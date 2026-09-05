@@ -49,6 +49,13 @@ first digit names an area:
 | `RM2005` | A unit compiled a file outside the workspace root, which the snapshot does not hold. |
 | `RM2006` | The candidates could not be assembled into a catalog: a display-id collision or an incoherent candidate. |
 | `RM2007` | A selected package is not a workspace member. |
+| `RM3001` | A candidate is not in the catalog being instrumented, which means the two were computed from different trees. |
+| `RM3002` | The source is not the one the candidates were discovered from. |
+| `RM3003` | Two rewrite sites partially overlap, which a syntax tree cannot produce: an engine bug rather than a fact about the program. |
+| `RM3004` | An alternative could not be folded onto one line. |
+| `RM3005` | The guards could not be applied to the file. |
+| `RM3006` | A guard would have moved a line, breaking the invariant every position depends on. |
+| `RM3007` | A mutant index collides with the runtime's sentinel values. |
 
 ## mjutest
 

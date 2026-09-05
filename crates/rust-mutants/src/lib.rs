@@ -26,6 +26,7 @@ pub mod error;
 pub mod flatten;
 pub mod glob;
 pub mod id;
+pub mod instrument;
 pub mod interval;
 pub mod outcome;
 pub mod rule;

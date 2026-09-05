@@ -15,7 +15,7 @@ use proc_macro2::{TokenStream, TokenTree};
 use syn::spanned::Spanned;
 use syn::{
     Attribute, Block, Expr, ImplItem, Item, Macro, Meta, Pat, ReturnType, Signature, Stmt,
-    TraitItem, Type,
+    TraitItem, Type, Visibility,
 };
 
 use super::position::LineIndex;
@@ -352,7 +352,7 @@ impl<'a> Walker<'a> {
     fn walk_item_inner(&mut self, item: &Item) {
         match item {
             Item::Fn(f) => {
-                let start = self.span(f).start;
+                let start = self.allow_offset(Some(&f.vis), &f.sig);
                 self.walk_fn(&f.sig, &f.block, start);
             }
             Item::Impl(i) => {
@@ -392,7 +392,7 @@ impl<'a> Walker<'a> {
     fn walk_impl_item(&mut self, member: &ImplItem) {
         match member {
             ImplItem::Fn(f) => {
-                let start = self.span(f).start;
+                let start = self.allow_offset(Some(&f.vis), &f.sig);
                 self.maybe_suppressed(&f.attrs, |walker| walker.walk_fn(&f.sig, &f.block, start));
             }
             ImplItem::Const(c) => {
@@ -407,7 +407,7 @@ impl<'a> Walker<'a> {
         match member {
             TraitItem::Fn(f) => {
                 if let Some(block) = &f.default {
-                    let start = self.span(f).start;
+                    let start = self.allow_offset(None, &f.sig);
                     self.maybe_suppressed(&f.attrs, |walker| walker.walk_fn(&f.sig, block, start));
                 }
             }
@@ -418,6 +418,18 @@ impl<'a> Walker<'a> {
             }
             TraitItem::Macro(m) => self.macro_site(&m.mac),
             _ => {}
+        }
+    }
+
+    /// Where `#[allow(warnings)]` goes for a function: before its
+    /// visibility if it has one, and otherwise before its signature. Never
+    /// before the item's attributes, so a doc comment keeps its own line and
+    /// the attribute lands on the line the reader expects it on.
+    fn allow_offset(&self, vis: Option<&Visibility>, sig: &Signature) -> u32 {
+        match vis {
+            Some(Visibility::Public(token)) => self.span(token).start,
+            Some(Visibility::Restricted(restricted)) => self.span(restricted).start,
+            Some(Visibility::Inherited) | None => self.span(sig).start,
         }
     }
 

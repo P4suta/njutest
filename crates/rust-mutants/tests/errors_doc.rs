@@ -78,11 +78,29 @@ fn every_variant_reports_a_declared_code() {
     let discover = rust_mutants::discover::DiscoverError::UnknownPackage {
         name: "x".to_owned(),
     };
+    let instrument = rust_mutants::instrument::plan_file(
+        &rust_mutants::catalog::Builder::new()
+            .build()
+            .expect("catalog"),
+        "src/lib.rs",
+        &rust_mutants::syntax::discover_file(
+            "src/lib.rs",
+            b"pub fn f(a: i32) -> i32 { a + 1 }\n",
+            &rust_mutants::syntax::Selection::tier(
+                &rust_mutants::rule::Registry::canonical(),
+                rust_mutants::rule::Tier::All,
+            ),
+        )
+        .expect("discover")
+        .candidates,
+    )
+    .expect_err("an empty catalog holds nothing");
     let samples = [
         rust_mutants::EngineError::Interrupted,
         rust_mutants::EngineError::from(snapshot),
         rust_mutants::EngineError::from(cargo),
         rust_mutants::EngineError::from(discover),
+        rust_mutants::EngineError::from(instrument),
     ];
     for sample in &samples {
         assert!(

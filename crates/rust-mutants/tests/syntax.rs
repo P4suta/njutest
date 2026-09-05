@@ -323,9 +323,11 @@ fn positions_count_bytes_and_chars_and_spans_are_absolute_past_a_bom_and_shebang
     assert_eq!(add.position.byte_column, 51);
     assert_eq!(add.position.char_column, 47);
     assert_eq!(add.hint.super_depth, 1);
+    // The allow attribute lands on the signature's line, not before the
+    // item's doc comment and attributes.
     let allow_at = add.hint.allow_at.expect("inside a fn") as usize;
     assert!(
-        src[allow_at..].starts_with("/// doc"),
+        src[allow_at..].starts_with("pub fn f("),
         "{:?}",
         &src[allow_at..allow_at + 12]
     );

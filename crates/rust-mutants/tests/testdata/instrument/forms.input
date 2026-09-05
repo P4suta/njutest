@@ -1,0 +1,27 @@
+// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! One site for each guard form.
+
+/// A boolean position: Form C, no block and so no temporary scope.
+pub fn compare(a: i32, b: i32) -> bool {
+    if a > b {
+        return true;
+    }
+    a >= b
+}
+
+/// A value position: Form E, an if-expression whose branches unify.
+pub fn pick(a: i32, b: i32) -> i32 {
+    let larger = if a > b { a } else { b };
+    larger + 1
+}
+
+/// A returned expression, and a match arm body.
+pub fn classify(n: i32) -> Option<&'static str> {
+    match n {
+        0 => None,
+        n if n < 0 => Some("negative"),
+        _ => Some("positive"),
+    }
+}

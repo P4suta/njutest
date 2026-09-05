@@ -152,6 +152,41 @@ snapshot_code!(
     "RM2007",
     "a selected package is not a workspace member"
 );
+snapshot_code!(
+    INSTRUMENT_UNKNOWN_MUTANT,
+    "RM3001",
+    "a candidate is not in the catalog being instrumented"
+);
+snapshot_code!(
+    INSTRUMENT_SOURCE_MISMATCH,
+    "RM3002",
+    "the source is not the one the candidates were discovered from"
+);
+snapshot_code!(
+    INSTRUMENT_SITE_CONFLICT,
+    "RM3003",
+    "two rewrite sites partially overlap, which a syntax tree cannot produce"
+);
+snapshot_code!(
+    INSTRUMENT_FLATTEN_FAILED,
+    "RM3004",
+    "an alternative could not be folded onto one line"
+);
+snapshot_code!(
+    INSTRUMENT_SPLICE_FAILED,
+    "RM3005",
+    "the guards could not be applied to the file"
+);
+snapshot_code!(
+    INSTRUMENT_LINES_MOVED,
+    "RM3006",
+    "a guard would have moved a line"
+);
+snapshot_code!(
+    INSTRUMENT_INDEX_RESERVED,
+    "RM3007",
+    "a mutant index collides with the runtime's sentinel values"
+);
 
 /// Every failure the engine reports.
 #[derive(Debug, thiserror::Error)]
@@ -171,6 +206,9 @@ pub enum EngineError {
     /// The workspace's files could not be turned into a catalog.
     #[error(transparent)]
     Discover(#[from] crate::discover::DiscoverError),
+    /// A file could not be rewritten to hold its mutants.
+    #[error(transparent)]
+    Instrument(#[from] crate::instrument::InstrumentError),
 }
 
 impl EngineError {
@@ -182,6 +220,7 @@ impl EngineError {
             Self::Snapshot(error) => error.code(),
             Self::Cargo(error) => error.code(),
             Self::Discover(error) => error.code(),
+            Self::Instrument(error) => error.code(),
         }
     }
 }
@@ -214,5 +253,12 @@ pub const fn error_codes() -> &'static [ErrorCode] {
         DISCOVER_OUTSIDE_ROOT,
         DISCOVER_CATALOG_FAILED,
         DISCOVER_UNKNOWN_PACKAGE,
+        INSTRUMENT_UNKNOWN_MUTANT,
+        INSTRUMENT_SOURCE_MISMATCH,
+        INSTRUMENT_SITE_CONFLICT,
+        INSTRUMENT_FLATTEN_FAILED,
+        INSTRUMENT_SPLICE_FAILED,
+        INSTRUMENT_LINES_MOVED,
+        INSTRUMENT_INDEX_RESERVED,
     ]
 }

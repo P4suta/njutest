@@ -86,6 +86,21 @@ instrumented file ([ADR 0011](../adr/0011-the-runtime-lives-at-the-end-of-each-i
 A guarded function gets `#[allow(warnings)]` on the same line as its first
 token, so the warnings guards provoke never trip a `#![deny(warnings)]`.
 
+### What instrumentation writes
+
+`rust_mutants::instrument` composes the guards and appends a `mod __rm` to
+each rewritten file. Alternatives of one site share one chain, nested sites
+become nested guards composed children first, and only the branch that keeps
+the original carries the guards inside it. Each alternative is folded onto
+one line and the original branch keeps its bytes, so a guard holds exactly
+as many line breaks as the bytes it replaced and every byte stays on its
+line. `#[allow(warnings)]` goes on the signature line of the innermost
+function that holds a guard, so a crate's deny policy is untouched
+elsewhere. The runtime reads `RUST_MUTANTS_ACTIVE` once per process; a
+`RUST_MUTANTS_CATALOG` that is not the one the tree was built from ends the
+process with exit 97, and an identity this file does not know activates
+nothing here because it belongs to another file.
+
 ## Skips, stated
 
 `const-context`, `macro-invocation`, `cfg-attribute`, `test-code`,

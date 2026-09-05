@@ -1,0 +1,24 @@
+// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! Inline modules reach the runtime through `super::`, and a nested function
+//! carries its own allow attribute.
+
+pub mod outer {
+    pub mod inner {
+        pub fn deep(a: i32) -> i32 {
+            a + 1
+        }
+    }
+
+    pub fn shallow(a: i32) -> i32 {
+        fn helper(x: i32) -> i32 {
+            x * 2
+        }
+        helper(a) - 1
+    }
+}
+
+pub fn top(a: i32) -> i32 {
+    a / 2
+}
