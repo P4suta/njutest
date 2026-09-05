@@ -112,6 +112,12 @@ its own `rustflags`, a build that will not instrument, and tools that are not
 installed each leave the measurement empty, which routes every mutant to every
 target exactly as if the layer were not there.
 
+`report --format` writes a stored run for somebody else: `json` is the
+document verbatim, `html` one page that fetches nothing, and `stryker` the
+mutation testing report every Stryker reader understands, with columns in
+UTF-16 as that schema counts them. `report --tui` reads it at the terminal
+instead. `doctor --json` answers with a `rust-mutants/doctor` document.
+
 `run --shard K/N` runs one part of the catalog, cut by index, and `merge`
 reassembles the parts into the report the whole would have written. A run
 reads back what an earlier run of this exact tree established unless

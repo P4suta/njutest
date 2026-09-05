@@ -13,6 +13,7 @@ pub mod outcomes;
 pub mod report;
 pub mod run;
 pub mod settings;
+pub mod tui;
 
 use std::ffi::OsString;
 use std::io::Write;

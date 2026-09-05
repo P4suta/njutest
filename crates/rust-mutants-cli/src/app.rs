@@ -56,12 +56,14 @@ pub fn dispatch(
             run,
             format,
             output,
+            tui,
         } => report_back(
             Wanted {
                 root: root.as_deref(),
                 run: run.as_deref(),
                 format: *format,
                 output: output.as_deref(),
+                tui: *tui,
             },
             environment,
             stdout,
@@ -543,6 +545,7 @@ struct Wanted<'a> {
     run: Option<&'a str>,
     format: cli::Format,
     output: Option<&'a Path>,
+    tui: bool,
 }
 
 fn report_back(
@@ -555,6 +558,7 @@ fn report_back(
         run,
         format,
         output,
+        tui,
     } = wanted;
     let root = root.map_or_else(|| environment.working_directory.clone(), Path::to_path_buf);
     let config = crate::config::Config::load(&root)?;
@@ -573,6 +577,11 @@ fn report_back(
         serde_json::from_str(&text).map_err(|error| CliError::ReportMissing {
             message: format!("{} is not a run report: {error}", path.display()),
         })?;
+    if tui {
+        let code = document.run.exit_code;
+        crate::tui::browse(document).map_err(|error| CliError::writing(&path, error))?;
+        return Ok(code);
+    }
     let projected = match format {
         cli::Format::Lines | cli::Format::Json => run_report::lines(&document),
         cli::Format::Html => html::document(&document),

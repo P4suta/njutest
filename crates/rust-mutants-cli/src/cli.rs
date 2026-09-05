@@ -139,6 +139,9 @@ pub enum Command {
         /// Write it here rather than to standard output.
         #[arg(long, value_name = "FILE")]
         output: Option<PathBuf>,
+        /// Read it at the terminal instead of writing it.
+        #[arg(long, conflicts_with_all = ["format", "output"])]
+        tui: bool,
     },
     /// Say what the engine left in the temporary directory, and remove what no run still owns.
     Cache {
