@@ -5,9 +5,9 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # Assurance report v1
 
-**Status: the model, its audit, the JSON projection, and the published
-schema are implemented** (`mjutest_cli::report`). Lines arrive later in M2;
-HTML, SARIF, and JUnit in M3.
+**Status: the model, its audit, the JSON and lines projections, and the
+published schema are implemented** (`mjutest_cli::report`). HTML, SARIF, and
+JUnit arrive in M3.
 
 The first public report contract is `mjutest-assurance-report-v1`. The
 schema value names the toolchain so a reader never confuses it with goatest's
@@ -95,9 +95,15 @@ search and section filtering. SARIF carries findings and the audit model in
 run properties. JUnit represents evidence as passing cases, findings as
 failures, and embeds core identity as properties.
 
-Terminal and pipe output is deterministic and escapes control characters so
-provider or test output cannot forge `FINDING`, `REPAIR`, `ACCEPTANCE`, or
-`LIMITATION` records.
+Terminal and pipe output is one record per line, tab-separated, the kind
+first and the verdict last, so `tail -1` is the answer and a filter on the
+first field is a projection. Every value the run did not write itself — a
+test's failure message, a provider's diagnostic, a limitation's detail — is
+escaped: a newline, a tab, a carriage return, and a terminal escape are
+spelled out rather than emitted. Without that, output from the code under
+test could forge a `FINDING`, `REPAIR`, `ACCEPTANCE`, or `LIMITATION`
+record, and a reader filtering for one would read a claim the run never
+made.
 
 ## Exit codes
 
