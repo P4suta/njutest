@@ -101,39 +101,52 @@ impl Repo {
     /// When git is not there or refuses, which a test asking for a
     /// repository cannot continue without.
     pub fn commit(&self) {
-        let run = |args: &[&str]| -> String {
-            let output =
-                Command::new("git")
-                    .args(args)
-                    .current_dir(&self.root)
-                    .env_clear()
-                    .envs(std::env::vars_os().filter(|(key, _)| {
-                        matches!(key.to_string_lossy().as_ref(), "PATH" | "HOME")
-                    }))
-                    .env("GIT_AUTHOR_NAME", "fixture")
-                    .env("GIT_AUTHOR_EMAIL", "fixture@example.invalid")
-                    .env("GIT_AUTHOR_DATE", "2026-09-05T00:00:00Z")
-                    .env("GIT_COMMITTER_NAME", "fixture")
-                    .env("GIT_COMMITTER_EMAIL", "fixture@example.invalid")
-                    .env("GIT_COMMITTER_DATE", "2026-09-05T00:00:00Z")
-                    .output()
-                    .expect("git runs");
-            assert!(
-                output.status.success(),
-                "git {args:?}: {}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-            String::from_utf8_lossy(&output.stdout).trim().to_owned()
-        };
-        if !self.root.join(".git").is_dir() {
-            run(&["init", "--initial-branch=main"]);
-        }
-        run(&["add", "-A"]);
-        let tree = run(&["write-tree"]);
-        let commit = run(&["commit-tree", &tree, "-m", "fixture"]);
-        run(&["update-ref", "refs/heads/main", &commit]);
-        run(&["symbolic-ref", "HEAD", "refs/heads/main"]);
+        commit_tree(&self.root);
     }
+}
+
+/// Makes `root` a git repository with one commit holding everything in it.
+///
+/// The commit is built from plumbing rather than `git commit`, so a signing
+/// configuration a developer has set for themselves cannot make a test that
+/// needs a repository fail or hang.
+///
+/// # Panics
+/// When git is not there or refuses, which a test asking for a repository
+/// cannot continue without.
+pub fn commit_tree(root: &Path) {
+    let run = |args: &[&str]| -> String {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(root)
+            .env_clear()
+            .envs(
+                std::env::vars_os()
+                    .filter(|(key, _)| matches!(key.to_string_lossy().as_ref(), "PATH" | "HOME")),
+            )
+            .env("GIT_AUTHOR_NAME", "fixture")
+            .env("GIT_AUTHOR_EMAIL", "fixture@example.invalid")
+            .env("GIT_AUTHOR_DATE", "2026-09-05T00:00:00Z")
+            .env("GIT_COMMITTER_NAME", "fixture")
+            .env("GIT_COMMITTER_EMAIL", "fixture@example.invalid")
+            .env("GIT_COMMITTER_DATE", "2026-09-05T00:00:00Z")
+            .output()
+            .expect("git runs");
+        assert!(
+            output.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).trim().to_owned()
+    };
+    if !root.join(".git").is_dir() {
+        run(&["init", "--initial-branch=main"]);
+    }
+    run(&["add", "-A"]);
+    let tree = run(&["write-tree"]);
+    let commit = run(&["commit-tree", &tree, "-m", "fixture"]);
+    run(&["update-ref", "refs/heads/main", &commit]);
+    run(&["symbolic-ref", "HEAD", "refs/heads/main"]);
 }
 
 impl Default for Repo {

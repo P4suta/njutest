@@ -175,6 +175,12 @@ pub struct Verify {
     /// Establish everything afresh instead of reading back what an earlier run of the same inputs established.
     #[arg(long)]
     pub no_cache: bool,
+    /// Mutate only the files that differ from a revision. `CHANGE_ASSURED` is the most this can conclude.
+    #[arg(long)]
+    pub changed: bool,
+    /// The revision to compare against. Implies --changed.
+    #[arg(long, value_name = "REV")]
+    pub changed_from: Option<String>,
     /// Arguments for the test binaries. Only the flags mjutest does not own are allowed: --test-threads, --include-ignored, --nocapture, --show-output.
     #[arg(last = true, value_name = "TEST ARGS")]
     pub test_args: Vec<String>,

@@ -485,3 +485,71 @@ fn names(document: &serde_json::Value) -> Vec<String> {
         .filter_map(|one| one["name"].as_str().map(str::to_owned))
         .collect()
 }
+
+#[test]
+fn a_run_about_a_change_set_mutates_what_changed_and_claims_no_more_than_that() {
+    let fixture = fixture("fixture-assured");
+    mjutest_devkit::repo::commit_tree(&fixture.root);
+
+    let unchanged = verify(&fixture, &["--changed"]);
+    assert_eq!(
+        unchanged.status.code(),
+        Some(2),
+        "nothing changed, so nothing was asked of the tests: {}",
+        String::from_utf8_lossy(&unchanged.stderr)
+    );
+    let empty = document(&fixture);
+    assert_eq!(empty["run_kind"], "changed");
+    assert_eq!(empty["accounting"]["mutants"]["cataloged"], 0);
+    assert!(
+        empty["repository"]["git"]["available"]
+            .as_bool()
+            .expect("a flag"),
+        "{empty}"
+    );
+
+    let path = fixture.root.join("src/lib.rs");
+    let source = std::fs::read_to_string(&path).expect("the source");
+    std::fs::write(&path, format!("{source}\n// changed\n")).expect("write");
+
+    let changed = verify(&fixture, &["--changed"]);
+    assert_eq!(
+        changed.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&changed.stderr)
+    );
+    let document = document(&fixture);
+    assert_eq!(document["run_kind"], "changed");
+    assert_eq!(
+        document["verdict"], "CHANGE_ASSURED",
+        "a run that looked at what changed claims no more than that: {document}"
+    );
+    assert!(
+        document["accounting"]["mutants"]["cataloged"]
+            .as_u64()
+            .expect("a count")
+            > 0,
+        "{document}"
+    );
+    assert_eq!(
+        document["repository"]["git"]["changed_files"],
+        serde_json::json!(["src/lib.rs"])
+    );
+}
+
+#[test]
+fn a_run_about_a_change_set_it_cannot_see_refuses_rather_than_verifying_nothing() {
+    let fixture = fixture("fixture-assured");
+    let output = verify(&fixture, &["--changed"]);
+    assert_eq!(
+        output.status.code(),
+        Some(3),
+        "a tree git cannot be asked about is not a tree in which nothing changed"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("cannot see what changed"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}

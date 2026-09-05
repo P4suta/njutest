@@ -44,7 +44,6 @@ pub fn run(
             return EXIT_ERROR;
         }
     };
-
     let started = Timestamp::now();
     let identity = run_id::mint(started, std::process::id());
     let trace = recorder(
@@ -57,39 +56,40 @@ pub fn run(
         stderr,
     );
     let cancel = environment.cancel.clone();
+
     let watch = Watch::new(&cancel, &trace);
-    let evidence = evidence_of(
-        arguments,
-        &Asked {
-            root: &root,
-            config: &config,
-            environment,
-        },
-        &cancel,
-    );
-    let store = store_of(environment, &config);
-    let asking = Asking {
-        store: &store,
-        identity: &evidence.identity,
-        run_id: &identity,
-        started,
-        root: &root,
-    };
-    let _lease = if arguments.no_cache || !evidence.is_known() {
-        None
-    } else {
-        match settled(
-            &asking,
-            arguments,
-            &cancel,
-            Streams {
-                out: stdout,
-                err: stderr,
-            },
-        ) {
-            Settled::Answered(code) => return code,
-            Settled::Establish(lease) => lease,
+    let changed = match change_set(arguments, &root, environment, watch) {
+        Ok(changed) => changed,
+        Err(message) => {
+            super::diagnose(stderr, &message);
+            return EXIT_ERROR;
         }
+    };
+    let asked = Asked {
+        root: &root,
+        config: &config,
+        environment,
+        changed: changed.as_ref(),
+    };
+    let evidence = evidence_of(arguments, &asked, &cancel);
+    let store = store_of(environment, &config);
+    let _lease = match already_answered(
+        &Asking {
+            store: &store,
+            identity: &evidence.identity,
+            run_id: &identity,
+            started,
+            root: &root,
+        },
+        arguments,
+        &cancel,
+        Streams {
+            out: stdout,
+            err: stderr,
+        },
+    ) {
+        Settled::Answered(code) => return code,
+        Settled::Establish(lease) => lease,
     };
     establish(
         &Establishing {
@@ -100,6 +100,7 @@ pub fn run(
             identity: &identity,
             started,
             evidence: &evidence,
+            changed: &changed,
             store: &store,
             trace: &trace,
             watch,
@@ -120,6 +121,7 @@ struct Establishing<'a> {
     identity: &'a str,
     started: Timestamp,
     evidence: &'a Evidence,
+    changed: &'a Option<crate::git::Change>,
     store: &'a Store,
     trace: &'a Recorder,
     watch: Watch<'a>,
@@ -157,6 +159,7 @@ fn establish(establishing: &Establishing<'_>, streams: Streams<'_>) -> u8 {
         started,
         engine_trace: engine_recorder(arguments, root, identity),
         evidence: evidence.clone(),
+        changed: establishing.changed.clone(),
     };
     let result = {
         let mut notes = ui::Notes::of(arguments.ui, stderr);
@@ -196,11 +199,60 @@ fn establish(establishing: &Establishing<'_>, streams: Streams<'_>) -> u8 {
     report.verdict.exit_code()
 }
 
+/// The change set a run was asked to mutate within, or nothing when it was not asked.
+///
+/// A run that cannot see what changed cannot claim to have verified what
+/// changed, so a tree git cannot be asked about ends the command rather than
+/// reading as a run about nothing.
+fn change_set(
+    arguments: &Verify,
+    root: &Path,
+    environment: &Environment,
+    watch: Watch<'_>,
+) -> Result<Option<crate::git::Change>, String> {
+    if !arguments.changed && arguments.changed_from.is_none() {
+        return Ok(None);
+    }
+    let base = arguments
+        .changed_from
+        .as_deref()
+        .unwrap_or(crate::git::DEFAULT_BASE);
+    crate::git::changed(root, &environment.vars, base, watch)
+        .map(Some)
+        .ok_or_else(|| {
+            format!(
+                "git could not say what differs from {base:?}, and a run that cannot see what \
+                 changed cannot claim to have verified what changed"
+            )
+        })
+}
+
 /// What a run was asked to verify, before anything has been established about it.
+#[derive(Clone, Copy)]
 struct Asked<'a> {
     root: &'a Path,
     config: &'a Config,
     environment: &'a Environment,
+    changed: Option<&'a crate::git::Change>,
+}
+
+/// How much of the workspace the run looked at, which is part of what it is: a run about one package established less than one about everything, and the two must never share a stored answer.
+fn mode_of(arguments: &Verify, config: &Config, changed: Option<&crate::git::Change>) -> Mode {
+    if let Some(change) = changed {
+        return Mode::Changed {
+            base: change.base.clone(),
+        };
+    }
+    if arguments.packages.is_empty() && config.project.packages.is_empty() {
+        return Mode::Full;
+    }
+    Mode::Scoped {
+        packages: if arguments.packages.is_empty() {
+            config.project.packages.clone()
+        } else {
+            arguments.packages.clone()
+        },
+    }
 }
 
 /// What this run is, as numbers, or nothing when the tree could not be read. A tree that cannot be measured is a limitation the report states, not a reason to refuse to verify it.
@@ -213,6 +265,7 @@ fn evidence_of(
         root,
         config,
         environment,
+        changed,
     } = *asked;
     let toolchain = rust_mutants::cargo::Toolchain::locate(
         &rust_mutants::cargo::LocateOptions {
@@ -230,17 +283,7 @@ fn evidence_of(
     let Ok(toolchain) = toolchain else {
         return Evidence::default();
     };
-    let mode = if arguments.packages.is_empty() && config.project.packages.is_empty() {
-        Mode::Full
-    } else {
-        Mode::Scoped {
-            packages: if arguments.packages.is_empty() {
-                config.project.packages.clone()
-            } else {
-                arguments.packages.clone()
-            },
-        }
-    };
+    let mode = mode_of(arguments, config, changed);
     let machine = identity::Machine {
         toolchain: &toolchain.to_string(),
         platform: toolchain.host(),
@@ -345,6 +388,19 @@ enum Settled {
     Answered(u8),
     /// Nothing is stored; the claim this run holds while it establishes one.
     Establish(Option<Lease>),
+}
+
+/// Whether the store already answers, unless the run was told to establish everything afresh or the tree could not be measured.
+fn already_answered(
+    asking: &Asking<'_>,
+    arguments: &Verify,
+    cancel: &rust_mutants::runner::Cancel,
+    streams: Streams<'_>,
+) -> Settled {
+    if arguments.no_cache || asking.identity.is_empty() {
+        return Settled::Establish(None);
+    }
+    settled(asking, arguments, cancel, streams)
 }
 
 /// Asks the store, waits for whoever is already establishing this identity, and asks again.

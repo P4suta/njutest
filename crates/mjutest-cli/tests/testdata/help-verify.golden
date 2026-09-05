@@ -43,5 +43,12 @@ Options:
           Establish everything afresh instead of reading back what an earlier run of the same inputs
           established
 
+      --changed
+          Mutate only the files that differ from a revision. `CHANGE_ASSURED` is the most this can
+          conclude
+
+      --changed-from <REV>
+          The revision to compare against. Implies --changed
+
   -h, --help
           Print help (see a summary with '-h')

@@ -55,6 +55,8 @@ pub struct Request {
     pub engine_trace: rust_mutants::trace::Recorder,
     /// What this run is, as numbers. Empty when the tree could not be read, which states a limitation rather than failing the run.
     pub evidence: crate::assure::identity::Evidence,
+    /// The change set to mutate within, when the run was asked for one.
+    pub changed: Option<git::Change>,
 }
 
 /// What one run produced.
@@ -86,14 +88,15 @@ pub fn run(
         &request.run_id,
         request.started,
     )?;
-    if !scratch.is_claimed() {
-        report.limitations.push(Limitation::new(
-            scratch::UNCLAIMED_LIMITATION,
-            "the run works in a directory it could not claim, so a sweep may remove it \
-             while the run is still using it",
-        ));
-    }
-    report.repository.git = git::describe(&request.root, &environment.vars, watch);
+    open_phase(
+        &mut report,
+        &Opening {
+            request,
+            environment,
+            scratch: &scratch,
+        },
+        watch,
+    );
     if !report.repository.git.available {
         report.limitations.push(Limitation::new(
             git::UNAVAILABLE_LIMITATION,
@@ -112,7 +115,6 @@ pub fn run(
 
     notes.phase("soundness");
     take_inventory(&mut report, request, &metadata);
-
     let layer = layer_for(&toolchain, environment, &scratch, notes)?;
 
     notes.phase("baseline");
@@ -200,6 +202,43 @@ fn count(value: usize) -> u32 {
     u32::try_from(value).unwrap_or(u32::MAX)
 }
 
+/// Where a run works and what it is about, before it has compiled anything.
+struct Opening<'a> {
+    request: &'a Request,
+    environment: &'a Environment,
+    scratch: &'a Scratch,
+}
+
+/// What the run can say before it has compiled anything: where it works, and what the repository was.
+fn open_phase(report: &mut Report, opening: &Opening<'_>, watch: Watch<'_>) {
+    let Opening {
+        request,
+        environment,
+        scratch,
+    } = *opening;
+    if !scratch.is_claimed() {
+        report.limitations.push(Limitation::new(
+            scratch::UNCLAIMED_LIMITATION,
+            "the run works in a directory it could not claim, so a sweep may remove it \
+             while the run is still using it",
+        ));
+    }
+    report.repository.git = git::describe(&request.root, &environment.vars, watch);
+    let Some(change) = &request.changed else {
+        return;
+    };
+    report
+        .repository
+        .git
+        .merge_base
+        .clone_from(&change.merge_base);
+    report
+        .repository
+        .git
+        .changed_files
+        .clone_from(&change.files);
+}
+
 /// The limitation a run states when it counted the places the compiler stops vouching for and did not execute any of them.
 pub const SOUNDNESS_LIMITATION: &str = "soundness-not-executed";
 
@@ -265,7 +304,9 @@ fn take_inventory(report: &mut Report, request: &Request, metadata: &Metadata) {
 /// A run that named packages looked at those, and the contract reserves
 /// `ASSURED` for a run that looked at everything.
 fn kind_of(request: &Request) -> RunKind {
-    if requested(request).is_empty() {
+    if request.changed.is_some() {
+        RunKind::Changed
+    } else if requested(request).is_empty() {
         RunKind::Full
     } else {
         RunKind::Scoped
@@ -408,6 +449,7 @@ fn prepare(
     Ok(workspace.prepare(
         &rust_mutants::session::PrepareOptions {
             packages: request.packages.clone(),
+            include: within(request.changed.as_ref()),
             verify: true,
             build_timeout: Some(request.config.execution.timeout),
             mutant_timeout: Some(request.config.execution.timeout),
@@ -416,6 +458,30 @@ fn prepare(
         watch.cancel,
     )?)
 }
+
+/// The files a change set names, as patterns the engine mutates within. An empty list is every file, so a change set that names no Rust file at all gets one pattern nothing matches: a run about nothing changing must mutate nothing, not everything.
+fn within(change: Option<&git::Change>) -> Vec<rust_mutants::glob::Pattern> {
+    let Some(change) = change else {
+        return Vec::new();
+    };
+    let sources: Vec<&String> = change
+        .files
+        .iter()
+        .filter(|path| std::path::Path::new(path).extension() == Some(std::ffi::OsStr::new("rs")))
+        .collect();
+    if sources.is_empty() {
+        return rust_mutants::glob::Pattern::compile(NOTHING_CHANGED)
+            .map(|pattern| vec![pattern])
+            .unwrap_or_default();
+    }
+    sources
+        .into_iter()
+        .filter_map(|path| rust_mutants::glob::Pattern::compile(path).ok())
+        .collect()
+}
+
+/// The pattern a run about an empty change set mutates within. No file is called this.
+pub const NOTHING_CHANGED: &str = ".mjutest-nothing-changed";
 
 fn record(report: &mut Report, mutation: &mutation::Mutation, accepted: &BTreeSet<String>) {
     report.accounting.mutants = mutation.accounting(accepted);
