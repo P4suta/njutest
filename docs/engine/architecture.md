@@ -45,6 +45,28 @@ cargo metadata (in the snapshot) ─→ pristine cargo check + dep-info
    Session: exec(mutant, target, args) / probe(target, args) / changes()
 ```
 
+## Snapshot
+
+`snapshot::create` copies the tree byte for byte into
+`<dest>/rust-mutants-snap-<16 hex of sha256(absolute root)>/tree`. The
+name is stable so cargo's fingerprints survive from one run to the next;
+the directory beside `tree` carries the `tempowner` lock and marker, so
+every byte under `tree` came from the source. A directory found under the
+stable name is swept and copied into again, never adopted; a live, kept, or
+young unowned one makes the run fall back to a fresh name (reported through
+`Snapshot::stable_dir`). `.git` at any depth and `reports/mutation` are
+always excluded; a symbolic link, reparse point, device, or backslash-named
+entry is refused with the first offending path in sorted order.
+
+The manifest is sorted by path and hashed under the domain
+`rust-mutants-workspace-v1` as `enc(domain) ‖ enc(path) ‖ enc(sha256hex) …`
+(4-byte big-endian length prefixes). `Snapshot::redigest` re-walks the copy
+with no exclusions and reports every added, removed, or changed path: the
+gate that catches a test writing into its own package. Cleanup releases the
+lock, checks a guard (absolute, prefixed name, expected parent), and retries
+the removal on a 20/40/80/160 ms ladder; `keep` records the decision in the
+marker so the next sweep obeys it.
+
 ## Guards
 
 Three forms. **Form C** for a position that is syntactically boolean (an

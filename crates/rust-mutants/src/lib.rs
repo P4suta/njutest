@@ -28,6 +28,7 @@ pub mod interval;
 pub mod outcome;
 pub mod rule;
 pub mod runner;
+pub mod snapshot;
 pub mod span;
 pub mod splice;
 pub mod tempowner;

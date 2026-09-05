@@ -69,7 +69,15 @@ fn error_codes_are_unique_well_formed_and_sorted() {
 #[test]
 fn every_variant_reports_a_declared_code() {
     let declared: BTreeSet<&str> = error_codes().iter().map(|c| c.code).collect();
-    let samples = [rust_mutants::EngineError::Interrupted];
+    let snapshot = rust_mutants::snapshot::cleanup_guard(
+        std::path::Path::new("relative"),
+        std::path::Path::new("/parent"),
+    )
+    .expect_err("a relative path is refused");
+    let samples = [
+        rust_mutants::EngineError::Interrupted,
+        rust_mutants::EngineError::from(snapshot),
+    ];
     for sample in &samples {
         assert!(
             declared.contains(sample.code().code),
