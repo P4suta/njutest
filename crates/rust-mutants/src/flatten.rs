@@ -75,6 +75,10 @@ pub fn flatten(src: &str) -> Result<String, FlattenError> {
     for leaf in &leaves {
         if let Some(end) = previous_end {
             match src.get(end..leaf.start) {
+                // A doc comment's `#` written where the comment was would
+                // touch the token before it and change that token's
+                // spacing, which is a different stream.
+                Some("") if leaf.synthesized(src) => out.push(' '),
                 Some("") => {}
                 Some(gap) if gap.bytes().all(|byte| byte == b' ' || byte == b'\t') => {
                     out.push_str(gap);
@@ -113,6 +117,22 @@ struct Leaf {
     start: usize,
     end: usize,
     text: String,
+}
+
+impl Leaf {
+    /// Whether the token is not what the source says at that place.
+    ///
+    /// A doc comment is the case that matters: the lexer expands `/// x`
+    /// into `#[doc = " x"]`, so a leaf whose source begins with `/` is
+    /// written as `#`. Writing that `#` where the comment was would put it
+    /// against the token before it and change that token's spacing, which
+    /// is a different stream — so an empty gap before one of these still
+    /// becomes a space. A re-spelled string literal is synthesized too,
+    /// and costs at most one space nobody can see.
+    fn synthesized(&self, src: &str) -> bool {
+        src.get(self.start..self.end)
+            .is_none_or(|text| !text.starts_with(&self.text))
+    }
 }
 
 fn collect_leaves(

@@ -36,6 +36,26 @@ fn lexes_the_same(a: &str, b: &str) -> bool {
 }
 
 #[test]
+fn a_doc_comment_expands_to_an_attribute_and_keeps_its_neighbour_apart() {
+    // A doc comment is not a comment to the lexer: it is `#[doc = "…"]`.
+    // Written where the comment was, its `#` would touch the token before
+    // it and change that token's spacing, which is a different stream.
+    let src = "a a a ==/// c\n";
+    let out = flat(src);
+    assert!(!out.contains('\n'), "{out:?}");
+    assert!(
+        out.starts_with("a a a == #"),
+        "the neighbour stays apart: {out:?}"
+    );
+    assert!(lexes_the_same(src, &out), "{src:?} -> {out:?}");
+
+    // An inner doc comment is the same shape.
+    let inner = "a//! c\n";
+    let out = flat(inner);
+    assert!(lexes_the_same(inner, &out), "{inner:?} -> {out:?}");
+}
+
+#[test]
 fn a_fragment_already_on_one_line_is_returned_byte_for_byte() {
     for src in [
         "a + b",
