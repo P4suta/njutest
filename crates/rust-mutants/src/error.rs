@@ -28,6 +28,7 @@ const INTERRUPTED: ErrorCode = ErrorCode {
 };
 
 macro_rules! snapshot_code {
+    // Named for the first area it served; every subsystem code is minted with it.
     ($name:ident, $code:literal, $summary:literal) => {
         pub(crate) const $name: ErrorCode = ErrorCode {
             code: $code,
@@ -91,6 +92,41 @@ snapshot_code!(
     "RM1011",
     "a snapshot directory that survived every removal attempt"
 );
+snapshot_code!(
+    CARGO_TOOLCHAIN_NOT_FOUND,
+    "RM1012",
+    "the cargo or rustc executable could not be found"
+);
+snapshot_code!(
+    CARGO_VERSION_UNREADABLE,
+    "RM1013",
+    "a -vV banner lacks its release or host line"
+);
+snapshot_code!(
+    CARGO_COMMAND_FAILED,
+    "RM1014",
+    "a cargo command could not start or exited unsuccessfully"
+);
+snapshot_code!(
+    CARGO_METADATA_UNPARSABLE,
+    "RM1015",
+    "cargo metadata printed something that is not its document"
+);
+snapshot_code!(
+    CARGO_MESSAGE_UNPARSABLE,
+    "RM1016",
+    "a --message-format=json line is not a message"
+);
+snapshot_code!(
+    DEP_INFO_UNREADABLE,
+    "RM2001",
+    "a dep-info file has no rule to read"
+);
+snapshot_code!(
+    DEP_INFO_MISSING,
+    "RM2002",
+    "an artifact's dep-info file could not be read"
+);
 
 /// Every failure the engine reports.
 #[derive(Debug, thiserror::Error)]
@@ -103,6 +139,10 @@ pub enum EngineError {
     /// the snapshot could not be removed.
     #[error(transparent)]
     Snapshot(#[from] crate::snapshot::SnapshotError),
+    /// The toolchain could not be located or driven, or what it printed
+    /// could not be read.
+    #[error(transparent)]
+    Cargo(#[from] crate::cargo::CargoError),
 }
 
 impl EngineError {
@@ -112,6 +152,7 @@ impl EngineError {
         match self {
             Self::Interrupted => INTERRUPTED,
             Self::Snapshot(error) => error.code(),
+            Self::Cargo(error) => error.code(),
         }
     }
 }
@@ -132,5 +173,12 @@ pub const fn error_codes() -> &'static [ErrorCode] {
         SNAPSHOT_COPY,
         SNAPSHOT_CLEANUP_REFUSED,
         SNAPSHOT_CLEANUP_FAILED,
+        CARGO_TOOLCHAIN_NOT_FOUND,
+        CARGO_VERSION_UNREADABLE,
+        CARGO_COMMAND_FAILED,
+        CARGO_METADATA_UNPARSABLE,
+        CARGO_MESSAGE_UNPARSABLE,
+        DEP_INFO_UNREADABLE,
+        DEP_INFO_MISSING,
     ]
 }

@@ -37,6 +37,13 @@ first digit names an area:
 | `RM1009` | A failure while copying the tree into the snapshot. |
 | `RM1010` | A cleanup refused because the recorded directory does not look like a snapshot directory. The guard between a bug and a user's source tree. |
 | `RM1011` | A snapshot directory that survived every removal attempt, usually a file still locked by a test binary on Windows. |
+| `RM1012` | The cargo or rustc executable could not be found: an explicit path that is not a file, or a bare name absent from the search path. |
+| `RM1013` | A `-vV` banner lacks its `release:` or `host:` line, so the toolchain cannot be named. |
+| `RM1014` | A cargo command could not start, timed out, or exited unsuccessfully; cargo's own words follow. |
+| `RM1015` | `cargo metadata` printed something that is not its document. |
+| `RM1016` | A `--message-format=json` line is not a message. |
+| `RM2001` | A dep-info file has no rule to read. |
+| `RM2002` | An artifact's dep-info file could not be read, so the files its unit compiled are unknown. |
 
 ## mjutest
 

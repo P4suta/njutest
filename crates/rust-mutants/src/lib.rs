@@ -19,6 +19,7 @@
 // with the reason. Every other module is unsafe-free.
 #![deny(unsafe_code)]
 
+pub mod cargo;
 pub mod catalog;
 pub mod error;
 pub mod flatten;

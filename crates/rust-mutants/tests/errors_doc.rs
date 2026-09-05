@@ -74,9 +74,11 @@ fn every_variant_reports_a_declared_code() {
         std::path::Path::new("/parent"),
     )
     .expect_err("a relative path is refused");
+    let cargo = rust_mutants::cargo::parse_dep_info("").expect_err("empty dep-info is refused");
     let samples = [
         rust_mutants::EngineError::Interrupted,
         rust_mutants::EngineError::from(snapshot),
+        rust_mutants::EngineError::from(cargo),
     ];
     for sample in &samples {
         assert!(
