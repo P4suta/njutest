@@ -227,6 +227,14 @@ impl ConfigError {
     }
 }
 
+impl ConfigError {
+    /// The failure of reading a configuration file at `path`.
+    #[must_use]
+    pub fn unreadable(path: &Path, message: impl Into<String>) -> Self {
+        Self::new(ConfigErrorKind::Unreadable, path, message)
+    }
+}
+
 impl Config {
     /// Reads `.rust-mutants.toml` from `root`, or the defaults when there is none.
     ///

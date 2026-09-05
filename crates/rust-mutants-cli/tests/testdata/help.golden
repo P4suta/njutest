@@ -10,10 +10,17 @@ Commands:
   list         List the candidates the rules propose, before the compiler has ruled
   catalog      Catalog the mutants the compiler accepts, and the candidates it refused with its own
                words
-  run          Run one mutant and report what the tests said
+  run          Run the mutants and report what the tests noticed. Every accepted mutant unless one
+               is named
   explain      Say everything known about one mutant
   instrument   Print one file as the engine rewrites it, guards and runtime included
   why-skipped  Tally why places were passed over
+  init         Write a `.rust-mutants.toml` whose every value is already the default
+  doctor       Say what a run would find in this environment: the toolchain, the configuration, the
+               temporary directory
+  report       Read back a stored run report
+  cache        Say what the engine left in the temporary directory, and remove what no run still
+               owns
   help         Print this message or the help of the given subcommand(s)
 
 Options:

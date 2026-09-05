@@ -59,6 +59,30 @@ pub const CONFIG_UNSUPPORTED_VERSION: ErrorCode = ErrorCode {
     summary: "a configuration whose version is not one this release understands",
 };
 
+/// A process environment that already selects a mutant.
+pub const ENVIRONMENT_RESERVED: ErrorCode = ErrorCode {
+    code: "RM0006",
+    summary: "a process environment that already selects a mutant or names a catalog",
+};
+
+/// A stored run report that is not there or cannot be read.
+pub const REPORT_MISSING: ErrorCode = ErrorCode {
+    code: "RM0007",
+    summary: "a stored run report that is not there or cannot be read",
+};
+
+/// A file a command would write that is already there.
+pub const FILE_EXISTS: ErrorCode = ErrorCode {
+    code: "RM0008",
+    summary: "a file a command would write that is already there",
+};
+
+/// A directory a command has to write to and could not.
+pub const WRITE_FAILED: ErrorCode = ErrorCode {
+    code: "RM0009",
+    summary: "a report or configuration file that could not be written",
+};
+
 macro_rules! snapshot_code {
     ($name:ident, $code:literal, $summary:literal) => {
         pub(crate) const $name: ErrorCode = ErrorCode {
@@ -328,6 +352,10 @@ pub const fn error_codes() -> &'static [ErrorCode] {
         CONFIG_UNPARSABLE,
         CONFIG_INVALID,
         CONFIG_UNSUPPORTED_VERSION,
+        ENVIRONMENT_RESERVED,
+        REPORT_MISSING,
+        FILE_EXISTS,
+        WRITE_FAILED,
         SNAPSHOT_INVALID_OPTIONS,
         SNAPSHOT_SOURCE_ROOT,
         SNAPSHOT_WALK,

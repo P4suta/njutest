@@ -47,20 +47,23 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Run one mutant and report what the tests said.
+    /// Run the mutants and report what the tests noticed. Every accepted mutant unless one is named.
     Run {
         /// Which workspace to read.
         #[command(flatten)]
         scope: Scope,
-        /// The mutant, by identity or by any prefix that names exactly one.
+        /// Run only this mutant, by identity or by any prefix that names exactly one.
         #[arg(long, value_name = "PREFIX")]
-        mutant: String,
-        /// Run only this target, by `package/kind/name` or by name.
-        #[arg(long, value_name = "TARGET")]
+        mutant: Option<String>,
+        /// With `--mutant`, run only this target, by `package/kind/name` or by name.
+        #[arg(long, value_name = "TARGET", requires = "mutant")]
         target: Option<String>,
-        /// Run only this test, by its libtest path.
-        #[arg(long, value_name = "TEST")]
+        /// With `--mutant`, run only this test, by its libtest path.
+        #[arg(long, value_name = "TEST", requires = "mutant")]
         test: Option<String>,
+        /// Do not write a run report under the report directory.
+        #[arg(long, conflicts_with = "mutant")]
+        no_report: bool,
         /// Arguments for the test harness itself.
         #[arg(last = true, value_name = "ARGS")]
         args: Vec<String>,
@@ -89,17 +92,56 @@ pub enum Command {
         #[command(flatten)]
         scope: Scope,
     },
+    /// Write a `.rust-mutants.toml` whose every value is already the default.
+    Init {
+        /// The workspace root. Defaults to the working directory.
+        #[arg(long, value_name = "DIR")]
+        root: Option<PathBuf>,
+        /// Overwrite a file that is already there.
+        #[arg(long)]
+        force: bool,
+    },
+    /// Say what a run would find in this environment: the toolchain, the configuration, the temporary directory.
+    Doctor {
+        /// The workspace root. Defaults to the working directory.
+        #[arg(long, value_name = "DIR")]
+        root: Option<PathBuf>,
+    },
+    /// Read back a stored run report.
+    Report {
+        /// The workspace root. Defaults to the working directory.
+        #[arg(long, value_name = "DIR")]
+        root: Option<PathBuf>,
+        /// The run, by its identity. Defaults to the newest.
+        #[arg(long, value_name = "ID")]
+        run: Option<String>,
+        /// Print the stored document rather than the lines a person reads.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Say what the engine left in the temporary directory, and remove what no run still owns.
+    Cache {
+        /// Remove every abandoned snapshot and target directory.
+        #[arg(long)]
+        gc: bool,
+    },
 }
 
-/// What a command reads, and how much of it.
+/// What a command reads, and how much of it. Every value here also has a key in `.rust-mutants.toml`; a flag given on the command line wins.
 #[derive(Debug, Clone, Args)]
 pub struct Scope {
     /// The workspace root. Defaults to the working directory.
     #[arg(long, value_name = "DIR")]
     pub root: Option<PathBuf>,
+    /// Read this configuration file instead of the one in the workspace root.
+    #[arg(long, value_name = "FILE", conflicts_with = "no_config")]
+    pub config: Option<PathBuf>,
+    /// Read no configuration file at all.
+    #[arg(long)]
+    pub no_config: bool,
     /// Which tier of operators to apply.
-    #[arg(long, value_enum, default_value_t = TierArg::Balanced)]
-    pub tier: TierArg,
+    #[arg(long, value_enum, value_name = "TIER")]
+    pub tier: Option<TierArg>,
     /// Apply exactly these operators, by name. Repeatable.
     #[arg(long = "operator", value_name = "RULE")]
     pub operators: Vec<String>,
@@ -112,6 +154,9 @@ pub struct Scope {
     /// Only mutate these packages. Repeatable.
     #[arg(long = "package", short = 'p', value_name = "NAME")]
     pub packages: Vec<String>,
+    /// How long one mutant execution may take before it is retried serially, as in `90s` or `5m`.
+    #[arg(long, value_name = "DURATION")]
+    pub timeout: Option<String>,
     /// How the workspace is treated.
     #[command(flatten)]
     pub switches: Switches,
@@ -162,16 +207,34 @@ impl TierArg {
 }
 
 impl Command {
-    /// What the command reads.
+    /// What the command reads, for the commands that read a workspace.
     #[must_use]
-    pub const fn scope(&self) -> &Scope {
+    pub const fn scope(&self) -> Option<&Scope> {
         match self {
             Self::List { scope }
             | Self::Catalog { scope, .. }
             | Self::Run { scope, .. }
             | Self::Explain { scope, .. }
             | Self::Instrument { scope, .. }
-            | Self::WhySkipped { scope } => scope,
+            | Self::WhySkipped { scope } => Some(scope),
+            Self::Init { .. } | Self::Doctor { .. } | Self::Report { .. } | Self::Cache { .. } => {
+                None
+            }
+        }
+    }
+
+    /// The workspace root the command names, when it names one.
+    #[must_use]
+    pub const fn root(&self) -> Option<&PathBuf> {
+        match self {
+            Self::Init { root, .. } | Self::Doctor { root } | Self::Report { root, .. } => {
+                root.as_ref()
+            }
+            Self::Cache { .. } => None,
+            _ => match self.scope() {
+                Some(scope) => scope.root.as_ref(),
+                None => None,
+            },
         }
     }
 }

@@ -3,6 +3,8 @@
 
 //! Rendering what the engine established, for a person and for a program.
 
+pub mod run;
+
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
@@ -11,7 +13,7 @@ use rust_mutants::discover::Discovery;
 use rust_mutants::execute::MutantResult;
 use rust_mutants::session::Session;
 use rust_mutants::syntax::{Position, Skip};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// `path:line:column`, the spelling every editor and every `::warning` consumer already understands.
 #[must_use]
@@ -137,10 +139,11 @@ fn one_line(mutant: &Mutant) -> String {
 }
 
 /// The catalog as one JSON document.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CatalogDocument {
     /// Names the shape, so a reader can tell versions apart.
-    pub document_type: &'static str,
+    pub document_type: String,
     /// The version of that shape.
     pub schema_version: u32,
     /// The engine that produced it.
@@ -158,7 +161,8 @@ pub struct CatalogDocument {
 }
 
 /// The tree a catalog was read from.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct WorkspaceDocument {
     /// The name of the directory the source root sits in.
     pub root_name: String,
@@ -173,7 +177,8 @@ pub struct WorkspaceDocument {
 }
 
 /// The machine a run happened on.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PlatformDocument {
     /// The operating system.
     pub os: String,
@@ -184,7 +189,8 @@ pub struct PlatformDocument {
 }
 
 /// What a run asked for.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SelectionDocument {
     /// The tier, when the run did not name operators.
     pub tier: String,
@@ -199,7 +205,8 @@ pub struct SelectionDocument {
 }
 
 /// One accepted mutant.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MutantDocument {
     /// The dense catalog index the guards name.
     pub index: u32,
@@ -232,7 +239,8 @@ pub struct MutantDocument {
 }
 
 /// One refused candidate.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RejectionDocument {
     /// The full identity.
     pub id: String,
@@ -249,7 +257,8 @@ pub struct RejectionDocument {
 }
 
 /// One reason places were passed over, and how many.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SkipDocument {
     /// The reason's name.
     pub reason: String,
@@ -263,63 +272,89 @@ pub struct SkipDocument {
 
 /// The catalog of a prepared session as a document.
 #[must_use]
-pub fn document(session: &Session, scope: &crate::cli::Scope) -> CatalogDocument {
-    let host = session.toolchain().host().to_owned();
-    let (arch, os) = host.split_once('-').unwrap_or((&host, ""));
+pub fn document(session: &Session, config: &crate::config::Config) -> CatalogDocument {
     CatalogDocument {
-        document_type: "rust-mutants/catalog",
+        document_type: "rust-mutants/catalog".to_owned(),
         schema_version: 1,
         tool_version: rust_mutants::VERSION.to_owned(),
-        workspace: WorkspaceDocument {
-            root_name: session.root_name(),
-            toolchain: session.toolchain().rustc_version().summary.clone(),
-            workspace_digest: session.workspace_digest().to_owned(),
-            catalog_digest: session.catalog().digest().to_owned(),
-            platform: PlatformDocument {
-                os: os.rsplit('-').next().unwrap_or_default().to_owned(),
-                arch: arch.to_owned(),
-                target: host.clone(),
-            },
-        },
-        selection: SelectionDocument {
-            tier: format!("{:?}", scope.tier).to_lowercase(),
-            operators: scope.operators.clone(),
-            include: scope.include.clone(),
-            exclude: scope.exclude.clone(),
-            packages: scope.packages.clone(),
-        },
+        workspace: workspace_document(session),
+        selection: selection_document(config),
         mutants: session
             .accepted()
             .iter()
             .filter_map(|index| session.catalog().by_index(*index))
             .map(|mutant| mutant_document(session, mutant))
             .collect(),
-        rejections: session
-            .rejections()
-            .iter()
-            .map(|rejection| RejectionDocument {
-                id: rejection.id.clone(),
-                display_id: rejection.display_id.clone(),
-                path: rejection.path.clone(),
-                rule: rejection.rule.clone(),
-                code: rejection.code.clone(),
-                diagnostic: rejection.diagnostic.clone(),
-            })
-            .collect(),
-        skips: session
-            .skips()
-            .iter()
-            .map(|skip| SkipDocument {
-                reason: skip.reason.name().to_owned(),
-                path: skip.path.clone(),
-                count: skip.count,
-                explanation: skip.reason.explanation().to_owned(),
-            })
-            .collect(),
+        rejections: rejection_documents(session),
+        skips: skip_documents(session),
     }
 }
 
-fn mutant_document(session: &Session, mutant: &Mutant) -> MutantDocument {
+/// The tree a session read, as a document.
+#[must_use]
+pub fn workspace_document(session: &Session) -> WorkspaceDocument {
+    let host = session.toolchain().host().to_owned();
+    let (arch, os) = host.split_once('-').unwrap_or((&host, ""));
+    WorkspaceDocument {
+        root_name: session.root_name(),
+        toolchain: session.toolchain().rustc_version().summary.clone(),
+        workspace_digest: session.workspace_digest().to_owned(),
+        catalog_digest: session.catalog().digest().to_owned(),
+        platform: PlatformDocument {
+            os: os.rsplit('-').next().unwrap_or_default().to_owned(),
+            arch: arch.to_owned(),
+            target: host.clone(),
+        },
+    }
+}
+
+/// What a command asked for, as a document.
+#[must_use]
+pub fn selection_document(config: &crate::config::Config) -> SelectionDocument {
+    SelectionDocument {
+        tier: config.mutation.tier.name().to_owned(),
+        operators: config.mutation.operators.clone(),
+        include: config.project.include.clone(),
+        exclude: config.project.exclude.clone(),
+        packages: config.project.packages.clone(),
+    }
+}
+
+/// Every candidate the compiler refused, as documents.
+#[must_use]
+pub fn rejection_documents(session: &Session) -> Vec<RejectionDocument> {
+    session
+        .rejections()
+        .iter()
+        .map(|rejection| RejectionDocument {
+            id: rejection.id.clone(),
+            display_id: rejection.display_id.clone(),
+            path: rejection.path.clone(),
+            rule: rejection.rule.clone(),
+            code: rejection.code.clone(),
+            diagnostic: rejection.diagnostic.clone(),
+        })
+        .collect()
+}
+
+/// Every place discovery passed over, as documents.
+#[must_use]
+pub fn skip_documents(session: &Session) -> Vec<SkipDocument> {
+    session
+        .skips()
+        .iter()
+        .map(|skip| SkipDocument {
+            reason: skip.reason.name().to_owned(),
+            path: skip.path.clone(),
+            count: skip.count,
+            explanation: skip.reason.explanation().to_owned(),
+        })
+        .collect()
+}
+
+/// One accepted mutant, as a document.
+#[must_use]
+pub fn mutant_document(session: &Session, mutant: &Mutant) -> MutantDocument {
     let position = session.position(mutant).unwrap_or(Position {
         line: 0,
         byte_column: 0,

@@ -24,6 +24,7 @@ doc = false
 
 [dependencies]
 clap = { workspace = true }
+jiff = { workspace = true }
 rust-mutants = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
