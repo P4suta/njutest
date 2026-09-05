@@ -59,6 +59,11 @@ fn verify(fixture: &Fixture, extra: &[&str]) -> Output {
         .current_dir(&fixture.root)
         .env_clear()
         .env("NO_COLOR", "1")
+        // Its own build cache, not the developer's: the layer under
+        // XDG_CACHE_HOME is shared by every run that names it, and two
+        // suites building different trees into one layer is a test with a
+        // side effect on the machine it runs on.
+        .env("XDG_CACHE_HOME", fixture.root.join(".cache"))
         .envs(std::env::vars_os().filter(|(key, _)| {
             matches!(
                 key.to_string_lossy().as_ref(),
@@ -260,4 +265,48 @@ fn a_workspace_that_does_not_compile_is_a_defect_that_names_itself() {
             .is_some_and(|detail| detail.contains("mismatched types")),
         "the compiler's own words: {findings:?}"
     );
+}
+
+#[test]
+fn the_report_of_a_known_workspace_is_the_recorded_one() {
+    let fixture = fixture("fixture-baseline");
+    assert_eq!(verify(&fixture, &[]).status.code(), Some(2));
+
+    // What changes between two runs of the same work — the moment, the
+    // commit, the compiler, how long each target took — is replaced in
+    // place, so what the golden holds is what the run claimed.
+    let normalized = mjutest_devkit::report::normalize(&document(&fixture));
+    let mut text = serde_json::to_string_pretty(&normalized).expect("one document");
+    text.push('\n');
+    let golden = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testdata/verify.golden.json");
+    mjutest_devkit::golden::golden(&golden, text.as_bytes()).expect("the recorded report");
+}
+
+#[test]
+fn a_workspace_with_no_tests_at_all_observed_nothing_and_says_so() {
+    let repo = mjutest_devkit::repo::Repo::new();
+    repo.package("silent")
+        .lib("/// Nothing tests this.\npub const fn one() -> i32 {\n    1\n}\n");
+    let fixture = Fixture {
+        root: repo.root().to_path_buf(),
+        _dir: tempfile::Builder::new()
+            .prefix("mjutest-unused-")
+            .tempdir()
+            .expect("a temporary directory"),
+    };
+    let output = verify(&fixture, &[]);
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("TARGETS\tselected=0"), "{stdout}");
+    assert!(
+        stdout.ends_with("VERDICT\tINSUFFICIENT\n"),
+        "a suite with nothing in it assures nothing: {stdout}"
+    );
+    drop(repo);
 }

@@ -55,6 +55,11 @@ fn mjutest(fixture: &Fixture, args: &[&str]) -> Output {
         .current_dir(&fixture.root)
         .env_clear()
         .env("NO_COLOR", "1")
+        // Its own build cache, not the developer's: the layer under
+        // XDG_CACHE_HOME is shared by every run that names it, and two
+        // suites building different trees into one layer is a test with a
+        // side effect on the machine it runs on.
+        .env("XDG_CACHE_HOME", fixture.root.join(".cache"))
         .envs(std::env::vars_os().filter(|(key, _)| {
             matches!(
                 key.to_string_lossy().as_ref(),

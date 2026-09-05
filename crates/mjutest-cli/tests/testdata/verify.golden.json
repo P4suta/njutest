@@ -1,0 +1,113 @@
+{
+  "accounting": {
+    "mutants": {
+      "accepted": 0,
+      "cataloged": 0,
+      "executed": 0,
+      "killed": 0,
+      "rejected": 0,
+      "reused_killed": 0,
+      "reused_survived": 0,
+      "survived": 0,
+      "timed_out": 0,
+      "unreached": 0
+    },
+    "soundness": {
+      "executed": false,
+      "packages_with_unsafe": 0,
+      "unsafe_items": 0
+    },
+    "targets": {
+      "failed": 0,
+      "missing": 0,
+      "passed": 2,
+      "selected": 3,
+      "skipped": 1
+    }
+  },
+  "contract": "standard-v1",
+  "findings": [],
+  "limitations": [
+    {
+      "detail": "the evidence identity of the tree is not computed in this release, so no result can be reused between runs",
+      "name": "workspace-digest-not-computed"
+    },
+    {
+      "detail": "git could not be asked, so the run cannot name the commit it verified",
+      "name": "git-metadata-unavailable"
+    },
+    {
+      "detail": "no mutant was executed, so nothing is claimed about whether the tests would notice a change",
+      "name": "mutation-phase-not-implemented"
+    }
+  ],
+  "mutants": [],
+  "repository": {
+    "configuration_digest": "<volatile>",
+    "git": {
+      "available": false,
+      "branch": "<volatile>",
+      "changed_files": [],
+      "commit": "<volatile>",
+      "dirty": false,
+      "merge_base": null
+    },
+    "packages": [
+      "fixture-baseline"
+    ],
+    "root_name": "<volatile>",
+    "workspace_digest": "<volatile>"
+  },
+  "run_id": "<volatile>",
+  "run_kind": "full",
+  "schema": "mjutest-assurance-report-v1",
+  "schema_version": 1,
+  "scope": {
+    "excluded": [],
+    "requested_packages": [],
+    "resolved_packages": []
+  },
+  "targets": [
+    {
+      "duration_ms": 0,
+      "id": "2b3377b3127f7d29",
+      "message": "libtest ignored it",
+      "name": "fixture-baseline/lib/fixture_baseline tests::zero_has_a_sign_of_its_own",
+      "package": "fixture-baseline",
+      "status": "skipped"
+    },
+    {
+      "duration_ms": 0,
+      "id": "b889a7cc06824a44",
+      "message": null,
+      "name": "fixture-baseline/test/doubling doubling_is_addition_twice",
+      "package": "fixture-baseline",
+      "status": "passed"
+    },
+    {
+      "duration_ms": 0,
+      "id": "f5521202a1e9e13c",
+      "message": null,
+      "name": "fixture-baseline/lib/fixture_baseline tests::sign_names_both_sides_of_zero",
+      "package": "fixture-baseline",
+      "status": "passed"
+    }
+  ],
+  "timing": {
+    "duration_ms": 0,
+    "finished": "<volatile>",
+    "started": "<volatile>"
+  },
+  "tool": {
+    "mjutest": "<volatile>",
+    "rust_mutants": "<volatile>"
+  },
+  "toolchain": {
+    "arch": "<volatile>",
+    "cargo": "<volatile>",
+    "os": "<volatile>",
+    "rustc": "<volatile>",
+    "target": "<volatile>"
+  },
+  "verdict": "INSUFFICIENT"
+}

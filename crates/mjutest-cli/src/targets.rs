@@ -300,13 +300,17 @@ pub fn enumerate(unit: &Unit, watch: Watch<'_>) -> Result<Vec<Target>, TargetErr
             message: format!("cannot start the test binary: {error}"),
         });
     }
-    let entries = if listed.ok() {
-        parse_list(&listed.stdout)
-    } else {
-        Vec::new()
-    };
-    if entries.is_empty() {
+    // Measured: a libtest harness holding no tests answers `--list` with
+    // exit 0 and no lines, while a binary with a harness of its own does not
+    // understand the flag at all. The difference matters — the first has
+    // nothing to measure, and calling that a target would make every run of
+    // a library without tests report a target it could not find.
+    if !listed.ok() {
         return Ok(vec![whole_binary(unit)]);
+    }
+    let entries = parse_list(&listed.stdout);
+    if entries.is_empty() {
+        return Ok(Vec::new());
     }
 
     let mut ignored = ignored_paths(unit, watch);
