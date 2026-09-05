@@ -8,8 +8,10 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 **Status: scaffold.** The list grows with each milestone; every limitation
 below is stated fail-closed.
 
-- Nothing below the command line is implemented yet. `mjutest` and
-  `rust-mutants` parse their arguments, print their help, and exit.
+- The engine (`rust-mutants`) works end to end. The runner (`mjutest`)
+  reads its configuration, names the tests it would measure, and reads
+  coverage; the phases that turn those into a verdict arrive in M2 and M3,
+  and until then `mjutest` prints its help and exits.
 
 ## Decided in advance
 

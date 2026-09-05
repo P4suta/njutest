@@ -78,3 +78,7 @@ first digit names an area:
 | `MJ1003` | The configuration says something a run cannot honour: a harness flag mjutest owns, an environment assignment, a resource that is both shared and exclusive, an acceptance without a reason. |
 | `MJ1004` | The configuration names a version this release does not understand. |
 | `MJ3001` | A test binary could not be asked what tests it holds. |
+| `MJ4001` | A coverage export could not be read. |
+| `MJ4002` | The LLVM tools the toolchain ships are not installed (`rustup component add llvm-tools`). |
+| `MJ4003` | `llvm-profdata` or `llvm-cov` failed. |
+| `MJ4004` | A test process wrote no coverage profile at all: the build was not instrumented, or the process did not exit normally. |

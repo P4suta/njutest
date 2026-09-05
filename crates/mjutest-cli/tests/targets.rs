@@ -20,6 +20,7 @@
 use mjutest_cli::targets::{
     Entry, EntryKind, TARGET_DOMAIN, Unit, UnitKind, WHOLE_BINARY, enumerate, parse_list, target_id,
 };
+use mjutest_cli::watch::Watch;
 use rust_mutants::runner::Cancel;
 use rust_mutants::trace::Recorder;
 
@@ -175,7 +176,9 @@ fn a_built_binary_names_every_test_it_holds_with_its_own_identity() {
     let (units, _target) = built_units("fixture-simple");
     let mut named: Vec<(String, String, bool)> = Vec::new();
     for unit in &units {
-        for target in enumerate(unit, &Cancel::new(), &Recorder::disabled()).expect("enumerate") {
+        for target in
+            enumerate(unit, Watch::new(&Cancel::new(), &Recorder::disabled())).expect("enumerate")
+        {
             assert_eq!(target.id.len(), 16, "{target:?}");
             assert_eq!(
                 target.id,

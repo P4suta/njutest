@@ -58,6 +58,26 @@ code!(
     "MJ3001",
     "a test binary could not be asked what tests it holds"
 );
+code!(
+    COVERAGE_UNREADABLE,
+    "MJ4001",
+    "a coverage export could not be read"
+);
+code!(
+    COVERAGE_TOOLS_MISSING,
+    "MJ4002",
+    "the LLVM tools the toolchain ships are not installed"
+);
+code!(
+    COVERAGE_TOOL_FAILED,
+    "MJ4003",
+    "llvm-profdata or llvm-cov failed"
+);
+code!(
+    COVERAGE_NOTHING_WRITTEN,
+    "MJ4004",
+    "a test process wrote no coverage profile at all"
+);
 
 /// Every failure the runner reports.
 #[derive(Debug, thiserror::Error)]
@@ -72,6 +92,9 @@ pub enum RunnerError {
     /// A unit's tests could not be named.
     #[error(transparent)]
     Target(#[from] crate::targets::TargetError),
+    /// Coverage could not be read.
+    #[error(transparent)]
+    Coverage(#[from] crate::coverage::CoverageError),
 }
 
 impl RunnerError {
@@ -82,6 +105,7 @@ impl RunnerError {
             Self::Interrupted => INTERRUPTED,
             Self::Config(error) => error.code(),
             Self::Target(error) => error.code(),
+            Self::Coverage(error) => error.code(),
         }
     }
 }
@@ -96,5 +120,9 @@ pub const fn error_codes() -> &'static [ErrorCode] {
         CONFIG_INVALID,
         CONFIG_UNSUPPORTED_VERSION,
         TARGET_LIST_FAILED,
+        COVERAGE_UNREADABLE,
+        COVERAGE_TOOLS_MISSING,
+        COVERAGE_TOOL_FAILED,
+        COVERAGE_NOTHING_WRITTEN,
     ]
 }

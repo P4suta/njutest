@@ -26,11 +26,12 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use rust_mutants::runner::{Cancel, Spec, run};
-use rust_mutants::trace::{ExecRecord, Recorder};
+use rust_mutants::runner::{Spec, run};
+use rust_mutants::trace::ExecRecord;
 use sha2::{Digest as _, Sha256};
 
 use crate::error::{self, ErrorCode};
+use crate::watch::Watch;
 
 /// The domain separator hashed first for every target identity. It carries
 /// the recipe version.
@@ -270,11 +271,7 @@ impl TargetError {
 ///
 /// [`TargetErrorKind::ListFailed`] when the binary could not be started at
 /// all, which is not the same as a binary that answered differently.
-pub fn enumerate(
-    unit: &Unit,
-    cancel: &Cancel,
-    trace: &Recorder,
-) -> Result<Vec<Target>, TargetError> {
+pub fn enumerate(unit: &Unit, watch: Watch<'_>) -> Result<Vec<Target>, TargetError> {
     let mut spec = Spec::new([
         unit.executable.as_os_str().to_owned(),
         std::ffi::OsString::from("--list"),
@@ -284,8 +281,8 @@ pub fn enumerate(
     spec.dir = Some(unit.cwd.clone());
     spec.timeout = Some(LIST_TIMEOUT);
     spec.structured_stdout = Some(64 << 20);
-    let listed = run(&spec, cancel);
-    trace.exec(ExecRecord::of(&spec, &listed));
+    let listed = run(&spec, watch.cancel);
+    watch.trace.exec(ExecRecord::of(&spec, &listed));
     if let Some(error) = &listed.error {
         return Err(TargetError {
             kind: TargetErrorKind::ListFailed,
@@ -302,7 +299,7 @@ pub fn enumerate(
         return Ok(vec![whole_binary(unit)]);
     }
 
-    let mut ignored = ignored_paths(unit, cancel, trace);
+    let mut ignored = ignored_paths(unit, watch);
     let mut targets: Vec<Target> = entries
         .into_iter()
         .filter(|entry| entry.kind == EntryKind::Test)
@@ -344,11 +341,7 @@ fn whole_binary(unit: &Unit) -> Target {
 /// A binary that will not answer this second question is not an error: the
 /// worst outcome is that a run treats an ignored test as ordinary and reads
 /// its "0 passed, 1 ignored" honestly anyway.
-fn ignored_paths(
-    unit: &Unit,
-    cancel: &Cancel,
-    trace: &Recorder,
-) -> std::collections::BTreeSet<String> {
+fn ignored_paths(unit: &Unit, watch: Watch<'_>) -> std::collections::BTreeSet<String> {
     let mut spec = Spec::new([
         unit.executable.as_os_str().to_owned(),
         std::ffi::OsString::from("--list"),
@@ -359,8 +352,8 @@ fn ignored_paths(
     spec.dir = Some(unit.cwd.clone());
     spec.timeout = Some(LIST_TIMEOUT);
     spec.structured_stdout = Some(64 << 20);
-    let listed = run(&spec, cancel);
-    trace.exec(ExecRecord::of(&spec, &listed));
+    let listed = run(&spec, watch.cancel);
+    watch.trace.exec(ExecRecord::of(&spec, &listed));
     if !listed.ok() {
         return std::collections::BTreeSet::new();
     }

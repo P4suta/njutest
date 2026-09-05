@@ -5,11 +5,11 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # Architecture
 
-**Status: scaffold.** The workspace, the gates, the command-line contracts of
-both binaries, and the public API crate exist. Every phase described below is
-the design; each page under `docs/` carries its own status line, and nothing
-here should be read as a description of working software until its status
-says so. The order of work is in [roadmap](roadmap.md).
+**Status: the engine is implemented; the runner is being built.**
+`rust-mutants` discovers, instruments, validates, and executes mutants and
+has a command line. `mjutest` has its configuration, its target naming, and
+its coverage layer; the baseline, the report, and the verdict arrive in M2
+and M3.
 
 mjutest is an orchestrator, not a replacement testing framework. Its core
 pipeline is:

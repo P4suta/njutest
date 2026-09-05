@@ -16,8 +16,10 @@
 
 pub mod cli;
 pub mod config;
+pub mod coverage;
 pub mod error;
 pub mod targets;
+pub mod watch;
 
 use std::ffi::OsString;
 use std::io::Write;
