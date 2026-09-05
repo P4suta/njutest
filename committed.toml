@@ -8,8 +8,7 @@ subject_not_punctuated = true
 imperative_subject = true
 
 # 50/72 — the Linux-kernel rule for legible `git log --oneline`. Body lines
-# get more room because trailers that carry a URL (`Link:`, `Claude-Session:`)
-# cannot wrap.
+# get more room because a trailer that carries a URL (`Link:`) cannot wrap.
 subject_length = 72
 line_length = 100
 hard_line_length = 0
