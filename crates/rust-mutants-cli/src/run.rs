@@ -43,6 +43,8 @@ pub struct Judged {
     pub tests_run: Option<u32>,
     /// Whether a first timeout was retried serially before the outcome was believed.
     pub retried: bool,
+    /// The run that established this, when it was not this one.
+    pub source_run_id: Option<String>,
     /// Whether a reviewer declared this outcome in advance and the run confirmed the claim.
     pub expected: bool,
 }
@@ -353,6 +355,19 @@ pub struct Options<'a> {
     pub args: &'a [String],
     /// Which part of the catalog this run is about. `None` is all of it.
     pub shard: Option<Shard>,
+    /// Where what earlier runs of this exact tree established is kept, and this run's own name. `None` establishes everything afresh.
+    pub outcomes: Option<Reusing<'a>>,
+}
+
+/// Where a run reads and writes what is established about individual mutants.
+#[derive(Debug, Clone, Copy)]
+pub struct Reusing<'a> {
+    /// The records.
+    pub store: &'a crate::outcomes::Store,
+    /// Everything a key is computed from beyond the mutant's own identity.
+    pub keyed: &'a crate::outcomes::Keyed,
+    /// This run, which is what a record it writes names.
+    pub run_id: &'a str,
 }
 
 /// One part of a catalog, for a run that shares the work with others.
@@ -455,7 +470,13 @@ pub fn run(
             judged.push(unexecuted(mutant));
             continue;
         }
-        let one = execute(session, mutant, options, cancel)?;
+        let one = if let Some(one) = reuse(mutant, options) {
+            one
+        } else {
+            let established = execute(session, mutant, options, cancel)?;
+            keep(mutant, options, &established);
+            established
+        };
         progress(&one, count(position).saturating_add(1), total);
         judged.push(one);
     }
@@ -511,7 +532,53 @@ fn execute(
         tests_run: result.tests_run,
         retried,
         expected: false,
+        source_run_id: None,
     })
+}
+
+/// What an earlier run of this exact tree established about this mutant, when a record answers for it.
+fn reuse(mutant: &Mutant, options: &Options<'_>) -> Option<Judged> {
+    let reusing = options.outcomes?;
+    let (outcome, record) = reusing
+        .store
+        .get(&reusing.keyed.key(&mutant.id), &mutant.id)?;
+    Some(Judged {
+        index: mutant.index,
+        id: mutant.id.clone(),
+        display_id: mutant.display_id.clone(),
+        outcome,
+        target: record.target,
+        exit_code: 0,
+        duration: Duration::ZERO,
+        tests_run: record.tests_run,
+        retried: false,
+        expected: false,
+        source_run_id: Some(record.run_id),
+    })
+}
+
+/// Records what this run established, for the next run of this exact tree. Only an outcome about the mutant is kept: a run that could not decide, or that never ran, says nothing the next run could inherit.
+fn keep(mutant: &Mutant, options: &Options<'_>, judged: &Judged) {
+    let Some(reusing) = options.outcomes else {
+        return;
+    };
+    if !matches!(
+        judged.outcome,
+        Outcome::Killed | Outcome::Survived | Outcome::TimedOut
+    ) {
+        return;
+    }
+    reusing.store.put(
+        &reusing.keyed.key(&mutant.id),
+        &crate::outcomes::Record {
+            schema: crate::outcomes::SCHEMA.to_owned(),
+            mutant: mutant.id.clone(),
+            outcome: judged.outcome.name().to_owned(),
+            target: judged.target.clone(),
+            tests_run: judged.tests_run,
+            run_id: reusing.run_id.to_owned(),
+        },
+    );
 }
 
 fn unexecuted(mutant: &Mutant) -> Judged {
@@ -526,6 +593,7 @@ fn unexecuted(mutant: &Mutant) -> Judged {
         tests_run: None,
         retried: false,
         expected: false,
+        source_run_id: None,
     }
 }
 

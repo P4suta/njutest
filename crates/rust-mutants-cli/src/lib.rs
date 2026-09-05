@@ -9,6 +9,7 @@ pub mod app;
 pub mod cli;
 pub mod config;
 pub mod error;
+pub mod outcomes;
 pub mod report;
 pub mod run;
 pub mod settings;
@@ -29,6 +30,8 @@ pub struct Environment {
     pub vars: Vec<(OsString, OsString)>,
     /// The directory snapshots and target directories are created in.
     pub temp_directory: PathBuf,
+    /// The user's cache directory, which what earlier runs established is kept under.
+    pub cache_directory: PathBuf,
     /// The working directory, which a command with no `--root` reads.
     pub working_directory: PathBuf,
 }
@@ -46,6 +49,23 @@ pub struct Streams<'a> {
     pub out: &'a mut dyn Write,
     /// What went wrong.
     pub err: &'a mut dyn Write,
+}
+
+impl Environment {
+    /// Where a user's caches belong, from `vars` alone: `XDG_CACHE_HOME`, then `HOME/.cache`, then `LOCALAPPDATA` on Windows.
+    #[must_use]
+    pub fn cache_directory_of(vars: &[(OsString, OsString)]) -> PathBuf {
+        let value = |name: &str| -> Option<PathBuf> {
+            vars.iter()
+                .find(|(key, _)| key == name)
+                .map(|(_, value)| PathBuf::from(value))
+                .filter(|path| path.is_absolute())
+        };
+        value("XDG_CACHE_HOME")
+            .or_else(|| value("HOME").map(|home| home.join(".cache")))
+            .or_else(|| value("LOCALAPPDATA"))
+            .unwrap_or_else(|| PathBuf::from(".rust-mutants-cache"))
+    }
 }
 
 /// Runs the command line described by `args` (program name first) and returns its exit code, writing to the two streams it was given. `cancel` is raised by whoever owns the process's signals; every command stops at the first place it can and leaves nothing behind.

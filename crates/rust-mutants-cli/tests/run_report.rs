@@ -14,6 +14,7 @@ use std::process::{Command, Output};
 
 struct Fixture {
     root: PathBuf,
+    cache: PathBuf,
     /// Every snapshot and build cache the run makes goes in here, so the tree a test leaves behind is the tree it took with it.
     temp: PathBuf,
     _dir: tempfile::TempDir,
@@ -28,8 +29,11 @@ fn fixture(name: &str) -> Fixture {
     copy_dir(&mjutest_devkit::paths::fixtures_dir().join(name), &root);
     let temp = dir.path().join("temp");
     std::fs::create_dir_all(&temp).expect("mkdir");
+    let cache = dir.path().join("cache");
+    std::fs::create_dir_all(&cache).expect("mkdir");
     Fixture {
         root,
+        cache,
         temp,
         _dir: dir,
     }
@@ -55,6 +59,7 @@ fn against(fixture: &Fixture, args: &[&str]) -> Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_rust-mutants"));
     command.env("NO_COLOR", "1");
     command.env("TMPDIR", &fixture.temp);
+    command.env("XDG_CACHE_HOME", &fixture.cache);
     command.args(args);
     command.args(["--root", &fixture.root.to_string_lossy()]);
     command.output().expect("rust-mutants runs")
@@ -66,6 +71,7 @@ fn rootless(fixture: &Fixture, args: &[&str]) -> Output {
         .args(args)
         .env("NO_COLOR", "1")
         .env("TMPDIR", &fixture.temp)
+        .env("XDG_CACHE_HOME", &fixture.cache)
         .output()
         .expect("rust-mutants runs")
 }
@@ -497,5 +503,88 @@ fn reports_that_are_not_the_parts_of_one_whole_are_refused() {
         String::from_utf8_lossy(&output.stderr).contains("more than one"),
         "the same part twice is not two parts: {}",
         String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn a_warm_cache_reaches_the_same_answer_without_executing_a_mutant() {
+    let fixture = fixture("fixture-simple");
+    let cold = against(&fixture, &["run", "--offline", "--locked", "--tier", "all"]);
+    assert_eq!(cold.status.code(), Some(1), "{}", stdout(&cold));
+    let first = stored(&fixture);
+    assert!(
+        first["mutants"]
+            .as_array()
+            .expect("mutants")
+            .iter()
+            .all(|one| one["source_run_id"] == serde_json::Value::Null),
+        "a cold run establishes everything itself: {first}"
+    );
+
+    let warm = against(&fixture, &["run", "--offline", "--locked", "--tier", "all"]);
+    assert_eq!(warm.status.code(), Some(1), "{}", stdout(&warm));
+    let second = stored(&fixture);
+    assert_eq!(
+        second["accounting"], first["accounting"],
+        "a warm run reaches the answer a cold one did"
+    );
+    assert_eq!(second["score"], first["score"]);
+    assert!(
+        second["mutants"]
+            .as_array()
+            .expect("mutants")
+            .iter()
+            .all(|one| one["source_run_id"] == first["run"]["id"]),
+        "and it read every one of them back rather than running it: {second}"
+    );
+
+    let afresh = against(
+        &fixture,
+        &[
+            "run",
+            "--offline",
+            "--locked",
+            "--tier",
+            "all",
+            "--no-cache",
+        ],
+    );
+    assert_eq!(afresh.status.code(), Some(1));
+    assert!(
+        stored(&fixture)["mutants"]
+            .as_array()
+            .expect("mutants")
+            .iter()
+            .all(|one| one["source_run_id"] == serde_json::Value::Null),
+        "a run told to establish everything afresh does"
+    );
+}
+
+#[test]
+fn a_tree_that_changed_is_a_different_question_and_is_answered_again() {
+    let fixture = fixture("fixture-simple");
+    assert_eq!(
+        against(&fixture, &["run", "--offline", "--locked"])
+            .status
+            .code(),
+        Some(1)
+    );
+    let path = fixture.root.join("src/lib.rs");
+    let source = std::fs::read_to_string(&path).expect("the source");
+    std::fs::write(&path, format!("{source}\n// one more line\n")).expect("write");
+
+    assert_eq!(
+        against(&fixture, &["run", "--offline", "--locked"])
+            .status
+            .code(),
+        Some(1)
+    );
+    assert!(
+        stored(&fixture)["mutants"]
+            .as_array()
+            .expect("mutants")
+            .iter()
+            .all(|one| one["source_run_id"] == serde_json::Value::Null),
+        "a record is about the tree it was established on, and this is another tree"
     );
 }

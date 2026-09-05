@@ -32,6 +32,7 @@ fn mutant(index: u32, outcome: &str, expected: bool) -> RunMutantDocument {
         tests_run: Some(1),
         retried: false,
         expected,
+        source_run_id: None,
     }
 }
 

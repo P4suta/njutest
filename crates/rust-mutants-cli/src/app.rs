@@ -100,6 +100,7 @@ fn workspace_command(
                 &Prepared {
                     session: &session,
                     settings: &settings,
+                    environment,
                 },
                 cancel,
                 stdout,
@@ -131,6 +132,7 @@ fn previewed(
 struct Prepared<'a> {
     session: &'a Session,
     settings: &'a Settings,
+    environment: &'a Environment,
 }
 
 /// What a command that needs a prepared session does.
@@ -140,7 +142,9 @@ fn prepared(
     cancel: &Cancel,
     stdout: &mut dyn Write,
 ) -> Result<u8, CliError> {
-    let Prepared { session, settings } = *prepared;
+    let Prepared {
+        session, settings, ..
+    } = *prepared;
     match command {
         cli::Command::Catalog { json, .. } => {
             let text = if *json {
@@ -163,6 +167,7 @@ fn prepared(
             test,
             shard,
             no_report,
+            no_cache,
             args,
             ..
         } => match mutant {
@@ -185,6 +190,8 @@ fn prepared(
                     args,
                     shard: shard.as_deref(),
                     no_report: *no_report,
+                    no_cache: *no_cache,
+                    environment: prepared.environment,
                 },
                 cancel,
                 stdout,
@@ -214,6 +221,8 @@ struct Whole<'a> {
     args: &'a [String],
     shard: Option<&'a str>,
     no_report: bool,
+    no_cache: bool,
+    environment: &'a Environment,
 }
 
 fn whole(
@@ -227,9 +236,19 @@ fn whole(
         args,
         shard,
         no_report,
+        no_cache,
+        environment,
     } = *whole;
-    let shard = shard.map(run::Shard::parse).transpose()?;
     let started = Timestamp::now();
+    let shard = shard.map(run::Shard::parse).transpose()?;
+    let outcomes = crate::outcomes::Store::new(&environment.cache_directory);
+    let keyed = crate::outcomes::Keyed {
+        workspace: session.workspace_digest().to_owned(),
+        catalog: session.catalog().digest().to_owned(),
+        args: args.to_vec(),
+        timeout_ms: u64::try_from(settings.config.mutation.timeout.as_millis()).unwrap_or(u64::MAX),
+    };
+    let id = run_id(started);
     let mut result = run::run(
         session,
         &run::Options {
@@ -237,6 +256,11 @@ fn whole(
             expectations: &settings.config.mutation.expect,
             args,
             shard,
+            outcomes: (!no_cache).then_some(run::Reusing {
+                store: &outcomes,
+                keyed: &keyed,
+                run_id: &id,
+            }),
         },
         cancel,
         &mut |judged, position, total| {
@@ -257,7 +281,6 @@ fn whole(
         &mut result.judged,
     );
     let finished = Timestamp::now();
-    let id = run_id(started);
     let document = run_report::document(
         session,
         &result,

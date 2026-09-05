@@ -25,6 +25,7 @@ fn judged(index: u32, outcome: Outcome) -> Judged {
         tests_run: Some(1),
         retried: false,
         expected: false,
+        source_run_id: None,
     }
 }
 

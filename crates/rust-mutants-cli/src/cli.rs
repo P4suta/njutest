@@ -67,6 +67,9 @@ pub enum Command {
         /// Do not write a run report under the report directory.
         #[arg(long, conflicts_with = "mutant")]
         no_report: bool,
+        /// Execute every mutant afresh rather than reading back what an earlier run of this exact tree established.
+        #[arg(long, conflicts_with = "mutant")]
+        no_cache: bool,
         /// Arguments for the test harness itself.
         #[arg(last = true, value_name = "ARGS")]
         args: Vec<String>,

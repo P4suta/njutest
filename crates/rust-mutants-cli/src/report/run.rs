@@ -161,6 +161,8 @@ pub struct RunMutantDocument {
     pub retried: bool,
     /// Whether a reviewer declared this outcome in advance and the run confirmed the claim.
     pub expected: bool,
+    /// The run that established this, when it was not this one.
+    pub source_run_id: Option<String>,
 }
 
 /// One declared expectation, as the run left it.
@@ -337,6 +339,7 @@ fn mutant(one: &crate::run::Judged, catalog: Option<MutantDocument>) -> RunMutan
         tests_run: one.tests_run,
         retried: one.retried,
         expected: one.expected,
+        source_run_id: one.source_run_id.clone(),
     }
 }
 

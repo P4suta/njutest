@@ -1112,6 +1112,7 @@ name = "rust-mutants-cli"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "hex",
  "jiff",
  "jsonschema",
  "mjutest-devkit",
@@ -1119,6 +1120,7 @@ dependencies = [
  "rustix",
  "serde",
  "serde_json",
+ "sha2",
  "signal-hook",
  "tempfile",
  "thiserror",

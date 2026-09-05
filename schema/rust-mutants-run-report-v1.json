@@ -169,7 +169,8 @@
           "duration_ms",
           "tests_run",
           "retried",
-          "expected"
+          "expected",
+          "source_run_id"
         ],
         "properties": {
           "index": { "type": "integer", "minimum": 0 },
@@ -204,7 +205,11 @@
             "type": "boolean",
             "description": "A timeout is believed only after a serial retry timed out again."
           },
-          "expected": { "type": "boolean" }
+          "expected": { "type": "boolean" },
+          "source_run_id": {
+            "oneOf": [{ "type": "null" }, { "type": "string", "minLength": 1 }],
+            "description": "The run that established this outcome, when it was read back rather than executed."
+          }
         }
       }
     },
