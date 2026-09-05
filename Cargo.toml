@@ -133,6 +133,7 @@ windows-sys = { version = "0.61", features = [
   "Win32_System_Threading",
 ] }
 jiff = "0.2"
+signal-hook = { version = "0.3", default-features = false }
 globset = "0.4"
 walkdir = "2.5"
 cargo_metadata = "0.23"

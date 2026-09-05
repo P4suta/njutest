@@ -20,7 +20,9 @@ arbitrary = { version = "1.4", features = ["derive"] }
 libfuzzer-sys = "0.4"
 mjutest-cli = { path = "../crates/mjutest-cli" }
 rust-mutants = { path = "../crates/rust-mutants" }
+rust-mutants-cli = { path = "../crates/rust-mutants-cli" }
 serde_json = "1"
+toml = "1.1"
 
 [[bin]]
 name = "flatten"
@@ -93,3 +95,15 @@ path = "fuzz_targets/report_document.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "engine_config"
+path = "fuzz_targets/engine_config.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "run_report"
+path = "fuzz_targets/run_report.rs"
+test = false
+doc = false

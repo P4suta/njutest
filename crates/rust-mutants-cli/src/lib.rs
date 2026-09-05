@@ -16,7 +16,6 @@ pub mod settings;
 use std::ffi::OsString;
 use std::io::Write;
 use std::path::PathBuf;
-use std::process::ExitCode;
 
 use rust_mutants::runner::Cancel;
 
@@ -34,16 +33,30 @@ pub struct Environment {
     pub working_directory: PathBuf,
 }
 
-/// Runs the command line described by `args` (program name first) and returns its exit code, writing to the two streams it was given.
-pub fn run_from<I>(
-    args: I,
-    environment: &Environment,
-    stdout: &mut dyn Write,
-    stderr: &mut dyn Write,
-) -> ExitCode
+/// The exit code of a run that was interrupted.
+pub const EXIT_INTERRUPTED: u8 = 130;
+
+/// The two streams a command writes to.
+#[expect(
+    missing_debug_implementations,
+    reason = "a stream is a handle to the outside; there is nothing to print about one"
+)]
+pub struct Streams<'a> {
+    /// What the command established.
+    pub out: &'a mut dyn Write,
+    /// What went wrong.
+    pub err: &'a mut dyn Write,
+}
+
+/// Runs the command line described by `args` (program name first) and returns its exit code, writing to the two streams it was given. `cancel` is raised by whoever owns the process's signals; every command stops at the first place it can and leaves nothing behind.
+pub fn run_from<I>(args: I, environment: &Environment, cancel: &Cancel, streams: Streams<'_>) -> u8
 where
     I: IntoIterator<Item = OsString>,
 {
+    let Streams {
+        out: stdout,
+        err: stderr,
+    } = streams;
     let command = match cli::parse(args) {
         Ok(command) => command,
         Err(usage) => {
@@ -51,15 +64,18 @@ where
             let _written = stream
                 .write_all(usage.text.as_bytes())
                 .and_then(|()| stream.flush());
-            return ExitCode::from(usage.exit_code);
+            return usage.exit_code;
         }
     };
-    let cancel = Cancel::new();
-    match app::dispatch(&command.command, environment, stdout, &cancel) {
-        Ok(code) => ExitCode::from(code),
+    match app::dispatch(&command.command, environment, stdout, cancel) {
+        Ok(code) => code,
+        Err(error) if cancel.is_cancelled() => {
+            let _written = writeln!(stderr, "rust-mutants: {error}");
+            EXIT_INTERRUPTED
+        }
         Err(error) => {
             let _written = writeln!(stderr, "rust-mutants: {error}");
-            ExitCode::from(EXIT_USAGE)
+            EXIT_USAGE
         }
     }
 }

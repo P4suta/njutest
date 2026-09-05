@@ -54,6 +54,12 @@ impl Cancel {
     pub fn is_cancelled(&self) -> bool {
         self.0.load(Ordering::SeqCst)
     }
+
+    /// The flag itself, so a composition root can raise it from a signal handler. This crate never installs one: a signal is the process's business, not a library's.
+    #[must_use]
+    pub fn flag(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.0)
+    }
 }
 
 /// One process to run.

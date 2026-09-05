@@ -128,9 +128,9 @@ cargo build --release --bin mjutest
 """
 
 [tasks."dogfood:engine"]
-description = "Point rust-mutants at this workspace and read what it catalogs"
+description = "Point rust-mutants at this workspace and read the score it reaches"
 run = """
 set -euo pipefail
 cargo build --release --bin rust-mutants
-./target/release/rust-mutants catalog --json --no-verify "$@"
+./target/release/rust-mutants run --locked --offline "$@"
 """

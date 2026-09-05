@@ -30,10 +30,12 @@ serde = { workspace = true }
 thiserror = { workspace = true }
 toml = { workspace = true }
 serde_json = { workspace = true }
+signal-hook = { workspace = true }
 
 [dev-dependencies]
 jsonschema = { workspace = true }
 mjutest-devkit = { workspace = true }
+rustix = { workspace = true }
 tempfile = { workspace = true }
 
 [lints]
