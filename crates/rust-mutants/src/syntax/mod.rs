@@ -60,7 +60,7 @@ pub struct SiteHint {
     pub site_text: String,
     /// How many `super::` segments separate the site's inline module from the file root, where the runtime module lives.
     pub super_depth: u32,
-    /// The byte offset of the innermost enclosing `fn` item, where `#[allow(warnings)]` goes so a guard's own lint noise never trips a crate's deny policy. `None` outside any function.
+    /// The byte offset of the innermost enclosing `fn` item, where the allow attribute goes so a guard's own lint noise never trips a crate's deny policy. `None` outside any function.
     pub allow_at: Option<u32>,
 }
 

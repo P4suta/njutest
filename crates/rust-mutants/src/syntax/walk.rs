@@ -404,7 +404,7 @@ impl<'a> Walker<'a> {
         }
     }
 
-    /// Where `#[allow(warnings)]` goes for a function: before its visibility if it has one, and otherwise before its signature. Never before the item's attributes, so a doc comment keeps its own line and the attribute lands on the line the reader expects it on.
+    /// Where the allow attribute goes for a function: before its visibility if it has one, and otherwise before its signature. Never before the item's attributes, so a doc comment keeps its own line and the attribute lands on the line the reader expects it on.
     fn allow_offset(&self, vis: Option<&Visibility>, sig: &Signature) -> u32 {
         match vis {
             Some(Visibility::Public(token)) => self.span(token).start,

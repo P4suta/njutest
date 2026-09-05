@@ -155,7 +155,7 @@ fn the_runtime_is_appended_after_the_last_line_and_names_the_catalog() {
     let (text, catalog) = instrument_with_catalog(source);
     let (body, runtime) = split_runtime(&text);
     assert!(
-        body.starts_with("#[allow(warnings)] pub fn f(a: i32) -> i32 {"),
+        body.starts_with("#[allow(warnings, unused, unfulfilled_lint_expectations, clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery, clippy::cargo)] pub fn f(a: i32) -> i32 {"),
         "{body}"
     );
     assert!(runtime.contains(RUNTIME_MARKER), "{runtime}");
@@ -212,15 +212,15 @@ fn the_innermost_function_carries_the_allow_and_carries_it_once() {
         "three functions and the runtime: {text}"
     );
     assert!(
-        text.contains("#[allow(warnings)] pub fn f(a: i32, b: i32) -> i32 {"),
+        text.contains("#[allow(warnings, unused, unfulfilled_lint_expectations, clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery, clippy::cargo)] pub fn f(a: i32, b: i32) -> i32 {"),
         "{text}"
     );
     assert!(
-        text.contains("#[allow(warnings)] fn inner(x: i32) -> i32 {"),
+        text.contains("#[allow(warnings, unused, unfulfilled_lint_expectations, clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery, clippy::cargo)] fn inner(x: i32) -> i32 {"),
         "{text}"
     );
     assert!(
-        text.contains("#[allow(warnings)] pub fn g(a: i32) -> i32 {"),
+        text.contains("#[allow(warnings, unused, unfulfilled_lint_expectations, clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery, clippy::cargo)] pub fn g(a: i32) -> i32 {"),
         "{text}"
     );
 }
@@ -387,4 +387,27 @@ fn every_alternative_reports_where_its_own_text_landed() {
     );
     let length = u32::try_from(file.text.len()).expect("a small file");
     assert!(file.branches.iter().all(|branch| branch.span.end <= length));
+}
+
+#[test]
+fn the_allow_names_every_lint_a_guard_can_trip_rather_than_the_warning_group() {
+    // `#[allow(warnings)]` covers only lints that are still at warn level.
+    // A workspace that denies `unused` or clippy's pedantic set has taken
+    // them out of that group, and a guard's parentheses would then fail the
+    // build of every mutant at once.
+    for lint in [
+        "warnings",
+        "unused",
+        "unfulfilled_lint_expectations",
+        "clippy::all",
+        "clippy::pedantic",
+        "clippy::restriction",
+        "clippy::nursery",
+    ] {
+        assert!(
+            rust_mutants::instrument::ALLOW_ATTRIBUTE.contains(lint),
+            "{lint} is not named: {}",
+            rust_mutants::instrument::ALLOW_ATTRIBUTE
+        );
+    }
 }
