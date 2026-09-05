@@ -15,7 +15,10 @@ use rust_mutants::workspace::{self, Workspace};
 use rust_mutants::{snapshot, tempowner};
 
 use crate::error::CliError;
+use crate::report::doctor as doctor_report;
+use crate::report::html;
 use crate::report::run as run_report;
+use crate::report::stryker;
 use crate::settings::Settings;
 use crate::{Environment, cli, report, run};
 
@@ -39,12 +42,26 @@ pub fn dispatch(
     reserved(environment)?;
     match command {
         cli::Command::Init { root, force } => init(root.as_deref(), *force, environment, stdout),
-        cli::Command::Doctor { root } => Ok(doctor(root.as_deref(), environment, stdout, cancel)),
-        cli::Command::Report { root, run, json } => report_back(
+        cli::Command::Doctor { root, json } => Ok(doctor(
+            &Asked {
+                root: root.as_deref(),
+                json: *json,
+            },
+            environment,
+            stdout,
+            cancel,
+        )),
+        cli::Command::Report {
+            root,
+            run,
+            format,
+            output,
+        } => report_back(
             Wanted {
                 root: root.as_deref(),
                 run: run.as_deref(),
-                json: *json,
+                format: *format,
+                output: output.as_deref(),
             },
             environment,
             stdout,
@@ -428,22 +445,21 @@ fn init(
 }
 
 fn doctor(
-    root: Option<&Path>,
+    asked: &Asked<'_>,
     environment: &Environment,
     stdout: &mut dyn Write,
     cancel: &Cancel,
 ) -> u8 {
-    let root = root.map_or_else(|| environment.working_directory.clone(), Path::to_path_buf);
-    let mut text = String::new();
-    let mut ok = true;
+    let root = asked
+        .root
+        .map_or_else(|| environment.working_directory.clone(), Path::to_path_buf);
+    let mut checks: Vec<doctor_report::Check> = Vec::new();
     let mut say = |label: &str, good: bool, detail: &str| {
-        ok &= good;
-        let written = writeln!(
-            text,
-            "{} {label:<12} {detail}",
-            if good { "ok  " } else { "FAIL" }
-        );
-        debug_assert!(written.is_ok(), "writing to a String cannot fail");
+        checks.push(doctor_report::Check {
+            name: label.to_owned(),
+            ok: good,
+            detail: detail.to_owned(),
+        });
     };
 
     let toolchain = rust_mutants::cargo::Toolchain::locate(
@@ -503,8 +519,21 @@ fn doctor(
             workspace::TARGET_DIR_PREFIX
         ),
     );
+    let document = doctor_report::DoctorDocument::of(checks);
+    let text = if asked.json {
+        json_line(&document)
+    } else {
+        doctor_report::lines(&document)
+    };
     write(stdout, &text);
-    if ok { 0 } else { crate::EXIT_USAGE }
+    if document.ok { 0 } else { crate::EXIT_USAGE }
+}
+
+/// What `doctor` was asked, and how it answers.
+#[derive(Debug, Clone, Copy)]
+struct Asked<'a> {
+    root: Option<&'a Path>,
+    json: bool,
 }
 
 /// Which stored report to read back, and how.
@@ -512,7 +541,8 @@ fn doctor(
 struct Wanted<'a> {
     root: Option<&'a Path>,
     run: Option<&'a str>,
-    json: bool,
+    format: cli::Format,
+    output: Option<&'a Path>,
 }
 
 fn report_back(
@@ -520,7 +550,12 @@ fn report_back(
     environment: &Environment,
     stdout: &mut dyn Write,
 ) -> Result<u8, CliError> {
-    let Wanted { root, run, json } = wanted;
+    let Wanted {
+        root,
+        run,
+        format,
+        output,
+    } = wanted;
     let root = root.map_or_else(|| environment.working_directory.clone(), Path::to_path_buf);
     let config = crate::config::Config::load(&root)?;
     let directory = root.join(&config.reports.directory);
@@ -531,16 +566,32 @@ fn report_back(
     let text = std::fs::read_to_string(&path).map_err(|error| CliError::ReportMissing {
         message: format!("{}: {error}", path.display()),
     })?;
-    if json {
-        write(stdout, &text);
-        return Ok(0);
+    if format == cli::Format::Json {
+        return written(&text, output, stdout).map(|()| 0);
     }
     let document: run_report::RunDocument =
         serde_json::from_str(&text).map_err(|error| CliError::ReportMissing {
             message: format!("{} is not a run report: {error}", path.display()),
         })?;
-    write(stdout, &run_report::lines(&document));
+    let projected = match format {
+        cli::Format::Lines | cli::Format::Json => run_report::lines(&document),
+        cli::Format::Html => html::document(&document),
+        cli::Format::Stryker => json_line(&stryker::project(&document, &root)),
+    };
+    written(&projected, output, stdout)?;
     Ok(document.run.exit_code)
+}
+
+/// Writes what a command produced where it was asked to.
+fn written(text: &str, output: Option<&Path>, stdout: &mut dyn Write) -> Result<(), CliError> {
+    match output {
+        Some(path) => {
+            std::fs::write(path, text).map_err(|error| CliError::writing(path, error))?;
+            write(stdout, &format!("{}\n", path.display()));
+        }
+        None => write(stdout, text),
+    }
+    Ok(())
 }
 
 /// The newest stored run, by the pointer the last run wrote, or by name when there is no pointer.

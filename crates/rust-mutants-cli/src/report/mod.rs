@@ -3,7 +3,10 @@
 
 //! Rendering what the engine established, for a person and for a program.
 
+pub mod doctor;
+pub mod html;
 pub mod run;
+pub mod stryker;
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;

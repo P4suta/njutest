@@ -112,6 +112,9 @@ pub enum Command {
         /// The workspace root. Defaults to the working directory.
         #[arg(long, value_name = "DIR")]
         root: Option<PathBuf>,
+        /// Print the `rust-mutants/doctor` document rather than the lines a person reads.
+        #[arg(long)]
+        json: bool,
     },
     /// Combine the reports of the parts of one catalog into the report the whole would have written.
     Merge {
@@ -130,9 +133,12 @@ pub enum Command {
         /// The run, by its identity. Defaults to the newest.
         #[arg(long, value_name = "ID")]
         run: Option<String>,
-        /// Print the stored document rather than the lines a person reads.
-        #[arg(long)]
-        json: bool,
+        /// How to write it.
+        #[arg(long, value_enum, value_name = "FORMAT", default_value_t = Format::Lines)]
+        format: Format,
+        /// Write it here rather than to standard output.
+        #[arg(long, value_name = "FILE")]
+        output: Option<PathBuf>,
     },
     /// Say what the engine left in the temporary directory, and remove what no run still owns.
     Cache {
@@ -140,6 +146,19 @@ pub enum Command {
         #[arg(long)]
         gc: bool,
     },
+}
+
+/// How a stored run is written back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum Format {
+    /// The lines a person reads.
+    Lines,
+    /// The stored `rust-mutants/run-report` document, verbatim.
+    Json,
+    /// One self-contained HTML page.
+    Html,
+    /// The mutation testing report every Stryker reader understands.
+    Stryker,
 }
 
 /// What a command reads, and how much of it. Every value here also has a key in `.rust-mutants.toml`; a flag given on the command line wins.
@@ -253,7 +272,7 @@ impl Command {
     #[must_use]
     pub const fn root(&self) -> Option<&PathBuf> {
         match self {
-            Self::Init { root, .. } | Self::Doctor { root } | Self::Report { root, .. } => {
+            Self::Init { root, .. } | Self::Doctor { root, .. } | Self::Report { root, .. } => {
                 root.as_ref()
             }
             Self::Cache { .. } | Self::Merge { .. } => None,

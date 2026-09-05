@@ -204,7 +204,7 @@ fn the_stored_report_is_read_back_by_the_report_command() {
     let text = stdout(&read_back);
     assert!(text.contains("MUTANTS   cataloged="), "{text}");
 
-    let as_json = against(&fixture, &["report", "--json"]);
+    let as_json = against(&fixture, &["report", "--format", "json"]);
     assert_eq!(as_json.status.code(), Some(0));
     let document: serde_json::Value =
         serde_json::from_str(&stdout(&as_json)).expect("one document");
