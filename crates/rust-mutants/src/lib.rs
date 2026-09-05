@@ -37,6 +37,7 @@ pub mod splice;
 pub mod syntax;
 pub mod tempowner;
 pub mod trace;
+pub mod validate;
 
 pub use error::{EngineError, ErrorCode};
 

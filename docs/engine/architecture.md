@@ -101,6 +101,25 @@ elsewhere. The runtime reads `RUST_MUTANTS_ACTIVE` once per process; a
 process with exit 97, and an identity this file does not know activates
 nothing here because it belongs to another file.
 
+### How a candidate becomes a mutant
+
+`rust_mutants::validate` compiles the instrumented tree and reads the
+diagnostics. Every alternative occupies a known byte range, so an error
+whose primary span falls inside one is about exactly that mutant: a whole
+round's refusals are condemned at once, and the loop costs one
+recompilation per round rather than one per candidate. An error that falls
+outside every branch is isolated by bisection instead, and a tree that does
+not compile with nothing live stops the run (`RM4001`) rather than blaming
+candidates until the error goes away. What comes back is always a tree that
+compiled, plus a rejection per refused candidate carrying the compiler's own
+words.
+
+Whether an edit is a program is a fact about the toolchain, never assumed:
+`fixtures/fixture-rejectable` records that this compiler refuses
+`String - &str` and a `RangeInclusive` where a `Range` belongs, and accepts
+`value / 0` for a run-time `value` — a mutant that dies at run time rather
+than at compile time.
+
 ## Skips, stated
 
 `const-context`, `macro-invocation`, `cfg-attribute`, `test-code`,

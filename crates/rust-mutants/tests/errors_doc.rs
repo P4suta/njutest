@@ -101,6 +101,9 @@ fn every_variant_reports_a_declared_code() {
         rust_mutants::EngineError::from(cargo),
         rust_mutants::EngineError::from(discover),
         rust_mutants::EngineError::from(instrument),
+        rust_mutants::EngineError::from(rust_mutants::validate::ValidateError::NotIsolated {
+            suspects: 2,
+        }),
     ];
     for sample in &samples {
         assert!(

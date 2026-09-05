@@ -187,6 +187,21 @@ snapshot_code!(
     "RM3007",
     "a mutant index collides with the runtime's sentinel values"
 );
+snapshot_code!(
+    VALIDATE_NOT_MUTANT_INDUCED,
+    "RM4001",
+    "the tree does not compile before any mutant is live"
+);
+snapshot_code!(
+    VALIDATE_NOT_ISOLATED,
+    "RM4002",
+    "the mutants a compilation failure came from could not be isolated"
+);
+snapshot_code!(
+    VALIDATE_ATTEMPT_FAILED,
+    "RM4003",
+    "an instrumented compilation could not be attempted at all"
+);
 
 /// Every failure the engine reports.
 #[derive(Debug, thiserror::Error)]
@@ -209,6 +224,9 @@ pub enum EngineError {
     /// A file could not be rewritten to hold its mutants.
     #[error(transparent)]
     Instrument(#[from] crate::instrument::InstrumentError),
+    /// Which candidates are real mutants could not be established.
+    #[error(transparent)]
+    Validate(#[from] crate::validate::ValidateError),
 }
 
 impl EngineError {
@@ -221,6 +239,7 @@ impl EngineError {
             Self::Cargo(error) => error.code(),
             Self::Discover(error) => error.code(),
             Self::Instrument(error) => error.code(),
+            Self::Validate(error) => error.code(),
         }
     }
 }
@@ -260,5 +279,8 @@ pub const fn error_codes() -> &'static [ErrorCode] {
         INSTRUMENT_SPLICE_FAILED,
         INSTRUMENT_LINES_MOVED,
         INSTRUMENT_INDEX_RESERVED,
+        VALIDATE_NOT_MUTANT_INDUCED,
+        VALIDATE_NOT_ISOLATED,
+        VALIDATE_ATTEMPT_FAILED,
     ]
 }

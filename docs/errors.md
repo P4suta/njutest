@@ -56,6 +56,9 @@ first digit names an area:
 | `RM3005` | The guards could not be applied to the file. |
 | `RM3006` | A guard would have moved a line, breaking the invariant every position depends on. |
 | `RM3007` | A mutant index collides with the runtime's sentinel values. |
+| `RM4001` | The tree does not compile before any mutant is live, so nothing about the failure is the mutants' doing. |
+| `RM4002` | The mutants a compilation failure came from could not be isolated. |
+| `RM4003` | An instrumented compilation could not be attempted at all: the tree could not be written, or the toolchain could not be reached. |
 
 ## mjutest
 
