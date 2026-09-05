@@ -5,9 +5,15 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # Fuzz targets
 
-cargo-fuzz targets for the parts of the engine that read hostile input or
-transform bytes. Each target states one property; a crash is a bug in the
-property or the code, never in the input.
+cargo-fuzz targets for the parts of this workspace that read input somebody
+else wrote, or transform bytes. Each target states one property; a crash is
+a bug in the property or the code, never in the input.
+
+The runner's targets are here for a particular reason: three of the four
+read something a *test suite* can influence. A suite that printed its own
+`test result:` line, an `llvm-cov` export from a version nobody expected, a
+report document edited by hand — each of those decides what a run claims,
+so each has to fail closed rather than plausibly.
 
 | Target | Property |
 | --- | --- |
@@ -17,6 +23,10 @@ property or the code, never in the input.
 | `splice` | never panics; an accepted set yields a monotone offset map of the right length |
 | `normalize_path` | never panics; a normalized path is a fixed point |
 | `discover_file` | never panics; every candidate validates, is spanned from the source, sits inside its site; deterministic |
+| `config` | never panics; an accepted configuration has one canonical rendering and one 64-character digest |
+| `coverage_export` | never panics; every accepted region ends where it began or after, and what a test reached is part of what the build instrumented |
+| `libtest_summary` | never panics; a target reaches `Passed` only through a line that counted a passing test, and a timeout is a failure whatever the line said |
+| `report_document` | never panics; an accepted report round-trips, its record stream carries exactly one `VERDICT`, and one that fails the audit is refused by the write path |
 
 ```sh
 mise run fuzz:smoke                     # every target, 256 runs each
