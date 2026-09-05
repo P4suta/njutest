@@ -5,7 +5,10 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # Configuration v1
 
-**Status: contract only.** Implemented in M2.
+**Status: implemented** (`mjutest_cli::config`). The defaults, the
+strictness, and the two rules about what a report may contain are fixed by
+tests; `mjutest init` writes the skeleton below, and a test loads the
+untouched skeleton and asserts it is exactly the defaults.
 
 `.mjutest.toml` is optional and strict. Missing configuration uses
 `standard-v1`, the whole workspace, a ten-minute execution timeout, and a

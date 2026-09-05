@@ -625,9 +625,13 @@ name = "mjutest-cli"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "jiff",
  "mjutest-devkit",
  "rust-mutants",
+ "serde",
+ "tempfile",
  "thiserror",
+ "toml",
 ]
 
 [[package]]

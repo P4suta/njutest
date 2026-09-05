@@ -24,6 +24,36 @@ const INTERRUPTED: ErrorCode = ErrorCode {
     summary: "the caller cancelled the operation before it completed",
 };
 
+macro_rules! code {
+    ($name:ident, $code:literal, $summary:literal) => {
+        pub(crate) const $name: ErrorCode = ErrorCode {
+            code: $code,
+            summary: $summary,
+        };
+    };
+}
+
+code!(
+    CONFIG_UNREADABLE,
+    "MJ1001",
+    "the configuration file could not be read"
+);
+code!(
+    CONFIG_UNPARSABLE,
+    "MJ1002",
+    "the configuration file is not the document this version understands"
+);
+code!(
+    CONFIG_INVALID,
+    "MJ1003",
+    "the configuration says something a run cannot honour"
+);
+code!(
+    CONFIG_UNSUPPORTED_VERSION,
+    "MJ1004",
+    "the configuration names a version this release does not understand"
+);
+
 /// Every failure the runner reports.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
@@ -31,6 +61,9 @@ pub enum RunnerError {
     /// The caller cancelled the operation before it completed.
     #[error("the operation was interrupted before it completed")]
     Interrupted,
+    /// The configuration could not be used.
+    #[error(transparent)]
+    Config(#[from] crate::config::ConfigError),
 }
 
 impl RunnerError {
@@ -39,6 +72,7 @@ impl RunnerError {
     pub const fn code(&self) -> ErrorCode {
         match self {
             Self::Interrupted => INTERRUPTED,
+            Self::Config(error) => error.code(),
         }
     }
 }
@@ -46,5 +80,11 @@ impl RunnerError {
 /// Every code the runner can report, in code order.
 #[must_use]
 pub const fn error_codes() -> &'static [ErrorCode] {
-    &[INTERRUPTED]
+    &[
+        INTERRUPTED,
+        CONFIG_UNREADABLE,
+        CONFIG_UNPARSABLE,
+        CONFIG_INVALID,
+        CONFIG_UNSUPPORTED_VERSION,
+    ]
 }

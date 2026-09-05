@@ -29,11 +29,15 @@ testkit = []
 
 [dependencies]
 clap = { workspace = true }
+jiff = { workspace = true, features = ["serde"] }
 rust-mutants = { workspace = true }
+serde = { workspace = true }
 thiserror = { workspace = true }
+toml = { workspace = true }
 
 [dev-dependencies]
 mjutest-devkit = { workspace = true }
+tempfile = { workspace = true }
 
 [lints]
 workspace = true
