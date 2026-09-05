@@ -105,3 +105,56 @@ pub fn truncation_notice(total: u64) -> String {
         "{OUTPUT_TRUNCATED_PREFIX}: the process produced {total} bytes, only the tail is kept\n"
     )
 }
+
+/// Keeps the first `limit` bytes of a stream and admits what it cut: the
+/// buffer for a child's structured stdout, where the head is the part that
+/// parses and a truncated tail would be a truncated document.
+#[derive(Debug)]
+pub struct HeadBuffer {
+    limit: usize,
+    state: Mutex<HeadState>,
+}
+
+#[derive(Debug, Default)]
+struct HeadState {
+    buf: Vec<u8>,
+    total: u64,
+    truncated: bool,
+}
+
+impl HeadBuffer {
+    /// A buffer keeping at most `limit` bytes.
+    #[must_use]
+    pub const fn new(limit: usize) -> Self {
+        Self {
+            limit,
+            state: Mutex::new(HeadState {
+                buf: Vec::new(),
+                total: 0,
+                truncated: false,
+            }),
+        }
+    }
+
+    /// Appends `bytes`, keeping what still fits.
+    pub fn write(&self, bytes: &[u8]) {
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        state.total = state
+            .total
+            .saturating_add(u64::try_from(bytes.len()).unwrap_or(u64::MAX));
+        let room = self.limit.saturating_sub(state.buf.len());
+        if bytes.len() > room {
+            state.truncated = true;
+        }
+        state
+            .buf
+            .extend_from_slice(bytes.get(..room.min(bytes.len())).unwrap_or_default());
+    }
+
+    /// The kept bytes, whether anything was cut, and the total written.
+    #[must_use]
+    pub fn capture(&self) -> (Vec<u8>, bool, u64) {
+        let state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        (state.buf.clone(), state.truncated, state.total)
+    }
+}

@@ -246,3 +246,52 @@ fn the_tail_buffer_keeps_the_last_bytes_and_pays_for_the_notice_out_of_the_budge
     assert!(out.len() <= 300);
     assert!(out.ends_with(b"xxxx"));
 }
+
+#[test]
+fn structured_stdout_is_captured_on_its_own_and_stderr_stays_in_the_tail() {
+    let mut spec = sh("echo out; echo err >&2; echo out2");
+    spec.structured_stdout = Some(1024);
+    let result = run(&spec, &Cancel::new());
+    assert!(result.ok(), "{result:?}");
+    assert_eq!(result.stdout, b"out\nout2\n");
+    assert!(!result.stdout_truncated);
+    assert_eq!(result.output, b"err\n");
+}
+
+#[test]
+fn structured_stdout_is_head_capped_and_says_so() {
+    let mut spec = sh("yes | head -c 5000");
+    spec.structured_stdout = Some(1000);
+    let result = run(&spec, &Cancel::new());
+    assert!(result.ok(), "{result:?}");
+    assert_eq!(result.stdout.len(), 1000);
+    assert!(result.stdout.iter().all(|&b| b == b'y' || b == b'\n'));
+    assert!(
+        result.stdout_truncated,
+        "the head is kept and the cut is admitted"
+    );
+}
+
+#[test]
+fn without_the_option_stdout_rides_in_the_combined_output() {
+    let result = run(&sh("echo out; echo err >&2"), &Cancel::new());
+    assert!(result.stdout.is_empty());
+    assert!(!result.stdout_truncated);
+    assert_eq!(result.output, b"out\nerr\n");
+}
+
+#[test]
+fn the_head_buffer_keeps_the_first_bytes_and_admits_the_cut() {
+    use rust_mutants::runner::HeadBuffer;
+    let head = HeadBuffer::new(5);
+    head.write(b"abc");
+    head.write(b"defgh");
+    head.write(b"ij");
+    let (kept, truncated, total) = head.capture();
+    assert_eq!(kept, b"abcde");
+    assert!(truncated);
+    assert_eq!(total, 10);
+    let exact = HeadBuffer::new(3);
+    exact.write(b"xyz");
+    assert_eq!(exact.capture(), (b"xyz".to_vec(), false, 3));
+}

@@ -50,7 +50,7 @@ use std::time::{Duration, Instant};
 
 use output::TailBuffer;
 
-pub use output::{DEFAULT_OUTPUT_LIMIT, MIN_OUTPUT_LIMIT, OUTPUT_TRUNCATED_PREFIX};
+pub use output::{DEFAULT_OUTPUT_LIMIT, HeadBuffer, MIN_OUTPUT_LIMIT, OUTPUT_TRUNCATED_PREFIX};
 
 /// [`RunResult::exit_code`] when there is no exit status to report.
 ///
@@ -113,6 +113,11 @@ pub struct Spec {
     /// [`DEFAULT_OUTPUT_LIMIT`]; anything below [`MIN_OUTPUT_LIMIT`] is raised
     /// to it so the truncation notice still fits inside the budget.
     pub output_limit: Option<usize>,
+    /// Captures stdout on its own, head-capped at this many bytes, for a
+    /// child that writes structured data (JSON lines) to stdout and chatter
+    /// to stderr — `cargo metadata`, `cargo check --message-format=json`.
+    /// `None` merges stdout into [`RunResult::output`] with stderr.
+    pub structured_stdout: Option<usize>,
 }
 
 impl Spec {
@@ -187,8 +192,14 @@ pub struct RunResult {
     /// exceed.
     pub duration: Duration,
     /// Combined stdout and stderr in the order the child wrote them, capped
-    /// at the effective output limit by keeping the tail.
+    /// at the effective output limit by keeping the tail. Stderr alone when
+    /// [`Spec::structured_stdout`] is set.
     pub output: Vec<u8>,
+    /// The child's stdout when [`Spec::structured_stdout`] is set, head-capped
+    /// at that many bytes; empty otherwise.
+    pub stdout: Vec<u8>,
+    /// Whether `stdout` was cut at the cap.
+    pub stdout_truncated: bool,
     /// Set only when the process could not be started or supervised.
     pub error: Option<RunnerError>,
 }
@@ -214,6 +225,8 @@ pub fn run(spec: &Spec, cancel: &Cancel) -> RunResult {
         timed_out: false,
         duration: started.elapsed(),
         output,
+        stdout: Vec::new(),
+        stdout_truncated: false,
         error,
     };
     let Some(program) = spec.argv.first() else {
@@ -242,6 +255,7 @@ pub fn run(spec: &Spec, cancel: &Cancel) -> RunResult {
         mut supervisor,
         tail,
         eof,
+        head,
         mut child,
     } = match start(spec, program) {
         Ok(started) => started,
@@ -259,31 +273,31 @@ pub fn run(spec: &Spec, cancel: &Cancel) -> RunResult {
     // Bound the wait for the pipe to reach EOF after the child exited: an
     // orphaned descendant still holding the write end must not stall the run.
     let _drained = eof.recv_timeout(IO_DRAIN_GRACE);
+    let (stdout, stdout_truncated) = head.map_or((Vec::new(), false), |(head, eof)| {
+        let _drained = eof.recv_timeout(IO_DRAIN_GRACE);
+        let (bytes, truncated, _total) = head.capture();
+        (bytes, truncated)
+    });
     supervisor.release();
     let output = tail.capture();
     let duration = started.elapsed();
-    match outcome {
-        Exit::Killed { timed_out } => RunResult {
-            exit_code: EXIT_CODE_UNAVAILABLE,
-            timed_out,
-            duration,
-            output,
-            error: None,
-        },
-        Exit::Status(Ok(status)) => RunResult {
-            exit_code: sys::exit_code(status),
-            timed_out: false,
-            duration,
-            output,
-            error: None,
-        },
-        Exit::Status(Err(source)) => RunResult {
-            exit_code: EXIT_CODE_UNAVAILABLE,
-            timed_out: false,
-            duration,
-            output,
-            error: Some(RunnerError::ProcessWaitFailed { source }),
-        },
+    let (exit_code, timed_out, error) = match outcome {
+        Exit::Killed { timed_out } => (EXIT_CODE_UNAVAILABLE, timed_out, None),
+        Exit::Status(Ok(status)) => (sys::exit_code(status), false, None),
+        Exit::Status(Err(source)) => (
+            EXIT_CODE_UNAVAILABLE,
+            false,
+            Some(RunnerError::ProcessWaitFailed { source }),
+        ),
+    };
+    RunResult {
+        exit_code,
+        timed_out,
+        duration,
+        output,
+        stdout,
+        stdout_truncated,
+        error,
     }
 }
 
@@ -292,6 +306,8 @@ struct Started {
     supervisor: sys::Supervisor,
     tail: Arc<TailBuffer>,
     eof: mpsc::Receiver<()>,
+    /// The separate stdout capture and its EOF signal, when requested.
+    head: Option<(Arc<HeadBuffer>, mpsc::Receiver<()>)>,
     child: Child,
 }
 
@@ -301,8 +317,8 @@ struct Failed {
     output: Vec<u8>,
 }
 
-/// The first half of [`run`]: supervision, the pipe, the spawn, the reader
-/// thread, and adoption. On any failure the child, if any, is dead.
+/// The first half of [`run`]: supervision, the pipes, the spawn, the reader
+/// threads, and adoption. On any failure the child, if any, is dead.
 fn start(spec: &Spec, program: &OsString) -> Result<Started, Failed> {
     let failed = |error: RunnerError| Failed {
         error,
@@ -320,28 +336,17 @@ fn start(spec: &Spec, program: &OsString) -> Result<Started, Failed> {
     let tail = Arc::new(TailBuffer::new(
         spec.output_limit.unwrap_or(DEFAULT_OUTPUT_LIMIT),
     ));
-    let pipe = io::pipe().and_then(|(reader, writer)| Ok((reader, writer.try_clone()?, writer)));
-    let (reader, stderr, stdout) = match pipe {
-        Ok(pipe) => pipe,
+    let Wired {
+        mut command,
+        merged,
+        structured,
+    } = match wire(spec, program) {
+        Ok(wired) => wired,
         Err(source) => {
             supervisor.release();
             return Err(start_failed(source));
         }
     };
-    let mut command = Command::new(program);
-    command.args(spec.argv.iter().skip(1));
-    if let Some(dir) = &spec.dir {
-        command.current_dir(dir);
-    }
-    if let Some(env) = &spec.env {
-        command.env_clear();
-        command.envs(env.iter().map(|(key, value)| (key, value)));
-    }
-    // No stdin: a test binary that reads from the terminal would hang. One
-    // pipe for both streams, so the interleaving is the child's own.
-    command.stdin(Stdio::null());
-    command.stdout(Stdio::from(stdout));
-    command.stderr(Stdio::from(stderr));
     supervisor.configure(&mut command);
     let mut child = match command.spawn() {
         Ok(child) => child,
@@ -350,23 +355,17 @@ fn start(spec: &Spec, program: &OsString) -> Result<Started, Failed> {
             return Err(start_failed(source));
         }
     };
-    // The command holds the parent's copies of the write end; they must go
-    // so that the reader sees EOF when the child's tree is gone.
+    // The command holds the parent's copies of the write ends; they must go
+    // so that the readers see EOF when the child's tree is gone.
     drop(command);
-
-    let capture = Arc::clone(&tail);
-    let (eof_sender, eof) = mpsc::channel::<()>();
-    let _reader_thread = thread::spawn(move || {
-        let mut reader = reader;
-        let mut buffer = [0u8; 8192];
-        loop {
-            match reader.read(&mut buffer) {
-                Ok(0) | Err(_) => break,
-                Ok(read) => capture.write(buffer.get(..read).unwrap_or_default()),
-            }
-        }
-        let _sent = eof_sender.send(());
+    let head = structured.map(|(limit, reader)| {
+        let head = Arc::new(HeadBuffer::new(limit));
+        let capture = Arc::clone(&head);
+        let eof = spawn_reader(reader, move |bytes| capture.write(bytes));
+        (head, eof)
     });
+    let capture = Arc::clone(&tail);
+    let eof = spawn_reader(merged, move |bytes| capture.write(bytes));
 
     // Fail closed: an unsupervised child is one this module cannot promise
     // to kill, and on Windows an unadopted child is also still suspended.
@@ -375,6 +374,9 @@ fn start(spec: &Spec, program: &OsString) -> Result<Started, Failed> {
         let _reaped = child.wait();
         supervisor.release();
         let _drained = eof.recv_timeout(IO_DRAIN_GRACE);
+        if let Some((_, eof)) = &head {
+            let _drained = eof.recv_timeout(IO_DRAIN_GRACE);
+        }
         return Err(Failed {
             error,
             output: tail.capture(),
@@ -384,8 +386,69 @@ fn start(spec: &Spec, program: &OsString) -> Result<Started, Failed> {
         supervisor,
         tail,
         eof,
+        head,
         child,
     })
+}
+
+/// A command with its pipes attached: the merged reader, and the structured
+/// stdout reader with its cap when the spec asked for one.
+struct Wired {
+    command: Command,
+    merged: io::PipeReader,
+    structured: Option<(usize, io::PipeReader)>,
+}
+
+/// Builds the command and the pipes it writes to. No stdin: a test binary
+/// that reads from the terminal would hang. One pipe for both streams
+/// unless stdout is wanted whole, so the interleaving is the child's own.
+fn wire(spec: &Spec, program: &OsString) -> io::Result<Wired> {
+    let (merged, stderr) = io::pipe()?;
+    let mut command = Command::new(program);
+    command.args(spec.argv.iter().skip(1));
+    if let Some(dir) = &spec.dir {
+        command.current_dir(dir);
+    }
+    if let Some(env) = &spec.env {
+        command.env_clear();
+        command.envs(env.iter().map(|(key, value)| (key, value)));
+    }
+    command.stdin(Stdio::null());
+    let structured = if let Some(limit) = spec.structured_stdout {
+        let (reader, writer) = io::pipe()?;
+        command.stdout(Stdio::from(writer));
+        Some((limit, reader))
+    } else {
+        command.stdout(Stdio::from(stderr.try_clone()?));
+        None
+    };
+    command.stderr(Stdio::from(stderr));
+    Ok(Wired {
+        command,
+        merged,
+        structured,
+    })
+}
+
+/// Reads a pipe to EOF on its own thread, handing every chunk to `sink`,
+/// and signals EOF through the returned receiver.
+fn spawn_reader(
+    reader: io::PipeReader,
+    sink: impl Fn(&[u8]) + Send + 'static,
+) -> mpsc::Receiver<()> {
+    let (eof_sender, eof) = mpsc::channel::<()>();
+    let _reader_thread = thread::spawn(move || {
+        let mut reader = reader;
+        let mut buffer = [0u8; 8192];
+        loop {
+            match reader.read(&mut buffer) {
+                Ok(0) | Err(_) => break,
+                Ok(read) => sink(buffer.get(..read).unwrap_or_default()),
+            }
+        }
+        let _sent = eof_sender.send(());
+    });
+    eof
 }
 
 /// How the wait half of [`run`] ended.
