@@ -29,7 +29,8 @@ use crate::trace::Recorder;
 
 pub use check::{CheckOptions, Checked, check};
 pub use depinfo::{Unit, dep_info_path, parse_dep_info, units_from_check};
-pub use locate::{LocateOptions, Toolchain, resolve_executable};
+
+pub use locate::{LocateOptions, Toolchain, command_failed, resolve_executable};
 pub use messages::{
     Artifact, CompilerMessage, Diagnostic, DiagnosticSpan, Message, Profile, parse_messages,
 };

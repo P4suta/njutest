@@ -151,7 +151,8 @@ impl fmt::Display for Toolchain {
 }
 
 /// The failure of a cargo command, with the tail of what it said.
-pub(super) fn command_failed(spec: &Spec, result: &crate::runner::RunResult) -> CargoError {
+#[must_use]
+pub fn command_failed(spec: &Spec, result: &crate::runner::RunResult) -> CargoError {
     let argv: Vec<String> = spec
         .argv
         .iter()
