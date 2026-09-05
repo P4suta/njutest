@@ -130,6 +130,19 @@ pub struct Owner {
 /// Returns [`ClaimError::Owned`] when another process holds the lock, and
 /// the I/O failure otherwise.
 pub fn claim(dir: &Path, now: Timestamp) -> Result<Owner, ClaimError> {
+    claim_as(dir, now, SCHEMA)
+}
+
+/// [`claim`], with the marker naming the program that wrote it.
+///
+/// The convention is shared with the runner, whose directories are its own
+/// and whose marker says so; a sweep reads `kept` and does not care which
+/// program left the directory, but a person reading one does.
+///
+/// # Errors
+///
+/// Those of [`claim`].
+pub fn claim_as(dir: &Path, now: Timestamp, schema: &str) -> Result<Owner, ClaimError> {
     let lock = acquire(&lock_path(dir)).map_err(|source| ClaimError::Lock {
         dir: dir.to_path_buf(),
         source,
@@ -140,7 +153,7 @@ pub fn claim(dir: &Path, now: Timestamp) -> Result<Owner, ClaimError> {
         });
     };
     let marker = Marker {
-        schema: SCHEMA.to_owned(),
+        schema: schema.to_owned(),
         pid: std::process::id(),
         started: now,
         kept: false,

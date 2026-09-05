@@ -88,6 +88,7 @@ code!(
     "MJ6002",
     "a document is not the assurance report this version understands"
 );
+code!(SCRATCH_UNUSABLE, "MJ8001", "the run has nowhere to work");
 code!(
     REPORT_UNSOUND,
     "MJ6003",
@@ -113,6 +114,9 @@ pub enum RunnerError {
     /// A report could not be written or read.
     #[error(transparent)]
     Report(#[from] crate::report::json::ReportError),
+    /// The run has nowhere to work.
+    #[error(transparent)]
+    Scratch(#[from] crate::scratch::ScratchError),
 }
 
 impl RunnerError {
@@ -125,6 +129,7 @@ impl RunnerError {
             Self::Target(error) => error.code(),
             Self::Coverage(error) => error.code(),
             Self::Report(error) => error.code(),
+            Self::Scratch(error) => error.code(),
         }
     }
 }
@@ -146,5 +151,6 @@ pub const fn error_codes() -> &'static [ErrorCode] {
         REPORT_UNSERIALIZABLE,
         REPORT_UNREADABLE,
         REPORT_UNSOUND,
+        SCRATCH_UNUSABLE,
     ]
 }
