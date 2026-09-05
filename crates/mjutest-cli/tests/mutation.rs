@@ -222,3 +222,137 @@ fn every_mutant_is_routed_to_the_tests_that_reach_it_and_no_others() {
         );
     }
 }
+
+fn mjutest(fixture: &Fixture, args: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_mjutest"))
+        .args(args)
+        .current_dir(&fixture.root)
+        .env_clear()
+        .env("NO_COLOR", "1")
+        .env("XDG_CACHE_HOME", fixture.root.join(".cache"))
+        .envs(std::env::vars_os().filter(|(key, _)| {
+            matches!(
+                key.to_string_lossy().as_ref(),
+                "PATH" | "HOME" | "RUSTUP_HOME" | "CARGO_HOME" | "TMPDIR"
+            )
+        }))
+        .output()
+        .expect("mjutest runs")
+}
+
+fn survivors(fixture: &Fixture) -> Vec<String> {
+    document(fixture)["mutants"]
+        .as_array()
+        .expect("mutants")
+        .iter()
+        .filter(|mutant| mutant["outcome"] == "survived")
+        .filter_map(|mutant| mutant["display_id"].as_str().map(ToOwned::to_owned))
+        .collect()
+}
+
+#[test]
+fn explain_says_everything_the_run_recorded_about_one_mutant() {
+    let fixture = fixture("fixture-baseline");
+    verify(&fixture, &[]);
+    let survivor = survivors(&fixture).first().cloned().expect("a survivor");
+
+    let output = mjutest(&fixture, &["explain", &survivor]);
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(text.contains("MUTANT\t"), "{text}");
+    assert!(text.contains("WHERE\tsrc/lib.rs:"), "{text}");
+    assert!(text.contains("OUTCOME\tsurvived"), "{text}");
+    assert!(text.contains("FINDING\tsurviving-mutant"), "{text}");
+}
+
+#[test]
+fn explain_refuses_a_prefix_that_names_more_than_one() {
+    let fixture = fixture("fixture-baseline");
+    verify(&fixture, &[]);
+    let output = mjutest(&fixture, &["explain", ""]);
+    assert_eq!(output.status.code(), Some(3));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("names 7 mutants"), "{stderr}");
+}
+
+#[test]
+fn accept_records_the_decision_where_the_next_run_will_read_it() {
+    let fixture = fixture("fixture-baseline");
+    verify(&fixture, &[]);
+    let names = survivors(&fixture);
+    assert_eq!(names.len(), 2);
+
+    for name in &names {
+        let output = mjutest(
+            &fixture,
+            &[
+                "accept",
+                name,
+                "--reason",
+                "an ignored test covers this boundary",
+            ],
+        );
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let written =
+        std::fs::read_to_string(fixture.root.join(".mjutest.toml")).expect("a configuration");
+    assert_eq!(written.matches("[[acceptance]]").count(), 2, "{written}");
+    assert!(
+        written.contains("an ignored test covers this boundary"),
+        "{written}"
+    );
+
+    assert_eq!(
+        verify(&fixture, &[]).status.code(),
+        Some(0),
+        "the decision the reviewer recorded is the one the next run reads"
+    );
+}
+
+#[test]
+fn accept_refuses_a_mutant_that_did_not_survive() {
+    let fixture = fixture("fixture-assured");
+    verify(&fixture, &[]);
+    let killed = document(&fixture)["mutants"].as_array().expect("mutants")[0]["display_id"]
+        .as_str()
+        .expect("a mutant")
+        .to_owned();
+
+    let output = mjutest(&fixture, &["accept", &killed, "--reason", "no"]);
+    assert_eq!(output.status.code(), Some(3));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("only a surviving mutant is a decision to accept"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn accept_keeps_the_comments_of_the_file_it_edits() {
+    let fixture = fixture("fixture-baseline");
+    std::fs::write(
+        fixture.root.join(".mjutest.toml"),
+        "version = 1\n\n# a note the maintainer left\ncontract = \"standard-v1\"\n",
+    )
+    .expect("a configuration");
+    verify(&fixture, &[]);
+    let survivor = survivors(&fixture).first().cloned().expect("a survivor");
+    mjutest(&fixture, &["accept", &survivor, "--reason", "reviewed"]);
+
+    let written =
+        std::fs::read_to_string(fixture.root.join(".mjutest.toml")).expect("a configuration");
+    assert!(
+        written.contains("# a note the maintainer left"),
+        "an edit that ate the comments would be an edit nobody trusts: {written}"
+    );
+}

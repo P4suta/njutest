@@ -102,6 +102,10 @@ pub enum Command {
     Plan(Plan),
     /// Show what a completed run concluded.
     Report(Report),
+    /// Show everything a run recorded about one mutant.
+    Explain(Explain),
+    /// Record that a reviewer looked at a surviving mutant.
+    Accept(Accept),
     /// Read what a run recorded.
     Trace {
         /// What to read.
@@ -193,6 +197,37 @@ pub struct Report {
     /// How to write it.
     #[arg(long, value_enum, default_value_t = Format::Lines)]
     pub format: Format,
+}
+
+/// `mjutest explain`.
+#[derive(Debug, Clone, clap::Args)]
+pub struct Explain {
+    /// The mutant, by identity or by any prefix that names exactly one.
+    #[arg(value_name = "MUTANT")]
+    pub mutant: String,
+    /// The run to read. The latest by default.
+    #[arg(long, value_name = "RUN")]
+    pub run: Option<String>,
+}
+
+/// `mjutest accept`.
+#[derive(Debug, Clone, clap::Args)]
+pub struct Accept {
+    /// The mutant, by identity or by any prefix that names exactly one.
+    #[arg(value_name = "MUTANT")]
+    pub mutant: String,
+    /// Why it may survive. Required: an acceptance without one is a mutant nobody looked at.
+    #[arg(long)]
+    pub reason: String,
+    /// Who decided.
+    #[arg(long)]
+    pub owner: Option<String>,
+    /// Where the decision is recorded.
+    #[arg(long)]
+    pub ticket: Option<String>,
+    /// The run that measured it. The latest by default.
+    #[arg(long, value_name = "RUN")]
+    pub run: Option<String>,
 }
 
 /// `mjutest diagnostics`.

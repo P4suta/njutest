@@ -5,9 +5,8 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # Assurance report v1
 
-**Status: the model, its audit, the JSON and lines projections, and the
-published schema are implemented** (`mjutest_cli::report`). HTML, SARIF, and
-JUnit arrive in M3.
+**Status: implemented** (`mjutest_cli::report`) — the model, its audit, and
+all five projections.
 
 The first public report contract is `mjutest-assurance-report-v1`. The
 schema value names the toolchain so a reader never confuses it with goatest's

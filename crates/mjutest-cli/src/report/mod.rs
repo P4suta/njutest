@@ -4,8 +4,11 @@
 //! What a completed verification says, and what a durable one must satisfy.
 
 pub mod audit;
+pub mod html;
 pub mod json;
+pub mod junit;
 pub mod lines;
+pub mod sarif;
 
 use serde::{Deserialize, Serialize};
 
@@ -397,6 +400,15 @@ pub struct Finding {
 }
 
 impl Finding {
+    /// The wire name of this finding's kind.
+    #[must_use]
+    pub fn kind_name(&self) -> String {
+        serde_json::to_value(self.kind)
+            .ok()
+            .and_then(|value| value.as_str().map(ToOwned::to_owned))
+            .unwrap_or_else(|| UNAVAILABLE.to_owned())
+    }
+
     /// A finding of `kind` about `subject`.
     #[must_use]
     pub fn new(kind: FindingKind, subject: &str, detail: &str) -> Self {

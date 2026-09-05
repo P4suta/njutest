@@ -24,6 +24,15 @@ pub const DOCUMENT_NAME: &str = "mjutest-assurance-report-v1.json";
 /// The published schema, copied in beside the document it describes.
 pub const SCHEMA_NAME: &str = "mjutest-assurance-report-v1.schema.json";
 
+/// The page a person opens.
+pub const HTML_NAME: &str = "mjutest-assurance-report-v1.html";
+
+/// The findings, for a code-scanning surface.
+pub const SARIF_NAME: &str = "mjutest-assurance-report-v1.sarif";
+
+/// The targets and findings, for a continuous integration surface.
+pub const JUNIT_NAME: &str = "mjutest-assurance-report-v1.junit.xml";
+
 /// Why a report could not be kept.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
@@ -77,6 +86,19 @@ pub fn keep(root: &Path, report: &Report) -> Result<Kept, StoreError> {
     write(
         &directory.join(crate::report::lines::FILE_NAME),
         crate::report::lines::stream(report).as_bytes(),
+    )?;
+
+    write(
+        &directory.join(HTML_NAME),
+        crate::report::html::document(report).as_bytes(),
+    )?;
+    write(
+        &directory.join(SARIF_NAME),
+        format!("{:#}\n", crate::report::sarif::document(report)).as_bytes(),
+    )?;
+    write(
+        &directory.join(JUNIT_NAME),
+        crate::report::junit::document(report).as_bytes(),
     )?;
 
     point(root, LATEST_ANY, &report.run_id)?;
