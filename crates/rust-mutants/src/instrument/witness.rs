@@ -1,0 +1,255 @@
+// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! The witness tree: putting to the compiler the one question the syntax cannot answer about a branch proof.
+//!
+//! A claim rests on the whole condition being inert, and syntax can decide
+//! everything about that except the types: `a < b` is a call whenever `a` is
+//! not a primitive, and a call may do anything. So each comparison and each
+//! cast becomes a statement in front of the condition whose argument types the
+//! compiler must accept — a sealed trait implemented for the primitives and for
+//! references to them, and nothing else. A claim whose witness the compiler
+//! refuses is a claim this release does not make (ADR 0008).
+//!
+//! The witnesses are written into the pristine tree, checked, and taken out
+//! again before anything is instrumented. They add no line, so every position
+//! the catalog reports still points where it did.
+
+use std::collections::BTreeMap;
+use std::fmt::Write as _;
+
+use crate::span::Span;
+use crate::splice::{Splice, apply};
+use crate::syntax::branch::{Claim, Witness};
+
+use super::runtime::module_named;
+use super::{InstrumentError, InstrumentErrorKind};
+
+/// The module the witness functions live in.
+pub const MODULE_STEM: &str = "__rmw";
+
+/// The line a reader will find at the end of a witnessed file.
+pub const MARKER: &str = "rust-mutants-witness-v1";
+
+/// One condition's witnesses, and every mutant whose claim rests on them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Site {
+    /// Where the witness statements landed in the rewritten text.
+    pub span: Span,
+    /// The mutants whose claims this condition carries, ascending.
+    pub claims: Vec<u32>,
+}
+
+/// One file with its witnesses written in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WitnessFile {
+    /// The workspace-relative path.
+    pub path: String,
+    /// The rewritten text, witness module included.
+    pub text: String,
+    /// Where each condition's witnesses landed.
+    pub sites: Vec<Site>,
+    /// Whether anything was rewritten. A file with no claim comes back byte for byte.
+    pub witnessed: bool,
+}
+
+/// One claim to witness, and where the mutant that carries it sits.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Claimed {
+    /// The mutant's dense catalog index.
+    pub index: u32,
+    /// What it claims.
+    pub claim: Claim,
+    /// How many `super::` segments separate the condition's inline module from the file root.
+    pub super_depth: u32,
+}
+
+/// Writes every claim's witnesses into `source`.
+///
+/// # Errors
+/// [`InstrumentErrorKind::LinesMoved`] when a rewrite would move a line, which
+/// no witness may do, and the splice's own refusals.
+pub fn witness_file(
+    path: &str,
+    source: &[u8],
+    claims: &[Claimed],
+) -> Result<WitnessFile, InstrumentError> {
+    let text = String::from_utf8_lossy(source).into_owned();
+    if claims.is_empty() {
+        return Ok(WitnessFile {
+            path: path.to_owned(),
+            text,
+            sites: Vec::new(),
+            witnessed: false,
+        });
+    }
+    let module = module_named(&text, MODULE_STEM);
+    let mut conditions: BTreeMap<Span, (Vec<u32>, Claim, u32)> = BTreeMap::new();
+    for claimed in claims {
+        let entry = conditions
+            .entry(claimed.claim.condition)
+            .or_insert_with(|| (Vec::new(), claimed.claim.clone(), claimed.super_depth));
+        entry.0.push(claimed.index);
+    }
+
+    let (splices, owners) = plan(
+        Reading {
+            path,
+            source,
+            text: &text,
+        },
+        &conditions,
+        &module,
+    )?;
+    let (bytes, map) = apply(source, &splices).map_err(|error| {
+        InstrumentError::new(
+            InstrumentErrorKind::SpliceFailed,
+            path.to_owned(),
+            error.to_string(),
+        )
+    })?;
+    let mut rewritten = String::from_utf8_lossy(&bytes).into_owned();
+    if crate::splice::count_lines(&bytes) != crate::splice::count_lines(source) {
+        return Err(InstrumentError::new(
+            InstrumentErrorKind::LinesMoved,
+            path.to_owned(),
+            "a witness moved a line, which every position in the catalog depends on not \
+             happening"
+                .to_owned(),
+        ));
+    }
+    let sites = splices
+        .iter()
+        .zip(owners)
+        .map(|(one, claims)| {
+            let start = map.to_output(one.span.start).0;
+            Site {
+                span: Span {
+                    start,
+                    end: start
+                        .saturating_add(u32::try_from(one.replacement.len()).unwrap_or(u32::MAX)),
+                },
+                claims,
+            }
+        })
+        .collect();
+    if !rewritten.ends_with('\n') {
+        rewritten.push('\n');
+    }
+    rewritten.push_str(&runtime(&module));
+    Ok(WitnessFile {
+        path: path.to_owned(),
+        text: rewritten,
+        sites,
+        witnessed: true,
+    })
+}
+
+/// The statements one condition's witnesses become, in one line.
+fn statements(witnesses: &[Witness], text: &str, module: &str, depth: u32) -> String {
+    let mut out = String::new();
+    for witness in witnesses {
+        let arguments: Vec<String> = witness
+            .operands
+            .iter()
+            .filter_map(|span| text.get(at(span.start)..at(span.end)))
+            .map(|operand| format!("&({})", one_line(operand)))
+            .collect();
+        if arguments.len() != witness.operands.len() {
+            continue;
+        }
+        let written = write!(
+            out,
+            "{}{module}::{}({}); ",
+            "super::".repeat(usize::try_from(depth).unwrap_or(0)),
+            witness.kind.function(),
+            arguments.join(", ")
+        );
+        debug_assert!(written.is_ok(), "writing to a String cannot fail");
+    }
+    out
+}
+
+/// One file as it is and as text.
+#[derive(Debug, Clone, Copy)]
+struct Reading<'a> {
+    path: &'a str,
+    source: &'a [u8],
+    text: &'a str,
+}
+
+/// What to write where, and which claims each rewrite carries.
+fn plan(
+    file: Reading<'_>,
+    conditions: &BTreeMap<Span, (Vec<u32>, Claim, u32)>,
+    module: &str,
+) -> Result<(Vec<Splice>, Vec<Vec<u32>>), InstrumentError> {
+    let Reading { path, source, text } = file;
+    let mut splices = Vec::new();
+    let mut owners = Vec::new();
+    for (condition, (indices, claim, depth)) in conditions {
+        let original = source
+            .get(at(condition.start)..at(condition.end))
+            .ok_or_else(|| {
+                InstrumentError::new(
+                    InstrumentErrorKind::SourceMismatch,
+                    path.to_owned(),
+                    format!("the condition at {condition} is not inside the source"),
+                )
+            })?;
+        let statements = statements(&claim.witnesses, text, module, *depth);
+        let mut replacement = format!("({{ {statements}").into_bytes();
+        replacement.extend_from_slice(original);
+        replacement.extend_from_slice(b" })");
+        splices.push(Splice {
+            span: *condition,
+            original: original.to_vec(),
+            replacement,
+        });
+        let mut claims = indices.clone();
+        claims.sort_unstable();
+        claims.dedup();
+        owners.push(claims);
+    }
+    Ok((splices, owners))
+}
+
+/// One offset as an index. Every offset here came from a `u32` span of a file this process read, and a file larger than a `usize` cannot have been read at all.
+fn at(offset: u32) -> usize {
+    usize::try_from(offset).unwrap_or(usize::MAX)
+}
+
+/// The operand with its newlines turned to spaces, so a witness never moves a line.
+fn one_line(operand: &str) -> String {
+    operand.replace(['\n', '\r'], " ")
+}
+
+/// The module the witness statements call into.
+fn runtime(module: &str) -> String {
+    format!(
+        "#[doc(hidden)] {allow}mod {module} {{ // {MARKER} — generated; DO NOT EDIT\n\
+         {impls}\n\
+         }}\n",
+        allow = super::ALLOW_ATTRIBUTE,
+        impls = IMPLS,
+    )
+}
+
+/// The sealed traits and the two functions. A trait implemented for the primitives and for references to them, and for nothing else, is exactly the question the syntax could not answer.
+const IMPLS: &str = "\
+    pub(crate) trait W {}
+    pub(crate) trait P {}
+    impl W for i8 {} impl W for i16 {} impl W for i32 {} impl W for i64 {} impl W for i128 {}
+    impl W for isize {} impl W for u8 {} impl W for u16 {} impl W for u32 {} impl W for u64 {}
+    impl W for u128 {} impl W for usize {} impl W for f32 {} impl W for f64 {}
+    impl W for bool {} impl W for char {}
+    impl<T: W + ?Sized> W for &T {}
+    impl<T: W + ?Sized> W for &mut T {}
+    impl P for i8 {} impl P for i16 {} impl P for i32 {} impl P for i64 {} impl P for i128 {}
+    impl P for isize {} impl P for u8 {} impl P for u16 {} impl P for u32 {} impl P for u64 {}
+    impl P for u128 {} impl P for usize {} impl P for f32 {} impl P for f64 {}
+    impl P for bool {} impl P for char {}
+    impl<T: P + ?Sized> P for &T {}
+    impl<T: P + ?Sized> P for &mut T {}
+    #[inline(always)] pub(crate) fn w_ord<T: W + ?Sized>(_a: &T, _b: &T) {}
+    #[inline(always)] pub(crate) fn w_prim<T: P + ?Sized>(_x: &T) {}";

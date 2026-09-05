@@ -92,6 +92,8 @@ pub struct Session {
     sources: BTreeMap<String, Vec<u8>>,
     /// Which package each mutant belongs to.
     packages: BTreeMap<u32, String>,
+    /// The branch proof of every mutant that has one, by catalog index.
+    proofs: BTreeMap<u32, crate::syntax::branch::Proof>,
 }
 
 impl Session {
@@ -155,6 +157,21 @@ impl Session {
     #[must_use]
     pub const fn toolchain(&self) -> &crate::cargo::Toolchain {
         self.workspace.toolchain()
+    }
+
+    /// The branch proof of one mutant, when the compiler vouched for one.
+    ///
+    /// A target during which no statement of the named body ran cannot have
+    /// observed this mutation.
+    #[must_use]
+    pub fn branch(&self, index: u32) -> Option<&crate::syntax::branch::Proof> {
+        self.proofs.get(&index)
+    }
+
+    /// How many mutants carry a branch proof.
+    #[must_use]
+    pub fn proven(&self) -> usize {
+        self.proofs.len()
     }
 
     /// The name of the directory the source root sits in, which is what a report calls the workspace.
@@ -392,6 +409,17 @@ pub fn prepare(
 
     let (sources, placements) = plan_tree(workspace.snapshot_root(), &discovery)?;
 
+    let proofs = crate::prove::establish(
+        &crate::prove::Asking {
+            workspace: &workspace,
+            discovery: &discovery,
+            sources: &sources,
+            options,
+        },
+        cancel,
+        &trace,
+    )?;
+
     let (validated, last_build) = establish(
         &workspace,
         &discovery,
@@ -441,6 +469,7 @@ pub fn prepare(
         skips: discovery.skips,
         sources,
         packages,
+        proofs,
         validated,
         targets,
         scratch,

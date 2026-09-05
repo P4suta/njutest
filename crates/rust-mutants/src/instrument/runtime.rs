@@ -61,6 +61,12 @@ pub(super) const LOWEST_SENTINEL: u32 = u32::MAX - 1;
 /// something else entirely.
 #[must_use]
 pub fn module_name(text: &str) -> String {
+    module_named(text, MODULE_STEM)
+}
+
+/// [`module_name`] for a module of another stem, so the witness tree can have one of its own without either shadowing the other.
+#[must_use]
+pub(super) fn module_named(text: &str, stem: &str) -> String {
     let taken: BTreeSet<String> = text
         .parse::<proc_macro2::TokenStream>()
         .map(|tokens| {
@@ -69,8 +75,8 @@ pub fn module_name(text: &str) -> String {
             names
         })
         .unwrap_or_default();
-    if !taken.contains(MODULE_STEM) {
-        return MODULE_STEM.to_owned();
+    if !taken.contains(stem) {
+        return stem.to_owned();
     }
     // Bounded: a file cannot spell more names than it has identifiers, and
     // the table is what every candidate came from.
@@ -78,9 +84,9 @@ pub fn module_name(text: &str) -> String {
         .unwrap_or(u32::MAX)
         .saturating_add(1);
     (1u32..=limit)
-        .map(|suffix| format!("{MODULE_STEM}{suffix}"))
+        .map(|suffix| format!("{stem}{suffix}"))
         .find(|name| !taken.contains(name))
-        .unwrap_or_else(|| format!("{MODULE_STEM}_generated"))
+        .unwrap_or_else(|| format!("{stem}_generated"))
 }
 
 fn collect_identifiers(tokens: proc_macro2::TokenStream, names: &mut BTreeSet<String>) {

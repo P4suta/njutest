@@ -5,6 +5,7 @@
 
 mod guards;
 mod runtime;
+pub mod witness;
 
 use std::collections::BTreeSet;
 use std::fmt;

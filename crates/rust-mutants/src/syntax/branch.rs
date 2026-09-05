@@ -61,6 +61,19 @@ pub struct Witness {
     pub operands: Vec<Span>,
 }
 
+/// A branch proof the compiler has vouched for: the span of the body the narrowed condition gates.
+///
+/// A target during which no statement of this body ran cannot have observed
+/// the mutation, and may be discharged from its reaching set without being
+/// executed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Proof {
+    /// Where the body's opening brace is.
+    pub body_start: crate::syntax::Position,
+    /// Where its closing brace is.
+    pub body_end: crate::syntax::Position,
+}
+
 /// A branch proof the syntax supports, pending the compiler's word on its witnesses.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Claim {

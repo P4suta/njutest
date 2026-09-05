@@ -17,6 +17,7 @@ pub mod id;
 pub mod instrument;
 pub mod interval;
 pub mod outcome;
+pub mod prove;
 pub mod rule;
 pub mod runner;
 pub mod session;
