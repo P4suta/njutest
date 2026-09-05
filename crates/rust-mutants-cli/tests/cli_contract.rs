@@ -279,3 +279,36 @@ fn run_exits_by_what_the_tests_said() {
     let said = String::from_utf8_lossy(&unknown.stderr);
     assert!(said.contains("RM5003"), "{said}");
 }
+
+#[test]
+fn instrument_prints_one_file_as_the_engine_rewrites_it() {
+    let fixture = fixture("fixture-simple");
+    let output = against(&fixture, &["instrument", "--file", "src/lib.rs"]);
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let text = stdout(&output);
+    assert!(
+        text.contains("__rm::active(") && text.contains("mod __rm {"),
+        "{text}"
+    );
+    assert!(text.contains("#[allow(warnings)] pub fn max"), "{text}");
+
+    // Printing rewrites nothing: the workspace is exactly as it was.
+    let source = std::fs::read_to_string(fixture.root.join("src/lib.rs")).expect("read");
+    assert!(
+        !source.contains("__rm"),
+        "the source workspace is read-only"
+    );
+
+    let missing = against(&fixture, &["instrument", "--file", "src/nope.rs"]);
+    assert_eq!(missing.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&missing.stderr).contains("RM5006"),
+        "{}",
+        String::from_utf8_lossy(&missing.stderr)
+    );
+}

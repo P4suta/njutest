@@ -79,6 +79,20 @@ pub enum Command {
         #[arg(value_name = "PREFIX")]
         mutant: String,
     },
+    /// Print one file as the engine rewrites it, guards and runtime
+    /// included.
+    ///
+    /// The tree is copied and type-checked, but nothing is built and
+    /// nothing is validated: what it prints is every candidate the rules
+    /// propose, which is what a person debugging a guard wants to see.
+    Instrument {
+        /// Which workspace to read.
+        #[command(flatten)]
+        scope: Scope,
+        /// The file, as a workspace-relative path.
+        #[arg(long, value_name = "PATH")]
+        file: String,
+    },
     /// Tally why places were passed over.
     WhySkipped {
         /// Which workspace to read.
@@ -167,6 +181,7 @@ impl Command {
             | Self::Catalog { scope, .. }
             | Self::Run { scope, .. }
             | Self::Explain { scope, .. }
+            | Self::Instrument { scope, .. }
             | Self::WhySkipped { scope } => scope,
         }
     }

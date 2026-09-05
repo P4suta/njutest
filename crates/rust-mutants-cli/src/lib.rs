@@ -109,6 +109,13 @@ fn dispatch(
             workspace.close()?;
             Ok(0)
         }
+        cli::Command::Instrument { file, .. } => {
+            let discovery = session::preview(&workspace, &options, &cancel)?;
+            let text = instrumented(&workspace, &discovery, file)?;
+            write(stdout, &text);
+            workspace.close()?;
+            Ok(0)
+        }
         cli::Command::Catalog { json, .. } => {
             let session = workspace.prepare(&options, &cancel)?;
             let text = if *json {
@@ -160,6 +167,31 @@ fn dispatch(
             Ok(code)
         }
     }
+}
+
+/// One file as the engine rewrites it.
+fn instrumented(
+    workspace: &Workspace,
+    discovery: &rust_mutants::discover::Discovery,
+    path: &str,
+) -> Result<String, EngineError> {
+    use rust_mutants::instrument::{instrument_file, plan_file};
+    use rust_mutants::workspace::SessionError;
+
+    let found: Vec<rust_mutants::syntax::Found> = discovery
+        .candidates
+        .iter()
+        .map(|located| located.found.clone())
+        .collect();
+    let source = std::fs::read(workspace.snapshot_root().join(path)).map_err(|source| {
+        SessionError::WriteFailed {
+            path: path.to_owned(),
+            source,
+        }
+    })?;
+    let placements = plan_file(&discovery.catalog, path, &found)?;
+    let file = instrument_file(path, &source, &placements, discovery.catalog.digest())?;
+    Ok(file.text)
 }
 
 /// A closed stream is the reader's choice, not a failure of ours.
