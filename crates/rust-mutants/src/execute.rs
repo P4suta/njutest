@@ -247,6 +247,12 @@ pub fn environment(
     if let Some(probe) = context.probe {
         env.insert(OsString::from(PROBE_ENV), probe.as_os_str().to_owned());
     }
+    if let Some(profile) = context.profile {
+        env.insert(
+            OsString::from(crate::coverage::PROFILE_ENV),
+            profile.as_os_str().to_owned(),
+        );
+    }
     if let Some(scratch) = scratch {
         for name in ["TMPDIR", "TMP", "TEMP"] {
             env.insert(OsString::from(name), scratch.as_os_str().to_owned());
@@ -336,6 +342,8 @@ pub struct Context<'a> {
     pub active: Option<(&'a str, &'a str)>,
     /// Where a probe process appends what it infected. `None` runs a process that records nothing.
     pub probe: Option<&'a Path>,
+    /// Where a coverage-instrumented process writes what it executed. `None` runs a process that measures nothing.
+    pub profile: Option<&'a Path>,
 }
 
 /// What one mutant execution established.
@@ -414,6 +422,7 @@ pub fn build(
             locked: options.locked,
             offline: options.offline,
             timeout: None,
+            env: Vec::new(),
         },
     )?;
     if !compiled.success {

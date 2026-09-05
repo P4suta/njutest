@@ -99,6 +99,19 @@ everything. A tree git cannot be asked about, or a revision it does not know,
 ends the command with `RM0010`: a run that could not see what changed must
 never look like a run that saw nothing change.
 
+`--coverage` builds the tree once more with `-C instrument-coverage`, runs
+every test target once with nothing active, and reads back which target
+executed which regions. A mutant is then only run against the targets that
+reached it, and one no measured target reaches is reported as
+`unreached-mutant` rather than executed against everything to find that out
+again. Every export names every binary the build produced, so a test that
+spawns one of the workspace's own binaries has that binary's coverage
+attributed to it; a place no export instrumented is a place the measurement
+says nothing about, and its mutant is run everywhere. A tree that configures
+its own `rustflags`, a build that will not instrument, and tools that are not
+installed each leave the measurement empty, which routes every mutant to every
+target exactly as if the layer were not there.
+
 `run --shard K/N` runs one part of the catalog, cut by index, and `merge`
 reassembles the parts into the report the whole would have written. A run
 reads back what an earlier run of this exact tree established unless

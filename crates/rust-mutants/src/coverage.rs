@@ -364,7 +364,12 @@ impl Tools {
         }
     }
 
-    /// Turns a merged profile and the binary that wrote it into regions.
+    /// Turns a merged profile and the binaries it may name into regions.
+    ///
+    /// Every binary a test process may have run belongs here: a test that
+    /// spawns another of the workspace's binaries writes that binary's
+    /// counters into the same profile, and a reader given only the test
+    /// binary would report the spawned code as never executed.
     ///
     /// # Errors
     /// [`CoverageErrorKind::ToolFailed`] and the refusals of
@@ -372,16 +377,28 @@ impl Tools {
     pub fn export<W: Watch>(
         &self,
         profile: &Path,
-        binary: &Path,
+        binaries: &[PathBuf],
         watch: &W,
     ) -> Result<Vec<FileRegions>, CoverageError> {
-        let mut spec = Spec::new([
+        let mut argv = vec![
             self.cov.as_os_str().to_owned(),
             std::ffi::OsString::from("export"),
             std::ffi::OsString::from(format!("--instr-profile={}", profile.display())),
             std::ffi::OsString::from("--format=text"),
-            binary.as_os_str().to_owned(),
-        ]);
+        ];
+        let mut binaries = binaries.iter();
+        let Some(first) = binaries.next() else {
+            return Err(CoverageError {
+                kind: CoverageErrorKind::ToolFailed,
+                message: "no binary to read regions from".to_owned(),
+            });
+        };
+        argv.push(first.as_os_str().to_owned());
+        for other in binaries {
+            argv.push(std::ffi::OsString::from("-object"));
+            argv.push(other.as_os_str().to_owned());
+        }
+        let mut spec = Spec::new(argv);
         spec.structured_stdout = Some(1 << 30);
         let exported = run(&spec, watch.cancel());
         watch.exec(&spec, &exported);

@@ -66,6 +66,7 @@ fn prepare(name: &str) -> Prepared {
             locked: true,
             offline: true,
             timeout: None,
+            env: Vec::new(),
         },
     )
     .expect("check");
@@ -388,6 +389,7 @@ fn the_check_records_an_exec_event_and_keeps_the_messages() {
             locked: true,
             offline: true,
             timeout: None,
+            env: Vec::new(),
         },
     )
     .expect("check");

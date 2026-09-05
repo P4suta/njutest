@@ -29,6 +29,7 @@ operators = []                 # exactly these rules; empty = the tier
 timeout = "5m"                 # one mutant execution, before a serial retry
 build_timeout = ""             # empty = no bound
 verify = true                  # run the instrumented baseline first
+coverage = false               # measure reach once, then run a mutant only where it was reached
 
 [execution]
 offline = false

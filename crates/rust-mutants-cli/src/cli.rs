@@ -202,6 +202,9 @@ pub struct Switches {
     /// Skip the run of every target with nothing active.
     #[arg(long)]
     pub no_verify: bool,
+    /// Measure once which target reached what, and run a mutant only against the targets that reached it.
+    #[arg(long)]
+    pub coverage: bool,
 }
 
 /// The tiers, as the command line spells them.

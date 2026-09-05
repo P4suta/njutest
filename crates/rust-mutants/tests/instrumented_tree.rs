@@ -105,6 +105,7 @@ fn prepare(fixture: &str) -> Tree {
             locked: true,
             offline: true,
             timeout: None,
+            env: Vec::new(),
         },
     )
     .expect("check");

@@ -93,6 +93,8 @@ pub struct Mutation {
     pub build_timeout: Option<Duration>,
     /// Run every test target once with nothing active before believing anything a mutant does.
     pub verify: bool,
+    /// Measure once which target reached what, and run a mutant only against the targets that reached it.
+    pub coverage: bool,
     /// The mutants a reviewer declared equivalent, with the outcome the run must confirm.
     pub expect: Vec<Expectation>,
 }
@@ -105,6 +107,7 @@ impl Default for Mutation {
             timeout: DEFAULT_TIMEOUT,
             build_timeout: None,
             verify: true,
+            coverage: false,
             expect: Vec::new(),
         }
     }
@@ -478,6 +481,7 @@ version = 1
 # timeout = \"{timeout}\"              # one mutant execution, before a serial retry
 # build_timeout = \"\"             # empty = no bound
 # verify = true                  # run the instrumented baseline before believing a mutant
+# coverage = false               # measure reach once, then run a mutant only where it was reached
 
 # A mutant a reviewer declared equivalent. The run confirms the claim and
 # reports a stale expectation rather than hiding the mutant.

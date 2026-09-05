@@ -47,6 +47,8 @@ pub struct Judged {
     pub source_run_id: Option<String>,
     /// Whether a reviewer declared this outcome in advance and the run confirmed the claim.
     pub expected: bool,
+    /// Whether the coverage measurement proved no target reaches it, which is why it never ran.
+    pub unreached: bool,
 }
 
 /// Whether a reviewer's claim about one mutant held.
@@ -94,6 +96,8 @@ pub enum FindingKind {
     ErroredMutant,
     /// A mutant nothing ran and nothing cancelled.
     NotRunMutant,
+    /// No measured target reaches the mutant, so no test could have noticed it.
+    UnreachedMutant,
     /// A reviewer's claim the run contradicted.
     StaleExpectation,
     /// A reviewer's claim that names no mutant of this catalog.
@@ -102,11 +106,12 @@ pub enum FindingKind {
 
 impl FindingKind {
     /// Every kind, in the order findings are reported.
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::SurvivingMutant,
         Self::InconclusiveMutant,
         Self::ErroredMutant,
         Self::NotRunMutant,
+        Self::UnreachedMutant,
         Self::StaleExpectation,
         Self::UnmatchedExpectation,
     ];
@@ -119,6 +124,7 @@ impl FindingKind {
             Self::InconclusiveMutant => "inconclusive-mutant",
             Self::ErroredMutant => "errored-mutant",
             Self::NotRunMutant => "not-run-mutant",
+            Self::UnreachedMutant => "unreached-mutant",
             Self::StaleExpectation => "stale-expectation",
             Self::UnmatchedExpectation => "unmatched-expectation",
         }
@@ -171,6 +177,8 @@ pub struct Tally {
     pub errored: u32,
     /// How many never ran.
     pub not_run: u32,
+    /// How many of those never ran because no measured target reaches them.
+    pub unreached: u32,
     /// How many survivors a reviewer had declared, and the run confirmed.
     pub expected: u32,
 }
@@ -225,6 +233,9 @@ impl Run {
                 _ => &mut tally.errored,
             };
             *slot = slot.saturating_add(1);
+            if one.unreached {
+                tally.unreached = tally.unreached.saturating_add(1);
+            }
             if one.expected {
                 tally.expected = tally.expected.saturating_add(1);
             }
@@ -255,6 +266,7 @@ impl Run {
                 Outcome::Survived if one.expected => continue,
                 Outcome::Survived => FindingKind::SurvivingMutant,
                 Outcome::Inconclusive => FindingKind::InconclusiveMutant,
+                Outcome::NotRun if one.unreached => FindingKind::UnreachedMutant,
                 Outcome::NotRun if self.interrupted => continue,
                 Outcome::NotRun => FindingKind::NotRunMutant,
                 Outcome::Killed | Outcome::TimedOut => continue,
@@ -328,6 +340,10 @@ fn detail(kind: FindingKind, one: &Judged) -> String {
             "the harness itself failed on {} with exit {}, so nothing about the tests was \
              established",
             one.display_id, one.exit_code
+        ),
+        FindingKind::UnreachedMutant => format!(
+            "no measured test reaches {}: the mutation lives in code the tests never execute",
+            one.display_id
         ),
         FindingKind::NotRunMutant
         | FindingKind::StaleExpectation
@@ -532,6 +548,7 @@ fn execute(
         tests_run: result.tests_run,
         retried,
         expected: false,
+        unreached: session.reaches(mutant) == Some(false),
         source_run_id: None,
     })
 }
@@ -553,6 +570,7 @@ fn reuse(mutant: &Mutant, options: &Options<'_>) -> Option<Judged> {
         tests_run: record.tests_run,
         retried: false,
         expected: false,
+        unreached: false,
         source_run_id: Some(record.run_id),
     })
 }
@@ -593,6 +611,7 @@ fn unexecuted(mutant: &Mutant) -> Judged {
         tests_run: None,
         retried: false,
         expected: false,
+        unreached: false,
         source_run_id: None,
     }
 }

@@ -50,6 +50,7 @@ impl Settings {
         config.execution.offline |= scope.switches.offline;
         config.execution.locked |= scope.switches.locked;
         config.mutation.verify &= !scope.switches.no_verify;
+        config.mutation.coverage |= scope.switches.coverage;
         Ok(Self {
             root,
             source,
@@ -96,6 +97,7 @@ impl Settings {
             exclude: compile(&self.config.project.exclude)?,
             packages: self.config.project.packages.clone(),
             verify: self.config.mutation.verify,
+            coverage: self.config.mutation.coverage,
             build_timeout: self.config.mutation.build_timeout,
             mutant_timeout: Some(self.config.mutation.timeout),
             ..PrepareOptions::default()

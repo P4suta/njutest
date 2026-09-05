@@ -41,6 +41,8 @@ pub struct PrepareOptions {
     pub verify: bool,
     /// Build and run the probe tree, which says which tests could not have noticed a return replacement however far they ran.
     pub probe: bool,
+    /// Build and run the tree once with coverage instrumentation, so a mutant is only ever run against the targets that reached it.
+    pub coverage: bool,
     /// How many validation rounds before falling back to bisection.
     pub max_rounds: u32,
     /// How long a build may take.
@@ -59,6 +61,7 @@ impl Default for PrepareOptions {
             packages: Vec::new(),
             verify: true,
             probe: false,
+            coverage: false,
             max_rounds: crate::validate::DEFAULT_MAX_ROUNDS,
             build_timeout: None,
             mutant_timeout: None,
@@ -97,6 +100,7 @@ pub struct Session {
     packages: BTreeMap<u32, String>,
     /// The branch proof of every mutant that has one, by catalog index.
     proofs: BTreeMap<u32, crate::syntax::branch::Proof>,
+    reached: crate::reach::Reached,
     /// What the probe pass established, empty when it did not run.
     probed: crate::probe::tree::Probed,
 }
@@ -179,6 +183,33 @@ impl Session {
         self.proofs.len()
     }
 
+    /// What the coverage pass measured, empty when it did not run.
+    #[must_use]
+    pub const fn reached(&self) -> &crate::reach::Reached {
+        &self.reached
+    }
+
+    /// Whether any measured target reached this mutant: `None` when the measurement says nothing about the place, so nothing is proved either way.
+    #[must_use]
+    pub fn reaches(&self, mutant: &Mutant) -> Option<bool> {
+        self.covering(mutant).map(|targets| !targets.is_empty())
+    }
+
+    /// The targets whose measured run covered this mutant, in identity order, or nothing when the measurement never instrumented the place.
+    fn covering(&self, mutant: &Mutant) -> Option<Vec<&str>> {
+        if !self.reached.measured() {
+            return None;
+        }
+        let position = self.position(mutant)?;
+        self.reached.covering(
+            std::path::Path::new(&mutant.candidate.path),
+            crate::coverage::Point {
+                line: position.line,
+                column: position.byte_column,
+            },
+        )
+    }
+
     /// What the probe pass established: which mutants it could ask about, and what each target infected.
     #[must_use]
     pub const fn probed(&self) -> &crate::probe::tree::Probed {
@@ -216,11 +247,30 @@ impl Session {
     pub fn exec(&self, request: &Request, cancel: &Cancel) -> Result<MutantResult, EngineError> {
         let mutant = self.resolve(&request.mutant)?;
         let targets = self.selected(request.target.as_deref())?;
+        let targets = match request
+            .target
+            .is_none()
+            .then(|| self.covering(mutant))
+            .flatten()
+        {
+            Some(covering) => {
+                let routed: Vec<&TestTarget> = targets
+                    .into_iter()
+                    .filter(|target| covering.contains(&target.id.as_str()))
+                    .collect();
+                if routed.is_empty() {
+                    return Ok(unreached());
+                }
+                routed
+            }
+            None => targets,
+        };
         let context = Context {
             base_env: &self.workspace.base_env,
             cargo: Some(self.workspace.toolchain.cargo()),
             active: Some((mutant.id.as_str(), self.catalog.digest())),
             probe: None,
+            profile: None,
         };
         let timeout = request.timeout.or(self.mutant_timeout);
         let mut last = None;
@@ -261,6 +311,7 @@ impl Session {
             cargo: Some(self.workspace.toolchain.cargo()),
             active: None,
             probe: None,
+            profile: None,
         };
         let timeout = request.timeout.or(self.mutant_timeout);
         let mut last = None;
@@ -382,6 +433,7 @@ fn pristine(
             locked: workspace.locked,
             offline: workspace.offline,
             timeout: Workspace::timeout(options.build_timeout),
+            env: Vec::new(),
         },
     )?;
     if checked.success {
@@ -423,10 +475,11 @@ fn built(
     Ok((targets, scratch))
 }
 
-/// What the two proof layers establish before anything is instrumented: which tests could not have noticed a return replacement, and which branch proofs the compiler vouches for.
+/// What the proof layers establish before anything is instrumented: which tests could not have noticed a return replacement, which branch proofs the compiler vouches for, and which targets reached what.
 type Layers = (
     crate::probe::tree::Probed,
     BTreeMap<u32, crate::syntax::branch::Proof>,
+    crate::reach::Reached,
 );
 
 fn layers(
@@ -449,7 +502,28 @@ fn layers(
         crate::probe::tree::Probed::default()
     };
     let proofs = crate::prove::establish(asking, cancel, trace)?;
-    Ok((probed, proofs))
+    let reached = crate::reach::establish(
+        &crate::reach::Asking {
+            workspace: asking.workspace,
+            options: asking.options,
+        },
+        cancel,
+        trace,
+    )?;
+    Ok((probed, proofs, reached))
+}
+
+/// What a mutant no measured target reached amounts to: nothing ran, because nothing that ran could have noticed.
+const fn unreached() -> MutantResult {
+    MutantResult {
+        outcome: crate::outcome::Outcome::NotRun,
+        target: String::new(),
+        exit_code: crate::runner::EXIT_CODE_UNAVAILABLE,
+        duration: Duration::ZERO,
+        output: Vec::new(),
+        summary: None,
+        tests_run: None,
+    }
 }
 
 /// Discovers, instruments, validates, builds, and verifies.
@@ -481,7 +555,7 @@ pub fn prepare(
 
     let (sources, placements) = plan_tree(workspace.snapshot_root(), &discovery)?;
 
-    let (probed, proofs) = layers(
+    let (probed, proofs, reached) = layers(
         &crate::prove::Asking {
             workspace: &workspace,
             discovery: &discovery,
@@ -521,6 +595,7 @@ pub fn prepare(
         sources,
         packages,
         proofs,
+        reached,
         probed,
         validated,
         targets,
@@ -622,6 +697,7 @@ fn verify(
         cargo: Some(workspace.toolchain.cargo()),
         active: None,
         probe: None,
+        profile: None,
     };
     for target in targets {
         let request = ExecRequest::new(target).with_scratch(scratch);
@@ -693,6 +769,7 @@ impl Compile for TreeCompiler<'_> {
                 locked: self.workspace.locked,
                 offline: self.workspace.offline,
                 timeout: self.timeout,
+                env: Vec::new(),
             },
         )?;
         let success = compiled.success;

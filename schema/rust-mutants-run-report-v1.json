@@ -126,6 +126,11 @@
         "inconclusive": { "type": "integer", "minimum": 0 },
         "errored": { "type": "integer", "minimum": 0 },
         "not_run": { "type": "integer", "minimum": 0 },
+        "unreached": {
+          "description": "Of the mutants that never ran, how many no measured target reaches. Absent in a report written before coverage routing existed.",
+          "type": "integer",
+          "minimum": 0
+        },
         "expected": { "type": "integer", "minimum": 0 }
       }
     },
@@ -206,6 +211,10 @@
             "description": "A timeout is believed only after a serial retry timed out again."
           },
           "expected": { "type": "boolean" },
+          "unreached": {
+            "description": "Whether no measured target reaches it, which is why it never ran. Absent in a report written before coverage routing existed.",
+            "type": "boolean"
+          },
           "source_run_id": {
             "oneOf": [{ "type": "null" }, { "type": "string", "minLength": 1 }],
             "description": "The run that established this outcome, when it was read back rather than executed."

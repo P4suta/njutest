@@ -103,6 +103,9 @@ pub struct Accounting {
     pub errored: u32,
     /// How many never ran.
     pub not_run: u32,
+    /// How many of those never ran because no measured target reaches them.
+    #[serde(default)]
+    pub unreached: u32,
     /// How many survivors a reviewer had declared, and the run confirmed.
     pub expected: u32,
 }
@@ -161,6 +164,9 @@ pub struct RunMutantDocument {
     pub retried: bool,
     /// Whether a reviewer declared this outcome in advance and the run confirmed the claim.
     pub expected: bool,
+    /// Whether no measured target reaches it, which is why it never ran.
+    #[serde(default)]
+    pub unreached: bool,
     /// The run that established this, when it was not this one.
     pub source_run_id: Option<String>,
 }
@@ -244,6 +250,7 @@ pub fn document(
             errored: tally.errored,
             not_run: tally.not_run,
             expected: tally.expected,
+            unreached: tally.unreached,
         },
         score: run.score().map(|score| ScoreDocument {
             detected: score.detected,
@@ -339,6 +346,7 @@ fn mutant(one: &crate::run::Judged, catalog: Option<MutantDocument>) -> RunMutan
         tests_run: one.tests_run,
         retried: one.retried,
         expected: one.expected,
+        unreached: one.unreached,
         source_run_id: one.source_run_id.clone(),
     }
 }
@@ -451,6 +459,9 @@ fn accounting_of(mutants: &[RunMutantDocument], first: &RunDocument) -> Accounti
             _ => &mut counted.errored,
         };
         *slot = slot.saturating_add(1);
+        if one.unreached {
+            counted.unreached = counted.unreached.saturating_add(1);
+        }
         if one.expected {
             counted.expected = counted.expected.saturating_add(1);
         }
@@ -497,7 +508,7 @@ pub fn lines(document: &RunDocument) -> String {
         "run       {}\nworkspace {}\ncatalog   {}\n\n\
          MUTANTS   cataloged={} refused={} skipped={} executed={}\n\
          OUTCOMES  killed={} survived={} timed_out={} inconclusive={} errored={} not_run={} \
-         expected={}\n",
+         unreached={} expected={}\n",
         document.run.id,
         document.workspace.workspace_digest,
         document.workspace.catalog_digest,
@@ -511,6 +522,7 @@ pub fn lines(document: &RunDocument) -> String {
         a.inconclusive,
         a.errored,
         a.not_run,
+        a.unreached,
         a.expected,
     );
     debug_assert!(written.is_ok(), "writing to a String cannot fail");

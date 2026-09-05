@@ -74,6 +74,7 @@ pub fn establish(
             locked: workspace.locked,
             offline: workspace.offline,
             timeout: Workspace::timeout(options.build_timeout),
+            env: Vec::new(),
         },
     );
     restore(&root, sources)?;

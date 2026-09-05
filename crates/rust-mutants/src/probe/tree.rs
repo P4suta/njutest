@@ -176,6 +176,7 @@ fn accept(
                 locked: workspace.locked,
                 offline: workspace.offline,
                 timeout: Workspace::timeout(running.options.build_timeout),
+                env: Vec::new(),
             },
         )
         .map_err(|error| error.to_string())?;
@@ -402,6 +403,7 @@ fn build_and_run(
             locked: workspace.locked,
             offline: workspace.offline,
             timeout: Workspace::timeout(options.build_timeout),
+            env: Vec::new(),
         },
     )
     .map_err(|error| error.to_string())?;
@@ -423,6 +425,7 @@ fn build_and_run(
             cargo: Some(workspace.toolchain().cargo()),
             active: None,
             probe: Some(&log_path),
+            profile: None,
         };
         let request = ExecRequest::new(target).with_timeout(options.mutant_timeout);
         let result = execute::exec(&request, &context, cancel, &Recorder::disabled());

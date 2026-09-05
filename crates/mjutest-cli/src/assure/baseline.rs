@@ -232,7 +232,7 @@ fn measure(
             let merged = options.profiles_dir.join(format!("{}.profdata", target.id));
             tools.merge(&profiles, &merged, &watch)?;
             let files = relative(
-                tools.export(&merged, &target.executable, &watch)?,
+                tools.export(&merged, std::slice::from_ref(&target.executable), &watch)?,
                 &options.root,
             );
             reached = covered(&files);

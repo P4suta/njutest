@@ -32,6 +32,7 @@ fn mutant(index: u32, outcome: &str, expected: bool) -> RunMutantDocument {
         tests_run: Some(1),
         retried: false,
         expected,
+        unreached: false,
         source_run_id: None,
     }
 }
@@ -78,6 +79,7 @@ fn document() -> RunDocument {
             timed_out: 0,
             inconclusive: 0,
             errored: 0,
+            unreached: 0,
             not_run: 0,
             expected: 1,
         },

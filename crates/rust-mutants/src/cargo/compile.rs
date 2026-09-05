@@ -3,6 +3,7 @@
 
 //! Compiling the tree and reading what the compiler said: the pristine gate, the source of every unit's file set, and the build validation and execution both stand on.
 
+use std::ffi::OsString;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -49,6 +50,8 @@ pub struct CompileOptions {
     pub offline: bool,
     /// How long the check may take.
     pub timeout: Option<Duration>,
+    /// What this compilation alone adds to the toolchain's environment, such as the flags a coverage build needs.
+    pub env: Vec<(OsString, OsString)>,
 }
 
 /// What a compilation produced.
@@ -87,6 +90,12 @@ pub fn compile(driver: &Driver<'_>, options: &CompileOptions) -> Result<Compiled
         args.push(target_dir.to_string_lossy().into_owned());
     }
     let mut spec = driver.toolchain.command(driver.dir, args);
+    if !options.env.is_empty() {
+        let mut env = spec.env.clone().unwrap_or_default();
+        env.retain(|(name, _)| !options.env.iter().any(|(other, _)| other == name));
+        env.extend(options.env.iter().cloned());
+        spec.env = Some(env);
+    }
     spec.structured_stdout = Some(MESSAGE_OUTPUT_LIMIT);
     spec.timeout = options.timeout;
     let result = run(&spec, driver.cancel);

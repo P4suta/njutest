@@ -262,6 +262,7 @@ fn measure(fixture: &str, test: &str) -> Measured {
             locked: true,
             offline: true,
             timeout: None,
+            env: Vec::new(),
         },
     )
     .expect("build");
@@ -301,7 +302,11 @@ fn measure(fixture: &str, test: &str) -> Measured {
         .merge(&raw, &merged, &Watched::new(&cancel, &trace))
         .expect("merge");
     let files = tools
-        .export(&merged, &executable, &Watched::new(&cancel, &trace))
+        .export(
+            &merged,
+            std::slice::from_ref(&executable),
+            &Watched::new(&cancel, &trace),
+        )
         .expect("export");
     Measured {
         root,

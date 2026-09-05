@@ -327,6 +327,7 @@ impl Compile for CargoScripted {
                 locked: true,
                 offline: true,
                 timeout: None,
+                env: Vec::new(),
             },
         )
         .map_err(ValidateError::from)?;
@@ -382,6 +383,7 @@ fn prepare_fixture(name: &str) -> CargoScripted {
             locked: true,
             offline: true,
             timeout: None,
+            env: Vec::new(),
         },
     )
     .expect("check");

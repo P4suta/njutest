@@ -122,3 +122,69 @@ fn a_revision_git_does_not_know_ends_the_command() {
     assert_eq!(output.status.code(), Some(2), "{output:?}");
     assert!(complaint.contains("no-such-revision"), "{complaint}");
 }
+
+/// The outcome of every mutant a run judged, by identity, from the lines it printed.
+fn outcomes(said: &str) -> std::collections::BTreeMap<String, String> {
+    said.lines()
+        .filter_map(|line| line.strip_prefix('['))
+        .filter_map(|line| line.split_once("] "))
+        .filter_map(|(_, rest)| rest.split_once(' '))
+        .map(|(id, outcome)| (id.to_owned(), outcome.trim().to_owned()))
+        .collect()
+}
+
+#[test]
+fn routing_by_coverage_loses_no_kill_and_names_the_code_no_test_runs() {
+    let fixture = fixture();
+    let lib = fixture.root.join("crates/core/src/lib.rs");
+    let mut widened = std::fs::read_to_string(&lib).expect("read");
+    widened.push_str("\n/// Nothing calls this.\npub fn adrift(a: i32) -> i32 {\n    a + 1\n}\n");
+    std::fs::write(&lib, widened).expect("write");
+
+    let whole = stdout(&against(
+        &fixture,
+        &["run", "--offline", "--locked", "--no-cache"],
+    ));
+    let routed = against(
+        &fixture,
+        &["run", "--coverage", "--offline", "--locked", "--no-cache"],
+    );
+    let said = stdout(&routed);
+
+    let (before, after) = (outcomes(&whole), outcomes(&said));
+    assert_eq!(before.len(), after.len(), "{whole}\n---\n{said}");
+    for (id, outcome) in &before {
+        if outcome == "killed" {
+            assert_eq!(
+                after.get(id).map(String::as_str),
+                Some("killed"),
+                "routing by coverage lost a kill: {id}"
+            );
+        }
+    }
+    let unreached: Vec<&String> = after
+        .iter()
+        .filter(|(_, outcome)| *outcome == "not_run")
+        .map(|(id, _)| id)
+        .collect();
+    assert!(
+        !unreached.is_empty(),
+        "the function nothing calls is reached by nothing: {said}"
+    );
+    for id in unreached {
+        assert_eq!(
+            before.get(id).map(String::as_str),
+            Some("survived"),
+            "only a mutant that survived everything can be one nothing reached: {id}"
+        );
+    }
+    assert!(
+        said.contains("unreached-mutant"),
+        "a mutant no measured test reaches is said to be one: {said}"
+    );
+    assert_eq!(
+        routed.status.code(),
+        Some(1),
+        "code the tests never execute is a finding about the tests, not a broken run: {routed:?}"
+    );
+}

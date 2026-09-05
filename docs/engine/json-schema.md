@@ -56,11 +56,12 @@ Written by `rust-mutants run` to
   "selection": { "tier": "all", "operators": [], "include": [], "exclude": [], "packages": [] },
   "accounting": { "cataloged": 6, "refused": 0, "skipped": 5, "executed": 6,
                   "killed": 5, "survived": 1, "timed_out": 0, "inconclusive": 0,
-                  "errored": 0, "not_run": 0, "expected": 0 },
+                  "errored": 0, "not_run": 0, "unreached": 0, "expected": 0 },
   "score": { "detected": 5, "decided": 6, "value": 0.8333333333333334 },
   "mutants": [{ "…": "as in the catalog document, plus:",
                 "outcome": "survived", "target": "a/lib/a", "exit_code": 0,
-                "duration_ms": 41, "tests_run": 1, "retried": false, "expected": false }],
+                "duration_ms": 41, "tests_run": 1, "retried": false, "expected": false,
+                "unreached": false }],
   "rejections": [], "skips": [],
   "expectations": [{ "id": "…", "reason": "…", "outcome": "survived", "mutant": "<64 hex>",
                      "standing": "met", "actual": null, "why": null }],
@@ -69,7 +70,9 @@ Written by `rust-mutants run` to
 ```
 
 The outcome columns add up: `killed + survived + timed_out + inconclusive +
-errored == executed`, and `executed + not_run == cataloged`. `score` is
+errored == executed`, and `executed + not_run == cataloged`. `unreached`
+counts the `not_run` mutants a coverage measurement proved no target reaches,
+so it is never larger than `not_run` and is zero in a run that measured none. `score` is
 `detected / decided` where `detected = killed + timed_out` and `decided =
 detected + survived`; it is **absent** when the run decided nothing, which is
 not the same as a score of zero. A timeout is `timed_out` only after a serial

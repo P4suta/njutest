@@ -21,6 +21,7 @@ pub mod interval;
 pub mod outcome;
 pub mod probe;
 pub mod prove;
+pub mod reach;
 pub mod rule;
 pub mod runner;
 pub mod session;
