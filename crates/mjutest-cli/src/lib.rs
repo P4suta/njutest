@@ -21,6 +21,7 @@ pub mod config;
 pub mod coverage;
 pub mod error;
 pub mod report;
+pub mod rustflags;
 pub mod scratch;
 pub mod targets;
 pub mod trace;

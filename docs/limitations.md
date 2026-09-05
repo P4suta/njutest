@@ -33,3 +33,11 @@ below is stated fail-closed.
 - One workspace per run. Path dependencies outside the workspace root are
   refused unless explicitly allowed as read-only.
 - Symbolic links in the evidence tree are rejected.
+- The coverage build sets `CARGO_ENCODED_RUSTFLAGS`, which replaces
+  `build.rustflags` rather than adding to it, so mjutest reads the project's
+  `.cargo/config.toml` files and puts those flags back. What it does not put
+  back is `target.<triple>` and `target.cfg(…)` flags — which of them apply
+  is cargo's decision about the target being built, and guessing wrong would
+  compile something other than the project's binaries. A project that
+  configures them gets `target-rustflags-not-merged`, and a configuration
+  file that cannot be parsed gets `cargo-configuration-unreadable`.
