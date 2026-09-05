@@ -40,6 +40,59 @@ pub struct Metadata {
     pub workspace_default_members: Vec<String>,
     /// Every package in the graph, members and dependencies alike.
     pub packages: Vec<Package>,
+    /// The resolved dependency graph, when cargo produced one.
+    #[serde(default)]
+    pub resolve: Option<Resolve>,
+}
+
+/// The resolved dependency graph.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Resolve {
+    /// One node per package in the graph.
+    #[serde(default)]
+    pub nodes: Vec<Node>,
+    /// The root package, for a single-package workspace.
+    #[serde(default)]
+    pub root: Option<String>,
+}
+
+/// One package's edges in the resolved graph.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Node {
+    /// The package this node is about.
+    pub id: String,
+    /// What it depends on.
+    #[serde(default)]
+    pub deps: Vec<NodeDep>,
+}
+
+/// One edge of the resolved graph.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct NodeDep {
+    /// The package depended on.
+    pub pkg: String,
+    /// How it is depended on. A dependency may be several kinds at once.
+    #[serde(default)]
+    pub dep_kinds: Vec<DepKind>,
+}
+
+/// One way one package depends on another.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct DepKind {
+    /// `null` for a normal dependency, `"dev"` or `"build"` otherwise.
+    #[serde(default)]
+    pub kind: Option<String>,
+}
+
+impl DepKind {
+    /// The name of a normal dependency, which cargo writes as the absence of a name.
+    pub const NORMAL: &'static str = "normal";
+
+    /// The kind, with a normal dependency named rather than absent.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        self.kind.as_deref().unwrap_or(Self::NORMAL)
+    }
 }
 
 /// One package.
@@ -194,6 +247,45 @@ impl Metadata {
             ));
         }
         Self::parse(&result.stdout)
+    }
+
+    /// Every package whose code goes into `id`'s test binary: `id` itself, everything it depends on through normal and build edges transitively, and its own development dependencies.
+    ///
+    /// A development dependency of something else is not in the closure: its
+    /// code is not linked into this binary, and a change to it cannot change
+    /// what this binary does. The closure is sorted, so two runs of the same
+    /// graph produce the same list.
+    #[must_use]
+    pub fn closure(&self, id: &str) -> Vec<String> {
+        let Some(resolve) = &self.resolve else {
+            return self.packages.iter().map(|one| one.id.clone()).collect();
+        };
+        let by_id: std::collections::BTreeMap<&str, &Node> = resolve
+            .nodes
+            .iter()
+            .map(|node| (node.id.as_str(), node))
+            .collect();
+        let mut found: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        let mut pending = vec![(id.to_owned(), true)];
+        while let Some((current, is_root)) = pending.pop() {
+            if !found.insert(current.clone()) {
+                continue;
+            }
+            let Some(node) = by_id.get(current.as_str()) else {
+                continue;
+            };
+            for edge in &node.deps {
+                let linked = edge.dep_kinds.is_empty()
+                    || edge.dep_kinds.iter().any(|kind| {
+                        let name = kind.name();
+                        name == DepKind::NORMAL || name == "build" || (is_root && name == "dev")
+                    });
+                if linked {
+                    pending.push((edge.pkg.clone(), false));
+                }
+            }
+        }
+        found.into_iter().collect()
     }
 
     /// The workspace members, in document order.

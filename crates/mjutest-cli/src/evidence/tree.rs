@@ -46,6 +46,38 @@ pub struct Scan {
     pub files: u32,
     /// How many bytes they held.
     pub bytes: u64,
+    /// Every file that entered the tree digest, with its own, so a key over part of the tree can be folded without reading it again.
+    pub entries: BTreeMap<String, String>,
+}
+
+impl Scan {
+    /// The digest of everything under `prefix`, as a slash-separated workspace-relative directory. A directory with nothing under it folds to a digest of its own, which is not the digest of a directory with something under it.
+    #[must_use]
+    pub fn under(&self, prefix: &str) -> String {
+        self.under_matching(prefix, |_path| true)
+    }
+
+    /// The digest of the files under `prefix` that `wanted` accepts.
+    #[must_use]
+    pub fn under_matching(&self, prefix: &str, wanted: impl Fn(&str) -> bool) -> String {
+        fold(TREE_DOMAIN, &self.paths_under(prefix, wanted))
+    }
+
+    /// The files under `prefix` that `wanted` accepts, with their digests.
+    #[must_use]
+    pub fn paths_under(
+        &self,
+        prefix: &str,
+        wanted: impl Fn(&str) -> bool,
+    ) -> BTreeMap<String, String> {
+        let inside = format!("{}/", prefix.trim_end_matches('/'));
+        self.entries
+            .iter()
+            .filter(|(path, _)| prefix.is_empty() || path.starts_with(&inside))
+            .filter(|(path, _)| wanted(path))
+            .map(|(path, value)| (path.clone(), value.clone()))
+            .collect()
+    }
 }
 
 /// Why the tree could not be read.
@@ -163,6 +195,7 @@ pub fn scan(root: &Path, exclude: &[Pattern], elsewhere: &[&Path]) -> Result<Sca
         corpus: fold(CORPUS_DOMAIN, &corpus),
         files,
         bytes,
+        entries: tree,
     })
 }
 

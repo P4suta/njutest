@@ -59,6 +59,8 @@ pub struct Request {
     pub changed: Option<git::Change>,
     /// Where scheduling state for an interrupted run is kept. `None` keeps none, which is what a run told to establish everything afresh does.
     pub checkpoints: Option<PathBuf>,
+    /// Where what earlier runs established about individual mutants is kept. `None` establishes everything afresh.
+    pub evidence_store: Option<PathBuf>,
 }
 
 /// What one run produced.
@@ -151,6 +153,7 @@ pub fn run(
                 request,
                 environment,
                 baseline: &baseline,
+                metadata: &metadata,
                 restore: restore.as_ref(),
                 journal: &mut journal,
             },
@@ -503,6 +506,7 @@ struct Mutating<'a> {
     request: &'a Request,
     environment: &'a Environment,
     baseline: &'a baseline::Baseline,
+    metadata: &'a Metadata,
     restore: Option<&'a crate::checkpoint::State>,
     journal: &'a mut Journal,
 }
@@ -530,6 +534,7 @@ fn run_mutation(
             instrumented: mutating.baseline.instrumented.clone(),
             accepted: accepted.clone(),
             test_args: mutating.request.test_args.clone(),
+            evidence: evidence_of(mutating),
         },
         &mut mutation::Resume {
             state: mutating.restore,
@@ -585,6 +590,60 @@ fn prepare(
     )?)
 }
 
+/// Where this run reads and writes what is established about individual mutants, or nothing when it may not.
+///
+/// Reuse is confined to a run that looked at the whole project with no
+/// configured resources: a run that looked at less established less, and a
+/// resource a run started is a fact about the world its tests ran in that no
+/// key covers.
+fn evidence_of(mutating: &Mutating<'_>) -> Option<mutation::Evidence> {
+    let request = mutating.request;
+    let root = request.evidence_store.as_ref()?;
+    if mutating.report.run_kind != RunKind::Full || !request.config.resources.is_empty() {
+        return None;
+    }
+    let keying = request.evidence.keying.as_ref()?;
+    let mut standing = crate::evidence::store::Standing::default();
+    let mut names = std::collections::BTreeMap::new();
+    for measured in &mutating.baseline.targets {
+        if measured.status != TargetStatus::Passed || measured.restored {
+            continue;
+        }
+        let Some(id) = package_id(mutating.metadata, &measured.target.package) else {
+            continue;
+        };
+        let linked = crate::evidence::key::linked_by(
+            &crate::evidence::key::Reading {
+                metadata: mutating.metadata,
+                scan: &keying.scan,
+                root: &request.root,
+                dependencies: &keying.dependencies,
+            },
+            &id,
+        );
+        standing.passing.insert(
+            measured.target.id.clone(),
+            crate::evidence::key::behaviour(&linked, &keying.common),
+        );
+        names.insert(measured.target.id.clone(), measured.target.name());
+    }
+    Some(mutation::Evidence {
+        root: root.clone(),
+        run_id: request.run_id.clone(),
+        standing,
+        names,
+    })
+}
+
+/// The package id cargo gave the package called `name`.
+fn package_id(metadata: &Metadata, name: &str) -> Option<String> {
+    metadata
+        .packages
+        .iter()
+        .find(|package| package.name == name)
+        .map(|package| package.id.clone())
+}
+
 /// The files a change set names, as patterns the engine mutates within. An empty list is every file, so a change set that names no Rust file at all gets one pattern nothing matches: a run about nothing changing must mutate nothing, not everything.
 fn within(change: Option<&git::Change>) -> Vec<rust_mutants::glob::Pattern> {
     let Some(change) = change else {
@@ -626,8 +685,8 @@ fn record(report: &mut Report, mutation: &mutation::Mutation, accepted: &BTreeSe
             rule: judged.rule.clone(),
             outcome: judged.disposition.name().to_owned(),
             killed_by: judged.disposition.decided_by().map(ToOwned::to_owned),
-            reused: false,
-            source_run_id: None,
+            reused: judged.source_run_id.is_some(),
+            source_run_id: judged.source_run_id.clone(),
         })
         .collect();
     report.findings.extend(mutation.findings(accepted));

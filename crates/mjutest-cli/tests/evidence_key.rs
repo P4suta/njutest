@@ -1,0 +1,216 @@
+// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! The behaviour key of one target: everything that could change what it does, and nothing else.
+
+use std::collections::BTreeMap;
+
+use mjutest_cli::evidence::key::{
+    Common, Linked, Reading, behaviour, linked_by, reads_directories_under, suite,
+};
+use mjutest_cli::evidence::tree::scan;
+use mjutest_devkit::repo::Repo;
+use rust_mutants::cargo::Metadata;
+
+fn common() -> Common {
+    Common {
+        toolchain: "rustc 1.98.0".to_owned(),
+        platform: "x86_64-unknown-linux-gnu".to_owned(),
+        environment: vec![("RUSTFLAGS".to_owned(), "-Copt-level=1".to_owned())],
+        contract: "standard-v1".to_owned(),
+        test_args: vec!["--test-threads=1".to_owned()],
+        features: vec!["a".to_owned()],
+        timeout_ms: 600_000,
+        versions: vec!["mjutest 0.1.0".to_owned(), "rust-mutants 0.1.0".to_owned()],
+        corpus: "c".repeat(64),
+    }
+}
+
+fn linked() -> Linked {
+    Linked {
+        packages: vec!["demo@0.1.0".to_owned(), "serde@1.0.0".to_owned()],
+        sources: BTreeMap::from([("demo@0.1.0".to_owned(), "a".repeat(64))]),
+        dependencies: "b".repeat(64),
+        reads_directories: false,
+        tree: "d".repeat(64),
+    }
+}
+
+#[test]
+fn every_key_is_sixty_four_hex_and_a_function_of_its_inputs() {
+    let value = behaviour(&linked(), &common());
+    assert_eq!(value.len(), 64);
+    assert_eq!(value, behaviour(&linked(), &common()));
+    assert_ne!(
+        value,
+        suite(&linked(), &common()),
+        "what one target does is not what a package suite does"
+    );
+}
+
+/// One thing that changes, what it links, and what the run shares.
+type Case = (&'static str, Linked, Common);
+
+/// One change to what every key of a run shares.
+type Shared = (&'static str, fn(&mut Common));
+
+#[test]
+fn a_key_covers_everything_that_could_change_what_the_target_does() {
+    let base = behaviour(&linked(), &common());
+    let mut cases: Vec<Case> = Vec::new();
+
+    let mut one = linked();
+    one.packages.push("extra@1.0.0".to_owned());
+    cases.push(("a package it links", one, common()));
+    let mut one = linked();
+    one.sources.insert("demo@0.1.0".to_owned(), "e".repeat(64));
+    cases.push(("the sources of one of them", one, common()));
+    let mut one = linked();
+    one.dependencies = "e".repeat(64);
+    cases.push(("what the lock file resolved", one, common()));
+
+    let changes: [Shared; 9] = [
+        ("the toolchain", |c| {
+            c.toolchain = "rustc 1.99.0".to_owned();
+        }),
+        ("the platform", |c| {
+            c.platform = "aarch64-apple-darwin".to_owned();
+        }),
+        ("the environment", |c| {
+            c.environment.push(("CC".to_owned(), "clang".to_owned()));
+        }),
+        ("the contract", |c| c.contract = "deep-v1".to_owned()),
+        ("the harness arguments", |c| c.test_args.clear()),
+        ("the features", |c| c.features.push("b".to_owned())),
+        ("the timeout", |c| c.timeout_ms = 1),
+        ("the versions", |c| {
+            c.versions.push("something 9".to_owned());
+        }),
+        ("the corpus", |c| c.corpus = "e".repeat(64)),
+    ];
+    for (what, apply) in changes {
+        let mut shared = common();
+        apply(&mut shared);
+        cases.push((what, linked(), shared));
+    }
+
+    for (what, one, other) in cases {
+        assert_ne!(
+            behaviour(&one, &other),
+            base,
+            "{what} did not change the key"
+        );
+    }
+}
+
+#[test]
+fn the_order_a_process_listed_its_environment_in_is_not_a_fact_about_the_target() {
+    let mut reversed = common();
+    reversed
+        .environment
+        .push(("CC".to_owned(), "clang".to_owned()));
+    let mut forwards = reversed.clone();
+    forwards.environment.reverse();
+    assert_eq!(
+        behaviour(&linked(), &reversed),
+        behaviour(&linked(), &forwards)
+    );
+}
+
+#[test]
+fn a_package_that_reads_a_directory_keys_on_the_whole_tree() {
+    let mut reading = linked();
+    reading.reads_directories = true;
+    let one = behaviour(&reading, &common());
+    assert_ne!(one, behaviour(&linked(), &common()));
+
+    let mut elsewhere = reading;
+    elsewhere.tree = "e".repeat(64);
+    assert_ne!(
+        behaviour(&elsewhere, &common()),
+        one,
+        "a file anywhere in the tree can change what it reads"
+    );
+
+    let mut not_reading = linked();
+    not_reading.tree = "e".repeat(64);
+    assert_eq!(
+        behaviour(&not_reading, &common()),
+        behaviour(&linked(), &common()),
+        "a package that reads only the files it names is not keyed on the rest of the tree"
+    );
+}
+
+#[test]
+fn what_reads_a_directory_is_found_in_the_source_rather_than_guessed_at() {
+    let repo = Repo::new();
+    repo.package("demo").lib("pub fn f() {}\n");
+    let scanned = scan(repo.root(), &[], &[]).expect("the tree reads");
+    assert!(!reads_directories_under(repo.root(), &scanned, ""));
+
+    repo.write(
+        "src/listing.rs",
+        "pub fn all() -> usize { std::fs::read_dir(\".\").into_iter().count() }\n",
+    );
+    let scanned = scan(repo.root(), &[], &[]).expect("the tree reads");
+    assert!(
+        reads_directories_under(repo.root(), &scanned, ""),
+        "a package whose result depends on what is in a directory keys the whole tree"
+    );
+    assert!(
+        !reads_directories_under(repo.root(), &scanned, "tests"),
+        "and one that does not is not keyed on it"
+    );
+}
+
+#[test]
+fn what_a_target_links_is_read_from_the_resolved_graph() {
+    let repo = Repo::new();
+    repo.package("demo").lib("pub fn f() {}\n");
+    let scanned = scan(repo.root(), &[], &[]).expect("the tree reads");
+    let document = format!(
+        r#"{{
+          "version": 1,
+          "workspace_root": "{root}",
+          "target_directory": "{root}/target",
+          "workspace_members": ["demo 0.1.0 (path+file://{root})"],
+          "packages": [
+            {{ "id": "demo 0.1.0 (path+file://{root})", "name": "demo", "version": "0.1.0",
+               "manifest_path": "{root}/Cargo.toml" }},
+            {{ "id": "far 1.0.0 (registry+x)", "name": "far", "version": "1.0.0",
+               "manifest_path": "/elsewhere/Cargo.toml" }}
+          ],
+          "resolve": {{
+            "root": null,
+            "nodes": [
+              {{ "id": "demo 0.1.0 (path+file://{root})",
+                 "deps": [{{ "pkg": "far 1.0.0 (registry+x)", "dep_kinds": [{{ "kind": null }}] }}] }},
+              {{ "id": "far 1.0.0 (registry+x)", "deps": [] }}
+            ]
+          }}
+        }}"#,
+        root = repo.root().display()
+    );
+    let metadata = Metadata::parse(document.as_bytes()).expect("the document parses");
+    let dependencies = "b".repeat(64);
+    let linked = linked_by(
+        &Reading {
+            metadata: &metadata,
+            scan: &scanned,
+            root: repo.root(),
+            dependencies: &dependencies,
+        },
+        &format!("demo 0.1.0 (path+file://{})", repo.root().display()),
+    );
+    assert_eq!(linked.packages, ["demo@0.1.0", "far@1.0.0"]);
+    assert!(
+        linked.sources.contains_key("demo@0.1.0"),
+        "a package in the tree is keyed on its own sources: {linked:?}"
+    );
+    assert!(
+        !linked.sources.contains_key("far@1.0.0"),
+        "a package outside the tree is keyed on what the lock file says its bytes are"
+    );
+    assert_eq!(linked.dependencies, "b".repeat(64));
+    assert!(!linked.reads_directories);
+}

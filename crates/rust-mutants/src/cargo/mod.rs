@@ -24,7 +24,7 @@ pub use locate::{LocateOptions, Toolchain, command_failed, resolve_executable};
 pub use messages::{
     Artifact, CompilerMessage, Diagnostic, DiagnosticSpan, Message, Profile, parse_messages,
 };
-pub use metadata::{Metadata, MetadataOptions, Package, Target};
+pub use metadata::{DepKind, Metadata, MetadataOptions, Node, NodeDep, Package, Resolve, Target};
 pub use version::{VersionInfo, parse_version};
 
 /// Everything a cargo command needs besides its arguments: the toolchain, the directory to run in, the cancellation flag, and the trace.

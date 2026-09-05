@@ -24,6 +24,7 @@ fn inputs() -> Inputs {
         ],
         contract: Contract::StandardV1,
         configuration: "d".repeat(64),
+        test_args: vec!["--nocapture".to_owned()],
         mode: Mode::Full,
     }
 }
@@ -127,6 +128,9 @@ fn the_identity_is_a_function_of_everything_that_can_change_what_the_tests_say()
     let mut one = inputs();
     one.configuration = "e".repeat(64);
     cases.push(("configuration", one));
+    let mut one = inputs();
+    one.test_args.push("--test-threads=1".to_owned());
+    cases.push(("the harness arguments", one));
     let mut one = inputs();
     one.mode = Mode::Scoped {
         packages: vec!["a".to_owned()],

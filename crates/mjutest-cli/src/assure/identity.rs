@@ -8,7 +8,8 @@ use std::path::Path;
 
 use crate::config::Config;
 use crate::evidence::digest::{Inputs, Mode, identity};
-use crate::evidence::tree::{ScanError, dependencies_of, scan};
+use crate::evidence::key::Common;
+use crate::evidence::tree::{Scan, ScanError, dependencies_of, scan};
 
 /// Environment variables that change what the compiler produces, by name.
 pub const SELECTED_NAMES: [&str; 9] = [
@@ -33,6 +34,19 @@ pub struct Evidence {
     pub identity: String,
     /// The digest of the tree under verification alone.
     pub tree: String,
+    /// What a behaviour key is computed from, when the tree could be read.
+    pub keying: Option<Keying>,
+}
+
+/// What every behaviour key of one run is computed from: the tree it read, what the lock file resolved, and what every key of the run shares.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Keying {
+    /// The tree, file by file.
+    pub scan: Scan,
+    /// The digest of the resolved dependencies.
+    pub dependencies: String,
+    /// What every key shares.
+    pub common: Common,
 }
 
 impl Evidence {
@@ -71,7 +85,7 @@ pub struct Machine<'a> {
 ///
 /// # Errors
 /// Returns what could not be read about the tree.
-pub fn inputs(asked: &Asked<'_>, mode: Mode) -> Result<Inputs, ScanError> {
+pub fn inputs(asked: &Asked<'_>, mode: Mode, test_args: &[String]) -> Result<Inputs, ScanError> {
     let Asked {
         root,
         config,
@@ -90,6 +104,7 @@ pub fn inputs(asked: &Asked<'_>, mode: Mode) -> Result<Inputs, ScanError> {
         environment: selected(vars, &config.execution.environment),
         contract: config.contract,
         configuration: config.digest(),
+        test_args: test_args.to_vec(),
         mode,
     })
 }
@@ -98,11 +113,30 @@ pub fn inputs(asked: &Asked<'_>, mode: Mode) -> Result<Inputs, ScanError> {
 ///
 /// # Errors
 /// Returns what could not be read about the tree.
-pub fn of(asked: &Asked<'_>, mode: Mode) -> Result<Evidence, ScanError> {
-    let read = inputs(asked, mode)?;
+pub fn of(asked: &Asked<'_>, mode: Mode, common: Common) -> Result<Evidence, ScanError> {
+    let exclude = compiled(asked.config);
+    let scanned = scan(asked.root, &exclude, asked.elsewhere)?;
+    let dependencies = dependencies_of(asked.root)?;
+    let read = Inputs {
+        tree: scanned.tree.clone(),
+        corpus: scanned.corpus.clone(),
+        dependencies: dependencies.clone(),
+        toolchain: asked.machine.toolchain.to_owned(),
+        platform: asked.machine.platform.to_owned(),
+        environment: selected(asked.vars, &asked.config.execution.environment),
+        contract: asked.config.contract,
+        configuration: asked.config.digest(),
+        test_args: common.test_args.clone(),
+        mode,
+    };
     Ok(Evidence {
         identity: identity(&read),
         tree: read.tree.clone(),
+        keying: Some(Keying {
+            scan: scanned,
+            dependencies,
+            common,
+        }),
     })
 }
 

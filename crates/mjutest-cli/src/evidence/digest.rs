@@ -130,6 +130,8 @@ pub struct Inputs {
     pub contract: Contract,
     /// The digest of the effective configuration.
     pub configuration: String,
+    /// The arguments the command line gave the test binaries, which the configuration does not carry.
+    pub test_args: Vec<String>,
     /// How much of the workspace the run looked at.
     pub mode: Mode,
 }
@@ -155,6 +157,7 @@ pub fn identity(inputs: &Inputs) -> String {
         )
         .field("contract", contract_name(inputs.contract))
         .field("configuration", &inputs.configuration)
+        .list("test-args", &inputs.test_args)
         .field("mode", inputs.mode.name())
         .list("mode-detail", inputs.mode.detail());
     fields.finish()

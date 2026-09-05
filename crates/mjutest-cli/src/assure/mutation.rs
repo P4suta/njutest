@@ -4,6 +4,7 @@
 //! Asking, of every mutation the compiler accepted, whether any test would notice it.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::PathBuf;
 
 use rust_mutants::catalog::Mutant;
 use rust_mutants::outcome::Outcome;
@@ -12,6 +13,7 @@ use rust_mutants::session::{Request, Session};
 use crate::assure::baseline::Measured;
 use crate::assure::route::{self, Route};
 use crate::coverage::Block;
+use crate::evidence::store;
 use crate::report::{Finding, FindingKind, MutantAccounting, TargetStatus};
 use crate::ui::Notes;
 use crate::watch::Watch;
@@ -147,6 +149,8 @@ pub struct Judged {
     pub position: Option<crate::report::Position>,
     /// What was established.
     pub disposition: Disposition,
+    /// The run that established it, when it was not this one.
+    pub source_run_id: Option<String>,
 }
 
 /// What the mutation phase established, whole.
@@ -174,6 +178,9 @@ impl Mutation {
                 Disposition::Killed { .. } => {
                     counts.executed = counts.executed.saturating_add(1);
                     counts.killed = counts.killed.saturating_add(1);
+                    if judged.source_run_id.is_some() {
+                        counts.reused_killed = counts.reused_killed.saturating_add(1);
+                    }
                 }
                 Disposition::TimedOut { .. } => {
                     counts.executed = counts.executed.saturating_add(1);
@@ -182,6 +189,9 @@ impl Mutation {
                 Disposition::Survived { .. } => {
                     counts.executed = counts.executed.saturating_add(1);
                     counts.survived = counts.survived.saturating_add(1);
+                    if judged.source_run_id.is_some() {
+                        counts.reused_survived = counts.reused_survived.saturating_add(1);
+                    }
                     if accepted.contains(&judged.id) {
                         counts.accepted = counts.accepted.saturating_add(1);
                     }
@@ -273,6 +283,31 @@ pub struct MutationOptions {
     pub accepted: BTreeSet<String>,
     /// Arguments for the test binaries.
     pub test_args: Vec<String>,
+    /// What earlier runs established about individual mutants, and what this run knows of the targets they name. `None` for a run that establishes everything itself.
+    pub evidence: Option<Evidence>,
+}
+
+/// Where a run reads and writes what is established about individual mutants.
+#[derive(Debug, Clone)]
+pub struct Evidence {
+    /// The directory records live in.
+    pub root: PathBuf,
+    /// This run, which is what a record it writes names.
+    pub run_id: String,
+    /// The behaviour key of every target this run's baseline saw pass on the original tree, by target identity.
+    pub standing: store::Standing,
+    /// What a person calls each of those targets, by identity. A record names identities, because a name is what a reader reads and an identity is what a route decides.
+    pub names: BTreeMap<String, String>,
+}
+
+impl Evidence {
+    /// The identity of the target a person calls `name`.
+    fn identity(&self, name: &str) -> Option<&str> {
+        self.names
+            .iter()
+            .find(|(_id, called)| called.as_str() == name)
+            .map(|(id, _called)| id.as_str())
+    }
 }
 
 /// Runs every accepted mutant against the tests that could notice it.
@@ -361,6 +396,7 @@ pub fn run_resuming(
             column: at.byte_column,
             character_column: at.char_column,
         });
+        let mut source: Option<String> = None;
         let disposition = if let Some(saved) = resume
             .state
             .and_then(|state| state.mutant(&mutant.id))
@@ -372,25 +408,15 @@ pub fn run_resuming(
                 diagnostic: (*diagnostic).to_owned(),
             }
         } else {
-            let route = route::route(
-                &mutant.candidate.path,
-                position.map(|at| crate::coverage::Point {
-                    line: at.line,
-                    column: at.column,
-                }),
-                baseline,
-                &options.instrumented,
-            );
-            watch.trace.note(
-                "route",
-                &format!(
-                    "{} {} {} targets",
-                    mutant.display_id,
-                    route.granularity(),
-                    route.reaching().len()
-                ),
-            );
-            judge(&mut judging, mutant, route)?
+            let route = routed(mutant, position, baseline, &judging);
+            if let Some((disposition, run_id)) = reuse(options, &route, &mutant.id) {
+                source = Some(run_id);
+                disposition
+            } else {
+                let established = judge(&mut judging, mutant, route.clone())?;
+                keep(options, &mutant.id, &route, &established);
+                established
+            }
         };
 
         let judged = Judged {
@@ -400,12 +426,98 @@ pub fn run_resuming(
             rule: mutant.candidate.rule.to_string(),
             position,
             disposition,
+            source_run_id: source,
         };
         (resume.record)(&judged);
         mutation.judged.push(judged);
     }
     phase.end();
     Ok(mutation)
+}
+
+/// The tests that could notice this mutant, and a note in the trace saying how they were chosen.
+fn routed(
+    mutant: &Mutant,
+    position: Option<crate::report::Position>,
+    baseline: &[Measured],
+    judging: &Judging<'_>,
+) -> Route {
+    let route = route::route(
+        &mutant.candidate.path,
+        position.map(|at| crate::coverage::Point {
+            line: at.line,
+            column: at.column,
+        }),
+        baseline,
+        &judging.options.instrumented,
+    );
+    judging.watch.trace.note(
+        "route",
+        &format!(
+            "{} {} {} targets",
+            mutant.display_id,
+            route.granularity(),
+            route.reaching().len()
+        ),
+    );
+    route
+}
+
+/// What an earlier run established about this mutant, when this run may believe it.
+fn reuse(options: &MutationOptions, route: &Route, mutant: &str) -> Option<(Disposition, String)> {
+    let evidence = options.evidence.as_ref()?;
+    let record = store::read(&evidence.root, mutant).ok()??;
+    let reaching: BTreeSet<String> = route.reaching().iter().cloned().collect();
+    record.believable(&reaching, &evidence.standing).ok()?;
+    let disposition = match &record.outcome {
+        store::Outcome::Killed { target, .. } => Disposition::Killed {
+            by: evidence
+                .names
+                .get(target)
+                .cloned()
+                .unwrap_or_else(|| target.clone()),
+        },
+        store::Outcome::Survived { .. } => Disposition::Survived {
+            route: route.clone(),
+        },
+    };
+    Some((disposition, record.run_id))
+}
+
+/// Records what this run established, for the next run of a tree these targets still behave the same in. Only a named kill and a survival are recorded: everything else is about the run rather than about the mutant.
+fn keep(options: &MutationOptions, mutant: &str, route: &Route, disposition: &Disposition) {
+    let Some(evidence) = options.evidence.as_ref() else {
+        return;
+    };
+    let outcome = match disposition {
+        Disposition::Killed { by } => {
+            let Some(target) = evidence.identity(by) else {
+                return;
+            };
+            let Some(key) = evidence.standing.passing.get(target) else {
+                return;
+            };
+            store::Outcome::Killed {
+                target: target.to_owned(),
+                key: key.clone(),
+            }
+        }
+        Disposition::Survived { .. } => {
+            let mut targets = BTreeMap::new();
+            for target in route.reaching() {
+                let Some(key) = evidence.standing.passing.get(target) else {
+                    return;
+                };
+                targets.insert(target.clone(), key.clone());
+            }
+            store::Outcome::Survived { targets }
+        }
+        _ => return,
+    };
+    drop(store::write(
+        &evidence.root,
+        &store::record(mutant, &evidence.run_id, outcome),
+    ));
 }
 
 /// The disposition a checkpoint's record stands for, or nothing when this release does not inherit it.

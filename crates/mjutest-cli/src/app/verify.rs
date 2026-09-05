@@ -164,6 +164,7 @@ fn establish(establishing: &Establishing<'_>, streams: Streams<'_>) -> u8 {
         evidence: evidence.clone(),
         changed: establishing.changed.clone(),
         checkpoints: (!arguments.no_cache).then(|| store.root().join(CHECKPOINTS)),
+        evidence_store: (!arguments.no_cache).then(|| store.root().to_path_buf()),
     };
     let result = {
         let mut notes = ui::Notes::of(arguments.ui, stderr);
@@ -292,17 +293,30 @@ fn evidence_of(
         toolchain: &toolchain.to_string(),
         platform: toolchain.host(),
     };
-    identity::of(
-        &identity::Asked {
-            root,
-            config,
-            machine: &machine,
-            vars: &environment.vars,
-            elsewhere: &[&environment.cache_directory],
-        },
-        mode,
-    )
-    .unwrap_or_default()
+    let asked = identity::Asked {
+        root,
+        config,
+        machine: &machine,
+        vars: &environment.vars,
+        elsewhere: &[&environment.cache_directory],
+    };
+    let common = crate::evidence::key::Common {
+        toolchain: machine.toolchain.to_owned(),
+        platform: machine.platform.to_owned(),
+        environment: identity::inputs(&asked, mode.clone(), &arguments.test_args)
+            .map(|read| read.environment)
+            .unwrap_or_default(),
+        contract: format!("{:?}", config.contract).to_lowercase(),
+        test_args: arguments.test_args.clone(),
+        features: config.execution.features.clone(),
+        timeout_ms: u64::try_from(config.execution.timeout.as_millis()).unwrap_or(u64::MAX),
+        versions: vec![
+            format!("mjutest {}", crate::VERSION),
+            format!("rust-mutants {}", rust_mutants::VERSION),
+        ],
+        corpus: String::new(),
+    };
+    identity::of(&asked, mode, common).unwrap_or_default()
 }
 
 /// The store of earlier answers, bounded the way the configuration says.
