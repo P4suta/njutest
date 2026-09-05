@@ -16,7 +16,16 @@
 
 #![forbid(unsafe_code)]
 
+pub mod catalog;
 pub mod error;
+pub mod flatten;
+pub mod glob;
+pub mod id;
+pub mod interval;
+pub mod outcome;
+pub mod rule;
+pub mod span;
+pub mod splice;
 
 pub use error::{EngineError, ErrorCode};
 

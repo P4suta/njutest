@@ -6,7 +6,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 # Operators
 
 **Status: designed, not implemented.** The v1 table, fixed before the code:
-eleven families, thirty-three rules, named `family` / `rule@version`. The
+eleven families, thirty-six rules, named `family` / `rule@version`. The
 version enters the mutant identity, so changing a rule's output is a new
 version and every old identity lapses with it.
 
