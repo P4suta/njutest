@@ -18,6 +18,7 @@ pub mod cli;
 pub mod config;
 pub mod coverage;
 pub mod error;
+pub mod report;
 pub mod targets;
 pub mod watch;
 

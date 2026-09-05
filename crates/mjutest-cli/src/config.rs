@@ -21,7 +21,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::error::{self, ErrorCode};
 
@@ -56,7 +56,7 @@ pub const ALLOWED_TEST_ARGS: [&str; 4] = [
 pub const RESERVED_ENV_PREFIX: &str = "RUST_TEST_";
 
 /// Which assurance contract a run answers to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Contract {
     /// The soundness phase is a static inventory, and a non-empty one is a

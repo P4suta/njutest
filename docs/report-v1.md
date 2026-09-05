@@ -5,8 +5,9 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # Assurance report v1
 
-**Status: contract only.** Implemented in M2 (JSON, schema, lines) and M3
-(HTML, SARIF, JUnit).
+**Status: the model and its audit are implemented; the projections arrive
+with the phases that fill them** — JSON, schema, and lines in M2, HTML,
+SARIF, and JUnit in M3.
 
 The first public report contract is `mjutest-assurance-report-v1`. The
 schema value names the toolchain so a reader never confuses it with goatest's
@@ -70,10 +71,16 @@ accounting carries `reused_killed` and `reused_survived`, each part of
 ## Positions
 
 Every position in a report — a mutant's, a coverage region's, a finding's —
-is a 1-based line and a 1-based column. The column unit (UTF-8 byte or Unicode
-scalar) is fixed by the coverage contract in M2, when `llvm-cov`'s convention
-is measured against the engine's on a non-ASCII fixture; until then a report
-carries no positions.
+is a 1-based `line` with **two** 1-based columns: `column`, counted in UTF-8
+bytes, and `character_column`, counted in Unicode scalars.
+
+Two are carried because one toolchain uses both and neither is a safe
+default. Measured on `fixtures/fixture-unicode`: an `llvm-cov` coverage
+region's columns are **bytes**, and a rustc diagnostic's columns are
+**characters**. A report that carried one unit would make every consumer
+guess which, and a consumer that guessed wrong would point at the wrong
+place in exactly the files where it matters. Both are derived from the same
+byte offset, so they cannot disagree.
 
 ## Projections
 
