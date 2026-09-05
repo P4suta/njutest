@@ -113,7 +113,7 @@ pub fn run(
 
     notes.phase("soundness");
     take_inventory(&mut report, request, &metadata);
-    interpreted(&mut report, request, (&toolchain, environment), watch)?;
+    deepened(&mut report, request, (&toolchain, environment), watch)?;
     let layer = layer_for(&toolchain, environment, &scratch, notes)?;
 
     let mut resources = holding(request, environment, &mut report, (notes, watch))?;
@@ -188,12 +188,13 @@ fn surveyed(
     report.scope.resolved_packages = resolved(request, &report.repository.packages);
 }
 
-/// Interprets the suite under Miri when the contract promises it.
+/// What the `deep-v1` contract adds to a run: the suite interpreted under Miri, and run again under every sanitizer the configuration asks for.
 ///
 /// # Errors
 /// A toolchain with no Miri, which a contract that promises interpretation
-/// cannot answer for.
-fn interpreted(
+/// cannot answer for. A sanitizer that will not run is a limitation, because
+/// it is asked for by configuration rather than promised by the contract.
+fn deepened(
     report: &mut Report,
     request: &Request,
     with: (&rust_mutants::cargo::Toolchain, &Environment),
@@ -218,6 +219,22 @@ fn interpreted(
     report.accounting.soundness.executed = done.executed;
     report.findings.extend(done.findings);
     report.limitations.extend(done.limitations);
+
+    let checked = super::sanitize::sanitize(
+        &super::sanitize::Sanitizing {
+            root: &request.root,
+            cargo: toolchain.cargo(),
+            host: toolchain.host(),
+            env: environment.vars.clone(),
+            packages: &report.scope.resolved_packages,
+            sanitizers: &request.config.soundness.sanitizers,
+            timeout: Some(request.config.execution.timeout),
+            offline: request.cargo.offline,
+        },
+        watch,
+    );
+    report.findings.extend(checked.findings);
+    report.limitations.extend(checked.limitations);
     Ok(())
 }
 
