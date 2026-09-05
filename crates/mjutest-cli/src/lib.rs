@@ -14,6 +14,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod app;
 pub mod build_cache;
 pub mod cli;
 pub mod config;
@@ -32,18 +33,24 @@ use std::process::ExitCode;
 /// The version of this runner, as recorded in every report.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// Runs the command line described by `args` (program name first) and
-/// returns its exit code, writing to the two streams it was given.
+/// Runs the command line described by `args` (program name first) in
+/// `environment` and returns its exit code, writing to the two streams it
+/// was given.
 ///
 /// Exit codes: `0` an assured, resolved, or completed operation; `1`
 /// `DEFECT` or `REPRODUCED`; `2` `INSUFFICIENT`; `3` `ERROR`, invalid input,
 /// or an infrastructure failure; `130` interrupted; `143` terminated.
-pub fn run_from<I>(args: I, stdout: &mut dyn Write, stderr: &mut dyn Write) -> ExitCode
+pub fn run_from<I>(
+    args: I,
+    environment: &cli::Environment,
+    stdout: &mut dyn Write,
+    stderr: &mut dyn Write,
+) -> ExitCode
 where
     I: IntoIterator<Item = OsString>,
 {
     match cli::parse(args) {
-        Ok(_request) => ExitCode::from(cli::EXIT_ASSURED),
+        Ok(request) => ExitCode::from(app::run(&request, environment, stdout, stderr)),
         Err(usage) => {
             let stream: &mut dyn Write = if usage.to_stderr { stderr } else { stdout };
             // A closed stream is the reader's choice, not a failure of ours.

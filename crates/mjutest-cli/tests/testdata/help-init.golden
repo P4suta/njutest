@@ -1,0 +1,13 @@
+Write an annotated .mjutest.toml.
+
+The skeleton is the defaults with every other section as commented guidance, so loading it untouched
+configures exactly what configuring nothing would.
+
+Usage: mjutest init [OPTIONS]
+
+Options:
+      --force
+          Replace a configuration that is already there
+
+  -h, --help
+          Print help (see a summary with '-h')

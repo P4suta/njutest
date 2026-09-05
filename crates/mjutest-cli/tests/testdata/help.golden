@@ -5,7 +5,12 @@ paired kill confirmation, a soundness phase, targeted fuzzing, explicit integrat
 reviewable repair candidates. It reports a verdict — ASSURED, DEFECT, INSUFFICIENT, ERROR — and
 never a percentage.
 
-Usage: mjutest
+Usage: mjutest <COMMAND>
+
+Commands:
+  init    Write an annotated .mjutest.toml
+  doctor  Report the toolchain and the tools a run needs
+  help    Print this message or the help of the given subcommand(s)
 
 Options:
   -h, --help

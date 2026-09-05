@@ -77,6 +77,7 @@ first digit names an area:
 | `MJ1002` | The configuration file is not the document this version understands: an unknown key, a malformed value. |
 | `MJ1003` | The configuration says something a run cannot honour: a harness flag mjutest owns, an environment assignment, a resource that is both shared and exclusive, an acceptance without a reason. |
 | `MJ1004` | The configuration names a version this release does not understand. |
+| `MJ1005` | A configuration file is already there, and `init` was not told to replace it. |
 | `MJ3001` | A test binary could not be asked what tests it holds. |
 | `MJ4001` | A coverage export could not be read. |
 | `MJ4002` | The LLVM tools the toolchain ships are not installed (`rustup component add llvm-tools`). |

@@ -54,6 +54,11 @@ code!(
     "the configuration names a version this release does not understand"
 );
 code!(
+    CONFIG_EXISTS,
+    "MJ1005",
+    "a configuration file is already there"
+);
+code!(
     TARGET_LIST_FAILED,
     "MJ3001",
     "a test binary could not be asked what tests it holds"
@@ -148,6 +153,7 @@ pub const fn error_codes() -> &'static [ErrorCode] {
         CONFIG_UNPARSABLE,
         CONFIG_INVALID,
         CONFIG_UNSUPPORTED_VERSION,
+        CONFIG_EXISTS,
         TARGET_LIST_FAILED,
         COVERAGE_UNREADABLE,
         COVERAGE_TOOLS_MISSING,
