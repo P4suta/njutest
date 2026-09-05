@@ -50,6 +50,7 @@ pub fn dispatch(
             stdout,
         ),
         cli::Command::Cache { gc } => cache(*gc, environment, stdout),
+        cli::Command::Merge { reports, output } => merge(reports, output.as_deref(), stdout),
         _ => workspace_command(command, environment, stdout, cancel),
     }
 }
@@ -160,6 +161,7 @@ fn prepared(
             mutant,
             target,
             test,
+            shard,
             no_report,
             args,
             ..
@@ -181,6 +183,7 @@ fn prepared(
                 &Whole {
                     settings,
                     args,
+                    shard: shard.as_deref(),
                     no_report: *no_report,
                 },
                 cancel,
@@ -209,6 +212,7 @@ fn one(
 struct Whole<'a> {
     settings: &'a Settings,
     args: &'a [String],
+    shard: Option<&'a str>,
     no_report: bool,
 }
 
@@ -221,8 +225,10 @@ fn whole(
     let Whole {
         settings,
         args,
+        shard,
         no_report,
     } = *whole;
+    let shard = shard.map(run::Shard::parse).transpose()?;
     let started = Timestamp::now();
     let mut result = run::run(
         session,
@@ -230,6 +236,7 @@ fn whole(
             timeout: settings.config.mutation.timeout,
             expectations: &settings.config.mutation.expect,
             args,
+            shard,
         },
         cancel,
         &mut |judged, position, total| {
@@ -562,6 +569,39 @@ fn json_line<T: serde::Serialize>(value: &T) -> String {
         .unwrap_or_else(|error| format!("{{\"error\":{error:?}}}"));
     text.push('\n');
     text
+}
+
+/// Puts the reports of the parts of one catalog back together.
+fn merge(
+    reports: &[PathBuf],
+    output: Option<&Path>,
+    stdout: &mut dyn Write,
+) -> Result<u8, CliError> {
+    let mut parts = Vec::with_capacity(reports.len());
+    for path in reports {
+        let text = std::fs::read_to_string(path).map_err(|error| CliError::ReportMissing {
+            message: format!("{}: {error}", path.display()),
+        })?;
+        parts.push(
+            serde_json::from_str::<run_report::RunDocument>(&text).map_err(|error| {
+                CliError::ReportMissing {
+                    message: format!("{} is not a run report: {error}", path.display()),
+                }
+            })?,
+        );
+    }
+    let merged = run_report::merge(&parts).map_err(|error| CliError::ReportMissing {
+        message: error.to_string(),
+    })?;
+    let text = json_line(&merged);
+    match output {
+        Some(path) => {
+            std::fs::write(path, &text).map_err(|source| CliError::writing(path, source))?;
+            write(stdout, &run_report::lines(&merged));
+        }
+        None => write(stdout, &text),
+    }
+    Ok(merged.run.exit_code)
 }
 
 /// A closed stream is the reader's choice, not a failure of ours.

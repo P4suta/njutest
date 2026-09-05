@@ -61,6 +61,9 @@ pub enum Command {
         /// With `--mutant`, run only this test, by its libtest path.
         #[arg(long, value_name = "TEST", requires = "mutant")]
         test: Option<String>,
+        /// Run only this part of the catalog, as `K/N`. Every part of one tree cuts the same way, so the parts together are the whole.
+        #[arg(long, value_name = "K/N", conflicts_with = "mutant")]
+        shard: Option<String>,
         /// Do not write a run report under the report directory.
         #[arg(long, conflicts_with = "mutant")]
         no_report: bool,
@@ -106,6 +109,15 @@ pub enum Command {
         /// The workspace root. Defaults to the working directory.
         #[arg(long, value_name = "DIR")]
         root: Option<PathBuf>,
+    },
+    /// Combine the reports of the parts of one catalog into the report the whole would have written.
+    Merge {
+        /// The reports to combine, one per part.
+        #[arg(value_name = "REPORT", required = true)]
+        reports: Vec<PathBuf>,
+        /// Write the combined report here rather than to standard output.
+        #[arg(long, value_name = "FILE")]
+        output: Option<PathBuf>,
     },
     /// Read back a stored run report.
     Report {
@@ -217,9 +229,11 @@ impl Command {
             | Self::Explain { scope, .. }
             | Self::Instrument { scope, .. }
             | Self::WhySkipped { scope } => Some(scope),
-            Self::Init { .. } | Self::Doctor { .. } | Self::Report { .. } | Self::Cache { .. } => {
-                None
-            }
+            Self::Init { .. }
+            | Self::Doctor { .. }
+            | Self::Merge { .. }
+            | Self::Report { .. }
+            | Self::Cache { .. } => None,
         }
     }
 
@@ -230,7 +244,7 @@ impl Command {
             Self::Init { root, .. } | Self::Doctor { root } | Self::Report { root, .. } => {
                 root.as_ref()
             }
-            Self::Cache { .. } => None,
+            Self::Cache { .. } | Self::Merge { .. } => None,
             _ => match self.scope() {
                 Some(scope) => scope.root.as_ref(),
                 None => None,

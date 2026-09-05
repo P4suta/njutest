@@ -33,7 +33,8 @@
         "finished_at",
         "duration_ms",
         "interrupted",
-        "exit_code"
+        "exit_code",
+        "shard"
       ],
       "properties": {
         "id": {
@@ -49,6 +50,13 @@
           "type": "integer",
           "enum": [0, 1, 2, 130],
           "description": "0 every mutant was noticed, 1 something was not, 2 the run itself failed, 130 it was interrupted."
+        },
+        "shard": {
+          "oneOf": [
+            { "type": "null" },
+            { "type": "string", "pattern": "^[1-9][0-9]*/[1-9][0-9]*$" }
+          ],
+          "description": "Which part of the catalog the run was about, written K/N, and absent for the whole of it. The parts of one tree cut the same way, so a merge of them is what the whole would have written."
         }
       }
     },

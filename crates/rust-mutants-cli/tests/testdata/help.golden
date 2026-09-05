@@ -18,6 +18,8 @@ Commands:
   init         Write a `.rust-mutants.toml` whose every value is already the default
   doctor       Say what a run would find in this environment: the toolchain, the configuration, the
                temporary directory
+  merge        Combine the reports of the parts of one catalog into the report the whole would have
+               written
   report       Read back a stored run report
   cache        Say what the engine left in the temporary directory, and remove what no run still
                owns

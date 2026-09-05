@@ -47,6 +47,7 @@ fn document() -> RunDocument {
             duration_ms: 1000,
             interrupted: false,
             exit_code: 1,
+            shard: None,
         },
         workspace: WorkspaceDocument {
             root_name: "demo".to_owned(),

@@ -197,6 +197,8 @@ pub struct Run {
     pub refused: u32,
     /// Whether the run stopped because it was asked to.
     pub interrupted: bool,
+    /// Which part of the catalog this run was about, when it was about one.
+    pub shard: Option<Shard>,
     /// How long the executions took together.
     pub duration: Duration,
 }
@@ -334,7 +336,9 @@ fn detail(kind: FindingKind, one: &Judged) -> String {
     }
 }
 
-fn count(value: usize) -> u32 {
+/// One length as a count. A catalog larger than a `u32` is one no run could hold in memory to begin with.
+#[must_use]
+pub fn count(value: usize) -> u32 {
     u32::try_from(value).unwrap_or(u32::MAX)
 }
 
@@ -347,6 +351,77 @@ pub struct Options<'a> {
     pub expectations: &'a [Expectation],
     /// Further arguments for the harness.
     pub args: &'a [String],
+    /// Which part of the catalog this run is about. `None` is all of it.
+    pub shard: Option<Shard>,
+}
+
+/// One part of a catalog, for a run that shares the work with others.
+///
+/// The parts are cut by catalog index, which is dense and in the catalog's own
+/// order, so every run of the same tree cuts them the same way without any run
+/// having to know what the others chose. They balance by count rather than by
+/// cost: a shard holding the slow mutants is a shard that takes longer, and
+/// that is a thing to measure before it is a thing to solve.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Shard {
+    /// Which part, from one.
+    pub index: u32,
+    /// How many parts there are.
+    pub of: u32,
+}
+
+/// Why a shard is not one.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum ShardError {
+    /// The text is not `K/N`.
+    #[error("{text:?} is not a shard; write it as K/N, as in 1/4")]
+    Malformed {
+        /// The text as given.
+        text: String,
+    },
+    /// A count of zero parts, or a part outside them.
+    #[error("shard {index} of {of} is not a part of anything; K runs from 1 to N")]
+    OutOfRange {
+        /// The part asked for.
+        index: u32,
+        /// How many were said to exist.
+        of: u32,
+    },
+}
+
+impl Shard {
+    /// The shard `K/N` names.
+    ///
+    /// # Errors
+    /// See [`ShardError`].
+    pub fn parse(text: &str) -> Result<Self, ShardError> {
+        let malformed = || ShardError::Malformed {
+            text: text.to_owned(),
+        };
+        let (index, of) = text.split_once('/').ok_or_else(malformed)?;
+        let index: u32 = index.trim().parse().map_err(|_error| malformed())?;
+        let of: u32 = of.trim().parse().map_err(|_error| malformed())?;
+        if of == 0 || index == 0 || index > of {
+            return Err(ShardError::OutOfRange { index, of });
+        }
+        Ok(Self { index, of })
+    }
+
+    /// Whether the mutant at this catalog index belongs to this part.
+    #[must_use]
+    pub const fn holds(self, index: u32) -> bool {
+        match index.checked_rem(self.of) {
+            Some(part) => part == self.index.saturating_sub(1),
+            None => false,
+        }
+    }
+}
+
+impl std::fmt::Display for Shard {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}/{}", self.index, self.of)
+    }
 }
 
 /// Runs every accepted mutant of `session` once, retrying a timeout serially before believing it, and reports what the run established.
@@ -362,7 +437,12 @@ pub fn run(
     progress: &mut dyn FnMut(&Judged, u32, u32),
 ) -> Result<Run, EngineError> {
     let started = Instant::now();
-    let accepted: Vec<u32> = session.accepted().to_vec();
+    let accepted: Vec<u32> = session
+        .accepted()
+        .iter()
+        .copied()
+        .filter(|index| options.shard.is_none_or(|shard| shard.holds(*index)))
+        .collect();
     let total = count(accepted.len());
     let mut judged = Vec::with_capacity(accepted.len());
     let mut interrupted = false;
@@ -388,6 +468,7 @@ pub fn run(
             .fold(0u32, |total, skip| total.saturating_add(skip.count)),
         refused: count(session.rejections().len()),
         interrupted: interrupted || cancel.is_cancelled(),
+        shard: options.shard,
         duration: started.elapsed(),
     })
 }

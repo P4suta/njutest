@@ -46,6 +46,13 @@ pub enum CliError {
         /// The file that is in the way.
         path: PathBuf,
     },
+    /// A shard is not one.
+    #[error("{}: {source}", error::CONFIG_INVALID.code)]
+    Shard {
+        /// What is wrong with it.
+        #[source]
+        source: crate::run::ShardError,
+    },
     /// A file the command had to write could not be written.
     #[error("{}: writing {}: {source}", error::WRITE_FAILED.code, path.display())]
     WriteFailed {
@@ -55,6 +62,12 @@ pub enum CliError {
         #[source]
         source: std::io::Error,
     },
+}
+
+impl From<crate::run::ShardError> for CliError {
+    fn from(source: crate::run::ShardError) -> Self {
+        Self::Shard { source }
+    }
 }
 
 impl CliError {
@@ -67,6 +80,7 @@ impl CliError {
             Self::EnvironmentReserved { .. } => error::ENVIRONMENT_RESERVED,
             Self::ReportMissing { .. } => error::REPORT_MISSING,
             Self::FileExists { .. } => error::FILE_EXISTS,
+            Self::Shard { .. } => error::CONFIG_INVALID,
             Self::WriteFailed { .. } => error::WRITE_FAILED,
         }
     }

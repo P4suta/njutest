@@ -60,6 +60,16 @@ fn against(fixture: &Fixture, args: &[&str]) -> Output {
     command.output().expect("rust-mutants runs")
 }
 
+/// A command that takes no workspace, so no `--root` is added to it.
+fn rootless(fixture: &Fixture, args: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_rust-mutants"))
+        .args(args)
+        .env("NO_COLOR", "1")
+        .env("TMPDIR", &fixture.temp)
+        .output()
+        .expect("rust-mutants runs")
+}
+
 fn stdout(output: &Output) -> String {
     String::from_utf8_lossy(&output.stdout).into_owned()
 }
@@ -365,4 +375,127 @@ fn cache_says_what_a_run_left_in_the_temporary_directory_and_gc_reclaims_it() {
         .map(|entry| entry.path())
         .collect();
     assert!(left.is_empty(), "gc collects the caches: {left:?}");
+}
+
+#[test]
+fn a_shard_is_not_a_shard_unless_it_names_a_part_of_something() {
+    let fixture = fixture("fixture-simple");
+    for bad in ["0/2", "3/2", "1/0", "one/two", "2", ""] {
+        let output = against(&fixture, &["run", "--offline", "--locked", "--shard", bad]);
+        assert_eq!(
+            output.status.code(),
+            Some(2),
+            "{bad:?} is not a shard: {}",
+            stdout(&output)
+        );
+    }
+}
+
+#[test]
+fn the_parts_of_a_catalog_put_back_together_are_the_whole_of_it() {
+    let whole_fixture = fixture("fixture-simple");
+    let output = against(
+        &whole_fixture,
+        &["run", "--offline", "--locked", "--tier", "all"],
+    );
+    assert_eq!(output.status.code(), Some(1), "{}", stdout(&output));
+    let whole = stored(&whole_fixture);
+
+    let parts_fixture = fixture("fixture-simple");
+    let mut written = Vec::new();
+    for part in ["1/3", "2/3", "3/3"] {
+        let output = against(
+            &parts_fixture,
+            &[
+                "run",
+                "--offline",
+                "--locked",
+                "--tier",
+                "all",
+                "--shard",
+                part,
+            ],
+        );
+        assert!(
+            output.status.code() == Some(0) || output.status.code() == Some(1),
+            "{part}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let document = stored(&parts_fixture);
+        assert_eq!(document["run"]["shard"], part);
+        let path = parts_fixture
+            .root
+            .join(format!("part-{}.json", part.replace('/', "-")));
+        std::fs::write(&path, serde_json::to_string(&document).expect("renders")).expect("write");
+        written.push(path);
+    }
+
+    let mut arguments = vec!["merge".to_owned()];
+    arguments.extend(written.iter().map(|path| path.display().to_string()));
+    let borrowed: Vec<&str> = arguments.iter().map(String::as_str).collect();
+    let merged_output = rootless(&parts_fixture, &borrowed);
+    let whole_code = whole["run"]["exit_code"].as_i64().expect("an exit code");
+    assert_eq!(
+        merged_output.status.code().map(i64::from),
+        Some(whole_code),
+        "the whole and its parts reach the same answer: {}",
+        String::from_utf8_lossy(&merged_output.stderr)
+    );
+    let merged: serde_json::Value =
+        serde_json::from_str(&stdout(&merged_output)).expect("one document");
+
+    assert_eq!(merged["run"]["shard"], serde_json::Value::Null);
+    assert_eq!(merged["accounting"], whole["accounting"]);
+    assert_eq!(merged["score"], whole["score"]);
+    assert_eq!(
+        merged["mutants"].as_array().map(Vec::len),
+        whole["mutants"].as_array().map(Vec::len)
+    );
+    let outcomes = |document: &serde_json::Value| -> Vec<(String, String)> {
+        let mut found: Vec<(String, String)> = document["mutants"]
+            .as_array()
+            .expect("mutants")
+            .iter()
+            .map(|one| {
+                (
+                    one["id"].as_str().unwrap_or_default().to_owned(),
+                    one["outcome"].as_str().unwrap_or_default().to_owned(),
+                )
+            })
+            .collect();
+        found.sort();
+        found
+    };
+    assert_eq!(
+        outcomes(&merged),
+        outcomes(&whole),
+        "every mutant reached the same verdict in a part as it did in the whole"
+    );
+}
+
+#[test]
+fn reports_that_are_not_the_parts_of_one_whole_are_refused() {
+    let fixture = fixture("fixture-simple");
+    let first = against(
+        &fixture,
+        &["run", "--offline", "--locked", "--shard", "1/2"],
+    );
+    assert!(first.status.code().is_some(), "{}", stdout(&first));
+    let one = fixture.root.join("one.json");
+    std::fs::write(
+        &one,
+        serde_json::to_string(&stored(&fixture)).expect("renders"),
+    )
+    .expect("write");
+
+    let output = rootless(
+        &fixture,
+        &["merge", &one.to_string_lossy(), &one.to_string_lossy()],
+    );
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("more than one"),
+        "the same part twice is not two parts: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }

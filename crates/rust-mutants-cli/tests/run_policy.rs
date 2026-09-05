@@ -35,6 +35,7 @@ const fn of(judged: Vec<Judged>) -> Run {
         skipped: 0,
         refused: 0,
         interrupted: false,
+        shard: None,
         duration: Duration::from_secs(1),
     }
 }
@@ -155,6 +156,7 @@ fn a_mutant_a_reviewer_expected_to_survive_is_not_a_finding_and_a_stale_claim_is
         skipped: 0,
         refused: 0,
         interrupted: false,
+        shard: None,
         duration: Duration::from_secs(1),
     };
     let kinds: Vec<FindingKind> = run.findings().iter().map(|f| f.kind).collect();

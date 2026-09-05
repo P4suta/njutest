@@ -3,6 +3,7 @@
 
 //! The run report: one completed run of every mutant, as a document and as lines a person reads.
 
+use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
 use jiff::Timestamp;
@@ -74,10 +75,12 @@ pub struct RunMeta {
     pub interrupted: bool,
     /// The exit code the run earned.
     pub exit_code: u8,
+    /// Which part of the catalog the run was about, absent for the whole of it.
+    pub shard: Option<String>,
 }
 
 /// What a run counted. Every mutant is in exactly one of the outcome columns.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Accounting {
     /// How many mutants the compiler accepted.
@@ -181,7 +184,7 @@ pub struct ExpectationDocument {
 }
 
 /// One thing that stops a run from being clean.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FindingDocument {
     /// What kind of hole it is.
@@ -223,6 +226,7 @@ pub fn document(
             duration_ms: millis(run.duration),
             interrupted: run.interrupted,
             exit_code: run.exit_code(),
+            shard: run.shard.map(|shard| shard.to_string()),
         },
         workspace: crate::report::workspace_document(session),
         selection,
@@ -339,6 +343,146 @@ fn mutant(one: &crate::run::Judged, catalog: Option<MutantDocument>) -> RunMutan
 fn millis(value: std::time::Duration) -> u64 {
     u64::try_from(value.as_millis()).unwrap_or(u64::MAX)
 }
+
+/// Why the parts of a catalog could not be put back together.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum MergeError {
+    /// Nothing was given to combine.
+    #[error("a merge of no reports is not a report")]
+    Nothing,
+    /// Two of the reports are about different trees, so their parts were never parts of one whole.
+    #[error(
+        "{first} and {other} are about different catalogs, and the parts of one catalog are what a merge is of"
+    )]
+    Disagree {
+        /// The catalog the first report is about.
+        first: String,
+        /// The one that differs.
+        other: String,
+    },
+    /// One mutant appears in more than one part, so the parts overlap and the counts would say more happened than did.
+    #[error(
+        "{mutant} is in more than one of these reports, so they are not the parts of one whole"
+    )]
+    Overlapping {
+        /// The mutant two reports both claim.
+        mutant: String,
+    },
+}
+
+/// The report the whole of a catalog would have written, from the reports of its parts.
+///
+/// The parts are checked for being parts: they must be about one catalog, and
+/// no mutant may appear in two of them. A merge that let them overlap would
+/// count one execution twice and report a score no run ever established.
+///
+/// # Errors
+/// See [`MergeError`].
+pub fn merge(parts: &[RunDocument]) -> Result<RunDocument, MergeError> {
+    let first = parts.first().ok_or(MergeError::Nothing)?;
+    for part in parts {
+        if part.workspace.catalog_digest != first.workspace.catalog_digest {
+            return Err(MergeError::Disagree {
+                first: first.workspace.catalog_digest.clone(),
+                other: part.workspace.catalog_digest.clone(),
+            });
+        }
+    }
+    let mut mutants: BTreeMap<u32, RunMutantDocument> = BTreeMap::new();
+    for part in parts {
+        for one in &part.mutants {
+            if mutants.insert(one.index, one.clone()).is_some() {
+                return Err(MergeError::Overlapping {
+                    mutant: one.id.clone(),
+                });
+            }
+        }
+    }
+    let mutants: Vec<RunMutantDocument> = mutants.into_values().collect();
+    let accounting = accounting_of(&mutants, first);
+    let mut merged = first.clone();
+    merged.run = RunMeta {
+        duration_ms: parts.iter().map(|part| part.run.duration_ms).sum(),
+        interrupted: parts.iter().any(|part| part.run.interrupted),
+        shard: None,
+        ..first.run.clone()
+    };
+    merged.score = score_of(&accounting);
+    merged.accounting = accounting;
+    merged.mutants = mutants;
+    merged.expectations = parts
+        .iter()
+        .flat_map(|part| part.expectations.iter().cloned())
+        .collect();
+    merged.findings = parts
+        .iter()
+        .flat_map(|part| part.findings.iter().cloned())
+        .collect();
+    merged.findings.sort_by(|a, b| {
+        a.kind
+            .cmp(&b.kind)
+            .then_with(|| a.mutant.cmp(&b.mutant))
+            .then_with(|| a.detail.cmp(&b.detail))
+    });
+    merged.findings.dedup();
+    merged.run.exit_code = exit_code_of(&merged);
+    Ok(merged)
+}
+
+/// The columns the merged records add up to. What no part executed — refusals and skips — is a fact about the catalog rather than about a part, so it is taken from one of them rather than summed.
+fn accounting_of(mutants: &[RunMutantDocument], first: &RunDocument) -> Accounting {
+    let mut counted = Accounting {
+        cataloged: count(mutants.len()),
+        refused: first.accounting.refused,
+        skipped: first.accounting.skipped,
+        ..Accounting::default()
+    };
+    for one in mutants {
+        let slot = match one.outcome.as_str() {
+            "killed" => &mut counted.killed,
+            "survived" => &mut counted.survived,
+            "timed_out" => &mut counted.timed_out,
+            "inconclusive" => &mut counted.inconclusive,
+            "not_run" => &mut counted.not_run,
+            _ => &mut counted.errored,
+        };
+        *slot = slot.saturating_add(1);
+        if one.expected {
+            counted.expected = counted.expected.saturating_add(1);
+        }
+    }
+    counted.executed = counted.cataloged.saturating_sub(counted.not_run);
+    counted
+}
+
+fn score_of(accounting: &Accounting) -> Option<ScoreDocument> {
+    let detected = accounting.killed.saturating_add(accounting.timed_out);
+    let decided = detected.saturating_add(accounting.survived);
+    (decided > 0).then(|| ScoreDocument {
+        detected,
+        decided,
+        value: f64::from(detected) / f64::from(decided),
+    })
+}
+
+/// The exit code the whole earns, which is the code the whole would have earned rather than the worst of its parts.
+const fn exit_code_of(merged: &RunDocument) -> u8 {
+    if merged.run.interrupted {
+        return crate::run::EXIT_INTERRUPTED;
+    }
+    let broken = merged.accounting.errored > 0 || merged.accounting.not_run > 0;
+    if broken {
+        return crate::EXIT_USAGE;
+    }
+    if merged.findings.is_empty() {
+        crate::run::EXIT_DETECTED
+    } else {
+        crate::run::EXIT_UNDETECTED
+    }
+}
+
+use crate::run::count;
 
 /// The run as lines a person reads: the tally, the score, and every finding.
 #[must_use]
