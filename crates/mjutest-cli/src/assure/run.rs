@@ -159,6 +159,7 @@ pub fn run(
             watch,
         )?;
     }
+    proposed(&mut report, request, environment, (notes, watch));
     released(&mut resources, &mut report);
     finish(&mut report, request.started);
     journal.finished();
@@ -184,6 +185,158 @@ fn surveyed(
         .map(|package| package.name.clone())
         .collect();
     report.scope.resolved_packages = resolved(request, &report.repository.packages);
+}
+
+/// The limitation a run states when a generation provider could not be asked.
+pub const GENERATION_LIMITATION: &str = "generation-provider-unavailable";
+
+/// Asks the generation provider, when the configuration names one.
+fn proposed(
+    report: &mut Report,
+    request: &Request,
+    environment: &Environment,
+    telling: (&mut Notes<'_>, Watch<'_>),
+) {
+    let (notes, watch) = telling;
+    if request.config.generation.is_none() {
+        return;
+    }
+    notes.phase("generation");
+    propose(report, request, environment, watch);
+}
+
+/// Asks the generation provider to close what the run found, and puts every candidate to the tests before keeping it.
+///
+/// Nothing here fails a run. A provider that cannot be asked leaves a
+/// limitation; a candidate that does not work is kept as a record of what was
+/// tried, marked as one nobody may apply.
+fn propose(report: &mut Report, request: &Request, environment: &Environment, watch: Watch<'_>) {
+    let Some(generation) = &request.config.generation else {
+        return;
+    };
+    let allowed = crate::repair::allowed(&generation.allowed_paths);
+    let subjects: Vec<(String, String)> = report
+        .findings
+        .iter()
+        .filter(|finding| finding.kind == FindingKind::SurvivingMutant)
+        .map(|finding| (finding.subject.clone(), finding.detail.clone()))
+        .collect();
+    for (mutant, detail) in subjects {
+        if watch.cancel.is_cancelled() {
+            break;
+        }
+        let asking = ask(report, request, (&mutant, &detail), &allowed);
+        let Ok(asked) = serde_json::to_string(&asking) else {
+            continue;
+        };
+        let seen = crate::resource::visible(&environment.vars, &generation.environment);
+        let said = crate::provider::once(&crate::provider::Once {
+            command: &generation.command,
+            dir: &request.root,
+            env: &seen,
+            question: &asked,
+            timeout: request.config.execution.timeout,
+            limit: crate::repair::OUTPUT_LIMIT,
+        });
+        let said = match said {
+            Ok(said) => said,
+            Err(refusal) => {
+                report.limitations.push(Limitation::new(
+                    GENERATION_LIMITATION,
+                    &format!("the generation provider could not be asked: {refusal}"),
+                ));
+                return;
+            }
+        };
+        match crate::repair::take(&said, &request.root, &allowed) {
+            Ok(proposals) => {
+                for proposal in &proposals {
+                    considered(report, (request, environment, watch), (proposal, &mutant));
+                }
+            }
+            Err(refusal) => report.limitations.push(Limitation::new(
+                GENERATION_LIMITATION,
+                &format!("a candidate for {mutant} was not read: {refusal}"),
+            )),
+        }
+    }
+}
+
+/// What the provider is told about one finding.
+fn ask(
+    report: &Report,
+    request: &Request,
+    about: (&str, &str),
+    allowed: &[String],
+) -> crate::repair::Ask {
+    let (mutant, detail) = about;
+    let found = report.mutants.iter().find(|one| one.id == mutant);
+    crate::repair::Ask {
+        version: crate::repair::VERSION,
+        finding: crate::repair::AskedFinding {
+            id: mutant.to_owned(),
+            kind: "surviving-mutant".to_owned(),
+            path: found.map(|one| one.path.clone()).unwrap_or_default(),
+            line: found.map_or(0, |one| one.position.line),
+            summary: detail.to_owned(),
+            replay: format!("mjutest replay {mutant}"),
+            mutant: found.map(|one| one.rule.clone()).unwrap_or_default(),
+            mutant_id: mutant.to_owned(),
+        },
+        allowed_paths: allowed.to_vec(),
+        workspace: crate::repair::AskedWorkspace {
+            workspace_digest: report.repository.workspace_digest.clone(),
+            run_id: request.run_id.clone(),
+        },
+    }
+}
+
+/// Puts one candidate to the tests and records what that established.
+fn considered(
+    report: &mut Report,
+    within: (&Request, &Environment, Watch<'_>),
+    about: (&crate::repair::Proposal, &str),
+) {
+    let (request, environment, watch) = within;
+    let (proposal, mutant) = about;
+    let verdict = super::repair::check(
+        &super::repair::Checking {
+            root: &request.root,
+            environment,
+            cargo: request.cargo,
+            timeout: request.config.execution.timeout,
+        },
+        proposal,
+        mutant,
+        watch,
+    );
+    let verdict = match verdict {
+        Ok(verdict) => verdict,
+        Err(refusal) => super::repair::Verdict::refused(
+            0,
+            0,
+            format!("the candidate could not be put to the tests: {refusal}"),
+        ),
+    };
+    if verdict.accepted && crate::repair::keep(&request.root, proposal).is_err() {
+        report.limitations.push(Limitation::new(
+            GENERATION_LIMITATION,
+            &format!("a candidate for {mutant} could not be kept, so it cannot be applied"),
+        ));
+        return;
+    }
+    report.candidates.push(crate::report::CandidateRecord {
+        finding: mutant.to_owned(),
+        mutant: mutant.to_owned(),
+        kind: proposal.kind.name().to_owned(),
+        path: proposal.path.clone(),
+        digest: proposal.digest.clone(),
+        preimage: proposal.preimage.clone(),
+        stability_runs: verdict.stable,
+        kill_runs: verdict.killed,
+        accepted: verdict.accepted,
+        why: verdict.why,
+    });
 }
 
 /// The limitation a run states when a resource it held would not stop.

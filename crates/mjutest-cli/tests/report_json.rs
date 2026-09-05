@@ -29,6 +29,18 @@ fn populated() -> Report {
             source_run_id: None,
         },
         run_kind: RunKind::Changed,
+        candidates: vec![mjutest_cli::report::CandidateRecord {
+            finding: "a".repeat(64),
+            mutant: "a".repeat(64),
+            kind: "patch".to_owned(),
+            path: "tests/closes.rs".to_owned(),
+            digest: "b".repeat(64),
+            preimage: None,
+            stability_runs: 3,
+            kill_runs: 2,
+            accepted: true,
+            why: None,
+        }],
         resources: vec![mjutest_cli::report::ResourceRecord {
             capability: "postgres".to_owned(),
             instance: "pg-1".to_owned(),

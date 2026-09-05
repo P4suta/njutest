@@ -445,6 +445,32 @@ pub struct ResourceRecord {
     pub environment: Vec<String>,
 }
 
+/// One repair a generation provider offered, and what putting it to the tests established.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CandidateRecord {
+    /// The finding it would close.
+    pub finding: String,
+    /// The mutant that finding is about.
+    pub mutant: String,
+    /// `patch` or `corpus`.
+    pub kind: String,
+    /// Where it would be written, workspace-relative.
+    pub path: String,
+    /// The SHA-256 of its content, which is also where the run kept it.
+    pub digest: String,
+    /// The SHA-256 of the file it patches, absent when it creates one.
+    pub preimage: Option<String>,
+    /// How many times the patched tree passed with nothing active.
+    pub stability_runs: u32,
+    /// How many times the patched tree noticed the mutant.
+    pub kill_runs: u32,
+    /// Whether it may be applied.
+    pub accepted: bool,
+    /// Why it may not, when it may not.
+    pub why: Option<String>,
+}
+
 /// One thing a report cannot claim, and why.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -511,6 +537,9 @@ pub struct Report {
     /// Every integration resource it started, in the order it started them.
     #[serde(default)]
     pub resources: Vec<ResourceRecord>,
+    /// Every repair a provider offered, and what putting it to the tests established.
+    #[serde(default)]
+    pub candidates: Vec<CandidateRecord>,
     /// Every target it selected, slowest first.
     pub targets: Vec<TargetRecord>,
     /// Every mutant it has something to say about.
@@ -550,6 +579,7 @@ impl Report {
             timing: Timing::default(),
             accounting: Accounting::default(),
             resources: Vec::new(),
+            candidates: Vec::new(),
             targets: Vec::new(),
             mutants: Vec::new(),
             findings: Vec::new(),

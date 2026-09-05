@@ -8,6 +8,7 @@ pub mod cache;
 pub mod diagnostics;
 pub mod doctor;
 pub mod explain;
+pub mod fix;
 pub mod init;
 pub mod plan;
 pub mod reports;
@@ -36,6 +37,7 @@ pub fn run(
         Command::Report(arguments) => show::run(arguments, environment, stdout, stderr),
         Command::Explain(arguments) => explain::run(arguments, environment, stdout, stderr),
         Command::Accept(arguments) => accept::run(arguments, environment, stdout, stderr),
+        Command::Fix(arguments) => fix::run(arguments, environment, stdout, stderr),
         Command::Trace { command } => trace::run(command, environment, stdout, stderr),
         Command::Diagnostics(arguments) => diagnostics::run(arguments, environment, stdout, stderr),
     }

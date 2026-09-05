@@ -5,7 +5,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # Provider protocols v1
 
-**Status: the resource protocol is implemented; generation is contract only.** Ported unchanged from goatest;
+**Status: both protocols are implemented.** Ported unchanged from goatest;
 both protocols use newline-delimited strict JSON and reject unknown fields.
 They are local subprocess contracts; core performs no network calls.
 
@@ -43,7 +43,12 @@ accepted. Allowed paths are independently confined to test files and fuzz
 corpora; a patch to a `#[cfg(test)] mod tests` inside `src/` is not accepted
 in v1.
 
-Provider output never changes the worktree. Each candidate must pass three
-original-code stability runs, two mutant-kill checks, the related suite
-validation, and preimage checks before it is stored. Explicit `fix --apply`
-repeats fresh validation and preimage checks.
+Provider output never changes the worktree. Each candidate is written into a
+snapshot, where the patched tree must pass three times with nothing active and
+fail twice with the mutant it claims to close; the preimage on disk must be
+the one the provider says it saw. Only then is the content kept, under
+`.mjutest/candidates-v1/<digest>`, and recorded in the report. `mjutest fix`
+says what was offered and writes nothing; `mjutest fix --apply` repeats the
+whole check and the preimage comparison before writing, and says so rather
+than overwriting when the file already holds exactly what the candidate would
+write.

@@ -91,6 +91,20 @@
       ]
     }
   ],
+  "candidates": [
+    {
+      "finding": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mutant": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "patch",
+      "path": "tests/closes.rs",
+      "digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "preimage": null,
+      "stability_runs": 3,
+      "kill_runs": 2,
+      "accepted": true,
+      "why": null
+    }
+  ],
   "targets": [
     {
       "id": "0123456789abcdef",

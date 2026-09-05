@@ -6,5 +6,6 @@
 pub mod baseline;
 pub mod identity;
 pub mod mutation;
+pub mod repair;
 pub mod route;
 pub mod run;

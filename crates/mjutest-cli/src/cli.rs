@@ -110,6 +110,8 @@ pub enum Command {
     Explain(Explain),
     /// Record that a reviewer looked at a surviving mutant.
     Accept(Accept),
+    /// Say what repairs a run was offered, and write the ones that hold up.
+    Fix(Fix),
     /// Read what a run recorded.
     Trace {
         /// What to read.
@@ -258,6 +260,26 @@ pub struct Accept {
     /// The run that measured it. The latest by default.
     #[arg(long, value_name = "RUN")]
     pub run: Option<String>,
+}
+
+/// `mjutest fix`.
+#[derive(Debug, Clone, clap::Args)]
+pub struct Fix {
+    /// The run whose candidates to read. The latest by default.
+    #[arg(long, value_name = "RUN")]
+    pub run: Option<String>,
+    /// Write the candidates that hold up, rather than only saying what they are.
+    #[arg(long)]
+    pub apply: bool,
+    /// Write only this candidate, by its digest or any prefix that names exactly one.
+    #[arg(long, value_name = "DIGEST")]
+    pub candidate: Option<String>,
+    /// Never touch the network.
+    #[arg(long)]
+    pub offline: bool,
+    /// Refuse to change `Cargo.lock`.
+    #[arg(long)]
+    pub locked: bool,
 }
 
 /// `mjutest diagnostics`.

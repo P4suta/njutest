@@ -370,6 +370,116 @@ fn read(said: &str, request: &Request) -> Result<Response, ProviderError> {
     Ok(response)
 }
 
+/// One question for a provider that answers once and ends.
+#[derive(Debug, Clone, Copy)]
+pub struct Once<'a> {
+    /// The command to run.
+    pub command: &'a [String],
+    /// The directory it runs in.
+    pub dir: &'a Path,
+    /// The environment it runs with.
+    pub env: &'a [(OsString, OsString)],
+    /// What it is asked, which goes to its standard input.
+    pub question: &'a str,
+    /// How long it may take to end.
+    pub timeout: Duration,
+    /// The most it may say.
+    pub limit: usize,
+}
+
+/// Asks one provider one question and reads everything it says back, once.
+///
+/// Generation is one process per finding: the question goes in, stdin is
+/// closed, and the answer is whatever the process writes before it ends.
+///
+/// # Errors
+/// [`ProviderErrorKind::Unstartable`] when the command cannot be run,
+/// [`ProviderErrorKind::Timeout`] when it does not end in time, and
+/// [`ProviderErrorKind::Protocol`] when it writes more than `limit`.
+pub fn once(asking: &Once<'_>) -> Result<String, ProviderError> {
+    let Once {
+        command,
+        dir,
+        env,
+        question,
+        timeout,
+        limit,
+    } = *asking;
+    let Some((program, arguments)) = command.split_first() else {
+        return Err(ProviderError::new(
+            ProviderErrorKind::Unstartable,
+            "a provider with no command to run",
+        ));
+    };
+    let mut spawning = Command::new(program);
+    spawning
+        .args(arguments)
+        .current_dir(dir)
+        .env_clear()
+        .envs(env.iter().cloned())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    grouped(&mut spawning);
+    let mut child = spawning.spawn().map_err(|source| {
+        ProviderError::new(
+            ProviderErrorKind::Unstartable,
+            format!("cannot start {program}: {source}"),
+        )
+    })?;
+    if let Some(mut stdin) = child.stdin.take() {
+        let mut asked = question.to_owned();
+        asked.push('\n');
+        let _written = stdin
+            .write_all(asked.as_bytes())
+            .and_then(|()| stdin.flush());
+    }
+    let stdout = child.stdout.take().ok_or_else(|| {
+        ProviderError::new(ProviderErrorKind::Unstartable, "the provider has no stdout")
+    })?;
+    let (sender, said) = channel();
+    std::thread::spawn(move || {
+        use std::io::Read as _;
+
+        let mut all = String::new();
+        let mut reader = BufReader::new(stdout);
+        let read = reader.read_to_string(&mut all);
+        let _sent = sender.send(read.map(|_read| all));
+    });
+    match said.recv_timeout(timeout) {
+        Ok(Ok(all)) if all.len() > limit => {
+            kill_tree(&mut child);
+            let _waited = child.wait();
+            Err(ProviderError::new(
+                ProviderErrorKind::Protocol,
+                format!("the provider wrote more than {limit} bytes"),
+            ))
+        }
+        Ok(Ok(all)) => {
+            let _waited = child.wait();
+            Ok(all)
+        }
+        Ok(Err(source)) => {
+            let _waited = child.wait();
+            Err(ProviderError::new(
+                ProviderErrorKind::Protocol,
+                format!("cannot read what the provider said: {source}"),
+            ))
+        }
+        Err(_elapsed) => {
+            kill_tree(&mut child);
+            let _waited = child.wait();
+            Err(ProviderError::new(
+                ProviderErrorKind::Timeout,
+                format!(
+                    "the provider did not end in {}",
+                    rust_mutants::duration::render(timeout)
+                ),
+            ))
+        }
+    }
+}
+
 #[cfg(unix)]
 fn grouped(command: &mut Command) {
     use std::os::unix::process::CommandExt as _;

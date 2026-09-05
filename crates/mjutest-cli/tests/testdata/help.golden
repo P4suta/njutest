@@ -14,6 +14,7 @@ Commands:
   report       Show what a completed run concluded
   explain      Show everything a run recorded about one mutant
   accept       Record that a reviewer looked at a surviving mutant
+  fix          Say what repairs a run was offered, and write the ones that hold up
   trace        Read what a run recorded
   diagnostics  Bundle everything about one run into one directory
   doctor       Report the toolchain and the tools a run needs

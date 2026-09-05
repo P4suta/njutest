@@ -25,6 +25,7 @@
       "skipped": 1
     }
   },
+  "candidates": [],
   "contract": "standard-v1",
   "findings": [
     {

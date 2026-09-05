@@ -19,6 +19,7 @@
     "scope",
     "timing",
     "accounting",
+    "candidates",
     "resources",
     "targets",
     "mutants",
@@ -185,6 +186,40 @@
               "description": "False under standard-v1, where the phase is a static inventory and a non-empty one is a limitation."
             }
           }
+        }
+      }
+    },
+    "candidates": {
+      "description": "Every repair a generation provider offered, and what putting it to the tests established. A candidate is a proposal: nothing here has been written into the tree.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "finding",
+          "mutant",
+          "kind",
+          "path",
+          "digest",
+          "preimage",
+          "stability_runs",
+          "kill_runs",
+          "accepted",
+          "why"
+        ],
+        "properties": {
+          "finding": { "type": "string" },
+          "mutant": { "type": "string" },
+          "kind": { "enum": ["patch", "corpus"] },
+          "path": { "type": "string" },
+          "digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "preimage": {
+            "oneOf": [{ "type": "null" }, { "type": "string", "pattern": "^[0-9a-f]{64}$" }]
+          },
+          "stability_runs": { "type": "integer", "minimum": 0 },
+          "kill_runs": { "type": "integer", "minimum": 0 },
+          "accepted": { "type": "boolean" },
+          "why": { "oneOf": [{ "type": "null" }, { "type": "string" }] }
         }
       }
     },

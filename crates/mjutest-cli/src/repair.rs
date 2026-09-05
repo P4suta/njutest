@@ -377,6 +377,35 @@ fn compiled(allowed: &[String]) -> Vec<rust_mutants::glob::Pattern> {
         .collect()
 }
 
+/// Where a run keeps the candidates it was offered, workspace-relative.
+pub const STORE: &str = ".mjutest/candidates-v1";
+
+/// Where one candidate's content is kept.
+#[must_use]
+pub fn stored_path(root: &Path, digest: &str) -> PathBuf {
+    root.join(STORE).join(digest)
+}
+
+/// Keeps one candidate's content, named by its own digest, for a later `fix`.
+///
+/// # Errors
+/// The operating system's, when the store cannot be written.
+pub fn keep(root: &Path, proposal: &Proposal) -> Result<PathBuf, std::io::Error> {
+    let path = stored_path(root, &proposal.digest);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&path, &proposal.content)?;
+    Ok(path)
+}
+
+/// The content of one kept candidate, when it is still there and still itself.
+#[must_use]
+pub fn load(root: &Path, digest: &str) -> Option<Vec<u8>> {
+    let content = std::fs::read(stored_path(root, digest)).ok()?;
+    (hex::encode(Sha256::digest(&content)) == digest).then_some(content)
+}
+
 /// The bytes a strict base64 text stands for.
 ///
 /// Padding is required, whitespace is not accepted, and neither is any
