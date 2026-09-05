@@ -50,6 +50,29 @@ write or an acceptance to record with a reason, never something to leave.
 The gates are also tests (`xtask/tests/gates.rs`), so `cargo test` refuses
 the same things.
 
+`cargo xtask proofaudit <run-directory>` stands apart from `all`, because it
+is about one completed run rather than about the tree. It reads that run's
+`mjutest-assurance-report-v1.json` and decides again, with code that never
+calls the runner's, whether each verdict is the one the recorded evidence
+supports: whether the columns say what the records they summarise say and add
+up the way the [assurance contract](assurance-contract.md) states, whether
+every kill names a target this run itself saw pass on the original tree,
+whether the mutations nothing noticed and the `surviving-mutant` findings are
+the same set, and whether every disposition read back from an earlier run
+names one a reader could go and read. This is
+[ADR 0004](adr/0004-proof-layers-not-budgets.md) decision 5, which ships a
+proof layer only against a re-implementation that is not asked whether it
+agrees with itself.
+
+Where the recording does not carry enough to decide something again — which
+survivors a reviewer accepted, what a reused disposition was routed under —
+the gate says `unaudited` and counts it apart from the violations, because
+fail-closed is never turning "I cannot check this" into "this is fine", and
+equally never into "this is broken". One line per remark names its layer and
+its subject, a summary line closes the report, and the exit code is 0 with no
+violations, 1 with them, and 2 when the run directory could not be read at
+all.
+
 ## Test harness
 
 `crates/mjutest-devkit` is test-only support shared by every crate: the

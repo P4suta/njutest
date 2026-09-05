@@ -10,6 +10,7 @@ pub mod devgates;
 pub mod fixtures;
 pub mod gates;
 pub mod lints;
+pub mod proofaudit;
 pub mod release;
 pub mod reportdiff;
 
@@ -38,6 +39,11 @@ enum Gate {
     Fixtures,
     /// Version consistency between the workspace and the release manifest.
     ReleaseCheck,
+    /// Whether a completed run's verdicts are the ones its own recording supports (ADR 0004).
+    Proofaudit {
+        /// The directory the run left its report in.
+        run: std::path::PathBuf,
+    },
     /// What changed between two stored assurance reports.
     ReportDiff {
         /// The earlier report.
@@ -73,6 +79,7 @@ where
         Gate::Deps => gates::deps(&root),
         Gate::Fixtures => gates::fixtures(&root),
         Gate::ReleaseCheck => gates::release_check(&root),
+        Gate::Proofaudit { run } => return audit_run(&run, stdout, stderr),
         Gate::ReportDiff { before, after } => gates::report_diff(&before, &after),
         Gate::All => gates::all(&root),
     };
@@ -84,6 +91,20 @@ where
         Err(failure) => {
             let _written = writeln!(stderr, "{failure}");
             ExitCode::FAILURE
+        }
+    }
+}
+
+/// A recording that could not be read at all is neither a clean audit nor a failed one, so it leaves by an exit code of its own.
+fn audit_run(run: &std::path::Path, stdout: &mut dyn Write, stderr: &mut dyn Write) -> ExitCode {
+    match gates::proofaudit(run) {
+        Ok(audit) => {
+            let _written = writeln!(stdout, "{audit}");
+            ExitCode::from(audit.exit_code())
+        }
+        Err(failure) => {
+            let _written = writeln!(stderr, "{failure}");
+            ExitCode::from(proofaudit::EXIT_UNREADABLE)
         }
     }
 }

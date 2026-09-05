@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use walkdir::WalkDir;
 
-use crate::{deps, devgates, fixtures, lints as lint_scan, release, reportdiff};
+use crate::{deps, devgates, fixtures, lints as lint_scan, proofaudit, release, reportdiff};
 
 /// The root of this workspace, resolved from the xtask manifest at compile time so the gates do not depend on the working directory.
 #[must_use]
@@ -285,6 +285,21 @@ pub fn all(root: &Path) -> Result<String, GateFailure> {
         let _written = writeln!(report, "{}", gate(root)?);
     }
     Ok(report.trim_end().to_owned())
+}
+
+/// Whether a completed run's verdicts are the ones its own recording supports.
+///
+/// # Errors
+/// A run directory whose report could not be read, is not JSON, or is not the assurance report.
+pub fn proofaudit(run: &Path) -> Result<proofaudit::Audit, proofaudit::AuditError> {
+    let path = run.join(proofaudit::REPORT_FILE);
+    let label = path.display().to_string();
+    let text =
+        std::fs::read_to_string(&path).map_err(|source| proofaudit::AuditError::Unreadable {
+            path: label.clone(),
+            source,
+        })?;
+    proofaudit::audit(&label, &text)
 }
 
 /// What changed between two stored reports.
