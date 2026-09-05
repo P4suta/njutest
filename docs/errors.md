@@ -84,5 +84,6 @@ first digit names an area:
 | `MJ4004` | A test process wrote no coverage profile at all: the build was not instrumented, or the process did not exit normally. |
 | `MJ6001` | The report could not be written as JSON, which is an invariant failure rather than anything about the code under test. |
 | `MJ6002` | A document is not the assurance report this version understands: an unknown field, a missing field, a value of the wrong shape. |
+| `MJ8002` | A build cache layer could not be used: it holds files this program did not put there, or it could not be written. Never a reason to fail a run — the command builds without one. |
 | `MJ8001` | The run has nowhere to work: its scratch directory could not be made. Failing to *claim* one is a limitation, not an error. |
 | `MJ6003` | The report contradicts itself — the numbers do not add up, the verdict is more than what ran supports, a fact recorded as unavailable is also present — so nothing was written. |

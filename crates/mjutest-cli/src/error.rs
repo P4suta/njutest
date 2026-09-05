@@ -90,6 +90,11 @@ code!(
 );
 code!(SCRATCH_UNUSABLE, "MJ8001", "the run has nowhere to work");
 code!(
+    BUILD_CACHE_UNUSABLE,
+    "MJ8002",
+    "a build cache layer could not be used"
+);
+code!(
     REPORT_UNSOUND,
     "MJ6003",
     "the report contradicts itself and was not written"
@@ -152,5 +157,6 @@ pub const fn error_codes() -> &'static [ErrorCode] {
         REPORT_UNREADABLE,
         REPORT_UNSOUND,
         SCRATCH_UNUSABLE,
+        BUILD_CACHE_UNUSABLE,
     ]
 }
