@@ -34,9 +34,14 @@ rustix = { workspace = true }
 windows-sys = { workspace = true }
 
 [dev-dependencies]
+criterion = { workspace = true }
 mjutest-devkit = { workspace = true }
 proptest = { workspace = true }
 tempfile = { workspace = true }
+
+[[bench]]
+name = "foundation"
+harness = false
 
 [lints]
 workspace = true
