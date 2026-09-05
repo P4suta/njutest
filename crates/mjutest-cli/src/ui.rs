@@ -17,6 +17,23 @@ pub enum Notes<'a> {
     Plain(&'a mut dyn Write),
     /// One JSON object per line, for a program.
     Jsonl(&'a mut dyn Write),
+    /// One block that says where the run is, rewritten in place. What a reader wants from a run under way is where it is, not everywhere it has been.
+    Dashboard(Dashboard<'a>),
+}
+
+/// The one line a dashboard keeps, and what it last said.
+#[expect(
+    missing_debug_implementations,
+    reason = "a stream is a handle to the outside; there is nothing to print about one"
+)]
+#[non_exhaustive]
+pub struct Dashboard<'a> {
+    /// Where the block goes.
+    pub out: &'a mut dyn Write,
+    /// The phase the run is in.
+    pub phase: String,
+    /// How wide the last block was, so the next one covers all of it.
+    pub width: usize,
 }
 
 impl std::fmt::Debug for Notes<'_> {
@@ -25,6 +42,7 @@ impl std::fmt::Debug for Notes<'_> {
             Self::Silent => "Silent",
             Self::Plain(_) => "Plain",
             Self::Jsonl(_) => "Jsonl",
+            Self::Dashboard(_) => "Dashboard",
         })
     }
 }
@@ -35,6 +53,18 @@ impl<'a> Notes<'a> {
         match kind {
             Ui::Plain => Self::Plain(out),
             Ui::Jsonl => Self::Jsonl(out),
+            Ui::Dashboard => Self::Dashboard(Dashboard {
+                out,
+                phase: String::new(),
+                width: 0,
+            }),
+        }
+    }
+
+    /// The run is over: the line after a dashboard starts at the left margin, and every other interface has nothing to add.
+    pub fn finish(&mut self) {
+        if let Self::Dashboard(dashboard) = self {
+            dashboard.end();
         }
     }
 
@@ -45,6 +75,10 @@ impl<'a> Notes<'a> {
             Self::Plain(out) => say(*out, &format!("== {}", escape(name))),
             Self::Jsonl(out) => {
                 emit(*out, &serde_json::json!({ "type": "phase", "name": name }));
+            }
+            Self::Dashboard(dashboard) => {
+                dashboard.phase = escape(name);
+                dashboard.redraw("");
             }
         }
     }
@@ -63,6 +97,9 @@ impl<'a> Notes<'a> {
                     "total": total,
                 }),
             ),
+            Self::Dashboard(dashboard) => {
+                dashboard.redraw(&format!("{done}/{total} {}", escape(message)));
+            }
         }
     }
 
@@ -75,6 +112,40 @@ impl<'a> Notes<'a> {
                 *out,
                 &serde_json::json!({ "type": "note", "kind": kind, "detail": text }),
             ),
+            Self::Dashboard(dashboard) => {
+                dashboard.aside(&format!("{}: {}", escape(kind), escape(text)));
+            }
+        }
+    }
+}
+
+impl Dashboard<'_> {
+    /// Rewrites the block where it already wrote, padded to cover whatever was longer before it.
+    fn redraw(&mut self, detail: &str) {
+        let line = if detail.is_empty() {
+            format!("{} ...", self.phase)
+        } else {
+            format!("{} {detail}", self.phase)
+        };
+        let padding = self.width.saturating_sub(line.chars().count());
+        let _written = write!(self.out, "\r{line}{: <padding$}\r", "");
+        let _flushed = self.out.flush();
+        self.width = line.chars().count();
+    }
+
+    /// Says something the progress line never will, on a line of its own, and puts the block back under it.
+    fn aside(&mut self, text: &str) {
+        let padding = self.width;
+        let _written = writeln!(self.out, "\r{text}{: <padding$}", "");
+        self.width = 0;
+        self.redraw("");
+    }
+
+    /// Ends the block so the next thing written starts at the left margin.
+    fn end(&mut self) {
+        if self.width > 0 {
+            let _written = writeln!(self.out);
+            self.width = 0;
         }
     }
 }

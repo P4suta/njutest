@@ -22,8 +22,9 @@ Options:
           How to write progress
 
           Possible values:
-          - plain: Lines a person reads
-          - jsonl: One JSON object per line, for a program
+          - plain:     Lines a person reads
+          - jsonl:     One JSON object per line, for a program
+          - dashboard: One block that says where the run is, rewritten in place
           
           [default: plain]
 

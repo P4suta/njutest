@@ -309,6 +309,8 @@ pub enum Ui {
     Plain,
     /// One JSON object per line, for a program.
     Jsonl,
+    /// One block that says where the run is, rewritten in place.
+    Dashboard,
 }
 
 /// A command line that could not be parsed, or a request to print help or the version, rendered for the stream it belongs on.
