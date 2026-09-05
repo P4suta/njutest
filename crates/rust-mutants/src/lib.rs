@@ -14,7 +14,10 @@
 //! open a workspace, prepare a session, execute mutants against test targets,
 //! and read the probe measurements the session took.
 
-#![forbid(unsafe_code)]
+// `deny`, not `forbid`: the process supervisor and the advisory lock need
+// Windows FFI in two modules, each carrying its own `#[allow(unsafe_code)]`
+// with the reason. Every other module is unsafe-free.
+#![deny(unsafe_code)]
 
 pub mod catalog;
 pub mod error;
@@ -24,8 +27,10 @@ pub mod id;
 pub mod interval;
 pub mod outcome;
 pub mod rule;
+pub mod runner;
 pub mod span;
 pub mod splice;
+pub mod tempowner;
 
 pub use error::{EngineError, ErrorCode};
 

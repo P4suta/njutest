@@ -1,0 +1,451 @@
+// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! Starts one child process, supervises its whole process tree, and returns
+//! what happened.
+//!
+//! This is the only place in the engine that creates processes, and it is
+//! deliberately small: no worker pool, no retry, no shell. A mutation run
+//! executes thousands of test binaries, every one of them a program written
+//! by somebody else that may hang, may fork, and may leave descendants
+//! behind. The single job of this module is that when the engine decides a
+//! child's time is up, nothing survives it.
+//!
+//! [`Spec::argv`] is an argument vector, never a command line: nothing is
+//! expanded, split, quoted, or interpreted by a shell.
+//!
+//! Killing only the process that was started is the bug this module exists
+//! to avoid. On Windows supervision is exact: a Job Object with
+//! kill-on-close is created before the child starts, the child is created
+//! suspended and assigned to it before it has run an instruction, and every
+//! process it later creates joins the job. On POSIX it is best effort: the
+//! child gets its own process group and a kill is sent to the group, SIGTERM
+//! first and SIGKILL after [`TERMINATION_GRACE`]; a descendant that calls
+//! `setsid` leaves the group. Fail-closed means fail-closed: a child that
+//! cannot be supervised is killed rather than run.
+//!
+//! [`RunResult`] separates three things that are easy to conflate: a child
+//! that ran and failed is not an error (a non-zero exit code is data); a
+//! child that was killed reports [`EXIT_CODE_UNAVAILABLE`]; a timeout and a
+//! cancellation are distinguished by [`RunResult::timed_out`] alone.
+//! Output is combined stdout and stderr in the order the child wrote it,
+//! through one pipe, capped by keeping the tail.
+
+pub mod output;
+
+#[cfg(unix)]
+mod unix;
+#[cfg(windows)]
+mod windows;
+
+use std::ffi::OsString;
+use std::io::{self, Read as _};
+use std::path::PathBuf;
+use std::process::{Child, Command, ExitStatus, Stdio};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, RecvTimeoutError};
+use std::thread;
+use std::time::{Duration, Instant};
+
+use output::TailBuffer;
+
+pub use output::{DEFAULT_OUTPUT_LIMIT, MIN_OUTPUT_LIMIT, OUTPUT_TRUNCATED_PREFIX};
+
+/// [`RunResult::exit_code`] when there is no exit status to report.
+///
+/// The process never started, or it was killed by this module. Negative on
+/// purpose: no process exits with a negative status, so a caller that
+/// forgets to check [`RunResult::timed_out`] cannot mistake it for zero.
+pub const EXIT_CODE_UNAVAILABLE: i32 = -1;
+
+/// How long a POSIX process group is given to shut down after SIGTERM before
+/// it is sent SIGKILL. Windows has no equivalent phase.
+pub const TERMINATION_GRACE: Duration = Duration::from_secs(2);
+
+/// How long [`run`] waits for the output pipe to reach EOF after the child
+/// itself has exited.
+///
+/// A descendant that outlived its parent still holds the write end, and
+/// "read until every writer closes" is never for an orphaned daemon.
+pub const IO_DRAIN_GRACE: Duration = Duration::from_secs(2);
+
+/// A cooperative cancellation flag shared between the caller and a run.
+#[derive(Debug, Clone, Default)]
+pub struct Cancel(Arc<AtomicBool>);
+
+impl Cancel {
+    /// A flag that is not yet cancelled.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Requests cancellation. Idempotent.
+    pub fn cancel(&self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+
+    /// Whether cancellation was requested.
+    #[must_use]
+    pub fn is_cancelled(&self) -> bool {
+        self.0.load(Ordering::SeqCst)
+    }
+}
+
+/// One process to run.
+#[derive(Debug, Clone, Default)]
+#[non_exhaustive]
+pub struct Spec {
+    /// The argument vector, executable first. Each element becomes exactly
+    /// one argument to the child. A bare program name is resolved through
+    /// `PATH`; anything with a separator is used as given.
+    pub argv: Vec<OsString>,
+    /// The child's working directory. `None` means this process's directory.
+    pub dir: Option<PathBuf>,
+    /// The child's complete environment. `None` inherits this process's
+    /// environment, which is convenient for one-shot probes; the engine
+    /// composes the full set explicitly for mutant executions.
+    pub env: Option<Vec<(OsString, OsString)>>,
+    /// Bounds the child's wall-clock run time. `None` means no timeout.
+    pub timeout: Option<Duration>,
+    /// Caps the retained combined output in bytes. `None` selects
+    /// [`DEFAULT_OUTPUT_LIMIT`]; anything below [`MIN_OUTPUT_LIMIT`] is raised
+    /// to it so the truncation notice still fits inside the budget.
+    pub output_limit: Option<usize>,
+}
+
+impl Spec {
+    /// A spec for `argv` with every default.
+    #[must_use]
+    pub fn new<I, S>(argv: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<OsString>,
+    {
+        Self {
+            argv: argv.into_iter().map(Into::into).collect(),
+            ..Self::default()
+        }
+    }
+}
+
+/// A failure to start or supervise a process — never a process that ran and
+/// failed.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum RunnerError {
+    /// The process tree could not be placed under supervision. Always fatal
+    /// to the run: the engine does not execute a test binary it cannot
+    /// guarantee it can kill.
+    #[error("could not supervise the child process tree: {message}")]
+    SupervisionUnavailable {
+        /// What failed.
+        message: String,
+        /// The underlying failure, if any.
+        #[source]
+        source: Option<io::Error>,
+    },
+    /// The child could not be started at all.
+    #[error("could not start {program}: {source}")]
+    ProcessStartFailed {
+        /// The program that was asked for.
+        program: String,
+        /// The failure.
+        #[source]
+        source: io::Error,
+    },
+    /// The spec cannot describe a process: an empty or blank argument vector.
+    #[error("the command {message}")]
+    SpecInvalid {
+        /// What is wrong.
+        message: &'static str,
+    },
+    /// The child was started and supervised but the operating system refused
+    /// to say how it ended, which leaves the exit code untrustworthy.
+    #[error("could not collect the child process's exit status: {source}")]
+    ProcessWaitFailed {
+        /// The failure.
+        #[source]
+        source: io::Error,
+    },
+}
+
+/// What one [`run`] produced.
+#[derive(Debug)]
+#[non_exhaustive]
+pub struct RunResult {
+    /// The child's exit status, or [`EXIT_CODE_UNAVAILABLE`]. On POSIX a
+    /// death by signal is reported as 128 + N.
+    pub exit_code: i32,
+    /// Whether [`Spec::timeout`] expired and the tree was killed. The only
+    /// field that distinguishes a timeout from a cancellation.
+    pub timed_out: bool,
+    /// The wall-clock time the run took, supervision and killing included:
+    /// the engine derives mutant timeouts from baseline durations, and a
+    /// budget that excluded this overhead would be one the same work could
+    /// exceed.
+    pub duration: Duration,
+    /// Combined stdout and stderr in the order the child wrote them, capped
+    /// at the effective output limit by keeping the tail.
+    pub output: Vec<u8>,
+    /// Set only when the process could not be started or supervised.
+    pub error: Option<RunnerError>,
+}
+
+impl RunResult {
+    /// Whether the process ran to completion with a zero exit status.
+    #[must_use]
+    pub const fn ok(&self) -> bool {
+        self.error.is_none() && !self.timed_out && self.exit_code == 0
+    }
+}
+
+/// Starts the process described by `spec`, supervises its whole process
+/// tree, and returns when it has finished, timed out, or been cancelled.
+///
+/// The tree is killed on both the timeout and the cancellation path and is
+/// never left running. Safe to call from many threads at once.
+#[must_use]
+pub fn run(spec: &Spec, cancel: &Cancel) -> RunResult {
+    let started = Instant::now();
+    let unavailable = |error: Option<RunnerError>, output: Vec<u8>| RunResult {
+        exit_code: EXIT_CODE_UNAVAILABLE,
+        timed_out: false,
+        duration: started.elapsed(),
+        output,
+        error,
+    };
+    let Some(program) = spec.argv.first() else {
+        return unavailable(
+            Some(RunnerError::SpecInvalid {
+                message: "has no argument vector",
+            }),
+            Vec::new(),
+        );
+    };
+    if program.to_string_lossy().trim().is_empty() {
+        return unavailable(
+            Some(RunnerError::SpecInvalid {
+                message: "has an empty executable name",
+            }),
+            Vec::new(),
+        );
+    }
+    // A run that is already cancelled is a cancellation, not a start failure:
+    // the engine draining a Ctrl-C should see its queued work come back as
+    // cancelled rather than as thousands of errored mutants.
+    if cancel.is_cancelled() {
+        return unavailable(None, Vec::new());
+    }
+    let Started {
+        mut supervisor,
+        tail,
+        eof,
+        mut child,
+    } = match start(spec, program) {
+        Ok(started) => started,
+        Err(Failed { error, output }) => return unavailable(Some(error), output),
+    };
+
+    let (exit_sender, exited) = mpsc::channel::<io::Result<ExitStatus>>();
+    let _wait_thread = thread::spawn(move || {
+        let _sent = exit_sender.send(child.wait());
+    });
+    let deadline = spec
+        .timeout
+        .map(|timeout| started.checked_add(timeout).unwrap_or(started));
+    let outcome = await_exit(&supervisor, &exited, deadline, cancel);
+    // Bound the wait for the pipe to reach EOF after the child exited: an
+    // orphaned descendant still holding the write end must not stall the run.
+    let _drained = eof.recv_timeout(IO_DRAIN_GRACE);
+    supervisor.release();
+    let output = tail.capture();
+    let duration = started.elapsed();
+    match outcome {
+        Exit::Killed { timed_out } => RunResult {
+            exit_code: EXIT_CODE_UNAVAILABLE,
+            timed_out,
+            duration,
+            output,
+            error: None,
+        },
+        Exit::Status(Ok(status)) => RunResult {
+            exit_code: sys::exit_code(status),
+            timed_out: false,
+            duration,
+            output,
+            error: None,
+        },
+        Exit::Status(Err(source)) => RunResult {
+            exit_code: EXIT_CODE_UNAVAILABLE,
+            timed_out: false,
+            duration,
+            output,
+            error: Some(RunnerError::ProcessWaitFailed { source }),
+        },
+    }
+}
+
+/// What [`start`] hands to the wait half of [`run`].
+struct Started {
+    supervisor: sys::Supervisor,
+    tail: Arc<TailBuffer>,
+    eof: mpsc::Receiver<()>,
+    child: Child,
+}
+
+/// A start that failed, with whatever output was captured before it did.
+struct Failed {
+    error: RunnerError,
+    output: Vec<u8>,
+}
+
+/// The first half of [`run`]: supervision, the pipe, the spawn, the reader
+/// thread, and adoption. On any failure the child, if any, is dead.
+fn start(spec: &Spec, program: &OsString) -> Result<Started, Failed> {
+    let failed = |error: RunnerError| Failed {
+        error,
+        output: Vec::new(),
+    };
+    let start_failed = |source: io::Error| {
+        failed(RunnerError::ProcessStartFailed {
+            program: program.to_string_lossy().into_owned(),
+            source,
+        })
+    };
+    // Supervision is established before anything is running, so a machine
+    // that cannot supervise never gets as far as spawning a child.
+    let mut supervisor = sys::Supervisor::new().map_err(failed)?;
+    let tail = Arc::new(TailBuffer::new(
+        spec.output_limit.unwrap_or(DEFAULT_OUTPUT_LIMIT),
+    ));
+    let pipe = io::pipe().and_then(|(reader, writer)| Ok((reader, writer.try_clone()?, writer)));
+    let (reader, stderr, stdout) = match pipe {
+        Ok(pipe) => pipe,
+        Err(source) => {
+            supervisor.release();
+            return Err(start_failed(source));
+        }
+    };
+    let mut command = Command::new(program);
+    command.args(spec.argv.iter().skip(1));
+    if let Some(dir) = &spec.dir {
+        command.current_dir(dir);
+    }
+    if let Some(env) = &spec.env {
+        command.env_clear();
+        command.envs(env.iter().map(|(key, value)| (key, value)));
+    }
+    // No stdin: a test binary that reads from the terminal would hang. One
+    // pipe for both streams, so the interleaving is the child's own.
+    command.stdin(Stdio::null());
+    command.stdout(Stdio::from(stdout));
+    command.stderr(Stdio::from(stderr));
+    supervisor.configure(&mut command);
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(source) => {
+            supervisor.release();
+            return Err(start_failed(source));
+        }
+    };
+    // The command holds the parent's copies of the write end; they must go
+    // so that the reader sees EOF when the child's tree is gone.
+    drop(command);
+
+    let capture = Arc::clone(&tail);
+    let (eof_sender, eof) = mpsc::channel::<()>();
+    let _reader_thread = thread::spawn(move || {
+        let mut reader = reader;
+        let mut buffer = [0u8; 8192];
+        loop {
+            match reader.read(&mut buffer) {
+                Ok(0) | Err(_) => break,
+                Ok(read) => capture.write(buffer.get(..read).unwrap_or_default()),
+            }
+        }
+        let _sent = eof_sender.send(());
+    });
+
+    // Fail closed: an unsupervised child is one this module cannot promise
+    // to kill, and on Windows an unadopted child is also still suspended.
+    if let Err(error) = supervisor.adopt(&child) {
+        let _killed = child.kill();
+        let _reaped = child.wait();
+        supervisor.release();
+        let _drained = eof.recv_timeout(IO_DRAIN_GRACE);
+        return Err(Failed {
+            error,
+            output: tail.capture(),
+        });
+    }
+    Ok(Started {
+        supervisor,
+        tail,
+        eof,
+        child,
+    })
+}
+
+/// How the wait half of [`run`] ended.
+enum Exit {
+    /// The child was reaped on its own.
+    Status(io::Result<ExitStatus>),
+    /// The tree was killed, on a timeout or a cancellation.
+    Killed {
+        /// Whether the timeout, rather than the cancellation, did it.
+        timed_out: bool,
+    },
+}
+
+/// How often the wait loop looks at the cancellation flag.
+const POLL_INTERVAL: Duration = Duration::from_millis(25);
+
+/// Waits for the child to exit, the deadline to pass, or the cancellation
+/// flag to be raised — and in the latter two cases ends the tree.
+fn await_exit(
+    supervisor: &sys::Supervisor,
+    exited: &mpsc::Receiver<io::Result<ExitStatus>>,
+    deadline: Option<Instant>,
+    cancel: &Cancel,
+) -> Exit {
+    loop {
+        let remaining = deadline.map(|deadline| deadline.saturating_duration_since(Instant::now()));
+        let poll = remaining.map_or(POLL_INTERVAL, |remaining| remaining.min(POLL_INTERVAL));
+        match exited.recv_timeout(poll) {
+            Ok(status) => return Exit::Status(status),
+            Err(RecvTimeoutError::Disconnected) => {
+                return Exit::Status(Err(io::Error::other(
+                    "the wait thread ended without a status",
+                )));
+            }
+            Err(RecvTimeoutError::Timeout) => {}
+        }
+        let expired = remaining.is_some_and(|remaining| remaining.is_zero());
+        if expired || cancel.is_cancelled() {
+            terminate(supervisor, exited);
+            return Exit::Killed { timed_out: expired };
+        }
+    }
+}
+
+/// Ends the tree, politely first where the platform has a polite phase, and
+/// waits for the child to be reaped.
+fn terminate(supervisor: &sys::Supervisor, exited: &mpsc::Receiver<io::Result<ExitStatus>>) {
+    supervisor.terminate_gently();
+    if exited.recv_timeout(TERMINATION_GRACE).is_ok() {
+        return;
+    }
+    supervisor.terminate_forcefully();
+    let _reaped = exited.recv();
+}
+
+#[cfg(unix)]
+use unix as sys;
+#[cfg(windows)]
+use windows as sys;
+
+/// The mechanism this platform supervises with: `process-group` or
+/// `job-object`. Diagnostic, for traces and `doctor`.
+pub const SUPERVISOR_KIND: &str = sys::SUPERVISOR_KIND;
