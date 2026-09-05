@@ -19,6 +19,7 @@ pub mod evidence;
 pub mod git;
 pub mod kept;
 pub mod provider;
+pub mod repair;
 pub mod report;
 pub mod resource;
 pub mod run_id;

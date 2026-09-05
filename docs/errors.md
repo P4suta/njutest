@@ -105,6 +105,9 @@ first digit names an area:
 | `MJ5003` | A provider said something this version does not understand: another protocol version, an unknown field, an answer without an instance. |
 | `MJ5004` | A provider said it could not do what it was asked. |
 | `MJ5005` | A provider offered an environment variable a run composes itself, which would decide what every test process measures. |
+| `MJ5006` | A generation provider said something this version does not understand: another protocol version, an unknown field, more candidates than are read, content that is not base64. |
+| `MJ5007` | A generation provider would write where it may not: outside the allowed paths, out of the tree, or a path that is absolute. |
+| `MJ5008` | The file a candidate patches is not the file the provider saw, so applying it would overwrite something nobody read. |
 | `MJ6001` | The report could not be written as JSON, which is an invariant failure rather than anything about the code under test. |
 | `MJ6002` | A document is not the assurance report this version understands: an unknown field, a missing field, a value of the wrong shape. |
 | `MJ6004` | The report could not be written where a reader will look for it. |

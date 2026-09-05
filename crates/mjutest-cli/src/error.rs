@@ -149,6 +149,21 @@ code!(
     "a provider offered an environment variable a run composes itself"
 );
 code!(
+    GENERATION_PROTOCOL,
+    "MJ5006",
+    "a generation provider said something this version does not understand"
+);
+code!(
+    GENERATION_PATH_REFUSED,
+    "MJ5007",
+    "a generation provider would write where it may not"
+);
+code!(
+    GENERATION_PREIMAGE_MOVED,
+    "MJ5008",
+    "the file a candidate patches is not the file the provider saw"
+);
+code!(
     REPORT_UNSOUND,
     "MJ6003",
     "the report contradicts itself and was not written"
@@ -246,6 +261,9 @@ pub const fn error_codes() -> &'static [ErrorCode] {
         PROVIDER_PROTOCOL,
         PROVIDER_REFUSED,
         RESOURCE_ENVIRONMENT_REFUSED,
+        GENERATION_PROTOCOL,
+        GENERATION_PATH_REFUSED,
+        GENERATION_PREIMAGE_MOVED,
         REPORT_UNSERIALIZABLE,
         REPORT_UNREADABLE,
         REPORT_UNSOUND,
