@@ -164,7 +164,10 @@ fn measure(
         if !profiles.is_empty() {
             let merged = options.profiles_dir.join(format!("{}.profdata", target.id));
             tools.merge(&profiles, &merged, watch)?;
-            let files = tools.export(&merged, &target.executable, watch)?;
+            let files = relative(
+                tools.export(&merged, &target.executable, watch)?,
+                &options.root,
+            );
             reached = covered(&files);
             seen = instrumented(&files);
         }
@@ -203,6 +206,24 @@ fn command(target: &Target, options: &BaselineOptions) -> Spec {
     spec.env = Some(env);
     spec.timeout = options.timeout;
     spec
+}
+
+/// The same regions, named the way a mutant is named: workspace-relative, forward slashes.
+///
+/// `llvm-cov` reports absolute paths and the catalog reports relative ones, and routing compares them.
+fn relative(
+    files: Vec<crate::coverage::FileRegions>,
+    root: &std::path::Path,
+) -> Vec<crate::coverage::FileRegions> {
+    files
+        .into_iter()
+        .map(|mut file| {
+            if let Ok(inside) = file.path.strip_prefix(root) {
+                file.path = PathBuf::from(inside.to_string_lossy().replace('\\', "/"));
+            }
+            file
+        })
+        .collect()
 }
 
 /// What the summary line says became of a target.

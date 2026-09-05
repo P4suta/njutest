@@ -286,7 +286,9 @@
             "failing-test",
             "target-missing",
             "surviving-mutant",
-            "timeout"
+            "timeout",
+            "flaky-test",
+            "not-measured"
           ]
         },
         "subject": { "type": "string", "minLength": 1 },

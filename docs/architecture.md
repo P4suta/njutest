@@ -5,14 +5,15 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # Architecture
 
-**Status: the engine is implemented, and the runner measures a baseline.**
+**Status: the engine is implemented, and the runner reaches verdicts.**
 `rust-mutants` discovers, instruments, validates, and executes mutants and
 has a command line. `mjutest verify` runs every test of a workspace on its
 own under coverage instrumentation, records what each one reached, and
-writes an audited report; `plan`, `report`, `trace`, `diagnostics`, `init`,
-and `doctor` read and prepare around it. The mutation phase arrives in M3,
-so no run yet reaches an assurance — a suite that passes says only that it
-passes.
+writes an audited report; Every mutation the compiler
+accepts is then routed to the tests baseline coverage proves can reach it,
+run against them cheapest first, and a kill is confirmed by a pair before it
+is believed. `plan`, `report`, `trace`, `diagnostics`, `init`, and `doctor`
+read and prepare around it.
 
 mjutest is an orchestrator, not a replacement testing framework. Its core
 pipeline is:

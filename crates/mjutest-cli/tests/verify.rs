@@ -78,7 +78,7 @@ fn document(fixture: &Fixture) -> serde_json::Value {
 }
 
 #[test]
-fn a_passing_workspace_is_insufficient_because_the_question_was_never_asked() {
+fn a_suite_with_a_gap_it_cannot_see_is_insufficient() {
     let fixture = fixture("fixture-baseline");
     let output = verify(&fixture, &[]);
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -94,8 +94,8 @@ fn a_passing_workspace_is_insufficient_because_the_question_was_never_asked() {
         "the verdict is the last record: {stdout}"
     );
     assert!(
-        stdout.contains("mutation-phase-not-implemented"),
-        "and the report says why it is not more: {stdout}"
+        stdout.contains("FINDING\tsurviving-mutant"),
+        "and the report names what nobody noticed: {stdout}"
     );
 }
 
@@ -121,7 +121,7 @@ fn the_report_is_written_where_a_reader_will_look_and_validates_against_the_sche
     assert_eq!(report["accounting"]["targets"]["selected"], 3);
     assert_eq!(report["accounting"]["targets"]["passed"], 2);
     assert_eq!(report["accounting"]["targets"]["skipped"], 1);
-    assert_eq!(report["findings"].as_array().expect("findings").len(), 0);
+    assert_eq!(report["findings"].as_array().expect("findings").len(), 2);
     assert_eq!(
         report["toolchain"]["target"].as_str().unwrap_or_default(),
         report["toolchain"]["target"].as_str().unwrap_or("x"),

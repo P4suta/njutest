@@ -363,6 +363,23 @@ pub enum FindingKind {
     SurvivingMutant,
     /// A target that ran out of time.
     Timeout,
+    /// A test that does not behave the same way twice.
+    FlakyTest,
+    /// Something a run could not measure, so it claims nothing about it.
+    NotMeasured,
+}
+
+impl FindingKind {
+    /// Whether this is a fault in the code under test rather than a gap in what was established.
+    #[must_use]
+    pub const fn is_defect(self) -> bool {
+        match self {
+            Self::BuildFailure | Self::FailingTest | Self::FlakyTest => true,
+            Self::TargetMissing | Self::SurvivingMutant | Self::Timeout | Self::NotMeasured => {
+                false
+            }
+        }
+    }
 }
 
 /// One thing a run found wrong with the code under test.

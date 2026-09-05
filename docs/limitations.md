@@ -8,13 +8,14 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 **Status: scaffold.** The list grows with each milestone; every limitation
 below is stated fail-closed.
 
-- The engine (`rust-mutants`) works end to end. `mjutest verify` measures a
-  baseline — every test once, on its own, under coverage instrumentation —
-  and writes a report; the mutation phase arrives in M3, so every run states
-  `mutation-phase-not-implemented` and no run reaches an assurance. A suite
-  that passes says only that it passes: whether those tests would notice a
-  change has not been asked yet, and a verdict that claimed otherwise would
-  be the one thing this program exists not to do.
+- The engine (`rust-mutants`) works end to end, and so does `mjutest
+  verify`: a baseline of every test on its own under coverage, then every
+  mutation the compiler accepts routed to the tests that reach it. A kill is
+  paired — the same test must pass on the original right now, and the kill
+  must reproduce — so a flake cannot be reported as strength.
+- The proofs that would narrow routing further (the infection probe, the
+  branch proof) arrive in M5, so a mutant reaching many tests is run against
+  all of them until one kills it.
 - The evidence identity of the tree is not computed
   (`workspace-digest-not-computed`), so nothing is reused between runs. It
   arrives in M4 with the cache.

@@ -61,8 +61,9 @@ pub fn run(
             locked: arguments.locked,
         },
         keep_temp: arguments.keep_temp,
-        run_id: identity,
+        run_id: identity.clone(),
         started,
+        engine_trace: engine_recorder(arguments, &root, &identity),
     };
     let result = {
         let mut notes = ui::Notes::of(arguments.ui, stderr);
@@ -131,6 +132,27 @@ struct Recording<'a> {
 }
 
 /// The recording this run keeps.
+fn engine_recorder(
+    arguments: &Verify,
+    root: &Path,
+    identity: &str,
+) -> rust_mutants::trace::Recorder {
+    use rust_mutants::trace::{DirSink, Recorder as EngineRecorder, Sink as EngineSink};
+
+    let Some(requested) = &arguments.trace else {
+        return EngineRecorder::disabled();
+    };
+    let directory = if requested.is_empty() {
+        root.join(".mjutest/trace").join(identity)
+    } else {
+        PathBuf::from(requested)
+    };
+    DirSink::create(&directory.join("engine")).map_or_else(
+        |_error| EngineRecorder::disabled(),
+        |sink| EngineRecorder::wall(EngineSink::Dir(sink)),
+    )
+}
+
 fn recorder(arguments: &Verify, run: &Recording<'_>, stderr: &mut dyn Write) -> Recorder {
     let (root, identity, contract) = (run.root, run.identity, run.contract);
     let start = StartRecord::of(identity, crate::report::RunKind::Full, contract);

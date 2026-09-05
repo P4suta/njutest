@@ -3,30 +3,32 @@
 
 //! One verification, from a request to a report.
 
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use jiff::Timestamp;
 
 use crate::assure::baseline::{self, BaselineOptions, Workspace};
+use crate::assure::mutation::{self, MutationOptions, Subject};
 use crate::build::{Cargo, Selection};
 use crate::cli::Environment;
 use crate::config::Config;
 use crate::error::RunnerError;
 use crate::git;
 use crate::report::{
-    Finding, FindingKind, Limitation, Report, RunKind, TargetRecord, TargetStatus, Toolchain,
-    UNAVAILABLE, Verdict,
+    Finding, FindingKind, Limitation, MutantRecord, Report, RunKind, TargetRecord, TargetStatus,
+    Toolchain, UNAVAILABLE, Verdict,
 };
 use crate::scratch::{self, Scratch};
 use crate::ui::Notes;
 use crate::watch::Watch;
 use crate::{build_cache, rustflags};
 
-/// The limitation every run of this release states.
-pub const MUTATION_LIMITATION: &str = "mutation-phase-not-implemented";
-
 /// The limitation a run states while the evidence identity is not computed.
 pub const DIGEST_LIMITATION: &str = "workspace-digest-not-computed";
+
+/// The limitation a run states when a test wrote into the tree it was being measured in.
+pub const DRIFT_LIMITATION: &str = "tree-written-during-measurement";
 
 /// What one run was asked to do.
 #[derive(Debug, Clone)]
@@ -47,6 +49,8 @@ pub struct Request {
     pub run_id: String,
     /// When it started.
     pub started: Timestamp,
+    /// Where the engine records its own stream.
+    pub engine_trace: rust_mutants::trace::Recorder,
 }
 
 /// What one run produced.
@@ -131,11 +135,18 @@ pub fn run(
     )?;
     absorb(&mut report, &baseline);
 
-    report.limitations.push(Limitation::new(
-        MUTATION_LIMITATION,
-        "no mutant was executed, so nothing is claimed about whether the tests would \
-         notice a change",
-    ));
+    if baseline.failure.is_none() {
+        run_mutation(
+            &mut Mutating {
+                report: &mut report,
+                request,
+                environment,
+                baseline: &baseline,
+            },
+            notes,
+            watch,
+        )?;
+    }
     finish(&mut report, request.started);
     let kept = if request.keep_temp {
         scratch.keep()
@@ -235,6 +246,117 @@ fn finish(report: &mut Report, started: Timestamp) {
 }
 
 /// Puts what the baseline observed into the report.
+struct Mutating<'a> {
+    report: &'a mut Report,
+    request: &'a Request,
+    environment: &'a Environment,
+    baseline: &'a baseline::Baseline,
+}
+
+fn run_mutation(
+    mutating: &mut Mutating<'_>,
+    notes: &mut Notes<'_>,
+    watch: Watch<'_>,
+) -> Result<(), RunnerError> {
+    notes.phase("mutation");
+    let session = prepare(mutating.request, mutating.environment, watch)?;
+    let accepted: BTreeSet<String> = mutating
+        .request
+        .config
+        .acceptance
+        .iter()
+        .map(|acceptance| acceptance.id.clone())
+        .collect();
+    let mutation = mutation::run(
+        Subject {
+            session: &session,
+            baseline: &mutating.baseline.targets,
+        },
+        &MutationOptions {
+            instrumented: mutating.baseline.instrumented.clone(),
+            accepted: accepted.clone(),
+            test_args: mutating.request.test_args.clone(),
+        },
+        notes,
+        watch,
+    )?;
+    if !session.changes()?.is_empty() {
+        mutating.report.limitations.push(Limitation::new(
+            DRIFT_LIMITATION,
+            "a test wrote into the tree while it was being measured, so every later \
+             mutation was measured against what it wrote",
+        ));
+    }
+    for path in session.close()? {
+        notes.note("kept", &path.display().to_string());
+    }
+    record(mutating.report, &mutation, &accepted);
+    Ok(())
+}
+
+fn prepare(
+    request: &Request,
+    environment: &Environment,
+    watch: Watch<'_>,
+) -> Result<rust_mutants::session::Session, RunnerError> {
+    let workspace = rust_mutants::workspace::Workspace::open(
+        &request.root,
+        rust_mutants::workspace::OpenOptions {
+            cargo: None,
+            search_path: environment.var("PATH").map(std::ffi::OsStr::to_owned),
+            env: environment.vars.clone(),
+            temp_directory: environment.temp_directory.clone(),
+            report_directory: Some("reports".to_owned()),
+            exclude: Vec::new(),
+            keep_temp: request.keep_temp,
+            offline: request.cargo.offline,
+            locked: request.cargo.locked,
+            trace: request.engine_trace.clone(),
+        },
+        watch.cancel,
+    )?;
+    Ok(workspace.prepare(
+        &rust_mutants::session::PrepareOptions {
+            packages: request.packages.clone(),
+            verify: true,
+            build_timeout: Some(request.config.execution.timeout),
+            mutant_timeout: Some(request.config.execution.timeout),
+            ..rust_mutants::session::PrepareOptions::default()
+        },
+        watch.cancel,
+    )?)
+}
+
+fn record(report: &mut Report, mutation: &mutation::Mutation, accepted: &BTreeSet<String>) {
+    report.accounting.mutants = mutation.accounting(accepted);
+    report.mutants = mutation
+        .judged
+        .iter()
+        .map(|judged| MutantRecord {
+            id: judged.id.clone(),
+            display_id: judged.display_id.clone(),
+            path: judged.path.clone(),
+            position: judged.position.unwrap_or(crate::report::Position {
+                line: 1,
+                column: 1,
+                character_column: 1,
+            }),
+            rule: judged.rule.clone(),
+            outcome: judged.disposition.name().to_owned(),
+            killed_by: judged.disposition.decided_by().map(ToOwned::to_owned),
+            reused: false,
+            provenance: None,
+        })
+        .collect();
+    report.findings.extend(mutation.findings(accepted));
+    for (reason, count) in &mutation.skips {
+        report.limitations.push(Limitation::new(
+            &format!("skipped-{reason}"),
+            &format!("{count} places were not mutated: {reason}"),
+        ));
+    }
+}
+
 fn absorb(report: &mut Report, baseline: &baseline::Baseline) {
     for name in &baseline.limitations {
         report
@@ -293,11 +415,23 @@ fn absorb(report: &mut Report, baseline: &baseline::Baseline) {
 }
 
 /// What the observations support.
-const fn verdict(report: &Report) -> Verdict {
-    if report.findings.is_empty() {
-        Verdict::Insufficient
+fn verdict(report: &Report) -> Verdict {
+    if report
+        .findings
+        .iter()
+        .any(|finding| finding.kind.is_defect())
+    {
+        return Verdict::Defect;
+    }
+    if !report.findings.is_empty() {
+        return Verdict::Insufficient;
+    }
+    let observed = report.accounting.targets.passed > 0;
+    let asked = report.accounting.mutants.executed > 0;
+    if observed && asked {
+        Verdict::Assured
     } else {
-        Verdict::Defect
+        Verdict::Insufficient
     }
 }
 
