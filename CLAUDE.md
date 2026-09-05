@@ -23,6 +23,7 @@ they explain most of what looks unusual here.
 ```console
 mise run check          # fmt, build, test, clippy, doc, gates, typos, taplo, actionlint, deny
 cargo xtask all         # seam ratchet, lints, dependency direction, fixtures, release consistency
+cargo xtask report-diff A B   # what changed between two stored reports
 ```
 
 - `xtask/seam_allowlist.txt` may shrink and never grow. If the seam ratchet

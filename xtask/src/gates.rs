@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use walkdir::WalkDir;
 
-use crate::{deps, devgates, fixtures, lints as lint_scan, release};
+use crate::{deps, devgates, fixtures, lints as lint_scan, release, reportdiff};
 
 /// The root of this workspace, resolved from the xtask manifest at compile
 /// time so the gates do not depend on the working directory.
@@ -298,6 +298,33 @@ pub fn all(root: &Path) -> Result<String, GateFailure> {
     let mut report = String::new();
     for gate in [devgates, lints, deps, fixtures, release_check] {
         let _written = writeln!(report, "{}", gate(root)?);
+    }
+    Ok(report.trim_end().to_owned())
+}
+
+/// What changed between two stored reports.
+///
+/// # Errors
+///
+/// A document that could not be read, or is not JSON.
+pub fn report_diff(before: &Path, after: &Path) -> Result<String, GateFailure> {
+    let read = |path: &Path| -> Result<String, GateFailure> {
+        std::fs::read_to_string(path)
+            .map_err(|error| GateFailure(format!("{}: {error}", path.display())))
+    };
+    let (left, right) = (read(before)?, read(after)?);
+    let changes = reportdiff::compare(
+        (&before.display().to_string(), &left),
+        (&after.display().to_string(), &right),
+    )
+    .map_err(|error| GateFailure(error.to_string()))?;
+
+    if changes.is_empty() {
+        return Ok("reportdiff: the two reports claim the same thing".to_owned());
+    }
+    let mut report = String::from("SUBJECT\tBEFORE\tAFTER\n");
+    for change in &changes {
+        let _written = writeln!(report, "{change}");
     }
     Ok(report.trim_end().to_owned())
 }

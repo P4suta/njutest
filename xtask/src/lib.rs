@@ -13,6 +13,7 @@ pub mod fixtures;
 pub mod gates;
 pub mod lints;
 pub mod release;
+pub mod reportdiff;
 
 use std::ffi::OsString;
 use std::io::Write;
@@ -39,6 +40,13 @@ enum Gate {
     Fixtures,
     /// Version consistency between the workspace and the release manifest.
     ReleaseCheck,
+    /// What changed between two stored assurance reports.
+    ReportDiff {
+        /// The earlier report.
+        before: std::path::PathBuf,
+        /// The later one.
+        after: std::path::PathBuf,
+    },
     /// Every gate, in order.
     All,
 }
@@ -67,6 +75,7 @@ where
         Gate::Deps => gates::deps(&root),
         Gate::Fixtures => gates::fixtures(&root),
         Gate::ReleaseCheck => gates::release_check(&root),
+        Gate::ReportDiff { before, after } => gates::report_diff(&before, &after),
         Gate::All => gates::all(&root),
     };
     match outcome {
