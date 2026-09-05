@@ -81,7 +81,7 @@ pub struct Outcome {
 pub fn run(
     request: &Request,
     environment: &Environment,
-    notes: &mut dyn Notes,
+    notes: &mut Notes<'_>,
     watch: Watch<'_>,
 ) -> Result<Outcome, RunnerError> {
     let mut report = identity(request);
@@ -228,7 +228,7 @@ fn layer_for(
     toolchain: &rust_mutants::cargo::Toolchain,
     environment: &Environment,
     scratch: &Scratch,
-    notes: &mut dyn Notes,
+    notes: &mut Notes<'_>,
 ) -> Result<PathBuf, RunnerError> {
     let version = toolchain.rustc_version();
     let cache = build_cache::BuildCache::new(

@@ -6,63 +6,40 @@
 //! Never a claim, never a failure, honest about what it lost. The engine
 //! records its own stream in its own vocabulary; this one is the run's.
 
-#![allow(
+#![expect(
     clippy::expect_used,
-    clippy::unwrap_used,
-    clippy::panic,
     clippy::indexing_slicing,
-    clippy::arithmetic_side_effects,
     clippy::as_conversions,
-    clippy::too_many_lines,
-    clippy::type_complexity,
-    clippy::string_slice,
     reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
 )]
 
 use std::fs;
-use std::io::{self, Write};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::io;
+use std::time::Duration;
 
 use jiff::Timestamp;
 use mjutest_cli::trace::{
     ArtifactRecord, Clock, DirSink, Event, ExecRecord, FILE_NAME, MemorySink, Payload, Problem,
-    ProgressRecord, RING_CAPACITY, Recorder, SCHEMA, Sink, StartRecord, TeeSink, WriterSink, check,
-    read_events,
+    ProgressRecord, RING_CAPACITY, Recorder, SCHEMA, Sink, StartRecord, check, read_events,
 };
 use sha2::{Digest as _, Sha256};
 
 /// A clock that advances one second per reading, from a fixed origin.
 fn stepping_clock() -> Clock {
-    let ticks = AtomicU64::new(0);
-    Box::new(move || {
-        let tick = ticks.fetch_add(1, Ordering::SeqCst);
-        Timestamp::from_second(1_800_000_000 + i64::try_from(tick).expect("small"))
-            .expect("in range")
-    })
+    Clock::stepping(
+        Timestamp::from_second(1_800_000_000).expect("in range"),
+        Duration::from_secs(1),
+    )
 }
 
-/// A memory sink shared with the recorder, so a test can read what was kept.
-fn memory() -> (Arc<MemorySink>, Box<dyn Sink>) {
-    let sink = Arc::new(MemorySink::unbounded());
-    (Arc::clone(&sink), Box::new(SharedSink(Arc::clone(&sink))))
-}
-
-/// Forwards to a shared sink: the recorder owns a box, the test keeps the Arc.
-struct SharedSink(Arc<MemorySink>);
-
-impl Sink for SharedSink {
-    fn emit(&self, event: &Event) -> io::Result<()> {
-        self.0.emit(event)
-    }
-
-    fn dropped(&self) -> Option<u64> {
-        self.0.dropped()
-    }
-
-    fn close(&self) -> io::Result<()> {
-        self.0.close()
-    }
+/// A recorder over a memory sink, which is what a test reads back: the
+/// recorder owns its sink and answers with what the sink kept.
+fn recording() -> Recorder {
+    Recorder::new(
+        Sink::Memory(MemorySink::unbounded()),
+        stepping_clock(),
+        start(),
+    )
 }
 
 fn start() -> StartRecord {
@@ -93,12 +70,11 @@ fn the_disabled_recorder_keeps_nothing_and_says_so() {
 
 #[test]
 fn a_recording_opens_with_run_start_and_closes_with_run_end() {
-    let (sink, boxed) = memory();
-    let trace = Recorder::new(boxed, stepping_clock(), start());
+    let trace = recording();
     trace.note("note", "in between");
     trace.run_end("ASSURED", None, None);
 
-    let events = sink.events();
+    let events = trace.events();
     assert_eq!(types(&events), ["run-start", "note", "run-end"]);
     let Payload::RunStart { start } = &events[0].payload else {
         panic!("a run-start first: {:?}", events[0]);
@@ -121,13 +97,12 @@ fn a_recording_opens_with_run_start_and_closes_with_run_end() {
 
 #[test]
 fn sequence_numbers_run_from_one_and_the_elapsed_time_is_measured_from_the_start() {
-    let (sink, boxed) = memory();
-    let trace = Recorder::new(boxed, stepping_clock(), start());
+    let trace = recording();
     trace.note("a", "one");
     trace.note("b", "two");
     trace.run_end("ERROR", None, None);
 
-    let events = sink.events();
+    let events = trace.events();
     assert_eq!(
         events.iter().map(|event| event.seq).collect::<Vec<_>>(),
         [1, 2, 3, 4]
@@ -145,8 +120,7 @@ fn sequence_numbers_run_from_one_and_the_elapsed_time_is_measured_from_the_start
 
 #[test]
 fn a_phase_ends_once_whether_the_caller_ends_it_or_drops_it() {
-    let (sink, boxed) = memory();
-    let trace = Recorder::new(boxed, stepping_clock(), start());
+    let trace = recording();
     {
         let phase = trace.phase("baseline");
         phase.end();
@@ -154,7 +128,7 @@ fn a_phase_ends_once_whether_the_caller_ends_it_or_drops_it() {
     drop(trace.phase("mutation"));
     trace.run_end("INSUFFICIENT", None, None);
 
-    let events = sink.events();
+    let events = trace.events();
     assert_eq!(
         types(&events),
         [
@@ -175,15 +149,14 @@ fn a_phase_ends_once_whether_the_caller_ends_it_or_drops_it() {
 
 #[test]
 fn phases_nest_and_each_guard_times_its_own() {
-    let (sink, boxed) = memory();
-    let trace = Recorder::new(boxed, stepping_clock(), start());
+    let trace = recording();
     let outer = trace.phase("verify");
     let inner = trace.phase("baseline");
     inner.end();
     outer.end();
     trace.run_end("ASSURED", None, None);
 
-    let events = sink.events();
+    let events = trace.events();
     assert_eq!(
         types(&events),
         [
@@ -207,13 +180,12 @@ fn phases_nest_and_each_guard_times_its_own() {
 
 #[test]
 fn a_recording_ends_once_and_keeps_nothing_after() {
-    let (sink, boxed) = memory();
-    let trace = Recorder::new(boxed, stepping_clock(), start());
+    let trace = recording();
     trace.run_end("ASSURED", None, None);
     trace.note("late", "after the end");
     trace.run_end("DEFECT", None, None);
 
-    let events = sink.events();
+    let events = trace.events();
     assert_eq!(types(&events), ["run-start", "run-end"]);
     let Payload::RunEnd { run } = &events[1].payload else {
         panic!("a run-end: {:?}", events[1]);
@@ -225,8 +197,7 @@ fn a_recording_ends_once_and_keeps_nothing_after() {
 
 #[test]
 fn an_exec_event_carries_environment_names_and_never_a_value() {
-    let (sink, boxed) = memory();
-    let trace = Recorder::new(boxed, stepping_clock(), start());
+    let trace = recording();
     trace.exec(ExecRecord {
         argv: vec!["cargo".to_owned(), "test".to_owned()],
         env_names: vec![
@@ -238,7 +209,7 @@ fn an_exec_event_carries_environment_names_and_never_a_value() {
     });
     trace.run_end("ASSURED", None, None);
 
-    let events = sink.events();
+    let events = trace.events();
     let Payload::Exec { exec } = &events[1].payload else {
         panic!("an exec: {:?}", events[1]);
     };
@@ -253,8 +224,7 @@ fn an_exec_event_carries_environment_names_and_never_a_value() {
 
 #[test]
 fn an_exec_event_digests_the_output_rather_than_carrying_it() {
-    let (sink, boxed) = memory();
-    let trace = Recorder::new(boxed, stepping_clock(), start());
+    let trace = recording();
     let output = b"error: something a person would want to grep for".to_vec();
     trace.exec(ExecRecord {
         argv: vec!["cargo".to_owned()],
@@ -263,7 +233,7 @@ fn an_exec_event_digests_the_output_rather_than_carrying_it() {
     });
     trace.run_end("DEFECT", None, None);
 
-    let events = sink.events();
+    let events = trace.events();
     let Payload::Exec { exec } = &events[1].payload else {
         panic!("an exec: {:?}", events[1]);
     };
@@ -281,8 +251,7 @@ fn an_exec_event_digests_the_output_rather_than_carrying_it() {
 
 #[test]
 fn a_progress_note_and_an_artifact_are_records_of_their_own() {
-    let (sink, boxed) = memory();
-    let trace = Recorder::new(boxed, stepping_clock(), start());
+    let trace = recording();
     trace.progress(ProgressRecord {
         message: "running targets".to_owned(),
         done: Some(3),
@@ -296,7 +265,7 @@ fn a_progress_note_and_an_artifact_are_records_of_their_own() {
     trace.run_end("ASSURED", None, None);
 
     assert_eq!(
-        types(&sink.events()),
+        types(&trace.events()),
         ["run-start", "progress", "artifact", "run-end"]
     );
 }
@@ -305,9 +274,8 @@ fn a_progress_note_and_an_artifact_are_records_of_their_own() {
 
 #[test]
 fn a_full_ring_drops_its_oldest_and_the_run_end_says_how_many() {
-    let sink = Arc::new(MemorySink::bounded(3));
     let trace = Recorder::new(
-        Box::new(SharedSink(Arc::clone(&sink))),
+        Sink::Memory(MemorySink::bounded(3)),
         stepping_clock(),
         start(),
     );
@@ -316,7 +284,7 @@ fn a_full_ring_drops_its_oldest_and_the_run_end_says_how_many() {
     }
     trace.run_end("ASSURED", None, None);
 
-    let events = sink.events();
+    let events = trace.events();
     assert_eq!(events.len(), 3, "the newest three");
     let Payload::RunEnd { run } = &events[2].payload else {
         panic!("a run-end last: {:?}", events[2]);
@@ -340,41 +308,44 @@ fn a_full_ring_drops_its_oldest_and_the_run_end_says_how_many() {
 #[test]
 fn the_default_ring_holds_the_last_events_of_a_run_that_asked_for_no_trace() {
     assert_eq!(RING_CAPACITY, 4096);
-    let sink = MemorySink::bounded(RING_CAPACITY);
-    assert_eq!(sink.events().len(), 0);
+    assert!(Sink::ring().events().is_empty());
 }
 
 #[test]
 fn a_sink_that_cannot_write_costs_the_count_and_never_the_run() {
-    struct Broken;
-    impl Sink for Broken {
-        fn emit(&self, _event: &Event) -> io::Result<()> {
-            Err(io::Error::other("the disk is gone"))
-        }
-    }
-    let trace = Recorder::new(Box::new(Broken), stepping_clock(), start());
+    let dir = tempfile::tempdir().expect("a temporary directory");
+    let sink = DirSink::create(&dir.path().join("recording")).expect("the sink");
+    // Closing the stream is the reachable version of "the disk is gone":
+    // everything after it fails to write.
+    sink.close().expect("closed");
+
+    let trace = Recorder::new(Sink::Dir(sink), stepping_clock(), start());
     trace.note("note", "into the void");
     trace.run_end("ASSURED", None, None);
 }
 
 #[test]
-fn a_tee_keeps_what_both_sinks_keep_and_survives_one_of_them_failing() {
-    struct Broken;
-    impl Sink for Broken {
-        fn emit(&self, _event: &Event) -> io::Result<()> {
-            Err(io::Error::other("the disk is gone"))
-        }
-    }
-    let sink = Arc::new(MemorySink::unbounded());
-    let tee = TeeSink::new(vec![
-        Box::new(Broken),
-        Box::new(SharedSink(Arc::clone(&sink))),
-    ]);
-    let trace = Recorder::new(Box::new(tee), stepping_clock(), start());
+fn a_tee_keeps_what_one_sink_keeps_when_the_other_cannot() {
+    let dir = tempfile::tempdir().expect("a temporary directory");
+    let broken = DirSink::create(&dir.path().join("recording")).expect("the sink");
+    broken.close().expect("closed");
+
+    let trace = Recorder::new(
+        Sink::Tee(vec![
+            Sink::Dir(broken),
+            Sink::Memory(MemorySink::unbounded()),
+        ]),
+        stepping_clock(),
+        start(),
+    );
     trace.note("note", "kept by one of them");
     trace.run_end("ASSURED", None, None);
 
-    assert_eq!(types(&sink.events()), ["run-start", "note", "run-end"]);
+    assert_eq!(
+        types(&trace.events()),
+        ["run-start", "note", "run-end"],
+        "a full disk must not cost the ring the last thing the run did"
+    );
 }
 
 // --- what a reader finds -----------------------------------------------------------
@@ -384,7 +355,7 @@ fn a_directory_sink_writes_one_json_object_per_line_and_the_reader_reads_it_back
     let dir = tempfile::tempdir().expect("a temporary directory");
     let recording = dir.path().join("trace/20260905T081500Z-1234");
     let sink = DirSink::create(&recording).expect("the sink");
-    let trace = Recorder::new(Box::new(sink), stepping_clock(), start());
+    let trace = Recorder::new(Sink::Dir(sink), stepping_clock(), start());
     trace.phase("baseline").end();
     trace.run_end("ASSURED", None, None);
 
@@ -409,11 +380,10 @@ fn a_directory_sink_writes_one_json_object_per_line_and_the_reader_reads_it_back
 
 #[test]
 fn the_reader_reports_a_gap_a_missing_end_and_what_the_run_said_it_dropped() {
-    let (sink, boxed) = memory();
-    let trace = Recorder::new(boxed, stepping_clock(), start());
+    let trace = recording();
     trace.note("a", "one");
     trace.note("b", "two");
-    let mut events = sink.events();
+    let mut events = trace.events();
 
     let unfinished = check(&events);
     assert!(
@@ -431,46 +401,11 @@ fn the_reader_reports_a_gap_a_missing_end_and_what_the_run_said_it_dropped() {
     );
 }
 
-#[test]
-fn a_writer_sink_puts_the_stream_where_the_caller_points_it() {
-    #[derive(Clone, Default)]
-    struct Shared(Arc<Mutex<Vec<u8>>>);
-    impl Write for Shared {
-        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-            self.0
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .extend_from_slice(buf);
-            Ok(buf.len())
-        }
-
-        fn flush(&mut self) -> io::Result<()> {
-            Ok(())
-        }
-    }
-
-    let shared = Shared::default();
-    let trace = Recorder::new(
-        Box::new(WriterSink::new(Box::new(shared.clone()))),
-        stepping_clock(),
-        start(),
-    );
-    trace.run_end("ASSURED", None, None);
-    let written = shared
-        .0
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .clone();
-    let text = String::from_utf8(written).expect("UTF-8");
-    assert_eq!(text.lines().count(), 2, "{text}");
-}
-
 // --- the wire shape ----------------------------------------------------------------
 
 #[test]
 fn the_wire_shape_is_the_recorded_one() {
-    let (sink, boxed) = memory();
-    let trace = Recorder::new(boxed, stepping_clock(), start());
+    let trace = recording();
     let phase = trace.phase("baseline");
     trace.exec(ExecRecord {
         argv: vec!["cargo".to_owned(), "test".to_owned(), "--no-run".to_owned()],
@@ -492,7 +427,7 @@ fn the_wire_shape_is_the_recorded_one() {
     trace.run_end("INSUFFICIENT", None, None);
 
     let mut lines = Vec::new();
-    for event in sink.events() {
+    for event in trace.events() {
         lines.extend_from_slice(serde_json::to_string(&event).expect("one line").as_bytes());
         lines.push(b'\n');
     }

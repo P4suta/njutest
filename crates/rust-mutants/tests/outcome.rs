@@ -4,13 +4,6 @@
 //! Outcomes: the default is "not run", the wire names are stable, and only a
 //! kill or a confirmed timeout counts as detection.
 
-#![allow(
-    clippy::expect_used,
-    clippy::unwrap_used,
-    clippy::panic,
-    reason = "tests assert with panics"
-)]
-
 use rust_mutants::outcome::Outcome;
 
 #[test]

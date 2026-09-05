@@ -9,16 +9,10 @@
 //! the mutation phase has not run and a suite that passes says only that it
 //! passes — the question mjutest exists to answer has not been asked yet.
 
-#![allow(
+#![expect(
     clippy::expect_used,
-    clippy::unwrap_used,
     clippy::panic,
     clippy::indexing_slicing,
-    clippy::arithmetic_side_effects,
-    clippy::as_conversions,
-    clippy::too_many_lines,
-    clippy::type_complexity,
-    clippy::string_slice,
     reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
 )]
 

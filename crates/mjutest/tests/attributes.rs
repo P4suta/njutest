@@ -3,19 +3,6 @@
 
 //! The attributes leave the test an ordinary `#[test]`.
 
-#![allow(
-    clippy::expect_used,
-    clippy::unwrap_used,
-    clippy::panic,
-    clippy::indexing_slicing,
-    clippy::arithmetic_side_effects,
-    clippy::as_conversions,
-    clippy::too_many_lines,
-    clippy::type_complexity,
-    clippy::string_slice,
-    reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
-)]
-
 #[mjutest::integration("postgres", "redis")]
 #[test]
 fn an_integration_test_still_runs_as_an_ordinary_test() {

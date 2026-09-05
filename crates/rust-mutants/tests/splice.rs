@@ -4,16 +4,10 @@
 //! Splicing: refuses to edit what it cannot verify, applies in span order,
 //! and answers offset questions in both directions.
 
-#![allow(
+#![expect(
     clippy::expect_used,
-    clippy::unwrap_used,
-    clippy::panic,
     clippy::indexing_slicing,
-    clippy::arithmetic_side_effects,
     clippy::as_conversions,
-    clippy::too_many_lines,
-    clippy::type_complexity,
-    clippy::string_slice,
     reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
 )]
 

@@ -4,21 +4,13 @@
 //! Whole-workspace discovery over the fixtures: which files are mutable,
 //! which are skipped as a whole and why, and the catalog that results.
 
-#![allow(
+#![expect(
     clippy::expect_used,
-    clippy::unwrap_used,
-    clippy::panic,
     clippy::indexing_slicing,
-    clippy::arithmetic_side_effects,
-    clippy::as_conversions,
-    clippy::too_many_lines,
-    clippy::type_complexity,
-    clippy::string_slice,
     reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
 )]
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use rust_mutants::cargo::{
     CompileKind, CompileOptions, Driver, LocateOptions, Metadata, MetadataOptions, Toolchain,
@@ -32,15 +24,6 @@ use rust_mutants::syntax::Selection;
 use rust_mutants::trace::{MemorySink, Payload, Recorder, Sink};
 
 static REGISTRY: Registry = Registry::canonical();
-
-/// Forwards to a shared memory sink, so a test can read what was recorded.
-struct Shared(Arc<MemorySink>);
-
-impl Sink for Shared {
-    fn emit(&self, event: &rust_mutants::trace::Event) -> std::io::Result<()> {
-        self.0.emit(event)
-    }
-}
 
 struct Prepared {
     dir: PathBuf,
@@ -335,13 +318,12 @@ fn the_selection_limits_the_rules_across_the_workspace() {
 fn discovery_is_deterministic_and_traced_per_file() {
     let prepared = prepare("fixture-workspace");
     let first = run(&prepared, &options(), &Recorder::disabled());
-    let sink = Arc::new(MemorySink::unbounded());
-    let recorder = Recorder::wall(Box::new(Shared(Arc::clone(&sink))));
+    let recorder = Recorder::wall(Sink::Memory(MemorySink::unbounded()));
     let second = run(&prepared, &options(), &recorder);
     recorder.run_end("ok", None);
     assert_eq!(first, second);
     assert_eq!(first.catalog.digest(), second.catalog.digest());
-    let files: Vec<(String, u32)> = sink
+    let files: Vec<(String, u32)> = recorder
         .events()
         .iter()
         .filter_map(|e| match &e.payload {
@@ -393,8 +375,7 @@ fn the_check_records_an_exec_event_and_keeps_the_messages() {
     };
     let cancel = Cancel::new();
     let toolchain = Toolchain::locate(&options, &dir, &cancel).expect("locate");
-    let sink = Arc::new(MemorySink::unbounded());
-    let recorder = Recorder::wall(Box::new(Shared(Arc::clone(&sink))));
+    let recorder = Recorder::wall(Sink::Memory(MemorySink::unbounded()));
     let target = tempfile::tempdir().expect("tempdir");
     let checked = compile(
         &Driver {
@@ -418,7 +399,7 @@ fn the_check_records_an_exec_event_and_keeps_the_messages() {
         m,
         rust_mutants::cargo::Message::BuildFinished { success: true }
     )));
-    let execs: Vec<Vec<String>> = sink
+    let execs: Vec<Vec<String>> = recorder
         .events()
         .iter()
         .filter_map(|e| match &e.payload {

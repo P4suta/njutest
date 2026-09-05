@@ -453,7 +453,7 @@ pub fn prepare(
 
 /// Instruments the tree and lets the compiler say which mutants are real,
 /// returning what it established and the build it ended with.
-#[allow(
+#[expect(
     clippy::too_many_arguments,
     reason = "every argument is a distinct fact of the run, and bundling them would only move the list"
 )]

@@ -106,7 +106,7 @@ pub struct Baseline {
 pub fn run(
     workspace: Workspace<'_>,
     options: &BaselineOptions,
-    notes: &mut dyn Notes,
+    notes: &mut Notes<'_>,
     watch: Watch<'_>,
 ) -> Result<Baseline, RunnerError> {
     let phase = watch.trace.phase("baseline");

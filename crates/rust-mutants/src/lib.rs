@@ -66,7 +66,7 @@
 //! ```
 
 // `deny`, not `forbid`: the process supervisor and the advisory lock need
-// Windows FFI in two modules, each carrying its own `#[allow(unsafe_code)]`
+// Windows FFI in two modules, each carrying its own `#[expect(unsafe_code)]`
 // with the reason. Every other module is unsafe-free.
 #![deny(unsafe_code)]
 

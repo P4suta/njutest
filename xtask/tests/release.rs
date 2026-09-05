@@ -3,19 +3,6 @@
 
 //! Version consistency.
 
-#![allow(
-    clippy::expect_used,
-    clippy::unwrap_used,
-    clippy::panic,
-    clippy::indexing_slicing,
-    clippy::arithmetic_side_effects,
-    clippy::as_conversions,
-    clippy::too_many_lines,
-    clippy::type_complexity,
-    clippy::string_slice,
-    reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
-)]
-
 use xtask::release::{check, workspace_version};
 
 const ROOT: &str = "[workspace]\nmembers = [\"crates/*\"]\n\n[workspace.package]\nversion = \"0.1.0\"\nedition = \"2024\"\n";

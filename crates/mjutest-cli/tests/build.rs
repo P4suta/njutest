@@ -8,16 +8,9 @@
 //! test process runs — otherwise coverage routing would silently measure
 //! nothing and every mutant would look unreachable.
 
-#![allow(
+#![expect(
     clippy::expect_used,
-    clippy::unwrap_used,
-    clippy::panic,
     clippy::indexing_slicing,
-    clippy::arithmetic_side_effects,
-    clippy::as_conversions,
-    clippy::too_many_lines,
-    clippy::type_complexity,
-    clippy::string_slice,
     reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
 )]
 
@@ -28,14 +21,6 @@ use mjutest_cli::build::{BuildOptions, Built, Cargo, Flavour, Selection, build};
 use mjutest_cli::trace::{MemorySink, Recorder, StartRecord};
 use mjutest_cli::watch::Watch;
 
-/// Forwards to a shared sink: the recorder owns a box, the test keeps the Arc.
-struct Shared(std::sync::Arc<MemorySink>);
-
-impl mjutest_cli::trace::Sink for Shared {
-    fn emit(&self, event: &mjutest_cli::trace::Event) -> std::io::Result<()> {
-        self.0.emit(event)
-    }
-}
 use rust_mutants::cargo::{Driver, LocateOptions, Metadata, MetadataOptions, Toolchain};
 use rust_mutants::runner::{Cancel, Spec, run};
 
@@ -252,10 +237,9 @@ fn an_instrumented_build_lands_under_the_host_triple_and_writes_a_profile_when_i
 
 #[test]
 fn the_build_says_what_it_did_into_the_trace_without_saying_what_the_variables_hold() {
-    let sink = std::sync::Arc::new(MemorySink::unbounded());
     let trace = Recorder::new(
-        Box::new(Shared(std::sync::Arc::clone(&sink))),
-        Box::new(jiff::Timestamp::now),
+        mjutest_cli::trace::Sink::Memory(MemorySink::unbounded()),
+        mjutest_cli::trace::Clock::Wall,
         StartRecord::of(
             "run",
             mjutest_cli::report::RunKind::Full,
@@ -299,7 +283,7 @@ fn the_build_says_what_it_did_into_the_trace_without_saying_what_the_variables_h
     .expect("the build runs");
     trace.run_end("COMPLETED", None, None);
 
-    let events = sink.events();
+    let events = trace.events();
     let exec = events
         .iter()
         .find_map(|event| match &event.payload {

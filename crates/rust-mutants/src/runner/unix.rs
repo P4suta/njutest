@@ -27,7 +27,7 @@ pub(super) struct Supervisor {
     pgid: Option<Pid>,
 }
 
-#[allow(
+#[expect(
     clippy::unnecessary_wraps,
     clippy::unused_self,
     clippy::missing_const_for_fn,

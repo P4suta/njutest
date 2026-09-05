@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use walkdir::WalkDir;
 
-use crate::{deps, devgates, fixtures, release};
+use crate::{deps, devgates, fixtures, lints as lint_scan, release};
 
 /// The root of this workspace, resolved from the xtask manifest at compile
 /// time so the gates do not depend on the working directory.
@@ -24,6 +24,62 @@ pub fn workspace_root() -> PathBuf {
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("{0}")]
 pub struct GateFailure(pub String);
+
+/// Every Rust file the repository commits, tests included.
+///
+/// The lint gate scans all of them: an `#[allow]` in a test hides a lint
+/// exactly as well as one in production.
+#[must_use]
+pub fn all_sources(root: &Path) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    for base in ["crates", "xtask", "fuzz"] {
+        for entry in WalkDir::new(root.join(base))
+            .sort_by_file_name()
+            .into_iter()
+            .filter_map(Result::ok)
+        {
+            let path = entry.path();
+            let relative = relative_slash(root, path);
+            if entry.file_type().is_file()
+                && path.extension().is_some_and(|extension| extension == "rs")
+                && !relative.split('/').any(|part| part == "target")
+            {
+                files.push(path.to_path_buf());
+            }
+        }
+    }
+    files
+}
+
+/// Refuses `#[allow]` and `Box<dyn Trait>` anywhere in the repository.
+///
+/// # Errors
+///
+/// Every finding, one per line, or a file that could not be read or parsed.
+pub fn lints(root: &Path) -> Result<String, GateFailure> {
+    let files = all_sources(root);
+    let mut found = Vec::new();
+    for path in &files {
+        let source = std::fs::read_to_string(path)
+            .map_err(|error| GateFailure(format!("{}: {error}", path.display())))?;
+        let label = relative_slash(root, path);
+        found.extend(
+            lint_scan::scan_source(&label, &source)
+                .map_err(|error| GateFailure(format!("{label}: {error}")))?,
+        );
+    }
+    if found.is_empty() {
+        return Ok(format!(
+            "lints: {} files carry no #[allow] and no Box<dyn Trait>",
+            files.len()
+        ));
+    }
+    let mut report = String::new();
+    for finding in &found {
+        let _written = writeln!(report, "{finding}");
+    }
+    Err(GateFailure(report.trim_end().to_owned()))
+}
 
 /// The production source files the seam ratchet scans.
 ///
@@ -240,7 +296,7 @@ pub fn release_check(root: &Path) -> Result<String, GateFailure> {
 /// Returns the first gate's failure.
 pub fn all(root: &Path) -> Result<String, GateFailure> {
     let mut report = String::new();
-    for gate in [devgates, deps, fixtures, release_check] {
+    for gate in [devgates, lints, deps, fixtures, release_check] {
         let _written = writeln!(report, "{}", gate(root)?);
     }
     Ok(report.trim_end().to_owned())

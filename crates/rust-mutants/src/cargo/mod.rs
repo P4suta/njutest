@@ -102,7 +102,51 @@ impl CargoErrorKind {
 pub struct CargoError {
     kind: CargoErrorKind,
     message: String,
-    source: Option<Box<dyn std::error::Error + Send + Sync + 'static>>,
+    source: Option<CargoSource>,
+}
+
+/// What underlies a cargo failure.
+///
+/// Named rather than boxed: there are two, a caller that can see which one
+/// it has can act on it, and the compiler is what says when a third
+/// arrives.
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum CargoSource {
+    /// A document cargo printed could not be read.
+    Json(serde_json::Error),
+    /// A file could not be read.
+    Io(std::io::Error),
+}
+
+impl fmt::Display for CargoSource {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Json(error) => error.fmt(f),
+            Self::Io(error) => error.fmt(f),
+        }
+    }
+}
+
+impl std::error::Error for CargoSource {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Json(error) => Some(error),
+            Self::Io(error) => Some(error),
+        }
+    }
+}
+
+impl From<serde_json::Error> for CargoSource {
+    fn from(error: serde_json::Error) -> Self {
+        Self::Json(error)
+    }
+}
+
+impl From<std::io::Error> for CargoSource {
+    fn from(error: std::io::Error) -> Self {
+        Self::Io(error)
+    }
 }
 
 impl CargoError {
@@ -114,11 +158,8 @@ impl CargoError {
         }
     }
 
-    pub(crate) fn with_source(
-        mut self,
-        source: impl std::error::Error + Send + Sync + 'static,
-    ) -> Self {
-        self.source = Some(Box::new(source));
+    pub(crate) fn with_source(mut self, source: impl Into<CargoSource>) -> Self {
+        self.source = Some(source.into());
         self
     }
 
@@ -154,7 +195,7 @@ impl fmt::Display for CargoError {
 impl std::error::Error for CargoError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         self.source
-            .as_deref()
+            .as_ref()
             .map(|source| -> &(dyn std::error::Error + 'static) { source })
     }
 }

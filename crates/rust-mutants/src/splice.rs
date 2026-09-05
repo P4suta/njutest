@@ -389,7 +389,7 @@ impl OffsetMap {
 /// The number of line breaks in `bytes`. Only `\n` is counted: a CRLF file
 /// has exactly one `\n` per line break just as an LF file does.
 #[must_use]
-#[allow(
+#[expect(
     clippy::naive_bytecount,
     reason = "line counts of one splice; no dependency for a filter and count"
 )]

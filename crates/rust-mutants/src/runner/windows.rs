@@ -11,7 +11,7 @@
 //! undocumented call, `NtResumeProcess`, because the supported route is a
 //! system-wide thread snapshot per mutant.
 
-#![allow(
+#![expect(
     unsafe_code,
     reason = "Job Objects, process assignment, and NtResumeProcess have no safe binding"
 )]

@@ -11,13 +11,9 @@
 //! break at once. The correct way to change the recipe is a new domain
 //! separator, `rust-mutants-id-v2`.
 
-#![allow(
+#![expect(
     clippy::expect_used,
-    clippy::unwrap_used,
-    clippy::panic,
-    clippy::indexing_slicing,
     clippy::arithmetic_side_effects,
-    clippy::as_conversions,
     clippy::too_many_lines,
     clippy::type_complexity,
     clippy::string_slice,
@@ -208,29 +204,29 @@ fn fields_are_unambiguously_framed() {
 fn every_identity_field_changes_the_id() {
     let base = VECTORS[0].identity();
     let base_id = base.id().expect("valid");
-    let variants: [(&str, Box<dyn Fn(&mut Identity)>); 8] = [
+    let variants: [(&str, fn(&mut Identity)); 8] = [
         (
             "path",
-            Box::new(|id| id.path = "crates/a/src/other.rs".to_owned()),
+            (|id: &mut Identity| id.path = "crates/a/src/other.rs".to_owned()),
         ),
         (
             "rule name",
-            Box::new(|id| id.rule_name = "neq-to-eq".to_owned()),
+            (|id: &mut Identity| id.rule_name = "neq-to-eq".to_owned()),
         ),
-        ("rule version", Box::new(|id| id.rule_version = 3)),
-        ("start byte", Box::new(|id| id.span.start = 1025)),
-        ("end byte", Box::new(|id| id.span.end = 1027)),
+        ("rule version", (|id: &mut Identity| id.rule_version = 3)),
+        ("start byte", (|id: &mut Identity| id.span.start = 1025)),
+        ("end byte", (|id: &mut Identity| id.span.end = 1027)),
         (
             "source digest",
-            Box::new(|id| id.source_digest = digest(b"other")),
+            (|id: &mut Identity| id.source_digest = digest(b"other")),
         ),
         (
             "original digest",
-            Box::new(|id| id.original_digest = digest(b"!=")),
+            (|id: &mut Identity| id.original_digest = digest(b"!=")),
         ),
         (
             "replacement digest",
-            Box::new(|id| id.replacement_digest = digest(b"==")),
+            (|id: &mut Identity| id.replacement_digest = digest(b"==")),
         ),
     ];
     for (name, mutate) in &variants {
@@ -248,55 +244,51 @@ fn every_identity_field_changes_the_id() {
 fn an_identity_that_does_not_validate_never_produces_an_id() {
     let valid = VECTORS[0].identity();
     valid.validate().expect("the golden identity is valid");
-    let cases: [(
-        &str,
-        Box<dyn Fn(&mut Identity)>,
-        Box<dyn Fn(&IdentityError) -> bool>,
-    ); 12] = [
+    let cases: [(&str, fn(&mut Identity), fn(&IdentityError) -> bool); 12] = [
         (
             "empty path",
-            Box::new(|id| id.path.clear()),
-            Box::new(|e| matches!(e, IdentityError::Path(PathError::Empty))),
+            (|id: &mut Identity| id.path.clear()),
+            (|e: &_| matches!(e, IdentityError::Path(PathError::Empty))),
         ),
         (
             "absolute path",
-            Box::new(|id| id.path = "/etc/passwd".to_owned()),
-            Box::new(|e| matches!(e, IdentityError::Path(PathError::Absolute { .. }))),
+            (|id: &mut Identity| id.path = "/etc/passwd".to_owned()),
+            (|e: &_| matches!(e, IdentityError::Path(PathError::Absolute { .. }))),
         ),
         (
             "escaping path",
-            Box::new(|id| id.path = "../outside.rs".to_owned()),
-            Box::new(|e| matches!(e, IdentityError::Path(PathError::Escaping { .. }))),
+            (|id: &mut Identity| id.path = "../outside.rs".to_owned()),
+            (|e: &_| matches!(e, IdentityError::Path(PathError::Escaping { .. }))),
         ),
         (
             "backslash path is not normalized",
-            Box::new(|id| id.path = r"crates\a\src\score.rs".to_owned()),
-            Box::new(|e| matches!(e, IdentityError::UnnormalizedPath { .. })),
+            (|id: &mut Identity| id.path = r"crates\a\src\score.rs".to_owned()),
+            (|e: &_| matches!(e, IdentityError::UnnormalizedPath { .. })),
         ),
         (
             "dot-slash path is not normalized",
-            Box::new(|id| id.path = "./crates/a/src/score.rs".to_owned()),
-            Box::new(|e| matches!(e, IdentityError::UnnormalizedPath { .. })),
+            (|id: &mut Identity| id.path = "./crates/a/src/score.rs".to_owned()),
+            (|e: &_| matches!(e, IdentityError::UnnormalizedPath { .. })),
         ),
         (
             "empty rule name",
-            Box::new(|id| id.rule_name.clear()),
-            Box::new(|e| matches!(e, IdentityError::InvalidRuleName { .. })),
+            (|id: &mut Identity| id.rule_name.clear()),
+            (|e: &_| matches!(e, IdentityError::InvalidRuleName { .. })),
         ),
         (
             "rule name with a version suffix",
-            Box::new(|id| id.rule_name = "eq-to-neq@1".to_owned()),
-            Box::new(|e| matches!(e, IdentityError::InvalidRuleName { .. })),
+            (|id: &mut Identity| id.rule_name = "eq-to-neq@1".to_owned()),
+            (|e: &_| matches!(e, IdentityError::InvalidRuleName { .. })),
         ),
         (
             "zero rule version",
-            Box::new(|id| id.rule_version = 0),
-            Box::new(|e| matches!(e, IdentityError::InvalidRuleVersion { version: 0 })),
+            (|id: &mut Identity| id.rule_version = 0),
+            (|e: &_| matches!(e, IdentityError::InvalidRuleVersion { version: 0 })),
         ),
         (
             "reversed span",
-            Box::new(|id| id.span = Span { start: 9, end: 4 }),
-            Box::new(|e| {
+            (|id: &mut Identity| id.span = Span { start: 9, end: 4 }),
+            (|e: &_| {
                 matches!(
                     e,
                     IdentityError::Span(SpanError::Reversed { start: 9, end: 4 })
@@ -305,8 +297,8 @@ fn an_identity_that_does_not_validate_never_produces_an_id() {
         ),
         (
             "short source digest",
-            Box::new(|id| id.source_digest = "abc".to_owned()),
-            Box::new(|e| {
+            (|id: &mut Identity| id.source_digest = "abc".to_owned()),
+            (|e: &_| {
                 matches!(
                     e,
                     IdentityError::InvalidDigest {
@@ -318,8 +310,8 @@ fn an_identity_that_does_not_validate_never_produces_an_id() {
         ),
         (
             "uppercase original digest",
-            Box::new(|id| id.original_digest = id.original_digest.to_uppercase()),
-            Box::new(|e| {
+            (|id: &mut Identity| id.original_digest = id.original_digest.to_uppercase()),
+            (|e: &_| {
                 matches!(
                     e,
                     IdentityError::InvalidDigest {
@@ -331,8 +323,8 @@ fn an_identity_that_does_not_validate_never_produces_an_id() {
         ),
         (
             "non-hex replacement digest",
-            Box::new(|id| id.replacement_digest = "z".repeat(64)),
-            Box::new(|e| {
+            (|id: &mut Identity| id.replacement_digest = "z".repeat(64)),
+            (|e: &_| {
                 matches!(
                     e,
                     IdentityError::InvalidDigest {
@@ -378,46 +370,40 @@ fn normalize_path_canonicalizes_and_refuses_paths_outside_the_workspace() {
             "normalization is idempotent"
         );
     }
-    let refused: [(&str, Box<dyn Fn(&PathError) -> bool>); 12] = [
-        ("", Box::new(|e| matches!(e, PathError::Empty))),
+    let refused: [(&str, fn(&PathError) -> bool); 12] = [
+        ("", (|e: &_| matches!(e, PathError::Empty))),
         (
             "crates/sco\0re.rs",
-            Box::new(|e| matches!(e, PathError::NulByte)),
+            (|e: &_| matches!(e, PathError::NulByte)),
         ),
         (
             "/crates/score.rs",
-            Box::new(|e| matches!(e, PathError::Absolute { .. })),
+            (|e: &_| matches!(e, PathError::Absolute { .. })),
         ),
         (
             r"C:\repo\score.rs",
-            Box::new(|e| matches!(e, PathError::VolumeName { .. })),
+            (|e: &_| matches!(e, PathError::VolumeName { .. })),
         ),
-        (
-            "c:",
-            Box::new(|e| matches!(e, PathError::VolumeName { .. })),
-        ),
-        (
-            "./A:",
-            Box::new(|e| matches!(e, PathError::VolumeName { .. })),
-        ),
+        ("c:", (|e: &_| matches!(e, PathError::VolumeName { .. }))),
+        ("./A:", (|e: &_| matches!(e, PathError::VolumeName { .. }))),
         (
             r"a:\repo\score.rs",
-            Box::new(|e| matches!(e, PathError::VolumeName { .. })),
+            (|e: &_| matches!(e, PathError::VolumeName { .. })),
         ),
         (
             r"Z:\repo\score.rs",
-            Box::new(|e| matches!(e, PathError::VolumeName { .. })),
+            (|e: &_| matches!(e, PathError::VolumeName { .. })),
         ),
         (
             "../score.rs",
-            Box::new(|e| matches!(e, PathError::Escaping { .. })),
+            (|e: &_| matches!(e, PathError::Escaping { .. })),
         ),
         (
             "crates/../../score.rs",
-            Box::new(|e| matches!(e, PathError::Escaping { .. })),
+            (|e: &_| matches!(e, PathError::Escaping { .. })),
         ),
-        (".", Box::new(|e| matches!(e, PathError::Escaping { .. }))),
-        ("..", Box::new(|e| matches!(e, PathError::Escaping { .. }))),
+        (".", (|e: &_| matches!(e, PathError::Escaping { .. }))),
+        ("..", (|e: &_| matches!(e, PathError::Escaping { .. }))),
     ];
     for (input, expected) in &refused {
         let error = normalize_path(input).expect_err(input);

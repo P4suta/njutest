@@ -4,16 +4,10 @@
 //! The public API, end to end: open a read-only tree, prepare it, and run
 //! mutants against the build that preparation produced.
 
-#![allow(
+#![expect(
     clippy::expect_used,
-    clippy::unwrap_used,
-    clippy::panic,
     clippy::indexing_slicing,
-    clippy::arithmetic_side_effects,
-    clippy::as_conversions,
     clippy::too_many_lines,
-    clippy::type_complexity,
-    clippy::string_slice,
     reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
 )]
 
@@ -398,20 +392,10 @@ fn keeping_the_temporary_directories_preserves_them_and_says_which() {
 
 #[test]
 fn the_trace_says_what_every_phase_did() {
-    use std::sync::Arc;
-
     use rust_mutants::trace::{MemorySink, Payload, Recorder, Sink};
 
-    struct Shared(Arc<MemorySink>);
-    impl Sink for Shared {
-        fn emit(&self, event: &rust_mutants::trace::Event) -> std::io::Result<()> {
-            self.0.emit(event)
-        }
-    }
-
     let fixture = fixture("fixture-rejectable");
-    let sink = Arc::new(MemorySink::unbounded());
-    let recorder = Recorder::wall(Box::new(Shared(Arc::clone(&sink))));
+    let recorder = Recorder::wall(Sink::Memory(MemorySink::unbounded()));
     let workspace = Workspace::open(
         &fixture.root,
         OpenOptions {
@@ -449,7 +433,7 @@ fn the_trace_says_what_every_phase_did() {
     recorder.run_end("ok", None);
     session.close().expect("close");
 
-    let events = sink.events();
+    let events = recorder.events();
     let types: Vec<&str> = events
         .iter()
         .map(|event| event.payload.type_name())

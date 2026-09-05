@@ -5,19 +5,6 @@
 //! shell; they are the reason the runner can be trusted with somebody
 //! else's test binary.
 
-#![allow(
-    clippy::expect_used,
-    clippy::unwrap_used,
-    clippy::panic,
-    clippy::indexing_slicing,
-    clippy::arithmetic_side_effects,
-    clippy::as_conversions,
-    clippy::too_many_lines,
-    clippy::type_complexity,
-    clippy::string_slice,
-    reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
-)]
-
 use std::ffi::OsString;
 use std::time::{Duration, Instant};
 

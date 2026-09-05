@@ -29,24 +29,95 @@ pub const TRUNCATION_MARKER: &str = "...";
 /// that fails still has its last moments to put in a diagnostics bundle.
 pub const RING_CAPACITY: usize = 4096;
 
-/// Keeps the events of a recording.
+/// Where a recording goes.
 ///
-/// A sink that cannot keep an event answers with an error and, if it counts,
-/// counts the loss; it never fails the run. Every method takes `&self`
-/// because the recorder is shared between threads.
-pub trait Sink: Send + Sync {
+/// A closed set, so this is an enum rather than a trait object: the sinks a
+/// run can have are the sinks this program ships, dispatch is a match the
+/// compiler checks, and a tee holds its sinks directly rather than a vector
+/// of allocations behind vtables.
+///
+/// A sink that cannot keep an event answers with an error and, where it
+/// knows, counts the loss; it never fails the run.
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum Sink {
+    /// The most recent events in memory: the ring an untraced run keeps and
+    /// the sink a test reads.
+    Memory(MemorySink),
+    /// A directory of JSON Lines, with the commands' output beside it.
+    Dir(DirSink),
+    /// Several at once, in order.
+    ///
+    /// One sink failing costs that sink the event and not the others: a full
+    /// disk must not cost the ring the last thing the run did before it
+    /// filled.
+    Tee(Vec<Self>),
+}
+
+impl Sink {
+    /// The ring an untraced run records into.
+    #[must_use]
+    pub const fn ring() -> Self {
+        Self::Memory(MemorySink::ring())
+    }
+
     /// Keeps one event.
     ///
     /// # Errors
     ///
-    /// The reason the event was not kept. The recorder counts it and moves on.
-    fn emit(&self, event: &Event) -> io::Result<()>;
+    /// The reason the event was not kept. The recorder counts it and moves
+    /// on.
+    pub fn emit(&self, event: &Event) -> io::Result<()> {
+        match self {
+            Self::Memory(sink) => {
+                sink.emit(event);
+                Ok(())
+            }
+            Self::Dir(sink) => sink.emit(event),
+            Self::Tee(sinks) => {
+                // Every sink is offered the event, whatever the ones before
+                // it did: a full disk must not cost the ring the last thing
+                // the run recorded.
+                let mut kept = false;
+                for sink in sinks {
+                    kept |= sink.emit(event).is_ok();
+                }
+                if kept {
+                    Ok(())
+                } else {
+                    Err(io::Error::other("no trace sink kept the event"))
+                }
+            }
+        }
+    }
 
-    /// How many events this sink lost, when it is the authority on that:
-    /// a full ring absorbs a loss without an error, and only the sink knows.
+    /// How many events this sink lost, when it is the authority on that: a
+    /// full ring absorbs a loss without an error, and only the sink knows.
     /// `None` leaves the count to the recorder's observed failures.
-    fn dropped(&self) -> Option<u64> {
-        None
+    #[must_use]
+    pub fn dropped(&self) -> Option<u64> {
+        match self {
+            Self::Memory(sink) => Some(sink.dropped()),
+            Self::Dir(sink) => Some(sink.dropped()),
+            // What a tee lost is what every sink lost: an event one sink
+            // kept is an event the recording has.
+            Self::Tee(sinks) => sinks.iter().filter_map(Self::dropped).min(),
+        }
+    }
+
+    /// Every event a memory sink anywhere in this sink kept, oldest first.
+    /// A recording with no memory sink has nothing to answer with.
+    #[must_use]
+    pub fn events(&self) -> Vec<Event> {
+        match self {
+            Self::Memory(sink) => sink.events(),
+            Self::Dir(_) => Vec::new(),
+            Self::Tee(sinks) => sinks
+                .iter()
+                .map(Self::events)
+                .find(|events| !events.is_empty())
+                .unwrap_or_default(),
+        }
     }
 
     /// Releases what the sink holds. Called once by the recorder at the end
@@ -55,8 +126,15 @@ pub trait Sink: Send + Sync {
     /// # Errors
     ///
     /// The failure to close, which the recorder drops.
-    fn close(&self) -> io::Result<()> {
-        Ok(())
+    pub fn close(&self) -> io::Result<()> {
+        match self {
+            Self::Memory(sink) => {
+                sink.close();
+                Ok(())
+            }
+            Self::Dir(sink) => sink.close(),
+            Self::Tee(sinks) => sinks.iter().try_for_each(Self::close),
+        }
     }
 }
 
@@ -118,8 +196,10 @@ impl MemorySink {
     }
 }
 
-impl Sink for MemorySink {
-    fn emit(&self, event: &Event) -> io::Result<()> {
+impl MemorySink {
+    /// Keeps one event, dropping the oldest when the ring is full. Memory
+    /// does not fail: what a full ring loses it counts.
+    fn emit(&self, event: &Event) {
         let evicted = {
             let mut events = self
                 .events
@@ -140,126 +220,16 @@ impl Sink for MemorySink {
             evicted
         };
         self.dropped.fetch_add(evicted, Ordering::SeqCst);
-        Ok(())
     }
 
-    fn dropped(&self) -> Option<u64> {
-        Some(self.dropped.load(Ordering::SeqCst))
+    /// How many events the ring evicted.
+    fn dropped(&self) -> u64 {
+        self.dropped.load(Ordering::SeqCst)
     }
 
-    fn close(&self) -> io::Result<()> {
+    /// Nothing to release; the flag is what a test reads.
+    fn close(&self) {
         self.closed.store(true, Ordering::SeqCst);
-        Ok(())
-    }
-}
-
-/// Writes JSON Lines to any writer, one flush per event, so a run that hangs
-/// or is killed still leaves everything it recorded readable.
-#[derive(Debug)]
-pub struct WriterSink<W: Write + Send> {
-    writer: Mutex<W>,
-    dropped: AtomicU64,
-}
-
-impl<W: Write + Send> WriterSink<W> {
-    /// Wraps a writer.
-    pub const fn new(writer: W) -> Self {
-        Self {
-            writer: Mutex::new(writer),
-            dropped: AtomicU64::new(0),
-        }
-    }
-}
-
-impl<W: Write + Send> Sink for WriterSink<W> {
-    fn emit(&self, event: &Event) -> io::Result<()> {
-        let line = encode(event).inspect_err(|_| {
-            self.dropped.fetch_add(1, Ordering::SeqCst);
-        })?;
-        let mut writer = self
-            .writer
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        writer
-            .write_all(&line)
-            .and_then(|()| writer.flush())
-            .inspect_err(|_| {
-                self.dropped.fetch_add(1, Ordering::SeqCst);
-            })
-    }
-
-    fn dropped(&self) -> Option<u64> {
-        Some(self.dropped.load(Ordering::SeqCst))
-    }
-
-    fn close(&self) -> io::Result<()> {
-        self.writer
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .flush()
-    }
-}
-
-/// Sends every event to several sinks: the ring a diagnostics bundle reads
-/// and the directory a person asked for are the same recording.
-///
-/// One sink failing costs that sink the event and not the others: a full
-/// disk must not cost the ring the last thing the run did before it filled.
-pub struct TeeSink {
-    sinks: Vec<Box<dyn Sink>>,
-    dropped: AtomicU64,
-}
-
-impl std::fmt::Debug for TeeSink {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("TeeSink")
-            .field("sinks", &self.sinks.len())
-            .field("dropped", &self.dropped)
-            .finish()
-    }
-}
-
-impl TeeSink {
-    /// Tees into each of `sinks`, in order.
-    #[must_use]
-    pub const fn new(sinks: Vec<Box<dyn Sink>>) -> Self {
-        Self {
-            sinks,
-            dropped: AtomicU64::new(0),
-        }
-    }
-}
-
-impl Sink for TeeSink {
-    fn emit(&self, event: &Event) -> io::Result<()> {
-        let mut kept = false;
-        for sink in &self.sinks {
-            if sink.emit(event).is_ok() {
-                kept = true;
-            }
-        }
-        if kept {
-            return Ok(());
-        }
-        self.dropped.fetch_add(1, Ordering::SeqCst);
-        Err(io::Error::other("no trace sink kept the event"))
-    }
-
-    /// What the tee lost is what every sink lost: an event one sink kept is
-    /// an event the recording has.
-    fn dropped(&self) -> Option<u64> {
-        Some(self.dropped.load(Ordering::SeqCst))
-    }
-
-    fn close(&self) -> io::Result<()> {
-        let mut first = Ok(());
-        for sink in &self.sinks {
-            let closed = sink.close();
-            if first.is_ok() {
-                first = closed;
-            }
-        }
-        first
     }
 }
 
@@ -297,7 +267,7 @@ impl DirSink {
         if let Some(parent) = directory.parent() {
             fs::create_dir_all(parent)?;
         }
-        #[allow(
+        #[expect(
             clippy::create_dir,
             reason = "exclusive creation is the point: a directory another recording owns is refused"
         )]
@@ -370,7 +340,9 @@ fn limit_output(output: &[u8]) -> (Vec<u8>, bool) {
     }
 }
 
-impl Sink for DirSink {
+impl DirSink {
+    /// Writes one event, preserving the output of a command that produced
+    /// any.
     fn emit(&self, event: &Event) -> io::Result<()> {
         let preserved = self.preserve_output(event);
         let line = encode(preserved.as_ref().unwrap_or(event)).inspect_err(|_| {
@@ -395,11 +367,18 @@ impl Sink for DirSink {
         written
     }
 
-    fn dropped(&self) -> Option<u64> {
-        Some(self.dropped.load(Ordering::SeqCst))
+    /// How many events could not be written.
+    fn dropped(&self) -> u64 {
+        self.dropped.load(Ordering::SeqCst)
     }
 
-    fn close(&self) -> io::Result<()> {
+    /// Flushes and closes the stream. Everything written afterwards fails,
+    /// which is the reachable form of "the disk is gone".
+    ///
+    /// # Errors
+    ///
+    /// The failure to flush.
+    pub fn close(&self) -> io::Result<()> {
         let file = self
             .stream
             .lock()

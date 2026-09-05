@@ -11,6 +11,7 @@ pub mod deps;
 pub mod devgates;
 pub mod fixtures;
 pub mod gates;
+pub mod lints;
 pub mod release;
 
 use std::ffi::OsString;
@@ -30,6 +31,8 @@ struct Cli {
 enum Gate {
     /// The seam ratchet (ADR 0001): production code against `xtask/seam_allowlist.txt`.
     Devgates,
+    /// `#[allow]` and `Box<dyn Trait>`, which this repository does not write.
+    Lints,
     /// Dependency direction between the workspace crates.
     Deps,
     /// Conventions of the independent fixture projects under fixtures/.
@@ -60,6 +63,7 @@ where
     let root = gates::workspace_root();
     let outcome = match cli.gate {
         Gate::Devgates => gates::devgates(&root),
+        Gate::Lints => gates::lints(&root),
         Gate::Deps => gates::deps(&root),
         Gate::Fixtures => gates::fixtures(&root),
         Gate::ReleaseCheck => gates::release_check(&root),

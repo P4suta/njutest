@@ -3,19 +3,6 @@
 
 //! Contract of the golden-file harness every other suite rests on.
 
-#![allow(
-    clippy::expect_used,
-    clippy::unwrap_used,
-    clippy::panic,
-    clippy::indexing_slicing,
-    clippy::arithmetic_side_effects,
-    clippy::as_conversions,
-    clippy::too_many_lines,
-    clippy::type_complexity,
-    clippy::string_slice,
-    reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
-)]
-
 use std::fs;
 
 use mjutest_devkit::golden::{GoldenError, compare_golden};

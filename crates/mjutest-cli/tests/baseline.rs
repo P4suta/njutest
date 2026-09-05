@@ -10,16 +10,10 @@
 //! be recorded as one that passed: libtest exits 0 for a filter that matched
 //! nothing, so the summary line is what decides.
 
-#![allow(
+#![expect(
     clippy::expect_used,
-    clippy::unwrap_used,
     clippy::panic,
     clippy::indexing_slicing,
-    clippy::arithmetic_side_effects,
-    clippy::as_conversions,
-    clippy::too_many_lines,
-    clippy::type_complexity,
-    clippy::string_slice,
     reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
 )]
 
@@ -101,7 +95,7 @@ fn measure(fixture: &str) -> (Baseline, tempfile::TempDir) {
             timeout: None,
             test_args: Vec::new(),
         },
-        &mut mjutest_cli::ui::Silent,
+        &mut mjutest_cli::ui::Notes::Silent,
         Watch::new(&cancel, &trace),
     )
     .expect("the baseline runs");

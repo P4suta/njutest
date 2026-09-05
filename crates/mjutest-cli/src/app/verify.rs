@@ -20,7 +20,7 @@ use crate::cli::{EXIT_ERROR, Environment, Verify};
 use crate::config::Config;
 use crate::report::lines;
 use crate::run_id;
-use crate::trace::{DirSink, MemorySink, Recorder, StartRecord, TeeSink};
+use crate::trace::{DirSink, Recorder, Sink, StartRecord};
 use crate::ui;
 use crate::watch::Watch;
 
@@ -73,8 +73,8 @@ pub fn run(
     // live exactly as long as the run does and every diagnostic is written
     // outside them.
     let result = {
-        let mut notes = ui::notes(arguments.ui, stderr);
-        run::run(&request, environment, notes.as_mut(), watch)
+        let mut notes = ui::Notes::of(arguments.ui, stderr);
+        run::run(&request, environment, &mut notes, watch)
     };
     let outcome = match result {
         Ok(outcome) => outcome,
@@ -100,7 +100,7 @@ pub fn run(
     };
     let removed = reports::retain(&root, request_keep(&request));
     {
-        let mut notes = ui::notes(arguments.ui, stderr);
+        let mut notes = ui::Notes::of(arguments.ui, stderr);
         notes.note("report", &kept.document.display().to_string());
         for path in &removed {
             notes.note("retired", &path.display().to_string());
@@ -149,7 +149,7 @@ struct Recording<'a> {
 fn recorder(arguments: &Verify, run: &Recording<'_>, stderr: &mut dyn Write) -> Recorder {
     let (root, identity, contract) = (run.root, run.identity, run.contract);
     let start = StartRecord::of(identity, crate::report::RunKind::Full, contract);
-    let ring: Box<dyn crate::trace::Sink> = Box::new(MemorySink::ring());
+    let ring = Sink::ring();
     let Some(requested) = &arguments.trace else {
         return Recorder::wall(ring, start);
     };
@@ -159,7 +159,7 @@ fn recorder(arguments: &Verify, run: &Recording<'_>, stderr: &mut dyn Write) -> 
         PathBuf::from(requested)
     };
     match DirSink::create(&directory) {
-        Ok(sink) => Recorder::wall(Box::new(TeeSink::new(vec![ring, Box::new(sink)])), start),
+        Ok(sink) => Recorder::wall(Sink::Tee(vec![ring, Sink::Dir(sink)]), start),
         Err(error) => {
             let _written = writeln!(
                 stderr,

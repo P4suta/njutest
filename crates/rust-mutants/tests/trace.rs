@@ -4,63 +4,44 @@
 //! The engine trace: diagnostic exhaust under the rules of ADR 0002. Never a
 //! claim, never a failure, honest about drops.
 
-#![allow(
+#![expect(
     clippy::expect_used,
-    clippy::unwrap_used,
-    clippy::panic,
     clippy::indexing_slicing,
-    clippy::arithmetic_side_effects,
     clippy::as_conversions,
-    clippy::too_many_lines,
-    clippy::type_complexity,
-    clippy::string_slice,
     reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
 )]
 
 use std::fs;
-use std::io::{self, Write};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::io;
 
 use jiff::Timestamp;
 use rust_mutants::trace::{
     Clock, DirSink, Event, ExecRecord, FILE_NAME, MemorySink, OUTPUT_DIRECTORY_NAME,
     OUTPUT_FILE_LIMIT, OpenRecord, Payload, Problem, Recorder, SCHEMA, Sink, SnapshotRecord,
-    SweepRecord, TRUNCATION_MARKER, WriterSink, check, read_events,
+    SweepRecord, TRUNCATION_MARKER, check, read_events,
 };
 use sha2::{Digest as _, Sha256};
 
 /// A clock that advances one second per reading, from a fixed origin.
 fn stepping_clock() -> Clock {
-    let ticks = AtomicU64::new(0);
-    Box::new(move || {
-        let tick = ticks.fetch_add(1, Ordering::SeqCst);
-        Timestamp::from_second(1_800_000_000 + i64::try_from(tick).expect("small"))
-            .expect("in range")
-    })
+    Clock::stepping(
+        Timestamp::from_second(1_800_000_000).expect("in range"),
+        std::time::Duration::from_secs(1),
+    )
 }
 
-/// A memory sink shared with the recorder, so a test can read what was kept.
-fn memory() -> (Arc<MemorySink>, Box<dyn Sink>) {
-    let sink = Arc::new(MemorySink::unbounded());
-    (Arc::clone(&sink), Box::new(SharedSink(Arc::clone(&sink))))
+/// A recorder over a memory sink, which is what a test reads back: the
+/// recorder owns its sink and answers with what the sink kept.
+fn recording() -> Recorder {
+    Recorder::new(Sink::Memory(MemorySink::unbounded()), stepping_clock())
 }
 
-/// Forwards to a shared sink: the recorder owns a box, the test keeps the Arc.
-struct SharedSink(Arc<MemorySink>);
-
-impl Sink for SharedSink {
-    fn emit(&self, event: &Event) -> io::Result<()> {
-        self.0.emit(event)
-    }
-
-    fn dropped(&self) -> Option<u64> {
-        self.0.dropped()
-    }
-
-    fn close(&self) -> io::Result<()> {
-        self.0.close()
-    }
+/// A directory sink that has been closed, so everything written to it
+/// fails: the reachable form of "the disk is gone".
+fn broken(dir: &std::path::Path) -> Sink {
+    let sink = DirSink::create(&dir.join("recording")).expect("the sink");
+    sink.close().expect("closed");
+    Sink::Dir(sink)
 }
 
 fn types(events: &[Event]) -> Vec<String> {
@@ -104,14 +85,13 @@ fn the_schema_is_frozen() {
 
 #[test]
 fn a_recording_starts_with_run_start_and_ends_with_run_end_carrying_the_accounting() {
-    let (kept, sink) = memory();
-    let recorder = Recorder::new(sink, stepping_clock());
+    let recorder = recording();
     assert!(recorder.is_enabled());
     recorder.note("progress", "one");
     recorder.note("progress", "two");
     recorder.run_end("prepared", None);
 
-    let events = kept.events();
+    let events = recorder.events();
     assert_eq!(types(&events), ["run-start", "note", "note", "run-end"]);
     let seqs: Vec<u64> = events.iter().map(|e| e.seq).collect();
     assert_eq!(seqs, [1, 2, 3, 4]);
@@ -139,24 +119,25 @@ fn a_recording_starts_with_run_start_and_ends_with_run_end_carrying_the_accounti
 
 #[test]
 fn run_end_happens_once_and_nothing_is_recorded_afterwards() {
-    let (kept, sink) = memory();
-    let recorder = Recorder::new(sink, stepping_clock());
+    let recorder = recording();
     recorder.run_end("errored", Some("boom".to_owned()));
     recorder.note("progress", "too late");
     recorder.run_end("ok", None);
-    let events = kept.events();
+    let events = recorder.events();
     assert_eq!(types(&events), ["run-start", "run-end"]);
     match &events[1].payload {
         Payload::RunEnd { run } => assert_eq!(run.error.as_deref(), Some("boom")),
         other => panic!("{other:?}"),
     }
-    assert!(kept.is_closed(), "run-end closes the sink");
+    assert!(
+        recorder.is_closed(),
+        "run-end closes the sink so the stream is complete on disk"
+    );
 }
 
 #[test]
 fn a_phase_guard_ends_its_phase_once_with_its_duration_and_phases_nest() {
-    let (kept, sink) = memory();
-    let recorder = Recorder::new(sink, stepping_clock());
+    let recorder = recording();
     let outer = recorder.phase("prepare");
     let inner = recorder.phase("discover");
     inner.end();
@@ -165,7 +146,7 @@ fn a_phase_guard_ends_its_phase_once_with_its_duration_and_phases_nest() {
     }
     drop(outer);
     recorder.run_end("ok", None);
-    let events = kept.events();
+    let events = recorder.events();
     assert_eq!(
         types(&events),
         [
@@ -203,8 +184,7 @@ fn a_phase_guard_ends_its_phase_once_with_its_duration_and_phases_nest() {
 
 #[test]
 fn events_are_sequenced_in_delivery_order_across_threads() {
-    let (kept, sink) = memory();
-    let recorder = Recorder::wall(sink);
+    let recorder = Recorder::wall(Sink::Memory(MemorySink::unbounded()));
     std::thread::scope(|scope| {
         for thread in 0..8 {
             let recorder = recorder.clone();
@@ -216,7 +196,7 @@ fn events_are_sequenced_in_delivery_order_across_threads() {
         }
     });
     recorder.run_end("ok", None);
-    let events = kept.events();
+    let events = recorder.events();
     assert_eq!(events.len(), 1 + 400 + 1);
     for (index, event) in events.iter().enumerate() {
         assert_eq!(
@@ -231,8 +211,7 @@ fn events_are_sequenced_in_delivery_order_across_threads() {
 
 #[test]
 fn exec_keeps_environment_names_only_sorted_and_deduplicated_and_digests_the_output() {
-    let (kept, sink) = memory();
-    let recorder = Recorder::new(sink, stepping_clock());
+    let recorder = recording();
     let record = ExecRecord {
         env_names: vec![
             "RUST_MUTANTS_ACTIVE=deadbeef".to_owned(),
@@ -249,7 +228,7 @@ fn exec_keeps_environment_names_only_sorted_and_deduplicated_and_digests_the_out
     };
     recorder.exec(record);
     recorder.run_end("ok", None);
-    let events = kept.events();
+    let events = recorder.events();
     let Payload::Exec { exec } = &events[1].payload else {
         panic!("{:?}", events[1]);
     };
@@ -268,47 +247,51 @@ fn exec_keeps_environment_names_only_sorted_and_deduplicated_and_digests_the_out
 
 // --- honesty about drops ------------------------------------------------------------
 
-/// Fails every other emission.
-struct Flaky {
-    calls: AtomicU64,
-}
-
-impl Sink for Flaky {
-    fn emit(&self, _: &Event) -> io::Result<()> {
-        if self.calls.fetch_add(1, Ordering::SeqCst) % 2 == 1 {
-            Err(io::Error::other("disk full"))
-        } else {
-            Ok(())
-        }
-    }
-}
-
 #[test]
-fn a_failing_sink_is_counted_never_returned() {
-    let recorder = Recorder::new(
-        Box::new(Flaky {
-            calls: AtomicU64::new(0),
-        }),
-        stepping_clock(),
-    );
+fn a_sink_that_cannot_write_is_counted_never_returned() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let recorder = Recorder::new(broken(temp.path()), stepping_clock());
     for i in 0..5 {
         recorder.note("n", &i.to_string());
     }
-    // Six emissions so far (run-start + five notes): three failed.
     recorder.run_end("ok", None);
-    // Nothing to assert on the sink: the recorder's accounting is what a
-    // reader sees, and it is exercised through a sink that keeps events.
+    // Nothing to assert on the sink: it kept nothing, and the point is that
+    // the run reached its end regardless.
+    assert!(recorder.events().is_empty());
+}
+
+#[test]
+fn one_sink_failing_costs_that_sink_the_event_and_not_the_others() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let recorder = Recorder::new(
+        Sink::Tee(vec![
+            broken(temp.path()),
+            Sink::Memory(MemorySink::unbounded()),
+        ]),
+        stepping_clock(),
+    );
+    recorder.note("a", "1");
+    recorder.run_end("ok", None);
+
+    let events = recorder.events();
+    assert_eq!(types(&events), ["run-start", "note", "run-end"]);
+    match &events[2].payload {
+        Payload::RunEnd { run } => assert_eq!(
+            run.events_dropped, 0,
+            "the recording lost nothing: one sink kept every event"
+        ),
+        other => panic!("{other:?}"),
+    }
 }
 
 #[test]
 fn a_sink_that_counts_its_own_drops_is_the_authority() {
-    let sink = Arc::new(MemorySink::bounded(4));
-    let recorder = Recorder::new(Box::new(SharedSink(Arc::clone(&sink))), stepping_clock());
+    let recorder = Recorder::new(Sink::Memory(MemorySink::bounded(4)), stepping_clock());
     for i in 0..5 {
         recorder.note("n", &i.to_string());
     }
     recorder.run_end("ok", None);
-    let events = sink.events();
+    let events = recorder.events();
     assert_eq!(events.len(), 4, "the ring keeps the newest four");
     assert_eq!(types(&events), ["note", "note", "note", "run-end"]);
     // The accounting is taken before run-end itself is emitted, which evicts
@@ -320,73 +303,18 @@ fn a_sink_that_counts_its_own_drops_is_the_authority() {
         }
         other => panic!("{other:?}"),
     }
-    assert_eq!(sink.dropped(), Some(3));
-}
-
-#[test]
-fn recorder_counted_failures_appear_in_the_accounting_when_the_sink_has_no_count() {
-    /// Keeps events but reports no count of its own; fails on the third.
-    struct Silent(Mutex<Vec<Event>>, AtomicU64);
-    impl Sink for Silent {
-        fn emit(&self, event: &Event) -> io::Result<()> {
-            if self.1.fetch_add(1, Ordering::SeqCst) == 2 {
-                return Err(io::Error::other("no"));
-            }
-            self.0
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .push(event.clone());
-            Ok(())
-        }
-    }
-    struct Fwd(Arc<Silent>);
-    impl Sink for Fwd {
-        fn emit(&self, event: &Event) -> io::Result<()> {
-            self.0.emit(event)
-        }
-    }
-    let sink = Arc::new(Silent(Mutex::new(Vec::new()), AtomicU64::new(0)));
-    let recorder = Recorder::new(Box::new(Fwd(Arc::clone(&sink))), stepping_clock());
-    recorder.note("a", "1");
-    recorder.note("b", "2");
-    recorder.note("c", "3");
-    recorder.run_end("ok", None);
-    let events = sink.0.lock().expect("lock").clone();
-    let seqs: Vec<u64> = events.iter().map(|e| e.seq).collect();
-    assert_eq!(seqs, [1, 2, 4, 5], "the third emission was lost");
-    match &events[3].payload {
-        Payload::RunEnd { run } => {
-            assert_eq!(run.events_dropped, 1);
-            assert_eq!(run.events_emitted, 3);
-        }
-        other => panic!("{other:?}"),
-    }
 }
 
 // --- sinks ------------------------------------------------------------------------------
 
-/// A `Write` the test can read back.
-#[derive(Clone, Default)]
-struct Shared(Arc<Mutex<Vec<u8>>>);
-
-impl Write for Shared {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.0
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .extend_from_slice(buf);
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
-
 #[test]
-fn writer_sink_writes_one_json_line_per_event_and_the_reader_round_trips() {
-    let buffer = Shared::default();
-    let recorder = Recorder::new(Box::new(WriterSink::new(buffer.clone())), stepping_clock());
+fn a_recording_writes_one_json_line_per_event_and_the_reader_round_trips() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let stream = temp.path().join("recording");
+    let recorder = Recorder::new(
+        Sink::Dir(DirSink::create(&stream).expect("the sink")),
+        stepping_clock(),
+    );
     let phase = recorder.phase("open");
     recorder.open(OpenRecord {
         root: "/home/alice/project".to_owned(),
@@ -417,8 +345,7 @@ fn writer_sink_writes_one_json_line_per_event_and_the_reader_round_trips() {
     });
     recorder.run_end("ok", None);
 
-    let raw = buffer.0.lock().expect("lock").clone();
-    let text = String::from_utf8(raw).expect("utf-8");
+    let text = fs::read_to_string(stream.join(FILE_NAME)).expect("the stream");
     assert_eq!(text.lines().count(), 7);
     assert!(text.ends_with('\n'));
     for line in text.lines() {
@@ -459,7 +386,7 @@ fn dir_sink_claims_its_directory_exclusively_and_preserves_output_beside_the_str
     let refused = DirSink::create(&dir).unwrap_err();
     assert_eq!(refused.kind(), io::ErrorKind::AlreadyExists);
 
-    let recorder = Recorder::new(Box::new(sink), stepping_clock());
+    let recorder = Recorder::new(Sink::Dir(sink), stepping_clock());
     let big = vec![b'x'; OUTPUT_FILE_LIMIT + 10];
     recorder.exec(ExecRecord {
         output: big.clone(),
@@ -522,11 +449,10 @@ fn the_reader_refuses_a_malformed_line_and_names_it() {
 
 #[test]
 fn check_reports_sequence_gaps_a_missing_run_end_and_drops() {
-    let (kept, sink) = memory();
-    let recorder = Recorder::new(sink, stepping_clock());
+    let recorder = recording();
     recorder.note("a", "1");
     recorder.note("b", "2");
-    let mut events = kept.events();
+    let mut events = recorder.events();
     assert_eq!(
         check(&events),
         [Problem::MissingRunEnd],
@@ -544,15 +470,13 @@ fn check_reports_sequence_gaps_a_missing_run_end_and_drops() {
         ]
     );
 
-    let sink = Arc::new(MemorySink::bounded(2));
-    let recorder = Recorder::new(Box::new(SharedSink(Arc::clone(&sink))), stepping_clock());
+    let recorder = Recorder::new(Sink::Memory(MemorySink::bounded(2)), stepping_clock());
     recorder.note("a", "1");
     recorder.note("b", "2");
     recorder.run_end("ok", None);
-    let problems = check(&sink.events());
+    let problems = check(&recorder.events());
     assert!(problems.contains(&Problem::MissingRunStart), "{problems:?}");
     // One drop before run-end was emitted; the ring lost another to run-end
     // itself, which the accounting cannot know.
     assert!(problems.contains(&Problem::Dropped(1)), "{problems:?}");
-    assert_eq!(sink.dropped(), Some(2));
 }

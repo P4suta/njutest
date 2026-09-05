@@ -7,6 +7,12 @@
 //! stream, so `mjutest verify > report.lines` is a report and not a report
 //! with a progress log mixed into it.
 //!
+//! The set of interfaces is closed — a command line names one of three — so
+//! this is an enum rather than a trait object. The compiler checks that
+//! every interface answers every call, there is no allocation and no
+//! vtable, and adding a fourth is a change the compiler points at rather
+//! than one a reader has to go looking for.
+//!
 //! Everything written here is escaped the way a report record is
 //! ([`crate::report::lines::escape`]): the messages come from test binaries
 //! and providers, and a newline inside one would put a line on the stream
@@ -19,110 +25,81 @@ use crate::report::lines::escape;
 
 /// Where a run says what it is doing.
 ///
-/// A run calls these unconditionally; [`Silent`] is what a caller that wants
-/// nothing passes, so there is no branch at the call site.
-pub trait Notes {
+/// A run calls these unconditionally; [`Notes::Silent`] is what a caller
+/// that wants nothing passes, so there is no branch at the call site.
+#[non_exhaustive]
+pub enum Notes<'a> {
+    /// Says nothing at all.
+    Silent,
+    /// Lines a person reads.
+    Plain(&'a mut dyn Write),
+    /// One JSON object per line, for a program.
+    Jsonl(&'a mut dyn Write),
+}
+
+impl std::fmt::Debug for Notes<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Silent => "Silent",
+            Self::Plain(_) => "Plain",
+            Self::Jsonl(_) => "Jsonl",
+        })
+    }
+}
+
+impl<'a> Notes<'a> {
+    /// The notes of the requested kind, writing to `out`.
+    pub fn of(kind: Ui, out: &'a mut dyn Write) -> Self {
+        match kind {
+            Ui::Plain => Self::Plain(out),
+            Ui::Jsonl => Self::Jsonl(out),
+        }
+    }
+
     /// A phase began.
-    fn phase(&mut self, name: &str);
+    pub fn phase(&mut self, name: &str) {
+        match self {
+            Self::Silent => {}
+            Self::Plain(out) => say(*out, &format!("== {}", escape(name))),
+            Self::Jsonl(out) => {
+                emit(*out, &serde_json::json!({ "type": "phase", "name": name }));
+            }
+        }
+    }
+
     /// One step of a phase finished.
-    fn progress(&mut self, message: &str, done: u64, total: u64);
+    pub fn progress(&mut self, message: &str, done: u64, total: u64) {
+        match self {
+            Self::Silent => {}
+            Self::Plain(out) => say(*out, &format!("   [{done}/{total}] {}", escape(message))),
+            Self::Jsonl(out) => emit(
+                *out,
+                &serde_json::json!({
+                    "type": "progress",
+                    "message": message,
+                    "done": done,
+                    "total": total,
+                }),
+            ),
+        }
+    }
+
     /// Something worth saying that is not progress.
-    fn note(&mut self, kind: &str, text: &str);
-}
-
-/// Says nothing at all.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct Silent;
-
-impl Notes for Silent {
-    fn phase(&mut self, _name: &str) {}
-    fn progress(&mut self, _message: &str, _done: u64, _total: u64) {}
-    fn note(&mut self, _kind: &str, _text: &str) {}
-}
-
-/// Lines a person reads.
-pub struct Plain<'a> {
-    out: &'a mut dyn Write,
-}
-
-impl std::fmt::Debug for Plain<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("Plain")
+    pub fn note(&mut self, kind: &str, text: &str) {
+        match self {
+            Self::Silent => {}
+            Self::Plain(out) => say(*out, &format!("   {}: {}", escape(kind), escape(text))),
+            Self::Jsonl(out) => emit(
+                *out,
+                &serde_json::json!({ "type": "note", "kind": kind, "detail": text }),
+            ),
+        }
     }
 }
 
-impl<'a> Plain<'a> {
-    /// Writes to `out`.
-    pub fn new(out: &'a mut dyn Write) -> Self {
-        Self { out }
-    }
-}
-
-impl Notes for Plain<'_> {
-    fn phase(&mut self, name: &str) {
-        say(self.out, &format!("== {}", escape(name)));
-    }
-
-    fn progress(&mut self, message: &str, done: u64, total: u64) {
-        say(
-            self.out,
-            &format!("   [{done}/{total}] {}", escape(message)),
-        );
-    }
-
-    fn note(&mut self, kind: &str, text: &str) {
-        say(self.out, &format!("   {}: {}", escape(kind), escape(text)));
-    }
-}
-
-/// One JSON object per line, for a program.
-pub struct Jsonl<'a> {
-    out: &'a mut dyn Write,
-}
-
-impl std::fmt::Debug for Jsonl<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("Jsonl")
-    }
-}
-
-impl<'a> Jsonl<'a> {
-    /// Writes to `out`.
-    pub fn new(out: &'a mut dyn Write) -> Self {
-        Self { out }
-    }
-
-    fn emit(&mut self, value: &serde_json::Value) {
-        say(self.out, &value.to_string());
-    }
-}
-
-impl Notes for Jsonl<'_> {
-    fn phase(&mut self, name: &str) {
-        self.emit(&serde_json::json!({ "type": "phase", "name": name }));
-    }
-
-    fn progress(&mut self, message: &str, done: u64, total: u64) {
-        self.emit(&serde_json::json!({
-            "type": "progress",
-            "message": message,
-            "done": done,
-            "total": total,
-        }));
-    }
-
-    fn note(&mut self, kind: &str, text: &str) {
-        self.emit(&serde_json::json!({ "type": "note", "kind": kind, "detail": text }));
-    }
-}
-
-/// The notes of the requested kind, writing to `out`.
-#[must_use]
-pub fn notes(kind: Ui, out: &mut dyn Write) -> Box<dyn Notes + '_> {
-    match kind {
-        Ui::Plain => Box::new(Plain::new(out)),
-        Ui::Jsonl => Box::new(Jsonl::new(out)),
-    }
+/// Writes one JSON object.
+fn emit(out: &mut dyn Write, value: &serde_json::Value) {
+    say(out, &value.to_string());
 }
 
 /// Writes one line. A closed stream is the reader's choice, not a failure of

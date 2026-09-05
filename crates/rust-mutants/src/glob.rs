@@ -144,7 +144,7 @@ impl Pattern {
 /// backwards over two rows bounds the whole matcher at O(pattern × path);
 /// the obvious recursive reading of `**` explores an exponential number of
 /// splits on a pattern such as `**/**/**/*a`.
-#[allow(
+#[expect(
     clippy::indexing_slicing,
     clippy::arithmetic_side_effects,
     reason = "the two rows have length count + 1 and every index is j <= count by construction"
@@ -180,7 +180,7 @@ fn match_elements(elements: &[Element], segments: &[&str]) -> bool {
 /// "does `pattern[..=i]` match `segment[..j]`". A table rather than a greedy
 /// scan keeps `a*a*a*a*b` linear in the product of the lengths instead of
 /// exponential in the number of stars.
-#[allow(
+#[expect(
     clippy::indexing_slicing,
     clippy::arithmetic_side_effects,
     reason = "the two rows have length len + 1 and every index is j <= len by construction"

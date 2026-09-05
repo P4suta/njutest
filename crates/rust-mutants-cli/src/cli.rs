@@ -129,7 +129,7 @@ pub struct Scope {
 
 /// The plain yes-or-no choices, kept together so the scope reads as what it
 /// selects rather than as a row of flags.
-#[allow(
+#[expect(
     clippy::struct_excessive_bools,
     reason = "each is one command line flag, and a flag is a bool wherever it is stored"
 )]

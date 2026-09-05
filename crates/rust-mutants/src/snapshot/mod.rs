@@ -81,7 +81,7 @@
 //!
 //! [`glob`]: crate::glob
 
-#![allow(
+#![expect(
     clippy::create_dir,
     reason = "exclusive creation is the point: an existing directory is a fact to react to, never one to paper over with create_dir_all"
 )]
@@ -1569,7 +1569,7 @@ mod platform {
             }
             let mut permissions = meta.permissions();
             if permissions.readonly() {
-                #[allow(
+                #[expect(
                     clippy::permissions_set_readonly_false,
                     reason = "Windows has no group or world bits to open; this only clears the attribute"
                 )]

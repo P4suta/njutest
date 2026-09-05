@@ -97,7 +97,7 @@ mod sys {
 }
 
 #[cfg(windows)]
-#[allow(
+#[expect(
     unsafe_code,
     reason = "LockFileEx and UnlockFileEx are the platform's advisory lock and have no safe binding"
 )]

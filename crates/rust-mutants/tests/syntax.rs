@@ -4,14 +4,10 @@
 //! Syntactic discovery: every candidate a file yields, with its guard site,
 //! and every place deliberately passed over, with its reason.
 
-#![allow(
+#![expect(
     clippy::expect_used,
-    clippy::unwrap_used,
-    clippy::panic,
     clippy::indexing_slicing,
-    clippy::arithmetic_side_effects,
     clippy::as_conversions,
-    clippy::too_many_lines,
     clippy::type_complexity,
     clippy::string_slice,
     reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"

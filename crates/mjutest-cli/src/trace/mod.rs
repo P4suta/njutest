@@ -24,8 +24,9 @@ mod event;
 mod reader;
 mod sink;
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use jiff::Timestamp;
 use sha2::{Digest as _, Sha256};
@@ -37,14 +38,62 @@ pub use event::{
 pub use reader::{Problem, ReadError, check, read_events};
 pub use sink::{
     DirSink, FILE_NAME, MemorySink, OUTPUT_DIRECTORY_NAME, OUTPUT_FILE_LIMIT, RING_CAPACITY, Sink,
-    TRUNCATION_MARKER, TeeSink, WriterSink,
+    TRUNCATION_MARKER,
 };
 
 use crate::report::Accounting;
 
 /// A source of the current moment: the recorder's one seam, so a test can
 /// freeze time and a golden can freeze the wire shape.
-pub type Clock = Box<dyn Fn() -> Timestamp + Send + Sync>;
+///
+/// A closed set rather than a boxed closure. The two clocks a program needs
+/// are the wall and one that steps predictably, and naming them means a
+/// reader of a recorder can see which it has.
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum Clock {
+    /// The moment it actually is.
+    Wall,
+    /// One that starts at `origin` and advances by `step` each reading, so a
+    /// recording is the same bytes every time it is made.
+    Stepping {
+        /// The first moment it answers with.
+        origin: Timestamp,
+        /// How far it moves per reading.
+        step: Duration,
+        /// How many readings there have been.
+        readings: AtomicU64,
+    },
+}
+
+impl Clock {
+    /// A clock that starts at `origin` and advances by `step` per reading.
+    #[must_use]
+    pub const fn stepping(origin: Timestamp, step: Duration) -> Self {
+        Self::Stepping {
+            origin,
+            step,
+            readings: AtomicU64::new(0),
+        }
+    }
+
+    /// The moment now, by this clock.
+    #[must_use]
+    pub fn now(&self) -> Timestamp {
+        match self {
+            Self::Wall => Timestamp::now(),
+            Self::Stepping {
+                origin,
+                step,
+                readings,
+            } => {
+                let reading = readings.fetch_add(1, Ordering::SeqCst);
+                let elapsed = step.saturating_mul(u32::try_from(reading).unwrap_or(u32::MAX));
+                origin.checked_add(elapsed).unwrap_or(*origin)
+            }
+        }
+    }
+}
 
 /// Turns the events of a run into a stream a sink keeps.
 ///
@@ -73,7 +122,7 @@ impl std::fmt::Debug for Recorder {
 }
 
 struct Inner {
-    sink: Box<dyn Sink>,
+    sink: Sink,
     clock: Clock,
     started: Timestamp,
     state: Mutex<State>,
@@ -97,8 +146,8 @@ impl Recorder {
     /// Starts a recording into `sink`, reading the moment from `clock`, and
     /// emits its `run-start` event.
     #[must_use]
-    pub fn new(sink: Box<dyn Sink>, clock: Clock, start: StartRecord) -> Self {
-        let started = clock();
+    pub fn new(sink: Sink, clock: Clock, start: StartRecord) -> Self {
+        let started = clock.now();
         let inner = Arc::new(Inner {
             sink,
             clock,
@@ -112,8 +161,21 @@ impl Recorder {
 
     /// [`Recorder::new`] on the wall clock.
     #[must_use]
-    pub fn wall(sink: Box<dyn Sink>, start: StartRecord) -> Self {
-        Self::new(sink, Box::new(Timestamp::now), start)
+    pub fn wall(sink: Sink, start: StartRecord) -> Self {
+        Self::new(sink, Clock::Wall, start)
+    }
+
+    /// Every event a memory sink of this recording kept, oldest first.
+    ///
+    /// This is what a diagnostics bundle reads from a run that asked for no
+    /// trace: the ring holds the last moments of the run, and nothing had to
+    /// be written to disk to have them.
+    #[must_use]
+    pub fn events(&self) -> Vec<Event> {
+        self.inner
+            .as_ref()
+            .map(|inner| inner.sink.events())
+            .unwrap_or_default()
     }
 
     /// Whether anything is recorded.
@@ -193,7 +255,7 @@ impl Recorder {
         let Some(inner) = &self.inner else {
             return;
         };
-        let moment = (inner.clock)();
+        let moment = inner.clock.now();
         {
             let mut state = inner
                 .state
@@ -225,7 +287,7 @@ impl Recorder {
     fn now(&self) -> Timestamp {
         self.inner
             .as_ref()
-            .map_or_else(Timestamp::now, |inner| (inner.clock)())
+            .map_or_else(Timestamp::now, |inner| inner.clock.now())
     }
 
     fn emit(&self, payload: Payload) {

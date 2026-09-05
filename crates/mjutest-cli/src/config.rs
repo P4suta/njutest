@@ -628,7 +628,7 @@ fn as_millis<S: serde::Serializer>(value: &Duration, serializer: S) -> Result<S:
 }
 
 /// A path as the text it came from, empty for none.
-#[allow(
+#[expect(
     clippy::ref_option,
     reason = "serde's serialize_with hands the field by reference, whatever its shape"
 )]
