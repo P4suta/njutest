@@ -158,10 +158,34 @@ jobs:
             target/llvm-cov/html
           if-no-files-found: error
 
+  package-install:
+    name: package-install
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+      - name: Fetch the locked dependency graph
+        env:
+          CARGO_NET_OFFLINE: "false"
+        run: cargo fetch --locked
+      - name: Every publishable member packages
+        run: cargo package --locked --workspace --no-verify --allow-dirty
+      - name: The binaries install from this tree
+        run: |
+          cargo install --locked --path crates/mjutest-cli --root "${RUNNER_TEMP}/install"
+          cargo install --locked --path crates/rust-mutants-cli --root "${RUNNER_TEMP}/install"
+          "${RUNNER_TEMP}/install/bin/mjutest" --version
+          "${RUNNER_TEMP}/install/bin/rust-mutants" --version
+      - name: What a release would say it is made of
+        run: cargo xtask sbom --output "${RUNNER_TEMP}/mjutest.cdx.json"
+
   ci-success:
     name: ci-success
     if: always()
-    needs: [test, lint, deny, audit, coverage]
+    needs: [test, lint, deny, audit, coverage, package-install]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

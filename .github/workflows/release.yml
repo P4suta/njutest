@@ -1,0 +1,164 @@
+# SPDX-FileCopyrightText: 2026 mjutest contributors
+# SPDX-License-Identifier: MIT OR Apache-2.0
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: The tag to build, which must already exist.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+      - name: The tag, the manifests, and the binaries must name one version
+        id: version
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          cargo xtask release-check
+          version="$(cargo metadata --format-version 1 --no-deps --locked \
+            | jq --raw-output '.packages[] | select(.name == "mjutest-cli") | .version')"
+          if [ "v${version}" != "${TAG}" ]; then
+            echo "the tag ${TAG} does not name version ${version}" >&2
+            exit 1
+          fi
+          cargo build --locked --release --workspace
+          for binary in mjutest rust-mutants; do
+            said="$("target/release/${binary}" --version)"
+            case "${said}" in
+              *"${version}"*) ;;
+              *) echo "${binary} --version says ${said}, not ${version}" >&2; exit 1 ;;
+            esac
+          done
+          echo "version=${version}" >>"$GITHUB_OUTPUT"
+
+  artifacts:
+    name: artifacts (${{ matrix.os }})
+    needs: [check]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+          - os: macos-15
+            target: aarch64-apple-darwin
+          - os: windows-2025
+            target: x86_64-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+      - name: Build the release binaries
+        run: cargo build --locked --release --workspace
+      - name: Bundle them
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+          VERSION: ${{ needs.check.outputs.version }}
+        run: |
+          set -euo pipefail
+          name="mjutest-${VERSION}-${TARGET}"
+          mkdir -p "dist/${name}"
+          for binary in mjutest rust-mutants; do
+            if [ -f "target/release/${binary}.exe" ]; then
+              cp "target/release/${binary}.exe" "dist/${name}/"
+            else
+              cp "target/release/${binary}" "dist/${name}/"
+            fi
+          done
+          cp LICENSE-MIT LICENSE-APACHE README.md "dist/${name}/"
+          (cd dist && tar --create --gzip --file "${name}.tar.gz" "${name}")
+          (cd dist && shasum --algorithm 256 "${name}.tar.gz" > "${name}.tar.gz.sha256")
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: dist-${{ matrix.target }}
+          path: dist/*.tar.gz*
+          if-no-files-found: error
+
+  sbom:
+    name: sbom
+    needs: [check]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+      - name: Write what the release is made of
+        run: |
+          mkdir -p dist
+          cargo xtask sbom --output "dist/mjutest-${{ needs.check.outputs.version }}.cdx.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: dist-sbom
+          path: dist/*.cdx.json
+          if-no-files-found: error
+
+  publish:
+    name: publish
+    needs: [check, artifacts, sbom]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: release
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: dist-*
+          merge-multiple: true
+          path: dist
+      - name: Say what was built and from what
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v2
+        with:
+          subject-path: dist/*
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          gh release create "${TAG}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "${TAG}" \
+            --generate-notes \
+            --draft \
+            dist/*
+          gh release edit "${TAG}" --repo "${GITHUB_REPOSITORY}" --draft=false

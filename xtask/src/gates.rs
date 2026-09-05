@@ -302,6 +302,49 @@ pub fn proofaudit(run: &Path) -> Result<proofaudit::Audit, proofaudit::AuditErro
     proofaudit::audit(&label, &text)
 }
 
+/// What a release is made of, as a `CycloneDX` document.
+///
+/// # Errors
+/// A `cargo metadata` that could not be run or read, or a file that could not
+/// be written.
+pub fn sbom(root: &Path, output: Option<&Path>) -> Result<String, GateFailure> {
+    let asked = std::process::Command::new("cargo")
+        .args(["metadata", "--format-version", "1", "--locked"])
+        .current_dir(root)
+        .output()
+        .map_err(|error| GateFailure(format!("cargo metadata: {error}")))?;
+    if !asked.status.success() {
+        return Err(GateFailure(format!(
+            "cargo metadata: {}",
+            String::from_utf8_lossy(&asked.stderr).trim()
+        )));
+    }
+    let manifest = std::fs::read_to_string(root.join("Cargo.toml"))
+        .map_err(|error| GateFailure(format!("Cargo.toml: {error}")))?;
+    let version = release::workspace_version(&manifest)
+        .ok_or_else(|| GateFailure("Cargo.toml has no [workspace.package].version".to_owned()))?;
+    let bom = crate::sbom::of(
+        &String::from_utf8_lossy(&asked.stdout),
+        ("mjutest", &version),
+    )
+    .map_err(GateFailure)?;
+    let document = serde_json::to_string_pretty(&bom)
+        .map_err(|error| GateFailure(format!("the bill of materials: {error}")))?;
+    match output {
+        Some(path) => {
+            std::fs::write(path, format!("{document}\n"))
+                .map_err(|error| GateFailure(format!("{}: {error}", path.display())))?;
+            Ok(format!(
+                "sbom: {} components of {} written to {}",
+                bom.components.len(),
+                version,
+                path.display()
+            ))
+        }
+        None => Ok(document),
+    }
+}
+
 /// What changed between two stored reports.
 ///
 /// # Errors

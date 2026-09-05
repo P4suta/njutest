@@ -4,11 +4,6 @@
 //! Running the suite under a sanitizer: what it finds, and what it says when it cannot run.
 
 #![cfg(unix)]
-#![expect(
-    clippy::expect_used,
-    reason = "a test reports a setup failure by panicking and asserts with panics"
-)]
-
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -18,34 +13,42 @@ use mjutest_cli::trace::Recorder;
 use mjutest_cli::watch::Watch;
 use rust_mutants::runner::Cancel;
 
-fn cargo(dir: &Path, name: &str, said: &str, code: i32) -> PathBuf {
-    use std::os::unix::fs::PermissionsExt as _;
+/// The cargo every test here drives, read rather than written: see the script's own note.
+fn cargo() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testdata/fake-cargo.sh")
+}
 
-    let path = dir.join(name);
-    std::fs::write(
-        &path,
-        format!("#!/bin/sh\ncat <<'SAID'\n{said}\nSAID\nexit {code}\n"),
-    )
-    .expect("write");
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).expect("chmod");
-    path
+/// What that cargo is told to say, and how it is told to end.
+fn saying(said: &str, code: i32) -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
+    let mut env: Vec<(std::ffi::OsString, std::ffi::OsString)> = std::env::vars_os()
+        .filter(|(name, _)| name == "PATH")
+        .collect();
+    env.push((
+        std::ffi::OsString::from("FAKE_CARGO_SAYS"),
+        std::ffi::OsString::from(said),
+    ));
+    env.push((
+        std::ffi::OsString::from("FAKE_CARGO_CODE"),
+        std::ffi::OsString::from(code.to_string()),
+    ));
+    env
 }
 
 fn sanitized(
-    cargo: &Path,
+    said: &str,
+    code: i32,
     dir: &Path,
     sanitizers: &[String],
 ) -> mjutest_cli::assure::sanitize::Sanitized {
     let cancel = Cancel::new();
     let trace = Recorder::disabled();
+    let cargo = cargo();
     sanitize(
         &Sanitizing {
             root: dir,
-            cargo,
+            cargo: &cargo,
             host: "x86_64-unknown-linux-gnu",
-            env: std::env::vars_os()
-                .filter(|(name, _)| name == "PATH")
-                .collect(),
+            env: saying(said, code),
             packages: &[],
             sanitizers,
             timeout: Some(Duration::from_secs(30)),
@@ -58,7 +61,7 @@ fn sanitized(
 #[test]
 fn a_configuration_that_asks_for_no_sanitizer_runs_none() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let done = sanitized(&cargo(dir.path(), "cargo-ok", "", 0), dir.path(), &[]);
+    let done = sanitized("", 0, dir.path(), &[]);
     assert!(done.ran.is_empty());
     assert!(done.findings.is_empty());
     assert!(done.limitations.is_empty());
@@ -68,7 +71,8 @@ fn a_configuration_that_asks_for_no_sanitizer_runs_none() {
 fn a_suite_a_sanitizer_passes_is_one_it_ran_under() {
     let dir = tempfile::tempdir().expect("tempdir");
     let done = sanitized(
-        &cargo(dir.path(), "cargo-ok", "test result: ok. 3 passed", 0),
+        "test result: ok. 3 passed",
+        0,
         dir.path(),
         &["address".to_owned()],
     );
@@ -88,11 +92,7 @@ fn a_suite_a_sanitizer_passes_is_one_it_ran_under() {
 fn what_a_sanitizer_finds_is_a_defect() {
     let dir = tempfile::tempdir().expect("tempdir");
     let said = "==1234==ERROR: AddressSanitizer: heap-use-after-free on address 0x602000000010";
-    let done = sanitized(
-        &cargo(dir.path(), "cargo-asan", said, 1),
-        dir.path(),
-        &["address".to_owned()],
-    );
+    let done = sanitized(said, 1, dir.path(), &["address".to_owned()]);
     let finding = done.findings.first().expect("a finding");
     assert_eq!(finding.kind, FindingKind::UndefinedBehaviour);
     assert!(finding.kind.is_defect());
@@ -107,11 +107,7 @@ fn what_a_sanitizer_finds_is_a_defect() {
 fn a_data_race_the_thread_sanitizer_sees_is_a_defect() {
     let dir = tempfile::tempdir().expect("tempdir");
     let said = "WARNING: ThreadSanitizer: data race (pid=1234)";
-    let done = sanitized(
-        &cargo(dir.path(), "cargo-tsan", said, 66),
-        dir.path(),
-        &["thread".to_owned()],
-    );
+    let done = sanitized(said, 66, dir.path(), &["thread".to_owned()]);
     assert_eq!(
         done.findings.first().map(|one| one.kind),
         Some(FindingKind::UndefinedBehaviour)
@@ -122,11 +118,7 @@ fn a_data_race_the_thread_sanitizer_sees_is_a_defect() {
 fn a_sanitizer_that_was_asked_for_and_could_not_run_is_a_gap_and_not_a_pass() {
     let dir = tempfile::tempdir().expect("tempdir");
     let said = "error: the option `Z` is only accepted on the nightly compiler";
-    let done = sanitized(
-        &cargo(dir.path(), "cargo-stable", said, 1),
-        dir.path(),
-        &["address".to_owned()],
-    );
+    let done = sanitized(said, 1, dir.path(), &["address".to_owned()]);
     assert!(done.ran.is_empty(), "{done:?}");
     assert_eq!(
         done.findings.first().map(|one| one.kind),
@@ -144,12 +136,8 @@ fn a_sanitizer_that_was_asked_for_and_could_not_run_is_a_gap_and_not_a_pass() {
 fn a_test_that_fails_under_a_sanitizer_is_a_failing_test() {
     let dir = tempfile::tempdir().expect("tempdir");
     let done = sanitized(
-        &cargo(
-            dir.path(),
-            "cargo-failed",
-            "test result: FAILED. 1 failed",
-            101,
-        ),
+        "test result: FAILED. 1 failed",
+        101,
         dir.path(),
         &["address".to_owned()],
     );
@@ -163,7 +151,8 @@ fn a_test_that_fails_under_a_sanitizer_is_a_failing_test() {
 fn every_sanitizer_the_configuration_names_is_run() {
     let dir = tempfile::tempdir().expect("tempdir");
     let done = sanitized(
-        &cargo(dir.path(), "cargo-ok", "test result: ok", 0),
+        "test result: ok",
+        0,
         dir.path(),
         &["address".to_owned(), "leak".to_owned()],
     );

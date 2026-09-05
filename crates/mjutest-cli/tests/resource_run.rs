@@ -43,34 +43,28 @@ fn copy(from: &Path, to: &Path) {
     }
 }
 
-fn provider(root: &Path, body: &str) -> PathBuf {
-    use std::os::unix::fs::PermissionsExt as _;
-
-    let path = root.join("provider.sh");
-    std::fs::write(&path, body).expect("write");
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).expect("chmod");
-    path
+/// The provider a run drives, read rather than written: see the script's own note.
+fn provider() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testdata/fake-provider.sh")
 }
 
-const READY: &str = "#!/bin/sh\n\
-     while IFS= read -r line; do\n\
-     \x20 case \"$line\" in\n\
-     \x20   *'\"action\":\"start\"'*) printf '%s\\n' '{\"version\":1,\"status\":\"ready\",\"instance\":\"pg-1\",\"environment\":{\"DATABASE_URL\":\"postgres://127.0.0.1/test\"}}' ;;\n\
-     \x20   *'\"action\":\"stop\"'*) printf '%s\\n' '{\"version\":1,\"status\":\"stopped\",\"instance\":\"pg-1\"}'; exit 0 ;;\n\
-     \x20 esac\n\
-     done\n";
+/// What the provider says when it is ready.
+const READY: &str = r#"{"version":1,"status":"ready","instance":"pg-1","environment":{"DATABASE_URL":"postgres://127.0.0.1/test"}}"#;
 
-const UNWILLING: &str = "#!/bin/sh\n\
-     while IFS= read -r line; do\n\
-     \x20 printf '%s\\n' '{\"version\":1,\"status\":\"error\",\"message\":\"no docker here\"}'\n\
-     done\n";
+/// What it says when it cannot.
+const UNWILLING: &str = r#"{"version":1,"status":"error","message":"no docker here"}"#;
 
-fn verify(fixture: &Fixture) -> Output {
+/// What it says when it has stopped.
+const STOPPED: &str = r#"{"version":1,"status":"stopped","instance":"pg-1"}"#;
+
+fn verify(fixture: &Fixture, ready: &str) -> Output {
     Command::new(env!("CARGO_BIN_EXE_mjutest"))
         .args(["verify", "--offline", "--locked"])
         .current_dir(&fixture.root)
         .env_clear()
         .env("NO_COLOR", "1")
+        .env("FAKE_PROVIDER_READY", ready)
+        .env("FAKE_PROVIDER_STOPPED", STOPPED)
         .env(
             "XDG_CACHE_HOME",
             mjutest_devkit::paths::cache_beside(&fixture.root).expect("a cache directory"),
@@ -101,12 +95,13 @@ fn document(fixture: &Fixture) -> serde_json::Value {
     serde_json::from_str(&std::fs::read_to_string(&path).expect("the report")).expect("JSON")
 }
 
-fn declaring(fixture: &Fixture, command: &Path) {
+fn declaring(fixture: &Fixture) {
     std::fs::write(
         fixture.root.join(".mjutest.toml"),
         format!(
-            "version = 1\n\n[resources.postgres]\ncommand = [{:?}]\ntimeout = \"10s\"\n",
-            command.to_string_lossy()
+            "version = 1\n\n[resources.postgres]\ncommand = [\"/bin/sh\", {:?}]\n\
+             timeout = \"10s\"\nenvironment = [\"FAKE_PROVIDER_READY\", \"FAKE_PROVIDER_STOPPED\"]\n",
+            provider().to_string_lossy()
         ),
     )
     .expect("write");
@@ -126,11 +121,10 @@ fn needing_the_resource(fixture: &Fixture) {
 #[test]
 fn a_test_of_a_leasing_run_sees_what_the_provider_said() {
     let fixture = fixture();
-    let command = provider(&fixture.root, READY);
-    declaring(&fixture, &command);
+    declaring(&fixture);
     needing_the_resource(&fixture);
 
-    let output = verify(&fixture);
+    let output = verify(&fixture, READY);
     let report = document(&fixture);
     assert_eq!(
         report["resources"],
@@ -161,10 +155,9 @@ fn a_test_of_a_leasing_run_sees_what_the_provider_said() {
 #[test]
 fn a_run_that_cannot_start_what_it_was_told_to_start_does_not_run_the_tests_without_it() {
     let fixture = fixture();
-    let command = provider(&fixture.root, UNWILLING);
-    declaring(&fixture, &command);
+    declaring(&fixture);
 
-    let output = verify(&fixture);
+    let output = verify(&fixture, UNWILLING);
     let complaint = String::from_utf8_lossy(&output.stderr).into_owned();
     assert_eq!(
         output.status.code(),

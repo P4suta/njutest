@@ -21,12 +21,13 @@ This repository is two products in one Cargo workspace:
   observe a mutant — and never by a time budget, a sample, or an exclusion
   list.
 
-**Status: pre-alpha, under construction.** The engine works end to end:
-`rust-mutants list`, `catalog`, `instrument`, `explain`, and `run` do what
-they say on a real workspace. The assurance runner is next. The contracts under [`docs/`](docs/)
-describe the intended product; each page carries a status line saying how much
-of it exists. Nothing here should be read as a description of working software
-until its status says so.
+**Status: 0.1.0, and pre-1.0 in every sense the number implies.** Both
+products work end to end on a real workspace, and the contracts under
+[`docs/`](docs/) describe what they do rather than what they will do; each page
+carries a status line, and [`docs/roadmap.md`](docs/roadmap.md) says which
+milestones are done. What is not settled is the shape of the public API and of
+the documents: they are versioned, they are validated by their own schemas,
+and they may still change before 1.0.
 
 [ocaml-mutants]: https://github.com/P4suta/ocaml-mutants
 [gleam-mutants]: https://github.com/P4suta/gleam-mutants
@@ -56,6 +57,24 @@ For `standard-v1`, mjutest:
 
 The design and the milestones are in [`docs/architecture.md`](docs/architecture.md)
 and the decisions behind them in [`docs/adr/`](docs/adr/).
+
+## The engine on its own
+
+`rust-mutants` is a product in its own right, and does not need the runner:
+
+```console
+rust-mutants list                  # what the rules propose, before the compiler has ruled
+rust-mutants catalog --json        # what it accepts, and every refusal in its own words
+rust-mutants run                   # every mutant, and an exit code that says what happened
+rust-mutants run --changed         # only the files that differ from HEAD
+rust-mutants run --coverage        # only against the targets that reached each mutant
+rust-mutants run --shard 1/4       # one part of the catalog, and `merge` puts them together
+rust-mutants report --format html  # one page that fetches nothing
+rust-mutants report --tui          # read it at the terminal
+```
+
+[`docs/engine/comparison-with-cargo-mutants.md`](docs/engine/comparison-with-cargo-mutants.md)
+says how it differs from the tool most Rust projects reach for, and why.
 
 ## Try it
 
@@ -95,6 +114,10 @@ the TDD protocol, and the catalog of developer tooling.
 mise run check     # every local gate, in the order CI runs them
 mise run doctor    # which tools are present and whether their versions match
 ```
+
+Releases are tags: [`docs/release.md`](docs/release.md) says what a tag sets
+off, what is checked before anything is published, and what each release
+carries with it.
 
 Licensed under either [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at
 your option.

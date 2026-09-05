@@ -46,36 +46,30 @@ fn copy(from: &Path, to: &Path) {
     }
 }
 
-fn provider(root: &Path, offering: &str) -> PathBuf {
-    use std::os::unix::fs::PermissionsExt as _;
-
-    let path = root.join("generate.sh");
-    std::fs::write(
-        &path,
-        format!("#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '{offering}'\n"),
-    )
-    .expect("write");
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).expect("chmod");
-    path
+/// The generation provider a run asks, read rather than written: see the script's own note.
+fn provider() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testdata/fake-generator.sh")
 }
 
-fn declaring(fixture: &Fixture, command: &Path) {
+fn declaring(fixture: &Fixture) {
     std::fs::write(
         fixture.root.join(".mjutest.toml"),
         format!(
-            "version = 1\n\n[generation]\ncommand = [{:?}]\n",
-            command.to_string_lossy()
+            "version = 1\n\n[generation]\ncommand = [\"/bin/sh\", {:?}]\n\
+             environment = [\"FAKE_GENERATOR_OFFERS\"]\n",
+            provider().to_string_lossy()
         ),
     )
     .expect("write");
 }
 
-fn mjutest(fixture: &Fixture, args: &[&str]) -> Output {
+fn mjutest(fixture: &Fixture, args: &[&str], offers: &str) -> Output {
     Command::new(env!("CARGO_BIN_EXE_mjutest"))
         .args(args)
         .current_dir(&fixture.root)
         .env_clear()
         .env("NO_COLOR", "1")
+        .env("FAKE_GENERATOR_OFFERS", offers)
         .env(
             "XDG_CACHE_HOME",
             mjutest_devkit::paths::cache_beside(&fixture.root).expect("a cache directory"),
@@ -115,10 +109,10 @@ fn offering(path: &str, content: &str) -> String {
 #[test]
 fn a_candidate_that_closes_the_gap_is_offered_and_only_then_written() {
     let fixture = fixture();
-    let command = provider(&fixture.root, &offering("tests/zero.rs", OFFERED));
-    declaring(&fixture, &command);
+    declaring(&fixture);
+    let offers = offering("tests/zero.rs", OFFERED);
 
-    let verified = mjutest(&fixture, &["verify", "--offline", "--locked"]);
+    let verified = mjutest(&fixture, &["verify", "--offline", "--locked"], &offers);
     assert_eq!(
         verified.status.code(),
         Some(2),
@@ -141,7 +135,7 @@ fn a_candidate_that_closes_the_gap_is_offered_and_only_then_written() {
         "a candidate is a proposal until somebody applies it"
     );
 
-    let listed = mjutest(&fixture, &["fix"]);
+    let listed = mjutest(&fixture, &["fix"], &offers);
     let said = String::from_utf8_lossy(&listed.stdout).into_owned();
     assert!(said.contains("tests/zero.rs"), "{said}");
     assert!(said.contains("held up"), "{said}");
@@ -150,7 +144,11 @@ fn a_candidate_that_closes_the_gap_is_offered_and_only_then_written() {
         "listing writes nothing"
     );
 
-    let applied = mjutest(&fixture, &["fix", "--apply", "--offline", "--locked"]);
+    let applied = mjutest(
+        &fixture,
+        &["fix", "--apply", "--offline", "--locked"],
+        &offers,
+    );
     let said = String::from_utf8_lossy(&applied.stdout).into_owned();
     assert_eq!(applied.status.code(), Some(0), "{applied:?}");
     assert!(said.contains("wrote tests/zero.rs"), "{said}");
@@ -166,10 +164,10 @@ fn a_candidate_that_closes_the_gap_is_offered_and_only_then_written() {
 fn a_candidate_that_does_not_close_the_gap_is_recorded_and_not_offered() {
     let fixture = fixture();
     let useless = "Ly8hIEEgdGVzdCB0aGF0IHJ1bnMgYW5kIHBhc3NlcyBhbmQgdGVsbHMgbm90aGluZyBhcGFydC4KCiNbdGVzdF0KZm4gcG9zaXRpdmVfaXNfcG9zaXRpdmUoKSB7CiAgICBhc3NlcnRfZXEhKGZpeHR1cmVfYmFzZWxpbmU6OnNpZ24oMSksICJwb3NpdGl2ZSIpOwp9Cg==";
-    let command = provider(&fixture.root, &offering("tests/useless.rs", useless));
-    declaring(&fixture, &command);
+    declaring(&fixture);
+    let offers = offering("tests/useless.rs", useless);
 
-    let verified = mjutest(&fixture, &["verify", "--offline", "--locked"]);
+    let verified = mjutest(&fixture, &["verify", "--offline", "--locked"], &offers);
     assert_eq!(verified.status.code(), Some(2), "{verified:?}");
     let report = document(&fixture);
     let candidates = report["candidates"].as_array().expect("the candidates");
@@ -184,7 +182,11 @@ fn a_candidate_that_does_not_close_the_gap_is_recorded_and_not_offered() {
         );
     }
 
-    let applied = mjutest(&fixture, &["fix", "--apply", "--offline", "--locked"]);
+    let applied = mjutest(
+        &fixture,
+        &["fix", "--apply", "--offline", "--locked"],
+        &offers,
+    );
     assert!(
         !fixture.root.join("tests/useless.rs").exists(),
         "nothing that did not hold up is written: {applied:?}"

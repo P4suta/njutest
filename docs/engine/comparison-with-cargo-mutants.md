@@ -1,0 +1,91 @@
+<!--
+SPDX-FileCopyrightText: 2026 mjutest contributors
+SPDX-License-Identifier: MIT OR Apache-2.0
+-->
+
+# rust-mutants and cargo-mutants
+
+[cargo-mutants] is the mutation testing tool most Rust projects reach for, and
+it is good. This page says what is different here, so that a reader can tell
+whether the difference is worth anything to them. It is a comparison of
+designs, not a benchmark: where a claim would need numbers this page says so
+rather than inventing them.
+
+[cargo-mutants]: https://github.com/sourcefrog/cargo-mutants
+
+## The one difference everything else follows from
+
+cargo-mutants writes one mutation into a copy of the tree, builds it, runs the
+tests, and starts again for the next mutant. rust-mutants writes **every**
+compilable mutation into one copy, each dormant behind a guard, builds that
+once, and activates one mutant per test process through an environment
+variable — the mutant schemata of the family this engine belongs to
+([ocaml-mutants], [gleam-mutants], [go-mutants]).
+
+[ocaml-mutants]: https://github.com/P4suta/ocaml-mutants
+[gleam-mutants]: https://github.com/P4suta/gleam-mutants
+[go-mutants]: https://github.com/P4suta/go-mutants
+
+That is why the compiler is asked once instead of once per mutant, why a
+mutant has a stable identity that survives an unrelated edit, and why a run
+can route a mutant to the targets that reached it without rebuilding anything.
+It is also why this engine has to be careful in ways cargo-mutants does not:
+one snapshot holds every mutation at once, so a guard that changed a line
+number or a runtime that touched a crate root would corrupt every later
+answer, and the tests here are mostly about those invariants.
+
+## What is different
+
+| | cargo-mutants | rust-mutants |
+| --- | --- | --- |
+| Build | one per mutant | one for the whole catalog |
+| Mutant identity | position in the current tree | content-addressed, stable across unrelated edits |
+| Which candidates are real | the build decides, per mutant | one `cargo check` decides for all of them, and every refusal is kept with the compiler's own words |
+| Line numbers | shifted by the mutation | preserved, byte for byte, which is what every position in a report rests on |
+| Selection | `--in-diff`, `--file`, `--regex` | `--changed`, `--include`, `--exclude`, `--package`, `--shard K/N` |
+| Skipping work | `--baseline`, timeouts, `--in-diff` | proofs only: coverage routing, branch proofs, probes — no budget, no sample |
+| Unbuildable mutants | reported as a build failure | refused before execution, with the diagnostic that refused them |
+| Report | `mutants.out/*.txt`, JSON | `rust-mutants/run-report` v1 with a JSON Schema, plus a Stryker projection, one offline page, and a terminal reader |
+| Verdict | a count | an exit code from a stated policy, with expectations a reviewer declares and the run verifies |
+
+## What cargo-mutants does that this does not
+
+- It is released, widely used, and documented for a general audience. This is
+  pre-1.0 and its contracts are still moving.
+- It works without the instrumentation this engine writes, so a workspace it
+  cannot instrument — `#![no_std]`, a proc-macro crate, a file reached by
+  `include!` — is one cargo-mutants can still mutate and this engine skips.
+  The skips are stated in every report rather than passed over silently, but
+  stated is not the same as done.
+- Its per-mutant build isolates a mutation completely. One snapshot cannot: a
+  test that writes into the tree it is being measured in is a limitation this
+  engine reports and cargo-mutants does not have.
+
+## What this does that cargo-mutants does not
+
+- **Proofs rather than budgets.** A mutant is not run against a target whose
+  measured run never reached it, a branch proof discharges a target that never
+  took the branch, and a probe discharges a test that could not have observed
+  a return replacement. Every one of these is evidence the run already holds;
+  none of them is a time limit or a sample.
+- **Paired confirmation.** A kill is believed only when the original passes
+  now and the kill reproduces.
+- **Stable identities.** A mutant's identity is a hash of what it is, so an
+  expectation a reviewer wrote survives an edit elsewhere in the file.
+- **A catalog you can read before anything runs.** `list`, `catalog --json`,
+  `why-skipped`, `explain`, and `instrument --print` each answer a question
+  about what would be measured, without measuring it.
+- **Answers a script can act on.** A JSON Schema for the report, a documented
+  exit policy, `--shard K/N` with a `merge` that refuses parts that disagree,
+  and an outcome cache keyed on the tree and the rules rather than on a
+  timestamp.
+
+## When to use which
+
+Reach for cargo-mutants when you want mutation testing today on a workspace
+you have not thought about instrumenting, or when its per-mutant isolation is
+worth the builds to you.
+
+Reach for rust-mutants when the answer has to be auditable — when somebody
+will ask *why* a mutant was not run and "the budget ran out" is not an
+acceptable answer.

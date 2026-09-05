@@ -13,6 +13,7 @@ pub mod lints;
 pub mod proofaudit;
 pub mod release;
 pub mod reportdiff;
+pub mod sbom;
 
 use std::ffi::OsString;
 use std::io::Write;
@@ -51,6 +52,12 @@ enum Gate {
         /// The later one.
         after: std::path::PathBuf,
     },
+    /// What a release is made of, as a `CycloneDX` document.
+    Sbom {
+        /// Write it here rather than to standard output.
+        #[arg(long, value_name = "FILE")]
+        output: Option<std::path::PathBuf>,
+    },
     /// Every gate, in order.
     All,
 }
@@ -81,6 +88,7 @@ where
         Gate::ReleaseCheck => gates::release_check(&root),
         Gate::Proofaudit { run } => return audit_run(&run, stdout, stderr),
         Gate::ReportDiff { before, after } => gates::report_diff(&before, &after),
+        Gate::Sbom { output } => gates::sbom(&root, output.as_deref()),
         Gate::All => gates::all(&root),
     };
     match outcome {

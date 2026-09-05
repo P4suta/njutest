@@ -45,6 +45,7 @@ fn targets_that_are_here_and_were_not_driven_are_said_to_be() {
 
 #[cfg(unix)]
 mod driving {
+    use std::ffi::OsString;
     use std::path::{Path, PathBuf};
     use std::time::Duration;
 
@@ -56,25 +57,43 @@ mod driving {
 
     use super::tree;
 
-    fn cargo(dir: &Path, name: &str, body: &str) -> PathBuf {
-        use std::os::unix::fs::PermissionsExt as _;
-
-        let path = dir.join(name);
-        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).expect("write");
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).expect("chmod");
-        path
+    /// The cargo every test here drives, read rather than written: see the script's own note.
+    fn cargo() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testdata/fake-cargo.sh")
     }
 
-    fn driven(cargo: &Path, root: &Path, targets: &[String]) -> mjutest_cli::assure::fuzz::Fuzzed {
+    /// What that cargo is told to say, what it is told to leave behind, and how it is told to end.
+    fn saying(said: &str, code: i32, artifact: Option<&str>) -> Vec<(OsString, OsString)> {
+        let mut env: Vec<(OsString, OsString)> = std::env::vars_os()
+            .filter(|(name, _)| name == "PATH")
+            .collect();
+        env.push((OsString::from("FAKE_CARGO_SAYS"), OsString::from(said)));
+        env.push((
+            OsString::from("FAKE_CARGO_CODE"),
+            OsString::from(code.to_string()),
+        ));
+        if let Some(artifact) = artifact {
+            env.push((
+                OsString::from("FAKE_CARGO_ARTIFACT"),
+                OsString::from(artifact),
+            ));
+        }
+        env
+    }
+
+    fn driven(
+        env: Vec<(OsString, OsString)>,
+        root: &Path,
+        targets: &[String],
+    ) -> mjutest_cli::assure::fuzz::Fuzzed {
         let cancel = Cancel::new();
         let trace = Recorder::disabled();
+        let cargo = cargo();
         fuzz(
             &Fuzzing {
                 root,
-                cargo,
-                env: std::env::vars_os()
-                    .filter(|(name, _)| name == "PATH")
-                    .collect(),
+                cargo: &cargo,
+                env,
                 targets,
                 max_total_time: Duration::from_secs(1),
                 timeout: Some(Duration::from_secs(30)),
@@ -86,8 +105,7 @@ mod driving {
     #[test]
     fn a_target_that_finds_nothing_leaves_nothing_to_apply() {
         let dir = tree(&["parse"]);
-        let command = cargo(dir.path(), "cargo-quiet", "echo 'Done 1000 runs'\nexit 0");
-        let done = driven(&command, dir.path(), &[]);
+        let done = driven(saying("Done 1000 runs", 0, None), dir.path(), &[]);
         assert_eq!(done.ran, ["parse"]);
         assert!(done.crashes.is_empty(), "{done:?}");
         assert!(done.findings.is_empty(), "{done:?}");
@@ -96,13 +114,15 @@ mod driving {
     #[test]
     fn an_input_that_crashes_a_target_is_kept_as_a_candidate_for_the_corpus() {
         let dir = tree(&["parse"]);
-        let command = cargo(
+        let done = driven(
+            saying(
+                "thread panicked",
+                77,
+                Some("fuzz/artifacts/parse/crash-abc"),
+            ),
             dir.path(),
-            "cargo-crash",
-            "mkdir -p fuzz/artifacts/parse\nprintf 'bad input' > fuzz/artifacts/parse/crash-abc\n\
-             echo 'thread panicked'\nexit 77",
+            &[],
         );
-        let done = driven(&command, dir.path(), &[]);
         assert_eq!(done.ran, ["parse"]);
         let crash = done.crashes.first().expect("a crash");
         assert_eq!(crash.target, "parse");
@@ -124,20 +144,18 @@ mod driving {
             "old input",
         )
         .expect("write");
-        let command = cargo(dir.path(), "cargo-quiet", "echo 'Done'\nexit 0");
-        let done = driven(&command, dir.path(), &[]);
+        let done = driven(saying("Done", 0, None), dir.path(), &[]);
         assert!(done.crashes.is_empty(), "{done:?}");
     }
 
     #[test]
     fn a_toolchain_with_no_fuzzer_says_what_it_did_not_drive() {
         let dir = tree(&["parse"]);
-        let command = cargo(
+        let done = driven(
+            saying("error: no such command: fuzz", 101, None),
             dir.path(),
-            "cargo-bare",
-            "echo \"error: no such command: \\`fuzz\\`\"\nexit 101",
+            &[],
         );
-        let done = driven(&command, dir.path(), &[]);
         assert!(done.ran.is_empty(), "{done:?}");
         assert_eq!(
             done.limitations.first().map(|one| one.name.clone()),
@@ -152,8 +170,7 @@ mod driving {
     #[test]
     fn only_the_targets_the_configuration_names_are_driven() {
         let dir = tree(&["parse", "decode"]);
-        let command = cargo(dir.path(), "cargo-quiet", "echo 'Done'\nexit 0");
-        let done = driven(&command, dir.path(), &["decode".to_owned()]);
+        let done = driven(saying("Done", 0, None), dir.path(), &["decode".to_owned()]);
         assert_eq!(done.ran, ["decode"]);
     }
 }
