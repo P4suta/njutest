@@ -15,6 +15,7 @@
     "tool",
     "toolchain",
     "repository",
+    "provenance",
     "scope",
     "timing",
     "accounting",
@@ -66,6 +67,24 @@
         "target": { "type": "string", "minLength": 1 },
         "os": { "type": "string", "minLength": 1 },
         "arch": { "type": "string", "minLength": 1 }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["identity", "cached", "source_run_id"],
+      "description": "Where the facts in this report came from. A run that read an earlier run's answer says so and names it, so a reader can check the claim rather than take it.",
+      "properties": {
+        "identity": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The evidence identity of the inputs, which is what a cached answer is keyed on."
+        },
+        "cached": { "type": "boolean" },
+        "source_run_id": {
+          "oneOf": [{ "type": "null" }, { "type": "string", "minLength": 1 }],
+          "description": "The run that established the facts, present exactly when cached is true."
+        }
       }
     },
     "repository": {
@@ -255,7 +274,7 @@
         "outcome",
         "killed_by",
         "reused",
-        "provenance"
+        "source_run_id"
       ],
       "properties": {
         "id": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
@@ -269,7 +288,7 @@
           "description": "The identity of the target that noticed it, when one did."
         },
         "reused": { "type": "boolean" },
-        "provenance": {
+        "source_run_id": {
           "type": ["string", "null"],
           "description": "The run this disposition came from, when it was reused."
         }

@@ -68,7 +68,7 @@ fn report() -> Report {
         outcome: "survived".to_owned(),
         killed_by: None,
         reused: false,
-        provenance: None,
+        source_run_id: None,
     }];
     report.findings = vec![Finding::new(
         FindingKind::SurvivingMutant,

@@ -76,7 +76,7 @@ that nothing was found, so it carries no findings, and a `DEFECT` a reader
 cannot see named is not one they can act on, so it carries at least one.
 
 `targets` is canonically ordered by descending duration, then ascending target
-ID. A mutant disposition may say `reused: true` with a `provenance`; the
+ID. A mutant disposition may say `reused: true` with a `source_run_id`; the
 accounting carries `reused_killed` and `reused_survived`, each part of
 `killed` and `survived`.
 

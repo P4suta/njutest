@@ -63,7 +63,7 @@ pub fn run(
     if let Some(by) = &mutant.killed_by {
         super::say(stdout, &format!("DECIDED-BY\t{}", escape(by)));
     }
-    if let Some(provenance) = &mutant.provenance {
+    if let Some(provenance) = &mutant.source_run_id {
         super::say(stdout, &format!("REUSED-FROM\t{}", escape(provenance)));
     }
     for finding in report

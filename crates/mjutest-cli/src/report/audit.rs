@@ -49,6 +49,11 @@ pub enum Violation {
         /// Which field.
         field: String,
     },
+    /// A report says it was read back but does not say from where, or says it was not and does.
+    ProvenanceIncoherent {
+        /// Why the two do not agree.
+        because: String,
+    },
     /// A verdict and the findings do not agree.
     FindingsDisagree {
         /// What the report claims.
@@ -114,6 +119,10 @@ impl fmt::Display for Violation {
                 "{field} is recorded as unavailable and carries facts anyway; one of the two \
                  is wrong, and a reader cannot tell which"
             ),
+            Self::ProvenanceIncoherent { because } => write!(
+                f,
+                "the report does not say where its facts came from: {because}"
+            ),
             Self::MissingLimitation { name, because } => write!(
                 f,
                 "the report must state the limitation {name:?}, because {because}"
@@ -131,7 +140,32 @@ pub fn validate_for_persistence(report: &Report) -> Vec<Violation> {
     check_verdict(report, &mut violations);
     check_git(report, &mut violations);
     check_findings(report, &mut violations);
+    check_provenance(report, &mut violations);
     violations
+}
+
+/// A report that was read back names the run that established it; one that was not names nobody.
+fn check_provenance(report: &Report, violations: &mut Vec<Violation>) {
+    let source = report.provenance.source_run_id.as_deref();
+    match (report.provenance.cached, source) {
+        (true, None) => violations.push(Violation::ProvenanceIncoherent {
+            because: "a report read back from an earlier run names that run".to_owned(),
+        }),
+        (true, Some(run)) if run == report.run_id => {
+            violations.push(Violation::ProvenanceIncoherent {
+                because: "a run cannot have read its own answer back".to_owned(),
+            });
+        }
+        (false, Some(run)) => violations.push(Violation::ProvenanceIncoherent {
+            because: format!("this run established its own facts and also names {run:?}"),
+        }),
+        (true, Some(_)) | (false, None) => {}
+    }
+    if source.is_some_and(str::is_empty) {
+        violations.push(Violation::ProvenanceIncoherent {
+            because: "a source run with no name is no source at all".to_owned(),
+        });
+    }
 }
 
 /// A verdict and the findings say the same thing, or the report says two things at once.
@@ -156,7 +190,7 @@ fn check_findings(report: &Report, violations: &mut Vec<Violation>) {
 
 /// The fields every report says something in.
 fn check_required(report: &Report, violations: &mut Vec<Violation>) {
-    let fields: [(&str, &str); 8] = [
+    let fields: [(&str, &str); 9] = [
         ("schema", &report.schema),
         ("run_id", &report.run_id),
         ("repository.root_name", &report.repository.root_name),
@@ -171,6 +205,7 @@ fn check_required(report: &Report, violations: &mut Vec<Violation>) {
         ("repository.git.commit", &report.repository.git.commit),
         ("repository.git.branch", &report.repository.git.branch),
         ("toolchain.rustc", &report.toolchain.rustc),
+        ("provenance.identity", &report.provenance.identity),
     ];
     for (name, value) in fields {
         if value.trim().is_empty() {

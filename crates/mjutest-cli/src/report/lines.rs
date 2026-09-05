@@ -44,7 +44,7 @@ pub fn stream(report: &Report) -> String {
         if let Some(killed_by) = mutant.killed_by.as_deref() {
             append(&mut out, &format!("killed_by={killed_by}"));
         }
-        if let Some(provenance) = mutant.provenance.as_deref() {
+        if let Some(provenance) = mutant.source_run_id.as_deref() {
             append(&mut out, &format!("reused={provenance}"));
         }
         out.push('\n');

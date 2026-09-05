@@ -35,6 +35,11 @@
       ]
     }
   },
+  "provenance": {
+    "identity": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "cached": false,
+    "source_run_id": null
+  },
   "scope": {
     "requested_packages": [
       "core"
@@ -109,7 +114,7 @@
       "outcome": "killed",
       "killed_by": "0123456789abcdef",
       "reused": true,
-      "provenance": "20260904T101500Z-123456"
+      "source_run_id": "20260904T101500Z-123456"
     }
   ],
   "findings": [],

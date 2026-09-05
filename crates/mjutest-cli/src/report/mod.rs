@@ -167,6 +167,18 @@ pub struct Repository {
     pub git: Git,
 }
 
+/// Where a report's facts came from. A run that read an earlier run's answer says so, names the run that established it, and carries the identity both were computed under, so a reader can check the claim rather than take it.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Provenance {
+    /// The evidence identity of the inputs, which is what a cached answer is keyed on.
+    pub identity: String,
+    /// Whether every fact here was read back rather than established.
+    pub cached: bool,
+    /// The run that established them, when it was not this one.
+    pub source_run_id: Option<String>,
+}
+
 /// What git said about the tree, or that it could not be asked.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -348,7 +360,7 @@ pub struct MutantRecord {
     /// Whether this came from a previous run.
     pub reused: bool,
     /// Which run it came from.
-    pub provenance: Option<String>,
+    pub source_run_id: Option<String>,
 }
 
 /// What kind of thing a run found.
@@ -476,6 +488,8 @@ pub struct Report {
     pub toolchain: Toolchain,
     /// What the repository was.
     pub repository: Repository,
+    /// Where the facts here came from: this run, or an earlier one of the same inputs.
+    pub provenance: Provenance,
     /// What was asked for and what was settled on.
     pub scope: Scope,
     /// When it happened.
@@ -511,6 +525,11 @@ impl Report {
                 workspace_digest: UNAVAILABLE.to_owned(),
                 configuration_digest: UNAVAILABLE.to_owned(),
                 git: Git::unavailable(),
+            },
+            provenance: Provenance {
+                identity: UNAVAILABLE.to_owned(),
+                cached: false,
+                source_run_id: None,
             },
             scope: Scope::default(),
             timing: Timing::default(),

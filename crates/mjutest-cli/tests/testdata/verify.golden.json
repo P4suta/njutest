@@ -74,9 +74,9 @@
         "column": 5,
         "line": 8
       },
-      "provenance": null,
       "reused": false,
-      "rule": "return-default@1"
+      "rule": "return-default@1",
+      "source_run_id": null
     },
     {
       "display_id": "2bcb6eb7d96056277fa1",
@@ -89,9 +89,9 @@
         "column": 17,
         "line": 10
       },
-      "provenance": null,
       "reused": false,
-      "rule": "lt-to-le@1"
+      "rule": "lt-to-le@1",
+      "source_run_id": null
     },
     {
       "display_id": "366948fbe36bfd19786d",
@@ -104,9 +104,9 @@
         "column": 10,
         "line": 8
       },
-      "provenance": null,
       "reused": false,
-      "rule": "gt-to-ge@1"
+      "rule": "gt-to-ge@1",
+      "source_run_id": null
     },
     {
       "display_id": "9618aa1c71c281ae9835",
@@ -119,9 +119,9 @@
         "column": 15,
         "line": 10
       },
-      "provenance": null,
       "reused": false,
-      "rule": "negate-condition@1"
+      "rule": "negate-condition@1",
+      "source_run_id": null
     },
     {
       "display_id": "ae6162ece39e3389335d",
@@ -134,9 +134,9 @@
         "column": 8,
         "line": 8
       },
-      "provenance": null,
       "reused": false,
-      "rule": "negate-condition@1"
+      "rule": "negate-condition@1",
+      "source_run_id": null
     },
     {
       "display_id": "d0f665a548910bd9ed45",
@@ -149,9 +149,9 @@
         "column": 7,
         "line": 19
       },
-      "provenance": null,
       "reused": false,
-      "rule": "mul-to-div@1"
+      "rule": "mul-to-div@1",
+      "source_run_id": null
     },
     {
       "display_id": "f0bd7961d77aed7f5cba",
@@ -164,11 +164,16 @@
         "column": 5,
         "line": 19
       },
-      "provenance": null,
       "reused": false,
-      "rule": "return-default@1"
+      "rule": "return-default@1",
+      "source_run_id": null
     }
   ],
+  "provenance": {
+    "cached": false,
+    "identity": "<volatile>",
+    "source_run_id": null
+  },
   "repository": {
     "configuration_digest": "<volatile>",
     "git": {

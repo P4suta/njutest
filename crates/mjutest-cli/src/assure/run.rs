@@ -357,7 +357,7 @@ fn record(report: &mut Report, mutation: &mutation::Mutation, accepted: &BTreeSe
             outcome: judged.disposition.name().to_owned(),
             killed_by: judged.disposition.decided_by().map(ToOwned::to_owned),
             reused: false,
-            provenance: None,
+            source_run_id: None,
         })
         .collect();
     report.findings.extend(mutation.findings(accepted));

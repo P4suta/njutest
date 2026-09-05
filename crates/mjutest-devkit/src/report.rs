@@ -9,6 +9,9 @@ use std::collections::BTreeSet;
 pub const PLACEHOLDER: &str = "<volatile>";
 
 /// A report with everything that changes between two runs of the same work replaced by [`PLACEHOLDER`], so what is left is what the run claimed.
+///
+/// A run identity and the run a fact was read back from are volatile; *whether*
+/// it was read back is not, because that is the claim a reuse test is about.
 #[must_use]
 pub fn normalize(document: &serde_json::Value) -> serde_json::Value {
     let volatile: BTreeSet<&str> = [
@@ -27,8 +30,9 @@ pub fn normalize(document: &serde_json::Value) -> serde_json::Value {
         "rust_mutants",
         "workspace_digest",
         "configuration_digest",
-        "provenance",
         "root_name",
+        "identity",
+        "source_run_id",
     ]
     .into_iter()
     .collect();

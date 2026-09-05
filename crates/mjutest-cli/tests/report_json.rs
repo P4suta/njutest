@@ -23,6 +23,11 @@ fn populated() -> Report {
         schema: SCHEMA.to_owned(),
         schema_version: mjutest_cli::report::SCHEMA_VERSION,
         run_id: "20260905T081500Z-abcdef".to_owned(),
+        provenance: mjutest_cli::report::Provenance {
+            identity: "f".repeat(64),
+            cached: false,
+            source_run_id: None,
+        },
         run_kind: RunKind::Changed,
         contract: mjutest_cli::config::Contract::DeepV1,
         verdict: Verdict::ChangeAssured,
@@ -118,7 +123,7 @@ fn populated() -> Report {
             outcome: "killed".to_owned(),
             killed_by: Some("0123456789abcdef".to_owned()),
             reused: true,
-            provenance: Some("20260904T101500Z-123456".to_owned()),
+            source_run_id: Some("20260904T101500Z-123456".to_owned()),
         }],
         findings: Vec::new(),
         limitations: vec![Limitation::new(
