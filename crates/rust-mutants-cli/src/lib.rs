@@ -119,7 +119,7 @@ fn dispatch(
         cli::Command::Catalog { json, .. } => {
             let session = workspace.prepare(&options, &cancel)?;
             let text = if *json {
-                let document = report::document(&session);
+                let document = report::document(&session, scope);
                 let mut text = serde_json::to_string_pretty(&document)
                     .unwrap_or_else(|error| format!("{{\"error\":{error:?}}}"));
                 text.push('\n');

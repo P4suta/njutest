@@ -5,8 +5,9 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # rust-mutants architecture
 
-**Status: designed, not implemented.** The library crate exists with its
-error ledger; everything below arrives in M1 in the order of the
+**Status: implemented.** Discovery, instrumentation, compiler-validated
+acceptance, execution, the public API, and the command line all work; the
+probe tree and the branch proof arrive in M5, in the order of the
 [roadmap](../roadmap.md).
 
 ## Invariants

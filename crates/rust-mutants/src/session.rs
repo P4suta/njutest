@@ -29,7 +29,7 @@ use crate::instrument::{FileOutput, Placement, instrument_file, plan_file};
 use crate::rule::{Registry, Tier};
 use crate::runner::Cancel;
 use crate::snapshot::Drift;
-use crate::syntax::{Found, Selection, Skip};
+use crate::syntax::{Found, LineIndex, Position, Selection, Skip};
 use crate::trace::{BuildRecord, InstrumentRecord, MutantExecRecord};
 use crate::validate::{
     Attempt, Compile, Rejection, ValidateError, ValidateOptions, Validated, validate,
@@ -103,6 +103,11 @@ pub struct Session {
     targets: Vec<TestTarget>,
     scratch: PathBuf,
     mutant_timeout: Option<Duration>,
+    /// The files as they were before instrumentation, so a position can be
+    /// counted in the file a person would open rather than in the rewrite.
+    sources: BTreeMap<String, Vec<u8>>,
+    /// Which package each mutant belongs to.
+    packages: BTreeMap<u32, String>,
 }
 
 impl Session {
@@ -146,6 +151,38 @@ impl Session {
     #[must_use]
     pub fn snapshot_root(&self) -> &std::path::Path {
         self.workspace.snapshot_root()
+    }
+
+    /// Where a mutant's edit is in the file a person would open, counted
+    /// in the pristine bytes rather than in the rewrite.
+    #[must_use]
+    pub fn position(&self, mutant: &Mutant) -> Option<Position> {
+        let source = self.sources.get(&mutant.candidate.path)?;
+        let text = std::str::from_utf8(source).ok()?;
+        Some(LineIndex::new(text).position(text, mutant.candidate.span.start))
+    }
+
+    /// The package a mutant belongs to.
+    #[must_use]
+    pub fn package_of(&self, index: u32) -> Option<&str> {
+        self.packages.get(&index).map(String::as_str)
+    }
+
+    /// The toolchain that compiled the tree, as it names itself.
+    #[must_use]
+    pub const fn toolchain(&self) -> &crate::cargo::Toolchain {
+        self.workspace.toolchain()
+    }
+
+    /// The name of the directory the source root sits in, which is what a
+    /// report calls the workspace.
+    #[must_use]
+    pub fn root_name(&self) -> String {
+        self.workspace
+            .root()
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default()
     }
 
     /// The mutant a prefix names.
@@ -392,9 +429,20 @@ pub fn prepare(
         verify(&workspace, &targets, &scratch, cancel)?;
     }
     phase.end();
+    let packages = discovery
+        .candidates
+        .iter()
+        .filter_map(|located| {
+            let id = located.found.candidate.id().ok()?;
+            let mutant = discovery.catalog.by_id(&id)?;
+            Some((mutant.index, located.package.clone()))
+        })
+        .collect();
     Ok(Session {
         catalog: discovery.catalog,
         skips: discovery.skips,
+        sources,
+        packages,
         validated,
         targets,
         scratch,

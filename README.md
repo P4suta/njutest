@@ -21,7 +21,9 @@ This repository is two products in one Cargo workspace:
   observe a mutant — and never by a time budget, a sample, or an exclusion
   list.
 
-**Status: pre-alpha, under construction.** The contracts under [`docs/`](docs/)
+**Status: pre-alpha, under construction.** The engine works end to end:
+`rust-mutants list`, `catalog`, `instrument`, `explain`, and `run` do what
+they say on a real workspace. The assurance runner is next. The contracts under [`docs/`](docs/)
 describe the intended product; each page carries a status line saying how much
 of it exists. Nothing here should be read as a description of working software
 until its status says so.

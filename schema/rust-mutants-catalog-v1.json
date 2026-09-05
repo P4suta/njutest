@@ -1,0 +1,134 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/P4suta/mjutest/schema/rust-mutants-catalog-v1.json",
+  "title": "rust-mutants catalog v1",
+  "description": "Everything one preparation of a workspace established: the mutants the compiler accepted, the candidates it refused with its own words, and the places discovery passed over with their reasons.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "document_type",
+    "schema_version",
+    "tool_version",
+    "workspace",
+    "selection",
+    "mutants",
+    "rejections",
+    "skips"
+  ],
+  "properties": {
+    "document_type": { "const": "rust-mutants/catalog" },
+    "schema_version": { "const": 1 },
+    "tool_version": { "type": "string", "minLength": 1 },
+    "workspace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["root_name", "toolchain", "workspace_digest", "catalog_digest", "platform"],
+      "properties": {
+        "root_name": { "type": "string" },
+        "toolchain": { "type": "string" },
+        "workspace_digest": { "$ref": "#/$defs/digest" },
+        "catalog_digest": { "$ref": "#/$defs/digest" },
+        "platform": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["os", "arch", "target"],
+          "properties": {
+            "os": { "type": "string" },
+            "arch": { "type": "string" },
+            "target": { "type": "string" }
+          }
+        }
+      }
+    },
+    "selection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tier", "operators", "include", "exclude", "packages"],
+      "properties": {
+        "tier": { "enum": ["balanced", "strong", "all"] },
+        "operators": { "type": "array", "items": { "type": "string" } },
+        "include": { "type": "array", "items": { "type": "string" } },
+        "exclude": { "type": "array", "items": { "type": "string" } },
+        "packages": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "mutants": { "type": "array", "items": { "$ref": "#/$defs/mutant" } },
+    "rejections": { "type": "array", "items": { "$ref": "#/$defs/rejection" } },
+    "skips": { "type": "array", "items": { "$ref": "#/$defs/skip" } }
+  },
+  "$defs": {
+    "digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "mutant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "index",
+        "id",
+        "display_id",
+        "path",
+        "package",
+        "family",
+        "rule",
+        "rule_version",
+        "line",
+        "column",
+        "start_byte",
+        "end_byte",
+        "original",
+        "replacement"
+      ],
+      "properties": {
+        "index": { "type": "integer", "minimum": 0 },
+        "id": { "$ref": "#/$defs/digest" },
+        "display_id": { "type": "string", "pattern": "^[0-9a-f]{20}$" },
+        "path": { "type": "string", "minLength": 1 },
+        "package": { "type": "string" },
+        "family": { "type": "string", "minLength": 1 },
+        "rule": { "type": "string", "minLength": 1 },
+        "rule_version": { "type": "integer", "minimum": 1 },
+        "line": { "type": "integer", "minimum": 0 },
+        "column": { "type": "integer", "minimum": 0 },
+        "start_byte": { "type": "integer", "minimum": 0 },
+        "end_byte": { "type": "integer", "minimum": 0 },
+        "original": { "type": "string" },
+        "replacement": { "type": "string" }
+      }
+    },
+    "rejection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "display_id", "path", "rule", "code", "diagnostic"],
+      "properties": {
+        "id": { "$ref": "#/$defs/digest" },
+        "display_id": { "type": "string", "pattern": "^[0-9a-f]{20}$" },
+        "path": { "type": "string", "minLength": 1 },
+        "rule": { "type": "string", "minLength": 1 },
+        "code": { "type": ["string", "null"] },
+        "diagnostic": { "type": "string" }
+      }
+    },
+    "skip": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reason", "path", "count", "explanation"],
+      "properties": {
+        "reason": {
+          "enum": [
+            "const-context",
+            "macro-invocation",
+            "cfg-attribute",
+            "test-code",
+            "unsupported-site",
+            "excluded",
+            "test-only-file",
+            "proc-macro-crate",
+            "no-std-crate"
+          ]
+        },
+        "path": { "type": "string", "minLength": 1 },
+        "count": { "type": "integer", "minimum": 0 },
+        "explanation": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

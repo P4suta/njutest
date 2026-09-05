@@ -29,6 +29,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 
 [dev-dependencies]
+jsonschema = { workspace = true }
 mjutest-devkit = { workspace = true }
 tempfile = { workspace = true }
 

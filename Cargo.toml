@@ -141,7 +141,7 @@ similar = { version = "3.2", default-features = false, features = ["text"] }
 # Test-only.
 tempfile = "3.27"
 proptest = "1.11"
-jsonschema = "0.53"
+jsonschema = { version = "0.52", default-features = false }
 trybuild = "1.0"
 
 [profile.release]

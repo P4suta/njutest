@@ -5,10 +5,12 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # JSON documents of the engine
 
-**Status: designed, not implemented.** The catalog document arrives in M1;
-the run report in E2. Both carry `document_type` and `schema_version`, close
-every object with `additionalProperties: false`, and are validated by tests
-against the schemas under `schema/`.
+**Status: the catalog document is implemented and validated
+(`schema/rust-mutants-catalog-v1.json`); the run report arrives in E2.**
+Both carry `document_type` and `schema_version`, close every object with
+`additionalProperties: false`, and are validated by tests against the
+schemas under `schema/`, so a field added without a version bump fails a
+test rather than a consumer.
 
 ## `rust-mutants/catalog` v1
 

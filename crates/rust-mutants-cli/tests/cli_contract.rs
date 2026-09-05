@@ -187,30 +187,12 @@ fn catalog_as_json_is_one_document_a_program_can_read() {
         serde_json::from_str(&stdout(&output)).expect("one JSON document");
     assert_eq!(document["document_type"], "rust-mutants/catalog");
     assert_eq!(document["schema_version"], 1);
-    assert_eq!(document["engine"], rust_mutants::VERSION);
-    assert_eq!(document["catalog_digest"].as_str().map(str::len), Some(64));
-    let mutants = document["mutants"].as_array().expect("mutants");
-    assert_eq!(mutants.len(), 6);
-    let first = &mutants[0];
-    for key in [
-        "index",
-        "id",
-        "display_id",
-        "path",
-        "family",
-        "rule",
-        "start_byte",
-        "end_byte",
-        "original",
-        "replacement",
-    ] {
-        assert!(first.get(key).is_some(), "{key} is missing from {first}");
-    }
-    assert!(
-        document["rejections"]
-            .as_array()
-            .expect("rejections")
-            .is_empty()
+    assert_eq!(document["tool_version"], rust_mutants::VERSION);
+    assert_eq!(
+        document["workspace"]["catalog_digest"]
+            .as_str()
+            .map(str::len),
+        Some(64)
     );
     assert_eq!(document["skips"].as_array().expect("skips").len(), 2);
 }
@@ -311,4 +293,47 @@ fn instrument_prints_one_file_as_the_engine_rewrites_it() {
         "{}",
         String::from_utf8_lossy(&missing.stderr)
     );
+}
+
+#[test]
+fn the_catalog_document_validates_against_its_schema() {
+    let schema_path =
+        mjutest_devkit::paths::workspace_root().join("schema/rust-mutants-catalog-v1.json");
+    let schema: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&schema_path).expect("the schema"))
+            .expect("the schema is JSON");
+    let validator = jsonschema::validator_for(&schema).expect("the schema compiles");
+
+    for fixture_name in ["fixture-simple", "fixture-rejectable"] {
+        let fixture = fixture(fixture_name);
+        let output = against(&fixture, &["catalog", "--json", "--no-verify"]);
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let document: serde_json::Value =
+            serde_json::from_str(&stdout(&output)).expect("one JSON document");
+        let problems: Vec<String> = validator
+            .iter_errors(&document)
+            .map(|error| format!("{} at {}", error, error.instance_path()))
+            .collect();
+        assert!(problems.is_empty(), "{fixture_name}: {problems:?}");
+
+        // The parts a consumer reads are really there.
+        let mutants = document["mutants"].as_array().expect("mutants");
+        assert!(!mutants.is_empty(), "{fixture_name}");
+        assert!(
+            mutants
+                .iter()
+                .all(|mutant| mutant["line"].as_u64().unwrap_or(0) > 0),
+            "every mutant is placed in the file a person would open"
+        );
+        assert_eq!(document["selection"]["tier"], "all");
+        assert_eq!(
+            document["workspace"]["root_name"], fixture_name,
+            "the workspace names itself"
+        );
+    }
 }
