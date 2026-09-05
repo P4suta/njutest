@@ -186,6 +186,7 @@
     "root_name": "<volatile>",
     "workspace_digest": "<volatile>"
   },
+  "resources": [],
   "run_id": "<volatile>",
   "run_kind": "full",
   "schema": "mjutest-assurance-report-v1",

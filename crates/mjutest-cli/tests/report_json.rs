@@ -29,6 +29,11 @@ fn populated() -> Report {
             source_run_id: None,
         },
         run_kind: RunKind::Changed,
+        resources: vec![mjutest_cli::report::ResourceRecord {
+            capability: "postgres".to_owned(),
+            instance: "pg-1".to_owned(),
+            environment: vec!["DATABASE_URL".to_owned()],
+        }],
         contract: mjutest_cli::config::Contract::DeepV1,
         verdict: Verdict::ChangeAssured,
         tool: Tool {

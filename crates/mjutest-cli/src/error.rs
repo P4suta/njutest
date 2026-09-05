@@ -124,6 +124,31 @@ code!(
     "a build cache layer could not be used"
 );
 code!(
+    PROVIDER_UNSTARTABLE,
+    "MJ5001",
+    "a provider could not be started"
+);
+code!(
+    PROVIDER_TIMEOUT,
+    "MJ5002",
+    "a provider said nothing in the time it was given"
+);
+code!(
+    PROVIDER_PROTOCOL,
+    "MJ5003",
+    "a provider said something this version does not understand"
+);
+code!(
+    PROVIDER_REFUSED,
+    "MJ5004",
+    "a provider said it could not do what it was asked"
+);
+code!(
+    RESOURCE_ENVIRONMENT_REFUSED,
+    "MJ5005",
+    "a provider offered an environment variable a run composes itself"
+);
+code!(
     REPORT_UNSOUND,
     "MJ6003",
     "the report contradicts itself and was not written"
@@ -151,6 +176,12 @@ pub enum RunnerError {
     /// Coverage could not be read.
     #[error(transparent)]
     Coverage(#[from] crate::coverage::CoverageError),
+    /// A provider could not be used.
+    #[error(transparent)]
+    Provider(#[from] crate::provider::ProviderError),
+    /// A resource could not be leased.
+    #[error(transparent)]
+    Resource(#[from] crate::resource::ResourceError),
     /// A report could not be written or read.
     #[error(transparent)]
     Report(#[from] crate::report::json::ReportError),
@@ -176,6 +207,8 @@ impl RunnerError {
             Self::Evidence(error) => error.code(),
             Self::Cache(error) => error.code(),
             Self::Coverage(error) => error.code(),
+            Self::Provider(error) => error.code(),
+            Self::Resource(error) => error.code(),
             Self::Report(error) => error.code(),
             Self::Scratch(error) => error.code(),
             Self::Build(error) => error.code(),
@@ -208,6 +241,11 @@ pub const fn error_codes() -> &'static [ErrorCode] {
         COVERAGE_TOOLS_MISSING,
         COVERAGE_TOOL_FAILED,
         COVERAGE_NOTHING_WRITTEN,
+        PROVIDER_UNSTARTABLE,
+        PROVIDER_TIMEOUT,
+        PROVIDER_PROTOCOL,
+        PROVIDER_REFUSED,
+        RESOURCE_ENVIRONMENT_REFUSED,
         REPORT_UNSERIALIZABLE,
         REPORT_UNREADABLE,
         REPORT_UNSOUND,

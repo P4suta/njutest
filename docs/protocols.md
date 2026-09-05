@@ -5,7 +5,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # Provider protocols v1
 
-**Status: contract only.** Implemented in M6. Ported unchanged from goatest;
+**Status: the resource protocol is implemented; generation is contract only.** Ported unchanged from goatest;
 both protocols use newline-delimited strict JSON and reject unknown fields.
 They are local subprocess contracts; core performs no network calls.
 

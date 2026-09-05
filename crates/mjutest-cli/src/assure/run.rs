@@ -109,17 +109,15 @@ pub fn run(
     }
 
     let (toolchain, metadata) = locate(request, environment, watch)?;
-    report.toolchain = describe(&toolchain);
-    report.repository.packages = metadata
-        .packages
-        .iter()
-        .map(|package| package.name.clone())
-        .collect();
-    report.scope.resolved_packages = resolved(request, &report.repository.packages);
+    surveyed(&mut report, request, (&toolchain, &metadata));
 
     notes.phase("soundness");
     take_inventory(&mut report, request, &metadata);
     let layer = layer_for(&toolchain, environment, &scratch, notes)?;
+
+    let mut resources = holding(request, environment, &mut report, (notes, watch))?;
+    let held = with_resources(environment, &resources);
+    let environment = &held;
 
     notes.phase("baseline");
     let restore = resume_state(request, &mut report);
@@ -161,6 +159,7 @@ pub fn run(
             watch,
         )?;
     }
+    released(&mut resources, &mut report);
     finish(&mut report, request.started);
     journal.finished();
     let kept = if request.keep_temp {
@@ -169,6 +168,105 @@ pub fn run(
         scratch.close()
     };
     Ok(Outcome { report, kept })
+}
+
+/// What the toolchain and the workspace are, before anything is built.
+fn surveyed(
+    report: &mut Report,
+    request: &Request,
+    found: (&rust_mutants::cargo::Toolchain, &Metadata),
+) {
+    let (toolchain, metadata) = found;
+    report.toolchain = describe(toolchain);
+    report.repository.packages = metadata
+        .packages
+        .iter()
+        .map(|package| package.name.clone())
+        .collect();
+    report.scope.resolved_packages = resolved(request, &report.repository.packages);
+}
+
+/// The limitation a run states when a resource it held would not stop.
+pub const RESOURCE_UNSTOPPED_LIMITATION: &str = "resource-not-stopped";
+
+/// Stops everything the run held, and says what would not stop.
+fn released(resources: &mut crate::resource::Manager, report: &mut Report) {
+    for refusal in resources.release() {
+        report.limitations.push(Limitation::new(
+            RESOURCE_UNSTOPPED_LIMITATION,
+            &format!("a resource would not stop: {refusal}"),
+        ));
+    }
+}
+
+/// The resources the configuration declares, started and held for the rest of the run.
+///
+/// # Errors
+/// Whatever stopped one from starting.
+fn holding(
+    request: &Request,
+    environment: &Environment,
+    report: &mut Report,
+    telling: (&mut Notes<'_>, Watch<'_>),
+) -> Result<crate::resource::Manager, RunnerError> {
+    let (notes, watch) = telling;
+    let mut resources = crate::resource::Manager::new(crate::resource::Where {
+        dir: request.root.clone(),
+        env: environment.vars.clone(),
+    });
+    if !request.config.resources.is_empty() {
+        notes.phase("resources");
+        hold(&mut resources, request, report, watch)?;
+    }
+    Ok(resources)
+}
+
+/// Starts every resource the configuration declares, in name order, and records what the run holds.
+///
+/// A resource that will not start ends the run: the tests would pass in a
+/// world the configuration does not describe, and the report would say so
+/// without knowing it.
+fn hold(
+    resources: &mut crate::resource::Manager,
+    request: &Request,
+    report: &mut Report,
+    watch: Watch<'_>,
+) -> Result<(), RunnerError> {
+    for (capability, resource) in &request.config.resources {
+        if watch.cancel.is_cancelled() {
+            break;
+        }
+        let started = resources.start(capability, resource);
+        let lease = match started {
+            Ok(lease) => lease,
+            Err(refusal) => {
+                let _stopped = resources.release();
+                return Err(refusal.into());
+            }
+        };
+        report.resources.push(crate::report::ResourceRecord {
+            capability: lease.capability.clone(),
+            instance: lease.instance.clone(),
+            environment: lease
+                .environment
+                .iter()
+                .map(|(name, _)| name.clone())
+                .collect(),
+        });
+    }
+    Ok(())
+}
+
+/// The environment every later phase runs with: this run's own, and what the resources it holds told it.
+fn with_resources(environment: &Environment, resources: &crate::resource::Manager) -> Environment {
+    let mut held = environment.clone();
+    for (name, value) in resources.environment() {
+        let name = std::ffi::OsString::from(name);
+        held.vars.retain(|(other, _)| *other != name);
+        held.vars.push((name, std::ffi::OsString::from(value)));
+    }
+    held.vars.sort();
+    held
 }
 
 /// The report as it is before anything has run: what the run is, what it was asked to verify, and what it already knows it will not claim.

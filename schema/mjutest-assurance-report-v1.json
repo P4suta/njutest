@@ -19,6 +19,7 @@
     "scope",
     "timing",
     "accounting",
+    "resources",
     "targets",
     "mutants",
     "findings",
@@ -183,6 +184,24 @@
               "type": "boolean",
               "description": "False under standard-v1, where the phase is a static inventory and a non-empty one is a limitation."
             }
+          }
+        }
+      }
+    },
+    "resources": {
+      "description": "Every integration resource the run held while its tests ran, in the order it started them. A resource is a fact about the world the tests ran in, so a run that held none says so with an empty list.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["capability", "instance", "environment"],
+        "properties": {
+          "capability": { "type": "string" },
+          "instance": { "type": "string" },
+          "environment": {
+            "description": "The variable names the provider set for every test process, in name order. Never a value: a report is read by people who may not hold the secret in it.",
+            "type": "array",
+            "items": { "type": "string" }
           }
         }
       }

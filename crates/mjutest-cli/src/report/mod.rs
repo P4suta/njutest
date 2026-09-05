@@ -433,6 +433,18 @@ impl Finding {
     }
 }
 
+/// One integration resource a run held while its tests ran.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResourceRecord {
+    /// The capability the resource provides.
+    pub capability: String,
+    /// The instance its provider named.
+    pub instance: String,
+    /// The variable names its provider set for every test process, in name order. Never a value: a report is read by people who may not hold the secret in it.
+    pub environment: Vec<String>,
+}
+
 /// One thing a report cannot claim, and why.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -496,6 +508,9 @@ pub struct Report {
     pub timing: Timing,
     /// Everything it counted.
     pub accounting: Accounting,
+    /// Every integration resource it started, in the order it started them.
+    #[serde(default)]
+    pub resources: Vec<ResourceRecord>,
     /// Every target it selected, slowest first.
     pub targets: Vec<TargetRecord>,
     /// Every mutant it has something to say about.
@@ -534,6 +549,7 @@ impl Report {
             scope: Scope::default(),
             timing: Timing::default(),
             accounting: Accounting::default(),
+            resources: Vec::new(),
             targets: Vec::new(),
             mutants: Vec::new(),
             findings: Vec::new(),

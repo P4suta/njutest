@@ -100,6 +100,11 @@ first digit names an area:
 | `MJ4002` | The LLVM tools the toolchain ships are not installed (`rustup component add llvm-tools`). |
 | `MJ4003` | `llvm-profdata` or `llvm-cov` failed. |
 | `MJ4004` | A test process wrote no coverage profile at all: the build was not instrumented, or the process did not exit normally. |
+| `MJ5001` | A provider could not be started: the command is empty, or the operating system refused it. |
+| `MJ5002` | A provider said nothing in the time it was given, so the run cannot say what its resources were. |
+| `MJ5003` | A provider said something this version does not understand: another protocol version, an unknown field, an answer without an instance. |
+| `MJ5004` | A provider said it could not do what it was asked. |
+| `MJ5005` | A provider offered an environment variable a run composes itself, which would decide what every test process measures. |
 | `MJ6001` | The report could not be written as JSON, which is an invariant failure rather than anything about the code under test. |
 | `MJ6002` | A document is not the assurance report this version understands: an unknown field, a missing field, a value of the wrong shape. |
 | `MJ6004` | The report could not be written where a reader will look for it. |

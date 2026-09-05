@@ -82,6 +82,15 @@
       "executed": true
     }
   },
+  "resources": [
+    {
+      "capability": "postgres",
+      "instance": "pg-1",
+      "environment": [
+        "DATABASE_URL"
+      ]
+    }
+  ],
   "targets": [
     {
       "id": "0123456789abcdef",
