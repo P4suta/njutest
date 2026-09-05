@@ -91,6 +91,13 @@ pub struct Recorder {
     inner: Option<Arc<Inner>>,
 }
 
+impl Default for Recorder {
+    /// The trace that records nothing.
+    fn default() -> Self {
+        Self::disabled()
+    }
+}
+
 impl std::fmt::Debug for Recorder {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Recorder")

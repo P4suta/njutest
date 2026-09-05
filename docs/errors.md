@@ -59,6 +59,13 @@ first digit names an area:
 | `RM4001` | The tree does not compile before any mutant is live, so nothing about the failure is the mutants' doing. |
 | `RM4002` | The mutants a compilation failure came from could not be isolated. |
 | `RM4003` | An instrumented compilation could not be attempted at all: the tree could not be written, or the toolchain could not be reached. |
+| `RM5001` | The workspace does not compile before anything is instrumented. |
+| `RM5002` | The instrumented baseline fails a test the pristine tree passes, so every later result would be about the instrumentation. |
+| `RM5003` | No mutant of the catalog answers to the identity or prefix given, or several do. |
+| `RM5004` | No test target of the session answers to the name given. |
+| `RM5005` | The workspace builds no test target, so no mutant can be measured. |
+| `RM5006` | The instrumented tree could not be written. |
+| `RM9001` | A rule name the canonical registry does not know. |
 
 ## mjutest
 

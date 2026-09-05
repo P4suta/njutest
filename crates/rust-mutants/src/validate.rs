@@ -249,6 +249,13 @@ fn rendered(diagnostic: &Diagnostic) -> String {
         .unwrap_or_else(|| diagnostic.message.clone())
 }
 
+/// The first error of a message stream, rendered, so a caller can say what
+/// stopped a build without matching on the stream itself.
+#[must_use]
+pub fn first_error_of(messages: &[Message]) -> String {
+    first_error(messages)
+}
+
 /// The first error of a round, rendered, for a message about the round.
 fn first_error(messages: &[Message]) -> String {
     messages

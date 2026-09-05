@@ -26,7 +26,7 @@ use std::path::{Path, PathBuf};
 use rust_mutants::cargo::{
     CargoError, CargoErrorKind, Diagnostic, Driver, LocateOptions, Message, Metadata,
     MetadataOptions, Toolchain, dep_info_path, parse_dep_info, parse_messages, parse_version,
-    resolve_executable, units_from_check,
+    resolve_executable, units_of,
 };
 use rust_mutants::runner::{Cancel, run};
 use rust_mutants::trace::Recorder;
@@ -395,7 +395,13 @@ fn the_dep_info_file_sits_beside_the_artifact_without_the_lib_prefix() {
         dep_info_path(Path::new("/t/debug/deps/libdemo-abc.rlib")),
         Some(PathBuf::from("/t/debug/deps/demo-abc.d"))
     );
-    assert_eq!(dep_info_path(Path::new("no-extension")), None);
+    // A test binary has no extension on Unix, and its dep-info is its own
+    // name with `.d` appended.
+    assert_eq!(
+        dep_info_path(Path::new("/t/debug/deps/demo-abc")),
+        Some(PathBuf::from("/t/debug/deps/demo-abc.d"))
+    );
+    assert_eq!(dep_info_path(Path::new("/")), None);
 }
 
 #[test]
@@ -420,7 +426,7 @@ fn units_from_a_check_name_exactly_the_files_each_unit_compiled() {
     let result = run(&spec, &Cancel::new());
     assert!(result.ok(), "{}", String::from_utf8_lossy(&result.output));
     let messages = parse_messages(&result.stdout).expect("messages");
-    let units = units_from_check(&messages, &dir).expect("units");
+    let units = units_of(&messages, &dir).expect("units");
     let mut described: Vec<(String, Vec<String>, bool, Vec<String>)> = units
         .iter()
         .map(|unit| {
@@ -490,8 +496,7 @@ fn units_of_a_nested_member_resolve_against_the_workspace_root() {
     spec.structured_stdout = Some(64 << 20);
     let result = run(&spec, &Cancel::new());
     assert!(result.ok(), "{}", String::from_utf8_lossy(&result.output));
-    let units =
-        units_from_check(&parse_messages(&result.stdout).expect("messages"), &dir).expect("units");
+    let units = units_of(&parse_messages(&result.stdout).expect("messages"), &dir).expect("units");
     let core: BTreeSet<String> = units
         .iter()
         .filter(|u| u.target.name == "fixture_core" && !u.test)

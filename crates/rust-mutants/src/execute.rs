@@ -33,7 +33,10 @@ use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use crate::cargo::{CargoError, Driver, Message, Package, Target, parse_messages};
+use crate::cargo::{
+    CargoError, CargoErrorKind, CompileKind, CompileOptions, Driver, Message, Package, Target,
+    compile,
+};
 use crate::instrument::{ACTIVE_ENV, CATALOG_ENV, STALE_CATALOG_EXIT};
 use crate::outcome::Outcome;
 use crate::runner::{Cancel, EXIT_CODE_UNAVAILABLE, RunResult, Spec, run};
@@ -453,33 +456,24 @@ pub fn build(
     packages: &[Package],
     options: &BuildOptions,
 ) -> Result<Vec<TestTarget>, CargoError> {
-    let mut args: Vec<String> = vec![
-        "test".to_owned(),
-        "--workspace".to_owned(),
-        "--all-targets".to_owned(),
-        "--no-run".to_owned(),
-        "--message-format=json".to_owned(),
-    ];
-    if options.locked {
-        args.push("--locked".to_owned());
+    let compiled = compile(
+        driver,
+        &CompileOptions {
+            kind: CompileKind::Tests,
+            target_dir: options.target_dir.clone(),
+            locked: options.locked,
+            offline: options.offline,
+            timeout: None,
+        },
+    )?;
+    if !compiled.success {
+        return Err(CargoError::new(
+            CargoErrorKind::CommandFailed,
+            "the test binaries could not be built",
+        ));
     }
-    if options.offline {
-        args.push("--offline".to_owned());
-    }
-    if let Some(target_dir) = &options.target_dir {
-        args.push("--target-dir".to_owned());
-        args.push(target_dir.to_string_lossy().into_owned());
-    }
-    let mut spec = driver.toolchain.command(driver.dir, args);
-    spec.structured_stdout = Some(256 << 20);
-    let result = run(&spec, driver.cancel);
-    driver.trace.exec(ExecRecord::of(&spec, &result));
-    if !result.ok() {
-        return Err(crate::cargo::command_failed(&spec, &result));
-    }
-    let messages = parse_messages(&result.stdout)?;
     Ok(targets_of(
-        &messages,
+        &compiled.messages,
         packages,
         options.target_dir.as_deref(),
     ))

@@ -23,7 +23,8 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use rust_mutants::cargo::{
-    CheckOptions, Driver, LocateOptions, Message, Metadata, MetadataOptions, Toolchain, check,
+    CompileKind, CompileOptions, Driver, LocateOptions, Message, Metadata, MetadataOptions,
+    Toolchain, compile,
 };
 use rust_mutants::catalog::Catalog;
 use rust_mutants::discover::{DiscoverOptions, Input, discover};
@@ -104,9 +105,10 @@ fn prepare(fixture: &str) -> Tree {
         },
     )
     .expect("metadata");
-    let checked = check(
+    let checked = compile(
         &driver,
-        &CheckOptions {
+        &CompileOptions {
+            kind: CompileKind::Check,
             target_dir: Some(target.path().to_path_buf()),
             locked: true,
             offline: true,

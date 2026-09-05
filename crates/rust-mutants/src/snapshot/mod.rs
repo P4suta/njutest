@@ -1221,6 +1221,45 @@ impl Snapshot {
         Ok(drifts)
     }
 
+    /// Replaces the manifest with the tree as it stands now, and reports
+    /// what that absorbed.
+    ///
+    /// Instrumentation rewrites the snapshot on purpose, so the manifest
+    /// [`create`] recorded stops describing it the moment the guards are
+    /// written. Resealing is how the intended rewrite stops being drift, so
+    /// that [`Snapshot::redigest`] afterwards means what it is for: a test
+    /// wrote into the tree every later mutant is measured against.
+    ///
+    /// # Errors
+    ///
+    /// The walk failures and refusals of [`create`].
+    pub fn reseal(&mut self) -> Result<Vec<Drift>, SnapshotError> {
+        let absorbed = self.redigest()?;
+        let mut walker = Walker::new(&self.root, &[]);
+        walker.walk("")?;
+        walker.rejection()?;
+        let mut manifest = Vec::with_capacity(walker.files.len());
+        for file in &walker.files {
+            let (size, sha256) = hash_file(&file.abs).map_err(|source| {
+                SnapshotError::new(
+                    SnapshotErrorKind::Walk,
+                    file.rel.clone(),
+                    "cannot read the file in the snapshot",
+                )
+                .with_source(source)
+            })?;
+            manifest.push(Entry {
+                rel_path: file.rel.clone(),
+                size,
+                sha256,
+            });
+        }
+        manifest.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
+        self.workspace_digest = workspace_digest(&manifest);
+        self.manifest = manifest;
+        Ok(absorbed)
+    }
+
     /// Preserves the directory instead of removing it, and records in the
     /// owner marker that this was asked for.
     ///

@@ -21,7 +21,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use rust_mutants::cargo::{
-    CheckOptions, Driver, LocateOptions, Metadata, MetadataOptions, Toolchain, check,
+    CompileKind, CompileOptions, Driver, LocateOptions, Metadata, MetadataOptions, Toolchain,
+    compile,
 };
 use rust_mutants::discover::{DiscoverError, DiscoverOptions, Discovery, Input, discover};
 use rust_mutants::glob::Pattern;
@@ -44,7 +45,7 @@ impl Sink for Shared {
 struct Prepared {
     dir: PathBuf,
     metadata: Metadata,
-    checked: rust_mutants::cargo::Checked,
+    checked: rust_mutants::cargo::Compiled,
     _target: tempfile::TempDir,
 }
 
@@ -75,9 +76,10 @@ fn prepare(name: &str) -> Prepared {
         .prefix("rust-mutants-discover-")
         .tempdir()
         .expect("tempdir");
-    let checked = check(
+    let checked = compile(
         &driver,
-        &CheckOptions {
+        &CompileOptions {
+            kind: CompileKind::Check,
             target_dir: Some(target.path().to_path_buf()),
             locked: true,
             offline: true,
@@ -394,14 +396,15 @@ fn the_check_records_an_exec_event_and_keeps_the_messages() {
     let sink = Arc::new(MemorySink::unbounded());
     let recorder = Recorder::wall(Box::new(Shared(Arc::clone(&sink))));
     let target = tempfile::tempdir().expect("tempdir");
-    let checked = check(
+    let checked = compile(
         &Driver {
             toolchain: &toolchain,
             dir: &dir,
             cancel: &cancel,
             trace: &recorder,
         },
-        &CheckOptions {
+        &CompileOptions {
+            kind: CompileKind::Check,
             target_dir: Some(target.path().to_path_buf()),
             locked: true,
             offline: true,

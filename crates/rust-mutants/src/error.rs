@@ -22,6 +22,12 @@ pub struct ErrorCode {
     pub summary: &'static str,
 }
 
+/// A rule name the canonical registry does not know.
+const RULE_UNKNOWN: ErrorCode = ErrorCode {
+    code: "RM9001",
+    summary: "a rule name the canonical registry does not know",
+};
+
 const INTERRUPTED: ErrorCode = ErrorCode {
     code: "RM0001",
     summary: "the caller cancelled the operation before it completed",
@@ -202,6 +208,36 @@ snapshot_code!(
     "RM4003",
     "an instrumented compilation could not be attempted at all"
 );
+snapshot_code!(
+    SESSION_PRISTINE_BROKEN,
+    "RM5001",
+    "the workspace does not compile before anything is instrumented"
+);
+snapshot_code!(
+    SESSION_VERIFY_FAILED,
+    "RM5002",
+    "the instrumented baseline fails a test the pristine tree passes"
+);
+snapshot_code!(
+    SESSION_UNKNOWN_MUTANT,
+    "RM5003",
+    "no mutant of the catalog answers to the identity or prefix given"
+);
+snapshot_code!(
+    SESSION_UNKNOWN_TARGET,
+    "RM5004",
+    "no test target of the session answers to the name given"
+);
+snapshot_code!(
+    SESSION_NO_TARGETS,
+    "RM5005",
+    "the workspace builds no test target, so no mutant can be measured"
+);
+snapshot_code!(
+    SESSION_WRITE_FAILED,
+    "RM5006",
+    "the instrumented tree could not be written"
+);
 
 /// Every failure the engine reports.
 #[derive(Debug, thiserror::Error)]
@@ -227,6 +263,13 @@ pub enum EngineError {
     /// Which candidates are real mutants could not be established.
     #[error(transparent)]
     Validate(#[from] crate::validate::ValidateError),
+    /// The workspace could not be prepared, or a request against a prepared
+    /// one could not be answered.
+    #[error(transparent)]
+    Session(#[from] crate::workspace::SessionError),
+    /// The rules asked for are not the registry's.
+    #[error(transparent)]
+    Rule(#[from] crate::rule::RuleError),
 }
 
 impl EngineError {
@@ -240,6 +283,8 @@ impl EngineError {
             Self::Discover(error) => error.code(),
             Self::Instrument(error) => error.code(),
             Self::Validate(error) => error.code(),
+            Self::Session(error) => error.code(),
+            Self::Rule(_) => RULE_UNKNOWN,
         }
     }
 }
@@ -282,5 +327,12 @@ pub const fn error_codes() -> &'static [ErrorCode] {
         VALIDATE_NOT_MUTANT_INDUCED,
         VALIDATE_NOT_ISOLATED,
         VALIDATE_ATTEMPT_FAILED,
+        SESSION_PRISTINE_BROKEN,
+        SESSION_VERIFY_FAILED,
+        SESSION_UNKNOWN_MUTANT,
+        SESSION_UNKNOWN_TARGET,
+        SESSION_NO_TARGETS,
+        SESSION_WRITE_FAILED,
+        RULE_UNKNOWN,
     ]
 }

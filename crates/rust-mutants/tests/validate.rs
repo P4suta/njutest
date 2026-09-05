@@ -22,7 +22,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use rust_mutants::cargo::{
-    CheckOptions, Driver, LocateOptions, Message, Metadata, MetadataOptions, Toolchain, check,
+    CompileKind, CompileOptions, Driver, LocateOptions, Message, Metadata, MetadataOptions,
+    Toolchain, compile,
 };
 use rust_mutants::catalog::{Builder, Catalog};
 use rust_mutants::instrument::{Placement, instrument_file, plan_file};
@@ -332,14 +333,17 @@ impl Compile for CargoScripted {
         }
         let cancel = Cancel::new();
         let trace = Recorder::disabled();
-        let checked = check(
+        let checked = compile(
             &Driver {
                 toolchain: &self.toolchain,
                 dir: &self.root,
                 cancel: &cancel,
                 trace: &trace,
             },
-            &CheckOptions {
+            &CompileOptions {
+                // The build validation ends with is the build the run
+                // executes: some refusals only happen once code is generated.
+                kind: CompileKind::Tests,
                 target_dir: Some(self.target.clone()),
                 locked: true,
                 offline: true,
@@ -391,9 +395,10 @@ fn prepare_fixture(name: &str) -> CargoScripted {
         },
     )
     .expect("metadata");
-    let checked = check(
+    let checked = compile(
         &driver,
-        &CheckOptions {
+        &CompileOptions {
+            kind: CompileKind::Check,
             target_dir: Some(target.path().to_path_buf()),
             locked: true,
             offline: true,
@@ -491,6 +496,7 @@ fn the_compiler_decides_which_mutants_are_real_and_says_why_for_each() {
         rejected,
         [
             ("add-to-sub", "E0369"),
+            ("mul-to-div", "unconditional_panic"),
             ("range-to-inclusive", "E0308"),
             ("return-default", "E0277"),
         ],

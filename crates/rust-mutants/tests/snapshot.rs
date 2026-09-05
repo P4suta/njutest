@@ -724,3 +724,43 @@ mod properties {
         }
     }
 }
+
+#[test]
+fn resealing_absorbs_an_intended_rewrite_so_later_drift_means_a_test_wrote() {
+    let fx = fixture();
+    let mut snap = create(&fx.source, &options(&fx), now()).expect("create");
+    let before = snap.workspace_digest().to_owned();
+
+    // Instrumentation: the tree is rewritten on purpose.
+    fs::write(
+        snap.root().join("src/main.rs"),
+        b"fn main() { guarded() }\n",
+    )
+    .expect("rewrite");
+    write(snap.root(), "src/generated.rs", b"// generated\n");
+    let absorbed = snap.reseal().expect("reseal");
+    let kinds: Vec<(&str, &str)> = absorbed
+        .iter()
+        .map(|drift| (drift.kind().name(), drift.rel_path()))
+        .collect();
+    assert_eq!(
+        kinds,
+        [("added", "src/generated.rs"), ("changed", "src/main.rs")]
+    );
+    assert_ne!(
+        snap.workspace_digest(),
+        before,
+        "the tree is not the tree it was"
+    );
+    assert!(
+        snap.redigest().expect("redigest").is_empty(),
+        "the rewrite is the new baseline"
+    );
+
+    // Now a test writes into the tree, and that is drift.
+    write(snap.root(), "testdata/golden.txt", b"updated by a test\n");
+    let drifts = snap.redigest().expect("redigest");
+    assert_eq!(drifts.len(), 1);
+    assert_eq!(drifts[0].rel_path(), "testdata/golden.txt");
+    assert_eq!(drifts[0].kind(), rust_mutants::snapshot::DriftKind::Added);
+}

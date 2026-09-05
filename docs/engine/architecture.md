@@ -67,6 +67,21 @@ lock, checks a guard (absolute, prefixed name, expected parent), and retries
 the removal on a 20/40/80/160 ms ladder; `keep` records the decision in the
 marker so the next sweep obeys it.
 
+### The public API
+
+`Workspace::open` sweeps the temporary area, copies the tree, and locates
+the toolchain inside the copy. `Workspace::prepare` consumes the workspace
+and returns a `Session`: the phases are types, so a mutant cannot be
+executed against a tree that was never prepared. A session is `Send + Sync`
+and every execution takes `&self`, so a consumer runs mutants in parallel
+across the targets one build produced.
+
+The engine reads no environment variable of its own. The environment every
+command and test process runs with, and the temporary directory everything
+is created in, are arguments ([ADR 0001](../adr/0001-seam-policy.md)); the
+composition root is the only place that names the process environment, and
+`cargo xtask devgates` refuses any other.
+
 ## Guards
 
 Three forms. **Form C** for a position that is syntactically boolean (an

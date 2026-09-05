@@ -21,10 +21,10 @@ pub fn window(n: usize) -> std::ops::Range<usize> {
     0..n
 }
 
-/// `value * 0` swapped to `value / 0` compiles: this compiler only refuses
-/// a division whose operands it can evaluate, and `value` is a run-time
-/// value. The mutant is accepted and dies at run time instead, which is the
-/// difference between "the compiler refused it" and "a test caught it".
+/// `value * 0` swapped to `value / 0` is refused by `unconditional_panic`,
+/// which is deny by default. The refusal only happens once code is
+/// generated: `cargo check` accepts it, and `cargo test --no-run` does not.
+/// Validation therefore compiles the way the run runs.
 pub fn erase(value: i32) -> i32 {
     value * 0
 }

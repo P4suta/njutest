@@ -13,7 +13,7 @@
 //! the environment a child should see, and the snapshot directory the
 //! commands run in decides which rustup toolchain answers.
 
-mod check;
+mod compile;
 mod depinfo;
 mod locate;
 mod messages;
@@ -27,8 +27,8 @@ use crate::error::{self, ErrorCode};
 use crate::runner::Cancel;
 use crate::trace::Recorder;
 
-pub use check::{CheckOptions, Checked, check};
-pub use depinfo::{Unit, dep_info_path, parse_dep_info, units_from_check};
+pub use compile::{CompileKind, CompileOptions, Compiled, compile};
+pub use depinfo::{Unit, dep_info_path, parse_dep_info, units_of};
 
 pub use locate::{LocateOptions, Toolchain, command_failed, resolve_executable};
 pub use messages::{

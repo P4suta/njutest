@@ -1,13 +1,22 @@
 // SPDX-FileCopyrightText: 2026 mjutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! `cargo check --all-targets --message-format=json`: the pristine gate and
-//! the source of every unit's file set.
+//! Compiling the tree and reading what the compiler said: the pristine
+//! gate, the source of every unit's file set, and the build validation and
+//! execution both stand on.
+//!
+//! Which command is used matters, and is the caller's choice. `cargo check`
+//! is fast and answers every type question, but some refusals only happen
+//! when code is generated: `unconditional_panic` is deny by default and
+//! fires in the middle end, so `x / 0` type-checks and does not build.
+//! Validation therefore compiles the way the run will run
+//! ([`CompileKind::Tests`]), and the build it ends with is the build the
+//! mutants execute.
 
 use std::path::PathBuf;
 use std::time::Duration;
 
-use super::depinfo::{Unit, units_from_check};
+use super::depinfo::{Unit, units_of};
 use super::locate::command_failed;
 use super::messages::{Message, parse_messages};
 use super::{CargoError, CargoErrorKind, Driver};
@@ -17,9 +26,32 @@ use crate::trace::ExecRecord;
 /// How much of the message stream is kept.
 const MESSAGE_OUTPUT_LIMIT: usize = 256 << 20;
 
-/// Configures [`check`].
+/// Which command compiles the tree.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CompileKind {
+    /// `cargo check --all-targets`: every type question, no code generated.
+    #[default]
+    Check,
+    /// `cargo test --all-targets --no-run`: the binaries a run executes,
+    /// and every refusal that only happens once code is generated.
+    Tests,
+}
+
+impl CompileKind {
+    /// The arguments this kind adds after `cargo`.
+    const fn args(self) -> &'static [&'static str] {
+        match self {
+            Self::Check => &["check", "--workspace", "--all-targets"],
+            Self::Tests => &["test", "--workspace", "--all-targets", "--no-run"],
+        }
+    }
+}
+
+/// Configures [`compile`].
 #[derive(Debug, Clone, Default)]
-pub struct CheckOptions {
+pub struct CompileOptions {
+    /// Which command to run.
+    pub kind: CompileKind,
     /// `--target-dir`. `None` lets cargo choose, which inside a snapshot is
     /// the snapshot's own `target`.
     pub target_dir: Option<PathBuf>,
@@ -31,9 +63,9 @@ pub struct CheckOptions {
     pub timeout: Option<Duration>,
 }
 
-/// What a check produced.
+/// What a compilation produced.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Checked {
+pub struct Compiled {
     /// Whether every unit compiled.
     pub success: bool,
     /// Every message, in order, for attribution.
@@ -43,11 +75,10 @@ pub struct Checked {
     pub units: Vec<Unit>,
 }
 
-/// Runs `cargo check --workspace --all-targets --message-format=json` in the
-/// driver's directory and reads what it said.
+/// Compiles the tree in the driver's directory and reads what it said.
 ///
 /// A tree that does not compile is not an error here: it is a
-/// [`Checked`] with `success == false` and the diagnostics that say why,
+/// [`Compiled`] with `success == false` and the diagnostics that say why,
 /// because the validation phase reads those diagnostics. A cargo that
 /// could not run, or a stream that could not be read, is an error.
 ///
@@ -55,14 +86,15 @@ pub struct Checked {
 ///
 /// [`CargoErrorKind::CommandFailed`] when cargo itself could not run or
 /// timed out, [`CargoErrorKind::MessageUnparsable`] for a stream that is
-/// not messages, and the dep-info errors of [`units_from_check`].
-pub fn check(driver: &Driver<'_>, options: &CheckOptions) -> Result<Checked, CargoError> {
-    let mut args: Vec<String> = vec![
-        "check".to_owned(),
-        "--workspace".to_owned(),
-        "--all-targets".to_owned(),
-        "--message-format=json".to_owned(),
-    ];
+/// not messages, and the dep-info errors of [`units_of`].
+pub fn compile(driver: &Driver<'_>, options: &CompileOptions) -> Result<Compiled, CargoError> {
+    let mut args: Vec<String> = options
+        .kind
+        .args()
+        .iter()
+        .map(|arg| (*arg).to_owned())
+        .collect();
+    args.push("--message-format=json".to_owned());
     if options.locked {
         args.push("--locked".to_owned());
     }
@@ -84,7 +116,7 @@ pub fn check(driver: &Driver<'_>, options: &CheckOptions) -> Result<Checked, Car
     if result.stdout_truncated {
         return Err(CargoError::new(
             CargoErrorKind::MessageUnparsable,
-            "cargo check printed more than the engine keeps",
+            "the compiler printed more than the engine keeps",
         ));
     }
     let messages = parse_messages(&result.stdout)?;
@@ -102,11 +134,11 @@ pub fn check(driver: &Driver<'_>, options: &CheckOptions) -> Result<Checked, Car
         // understand.
         return Err(CargoError::new(
             CargoErrorKind::MessageUnparsable,
-            "cargo check exited 0 without reporting a finished build",
+            "the compiler exited 0 without reporting a finished build",
         ));
     }
-    let units = units_from_check(&messages, driver.dir)?;
-    Ok(Checked {
+    let units = units_of(&messages, driver.dir)?;
+    Ok(Compiled {
         success,
         messages,
         units,

@@ -31,10 +31,17 @@ pub struct Unit {
 
 /// The dep-info file rustc wrote beside `artifact`: the same stem without
 /// the `lib` prefix and with the `.d` extension.
+///
+/// A test binary has no extension at all on Unix, and its dep-info is its
+/// own name with `.d` appended; a library has both a `lib` prefix and an
+/// extension, and neither belongs in the dep-info's name.
 #[must_use]
 pub fn dep_info_path(artifact: &Path) -> Option<PathBuf> {
-    artifact.extension()?;
-    let stem = artifact.file_stem()?.to_str()?;
+    let name = artifact.file_name()?.to_str()?;
+    let stem = match artifact.extension() {
+        Some(_) => artifact.file_stem()?.to_str()?,
+        None => name,
+    };
     let stem = stem.strip_prefix("lib").unwrap_or(stem);
     Some(artifact.with_file_name(format!("{stem}.d")))
 }
@@ -101,7 +108,7 @@ fn split_escaped(text: &str) -> Vec<String> {
     items
 }
 
-/// The units of a check or build, each with the sources its dep-info names,
+/// The units of a compilation, each with the sources its dep-info names,
 /// resolved against `workspace_root` (the directory rustc ran in). Build
 /// scripts are left out: they are never mutated.
 ///
@@ -109,10 +116,7 @@ fn split_escaped(text: &str) -> Vec<String> {
 ///
 /// [`CargoErrorKind::DepInfoMissing`] when an artifact's dep-info cannot be
 /// read, and [`CargoErrorKind::DepInfoUnreadable`] when it has no rule.
-pub fn units_from_check(
-    messages: &[Message],
-    workspace_root: &Path,
-) -> Result<Vec<Unit>, CargoError> {
+pub fn units_of(messages: &[Message], workspace_root: &Path) -> Result<Vec<Unit>, CargoError> {
     let mut units = Vec::new();
     for message in messages {
         let Message::CompilerArtifact(artifact) = message else {
