@@ -30,7 +30,9 @@ testkit = []
 [dependencies]
 clap = { workspace = true }
 jiff = { workspace = true, features = ["serde"] }
+hex = { workspace = true }
 rust-mutants = { workspace = true }
+sha2 = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
 toml = { workspace = true }

@@ -53,6 +53,11 @@ code!(
     "MJ1004",
     "the configuration names a version this release does not understand"
 );
+code!(
+    TARGET_LIST_FAILED,
+    "MJ3001",
+    "a test binary could not be asked what tests it holds"
+);
 
 /// Every failure the runner reports.
 #[derive(Debug, thiserror::Error)]
@@ -64,6 +69,9 @@ pub enum RunnerError {
     /// The configuration could not be used.
     #[error(transparent)]
     Config(#[from] crate::config::ConfigError),
+    /// A unit's tests could not be named.
+    #[error(transparent)]
+    Target(#[from] crate::targets::TargetError),
 }
 
 impl RunnerError {
@@ -73,6 +81,7 @@ impl RunnerError {
         match self {
             Self::Interrupted => INTERRUPTED,
             Self::Config(error) => error.code(),
+            Self::Target(error) => error.code(),
         }
     }
 }
@@ -86,5 +95,6 @@ pub const fn error_codes() -> &'static [ErrorCode] {
         CONFIG_UNPARSABLE,
         CONFIG_INVALID,
         CONFIG_UNSUPPORTED_VERSION,
+        TARGET_LIST_FAILED,
     ]
 }

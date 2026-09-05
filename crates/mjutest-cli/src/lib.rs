@@ -17,6 +17,7 @@
 pub mod cli;
 pub mod config;
 pub mod error;
+pub mod targets;
 
 use std::ffi::OsString;
 use std::io::Write;

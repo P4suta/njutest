@@ -77,3 +77,4 @@ first digit names an area:
 | `MJ1002` | The configuration file is not the document this version understands: an unknown key, a malformed value. |
 | `MJ1003` | The configuration says something a run cannot honour: a harness flag mjutest owns, an environment assignment, a resource that is both shared and exclusive, an acceptance without a reason. |
 | `MJ1004` | The configuration names a version this release does not understand. |
+| `MJ3001` | A test binary could not be asked what tests it holds. |

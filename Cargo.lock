@@ -625,10 +625,12 @@ name = "mjutest-cli"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "hex",
  "jiff",
  "mjutest-devkit",
  "rust-mutants",
  "serde",
+ "sha2",
  "tempfile",
  "thiserror",
  "toml",
