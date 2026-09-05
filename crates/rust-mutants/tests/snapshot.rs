@@ -728,3 +728,51 @@ fn resealing_absorbs_an_intended_rewrite_so_later_drift_means_a_test_wrote() {
     assert_eq!(drifts[0].rel_path(), "testdata/golden.txt");
     assert_eq!(drifts[0].kind(), rust_mutants::snapshot::DriftKind::Added);
 }
+
+#[test]
+fn a_directory_tagged_as_a_cache_is_not_copied() {
+    let source = tempfile::tempdir().expect("tempdir");
+    let dest = tempfile::tempdir().expect("tempdir");
+    fs::write(source.path().join("Cargo.toml"), b"[package]\n").expect("a manifest");
+    let target = source.path().join("target");
+    fs::create_dir_all(target.join("debug/deps")).expect("a build directory");
+    fs::write(
+        target.join("CACHEDIR.TAG"),
+        b"Signature: 8a477f597d28d172789f06886806bc55\n",
+    )
+    .expect("the tag");
+    fs::write(target.join("debug/deps/huge.rlib"), vec![0_u8; 4096]).expect("build output");
+
+    let snapshot =
+        create(source.path(), &Options::new(dest.path()), Timestamp::now()).expect("the snapshot");
+
+    assert!(snapshot.root().join("Cargo.toml").is_file());
+    assert!(
+        !snapshot.root().join("target").exists(),
+        "copying somebody else's build cache would be gigabytes and a race with the \
+         cargo that is writing it"
+    );
+    assert!(
+        snapshot
+            .manifest()
+            .iter()
+            .all(|entry| !entry.rel_path.starts_with("target/")),
+        "and it is not in the digest either"
+    );
+}
+
+#[test]
+fn a_directory_with_a_file_of_that_name_that_is_not_the_tag_is_copied() {
+    let source = tempfile::tempdir().expect("tempdir");
+    let dest = tempfile::tempdir().expect("tempdir");
+    let ordinary = source.path().join("data");
+    fs::create_dir_all(&ordinary).expect("a directory");
+    fs::write(ordinary.join("CACHEDIR.TAG"), b"notes about caching\n").expect("a file");
+
+    let snapshot =
+        create(source.path(), &Options::new(dest.path()), Timestamp::now()).expect("the snapshot");
+    assert!(
+        snapshot.root().join("data/CACHEDIR.TAG").is_file(),
+        "the signature is what tags a cache, not the name"
+    );
+}

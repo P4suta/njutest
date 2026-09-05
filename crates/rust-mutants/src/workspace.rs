@@ -70,7 +70,10 @@ pub enum SessionError {
         first: String,
     },
     /// The instrumented baseline does not pass its own tests.
-    #[error("{}: the instrumented baseline fails {target}, which the pristine tree passes", error::SESSION_VERIFY_FAILED.code)]
+    #[error(
+        "{}: the instrumented baseline fails {target}, which the pristine tree passes:\n{output}",
+        error::SESSION_VERIFY_FAILED.code
+    )]
     VerifyFailed {
         /// The target that failed.
         target: String,

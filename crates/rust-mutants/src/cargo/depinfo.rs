@@ -106,16 +106,48 @@ pub fn units_of(messages: &[Message], workspace_root: &Path) -> Result<Vec<Unit>
         if artifact.target.is_custom_build() {
             continue;
         }
+        if is_uplift(artifact) {
+            continue;
+        }
         units.push(unit_of(artifact, workspace_root)?);
     }
     Ok(units)
 }
 
-fn unit_of(artifact: &Artifact, workspace_root: &Path) -> Result<Unit, CargoError> {
-    let file = artifact
+/// Whether this artifact is cargo's uplifted copy of a unit rather than the
+/// unit itself.
+///
+/// Cargo compiles into `deps/` and then hard-links a binary up into the
+/// profile directory so a person can run it by name. The copy carries no
+/// dep-info of its own, and the unit it copies is either reported separately
+/// or is one nothing reads; either way it is not a compilation.
+fn is_uplift(artifact: &Artifact) -> bool {
+    artifact.filenames.iter().all(|file| {
+        file.parent()
+            .and_then(Path::file_name)
+            .is_none_or(|directory| directory != "deps")
+    })
+}
+
+/// Every place this artifact's dep-info could sit: cargo puts it beside the
+/// hashed file in `deps/` and, for a binary it uplifts, beside the copy too.
+fn dep_info_candidates(artifact: &Artifact) -> Vec<PathBuf> {
+    let mut candidates: Vec<PathBuf> = artifact
         .filenames
-        .first()
-        .and_then(|first| dep_info_path(first))
+        .iter()
+        .chain(artifact.executable.iter())
+        .filter_map(|file| dep_info_path(file))
+        .collect();
+    candidates.dedup();
+    candidates
+}
+
+fn unit_of(artifact: &Artifact, workspace_root: &Path) -> Result<Unit, CargoError> {
+    let candidates = dep_info_candidates(artifact);
+    let file = candidates
+        .iter()
+        .find(|path| path.is_file())
+        .or_else(|| candidates.first())
         .ok_or_else(|| {
             CargoError::new(
                 CargoErrorKind::DepInfoMissing,
@@ -125,7 +157,7 @@ fn unit_of(artifact: &Artifact, workspace_root: &Path) -> Result<Unit, CargoErro
                 ),
             )
         })?;
-    let text = std::fs::read_to_string(&file).map_err(|source| {
+    let text = std::fs::read_to_string(file).map_err(|source| {
         CargoError::new(
             CargoErrorKind::DepInfoMissing,
             format!("cannot read dep-info {}", file.display()),

@@ -598,6 +598,9 @@ impl<'a> Walker<'a> {
                     "refuses to follow a reparse point (junction or mount point)",
                 );
             } else if file_type.is_dir() {
+                if is_cache_directory(&abs) {
+                    return Ok(());
+                }
                 self.dirs.push(Record {
                     rel: rel.clone(),
                     abs,
@@ -666,6 +669,25 @@ fn join_rel(rel_dir: &str, name: &str) -> String {
     } else {
         format!("{rel_dir}/{name}")
     }
+}
+
+/// The signature the Cache Directory Tagging Specification puts at the start of a `CACHEDIR.TAG`.
+const CACHE_TAG: &[u8] = b"Signature: 8a477f597d28d172789f06886806bc55";
+
+/// The file that tags a directory as one nothing should copy or back up.
+const CACHE_TAG_NAME: &str = "CACHEDIR.TAG";
+
+/// Whether this directory is a cache somebody else owns.
+///
+/// `target/` carries the tag, and copying it would put gigabytes of build
+/// output into the snapshot — output another cargo may be rewriting while
+/// the copy reads it, which is a race with no upside: nothing under it is
+/// source, and the engine builds into a directory of its own.
+fn is_cache_directory(dir: &Path) -> bool {
+    let Ok(bytes) = fs::read(dir.join(CACHE_TAG_NAME)) else {
+        return false;
+    };
+    bytes.starts_with(CACHE_TAG)
 }
 
 /// Names the reason a directory entry cannot be represented as a `/`-normalized relative path, or `None` if it can.
