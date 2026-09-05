@@ -198,6 +198,9 @@ impl Mutation {
                 }
                 Disposition::Unreached => {
                     counts.unreached = counts.unreached.saturating_add(1);
+                    if accepted.contains(&judged.id) {
+                        counts.accepted = counts.accepted.saturating_add(1);
+                    }
                 }
                 Disposition::Unconfirmed { .. } | Disposition::Errored { .. } => {
                     counts.executed = counts.executed.saturating_add(1);

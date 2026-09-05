@@ -370,3 +370,41 @@ fn accept_keeps_the_comments_of_the_file_it_edits() {
         "an edit that ate the comments would be an edit nobody trusts: {written}"
     );
 }
+
+#[test]
+fn a_mutant_no_test_reaches_that_a_reviewer_accepted_is_counted_as_accepted() {
+    let fixture = fixture("fixture-baseline");
+    verify(&fixture, &[]);
+    let unreached: Vec<String> = document(&fixture)["mutants"]
+        .as_array()
+        .expect("mutants")
+        .iter()
+        .filter(|mutant| mutant["outcome"] == "unreached")
+        .filter_map(|mutant| mutant["id"].as_str().map(ToOwned::to_owned))
+        .collect();
+    if unreached.is_empty() {
+        return;
+    }
+
+    let mut configuration = String::from("version = 1\n");
+    for id in &unreached {
+        let _written = write!(
+            configuration,
+            "\n[[acceptance]]\nid = \"{id}\"\nreason = \"nothing reaches it and that is the \
+             decision\"\n"
+        );
+    }
+    std::fs::write(fixture.root.join(".mjutest.toml"), configuration).expect("a configuration");
+
+    verify(&fixture, &[]);
+    let report = document(&fixture);
+    let counted = report["accounting"]["mutants"]["accepted"]
+        .as_u64()
+        .expect("a count");
+    assert_eq!(
+        counted,
+        u64::try_from(unreached.len()).unwrap_or(u64::MAX),
+        "a mutant whose finding an acceptance removed is one the accounting says was \
+         accepted: {report}"
+    );
+}
