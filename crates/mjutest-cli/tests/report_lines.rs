@@ -2,12 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The record stream a pipe reads and a person skims.
-//!
-//! The thing this projection has to get right is that no value inside it can
-//! become a record. A test's failure message, a provider's diagnostic, a
-//! limitation's detail — all of it is text this program did not write, and
-//! all of it appears here. If any of it could carry a newline, a reader
-//! filtering for `LIMITATION` would read a limitation the run never stated.
 
 #![expect(
     clippy::assigning_clones,
@@ -95,8 +89,6 @@ fn records(text: &str, kind: &str) -> Vec<String> {
         .collect()
 }
 
-// --- the shape ---------------------------------------------------------------------
-
 #[test]
 fn every_line_is_a_record_that_names_its_kind_first() {
     let text = lines::stream(&report());
@@ -157,8 +149,6 @@ fn a_mutant_record_carries_the_place_a_person_would_open() {
     assert!(record.contains("lt-to-le@1"), "{record}");
 }
 
-// --- what a value cannot do --------------------------------------------------------
-
 #[test]
 fn a_message_holding_a_newline_cannot_forge_a_record() {
     let mut report = report();
@@ -214,8 +204,6 @@ fn a_backslash_is_written_so_the_escaping_reads_back() {
         "otherwise a literal backslash-n and a newline are the same text: {text}"
     );
 }
-
-// --- the recorded stream -----------------------------------------------------------
 
 #[test]
 fn the_stream_matches_the_recorded_one() {

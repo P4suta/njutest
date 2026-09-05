@@ -5,23 +5,16 @@
 
 use std::sync::{Mutex, PoisonError};
 
-/// How many bytes of combined output [`super::run`] keeps when the spec does
-/// not say. One mebibyte is far more than a readable test failure needs and
-/// far less than a runaway logger can produce.
+/// How many bytes of combined output [`super::run`] keeps when the spec does not say. One mebibyte is far more than a readable test failure needs and far less than a runaway logger can produce.
 pub const DEFAULT_OUTPUT_LIMIT: usize = 1 << 20;
 
-/// The smallest cap honoured. The truncation notice has to fit inside the
-/// budget for `output.len() <= limit` to hold.
+/// The smallest cap honoured. The truncation notice has to fit inside the budget for `output.len() <= limit` to hold.
 pub const MIN_OUTPUT_LIMIT: usize = 256;
 
-/// Begins the first line of an output that lost bytes. Stable, because
-/// reports quote it.
+/// Begins the first line of an output that lost bytes. Stable, because reports quote it.
 pub const OUTPUT_TRUNCATED_PREFIX: &str = "[rust-mutants] output truncated";
 
 /// Captures the last `limit` bytes written to it and counts the rest.
-///
-/// Both of the child's streams are wired to one pipe, so the interleaving in
-/// the capture is the child's own; the mutex is for the writer threads.
 #[derive(Debug)]
 pub struct TailBuffer {
     limit: usize,
@@ -50,8 +43,7 @@ impl TailBuffer {
         self.limit
     }
 
-    /// Appends `bytes`, keeping only the tail. Never fails: a capture that
-    /// could error would make the child's own writes fail.
+    /// Appends `bytes`, keeping only the tail. Never fails: a capture that could error would make the child's own writes fail.
     pub fn write(&self, bytes: &[u8]) {
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         state.total = state
@@ -67,17 +59,13 @@ impl TailBuffer {
             return;
         }
         state.buf.extend_from_slice(bytes);
-        // The buffer may grow to twice the limit before it is compacted, so
-        // the copy cost is amortised over at least `limit` bytes.
         if state.buf.len() > self.limit.saturating_mul(2) {
             let drop_count = state.buf.len().saturating_sub(self.limit);
             state.buf.drain(..drop_count);
         }
     }
 
-    /// The output as a result carries it: the bytes as written when nothing
-    /// was lost, otherwise the truncation notice followed by as much of the
-    /// tail as the remaining budget allows. `capture().len() <= limit` always.
+    /// The output as a result carries it: the bytes as written when nothing was lost, otherwise the truncation notice followed by as much of the tail as the remaining budget allows. `capture().len() <= limit` always.
     #[must_use]
     pub fn capture(&self) -> Vec<u8> {
         let (total, buf) = {
@@ -97,8 +85,7 @@ impl TailBuffer {
     }
 }
 
-/// The line prepended to a capped capture. It reports only the total the
-/// child produced, which the writer knows before it decides how much to keep.
+/// The line prepended to a capped capture. It reports only the total the child produced, which the writer knows before it decides how much to keep.
 #[must_use]
 pub fn truncation_notice(total: u64) -> String {
     format!(
@@ -106,9 +93,7 @@ pub fn truncation_notice(total: u64) -> String {
     )
 }
 
-/// Keeps the first `limit` bytes of a stream and admits what it cut: the
-/// buffer for a child's structured stdout, where the head is the part that
-/// parses and a truncated tail would be a truncated document.
+/// Keeps the first `limit` bytes of a stream and admits what it cut: the buffer for a child's structured stdout, where the head is the part that parses and a truncated tail would be a truncated document.
 #[derive(Debug)]
 pub struct HeadBuffer {
     limit: usize,

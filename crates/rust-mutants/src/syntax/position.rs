@@ -5,13 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Where a byte offset falls in a file, for the console, the report, and
-/// the editors that consume `file:line:col`.
-///
-/// Both column units are carried because the consumers disagree: rustc
-/// diagnostics count characters, `file:line:col` consumers count what their
-/// editor counts, and coverage regions from `llvm-cov` fix their unit in M2.
-/// Lines are counted by `\n`, so a CRLF file reads the same as an LF one.
+/// Where a byte offset falls in a file, for the console, the report, and the editors that consume `file:line:col`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Position {
     /// 1-based line.
@@ -22,8 +16,7 @@ pub struct Position {
     pub char_column: u32,
 }
 
-/// The byte offset of the start of every line, for offset-to-position
-/// lookups in constant-ish time.
+/// The byte offset of the start of every line, for offset-to-position lookups in constant-ish time.
 #[derive(Debug, Clone)]
 pub struct LineIndex {
     starts: Vec<u32>,
@@ -42,8 +35,7 @@ impl LineIndex {
         Self { starts }
     }
 
-    /// The position of byte `offset` in `source`, which must be the text the
-    /// index was built from. An offset past the end lands on the last line.
+    /// The position of byte `offset` in `source`, which must be the text the index was built from. An offset past the end lands on the last line.
     #[must_use]
     pub fn position(&self, source: &str, offset: u32) -> Position {
         let line = self.starts.partition_point(|&start| start <= offset);

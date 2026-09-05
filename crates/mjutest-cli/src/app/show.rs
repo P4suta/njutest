@@ -2,11 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! `mjutest report`: what a completed run concluded.
-//!
-//! The JSON form is the bytes the run wrote, read from the file and passed
-//! through unchanged. Re-serializing the model would be almost the same
-//! document, and "almost" is exactly what a reader comparing a piped report
-//! with the stored one cannot check.
 
 use std::io::Write;
 

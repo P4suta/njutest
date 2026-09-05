@@ -1,32 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mjutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Running one test process per mutant, and reading what its exit status
-//! means.
-//!
-//! The test binaries are built once, by cargo, from the instrumented tree.
-//! After that the engine starts them itself: cargo would rebuild nothing and
-//! add a process, a lock on the target directory, and an exit status of its
-//! own between the engine and the harness. Starting the binary directly also
-//! makes the environment explicit, which is what activation is.
-//!
-//! # What a status means
-//!
-//! The order is fixed, and every step of it is a decision about evidence:
-//!
-//! | Observation | Outcome | Why |
-//! | --- | --- | --- |
-//! | the process could not start | [`Outcome::Errored`] | nothing was observed |
-//! | the timeout fired | [`Outcome::TimedOut`] | a mutant that loops is detected, not survived |
-//! | no status, no timeout | [`Outcome::NotRun`] | the run was cancelled |
-//! | exit 97 | [`Outcome::Errored`] | the tree was built from another catalog |
-//! | any other non-zero exit | [`Outcome::Killed`] | a test failed, which is what a kill is |
-//! | exit 0, tests ran | [`Outcome::Survived`] | the suite watched the mutant and said nothing |
-//! | exit 0, nothing ran | [`Outcome::Inconclusive`] | a filter that matched nothing is green and empty |
-//!
-//! The last row is the one that matters: libtest exits 0 when a filter
-//! matches no test at all, so a green exit is only evidence when the summary
-//! line says something ran.
+//! Running one test process per mutant, and reading what its exit status means.
 
 use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
@@ -42,13 +17,10 @@ use crate::outcome::Outcome;
 use crate::runner::{Cancel, EXIT_CODE_UNAVAILABLE, RunResult, Spec, run};
 use crate::trace::{ExecRecord, Recorder};
 
-/// Selects the mutant to probe rather than to activate. Reserved here so
-/// that a stale value from an outer probe run is stripped, and used by the
-/// probe phase.
+/// Selects the mutant to probe rather than to activate. Reserved here so that a stale value from an outer probe run is stripped, and used by the probe phase.
 pub const PROBE_ENV: &str = "RUST_MUTANTS_PROBE";
 
-/// Every variable the engine owns. A test process sees exactly the ones
-/// this run set, never one an outer run left behind.
+/// Every variable the engine owns. A test process sees exactly the ones this run set, never one an outer run left behind.
 pub const RESERVED_ENV: [&str; 3] = [ACTIVE_ENV, CATALOG_ENV, PROBE_ENV];
 
 /// The kinds of target that carry tests the engine runs.
@@ -85,8 +57,7 @@ impl TargetKind {
         Self::ALL.into_iter().find(|kind| kind.name() == name)
     }
 
-    /// The kind of a cargo target, or `None` for one that carries no tests
-    /// the engine runs (a build script, a bench, a proc macro).
+    /// The kind of a cargo target, or `None` for one that carries no tests the engine runs (a build script, a bench, a proc macro).
     #[must_use]
     pub fn of(target: &Target) -> Option<Self> {
         if target.is_proc_macro() || target.is_custom_build() || target.is_bench() {
@@ -106,9 +77,6 @@ impl TargetKind {
 }
 
 /// The stable name of a test target: `package/kind/name`.
-///
-/// No line number and no hash: a target's identity is where its tests live,
-/// which is what a person reads and what a cached result is keyed on.
 #[must_use]
 pub fn target_id(package: &str, kind: TargetKind, name: &str) -> String {
     format!("{package}/{}/{name}", kind.name())
@@ -127,11 +95,9 @@ pub struct TestTarget {
     pub name: String,
     /// The binary cargo built.
     pub executable: PathBuf,
-    /// The directory it runs in: the package's manifest directory, which is
-    /// what cargo uses and what a test reading a relative path expects.
+    /// The directory it runs in: the package's manifest directory, which is what cargo uses and what a test reading a relative path expects.
     pub cwd: PathBuf,
-    /// What cargo sets for this target that the parent environment does not
-    /// have: `CARGO_MANIFEST_DIR`, `CARGO_PKG_*`, `CARGO_BIN_EXE_*`.
+    /// What cargo sets for this target that the parent environment does not have: `CARGO_MANIFEST_DIR`, `CARGO_PKG_*`, `CARGO_BIN_EXE_*`.
     pub cargo_env: Vec<(OsString, OsString)>,
 }
 
@@ -159,8 +125,7 @@ impl Summary {
         self.passed.saturating_add(self.failed)
     }
 
-    /// Whether nothing ran at all, which is what a filter matching no test
-    /// looks like: exit 0 with no evidence in it.
+    /// Whether nothing ran at all, which is what a filter matching no test looks like: exit 0 with no evidence in it.
     #[must_use]
     pub const fn ran_nothing(&self) -> bool {
         self.tests_run() == 0
@@ -168,9 +133,6 @@ impl Summary {
 }
 
 /// Reads the last `test result:` line of a captured output.
-///
-/// The last one wins: a binary that ran several suites prints one each, and
-/// the final line is the one that speaks for the process.
 #[must_use]
 pub fn parse_summary(output: &[u8]) -> Option<Summary> {
     let text = String::from_utf8_lossy(output);
@@ -210,8 +172,7 @@ fn parse_summary_line(line: &str) -> Option<Summary> {
     (seen > 0).then_some(summary)
 }
 
-/// What a run of a test binary looked like from outside, which is all the
-/// outcome policy reads.
+/// What a run of a test binary looked like from outside, which is all the outcome policy reads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Observation {
     /// The process could not be started or supervised at all.
@@ -234,8 +195,7 @@ impl Observation {
     }
 }
 
-/// What one run of a test binary establishes about the mutant that was
-/// active during it. See the module documentation for the order.
+/// What one run of a test binary establishes about the mutant that was active during it. See the module documentation for the order.
 #[must_use]
 pub const fn outcome_of(observed: Observation, summary: Option<Summary>) -> Outcome {
     if observed.unstarted {
@@ -259,14 +219,7 @@ pub const fn outcome_of(observed: Observation, summary: Option<Summary>) -> Outc
     }
 }
 
-/// The environment one test process runs with: the base the workspace was
-/// opened with, the variables cargo sets for the target, the activation, and
-/// a temporary directory of the worker's own.
-///
-/// Every variable the engine owns is removed from the base first, so a
-/// value an outer run left behind can never activate a mutant here. With
-/// `active` absent the variables are absent too, which is the instrumented
-/// baseline.
+/// The environment one test process runs with: the base the workspace was opened with, the variables cargo sets for the target, the activation, and a temporary directory of the worker's own.
 #[must_use]
 pub fn environment(
     base: &[(OsString, OsString)],
@@ -353,9 +306,7 @@ impl<'a> ExecRequest<'a> {
         self.target
     }
 
-    /// The command line the binary receives. A named test is passed as a
-    /// filter with `--exact`, so a name that is a prefix of another cannot
-    /// drag it in.
+    /// The command line the binary receives. A named test is passed as a filter with `--exact`, so a name that is a prefix of another cannot drag it in.
     #[must_use]
     pub fn argv(&self) -> Vec<OsString> {
         let mut argv = vec![self.target.executable.clone().into_os_string()];
@@ -368,9 +319,7 @@ impl<'a> ExecRequest<'a> {
     }
 }
 
-/// What a test process runs with: the environment the workspace was opened
-/// with, and the mutant to activate (its identity and the catalog it came
-/// from), or `None` for the instrumented baseline.
+/// What a test process runs with: the environment the workspace was opened with, and the mutant to activate (its identity and the catalog it came from), or `None` for the instrumented baseline.
 #[derive(Debug, Clone, Copy)]
 pub struct Context<'a> {
     /// The environment the workspace was opened with.
@@ -400,9 +349,6 @@ pub struct MutantResult {
 }
 
 /// Runs one test process and reads what it means.
-///
-/// Nothing here reads the process environment: what a test process sees is
-/// composed from [`Context`].
 #[must_use]
 pub fn exec(
     request: &ExecRequest<'_>,
@@ -448,7 +394,6 @@ pub struct BuildOptions {
 /// Builds the test binaries of a tree and reports them.
 ///
 /// # Errors
-///
 /// Whatever stopped cargo from building, and a message stream that could
 /// not be read.
 pub fn build(
@@ -522,11 +467,6 @@ pub fn targets_of(
 }
 
 /// What cargo sets for a test process, reproduced from the metadata.
-///
-/// A test that reads `env!("CARGO_PKG_VERSION")` or
-/// `env!("CARGO_BIN_EXE_…")` compiled those in already; what matters here
-/// are the ones read at run time with `std::env::var`, which is why they
-/// are set rather than assumed.
 fn cargo_environment(
     package: &Package,
     kind: TargetKind,
@@ -550,8 +490,6 @@ fn cargo_environment(
             OsString::from(&package.version),
         ),
     ];
-    // Integration tests and examples are the targets cargo gives a scratch
-    // directory and the paths of the package's binaries.
     if matches!(kind, TargetKind::Test | TargetKind::Example) {
         if let Some(target_dir) = target_dir {
             env.push((

@@ -2,12 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The walk over one file's syntax tree.
-//!
-//! The walker is recursive descent rather than `syn::visit`, because every
-//! decision depends on where an expression sits: a comparison under an `if`
-//! is a Form C site, the same comparison in a `let` a Form E site, and a
-//! range anywhere needs the statement around it. A context travels down
-//! with the recursion and says what the position allows.
 
 use std::collections::BTreeMap;
 
@@ -86,8 +80,7 @@ enum Kind {
 #[derive(Debug, Clone, Copy)]
 struct Ctx {
     kind: Kind,
-    /// The statement-level site, for an edit that changes its expression's
-    /// type.
+    /// The statement-level site, for an edit that changes its expression's type.
     stmt: Option<Site>,
     /// Whether the expression is the whole of an expression statement.
     direct_stmt: bool,
@@ -194,8 +187,6 @@ impl<'a> Walker<'a> {
         file.attrs.iter().any(|attr| attr.path().is_ident("no_std"))
     }
 
-    // --- spans and text -------------------------------------------------------------
-
     /// The absolute span of a node.
     fn span<T: Spanned + ?Sized>(&self, node: &T) -> Span {
         let range = node.span().byte_range();
@@ -230,10 +221,7 @@ impl<'a> Walker<'a> {
         }
     }
 
-    // --- recording ---------------------------------------------------------------------
-
-    /// Proposes one edit. Under a suppression it is counted rather than
-    /// kept; without a site it is an unsupported-site skip.
+    /// Proposes one edit. Under a suppression it is counted rather than kept; without a site it is an unsupported-site skip.
     fn emit(&mut self, rule_name: &str, edit: Edit) {
         let Some(rule) = self.selection.rule(rule_name) else {
             return;
@@ -337,8 +325,6 @@ impl<'a> Walker<'a> {
         self.frames.last().and_then(|frame| frame.allow_at)
     }
 
-    // --- items ---------------------------------------------------------------------------
-
     fn walk_items(&mut self, items: &[Item]) {
         for item in items {
             self.walk_item(item);
@@ -381,9 +367,6 @@ impl<'a> Walker<'a> {
                     }
                 }
             }
-            // A `macro_rules!` definition is not a place code runs: its body
-            // is counted at every invocation. Any other item-level macro is
-            // an invocation.
             Item::Macro(m) if !m.mac.path.is_ident("macro_rules") => self.macro_site(&m.mac),
             _ => {}
         }
@@ -421,10 +404,7 @@ impl<'a> Walker<'a> {
         }
     }
 
-    /// Where `#[allow(warnings)]` goes for a function: before its
-    /// visibility if it has one, and otherwise before its signature. Never
-    /// before the item's attributes, so a doc comment keeps its own line and
-    /// the attribute lands on the line the reader expects it on.
+    /// Where `#[allow(warnings)]` goes for a function: before its visibility if it has one, and otherwise before its signature. Never before the item's attributes, so a doc comment keeps its own line and the attribute lands on the line the reader expects it on.
     fn allow_offset(&self, vis: Option<&Visibility>, sig: &Signature) -> u32 {
         match vis {
             Some(Visibility::Public(token)) => self.span(token).start,
@@ -453,10 +433,7 @@ impl<'a> Walker<'a> {
         });
     }
 
-    // --- blocks and statements --------------------------------------------------------
-
-    /// Walks a block; when it is a function body, its tail expression is a
-    /// return site.
+    /// Walks a block; when it is a function body, its tail expression is a return site.
     fn walk_block(&mut self, block: &Block, fn_body: bool) {
         let last = block.stmts.len().saturating_sub(1);
         for (index, stmt) in block.stmts.iter().enumerate() {
@@ -495,8 +472,6 @@ impl<'a> Walker<'a> {
             }
             Stmt::Expr(expr, None) => {
                 let span = self.span(expr);
-                // The last expression is the block's value; an earlier one
-                // is a block-like statement whose value is `()`.
                 let site = Site {
                     form: if role == TailRole::NotLast {
                         Form::S
@@ -531,8 +506,7 @@ impl<'a> Walker<'a> {
         }
     }
 
-    /// The candidates whose edit is the statement itself: deletions and the
-    /// dropped `?`.
+    /// The candidates whose edit is the statement itself: deletions and the dropped `?`.
     fn statement_candidates(&mut self, expr: &Expr, stmt_span: Span) {
         let site = Some(Site {
             form: Form::S,
@@ -591,8 +565,6 @@ impl<'a> Walker<'a> {
             _ => {}
         }
     }
-
-    // --- expressions ----------------------------------------------------------------------
 
     fn walk_expr(&mut self, expr: &Expr, ctx: Ctx) {
         let attrs = expr_attrs(expr);
@@ -849,8 +821,7 @@ impl<'a> Walker<'a> {
         }
     }
 
-    /// The guard of an arm is a boolean position; patterns hold no other
-    /// runtime expression.
+    /// The guard of an arm is a boolean position; patterns hold no other runtime expression.
     fn walk_pat_guards(&mut self, pat: &Pat, ctx: Ctx) {
         match pat {
             Pat::Guard(g) => {
@@ -880,8 +851,7 @@ impl<'a> Walker<'a> {
         self.walk_expr(expr, Ctx::new(Kind::Value, Some(site)));
     }
 
-    /// The return-replacement candidates of a returned expression, by what
-    /// the enclosing function's signature says it returns.
+    /// The return-replacement candidates of a returned expression, by what the enclosing function's signature says it returns.
     fn return_site(&mut self, expr: &Expr) {
         let Some(frame) = self.frames.last().copied() else {
             return;
@@ -943,8 +913,7 @@ impl<'a> Walker<'a> {
         self.walk_expr(&t.expr, ctx.value());
     }
 
-    /// A range swap changes the expression's type, so its site is the
-    /// statement level the context carries, never the range itself.
+    /// A range swap changes the expression's type, so its site is the statement level the context carries, never the range itself.
     fn walk_range(&mut self, r: &syn::ExprRange, ctx: Ctx) {
         if r.end.is_some() {
             let edit = self.span(&r.limits);
@@ -1022,9 +991,7 @@ fn return_kind_of(ty: &Type) -> ReturnKind {
     }
 }
 
-/// The reason attributes suppress what they decorate: `#[test]` and
-/// `#[bench]` are test code, a `cfg` mentioning `test` is test code, and any
-/// other `cfg` is a configuration the walker does not evaluate.
+/// The reason attributes suppress what they decorate: `#[test]` and `#[bench]` are test code, a `cfg` mentioning `test` is test code, and any other `cfg` is a configuration the walker does not evaluate.
 fn suppression_of(attrs: &[Attribute]) -> Option<SkipReason> {
     let mut cfg = None;
     for attr in attrs {

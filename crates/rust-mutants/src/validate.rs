@@ -2,36 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Deciding which candidates are real mutants, by compiling them.
-//!
-//! Discovery proposes an edit wherever a rule's token shape appears, and
-//! nothing before this point type-checks anything: `String + &str` becomes a
-//! `sub-to-add` candidate, `x * 0` becomes `x / 0`, and a function returning
-//! a type with no `Default` gets a `return-default`. Which of those are
-//! programs is a question the compiler answers for free while building the
-//! tree that has to be built anyway.
-//!
-//! # Attribution, not bisection
-//!
-//! Every alternative's own text occupies a known byte range of the
-//! instrumented file ([`crate::instrument::Branch`]), and rustc reports the
-//! byte range of every diagnostic. An error whose primary span falls inside
-//! a branch is therefore about exactly that mutant, and the whole round's
-//! refusals can be condemned at once: one recompilation per round rather
-//! than one per candidate.
-//!
-//! An error that falls outside every branch is not attributable. It is not
-//! ignored: the suspects are isolated by bisection, halving the live set
-//! until the offenders are named. That costs compilations, which is why the
-//! branch table exists.
-//!
-//! # Fail closed
-//!
-//! A tree that does not compile with *no* mutant live is not the mutants'
-//! fault, and the run stops with [`ValidateError::NotMutantInduced`] rather
-//! than condemning candidates until the error goes away. A round loop that
-//! does not settle within [`ValidateOptions::max_rounds`] falls back to
-//! bisection rather than accepting a tree it never saw compile, and the
-//! final state is always a tree that compiled.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -42,8 +12,7 @@ use crate::instrument::{FileOutput, InstrumentError};
 use crate::span::Span;
 use crate::trace::{AttributionRecord, BisectRecord, Recorder, ValidateRoundRecord};
 
-/// How many rounds of "condemn what was attributed and recompile" are tried
-/// before the remaining suspects are isolated by bisection.
+/// How many rounds of "condemn what was attributed and recompile" are tried before the remaining suspects are isolated by bisection.
 pub const DEFAULT_MAX_ROUNDS: u32 = 6;
 
 /// What one instrumented compilation produced.
@@ -58,16 +27,10 @@ pub struct Attempt {
 }
 
 /// Instrumenting the tree with a set of mutants left out, and compiling it.
-///
-/// The seam of this module: the loop below knows nothing about snapshots,
-/// cargo, or the filesystem, so a test drives it with a script and a run
-/// drives it with a real toolchain.
 pub trait Compile {
-    /// Instruments the tree leaving out `condemned`, compiles it, and
-    /// reports what the compiler said.
+    /// Instruments the tree leaving out `condemned`, compiles it, and reports what the compiler said.
     ///
     /// # Errors
-    ///
     /// Whatever stopped the attempt from happening at all. A tree that
     /// merely fails to compile is a successful attempt with
     /// [`Attempt::success`] false.
@@ -140,8 +103,7 @@ pub struct Attributed {
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum ValidateError {
-    /// The tree does not compile with no mutant live, so nothing here is
-    /// about the mutants.
+    /// The tree does not compile with no mutant live, so nothing here is about the mutants.
     #[error("{}: validate: the tree does not compile before any mutant is live: {first}", error::VALIDATE_NOT_MUTANT_INDUCED.code)]
     NotMutantInduced {
         /// The first error the compiler reported, rendered.
@@ -153,8 +115,7 @@ pub enum ValidateError {
         /// How many were left.
         suspects: usize,
     },
-    /// The attempt itself could not be made: the tree could not be written,
-    /// or whatever else the [`Compile`] implementation needs to say.
+    /// The attempt itself could not be made: the tree could not be written, or whatever else the [`Compile`] implementation needs to say.
     #[error("{}: validate: the attempt could not be made: {message}", error::VALIDATE_ATTEMPT_FAILED.code)]
     AttemptFailed {
         /// What went wrong.
@@ -183,10 +144,6 @@ impl ValidateError {
 }
 
 /// Reads one round's diagnostics against the files that were written.
-///
-/// An error is attributed to a mutant when its primary span lies inside
-/// that mutant's branch in the file the diagnostic names. Warnings are not
-/// rejections: the instrumented tree is allowed to be noisy.
 #[must_use]
 pub fn attribute(files: &[FileOutput], messages: &[Message]) -> Attributed {
     let mut attributed = Attributed::default();
@@ -225,18 +182,11 @@ fn locate(files: &[FileOutput], diagnostic: &Diagnostic) -> Option<u32> {
     file.branches
         .iter()
         .filter(|branch| branch.span.start <= span.byte_start && span.byte_start < branch.span.end)
-        // The innermost branch holding the offset: a nested site's branch
-        // lies inside its parent's original branch, never inside one of the
-        // parent's alternatives, so the narrowest is the one that is about
-        // this error.
         .min_by_key(|branch| branch.span.len())
         .map(|branch| branch.index)
 }
 
-/// Whether the path a diagnostic names is the file that was written. rustc
-/// reports a path relative to the directory it ran in, which is the
-/// workspace root, and the engine names files the same way; a member's
-/// nested path therefore matches exactly, and an absolute one by suffix.
+/// Whether the path a diagnostic names is the file that was written. rustc reports a path relative to the directory it ran in, which is the workspace root, and the engine names files the same way; a member's nested path therefore matches exactly, and an absolute one by suffix.
 fn ends_with_path(reported: &str, path: &str) -> bool {
     let reported = reported.replace('\\', "/");
     reported == path || reported.ends_with(&format!("/{path}"))
@@ -249,8 +199,7 @@ fn rendered(diagnostic: &Diagnostic) -> String {
         .unwrap_or_else(|| diagnostic.message.clone())
 }
 
-/// The first error of a message stream, rendered, so a caller can say what
-/// stopped a build without matching on the stream itself.
+/// The first error of a message stream, rendered, so a caller can say what stopped a build without matching on the stream itself.
 #[must_use]
 pub fn first_error_of(messages: &[Message]) -> String {
     first_error(messages)
@@ -271,10 +220,7 @@ fn first_error(messages: &[Message]) -> String {
 
 /// Establishes which of a catalog's mutants compile.
 ///
-/// Returns when a tree holding exactly the accepted mutants has compiled.
-///
 /// # Errors
-///
 /// [`ValidateError::NotMutantInduced`] when the tree does not compile with
 /// nothing live, and whatever [`Compile::attempt`] reports.
 pub fn validate(
@@ -325,9 +271,6 @@ pub fn validate(
         if progressed && rounds < options.max_rounds {
             continue;
         }
-        // Either nothing new was attributed or the rounds ran out. Anything
-        // still live is a suspect, and the pristine tree settles whether
-        // the mutants are to blame at all.
         let settled = settle(compile, &all, &condemned, trace)?;
         rounds = rounds.saturating_add(settled.rounds);
         bisections = bisections.saturating_add(settled.attempts);
@@ -384,8 +327,7 @@ fn attributions(attributed: &Attributed) -> Vec<AttributionRecord> {
         .collect()
 }
 
-/// The first line of a rendered diagnostic, which is the one that says what
-/// went wrong.
+/// The first line of a rendered diagnostic, which is the one that says what went wrong.
 fn first_line(said: &str) -> String {
     said.lines().next().unwrap_or(said).to_owned()
 }
@@ -412,12 +354,7 @@ struct Settled {
     unsettled: bool,
 }
 
-/// Isolates the offenders among everything still live, and leaves a tree
-/// that compiled behind.
-///
-/// The pristine tree comes first: a failure that survives with nothing live
-/// is not the mutants' doing, and condemning candidates until it goes away
-/// would blame the innocent.
+/// Isolates the offenders among everything still live, and leaves a tree that compiled behind.
 fn settle(
     compile: &mut dyn Compile,
     all: &BTreeSet<u32>,
@@ -459,7 +396,6 @@ fn settle(
             ),
         );
     }
-    // One last attempt, so that what is returned is a tree that compiled.
     let mut finally = condemned.clone();
     finally.extend(offenders);
     let last = compile.attempt(&finally)?;
@@ -480,8 +416,7 @@ fn settle(
 /// Narrowing a set of suspects by halving.
 struct Isolation<'a> {
     compile: &'a mut dyn Compile,
-    /// Everything, so that "only these are live" is spelled as a condemned
-    /// set the [`Compile`] seam understands.
+    /// Everything, so that "only these are live" is spelled as a condemned set the [`Compile`] seam understands.
     base: &'a BTreeSet<u32>,
     attempts: u32,
 }
@@ -498,11 +433,6 @@ impl Isolation<'_> {
     }
 
     /// The smallest sets of `suspects` that still fail, found by halving.
-    ///
-    /// When neither half fails on its own the failure needs both, and the
-    /// whole set is condemned: an interaction between two mutants is not a
-    /// mutant either half can be blamed for, and keeping any of them would
-    /// leave a tree that does not compile.
     fn isolate(&mut self, suspects: &[u32]) -> Result<Vec<u32>, ValidateError> {
         if suspects.is_empty() || !self.fails(suspects)? {
             return Ok(Vec::new());

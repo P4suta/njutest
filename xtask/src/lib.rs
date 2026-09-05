@@ -1,9 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mjutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Repository gates. Each gate is a pure function over the tree it is given,
-//! so a test can hand it a synthetic tree and watch it refuse the right
-//! things; the command line only points it at this repository.
+//! Repository gates. Each gate is a pure function over the tree it is given, so a test can hand it a synthetic tree and watch it refuse the right things; the command line only points it at this repository.
 
 #![forbid(unsafe_code)]
 

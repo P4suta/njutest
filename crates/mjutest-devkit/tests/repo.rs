@@ -61,8 +61,6 @@ fn the_tree_goes_away_with_the_value_so_a_test_bounds_its_own_mess() {
     assert!(!path.exists(), "{}", path.display());
 }
 
-// --- normalizing a report ------------------------------------------------------------
-
 #[test]
 fn what_changes_between_two_runs_of_the_same_work_is_replaced_in_place() {
     let document = serde_json::json!({

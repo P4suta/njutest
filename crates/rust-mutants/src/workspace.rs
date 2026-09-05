@@ -2,16 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The public entry point: a read-only source tree, copied.
-//!
-//! [`Workspace::open`] sweeps the temporary area, copies the tree into a
-//! disposable snapshot at a name stable for that root, and locates the
-//! toolchain inside the copy so a `rust-toolchain.toml` there is what
-//! answers. Nothing is instrumented and nothing is built until
-//! [`Workspace::prepare`], which consumes the workspace and returns a
-//! [`Session`]: the phases are types, so a caller cannot execute a mutant
-//! against a tree that was never prepared.
-//!
-//! The user's tree is only ever read. Everything else happens in the copy.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -26,9 +16,7 @@ use crate::snapshot::{self, DIR_PREFIX, Options as SnapshotOptions, Snapshot};
 use crate::tempowner::{self, SweepResult};
 use crate::trace::{OpenRecord, Recorder, SnapshotRecord, SweepRecord};
 
-/// Where the engine puts the target directory of a run, under the temporary
-/// root: one per source root, so successive runs share cargo's incremental
-/// state.
+/// Where the engine puts the target directory of a run, under the temporary root: one per source root, so successive runs share cargo's incremental state.
 pub const TARGET_DIR_PREFIX: &str = "rust-mutants-target-";
 
 /// Configures [`Workspace::open`].
@@ -36,28 +24,17 @@ pub const TARGET_DIR_PREFIX: &str = "rust-mutants-target-";
 pub struct OpenOptions {
     /// The cargo to use: a path, or a bare name to find on `search_path`.
     pub cargo: Option<PathBuf>,
-    /// The `PATH` a bare cargo name is searched on. The composition root
-    /// reads the process environment; the engine never does.
+    /// The `PATH` a bare cargo name is searched on. The composition root reads the process environment; the engine never does.
     pub search_path: Option<OsString>,
     /// The complete environment every command and test process runs with.
-    ///
-    /// An argument, never this process's environment: the engine reads no
-    /// variable of its own ([ADR 0001]), so a run is reproducible from what
-    /// its caller passed and a test can drive it with nothing at all.
-    ///
-    /// [ADR 0001]: https://github.com/P4suta/mjutest/blob/main/docs/adr/0001-seam-policy.md
     pub env: Vec<(OsString, OsString)>,
-    /// The absolute directory snapshots and target directories are created
-    /// in. An argument for the same reason `env` is; the composition root
-    /// is where the operating system's temporary directory is named.
+    /// The absolute directory snapshots and target directories are created in. An argument for the same reason `env` is; the composition root is where the operating system's temporary directory is named.
     pub temp_directory: PathBuf,
-    /// The configured report directory as a source-root-relative path, so
-    /// the snapshot excludes it.
+    /// The configured report directory as a source-root-relative path, so the snapshot excludes it.
     pub report_directory: Option<String>,
     /// Patterns removing paths from the snapshot entirely.
     pub exclude: Vec<Pattern>,
-    /// Preserve the snapshot and the target directory instead of removing
-    /// them, for a person who has to look at what a run produced.
+    /// Preserve the snapshot and the target directory instead of removing them, for a person who has to look at what a run produced.
     pub keep_temp: bool,
     /// Pass `--offline` to every cargo command.
     pub offline: bool,
@@ -142,11 +119,9 @@ impl SessionError {
 }
 
 impl Workspace {
-    /// Sweeps the temporary area, copies `root` into a snapshot, and locates
-    /// the toolchain inside the copy.
+    /// Sweeps the temporary area, copies `root` into a snapshot, and locates the toolchain inside the copy.
     ///
     /// # Errors
-    ///
     /// The snapshot's refusals, and whatever stopped the toolchain from
     /// being located or `cargo metadata` from being read.
     pub fn open(
@@ -291,9 +266,7 @@ impl Workspace {
         &self.metadata
     }
 
-    /// The target directory builds go into: outside the snapshot, at a name
-    /// stable for this source root, so successive runs share cargo's
-    /// incremental state.
+    /// The target directory builds go into: outside the snapshot, at a name stable for this source root, so successive runs share cargo's incremental state.
     #[must_use]
     pub fn target_dir(&self) -> &Path {
         &self.target_dir
@@ -302,7 +275,6 @@ impl Workspace {
     /// Discovers, instruments, validates, and builds; see [`prepare`].
     ///
     /// # Errors
-    ///
     /// Every failure of the phases it runs.
     pub fn prepare(
         self,
@@ -312,11 +284,9 @@ impl Workspace {
         prepare(self, options, cancel)
     }
 
-    /// Removes the snapshot, or preserves it when the workspace was opened
-    /// with `keep_temp`, and reports what was preserved.
+    /// Removes the snapshot, or preserves it when the workspace was opened with `keep_temp`, and reports what was preserved.
     ///
     /// # Errors
-    ///
     /// A snapshot directory that could not be removed.
     pub fn close(mut self) -> Result<Vec<PathBuf>, crate::EngineError> {
         if self.keep_temp {

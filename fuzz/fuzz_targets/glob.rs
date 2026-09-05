@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mjutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Compiling any pattern and matching any path never panics, and a pattern
-//! with no wildcard matches exactly its own spelling.
+//! Compiling any pattern and matching any path never panics, and a pattern with no wildcard matches exactly its own spelling.
 
 #![no_main]
 

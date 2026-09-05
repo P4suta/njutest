@@ -164,7 +164,6 @@ fn the_sweep_removes_only_abandoned_directories_wearing_a_prefix() {
         removed,
         [other_prefix.clone(), abandoned.clone(), old.clone()]
     );
-    // The three payloads, plus the owner files of the two claimed directories.
     assert!(
         result.removed_bytes >= 3 * 1024 && result.removed_bytes < 3 * 1024 + 1024,
         "{}",

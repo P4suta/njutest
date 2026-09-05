@@ -2,10 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The gate that keeps `#[allow]` and `Box<dyn Trait>` out.
-//!
-//! A gate nobody has watched refuse anything is a gate that might be
-//! matching nothing, so each of these hands it a source holding exactly one
-//! of the things it is supposed to find.
 
 #![expect(
     clippy::expect_used,

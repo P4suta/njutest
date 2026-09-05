@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mjutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! The public API, end to end: open a read-only tree, prepare it, and run
-//! mutants against the build that preparation produced.
+//! The public API, end to end: open a read-only tree, prepare it, and run mutants against the build that preparation produced.
 
 #![expect(
     clippy::expect_used,
@@ -91,8 +90,7 @@ fn prepare(fixture: &Fixture) -> Session {
         .expect("prepare")
 }
 
-/// The digest of every file of a tree, so "the source was not touched" can
-/// be asserted rather than hoped.
+/// The digest of every file of a tree, so "the source was not touched" can be asserted rather than hoped.
 fn fingerprint(root: &Path) -> Vec<(String, String)> {
     let mut entries = Vec::new();
     let mut stack = vec![root.to_path_buf()];
@@ -218,7 +216,6 @@ fn a_mutant_runs_against_every_target_until_one_kills_it() {
             .clone()
     };
 
-    // `max` returning the default is what the library's own test is about.
     let killed = session
         .exec(
             &Request {
@@ -232,7 +229,6 @@ fn a_mutant_runs_against_every_target_until_one_kills_it() {
     assert_eq!(killed.target, "fixture-simple/lib/fixture_simple");
     assert!(killed.tests_run.unwrap_or_default() > 0);
 
-    // `>` and `>=` differ only on equal arguments, which no test passes.
     let survivor = session
         .exec(
             &Request {
@@ -248,7 +244,6 @@ fn a_mutant_runs_against_every_target_until_one_kills_it() {
         "every target ran, and the last one had the last word"
     );
 
-    // One target, one test.
     let one = session
         .exec(
             &Request {
@@ -263,7 +258,6 @@ fn a_mutant_runs_against_every_target_until_one_kills_it() {
     assert_eq!(one.outcome, Outcome::Killed);
     assert_eq!(one.summary.expect("a summary").failed, 1);
 
-    // A filter that matches nothing is green and empty, and says so.
     let nothing = session
         .exec(
             &Request {
@@ -456,8 +450,6 @@ fn the_trace_says_what_every_phase_did() {
         );
     }
 
-    // Every validation round is readable, and the refusals name the mutants
-    // and carry the compiler's own words.
     let rounds: Vec<(u32, bool, usize)> = events
         .iter()
         .filter_map(|event| match &event.payload {
@@ -487,7 +479,6 @@ fn the_trace_says_what_every_phase_did() {
         "{attributed:?}"
     );
 
-    // Instrumentation says it moved no line.
     for event in &events {
         if let Payload::Instrument { instrument } = &event.payload {
             assert_eq!(
@@ -499,7 +490,6 @@ fn the_trace_says_what_every_phase_did() {
         }
     }
 
-    // The execution says what it established.
     let executed: Vec<(&str, &str)> = events
         .iter()
         .filter_map(|event| match &event.payload {

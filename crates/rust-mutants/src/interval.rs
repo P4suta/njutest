@@ -2,17 +2,12 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Nested rewrite sites.
-//!
-//! Candidates that rewrite the same bytes are alternatives of one site;
-//! candidates nested inside another are that site's children; partial
-//! overlap is unrepresentable and is reported, never silently dropped.
 
 use std::fmt;
 
 use crate::span::Span;
 
-/// One candidate rewrite: the bytes it replaces, plus whatever the caller
-/// needs to recognise it again. The payload is opaque here.
+/// One candidate rewrite: the bytes it replaces, plus whatever the caller needs to recognise it again. The payload is opaque here.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Item<T> {
     /// The byte range this candidate rewrites.
@@ -21,18 +16,14 @@ pub struct Item<T> {
     pub payload: T,
 }
 
-/// One rewrite site: a byte range plus every candidate that rewrites
-/// exactly that range, and the sites nested strictly inside it.
+/// One rewrite site: a byte range plus every candidate that rewrites exactly that range, and the sites nested strictly inside it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Node<T> {
     /// The byte range this site rewrites.
     pub span: Span,
-    /// The payload of every item with exactly this span, in the order the
-    /// caller supplied them. They are mutually exclusive rewrites of the same
-    /// bytes: the instrumenter emits them as one guard chain.
+    /// The payload of every item with exactly this span, in the order the caller supplied them. They are mutually exclusive rewrites of the same bytes: the instrumenter emits them as one guard chain.
     pub alternatives: Vec<T>,
-    /// The sites nested strictly inside this one, ordered by start offset,
-    /// pairwise disjoint, each hanging off the smallest site that encloses it.
+    /// The sites nested strictly inside this one, ordered by start offset, pairwise disjoint, each hanging off the smallest site that encloses it.
     pub children: Vec<Self>,
 }
 
@@ -48,16 +39,13 @@ impl<T> Default for Forest<T> {
     }
 }
 
-/// Why an item could not be placed in the forest. Surfaced verbatim as a
-/// skip reason, beside the reasons discovery produces.
+/// Why an item could not be placed in the forest. Surfaced verbatim as a skip reason, beside the reasons discovery produces.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Reason {
     /// The item straddles the boundary of a site already in the forest.
     PartialOverlap,
-    /// The item covers no bytes. An empty span is a legal catalog span, but
-    /// the forest is precisely the structure that cannot hold one: `[3,3)` is
-    /// at once enclosed by an open `[3,5)` and disjoint from it.
+    /// The item covers no bytes. An empty span is a legal catalog span, but the forest is precisely the structure that cannot hold one: `[3,3)` is at once enclosed by an open `[3,5)` and disjoint from it.
     EmptySpan,
 }
 
@@ -77,24 +65,13 @@ pub struct Conflict<T> {
     pub item: Item<T>,
     /// Why it was evicted.
     pub reason: Reason,
-    /// The innermost forest span the item partially overlaps; the default
-    /// span when the reason is not a partial overlap.
+    /// The innermost forest span the item partially overlaps; the default span when the reason is not a partial overlap.
     pub against: Span,
 }
 
-/// Arranges items into a forest of nested rewrite sites and returns the
-/// items it could not place.
-///
-/// Identical spans collapse into one node in insertion order; a span
-/// enclosed by others becomes a child of the smallest such span; disjoint
-/// spans become siblings ordered by start; partial overlap evicts the later
-/// item in canonical order (start ascending, end descending, insertion
-/// index), which is what makes the outcome independent of discovery order.
+/// Arranges items into a forest of nested rewrite sites and returns the items it could not place.
 #[must_use]
 pub fn build<T>(items: Vec<Item<T>>) -> (Forest<T>, Vec<Conflict<T>>) {
-    // Canonical order: start ascending, then end descending so an enclosing
-    // span is always seen before what it encloses (and identical spans land
-    // next to each other), then insertion index.
     let mut order: Vec<(Span, usize)> = items
         .iter()
         .enumerate()
@@ -103,12 +80,8 @@ pub fn build<T>(items: Vec<Item<T>>) -> (Forest<T>, Vec<Conflict<T>>) {
     order.sort_by(|(a, x), (b, y)| a.start.cmp(&b.start).then(b.end.cmp(&a.end)).then(x.cmp(y)));
     let mut slots: Vec<Option<Item<T>>> = items.into_iter().map(Some).collect();
 
-    // An arena of open and closed sites; a child's id is always greater than
-    // its parent's, which is what lets the assembly below pop in reverse.
     let mut arena: Vec<Site<T>> = Vec::new();
     let mut roots: Vec<usize> = Vec::new();
-    // The chain of sites still open at the sweep position, outermost first,
-    // so its top is always the smallest enclosing site.
     let mut stack: Vec<usize> = Vec::new();
     let mut conflicts = Vec::new();
 
@@ -124,10 +97,6 @@ pub fn build<T>(items: Vec<Item<T>>) -> (Forest<T>, Vec<Conflict<T>>) {
             });
             continue;
         }
-        // Close every site that ends at or before this span starts. Because
-        // the sweep runs in start order, every open site starts at or before
-        // this span, so this single test is exactly disjointness — for
-        // non-empty spans, which is why the empty ones were rejected above.
         while let Some(&top) = stack.last()
             && arena
                 .get(top)
@@ -139,10 +108,6 @@ pub fn build<T>(items: Vec<Item<T>>) -> (Forest<T>, Vec<Conflict<T>>) {
             && let Some(enclosing) = arena.get_mut(top)
         {
             if span.end > enclosing.span.end {
-                // The spans share bytes and this one runs past the end of the
-                // enclosing site. It cannot enclose that site in turn: equal
-                // starts are ordered by descending end, so an open site with
-                // this same start would already reach at least this far.
                 conflicts.push(Conflict {
                     item,
                     reason: Reason::PartialOverlap,
@@ -186,8 +151,7 @@ struct Site<T> {
     children: Vec<usize>,
 }
 
-/// Turns the arena into owned nodes. Children have greater ids than their
-/// parents, so popping from the end builds every child before its parent.
+/// Turns the arena into owned nodes. Children have greater ids than their parents, so popping from the end builds every child before its parent.
 fn assemble<T>(mut arena: Vec<Site<T>>, roots: &[usize]) -> Vec<Node<T>> {
     let mut built: Vec<Option<Node<T>>> = arena.iter().map(|_| None).collect();
     while let Some(site) = arena.pop() {
@@ -218,14 +182,8 @@ impl<T> Forest<T> {
         &self.roots
     }
 
-    /// Visits every node children before parents, left to right within each
-    /// level: the order the splicer composes in, since a site's replacement
-    /// is built from its own bytes with each child's already-rendered text
-    /// substituted in.
+    /// Visits every node children before parents, left to right within each level: the order the splicer composes in, since a site's replacement is built from its own bytes with each child's already-rendered text substituted in.
     pub fn inner_first(&self, mut visit: impl FnMut(&Node<T>)) {
-        // Iterative rather than recursive: nesting depth comes from the
-        // analysed source, and this way pathological input costs memory
-        // rather than the stack.
         for root in &self.roots {
             let mut frames: Vec<(&Node<T>, usize)> = vec![(root, 0)];
             while let Some((node, next)) = frames.pop() {
@@ -239,8 +197,7 @@ impl<T> Forest<T> {
         }
     }
 
-    /// Visits every node parents before children, left to right: the order
-    /// an indented dump wants.
+    /// Visits every node parents before children, left to right: the order an indented dump wants.
     pub fn walk(&self, mut visit: impl FnMut(&Node<T>)) {
         let mut pending: Vec<&Node<T>> = self.roots.iter().rev().collect();
         while let Some(node) = pending.pop() {

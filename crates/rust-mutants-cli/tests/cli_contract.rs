@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mjutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! The command-line contract of the `rust-mutants` binary: what `--version`
-//! and `--help` print, and the exit codes of usage errors.
+//! The command-line contract of the `rust-mutants` binary: what `--version` and `--help` print, and the exit codes of usage errors.
 
 #![expect(
     clippy::expect_used,
@@ -60,12 +59,9 @@ fn an_unknown_subcommand_is_a_usage_error() {
     );
 }
 
-// --- the commands ---------------------------------------------------------------
-
 use std::path::PathBuf;
 
-/// A throwaway copy of a fixture, so the tree the command line opens is one
-/// nothing else is reading.
+/// A throwaway copy of a fixture, so the tree the command line opens is one nothing else is reading.
 struct Fixture {
     root: PathBuf,
     _dir: tempfile::TempDir,
@@ -231,7 +227,6 @@ fn run_exits_by_what_the_tests_said() {
             .to_owned()
     };
 
-    // A mutant the tests notice: exit 0, and the outcome says so.
     let killed = against(&fixture, &["run", "--mutant", &short_of("return-default")]);
     assert_eq!(
         killed.status.code(),
@@ -243,12 +238,10 @@ fn run_exits_by_what_the_tests_said() {
     assert!(text.contains("killed"), "{text}");
     assert!(text.contains("fixture-simple/lib/fixture_simple"), "{text}");
 
-    // A mutant nothing notices: exit 1, so a script can act on it.
     let survived = against(&fixture, &["run", "--mutant", &short_of("gt-to-ge")]);
     assert_eq!(survived.status.code(), Some(1), "{}", stdout(&survived));
     assert!(stdout(&survived).contains("survived"));
 
-    // A prefix that names nothing is refused by code, on stderr.
     let unknown = against(&fixture, &["run", "--mutant", "ffffffff"]);
     assert_eq!(unknown.status.code(), Some(2));
     let said = String::from_utf8_lossy(&unknown.stderr);
@@ -272,7 +265,6 @@ fn instrument_prints_one_file_as_the_engine_rewrites_it() {
     );
     assert!(text.contains("#[allow(warnings)] pub fn max"), "{text}");
 
-    // Printing rewrites nothing: the workspace is exactly as it was.
     let source = std::fs::read_to_string(fixture.root.join("src/lib.rs")).expect("read");
     assert!(
         !source.contains("__rm"),
@@ -314,7 +306,6 @@ fn the_catalog_document_validates_against_its_schema() {
             .collect();
         assert!(problems.is_empty(), "{fixture_name}: {problems:?}");
 
-        // The parts a consumer reads are really there.
         let mutants = document["mutants"].as_array().expect("mutants");
         assert!(!mutants.is_empty(), "{fixture_name}");
         assert!(

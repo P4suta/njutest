@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mjutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Normalizing any path never panics, and a normalized path is a fixed point:
-//! normalizing it again gives the same answer.
+//! Normalizing any path never panics, and a normalized path is a fixed point: normalizing it again gives the same answer.
 
 #![no_main]
 

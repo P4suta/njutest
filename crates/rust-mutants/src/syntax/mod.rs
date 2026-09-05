@@ -1,54 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mjutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Syntactic discovery: the candidates one file yields, each with the guard
-//! site the instrumenter will use, and every place deliberately passed over,
-//! each with its reason.
-//!
-//! Discovery is syntax-first ([ADR 0008]): `syn` parses the file, the walker
-//! proposes an edit wherever an operator's token shape appears, and the
-//! compiler settles later whether the edit type-checks. That is the whole
-//! reason the phase needs no type information and runs without a toolchain
-//! in the loop, and the reason it over-proposes: `String + &str` becomes a
-//! `sub-to-add` candidate the validation phase rejects.
-//!
-//! # Sites and forms
-//!
-//! Every candidate carries a [`SiteHint`]: which guard form the instrumenter
-//! composes the dormant mutant from, and over which bytes.
-//!
-//! - **Form C** wraps an expression in a syntactically boolean position — an
-//!   `if` or `while` condition, an operand of `&&` or `||`, a match guard —
-//!   as `(__rm::active(i) && (mutated) || !(__rm::active(i)) && (original))`.
-//! - **Form E** wraps any other expression in value position as
-//!   `(if __rm::active(i) { mutated } else { original })`; both branches
-//!   unify to one type, and inference from the original settles what
-//!   `Default::default()` means.
-//! - **Form S** wraps a statement as `if __rm::active(i) { mutated } else
-//!   { original }`, with the original bytes verbatim so lines are kept.
-//!
-//! The site is the candidate's own expression unless the edit changes that
-//! expression's type: a range swap turns a `Range` into a `RangeInclusive`,
-//! so its site is the enclosing statement, or the initializer of a `let`,
-//! where the types meet again.
-//!
-//! # Skips, stated
-//!
-//! Nothing is dropped silently. A region the walker will not mutate — a
-//! constant context, code behind a `cfg`, test code — is still walked, and
-//! every candidate it would have produced is counted under the outermost
-//! reason. A macro invocation counts once, because its body is tokens the
-//! walker does not parse; a `macro_rules!` definition is not a place code
-//! runs and is not counted. [`FileDiscovery::trace_record`] carries every
-//! decision for the trace, and `rust-mutants why-skipped` tallies them.
-//!
-//! # Determinism
-//!
-//! Two discoveries over the same bytes produce identical results. Candidates
-//! are ordered by (edit start, rule registry position) and skips by (reason
-//! rank, path), compared byte-wise.
-//!
-//! [ADR 0008]: https://github.com/P4suta/mjutest/blob/main/docs/adr/0008-compiler-validated-acceptance-and-the-type-witness-pass.md
+//! Syntactic discovery: the candidates one file yields, each with the guard site the instrumenter will use, and every place deliberately passed over, each with its reason.
 
 mod position;
 mod rules;
@@ -67,8 +20,7 @@ use crate::trace::{DiscoverFileRecord, SiteRecord, SkipCount};
 
 pub use position::{LineIndex, Position};
 
-/// One of the three guard shapes the instrumenter composes a dormant mutant
-/// from; see the module documentation.
+/// One of the three guard shapes the instrumenter composes a dormant mutant from; see the module documentation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Form {
     /// The boolean selector, for a syntactically boolean position.
@@ -102,17 +54,13 @@ impl fmt::Display for Form {
 pub struct SiteHint {
     /// Which guard form.
     pub form: Form,
-    /// The bytes the guard replaces: an expression for C and E, a statement
-    /// for S. The candidate's edit lies inside it.
+    /// The bytes the guard replaces: an expression for C and E, a statement for S. The candidate's edit lies inside it.
     pub site: Span,
     /// The bytes of `site`, verbatim.
     pub site_text: String,
-    /// How many `super::` segments separate the site's inline module from
-    /// the file root, where the runtime module lives.
+    /// How many `super::` segments separate the site's inline module from the file root, where the runtime module lives.
     pub super_depth: u32,
-    /// The byte offset of the innermost enclosing `fn` item, where
-    /// `#[allow(warnings)]` goes so a guard's own lint noise never trips a
-    /// crate's deny policy. `None` outside any function.
+    /// The byte offset of the innermost enclosing `fn` item, where `#[allow(warnings)]` goes so a guard's own lint noise never trips a crate's deny policy. `None` outside any function.
     pub allow_at: Option<u32>,
 }
 
@@ -127,13 +75,11 @@ pub struct Found {
     pub hint: SiteHint,
 }
 
-/// Why a place produced no candidate. Declared in rank order, which is the
-/// order skips are reported in.
+/// Why a place produced no candidate. Declared in rank order, which is the order skips are reported in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum SkipReason {
-    /// A constant context: a `const` or `static` initializer, a `const fn`
-    /// body, a `const` block, an array length, an enum discriminant.
+    /// A constant context: a `const` or `static` initializer, a `const fn` body, a `const` block, an array length, an enum discriminant.
     ConstContext,
     /// A macro invocation, whose body is tokens the walker does not parse.
     MacroInvocation,
@@ -222,8 +168,7 @@ impl SkipReason {
     }
 }
 
-/// How many candidates one reason suppressed in one file. Ordered by
-/// (reason rank, path).
+/// How many candidates one reason suppressed in one file. Ordered by (reason rank, path).
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Skip {
     /// The reason.
@@ -316,7 +261,6 @@ impl<'r> Selection<'r> {
     /// Exactly the named rules.
     ///
     /// # Errors
-    ///
     /// [`RuleError::UnknownRule`] for a name the registry does not know.
     pub fn rules(registry: &'r Registry, names: &[&str]) -> Result<Self, RuleError> {
         let rules = names
@@ -379,11 +323,7 @@ pub enum SyntaxError {
 
 /// Finds every candidate in one file.
 ///
-/// `path` is the workspace-relative path the candidates carry; `source` is
-/// the file's bytes, digested as they are. The rules come from `selection`.
-///
 /// # Errors
-///
 /// See [`SyntaxError`].
 pub fn discover_file(
     path: &str,
@@ -451,10 +391,7 @@ fn tally(path: &str, counts: BTreeMap<SkipReason, u32>) -> Vec<Skip> {
         .collect()
 }
 
-/// Strips what `syn::parse_file` would strip — a byte order mark and a
-/// shebang line — and returns the byte offset the remainder starts at, so
-/// every span can be made absolute. The shebang's newline is kept, which
-/// keeps the parser's line numbers equal to the file's.
+/// Strips what `syn::parse_file` would strip — a byte order mark and a shebang line — and returns the byte offset the remainder starts at, so every span can be made absolute. The shebang's newline is kept, which keeps the parser's line numbers equal to the file's.
 fn strip_prefix(text: &str) -> (u32, &str) {
     const BOM: &str = "\u{feff}";
     let mut rest = text.strip_prefix(BOM).unwrap_or(text);

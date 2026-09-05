@@ -2,12 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What a report costs to audit and to write.
-//!
-//! Observations, not contracts: nothing fails when a number moves. They are
-//! here because the audit runs on every report a run persists and the
-//! projections run once per format, so a run that got slower at the end is
-//! a run that got slower here, and a person should be able to see that
-//! rather than infer it.
 
 use criterion::Criterion;
 use mjutest_cli::config::Contract;
@@ -16,8 +10,7 @@ use mjutest_cli::report::{
     json, lines,
 };
 
-/// A report of a workspace with a few hundred tests, which is where the
-/// audit's per-record work starts to be worth measuring.
+/// A report of a workspace with a few hundred tests, which is where the audit's per-record work starts to be worth measuring.
 fn report(targets: u32) -> Report {
     let mut report = Report::new(
         "20260905T081500Z-abcdef",
@@ -71,9 +64,7 @@ fn benchmarks(criterion: &mut Criterion) {
     });
 }
 
-/// `harness = false`, so this is the whole program: the generated harness
-/// would put an undocumented public function in a crate that documents
-/// everything.
+/// `harness = false`, so this is the whole program: the generated harness would put an undocumented public function in a crate that documents everything.
 fn main() {
     let mut criterion = Criterion::default().configure_from_args();
     benchmarks(&mut criterion);

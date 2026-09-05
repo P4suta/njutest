@@ -18,39 +18,24 @@ pub const FILE_NAME: &str = "trace.jsonl";
 /// The subdirectory of a directory sink that holds preserved output.
 pub const OUTPUT_DIRECTORY_NAME: &str = "output";
 
-/// Caps one preserved output file. A capture larger than the limit is cut to
-/// it; the event still digests the whole capture.
+/// Caps one preserved output file. A capture larger than the limit is cut to it; the event still digests the whole capture.
 pub const OUTPUT_FILE_LIMIT: usize = 1 << 20;
 
 /// Ends a preserved output file that did not fit.
 pub const TRUNCATION_MARKER: &str = "...";
 
-/// How many events a run that asked for no trace keeps in memory, so a run
-/// that fails still has its last moments to put in a diagnostics bundle.
+/// How many events a run that asked for no trace keeps in memory, so a run that fails still has its last moments to put in a diagnostics bundle.
 pub const RING_CAPACITY: usize = 4096;
 
 /// Where a recording goes.
-///
-/// A closed set, so this is an enum rather than a trait object: the sinks a
-/// run can have are the sinks this program ships, dispatch is a match the
-/// compiler checks, and a tee holds its sinks directly rather than a vector
-/// of allocations behind vtables.
-///
-/// A sink that cannot keep an event answers with an error and, where it
-/// knows, counts the loss; it never fails the run.
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum Sink {
-    /// The most recent events in memory: the ring an untraced run keeps and
-    /// the sink a test reads.
+    /// The most recent events in memory: the ring an untraced run keeps and the sink a test reads.
     Memory(MemorySink),
     /// A directory of JSON Lines, with the commands' output beside it.
     Dir(DirSink),
     /// Several at once, in order.
-    ///
-    /// One sink failing costs that sink the event and not the others: a full
-    /// disk must not cost the ring the last thing the run did before it
-    /// filled.
     Tee(Vec<Self>),
 }
 
@@ -64,7 +49,6 @@ impl Sink {
     /// Keeps one event.
     ///
     /// # Errors
-    ///
     /// The reason the event was not kept. The recorder counts it and moves
     /// on.
     pub fn emit(&self, event: &Event) -> io::Result<()> {
@@ -75,9 +59,6 @@ impl Sink {
             }
             Self::Dir(sink) => sink.emit(event),
             Self::Tee(sinks) => {
-                // Every sink is offered the event, whatever the ones before
-                // it did: a full disk must not cost the ring the last thing
-                // the run recorded.
                 let mut kept = false;
                 for sink in sinks {
                     kept |= sink.emit(event).is_ok();
@@ -91,22 +72,17 @@ impl Sink {
         }
     }
 
-    /// How many events this sink lost, when it is the authority on that: a
-    /// full ring absorbs a loss without an error, and only the sink knows.
-    /// `None` leaves the count to the recorder's observed failures.
+    /// How many events this sink lost, when it is the authority on that: a full ring absorbs a loss without an error, and only the sink knows. `None` leaves the count to the recorder's observed failures.
     #[must_use]
     pub fn dropped(&self) -> Option<u64> {
         match self {
             Self::Memory(sink) => Some(sink.dropped()),
             Self::Dir(sink) => Some(sink.dropped()),
-            // What a tee lost is what every sink lost: an event one sink
-            // kept is an event the recording has.
             Self::Tee(sinks) => sinks.iter().filter_map(Self::dropped).min(),
         }
     }
 
-    /// Every event a memory sink anywhere in this sink kept, oldest first.
-    /// A recording with no memory sink has nothing to answer with.
+    /// Every event a memory sink anywhere in this sink kept, oldest first. A recording with no memory sink has nothing to answer with.
     #[must_use]
     pub fn events(&self) -> Vec<Event> {
         match self {
@@ -120,11 +96,9 @@ impl Sink {
         }
     }
 
-    /// Releases what the sink holds. Called once by the recorder at the end
-    /// of the recording; closing twice is not an error.
+    /// Releases what the sink holds. Called once by the recorder at the end of the recording; closing twice is not an error.
     ///
     /// # Errors
-    ///
     /// The failure to close, which the recorder drops.
     pub fn close(&self) -> io::Result<()> {
         match self {
@@ -138,9 +112,7 @@ impl Sink {
     }
 }
 
-/// Keeps the most recent events in memory: the sink of a test, of an
-/// in-process reader, and of an untraced run's ring. A full ring drops its
-/// oldest event and counts it.
+/// Keeps the most recent events in memory: the sink of a test, of an in-process reader, and of an untraced run's ring. A full ring drops its oldest event and counts it.
 #[derive(Debug)]
 pub struct MemorySink {
     capacity: Option<usize>,
@@ -162,8 +134,7 @@ impl MemorySink {
         Self::with_capacity(Some(capacity))
     }
 
-    /// The ring an untraced run records into: the last [`RING_CAPACITY`]
-    /// events, and nothing on disk until a failure asks for them.
+    /// The ring an untraced run records into: the last [`RING_CAPACITY`] events, and nothing on disk until a failure asks for them.
     #[must_use]
     pub const fn ring() -> Self {
         Self::with_capacity(Some(RING_CAPACITY))
@@ -197,8 +168,7 @@ impl MemorySink {
 }
 
 impl MemorySink {
-    /// Keeps one event, dropping the oldest when the ring is full. Memory
-    /// does not fail: what a full ring loses it counts.
+    /// Keeps one event, dropping the oldest when the ring is full. Memory does not fail: what a full ring loses it counts.
     fn emit(&self, event: &Event) {
         let evicted = {
             let mut events = self
@@ -240,14 +210,7 @@ fn encode(event: &Event) -> io::Result<Vec<u8>> {
     Ok(line)
 }
 
-/// Writes a recording to a directory: the stream in [`FILE_NAME`] and the
-/// output of the commands that produced any under [`OUTPUT_DIRECTORY_NAME`].
-///
-/// The directory belongs to one recording and is created exclusively, so a
-/// name another recording owns is refused rather than joined: everything in a
-/// recording is numbered from the first event, and a second run sharing a
-/// directory would append to the first run's stream and write its output over
-/// the files the first run's events digested.
+/// Writes a recording to a directory: the stream in [`FILE_NAME`] and the output of the commands that produced any under [`OUTPUT_DIRECTORY_NAME`].
 #[derive(Debug)]
 pub struct DirSink {
     directory: PathBuf,
@@ -260,7 +223,6 @@ impl DirSink {
     /// Creates `directory` and opens its stream.
     ///
     /// # Errors
-    ///
     /// The failure to create the directory (including `AlreadyExists`) or to
     /// open the stream. A caller that cannot trace runs untraced.
     pub fn create(directory: &Path) -> io::Result<Self> {
@@ -290,10 +252,7 @@ impl DirSink {
         &self.directory
     }
 
-    /// Writes the captured output of an exec event beside the stream and
-    /// returns the event pointing at the file. Best effort: an output that
-    /// cannot be written costs its path, not the event. The event is copied
-    /// so a sink sharing it with others never leaks this sink's paths.
+    /// Writes the captured output of an exec event beside the stream and returns the event pointing at the file. Best effort: an output that cannot be written costs its path, not the event. The event is copied so a sink sharing it with others never leaks this sink's paths.
     fn preserve_output(&self, event: &Event) -> Option<Event> {
         let Payload::Exec { exec } = &event.payload else {
             return None;
@@ -341,8 +300,7 @@ fn limit_output(output: &[u8]) -> (Vec<u8>, bool) {
 }
 
 impl DirSink {
-    /// Writes one event, preserving the output of a command that produced
-    /// any.
+    /// Writes one event, preserving the output of a command that produced any.
     fn emit(&self, event: &Event) -> io::Result<()> {
         let preserved = self.preserve_output(event);
         let line = encode(preserved.as_ref().unwrap_or(event)).inspect_err(|_| {
@@ -353,9 +311,6 @@ impl DirSink {
                 .stream
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            // The line is in the file's hands and readable; whether it
-            // reached the disk is not something a diagnostic stream fails
-            // over.
             stream.as_mut().map_or_else(
                 || Err(io::Error::other("trace sink is closed")),
                 |file| file.write_all(&line).map(|()| drop(file.sync_data())),
@@ -372,11 +327,9 @@ impl DirSink {
         self.dropped.load(Ordering::SeqCst)
     }
 
-    /// Flushes and closes the stream. Everything written afterwards fails,
-    /// which is the reachable form of "the disk is gone".
+    /// Flushes and closes the stream. Everything written afterwards fails, which is the reachable form of "the disk is gone".
     ///
     /// # Errors
-    ///
     /// The failure to flush.
     pub fn close(&self) -> io::Result<()> {
         let file = self

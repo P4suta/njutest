@@ -2,28 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Every temporary directory has an owner and a collector (ADR 0006).
-//!
-//! A run copies a whole workspace into the temporary area and removes it
-//! when it finishes — and "when it finishes" is the problem: a SIGKILL, an
-//! out-of-memory kill, a closed terminal, or a machine that lost power ends
-//! the process somewhere between the copy and the removal. The rule here is
-//! that no byte a run writes is anonymous: every top-level temporary
-//! directory says who made it, and the next run collects the ones whose
-//! maker is gone.
-//!
-//! A claimed directory holds two files. [`LOCK_NAME`] is an exclusive
-//! advisory lock held open for as long as the directory is in use; it is
-//! the liveness signal and the only one — a lock that can be taken means
-//! the process that held it no longer exists, whatever its pid has been
-//! reused for since. [`MARKER_NAME`] is a small JSON document naming the
-//! schema, the process, the start time, and whether the directory was kept
-//! deliberately; it is read by people, and by [`sweep`] for one bit.
-//!
-//! [`sweep`] removes a directory only when it is under the named parent,
-//! its name begins with one of the named prefixes, it is a directory, and
-//! either its lock is free and its marker does not say kept, or it carries
-//! no marker at all and nothing has touched it for [`LEGACY_MAX_AGE`].
-//! Everything else is left exactly as found.
 
 mod lock;
 
@@ -37,29 +15,22 @@ use serde::{Deserialize, Serialize};
 
 pub use lock::{Lock, acquire};
 
-/// The marker's schema field. It carries the version, so a later document
-/// shape can never be read as this one.
+/// The marker's schema field. It carries the version, so a later document shape can never be read as this one.
 pub const SCHEMA: &str = "rust-mutants-temp-owner-v1";
 /// The advisory lock file inside a claimed directory.
 pub const LOCK_NAME: &str = "owner.lock";
 /// The JSON marker file inside a claimed directory.
 pub const MARKER_NAME: &str = "owner.json";
-/// How long an unowned directory must have been untouched before [`sweep`]
-/// treats it as a leftover.
-///
-/// Generous, because the cost of waiting is disk and the cost of being wrong
-/// is deleting the directory of a run that is still using it.
+/// How long an unowned directory must have been untouched before [`sweep`] treats it as a leftover.
 pub const LEGACY_MAX_AGE: Duration = Duration::from_hours(24);
 
-/// The JSON document in a claimed directory. Written once at creation and
-/// rewritten only to record a deliberate keep.
+/// The JSON document in a claimed directory. Written once at creation and rewritten only to record a deliberate keep.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Marker {
     /// [`SCHEMA`].
     pub schema: String,
-    /// The process that claimed the directory. Diagnostic only: liveness is
-    /// the lock's job.
+    /// The process that claimed the directory. Diagnostic only: liveness is the lock's job.
     pub pid: u32,
     /// When the directory was claimed, in UTC.
     pub started: Timestamp,
@@ -83,8 +54,7 @@ pub fn marker_path(dir: &Path) -> PathBuf {
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum ClaimError {
-    /// The directory's lock is held by another process: it is theirs, not
-    /// the caller's to remove.
+    /// The directory's lock is held by another process: it is theirs, not the caller's to remove.
     #[error("{dir} is already owned by another process")]
     Owned {
         /// The directory.
@@ -110,8 +80,7 @@ pub enum ClaimError {
     },
 }
 
-/// A claimed directory: the lock is held open and the marker is written.
-/// Releasing or keeping it closes the lock; neither removes anything.
+/// A claimed directory: the lock is held open and the marker is written. Releasing or keeping it closes the lock; neither removes anything.
 #[derive(Debug)]
 pub struct Owner {
     dir: PathBuf,
@@ -121,12 +90,7 @@ pub struct Owner {
 
 /// Writes the marker pair into an existing directory and takes its lock.
 ///
-/// The lock comes first and the marker second, so that a directory caught
-/// half-claimed by a concurrent [`sweep`] has no marker and a modification
-/// time of a moment ago — which is the case the legacy rule leaves alone.
-///
 /// # Errors
-///
 /// Returns [`ClaimError::Owned`] when another process holds the lock, and
 /// the I/O failure otherwise.
 pub fn claim(dir: &Path, now: Timestamp) -> Result<Owner, ClaimError> {
@@ -135,12 +99,7 @@ pub fn claim(dir: &Path, now: Timestamp) -> Result<Owner, ClaimError> {
 
 /// [`claim`], with the marker naming the program that wrote it.
 ///
-/// The convention is shared with the runner, whose directories are its own
-/// and whose marker says so; a sweep reads `kept` and does not care which
-/// program left the directory, but a person reading one does.
-///
 /// # Errors
-///
 /// Those of [`claim`].
 pub fn claim_as(dir: &Path, now: Timestamp, schema: &str) -> Result<Owner, ClaimError> {
     let lock = acquire(&lock_path(dir)).map_err(|source| ClaimError::Lock {
@@ -177,7 +136,6 @@ fn write_marker(dir: &Path, marker: &Marker) -> io::Result<()> {
     raw.push(b'\n');
     let path = marker_path(dir);
     fs::write(&path, raw)?;
-    // Owner-only: a temporary directory's bookkeeping is nobody else's business.
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt as _;
@@ -199,23 +157,17 @@ impl Owner {
         &self.marker
     }
 
-    /// Closes the lock without touching the directory. Idempotent, and it
-    /// must be called before the directory is removed: on Windows an open
-    /// handle inside a directory is what makes the removal fail.
+    /// Closes the lock without touching the directory. Idempotent, and it must be called before the directory is removed: on Windows an open handle inside a directory is what makes the removal fail.
     ///
     /// # Errors
-    ///
     /// Returns the unlock or close failure.
     pub fn release(&mut self) -> io::Result<()> {
         self.lock.take().map_or(Ok(()), |mut lock| lock.release())
     }
 
-    /// Records that the directory was preserved on purpose and releases the
-    /// lock, so that a later [`sweep`] reads the marker rather than finding a
-    /// lock nobody holds and concluding the directory was abandoned.
+    /// Records that the directory was preserved on purpose and releases the lock, so that a later [`sweep`] reads the marker rather than finding a lock nobody holds and concluding the directory was abandoned.
     ///
     /// # Errors
-    ///
     /// Returns the marker write failure; the lock is released either way.
     pub fn keep(&mut self) -> Result<(), ClaimError> {
         let mut marker = self.marker.clone();
@@ -267,7 +219,6 @@ pub enum MarkerError {
 /// Decodes the marker in `dir`.
 ///
 /// # Errors
-///
 /// Returns a missing, unreadable, or malformed marker.
 pub fn read_marker(dir: &Path) -> Result<Marker, MarkerError> {
     let raw = match fs::read(marker_path(dir)) {
@@ -299,9 +250,7 @@ pub struct SweepFailure {
     pub source: io::Error,
 }
 
-/// What one [`sweep`] did. Diagnostic: no report, no schema, and no exit code
-/// depends on it, because collecting somebody else's leftovers is
-/// housekeeping a run does on the way.
+/// What one [`sweep`] did. Diagnostic: no report, no schema, and no exit code depends on it, because collecting somebody else's leftovers is housekeeping a run does on the way.
 #[derive(Debug, Default)]
 pub struct SweepResult {
     /// The absolute path of every directory the sweep deleted.
@@ -312,30 +261,21 @@ pub struct SweepResult {
     pub live: usize,
     /// How many were preserved on purpose.
     pub kept: usize,
-    /// The directories that could not be judged or removed. A failure does
-    /// not stop the sweep of the others.
+    /// The directories that could not be judged or removed. A failure does not stop the sweep of the others.
     pub failures: Vec<SweepFailure>,
 }
 
-/// Removes every abandoned directory directly under `parent` whose name
-/// begins with one of `prefixes`.
-///
-/// A parent that does not exist is not an error: it is a machine on which
-/// nothing has run yet.
+/// Removes every abandoned directory directly under `parent` whose name begins with one of `prefixes`.
 ///
 /// # Errors
-///
 /// Returns the failure to read `parent` itself.
 pub fn sweep(parent: &Path, prefixes: &[&str], now: Timestamp) -> io::Result<SweepResult> {
     sweep_with(parent, prefixes, now, &|dir: &Path| fs::remove_dir_all(dir))
 }
 
-/// [`sweep`] with its removal operation as an argument, so the "one directory
-/// refuses to go" case can be tested without a filesystem persuaded into
-/// failing.
+/// [`sweep`] with its removal operation as an argument, so the "one directory refuses to go" case can be tested without a filesystem persuaded into failing.
 ///
 /// # Errors
-///
 /// See [`sweep`].
 pub fn sweep_with(
     parent: &Path,
@@ -397,15 +337,11 @@ enum Verdict {
     Live,
     /// The marker says it was preserved.
     Kept,
-    /// Left alone without being counted: an unowned directory too young to
-    /// judge. Not a fact about a live owner, so not a number in the result.
+    /// Left alone without being counted: an unowned directory too young to judge. Not a fact about a live owner, so not a number in the result.
     Spared,
 }
 
-/// A marker that cannot be read at all is treated as a marker that does not
-/// say kept, deliberately: the lock has already answered the only question
-/// that matters, and a half-written marker must not make a dead directory
-/// immortal.
+/// A marker that cannot be read at all is treated as a marker that does not say kept, deliberately: the lock has already answered the only question that matters, and a half-written marker must not make a dead directory immortal.
 fn judge(dir: &Path, entry: &fs::DirEntry, now: Timestamp) -> io::Result<Verdict> {
     match read_marker(dir) {
         Ok(marker) if marker.kept => return Ok(Verdict::Kept),
@@ -415,18 +351,13 @@ fn judge(dir: &Path, entry: &fs::DirEntry, now: Timestamp) -> io::Result<Verdict
     match acquire(&lock_path(dir))? {
         None => Ok(Verdict::Live),
         Some(mut lock) => {
-            // Released before the removal rather than after it: on Windows the
-            // open handle inside the directory is itself what would refuse the
-            // delete.
             lock.release()?;
             Ok(Verdict::Abandoned)
         }
     }
 }
 
-/// A directory with no marker at all: one created before this convention, or
-/// one whose marker was lost. Age is the only evidence there is, and a young
-/// one is left alone because it may be a run in progress.
+/// A directory with no marker at all: one created before this convention, or one whose marker was lost. Age is the only evidence there is, and a young one is left alone because it may be a run in progress.
 fn legacy(entry: &fs::DirEntry, now: Timestamp) -> io::Result<Verdict> {
     let modified = match entry.metadata() {
         Ok(metadata) => metadata.modified()?,
@@ -443,9 +374,7 @@ fn legacy(entry: &fs::DirEntry, now: Timestamp) -> io::Result<Verdict> {
     }
 }
 
-/// Adds up the regular files under `dir`, best effort: the number is for a
-/// person reading a log line, and a sweep must not fail to reclaim a
-/// directory because it could not measure one file inside it.
+/// Adds up the regular files under `dir`, best effort: the number is for a person reading a log line, and a sweep must not fail to reclaim a directory because it could not measure one file inside it.
 fn directory_size(dir: &Path) -> u64 {
     let mut total = 0u64;
     let mut pending = vec![dir.to_path_buf()];

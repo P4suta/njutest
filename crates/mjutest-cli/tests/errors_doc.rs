@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mjutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Every error code the runner can report is documented, and every
-//! documented code exists.
+//! Every error code the runner can report is documented, and every documented code exists.
 
 #![expect(
     clippy::expect_used,

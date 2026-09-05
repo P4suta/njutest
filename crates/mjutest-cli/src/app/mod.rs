@@ -2,10 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What each command does, once the command line has been understood.
-//!
-//! Every command here takes the machine as an argument ([`Environment`]) and
-//! writes to the two streams it was handed, so a test drives one exactly as
-//! the binary does and reads back what a person would have seen.
 
 pub mod diagnostics;
 pub mod doctor;
@@ -39,10 +35,7 @@ pub fn run(
     }
 }
 
-/// Writes one diagnostic the way every mjutest diagnostic is written: the
-/// program name, then what happened.
-///
-/// A closed stream is the reader's choice, not a failure of ours.
+/// Writes one diagnostic the way every mjutest diagnostic is written: the program name, then what happened.
 pub fn diagnose(stderr: &mut dyn Write, message: &str) {
     let _written = writeln!(stderr, "{PROGRAM}: {message}");
 }

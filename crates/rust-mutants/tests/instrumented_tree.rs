@@ -1,9 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mjutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! The proof that instrumentation is honest: a real workspace, instrumented
-//! and built by a real cargo, behaves exactly as it did until a mutant is
-//! activated, and then behaves as that one edit says.
+//! The proof that instrumentation is honest: a real workspace, instrumented and built by a real cargo, behaves exactly as it did until a mutant is activated, and then behaves as that one edit says.
 
 #![expect(
     clippy::expect_used,
@@ -189,8 +187,7 @@ fn prepare(fixture: &str) -> Tree {
 }
 
 impl Tree {
-    /// The identity of the one mutant of `rule` in the fixture, which the
-    /// catalog is small enough to name unambiguously.
+    /// The identity of the one mutant of `rule` in the fixture, which the catalog is small enough to name unambiguously.
     fn mutant(&self, rule: &str) -> String {
         let matching: Vec<&rust_mutants::catalog::Mutant> = self
             .catalog
@@ -228,7 +225,6 @@ fn an_instrumented_tree_builds_and_behaves_exactly_as_it_did_until_a_mutant_is_a
     assert!(tree.binaries.contains_key("fixture_simple"));
     assert!(tree.binaries.contains_key("parity"));
 
-    // The instrumented baseline is the program the user wrote.
     for binary in tree.binaries.keys() {
         let result = tree.exec(binary, None, None);
         assert!(
@@ -238,8 +234,6 @@ fn an_instrumented_tree_builds_and_behaves_exactly_as_it_did_until_a_mutant_is_a
         );
     }
 
-    // One edit, one failing test: `max` returning the default is what the
-    // unit test is about.
     let killed = tree.mutant("return-default");
     let result = tree.exec("fixture_simple", Some(&killed), None);
     assert_eq!(
@@ -254,18 +248,13 @@ fn an_instrumented_tree_builds_and_behaves_exactly_as_it_did_until_a_mutant_is_a
         String::from_utf8_lossy(&result.output)
     );
 
-    // The same mutant leaves the other target alone: nothing there calls it.
     let result = tree.exec("parity", Some(&killed), None);
     assert!(result.ok(), "{}", String::from_utf8_lossy(&result.output));
 
-    // A survivor is a survivor, and the tool says so rather than pretending:
-    // `>` and `>=` differ only on equal arguments, which this test never
-    // passes.
     let survivor = tree.mutant("gt-to-ge");
     let result = tree.exec("fixture_simple", Some(&survivor), None);
     assert!(result.ok(), "{}", String::from_utf8_lossy(&result.output));
 
-    // A mutant of another file activates nothing here, and the tests pass.
     let elsewhere = "0".repeat(64);
     let result = tree.exec("fixture_simple", Some(&elsewhere), None);
     assert!(result.ok(), "{}", String::from_utf8_lossy(&result.output));

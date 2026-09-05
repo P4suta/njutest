@@ -2,33 +2,21 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The stable mutant identity recipe.
-//!
-//! An identity is deliberately over-specified. Path, rule, and span alone
-//! would collide across edits of the same file, so three digests pin the
-//! mutant to exact bytes: the source digest changes when anything in the
-//! file changes (a CRLF-to-LF conversion included), the original digest pins
-//! what is being replaced, and the replacement digest pins what replaces it.
-//! A cached outcome can therefore never be reused for a mutant that is not
-//! literally the same edit to the same bytes.
 
 use sha2::{Digest as _, Sha256};
 
 use crate::span::{Span, SpanError};
 
-/// The domain separator hashed first for every mutant ID. It carries the
-/// recipe version: a future recipe becomes `rust-mutants-id-v2` so that v1
-/// identities can never be mistaken for v2 identities.
+/// The domain separator hashed first for every mutant ID. It carries the recipe version: a future recipe becomes `rust-mutants-id-v2` so that v1 identities can never be mistaken for v2 identities.
 pub const ID_DOMAIN: &str = "rust-mutants-id-v1";
 
 /// The length of a full mutant ID in lowercase hex characters (SHA-256).
 pub const ID_HEX_LENGTH: usize = 64;
 
-/// The length of the short ID shown in the console and accepted by
-/// `--mutant`. The catalog builder proves the prefix is unique within a run.
+/// The length of the short ID shown in the console and accepted by `--mutant`. The catalog builder proves the prefix is unique within a run.
 pub const DISPLAY_ID_LENGTH: usize = 20;
 
-/// The shortest `--mutant` prefix the catalog resolves. Anything shorter is
-/// rejected as a typo rather than silently matching half the run.
+/// The shortest `--mutant` prefix the catalog resolves. Anything shorter is rejected as a typo rather than silently matching half the run.
 pub const MIN_PREFIX_LENGTH: usize = 4;
 
 /// A source path that cannot name a file inside the workspace.
@@ -118,13 +106,11 @@ pub enum IdentityError {
 /// The complete, canonical input to a stable mutant ID.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Identity {
-    /// The workspace-relative source path with forward slashes, as produced
-    /// by [`normalize_path`].
+    /// The workspace-relative source path with forward slashes, as produced by [`normalize_path`].
     pub path: String,
     /// The operator rule name, for example `eq-to-neq`.
     pub rule_name: String,
-    /// The rule's version. Bumping it re-mints every mutant the rule
-    /// produces, which is how a behaviour change invalidates cached outcomes.
+    /// The rule's version. Bumping it re-mints every mutant the rule produces, which is how a behaviour change invalidates cached outcomes.
     pub rule_version: u32,
     /// The byte range of the original text being replaced.
     pub span: Span,
@@ -132,8 +118,7 @@ pub struct Identity {
     pub source_digest: String,
     /// The SHA-256 of the original span bytes.
     pub original_digest: String,
-    /// The SHA-256 of the replacement bytes. For a deletion, the digest of
-    /// the empty string.
+    /// The SHA-256 of the replacement bytes. For a deletion, the digest of the empty string.
     pub replacement_digest: String,
 }
 
@@ -143,15 +128,9 @@ pub fn digest(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
 }
 
-/// Converts a source path to the canonical workspace-relative form used in
-/// identities and reports: forward slashes, cleaned, no leading `./`.
-///
-/// Backslashes are treated as separators so that a Windows path lands on the
-/// same identity as the POSIX spelling of the same file: a mutant must not
-/// change its name because the run happened on a different operating system.
+/// Converts a source path to the canonical workspace-relative form used in identities and reports: forward slashes, cleaned, no leading `./`.
 ///
 /// # Errors
-///
 /// Returns the reason the path cannot name a workspace file.
 pub fn normalize_path(path: &str) -> Result<String, PathError> {
     if path.is_empty() {
@@ -172,9 +151,6 @@ pub fn normalize_path(path: &str) -> Result<String, PathError> {
         });
     }
     let cleaned = clean(&slashed);
-    // Cleaning removes a leading "./". Re-check the canonical spelling so
-    // inputs such as "./C:" cannot turn into a volume name only after the
-    // first check has passed.
     if has_volume_name(&cleaned) {
         return Err(PathError::VolumeName {
             path: path.to_owned(),
@@ -188,17 +164,13 @@ pub fn normalize_path(path: &str) -> Result<String, PathError> {
     Ok(cleaned)
 }
 
-/// A volume name is an ASCII letter followed by a colon. Both halves are
-/// checked: a colon after something that is not a letter (`1:`) is a
-/// directory whose name contains a colon, which POSIX allows.
+/// A volume name is an ASCII letter followed by a colon. Both halves are checked: a colon after something that is not a letter (`1:`) is a directory whose name contains a colon, which POSIX allows.
 fn has_volume_name(path: &str) -> bool {
     let bytes = path.as_bytes();
     matches!((bytes.first(), bytes.get(1)), (Some(letter), Some(b':')) if letter.is_ascii_alphabetic())
 }
 
-/// The relative-path half of Go's `path.Clean`: drop empty and `.` elements,
-/// resolve `..` against a preceding element, keep a leading `..`, and answer
-/// `.` for a path that cleans to nothing.
+/// The relative-path half of Go's `path.Clean`: drop empty and `.` elements, resolve `..` against a preceding element, keep a leading `..`, and answer `.` for a path that cleans to nothing.
 fn clean(path: &str) -> String {
     let mut stack: Vec<&str> = Vec::new();
     for element in path.split('/') {
@@ -222,13 +194,9 @@ fn clean(path: &str) -> String {
 }
 
 impl Identity {
-    /// Whether the identity is complete and canonical. Every field that feeds
-    /// the hash is checked, because a malformed field would otherwise produce
-    /// a plausible-looking ID for a mutant that cannot be resolved back to a
-    /// source location.
+    /// Whether the identity is complete and canonical. Every field that feeds the hash is checked, because a malformed field would otherwise produce a plausible-looking ID for a mutant that cannot be resolved back to a source location.
     ///
     /// # Errors
-    ///
     /// Returns the first field that is not canonical.
     pub fn validate(&self) -> Result<(), IdentityError> {
         let normalized = normalize_path(&self.path)?;
@@ -273,28 +241,7 @@ impl Identity {
 
     /// The stable full mutant ID.
     ///
-    /// The recipe, frozen as of v1: SHA-256 over the concatenation of nine
-    /// length-prefixed fields, in order
-    ///
-    /// ```text
-    /// enc("rust-mutants-id-v1")
-    /// enc(path)                   workspace-relative, forward slashes
-    /// enc(rule_name)
-    /// enc(rule_version)           decimal
-    /// enc(start_byte)             decimal
-    /// enc(end_byte)               decimal
-    /// enc(source_sha256_hex)      lowercase 64 hex characters
-    /// enc(original_sha256_hex)    lowercase 64 hex characters
-    /// enc(replacement_sha256_hex) lowercase 64 hex characters
-    /// ```
-    ///
-    /// where `enc(s)` is a 4-byte big-endian length of the UTF-8 bytes of `s`
-    /// followed by those bytes. Numbers are hashed as decimal text and digests
-    /// as hex text, so the encoding is fully described by the bytes on the
-    /// wire and can be reimplemented in any language.
-    ///
     /// # Errors
-    ///
     /// Returns the validation failure; an invalid identity never produces an ID.
     pub fn id(&self) -> Result<String, IdentityError> {
         self.validate()?;
@@ -319,12 +266,9 @@ impl Identity {
     }
 }
 
-/// Appends `enc(s)` to `hasher`: a 4-byte big-endian byte length followed by
-/// the raw bytes. Every hash the engine builds from a list of fields uses
-/// this one encoding.
+/// Appends `enc(s)` to `hasher`: a 4-byte big-endian byte length followed by the raw bytes. Every hash the engine builds from a list of fields uses this one encoding.
 ///
 /// # Errors
-///
 /// Returns [`IdentityError::FieldTooLong`] when `s` does not fit the prefix.
 pub fn write_length_prefixed(hasher: &mut Sha256, s: &str) -> Result<(), IdentityError> {
     let length = u32::try_from(s.len())
@@ -334,12 +278,9 @@ pub fn write_length_prefixed(hasher: &mut Sha256, s: &str) -> Result<(), Identit
     Ok(())
 }
 
-/// The short form of a full mutant ID. Uniqueness of the short form is a
-/// property of a whole catalog, proven by the catalog builder; this only
-/// truncates.
+/// The short form of a full mutant ID. Uniqueness of the short form is a property of a whole catalog, proven by the catalog builder; this only truncates.
 ///
 /// # Errors
-///
 /// Returns [`IdentityError::InvalidId`] when `full` is not a full ID.
 pub fn display_id_of(full: &str) -> Result<String, IdentityError> {
     if !is_id(full) {
@@ -366,9 +307,7 @@ pub fn is_digest(s: &str) -> bool {
     s.len() == ID_HEX_LENGTH && is_lower_hex(s)
 }
 
-/// Whether every character of `s` is a lowercase hex digit. Uppercase is
-/// rejected rather than folded: identities are compared as strings, so
-/// exactly one spelling may exist.
+/// Whether every character of `s` is a lowercase hex digit. Uppercase is rejected rather than folded: identities are compared as strings, so exactly one spelling may exist.
 #[must_use]
 pub fn is_lower_hex(s: &str) -> bool {
     s.bytes()

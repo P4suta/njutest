@@ -2,23 +2,13 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Byte splicing with an offset map.
-//!
-//! A splice replaces one byte range of a source file. Its `original` is not
-//! redundant with its span: it is the caller's statement of what it believes
-//! those bytes are, and [`apply`] refuses to edit anything until every such
-//! statement checks out. Spans travel a long way before they are applied —
-//! minted during discovery, hashed into identities, written to reports, read
-//! back from caches — and a span that no longer covers what it covered when
-//! it was minted is the one failure mode that silently produces a wrong
-//! mutant instead of an error.
 
 use crate::span::{Span, SpanError};
 
 /// One byte-range replacement.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Splice {
-    /// The half-open byte range this replaces. An empty span is an insertion
-    /// at that offset.
+    /// The half-open byte range this replaces. An empty span is an insertion at that offset.
     pub span: Span,
     /// The bytes the span is expected to cover.
     pub original: Vec<u8>,
@@ -98,17 +88,7 @@ struct Edit {
     out_end: u32,
 }
 
-/// Translates byte offsets between a source and its spliced output, in both
-/// directions.
-///
-/// Every splice moves everything after it, so a span minted against the
-/// original bytes points at the wrong text the moment an earlier splice is
-/// applied. The map lets a caller keep working in original coordinates.
-/// Offsets outside every replaced range translate exactly and to the same
-/// byte; offsets strictly inside a replaced range have no exact translation
-/// and answer with the start of the replacement, reported as inexact. Both
-/// directions are monotonically non-decreasing. The default map is the
-/// identity on empty input.
+/// Translates byte offsets between a source and its spliced output, in both directions.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct OffsetMap {
     edits: Vec<Edit>,
@@ -116,21 +96,9 @@ pub struct OffsetMap {
     out_len: u32,
 }
 
-/// Performs every splice in one left-to-right pass and reports how offsets
-/// moved.
-///
-/// Splices are applied in span order regardless of the order given, so the
-/// result is a function of the set alone. They must not overlap: two edits to
-/// the same bytes have no well-defined composition. Nested rewrites are
-/// expressed by composing them into one replacement before splicing — the
-/// order the interval forest hands sites out in.
-///
-/// `apply` does not check [`line_preserving`]: whether a set of splices
-/// belongs on the lines it edits is a property of the guard form that
-/// produced them, and the forms assert it themselves.
+/// Performs every splice in one left-to-right pass and reports how offsets moved.
 ///
 /// # Errors
-///
 /// Returns the first splice that does not fit, does not cover what it claims,
 /// or overlaps another, or an output past the offset limit.
 pub fn apply(src: &[u8], splices: &[Splice]) -> Result<(Vec<u8>, OffsetMap), SpliceError> {
@@ -187,8 +155,7 @@ fn output_offset(len: usize) -> Result<u32, SpliceError> {
     })
 }
 
-/// Checks every splice against `src` and returns the source length with the
-/// indices of the splices in application order.
+/// Checks every splice against `src` and returns the source length with the indices of the splices in application order.
 fn validate(src: &[u8], splices: &[Splice]) -> Result<(u32, Vec<usize>), SpliceError> {
     let src_len = u32::try_from(src.len()).map_err(|_overflow| SpliceError::TooLarge {
         what: "source",
@@ -216,9 +183,6 @@ fn validate(src: &[u8], splices: &[Splice]) -> Result<(u32, Vec<usize>), SpliceE
             .unwrap_or_default()
     });
 
-    // `reach` carries the furthest end seen so far rather than the previous
-    // end, so that a span enclosing several later ones is caught against every
-    // one of them and not just the first.
     let mut reach = 0u32;
     let mut reach_index: Option<usize> = None;
     let mut previous: Option<(usize, Span)> = None;
@@ -259,8 +223,7 @@ fn validate(src: &[u8], splices: &[Splice]) -> Result<(u32, Vec<usize>), SpliceE
     Ok((src_len, order))
 }
 
-/// Renders a byte range for a diagnostic, shortened so that a mismatch on a
-/// long span stays one line.
+/// Renders a byte range for a diagnostic, shortened so that a mismatch on a long span stays one line.
 fn quote_bytes(bytes: &[u8]) -> String {
     const LIMIT: usize = 48;
     let shown = bytes.get(..LIMIT).unwrap_or(bytes);
@@ -318,12 +281,6 @@ impl OffsetMap {
     }
 
     /// Translates an original offset into an output offset.
-    ///
-    /// The flag reports whether the translation is exact. It is false for an
-    /// offset strictly inside replaced bytes — the answer is then the start of
-    /// the replacement — and for an offset past the end of the source. An
-    /// offset at the position of an inserted range translates past the
-    /// insertion, so the byte it addressed keeps its identity.
     #[must_use]
     pub fn to_output(&self, offset: u32) -> (u32, bool) {
         if offset > self.src_len {
@@ -337,10 +294,7 @@ impl OffsetMap {
         }
     }
 
-    /// Translates an output offset back into an original offset: the inverse
-    /// of [`OffsetMap::to_output`] wherever an inverse exists, with an offset
-    /// strictly inside a replacement answering with the start of the range it
-    /// replaced.
+    /// Translates an output offset back into an original offset: the inverse of [`OffsetMap::to_output`] wherever an inverse exists, with an offset strictly inside a replacement answering with the start of the range it replaced.
     #[must_use]
     pub fn to_original(&self, offset: u32) -> (u32, bool) {
         if offset > self.out_len {
@@ -354,12 +308,9 @@ impl OffsetMap {
         }
     }
 
-    /// Translates a whole span into output coordinates. Both endpoints must
-    /// translate exactly; a span that encloses splices grows or shrinks by
-    /// their net effect, which is the case the nested-rewrite path depends on.
+    /// Translates a whole span into output coordinates. Both endpoints must translate exactly; a span that encloses splices grows or shrinks by their net effect, which is the case the nested-rewrite path depends on.
     ///
     /// # Errors
-    ///
     /// Returns a span that is invalid, out of range, or starts or ends inside
     /// replaced bytes.
     pub fn map_span(&self, span: Span) -> Result<Span, SpliceError> {
@@ -386,8 +337,7 @@ impl OffsetMap {
     }
 }
 
-/// The number of line breaks in `bytes`. Only `\n` is counted: a CRLF file
-/// has exactly one `\n` per line break just as an LF file does.
+/// The number of line breaks in `bytes`. Only `\n` is counted: a CRLF file has exactly one `\n` per line break just as an LF file does.
 #[must_use]
 #[expect(
     clippy::naive_bytecount,
@@ -397,13 +347,7 @@ pub fn count_lines(bytes: &[u8]) -> usize {
     bytes.iter().filter(|&&byte| byte == b'\n').count()
 }
 
-/// Whether applying these splices would leave every original byte on the
-/// line it started on.
-///
-/// Every splice's replacement must hold exactly as many line breaks as the
-/// bytes it replaces. Per-splice equality, not "no line break": a statement
-/// guard keeps the original bytes, line breaks included, in its `else`
-/// branch, and is line-preserving anyway.
+/// Whether applying these splices would leave every original byte on the line it started on.
 #[must_use]
 pub fn line_preserving(splices: &[Splice]) -> bool {
     splices

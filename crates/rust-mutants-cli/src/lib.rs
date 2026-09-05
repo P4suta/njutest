@@ -2,11 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Command line of the rust-mutants engine.
-//!
-//! [`run_from`] is the whole surface: it takes the argument vector, the
-//! environment, and the two output streams as arguments so a test can drive
-//! it without a process, and returns the exit code `main` hands to the
-//! operating system.
 
 #![forbid(unsafe_code)]
 
@@ -28,16 +23,9 @@ use rust_mutants::workspace::{OpenOptions, Workspace};
 pub const EXIT_USAGE: u8 = 2;
 
 /// Everything the command line needs from the process it runs in.
-///
-/// It is an argument because nothing below the composition root may read the
-/// process environment ([ADR 0001]): `main.rs` fills this in, and a test
-/// fills it in with whatever it wants the run to see.
-///
-/// [ADR 0001]: https://github.com/P4suta/mjutest/blob/main/docs/adr/0001-seam-policy.md
 #[derive(Debug)]
 pub struct Environment {
-    /// The process environment, which the engine hands to every command and
-    /// test process it starts.
+    /// The process environment, which the engine hands to every command and test process it starts.
     pub vars: Vec<(OsString, OsString)>,
     /// The directory snapshots and target directories are created in.
     pub temp_directory: PathBuf,
@@ -45,12 +33,7 @@ pub struct Environment {
     pub working_directory: PathBuf,
 }
 
-/// Runs the command line described by `args` (program name first) and
-/// returns its exit code, writing to the two streams it was given.
-///
-/// Exit codes: `0` the command did what it was asked (and, for `run`, the
-/// tests noticed the mutant), `1` the mutant survived, `2` a usage error or
-/// an infrastructure failure.
+/// Runs the command line described by `args` (program name first) and returns its exit code, writing to the two streams it was given.
 pub fn run_from<I>(
     args: I,
     environment: &Environment,
@@ -64,7 +47,6 @@ where
         Ok(command) => command,
         Err(usage) => {
             let stream: &mut dyn Write = if usage.to_stderr { stderr } else { stdout };
-            // A closed stream is the reader's choice, not a failure of ours.
             let _written = stream
                 .write_all(usage.text.as_bytes())
                 .and_then(|()| stream.flush());
@@ -239,8 +221,7 @@ fn compile_patterns(patterns: &[String]) -> Result<Vec<Pattern>, EngineError> {
         .collect()
 }
 
-/// The pristine text of every file that yielded a candidate, so a position
-/// can be counted in the file a person would open.
+/// The pristine text of every file that yielded a candidate, so a position can be counted in the file a person would open.
 fn read_sources(
     root: &std::path::Path,
     discovery: &rust_mutants::discover::Discovery,
@@ -257,9 +238,7 @@ fn read_sources(
         .collect()
 }
 
-/// The text of one file of a prepared session. It is the instrumented text,
-/// which is why `explain` reads a position from the catalog's own span
-/// rather than trusting it blindly.
+/// The text of one file of a prepared session. It is the instrumented text, which is why `explain` reads a position from the catalog's own span rather than trusting it blindly.
 fn read_source(session: &Session, path: &str) -> Option<String> {
     std::fs::read_to_string(session.snapshot_root().join(path)).ok()
 }

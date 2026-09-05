@@ -1,71 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mjutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Rewriting a file so that every compilable mutant of it lives in the file
-//! at once, dormant behind a guard.
-//!
-//! One build then serves every mutant, and activating one costs an
-//! environment variable per test process rather than a rebuild. With no
-//! variable set, what runs is the original bytes: the instrumented baseline
-//! is the program the user wrote.
-//!
-//! # The three guard forms
-//!
-//! Which form a site takes is decided by [`crate::syntax`], not here.
-//!
-//! **Form C**, a boolean position:
-//!
-//! ```text
-//! (__rm::active(3) && (a >= b) || !(__rm::active(3)) && (a > b))
-//! ```
-//!
-//! No block, and so no temporary scope: a lock guard held by the original
-//! condition lives exactly as long as it did. The parentheses are load
-//! bearing, since a nested Form C site sits inside its parent's `&&` chain.
-//!
-//! **Form E**, any value position:
-//!
-//! ```text
-//! (if __rm::active(5) { a - b } else { a + b })
-//! ```
-//!
-//! Both branches unify to one type, so `Default::default()` is inferred
-//! from the original rather than spelled.
-//!
-//! **Form S**, a statement:
-//!
-//! ```text
-//! if __rm::active(7) { x -= step; } else { x += step; }
-//! ```
-//!
-//! A deletion is the degenerate branch and not a special case:
-//! `if __rm::active(4) { } else { … }` is exactly "this statement does not
-//! run".
-//!
-//! Several mutants of one site are alternatives of one chain rather than
-//! nested guards, because mutants are mutually exclusive. Genuinely nested
-//! sites become nested guards, composed children first. Every alternative is
-//! rendered from the pristine site with that one edit applied and nothing
-//! else — a mutant is one edit to the program the user wrote — so only the
-//! branch that keeps the original carries the guards of the sites inside it.
-//!
-//! # Lines are preserved
-//!
-//! Each alternative is flattened onto one line and the original branch keeps
-//! its bytes verbatim, so a guard holds exactly as many line breaks as the
-//! bytes it replaced. Every byte of the file therefore stays on the line it
-//! started on, which is what lets coverage regions, rustc diagnostics, and
-//! mutant positions agree with the pristine file. The runtime module is
-//! appended after the last line, where it shifts nothing.
-//!
-//! # Whether the guard compiles is the validation phase's problem
-//!
-//! Nothing here type-checks anything, and a mutated copy can still be a
-//! program the compiler refuses. Deciding that here would mean type-checking
-//! every file to ask a question the compiler is about to answer for free.
-//! Instrumentation is a byte rewrite that always produces the same bytes for
-//! the same input; whether those bytes compile is established by compiling
-//! them.
+//! Rewriting a file so that every compilable mutant of it lives in the file at once, dormant behind a guard.
 
 mod guards;
 mod runtime;
@@ -85,9 +21,7 @@ pub use runtime::{
     ACTIVE_ENV, CATALOG_ENV, MODULE_STEM, RUNTIME_MARKER, STALE_CATALOG_EXIT, module_name,
 };
 
-/// The text inserted before the innermost function holding a guard, so that
-/// a guard's own lint noise never trips a crate's deny policy anywhere else.
-/// It holds no line break.
+/// The text inserted before the innermost function holding a guard, so that a guard's own lint noise never trips a crate's deny policy anywhere else. It holds no line break.
 pub const ALLOW_ATTRIBUTE: &str = "#[allow(warnings)] ";
 
 /// One mutant placed at its rewrite site.
@@ -121,10 +55,6 @@ pub struct Guard {
 }
 
 /// Where one mutant's own text sits in an instrumented file.
-///
-/// This is what makes a compiler diagnostic attributable: an error whose
-/// span falls inside a branch belongs to exactly that mutant, and one that
-/// falls outside every branch is about the program the user wrote.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Branch {
     /// The mutant's dense catalog index.
@@ -162,15 +92,11 @@ pub struct FileOutput {
     pub text: String,
     /// Every guard placed, in catalog order.
     pub guards: Vec<Guard>,
-    /// Every alternative branch, in file order: where each mutant's own
-    /// text landed.
+    /// Every alternative branch, in file order: where each mutant's own text landed.
     pub branches: Vec<Branch>,
     /// The name the runtime module took, empty when none was generated.
     pub module: String,
-    /// Whether anything was rewritten. A file with no mutants comes back
-    /// byte for byte, without a runtime: an unused module would only be
-    /// noise, and a file cargo did not have to recompile is one this run
-    /// does not pay for.
+    /// Whether anything was rewritten. A file with no mutants comes back byte for byte, without a runtime: an unused module would only be noise, and a file cargo did not have to recompile is one this run does not pay for.
     pub instrumented: bool,
 }
 
@@ -181,15 +107,13 @@ pub enum InstrumentErrorKind {
     UnknownMutant,
     /// The source is not the one the candidates were discovered from.
     SourceMismatch,
-    /// Two rewrite sites partially overlap, which the syntax tree cannot
-    /// produce: an engine bug rather than a fact about the program.
+    /// Two rewrite sites partially overlap, which the syntax tree cannot produce: an engine bug rather than a fact about the program.
     SiteConflict,
     /// An alternative could not be folded onto one line.
     FlattenFailed,
     /// The rewrites could not be applied to the file.
     SpliceFailed,
-    /// A rewrite would have moved a line, breaking the one invariant every
-    /// consumer of a position depends on.
+    /// A rewrite would have moved a line, breaking the one invariant every consumer of a position depends on.
     LinesMoved,
     /// A mutant index collides with the runtime's sentinel values.
     IndexReserved,
@@ -275,7 +199,6 @@ impl std::error::Error for InstrumentError {}
 /// Pairs the candidates discovered in one file with their catalog entries.
 ///
 /// # Errors
-///
 /// [`InstrumentErrorKind::UnknownMutant`] for a candidate the catalog does
 /// not hold, which means the two were computed from different trees.
 pub fn plan_file(
@@ -293,9 +216,6 @@ pub fn plan_file(
             )
         })?;
         let Some(mutant) = catalog.by_id(&id) else {
-            // A candidate the catalog deduplicated is not missing: the
-            // mutant that won spells the same edit over the same bytes and
-            // is placed already, so this one has nothing left to place.
             if catalog
                 .duplicates()
                 .iter()
@@ -327,12 +247,7 @@ pub fn plan_file(
 
 /// Rewrites one file so that every placed mutant lives in it behind a guard.
 ///
-/// `catalog_digest` is what the generated runtime checks the activating
-/// process against, so that a stale catalog ends the process instead of
-/// quietly activating nothing.
-///
 /// # Errors
-///
 /// See [`InstrumentErrorKind`].
 pub fn instrument_file(
     path: &str,
@@ -428,8 +343,7 @@ impl File<'_> {
         })
     }
 
-    /// Every placement must name bytes this file really holds, and an index
-    /// the runtime can tell apart from its sentinels.
+    /// Every placement must name bytes this file really holds, and an index the runtime can tell apart from its sentinels.
     fn check_placements(&self, placements: &[Placement]) -> Result<(), InstrumentError> {
         for placement in placements {
             if placement.index >= runtime::LOWEST_SENTINEL {
@@ -473,8 +387,7 @@ impl File<'_> {
         Ok(())
     }
 
-    /// Arranges the sites by containment. Sites come from the syntax tree,
-    /// so they nest; a partial overlap is an engine bug and is refused.
+    /// Arranges the sites by containment. Sites come from the syntax tree, so they nest; a partial overlap is an engine bug and is refused.
     fn forest(
         &self,
         placements: &[Placement],
@@ -502,8 +415,7 @@ impl File<'_> {
         Ok(forest)
     }
 
-    /// Applies every guard and every allow attribute to the file's bytes,
-    /// and reports where each alternative landed in the result.
+    /// Applies every guard and every allow attribute to the file's bytes, and reports where each alternative landed in the result.
     fn rewrite(
         &self,
         source: &[u8],
@@ -546,12 +458,7 @@ impl File<'_> {
         Ok(Rewritten { text, branches })
     }
 
-    /// Renders one site: its alternatives, then its original branch with the
-    /// sites nested inside it already rendered.
-    ///
-    /// The branch ranges it reports are relative to the start of the text,
-    /// and every nested site's ranges are shifted into it, so a caller that
-    /// knows where the text lands knows where every alternative lands.
+    /// Renders one site: its alternatives, then its original branch with the sites nested inside it already rendered.
     fn render(&self, node: &Node<Placement>) -> Result<Rendered, InstrumentError> {
         let Rendered {
             text: original,
@@ -614,9 +521,7 @@ impl File<'_> {
         })
     }
 
-    /// The branch that keeps the original: the site's own bytes with every
-    /// site nested inside it already rendered, and their branch ranges
-    /// shifted to where they landed.
+    /// The branch that keeps the original: the site's own bytes with every site nested inside it already rendered, and their branch ranges shifted to where they landed.
     fn original_branch(&self, node: &Node<Placement>) -> Result<Rendered, InstrumentError> {
         let bounds = |from: u32, to: u32| {
             Span::new(from, to)
@@ -642,8 +547,7 @@ impl File<'_> {
         Ok(Rendered { text, branches })
     }
 
-    /// One alternative: the pristine site with exactly this edit applied,
-    /// folded onto one line.
+    /// One alternative: the pristine site with exactly this edit applied, folded onto one line.
     fn alternative(
         &self,
         site: Span,
@@ -693,12 +597,6 @@ impl File<'_> {
     }
 
     /// One `#[allow(warnings)]` insertion per function that holds a guard.
-    ///
-    /// An insertion that would land inside a rewrite site is dropped: the
-    /// site's own text is composed here, not spliced, so an insertion into
-    /// it would be applied twice. That costs the guards in such a function
-    /// their lint suppression and nothing else, and the case needs a
-    /// function declared inside an expression to arise at all.
     fn allow_splices(placements: &[Placement], roots: &[Node<Placement>]) -> Vec<Splice> {
         let offsets: BTreeSet<u32> = placements
             .iter()

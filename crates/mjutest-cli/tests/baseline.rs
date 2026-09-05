@@ -1,14 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mjutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! The baseline: every test in its own process, under instrumentation, and
-//! what each one reached.
-//!
-//! Two things here are load-bearing. Per-target coverage must actually
-//! differ between targets, or routing a mutant to the tests that reach it is
-//! no better than running them all. And a target that did not run must never
-//! be recorded as one that passed: libtest exits 0 for a filter that matched
-//! nothing, so the summary line is what decides.
+//! The baseline: every test in its own process, under instrumentation, and what each one reached.
 
 #![expect(
     clippy::expect_used,
@@ -119,8 +112,6 @@ fn named(baseline: &Baseline, name: &str) -> usize {
         })
 }
 
-// --- what a baseline observes -------------------------------------------------------
-
 #[test]
 fn every_test_is_a_target_of_its_own_and_says_what_became_of_it() {
     let (baseline, _scratch) = measure("fixture-baseline");
@@ -196,8 +187,6 @@ fn a_skipped_target_reached_nothing_because_it_never_ran() {
         "a test libtest did not run reached nothing"
     );
 }
-
-// --- what the summary line decides ---------------------------------------------------
 
 const fn summary(passed: u32, failed: u32, ignored: u32) -> Summary {
     Summary {

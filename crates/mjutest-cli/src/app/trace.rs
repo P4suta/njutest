@@ -1,18 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mjutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! `mjutest trace summary` and `mjutest trace diff`: reading a recording
-//! back.
-//!
-//! A summary answers two questions a person actually has. Is this recording
-//! whole — no gap in the sequence, a beginning, an end, and what it admits
-//! it dropped — and where did the time go. It exits 2 when the recording is
-//! not whole, because a summary of a recording with holes in it is a summary
-//! of something else.
-//!
-//! A diff compares two recordings without replaying either, which is how a
-//! reader answers "what did that change actually do to the run" without
-//! running it a third time.
+//! `mjutest trace summary` and `mjutest trace diff`: reading a recording back.
 
 use std::collections::BTreeMap;
 use std::io::Write;

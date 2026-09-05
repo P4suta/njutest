@@ -2,18 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What the byte foundation costs.
-//!
-//! These are observations, not contracts: nothing fails when a number
-//! moves, and no verdict depends on one ([ADR 0004] asks a proof layer to
-//! report what it saved, and this is how a person answers "did that change
-//! make discovery slower" without guessing).
-//!
-//! The three measured here are the ones every run pays per file — a splice
-//! of the edits, the flattening of an alternative onto one line, and the
-//! identity of a mutant — so a regression in any of them is a regression in
-//! the whole engine.
-//!
-//! [ADR 0004]: https://github.com/P4suta/mjutest/blob/main/docs/adr/0004-proof-layers-not-budgets.md
 
 use std::fmt::Write as _;
 
@@ -76,9 +64,7 @@ fn benchmarks(criterion: &mut Criterion) {
     });
 }
 
-/// `harness = false`, so this is the whole program: the generated harness
-/// would put an undocumented public function in a crate that documents
-/// everything.
+/// `harness = false`, so this is the whole program: the generated harness would put an undocumented public function in a crate that documents everything.
 fn main() {
     let mut criterion = Criterion::default().configure_from_args();
     benchmarks(&mut criterion);

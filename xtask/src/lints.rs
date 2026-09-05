@@ -2,25 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Two things this repository does not write.
-//!
-//! **`#[allow]`.** A lint switched off with `allow` stays off forever, and
-//! nothing ever says so: the code it was hiding can be deleted and the
-//! attribute remains, silently covering whatever arrives next. `#[expect]`
-//! is the same waiver with an expiry — the compiler fails the build when the
-//! lint stops firing — so a waiver here is always one somebody still needs.
-//!
-//! **`Box<dyn Trait>`.** Rust has two ways to accept more than one
-//! implementation, and the one that costs an allocation and a vtable is the
-//! second choice: a closed set is an enum the compiler checks exhaustively,
-//! an open one is a generic parameter. A boxed trait object is worth it only
-//! where neither works, and this gate makes that a decision somebody argues
-//! for rather than one that accumulates.
-//!
-//! Both are scanned across every Rust file the repository commits, tests
-//! included. The code the engine *generates* into somebody else's tree is
-//! not scanned as code — it lives here as string literals, and its
-//! `#[allow(warnings)]` is deliberate: an expectation that went unfulfilled
-//! in a user's build would be our lint noise in their terminal.
 
 use std::fmt;
 
@@ -89,7 +70,6 @@ impl fmt::Display for Finding {
 /// Everything `source` holds that this repository does not write.
 ///
 /// # Errors
-///
 /// A file that is not Rust this version can parse.
 pub fn scan_source(file: &str, source: &str) -> Result<Vec<Finding>, syn::Error> {
     let parsed = syn::parse_file(source)?;

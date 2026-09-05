@@ -38,8 +38,13 @@ cargo xtask report-diff A B   # what changed between two stored reports
 
 ## Conventions
 
-- English in code, comments, documentation, and commits. Conventional
-  Commits. SPDX header on every `.rs`, `.toml`, `.yml`.
+- English in code, documentation, and commits. Conventional Commits. SPDX
+  header on every `.rs`, `.toml`, `.yml`.
+- **No comments.** The SPDX header stays, and so does the one line of
+  documentation the lint set requires on a public item (plus the `# Errors`
+  and `# Panics` sections clippy asks for). Nothing else: a name that needs
+  a comment is a name to change, and a test named after the behaviour says
+  more than a paragraph above the code ever will.
 - Workspace lints are strict (`pedantic`, `nursery`, `unwrap_used`, …).
   **`#[allow]` is never written** — `cargo xtask lints` refuses it anywhere,
   tests included. A waiver is `#[expect(…, reason = "…")]`, which the

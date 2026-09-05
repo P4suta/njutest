@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mjutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Instrumentation: every compilable mutant of a file lives in the file at
-//! once, dormant behind a guard, and the file keeps its line numbering.
+//! Instrumentation: every compilable mutant of a file lives in the file at once, dormant behind a guard, and the file keeps its line numbering.
 
 #![expect(
     clippy::expect_used,
@@ -61,9 +60,7 @@ fn golden_case(name: &str) {
     let input = std::fs::read(golden_path(&format!("{name}.input"))).expect("input");
     let source = String::from_utf8(input).expect("utf-8");
     let text = instrument(&source);
-    // The instrumented file is still Rust.
     syn::parse_file(&text).expect("the instrumented file parses");
-    // Every line of the original still starts where it did.
     let (body, _runtime) = split_runtime(&text);
     assert_eq!(
         count_lines(body.as_bytes()),
@@ -74,8 +71,7 @@ fn golden_case(name: &str) {
         .expect("golden");
 }
 
-/// Splits an instrumented file into the rewritten body and the appended
-/// runtime module.
+/// Splits an instrumented file into the rewritten body and the appended runtime module.
 fn split_runtime(text: &str) -> (&str, &str) {
     let at = text.find(RUNTIME_MARKER).expect("the runtime is appended");
     let start = text[..at]
@@ -84,8 +80,6 @@ fn split_runtime(text: &str) -> (&str, &str) {
         + 1;
     (&text[..start], &text[start..])
 }
-
-// --- the forms ------------------------------------------------------------------
 
 #[test]
 fn the_constants_are_frozen() {
@@ -101,18 +95,14 @@ fn a_boolean_position_takes_the_selector_form_and_a_value_position_the_expressio
     let text = instrument(
         "pub fn f(a: i32, b: i32) -> bool {\n    if a > b {\n        return true;\n    }\n    a + 1 > b\n}\n",
     );
-    // Form C: no block, so no temporary scope is introduced in a condition.
-    // The outer parentheses are load bearing for a nested selector.
     assert!(
         text.contains("if (__rm::active(0) && (!(a > b)) || __rm::active(1) && (a >= b) || !(__rm::active(0)) && !(__rm::active(1)) && (a > b)) {"),
         "{text}"
     );
-    // Form E: an if-expression, both branches unifying to one type.
     assert!(
         text.contains("return (if __rm::active(2) { false } else { true });"),
         "{text}"
     );
-    // One chain per site, whatever families its alternatives come from.
     assert!(
         text.contains("(if __rm::active(3) { true } else if __rm::active(5) { a + 1 >= b } else {"),
         "{text}"
@@ -139,8 +129,6 @@ fn a_statement_takes_the_statement_form_and_a_deletion_renders_an_empty_branch()
 #[test]
 fn nested_sites_become_nested_guards_and_only_the_original_branch_carries_them() {
     let text = instrument("pub fn f(a: i32, b: i32) -> bool {\n    a + 1 < b\n}\n");
-    // The inner arithmetic guard appears in the outer guard's original branch
-    // and in neither alternative.
     let line = text
         .lines()
         .find(|line| line.contains("__rm::active"))
@@ -160,8 +148,6 @@ fn nested_sites_become_nested_guards_and_only_the_original_branch_carries_them()
         "exactly the nested guard: {tail}"
     );
 }
-
-// --- the file's shape -------------------------------------------------------------
 
 #[test]
 fn the_runtime_is_appended_after_the_last_line_and_names_the_catalog() {
@@ -264,8 +250,6 @@ fn an_inline_module_reaches_the_runtime_through_super() {
     );
 }
 
-// --- byte fidelity ------------------------------------------------------------------
-
 #[test]
 fn line_endings_and_non_ascii_bytes_survive() {
     let source = "pub fn 加算(α: i32, β: i32) -> i32 {\r\n    α + β\r\n}\r\n";
@@ -303,8 +287,6 @@ fn a_multi_line_site_keeps_its_lines_because_only_the_original_branch_holds_them
     );
 }
 
-// --- refusals -------------------------------------------------------------------------
-
 #[test]
 fn a_placement_naming_an_unknown_mutant_is_refused() {
     let source = "pub fn f(a: i32) -> i32 { a + 1 }\n";
@@ -332,8 +314,6 @@ fn a_source_that_is_not_the_one_the_candidates_came_from_is_refused() {
     assert_eq!(error.kind(), InstrumentErrorKind::SourceMismatch);
 }
 
-// --- goldens ----------------------------------------------------------------------------
-
 #[test]
 fn the_recorded_cases_are_rewritten_exactly_as_recorded() {
     for name in ["forms", "nested", "statements", "modules"] {
@@ -360,8 +340,6 @@ fn every_alternative_reports_where_its_own_text_landed() {
     )
     .expect("instrument");
 
-    // Every mutant has exactly one branch, and its text is the pristine site
-    // with that one edit applied.
     let mut indices: Vec<u32> = file.branches.iter().map(|branch| branch.index).collect();
     indices.sort_unstable();
     let mut expected: Vec<u32> = catalog
@@ -393,8 +371,6 @@ fn every_alternative_reports_where_its_own_text_landed() {
     assert_eq!(text_of(by_rule("negate-condition")), "!(a + 1 > b)");
     assert_eq!(text_of(by_rule("true-to-false")), "false");
 
-    // A nested branch sits inside its parent's original branch, never inside
-    // one of its alternatives.
     let inner = file
         .branches
         .iter()

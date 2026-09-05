@@ -33,7 +33,6 @@ impl VersionInfo {
 /// Parses a `-vV` banner.
 ///
 /// # Errors
-///
 /// [`CargoErrorKind::VersionUnreadable`] when the `release:` or `host:` line
 /// is missing: without them the toolchain cannot be named or keyed.
 pub fn parse_version(output: &str) -> Result<VersionInfo, CargoError> {

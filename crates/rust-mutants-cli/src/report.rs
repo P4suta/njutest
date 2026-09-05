@@ -13,15 +13,13 @@ use rust_mutants::session::Session;
 use rust_mutants::syntax::{Position, Skip};
 use serde::Serialize;
 
-/// `path:line:column`, the spelling every editor and every `::warning`
-/// consumer already understands.
+/// `path:line:column`, the spelling every editor and every `::warning` consumer already understands.
 #[must_use]
 pub fn at(path: &str, position: Position) -> String {
     format!("{path}:{}:{}", position.line, position.byte_column)
 }
 
-/// The position of a mutant's edit, found by counting the lines of the file
-/// it came from.
+/// The position of a mutant's edit, found by counting the lines of the file it came from.
 #[must_use]
 pub fn position_in(source: &str, offset: u32) -> Position {
     rust_mutants::syntax::LineIndex::new(source).position(source, offset)
@@ -139,12 +137,6 @@ fn one_line(mutant: &Mutant) -> String {
 }
 
 /// The catalog as one JSON document.
-///
-/// The shape is the contract in `docs/engine/json-schema.md`, and
-/// `schema/rust-mutants-catalog-v1.json` is the schema a test validates it
-/// against. Every object closes with `additionalProperties: false`, so a
-/// field added without a version bump fails that test rather than a
-/// consumer.
 #[derive(Debug, Serialize)]
 pub struct CatalogDocument {
     /// Names the shape, so a reader can tell versions apart.
@@ -444,16 +436,13 @@ pub fn outcome(result: &MutantResult, mutant: &Mutant) -> String {
     text
 }
 
-/// The exit code an outcome earns: zero when the tests noticed the mutant,
-/// one when they did not, and two when nothing was established.
+/// The exit code an outcome earns: zero when the tests noticed the mutant, one when they did not, and two when nothing was established.
 #[must_use]
 pub const fn exit_code(outcome: rust_mutants::outcome::Outcome) -> u8 {
     use rust_mutants::outcome::Outcome;
     match outcome {
         Outcome::Killed | Outcome::TimedOut => 0,
         Outcome::Survived => 1,
-        // Not run, inconclusive, errored, and whatever a later version
-        // adds: nothing was established, which is not a verdict.
         _ => crate::EXIT_USAGE,
     }
 }

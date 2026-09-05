@@ -2,14 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Argument parsing, the environment a run is given, and the exit codes.
-//!
-//! This module knows the command tree and the verdict-to-exit-code mapping,
-//! and nothing about executing a run. It also names [`Environment`], which
-//! is how everything below the command line is told about the machine:
-//! [ADR 0001] puts the process environment behind an argument, so only the
-//! composition root reads it and every layer under it is driven by a test.
-//!
-//! [ADR 0001]: https://github.com/P4suta/mjutest/blob/main/docs/adr/0001-seam-policy.md
 
 use std::ffi::{OsStr, OsString};
 use std::path::PathBuf;
@@ -33,10 +25,6 @@ pub const EXIT_TERMINATED: u8 = 143;
 pub const PROGRAM: &str = "mjutest";
 
 /// What the machine is, as an argument.
-///
-/// Everything a run learns about the process it is running in arrives here.
-/// The composition root fills it once; nothing below reads the environment,
-/// so a test drives a run with exactly the machine it wants and no other.
 #[derive(Debug, Clone, Default)]
 pub struct Environment {
     /// The whole environment, as names and values.
@@ -59,11 +47,7 @@ impl Environment {
             .map(|(_, value)| value.as_os_str())
     }
 
-    /// Where a user's caches belong, from `vars` alone: `XDG_CACHE_HOME`,
-    /// then `HOME/.cache`, then `LOCALAPPDATA` on Windows.
-    ///
-    /// A pure function of the environment rather than a read of it, so the
-    /// composition root stays the only place that asks the process.
+    /// Where a user's caches belong, from `vars` alone: `XDG_CACHE_HOME`, then `HOME/.cache`, then `LOCALAPPDATA` on Windows.
     #[must_use]
     pub fn cache_directory_of(vars: &[(OsString, OsString)]) -> PathBuf {
         let of = |name: &str| {
@@ -111,23 +95,10 @@ pub struct Request {
 #[non_exhaustive]
 pub enum Command {
     /// Verify the workspace and report a verdict.
-    ///
-    /// Every test runs once, on its own, under coverage instrumentation.
-    /// The verdict is written to the report directory and to standard
-    /// output; progress goes to standard error, so redirecting the output
-    /// gives a report and not a report with a progress log in it.
     Verify(Verify),
     /// Write an annotated .mjutest.toml.
-    ///
-    /// The skeleton is the defaults with every other section as commented
-    /// guidance, so loading it untouched configures exactly what configuring
-    /// nothing would.
     Init(Init),
     /// Say what a run would measure, without measuring it.
-    ///
-    /// It builds, because there is no way to know what tests exist without
-    /// asking the binaries that hold them, but it runs none of them and
-    /// writes no report.
     Plan(Plan),
     /// Show what a completed run concluded.
     Report(Report),
@@ -140,10 +111,6 @@ pub enum Command {
     /// Bundle everything about one run into one directory.
     Diagnostics(Diagnostics),
     /// Report the toolchain and the tools a run needs.
-    ///
-    /// Exits 0 when a standard-v1 run could go ahead on this machine and 3
-    /// when it could not. What only a deep-v1 run or a later phase needs is
-    /// reported as optional and costs nothing.
     Doctor(Doctor),
 }
 
@@ -153,8 +120,7 @@ pub struct Verify {
     /// The workspace to verify. The working directory by default.
     #[arg(long, value_name = "DIR")]
     pub directory: Option<PathBuf>,
-    /// The configuration file. `.mjutest.toml` beside the workspace by
-    /// default; a missing one is the defaults.
+    /// The configuration file. `.mjutest.toml` beside the workspace by default; a missing one is the defaults.
     #[arg(long, value_name = "PATH")]
     pub config: Option<PathBuf>,
     /// Verify only this package. Repeatable; the default is every member.
@@ -164,10 +130,6 @@ pub struct Verify {
     #[arg(long, value_enum, default_value_t = Ui::Plain)]
     pub ui: Ui,
     /// Record what the run does, under DIR or `.mjutest/trace/<run>`.
-    ///
-    /// Written as `--trace` or `--trace=DIR`: the equals sign is required,
-    /// because `--trace some/path` would otherwise be ambiguous with a
-    /// positional argument.
     #[arg(
         long,
         value_name = "DIR",
@@ -185,9 +147,7 @@ pub struct Verify {
     /// Pass --locked to every cargo command.
     #[arg(long)]
     pub locked: bool,
-    /// Arguments for the test binaries. Only the flags mjutest does not own
-    /// are allowed: --test-threads, --include-ignored, --nocapture,
-    /// --show-output.
+    /// Arguments for the test binaries. Only the flags mjutest does not own are allowed: --test-threads, --include-ignored, --nocapture, --show-output.
     #[arg(last = true, value_name = "TEST ARGS")]
     pub test_args: Vec<String>,
 }
@@ -248,9 +208,6 @@ pub struct Diagnostics {
 #[non_exhaustive]
 pub enum TraceCommand {
     /// What one recording holds, and what is wrong with it.
-    ///
-    /// Exits 2 when the recording is not whole: a summary of a recording
-    /// with holes in it is a summary of something else.
     Summary {
         /// The run to read. The latest by default.
         #[arg(value_name = "RUN")]
@@ -289,8 +246,7 @@ pub enum Ui {
     Jsonl,
 }
 
-/// A command line that could not be parsed, or a request to print help or the
-/// version, rendered for the stream it belongs on.
+/// A command line that could not be parsed, or a request to print help or the version, rendered for the stream it belongs on.
 #[derive(Debug)]
 pub struct Usage {
     /// The text to write, newline-terminated.
@@ -301,11 +257,9 @@ pub struct Usage {
     pub exit_code: u8,
 }
 
-/// Parses `args`, program name first. A bare invocation is the help text, as
-/// it is in goatest.
+/// Parses `args`, program name first. A bare invocation is the help text, as it is in goatest.
 ///
 /// # Errors
-///
 /// Returns the rendered usage error, help text, or version text.
 pub fn parse<I>(args: I) -> Result<Request, Usage>
 where
@@ -332,8 +286,7 @@ where
     })
 }
 
-/// Renders a diagnostic the way every mjutest diagnostic is rendered: one
-/// `mjutest: ` prefix, a lowercase message, and the usage that follows it.
+/// Renders a diagnostic the way every mjutest diagnostic is rendered: one `mjutest: ` prefix, a lowercase message, and the usage that follows it.
 fn diagnose(rendered: &str) -> String {
     let message = rendered.strip_prefix("error: ").unwrap_or(rendered);
     format!("{PROGRAM}: {message}")

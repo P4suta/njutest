@@ -2,14 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The seam ratchet (ADR 0001).
-//!
-//! Production code carries no package-level seam a test could overwrite,
-//! reads no process environment outside the composition root, exits nowhere
-//! but there, and never imports test support.
-//!
-//! The scan and the ledger `xtask/seam_allowlist.txt` must agree exactly. A
-//! seam the ledger does not name fails the gate as a new global; a ledger
-//! line the tree no longer has fails it as a removal that was not recorded.
 
 use std::collections::BTreeSet;
 use std::fmt;
@@ -89,15 +81,7 @@ impl fmt::Display for Seam {
 
 /// Scans one production source file.
 ///
-/// `path` is the label the findings carry and decides whether the file is a
-/// composition root (`main.rs`), where the process environment may be read
-/// and the process may exit.
-///
-/// Findings are sorted by path, kind, and name, and identical findings are
-/// collapsed, so the result is a set the ledger can name.
-///
 /// # Errors
-///
 /// Returns the parse error when `source` is not Rust.
 pub fn scan_source(path: &str, source: &str) -> Result<Vec<Seam>, syn::Error> {
     let file = syn::parse_file(source)?;
@@ -284,7 +268,6 @@ impl<'ast> Visit<'ast> for Scanner<'_> {
             if !is_tests_module(item) {
                 self.record(SeamKind::CfgTestOutsideTestsModule, item_name(item));
             }
-            // Test-only code is not production code: do not scan inside it.
             return;
         }
         syn::visit::visit_item(self, item);
@@ -381,7 +364,6 @@ impl fmt::Display for Disagreement {
 /// Compares the scan against the ledger. `Ok(())` means exact agreement.
 ///
 /// # Errors
-///
 /// Returns every seam missing from either side.
 pub fn compare(found: &[Seam], ledger: &[Seam]) -> Result<(), Disagreement> {
     let found: BTreeSet<&Seam> = found.iter().collect();
@@ -401,11 +383,9 @@ pub fn compare(found: &[Seam], ledger: &[Seam]) -> Result<(), Disagreement> {
     }
 }
 
-/// Parses the ledger: one `path:kind:name` per line, sorted, `#` comments and
-/// blank lines ignored.
+/// Parses the ledger: one `path:kind:name` per line, sorted, `#` comments and blank lines ignored.
 ///
 /// # Errors
-///
 /// Returns the first malformed or out-of-order line.
 pub fn parse_ledger(text: &str) -> Result<Vec<Seam>, LedgerError> {
     let mut seams: Vec<Seam> = Vec::new();

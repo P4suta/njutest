@@ -2,17 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The canonical projection: the whole model, as one JSON document.
-//!
-//! Everything else a run publishes — lines, HTML, SARIF, JUnit — is derived
-//! from this, so this is the one that has to be complete rather than
-//! readable. It is indented and its fields are in declaration order, so two
-//! runs of the same work produce the same bytes and a diff between two runs
-//! is a diff between two verifications.
-//!
-//! [`document`] is the write path, and it runs
-//! [`audit::validate_for_persistence`] first. A report that contradicts
-//! itself is a bug in this program; refusing to write it is how that bug
-//! reaches a person instead of a reader who trusts it.
 
 use super::{Report, audit};
 use crate::error::{self, ErrorCode};
@@ -28,8 +17,7 @@ pub enum ReportError {
         #[source]
         source: serde_json::Error,
     },
-    /// The document is not one this version understands: an unknown field, a
-    /// missing field, a value of the wrong shape.
+    /// The document is not one this version understands: an unknown field, a missing field, a value of the wrong shape.
     #[error("{}: not an {schema} document: {source}", error::REPORT_UNREADABLE.code, schema = super::SCHEMA)]
     Unreadable {
         /// What serde said, which names the offending field.
@@ -63,7 +51,6 @@ impl ReportError {
 /// The durable document for `report`, ending in one newline.
 ///
 /// # Errors
-///
 /// [`ReportError::Unsound`] when the report fails its own audit, and
 /// [`ReportError::Unserializable`] when the model itself cannot be written.
 pub fn document(report: &Report) -> Result<String, ReportError> {
@@ -74,12 +61,9 @@ pub fn document(report: &Report) -> Result<String, ReportError> {
     render(report)
 }
 
-/// The same document, without the audit, for a caller that has one reason to
-/// look at a report it already knows is broken — a diagnostics bundle, a
-/// test of the audit itself.
+/// The same document, without the audit, for a caller that has one reason to look at a report it already knows is broken — a diagnostics bundle, a test of the audit itself.
 ///
 /// # Errors
-///
 /// [`ReportError::Unserializable`] when the model cannot be written.
 pub fn render(report: &Report) -> Result<String, ReportError> {
     let mut text = serde_json::to_string_pretty(report)
@@ -91,7 +75,6 @@ pub fn render(report: &Report) -> Result<String, ReportError> {
 /// Reads a document this version understands, and refuses anything else.
 ///
 /// # Errors
-///
 /// [`ReportError::Unreadable`] for a document with an unknown field, a
 /// missing field, or a value of the wrong shape.
 pub fn parse(text: &str) -> Result<Report, ReportError> {

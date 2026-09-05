@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mjutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Syntactic discovery: every candidate a file yields, with its guard site,
-//! and every place deliberately passed over, with its reason.
+//! Syntactic discovery: every candidate a file yields, with its guard site, and every place deliberately passed over, with its reason.
 
 #![expect(
     clippy::expect_used,
@@ -98,8 +97,6 @@ fn assert_coherent(source: &str, discovery: &FileDiscovery) {
     assert_eq!(starts, sorted, "candidates are in (start, rule) order");
     starts.clear();
 }
-
-// --- forms ----------------------------------------------------------------------
 
 #[test]
 fn comparisons_in_conditions_take_form_c_and_nested_arithmetic_form_e() {
@@ -219,8 +216,6 @@ fn bitwise_operators_and_match_guards() {
     );
 }
 
-// --- skips ----------------------------------------------------------------------
-
 #[test]
 fn every_place_passed_over_is_counted_under_the_outermost_reason() {
     let src = "#![no_std]\nconst A: bool = true;\nstatic B: i32 = 1 + 2;\nconst fn c(x: i32) -> i32 { x + 1 }\n#[cfg(feature = \"extra\")]\nfn d(x: i32) -> i32 { x - 1 }\n#[cfg(test)]\nmod tests {\n    fn t(x: i32) -> bool { x > 0 }\n}\n#[test]\nfn u() { assert!(1 < 2); }\nfn m(x: i32) -> i32 {\n    println!(\"{}\", x + 1);\n    let a = [0u8; 2 + 2];\n    a.len() as i32 * x\n}\nenum E { X = 1 + 1 }\n";
@@ -303,8 +298,6 @@ fn skip_reasons_are_named_explained_and_ranked() {
     );
 }
 
-// --- positions and sites --------------------------------------------------------------
-
 #[test]
 fn positions_count_bytes_and_chars_and_spans_are_absolute_past_a_bom_and_shebang() {
     let src = "\u{feff}#!/usr/bin/env cargo\r\n// comment\r\nmod inner {\r\n    /// doc\r\n    #[inline]\r\n    pub fn f(a: i32) -> i32 { let s = \"日本\"; a + s.len() as i32 }\r\n}\r\n";
@@ -319,8 +312,6 @@ fn positions_count_bytes_and_chars_and_spans_are_absolute_past_a_bom_and_shebang
     assert_eq!(add.position.byte_column, 51);
     assert_eq!(add.position.char_column, 47);
     assert_eq!(add.hint.super_depth, 1);
-    // The allow attribute lands on the signature's line, not before the
-    // item's doc comment and attributes.
     let allow_at = add.hint.allow_at.expect("inside a fn") as usize;
     assert!(
         src[allow_at..].starts_with("pub fn f("),
@@ -382,8 +373,6 @@ fn closures_and_async_blocks_have_no_known_return_type_unless_spelled() {
         .collect();
     assert_eq!(returns, [(2, "a * 3"), (6, "f(1) + g(1)")]);
 }
-
-// --- errors, determinism, selection ----------------------------------------------------
 
 #[test]
 fn a_file_that_does_not_parse_is_an_error_naming_the_line() {
@@ -453,8 +442,6 @@ fn the_trace_record_lists_every_decision_in_source_order() {
     let json = serde_json::to_string(&record).expect("json");
     assert!(json.contains("\"candidates\":2"), "{json}");
 }
-
-// --- the golden ----------------------------------------------------------------------------
 
 #[test]
 fn the_families_input_exercises_every_rule_and_matches_the_golden() {

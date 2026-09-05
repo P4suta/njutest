@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mjutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Splicing: refuses to edit what it cannot verify, applies in span order,
-//! and answers offset questions in both directions.
+//! Splicing: refuses to edit what it cannot verify, applies in span order, and answers offset questions in both directions.
 
 #![expect(
     clippy::expect_used,
@@ -142,7 +141,6 @@ fn overlapping_splices_are_refused() {
     )
     .expect_err("partial");
     assert!(matches!(error, SpliceError::Overlap { .. }), "{error:?}");
-    // An enclosing span is caught against every later span, not just the first.
     let error = apply(
         SRC,
         &[
@@ -167,7 +165,6 @@ fn overlapping_splices_are_refused() {
 
 #[test]
 fn the_offset_map_translates_exactly_outside_replaced_bytes() {
-    // "let x = a + b;\n" -> "let total = a - b;\n"
     let (out, map) = apply(
         SRC,
         &[splice(4, 5, b"x", b"total"), splice(10, 11, b"+", b"-")],
@@ -212,8 +209,6 @@ fn an_offset_inside_a_deleted_range_maps_inexactly_to_the_replacement_start() {
     assert_eq!(map.to_output(10), (8, false));
     assert_eq!(map.to_output(8), (8, true));
     assert_eq!(map.to_output(14), (8, true));
-    // Both ends of the deleted range map onto output offset 8; the reverse
-    // lookup answers with the surviving byte after the deletion.
     assert_eq!(map.to_original(8), (14, true));
 }
 
@@ -327,7 +322,6 @@ proptest! {
         cuts in proptest::collection::btree_set(0u32..41, 0..8),
         replacements in proptest::collection::vec(proptest::collection::vec(any::<u8>(), 0..5), 0..8),
     ) {
-        // Non-overlapping spans from sorted cut points: [c0,c1), [c2,c3), ...
         let len = u32::try_from(src.len()).expect("small");
         let cuts: Vec<u32> = cuts.into_iter().filter(|c| *c <= len).collect();
         let mut splices = Vec::new();

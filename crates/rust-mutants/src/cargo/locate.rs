@@ -17,15 +17,11 @@ const VERSION_OUTPUT_LIMIT: usize = 64 * 1024;
 /// Configures [`Toolchain::locate`].
 #[derive(Debug, Clone, Default)]
 pub struct LocateOptions {
-    /// The cargo to use: a path, or a bare name to find on `search_path`.
-    /// `None` means the bare name `cargo`.
+    /// The cargo to use: a path, or a bare name to find on `search_path`. `None` means the bare name `cargo`.
     pub cargo: Option<PathBuf>,
-    /// The `PATH` a bare name is searched on. The composition root reads
-    /// the process environment; this module never does. `None` refuses
-    /// every bare name.
+    /// The `PATH` a bare name is searched on. The composition root reads the process environment; this module never does. `None` refuses every bare name.
     pub search_path: Option<OsString>,
-    /// The complete environment every cargo command runs with. `None`
-    /// inherits this process's environment.
+    /// The complete environment every cargo command runs with. `None` inherits this process's environment.
     pub env: Option<Vec<(OsString, OsString)>>,
 }
 
@@ -40,14 +36,9 @@ pub struct Toolchain {
 }
 
 impl Toolchain {
-    /// Finds cargo, then runs `cargo -vV` and `rustc -vV` inside `dir`, so
-    /// that a rustup toolchain file there is what answers.
-    ///
-    /// The rustc is the one beside cargo when there is one — the rustup
-    /// shims are siblings — and otherwise the `rustc` on the search path.
+    /// Finds cargo, then runs `cargo -vV` and `rustc -vV` inside `dir`, so that a rustup toolchain file there is what answers.
     ///
     /// # Errors
-    ///
     /// [`CargoErrorKind::ToolchainNotFound`] when an executable is missing,
     /// [`CargoErrorKind::CommandFailed`] when a banner could not be read, and
     /// [`CargoErrorKind::VersionUnreadable`] when it could not be parsed.
@@ -123,9 +114,7 @@ impl Toolchain {
         self.env.as_deref()
     }
 
-    /// A spec that runs `cargo <args>` inside `dir` with the toolchain's
-    /// environment. The caller adds a timeout, an output limit, or a
-    /// structured stdout as the command warrants.
+    /// A spec that runs `cargo <args>` inside `dir` with the toolchain's environment. The caller adds a timeout, an output limit, or a structured stdout as the command warrants.
     pub fn command<I, S>(&self, dir: &Path, args: I) -> Spec
     where
         I: IntoIterator<Item = S>,
@@ -180,14 +169,9 @@ fn sibling(program: &Path, name: &str) -> Option<PathBuf> {
         .find(|p| p.is_file())
 }
 
-/// Resolves an executable the way a shell would, without consulting this
-/// process's environment.
-///
-/// A name with a directory component must exist as given; a bare name is
-/// searched on `search_path`, and refused when there is none.
+/// Resolves an executable the way a shell would, without consulting this process's environment.
 ///
 /// # Errors
-///
 /// [`CargoErrorKind::ToolchainNotFound`].
 pub fn resolve_executable(name: &Path, search_path: Option<&OsStr>) -> Result<PathBuf, CargoError> {
     let not_found = |detail: String| CargoError::new(CargoErrorKind::ToolchainNotFound, detail);

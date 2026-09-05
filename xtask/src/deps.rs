@@ -2,10 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Dependency direction between the workspace crates.
-//!
-//! The engine knows nothing of the runner, the public API crate knows nothing
-//! of either, and the devkit is a development dependency of everybody and a
-//! dependency of nobody.
 
 use std::fmt;
 

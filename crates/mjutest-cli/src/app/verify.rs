@@ -2,11 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! `mjutest verify`: run a verification and say what it concluded.
-//!
-//! The command line is turned into a request, the request into a report, and
-//! the report into an exit code — and the exit code comes from the verdict
-//! rather than from anything this layer decides, so a caller reading `$?`
-//! and a reader reading the report can never disagree.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -69,9 +64,6 @@ pub fn run(
         run_id: identity,
         started,
     };
-    // The notes hold the error stream for as long as they exist, so they
-    // live exactly as long as the run does and every diagnostic is written
-    // outside them.
     let result = {
         let mut notes = ui::Notes::of(arguments.ui, stderr);
         run::run(&request, environment, &mut notes, watch)
@@ -139,13 +131,6 @@ struct Recording<'a> {
 }
 
 /// The recording this run keeps.
-///
-/// A run always records: without `--trace` into a ring in memory, which is
-/// what a diagnostics bundle reads when a run fails, and with it into a
-/// directory as well. A trace that cannot be written costs a note and never
-/// the run ([ADR 0002]).
-///
-/// [ADR 0002]: https://github.com/P4suta/mjutest/blob/main/docs/adr/0002-trace-is-not-evidence.md
 fn recorder(arguments: &Verify, run: &Recording<'_>, stderr: &mut dyn Write) -> Recorder {
     let (root, identity, contract) = (run.root, run.identity, run.contract);
     let start = StartRecord::of(identity, crate::report::RunKind::Full, contract);

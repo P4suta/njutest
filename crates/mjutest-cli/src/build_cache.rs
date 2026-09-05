@@ -1,33 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mjutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Two layers of build output, and the one rule that says which a command
-//! writes into.
-//!
-//! A verification leaves gigabytes behind, and almost none of it is mutants:
-//! it is the builds the *test suites themselves* perform. So [ADR 0005]
-//! divides the output in two. A **base** layer belongs to the machine and
-//! survives between runs; a **scratch** layer belongs to one run and dies
-//! with it. Only a command that compiles or lists may write to the base
-//! layer, and nothing that runs the project's tests may — that half is what
-//! keeps a suite's throwaway builds from evicting the standard library, the
-//! dependencies, and the project's own crates.
-//!
-//! The mechanism is [ADR 0010]'s: a compiling command is given
-//! `--target-dir <base layer>` on its command line, and every process that
-//! runs tests is given `CARGO_TARGET_DIR=<run scratch>/build` in its
-//! environment. `--target-dir` outranks the environment, which is exactly
-//! what lets one command compile into the base layer while any cargo its
-//! children spawn stays in scratch.
-//!
-//! [`layer_for`] is that rule, in one function, and a test names every
-//! command the runner issues and pins its side.
-//!
-//! None of this may fail a run ([ADR 0005] §7): a layer that cannot be
-//! prepared is a note, and the command runs without one.
-//!
-//! [ADR 0005]: https://github.com/P4suta/mjutest/blob/main/docs/adr/0005-build-cache-mjutest-owns.md
-//! [ADR 0010]: https://github.com/P4suta/mjutest/blob/main/docs/adr/0010-target-directories-are-the-cache-layers.md
+//! Two layers of build output, and the one rule that says which a command writes into.
 
 use std::fs;
 use std::io;
@@ -37,8 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{self, ErrorCode};
 
-/// The layout version, in the directory name: a later layout is a new
-/// directory, not a migration.
+/// The layout version, in the directory name: a later layout is a new directory, not a migration.
 pub const LAYOUT_DIR: &str = "build-v1";
 
 /// The marker that proves a directory is one this program made.
@@ -48,10 +21,6 @@ pub const MARKER_SCHEMA: &str = "mjutest-build-cache-v1";
 pub const MARKER_NAME: &str = "mjutest-build-cache-v1.json";
 
 /// One flavour of build output.
-///
-/// Three, because `RUSTFLAGS` are part of every fingerprint: an instrumented
-/// build and a plain one share nothing, and putting them in one directory
-/// would rebuild both every time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Layer {
@@ -76,9 +45,6 @@ impl Layer {
 }
 
 /// Every command a run starts that a build directory could belong to.
-///
-/// A new variant must choose a side in [`layer_for`] and appear in
-/// [`COMMANDS`]; the test that pins the rule fails otherwise.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Command {
@@ -131,19 +97,14 @@ pub enum Destination {
 }
 
 /// The rule of [ADR 0005], in one function.
-///
-/// [ADR 0005]: https://github.com/P4suta/mjutest/blob/main/docs/adr/0005-build-cache-mjutest-owns.md
 #[must_use]
 pub const fn layer_for(command: Command) -> Destination {
     match command {
-        // Compiles or lists: what a later run can hit again.
         Command::Metadata | Command::TestBuild | Command::DoctestBuild => {
             Destination::Base(Layer::Native)
         }
         Command::CoverageBuild => Destination::Base(Layer::Coverage),
         Command::EngineBuild => Destination::Base(Layer::Mutants),
-        // Runs the project's tests: whatever cargo the suite itself spawns
-        // is addressed by a path nothing will ever ask for again.
         Command::TargetProcess
         | Command::ControlProcess
         | Command::MutantProcess
@@ -158,8 +119,7 @@ pub const fn layer_for(command: Command) -> Destination {
 pub enum How {
     /// `--target-dir DIR` on the command line, which outranks the variable.
     Flag,
-    /// `CARGO_TARGET_DIR=DIR` in the environment, which any cargo the
-    /// process spawns inherits.
+    /// `CARGO_TARGET_DIR=DIR` in the environment, which any cargo the process spawns inherits.
     Environment,
 }
 
@@ -184,13 +144,11 @@ pub struct Marker {
     pub toolchain: String,
 }
 
-/// Why a layer could not be used. Never a reason to fail a run: the caller
-/// notes it and builds without one.
+/// Why a layer could not be used. Never a reason to fail a run: the caller notes it and builds without one.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum CacheError {
-    /// The directory holds files and carries none of this program's names,
-    /// so it is somebody else's and is left exactly as it was found.
+    /// The directory holds files and carries none of this program's names, so it is somebody else's and is left exactly as it was found.
     #[error("{}: {path} holds files this program did not put there", error::BUILD_CACHE_UNUSABLE.code)]
     Foreign {
         /// The directory.
@@ -218,12 +176,6 @@ impl CacheError {
 }
 
 /// The base layers of one machine, for one compiler.
-///
-/// Only the composition root names the root directory ([ADR 0005] §8): a
-/// service embedded elsewhere that resolved it for itself would be
-/// collecting entries out of somebody's own build cache.
-///
-/// [ADR 0005]: https://github.com/P4suta/mjutest/blob/main/docs/adr/0005-build-cache-mjutest-owns.md
 #[derive(Debug, Clone)]
 pub struct BuildCache {
     root: PathBuf,
@@ -231,9 +183,7 @@ pub struct BuildCache {
 }
 
 impl BuildCache {
-    /// The layers under `build_dir`, for the compiler `toolchain` names —
-    /// its commit hash, which is what actually decides whether artifacts are
-    /// compatible.
+    /// The layers under `build_dir`, for the compiler `toolchain` names — its commit hash, which is what actually decides whether artifacts are compatible.
     #[must_use]
     pub fn new(build_dir: &Path, toolchain: &str) -> Self {
         Self {
@@ -248,11 +198,9 @@ impl BuildCache {
         self.root.join(layer.dir_name()).join(&self.toolchain)
     }
 
-    /// Makes the layer if it is not there and leaves the marker that says
-    /// this program made it. Asking twice asks for the same directory.
+    /// Makes the layer if it is not there and leaves the marker that says this program made it. Asking twice asks for the same directory.
     ///
     /// # Errors
-    ///
     /// [`CacheError::Foreign`] for a directory holding files and none of
     /// this program's names, and [`CacheError::Unusable`] for the I/O
     /// failure.
@@ -284,12 +232,7 @@ impl BuildCache {
         Ok(dir)
     }
 
-    /// Where `command` builds and how it is told, given the run's scratch
-    /// build directory. `None` for a command that builds nothing.
-    ///
-    /// The directory is named, not made: [`BuildCache::prepare`] is what
-    /// makes one, and a caller that could not prepare it says so and runs
-    /// without.
+    /// Where `command` builds and how it is told, given the run's scratch build directory. `None` for a command that builds nothing.
     #[must_use]
     pub fn placement(&self, command: Command, scratch_build_dir: &Path) -> Option<Placement> {
         match layer_for(command) {
@@ -306,8 +249,7 @@ impl BuildCache {
     }
 }
 
-/// Whether `dir` holds files and none of this program's names. An empty
-/// directory is not foreign: a run may well have made it and died.
+/// Whether `dir` holds files and none of this program's names. An empty directory is not foreign: a run may well have made it and died.
 fn is_foreign(dir: &Path) -> bool {
     if dir.join(MARKER_NAME).exists() {
         return false;
@@ -315,9 +257,7 @@ fn is_foreign(dir: &Path) -> bool {
     fs::read_dir(dir).is_ok_and(|mut entries| entries.next().is_some())
 }
 
-/// A path component from arbitrary text: anything that is not a letter, a
-/// digit, a dash, or a dot becomes a dash, so a version string with a space
-/// or a slash in it cannot leave the layout.
+/// A path component from arbitrary text: anything that is not a letter, a digit, a dash, or a dot becomes a dash, so a version string with a space or a slash in it cannot leave the layout.
 fn sanitize(value: &str) -> String {
     let cleaned: String = value
         .chars()

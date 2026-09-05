@@ -24,8 +24,6 @@ fn expect_error(text: &str) -> mjutest_cli::config::ConfigError {
     load(text).expect_err("this configuration is refused")
 }
 
-// --- defaults -------------------------------------------------------------------
-
 #[test]
 fn the_defaults_are_the_numbers_the_contract_states() {
     let config = Config::default();
@@ -74,7 +72,6 @@ fn an_empty_file_and_the_written_skeleton_both_mean_the_defaults() {
         Config::default(),
         "the untouched skeleton is exactly the defaults"
     );
-    // The skeleton is guidance, so every optional section is there to read.
     for section in [
         "[project]",
         "[execution]",
@@ -89,8 +86,6 @@ fn an_empty_file_and_the_written_skeleton_both_mean_the_defaults() {
     }
     assert!(skeleton().starts_with("# "), "the skeleton explains itself");
 }
-
-// --- strictness ------------------------------------------------------------------
 
 #[test]
 fn an_unknown_key_is_an_error_that_names_it() {
@@ -132,8 +127,6 @@ fn the_contract_is_one_of_two_names() {
     assert!(error.to_string().contains("strict-v9"), "{error}");
 }
 
-// --- durations --------------------------------------------------------------------
-
 #[test]
 fn durations_are_read_the_way_go_writes_them() {
     let cases: [(&str, u64); 8] = [
@@ -168,8 +161,6 @@ fn a_duration_key_carries_its_own_name_into_the_error() {
     let config = load("[execution]\ntimeout = \"90s\"\n").expect("a duration");
     assert_eq!(config.execution.timeout, Duration::from_secs(90));
 }
-
-// --- what mjutest owns --------------------------------------------------------------
 
 #[test]
 fn the_harness_flags_mjutest_owns_are_refused_and_the_rest_pass() {
@@ -227,8 +218,6 @@ fn an_environment_entry_is_a_name_and_never_a_value() {
         "{reserved}"
     );
 }
-
-// --- the rest of the file ------------------------------------------------------------
 
 #[test]
 fn every_section_is_read_the_way_the_contract_describes_it() {
@@ -300,8 +289,7 @@ ticket = "QA-123"
     assert_documented_extras(&config);
 }
 
-/// The sections a run reaches for only when it has to: resources, the
-/// generator, and the acceptances a reviewer recorded.
+/// The sections a run reaches for only when it has to: resources, the generator, and the acceptances a reviewer recorded.
 fn assert_documented_extras(config: &Config) {
     let postgres = config.resources.get("postgres").expect("the resource");
     assert_eq!(postgres.command, ["./tools/postgres-provider"]);
@@ -342,8 +330,6 @@ fn a_resource_cannot_be_shared_and_exclusive_at_once() {
     let empty = expect_error("[resources.db]\ncommand = []\n");
     assert_eq!(empty.kind(), ConfigErrorKind::Invalid);
 }
-
-// --- finding and reading it ------------------------------------------------------------
 
 #[test]
 fn a_missing_file_is_the_defaults_and_a_present_one_is_read() {

@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mjutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! The seam ratchet refuses each shape ADR 0001 names, exempts what it
-//! exempts, and holds the tree to the ledger in both directions.
+//! The seam ratchet refuses each shape ADR 0001 names, exempts what it exempts, and holds the tree to the ledger in both directions.
 
 #![expect(
     clippy::expect_used,

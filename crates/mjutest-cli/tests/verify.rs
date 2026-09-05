@@ -2,12 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! `mjutest verify`, end to end, against a real workspace.
-//!
-//! This is the contract a user sees: an exit code, a report where a reader
-//! will look for it, and a recording of what happened. The verdict this
-//! release reaches is `INSUFFICIENT` even when every test passes, because
-//! the mutation phase has not run and a suite that passes says only that it
-//! passes — the question mjutest exists to answer has not been asked yet.
 
 #![expect(
     clippy::expect_used,
@@ -19,8 +13,7 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-/// A throwaway copy of a fixture, so the run writes its reports somewhere
-/// nothing else is reading.
+/// A throwaway copy of a fixture, so the run writes its reports somewhere nothing else is reading.
 struct Fixture {
     root: PathBuf,
     _dir: tempfile::TempDir,
@@ -59,10 +52,6 @@ fn verify(fixture: &Fixture, extra: &[&str]) -> Output {
         .current_dir(&fixture.root)
         .env_clear()
         .env("NO_COLOR", "1")
-        // Its own build cache, not the developer's: the layer under
-        // XDG_CACHE_HOME is shared by every run that names it, and two
-        // suites building different trees into one layer is a test with a
-        // side effect on the machine it runs on.
         .env("XDG_CACHE_HOME", fixture.root.join(".cache"))
         .envs(std::env::vars_os().filter(|(key, _)| {
             matches!(
@@ -87,8 +76,6 @@ fn document(fixture: &Fixture) -> serde_json::Value {
         .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
     serde_json::from_str(&text).expect("the report is JSON")
 }
-
-// --- the contract a user sees --------------------------------------------------------
 
 #[test]
 fn a_passing_workspace_is_insufficient_because_the_question_was_never_asked() {
@@ -272,9 +259,6 @@ fn the_report_of_a_known_workspace_is_the_recorded_one() {
     let fixture = fixture("fixture-baseline");
     assert_eq!(verify(&fixture, &[]).status.code(), Some(2));
 
-    // What changes between two runs of the same work — the moment, the
-    // commit, the compiler, how long each target took — is replaced in
-    // place, so what the golden holds is what the run claimed.
     let normalized = mjutest_devkit::report::normalize(&document(&fixture));
     let mut text = serde_json::to_string_pretty(&normalized).expect("one document");
     text.push('\n');

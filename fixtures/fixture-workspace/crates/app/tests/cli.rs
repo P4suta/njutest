@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mjutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Runs the binary cargo built, the way cargo's own test environment
-//! allows.
+//! Runs the binary cargo built, the way cargo's own test environment allows.
 
 #[test]
 fn sums_and_clamps() {

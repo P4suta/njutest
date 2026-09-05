@@ -2,16 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! `mjutest diagnostics`: everything about one run, in one directory.
-//!
-//! What a person needs when a run went wrong is not one file. It is the
-//! report, the recording, the preserved output of the commands, and — this
-//! is the part that is easy to leave out — an honest list of what could
-//! *not* be found, so nobody spends an hour looking for a trace that was
-//! never recorded.
-//!
-//! The bundle is a copy. A run directory is immutable and a recording is
-//! diagnostic exhaust; a bundle that moved them would destroy the thing it
-//! was made to explain.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};

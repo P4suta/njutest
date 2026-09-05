@@ -2,14 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Where a completed verification is kept.
-//!
-//! A run directory is immutable for as long as it exists: nothing rewrites
-//! one, and a later run of the same work is a new directory. That is what
-//! makes two reports comparable — a diff between them is a diff between two
-//! verifications rather than between two edits of one file.
-//!
-//! The indexes point at directories rather than holding copies, so a reader
-//! following `latest-any.json` reads the same bytes the run wrote.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -70,14 +62,9 @@ pub struct Kept {
     pub document: PathBuf,
 }
 
-/// Writes `report` into its own directory under `root`, then points the
-/// indexes at it.
-///
-/// The document is written before the indexes, so an index never names a
-/// directory that does not hold a report yet.
+/// Writes `report` into its own directory under `root`, then points the indexes at it.
 ///
 /// # Errors
-///
 /// [`StoreError::Report`] when the report fails its own audit — nothing is
 /// written then — and [`StoreError::NotKept`] for the I/O failure.
 pub fn keep(root: &Path, report: &Report) -> Result<Kept, StoreError> {
@@ -102,15 +89,7 @@ pub fn keep(root: &Path, report: &Report) -> Result<Kept, StoreError> {
     })
 }
 
-/// Removes the oldest run directories beyond `keep`, newest first by name —
-/// which is chronological, because that is what a run identity is for.
-///
-/// The directories the indexes point at are kept whatever their age: an
-/// index naming a directory that is not there would be worse than one more
-/// directory on the disk.
-///
-/// Retention is housekeeping: a directory that will not go away is not a
-/// reason to fail a verification. Answers with what it removed.
+/// Removes the oldest run directories beyond `keep`, newest first by name — which is chronological, because that is what a run identity is for.
 #[must_use]
 pub fn retain(root: &Path, keep: u32) -> Vec<PathBuf> {
     let runs = root.join(RUNS_DIR);

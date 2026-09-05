@@ -1,13 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mjutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Which target directory a command writes into, and why the rule is one
-//! function with a test that names every command.
-//!
-//! ADR 0005's load-bearing half is that nothing which runs the project's
-//! tests may write to the layer that survives the run: a suite's own cargo
-//! invocations are exactly the throwaway builds, and were they to persist
-//! they would evict what the base layer exists to hold.
+//! Which target directory a command writes into, and why the rule is one function with a test that names every command.
 
 #![expect(
     clippy::indexing_slicing,
@@ -24,8 +18,6 @@ use mjutest_cli::build_cache::{
 fn cache(root: &Path) -> BuildCache {
     BuildCache::new(root, "0123456789abcdef0123456789abcdef01234567")
 }
-
-// --- the rule ----------------------------------------------------------------------
 
 #[test]
 fn every_command_the_runner_issues_says_which_side_of_the_rule_it_is_on() {
@@ -76,8 +68,6 @@ fn the_instrumented_build_never_shares_a_layer_with_the_plain_one() {
         "RUSTFLAGS invalidate every fingerprint, so sharing would rebuild both every time"
     );
 }
-
-// --- where a layer is --------------------------------------------------------------
 
 #[test]
 fn a_layer_is_named_for_the_layout_the_flavour_and_the_compiler() {
@@ -138,8 +128,6 @@ fn a_directory_full_of_somebody_else_s_files_is_refused_untouched() {
         "refused without writing anything into it"
     );
 }
-
-// --- how a command is told ---------------------------------------------------------
 
 #[test]
 fn a_command_that_compiles_is_given_the_flag_and_a_test_process_the_variable() {

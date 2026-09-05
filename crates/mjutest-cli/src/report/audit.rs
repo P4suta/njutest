@@ -2,14 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What a durable report must satisfy, beyond being well-formed.
-//!
-//! A JSON Schema can say that a field is an integer. It cannot say that the
-//! numbers add up, that the verdict is the one the accounting supports, or
-//! that a fact recorded as unavailable is not also present. Those are the
-//! invariants that make a report auditable, and every one of them is a
-//! statement about this program rather than about the code under test: a
-//! violation is a bug here, and a run that hit one must not write the
-//! report and claim it.
 
 use std::fmt;
 
@@ -130,10 +122,7 @@ impl fmt::Display for Violation {
     }
 }
 
-/// Everything wrong with a report that is about to be written, in the order
-/// a reader would want to fix them.
-///
-/// An empty answer is the only one that may be persisted.
+/// Everything wrong with a report that is about to be written, in the order a reader would want to fix them.
 #[must_use]
 pub fn validate_for_persistence(report: &Report) -> Vec<Violation> {
     let mut violations = Vec::new();
@@ -145,8 +134,7 @@ pub fn validate_for_persistence(report: &Report) -> Vec<Violation> {
     violations
 }
 
-/// A verdict and the findings say the same thing, or the report says two
-/// things at once.
+/// A verdict and the findings say the same thing, or the report says two things at once.
 fn check_findings(report: &Report, violations: &mut Vec<Violation>) {
     let findings = report.findings.len();
     if report.verdict.is_assurance() && findings > 0 {

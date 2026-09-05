@@ -1,19 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mjutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! The baseline: every test of the workspace, once, in its own process,
-//! under coverage instrumentation.
-//!
-//! One process per test is what makes the rest possible. It is how a run
-//! learns which regions each test reaches — the fact every routing decision
-//! later rests on — and it is why a failing test can be named rather than
-//! merely counted.
-//!
-//! The thing this phase must never do is call a target passed that did not
-//! run. libtest exits 0 for a filter that matched nothing, so the exit code
-//! answers nothing at all; the `test result:` line is what decides, and its
-//! absence is [`TargetStatus::Missing`] rather than a pass
-//! ([`status_of`]).
+//! The baseline: every test of the workspace, once, in its own process, under coverage instrumentation.
 
 use std::collections::BTreeSet;
 use std::ffi::{OsStr, OsString};
@@ -33,8 +21,7 @@ use crate::trace::{ExecRecord, ProgressRecord};
 use crate::ui::Notes;
 use crate::watch::Watch;
 
-/// The compiled workspace a phase works against: one argument, so a phase
-/// that also takes options, notes, and a watch still reads.
+/// The compiled workspace a phase works against: one argument, so a phase that also takes options, notes, and a watch still reads.
 #[derive(Debug, Clone, Copy)]
 pub struct Workspace<'a> {
     /// The located toolchain.
@@ -86,11 +73,9 @@ pub struct Measured {
 pub struct Baseline {
     /// Every target, in the order the build produced them.
     pub targets: Vec<Measured>,
-    /// Every region the build instrumented, whether or not anything reached
-    /// it: the denominator routing is defined against.
+    /// Every region the build instrumented, whether or not anything reached it: the denominator routing is defined against.
     pub instrumented: BTreeSet<Block>,
-    /// What the compiler said, when the workspace did not build. Then there
-    /// are no targets, and that is a finding rather than an error.
+    /// What the compiler said, when the workspace did not build. Then there are no targets, and that is a finding rather than an error.
     pub failure: Option<String>,
     /// What this phase could not honour, by name.
     pub limitations: Vec<String>,
@@ -99,7 +84,6 @@ pub struct Baseline {
 /// Builds the workspace instrumented, then runs each of its tests once.
 ///
 /// # Errors
-///
 /// The build's refusals, a test binary that could not be asked what it
 /// holds, and a coverage tool that failed. A test that fails is not an
 /// error: it is a [`Measured`] that failed.
@@ -160,9 +144,7 @@ pub fn run(
     Ok(baseline)
 }
 
-/// Runs one target and reads what it reached, together with every region
-/// the export said the build instrumented — which is a fact about the
-/// binary rather than about this target, and the caller unions.
+/// Runs one target and reads what it reached, together with every region the export said the build instrumented — which is a fact about the binary rather than about this target, and the caller unions.
 fn measure(
     tools: &Tools,
     target: &Target,
@@ -199,15 +181,7 @@ fn measure(
     ))
 }
 
-/// The command one target runs as: exactly that test, in terse form, with
-/// whatever the caller asked the binaries for.
-///
-/// `--exact` and the one path are what make a target a target. An ignored
-/// test is asked for by name like any other and *not* forced to run: the
-/// filter matches it, libtest ignores it, and the summary says
-/// `1 ignored` — which is what tells "skipped" apart from "never existed".
-/// A caller who wants it run says so with `-- --include-ignored`, and then
-/// it is a target that ran.
+/// The command one target runs as: exactly that test, in terse form, with whatever the caller asked the binaries for.
 fn command(target: &Target, options: &BaselineOptions) -> Spec {
     let mut argv: Vec<OsString> = vec![target.executable.as_os_str().to_owned()];
     if !target.is_whole_binary() {
@@ -232,12 +206,6 @@ fn command(target: &Target, options: &BaselineOptions) -> Spec {
 }
 
 /// What the summary line says became of a target.
-///
-/// The exit code says nothing useful: libtest exits 0 when its filter
-/// matched nothing, so a target that never ran would look exactly like one
-/// that passed. The counts are the observation, and their absence is
-/// [`TargetStatus::Missing`] — fail-closed, because a claim about a test
-/// that did not run is a claim about nothing.
 #[must_use]
 pub fn status_of(summary: Option<Summary>, timed_out: bool) -> (TargetStatus, Option<String>) {
     if timed_out {

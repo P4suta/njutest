@@ -6,31 +6,21 @@
 use std::fmt;
 
 /// The outcome of one mutant.
-///
-/// The default is [`Outcome::NotRun`] on purpose: a result that was never
-/// filled in must never read as a kill. Forgetting to record an outcome
-/// deflates a score; it never inflates one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[non_exhaustive]
 pub enum Outcome {
-    /// Never executed: another shard owned it, a selection excluded it, the
-    /// run was interrupted, or routing proved no test reaches it.
+    /// Never executed: another shard owned it, a selection excluded it, the run was interrupted, or routing proved no test reaches it.
     #[default]
     NotRun,
     /// At least one test failed with the mutant active. Detected.
     Killed,
     /// Every selected test passed with the mutant active.
     Survived,
-    /// A *confirmed* timeout: exceeded the budget, retried serially, exceeded
-    /// it again. Detected — an infinite loop a mutant introduced is a
-    /// behaviour change the tests noticed. A single timeout is inconclusive.
+    /// A *confirmed* timeout: exceeded the budget, retried serially, exceeded it again. Detected — an infinite loop a mutant introduced is a behaviour change the tests noticed. A single timeout is inconclusive.
     TimedOut,
-    /// The run could not decide: one timeout that did not reproduce, or a
-    /// failure that also fails on the instrumented baseline.
+    /// The run could not decide: one timeout that did not reproduce, or a failure that also fails on the instrumented baseline.
     Inconclusive,
-    /// The harness itself failed for this mutant: the test binary could not
-    /// start, the runtime rejected the activation, the process died on a
-    /// signal the supervisor did not send.
+    /// The harness itself failed for this mutant: the test binary could not start, the runtime rejected the activation, the process died on a signal the supervisor did not send.
     Errored,
 }
 

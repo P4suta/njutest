@@ -1,15 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mjutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! What a build is compiled with, and why the coverage build has to say it
-//! in the variable rather than the flag.
-//!
-//! `CARGO_ENCODED_RUSTFLAGS` does not add to what `.cargo/config.toml`
-//! configures — it replaces it. So a coverage build that simply set the
-//! variable would silently compile the project without the flags the project
-//! asked for, and the binaries under verification would not be the project's
-//! binaries. Reading the configuration and putting it back is the only way
-//! to add one flag without taking others away.
+//! What a build is compiled with, and why the coverage build has to say it in the variable rather than the flag.
 
 #![expect(
     clippy::expect_used,
@@ -42,8 +34,6 @@ fn write(root: &Path, relative: &str, contents: &str) {
     fs::create_dir_all(path.parent().expect("a parent")).expect("the directory");
     fs::write(path, contents).expect("the file");
 }
-
-// --- what a command is told ---------------------------------------------------------
 
 #[test]
 fn nothing_to_say_leaves_the_variable_unset_so_the_configuration_still_applies() {
@@ -131,8 +121,6 @@ fn an_environment_that_is_already_set_leaves_the_configuration_where_cargo_left_
         "cargo ignores build.rustflags when the variable is set, and so does this"
     );
 }
-
-// --- what the project configured ----------------------------------------------------
 
 #[test]
 fn build_rustflags_are_read_from_the_workspace_and_its_ancestors_closest_first() {

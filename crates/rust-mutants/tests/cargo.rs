@@ -1,10 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mjutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! The cargo boundary: locating the toolchain, reading `cargo metadata`,
-//! parsing `--message-format=json`, and reading dep-info to learn which
-//! files a unit really compiled. The end-to-end tests drive the cargo that
-//! built this test binary against the fixtures, offline.
+//! The cargo boundary: locating the toolchain, reading `cargo metadata`, parsing `--message-format=json`, and reading dep-info to learn which files a unit really compiled. The end-to-end tests drive the cargo that built this test binary against the fixtures, offline.
 
 #![expect(
     clippy::expect_used,
@@ -43,8 +40,6 @@ fn scratch_target(name: &str) -> tempfile::TempDir {
         .tempdir()
         .expect("tempdir")
 }
-
-// --- versions ----------------------------------------------------------------------
 
 #[test]
 fn verbose_version_output_is_parsed_into_its_fields() {
@@ -85,8 +80,6 @@ fn version_output_without_release_or_host_is_refused() {
         assert_eq!(error.kind(), CargoErrorKind::VersionUnreadable, "{bad:?}");
     }
 }
-
-// --- locating ----------------------------------------------------------------------
 
 #[test]
 fn an_explicit_cargo_path_must_exist_and_a_bare_name_is_searched_on_the_given_path() {
@@ -159,8 +152,6 @@ fn a_cargo_that_cannot_run_is_a_typed_error() {
         "{error}"
     );
 }
-
-// --- metadata -----------------------------------------------------------------------
 
 #[test]
 fn metadata_json_is_parsed_into_packages_and_targets() {
@@ -286,8 +277,6 @@ fn metadata_is_loaded_from_a_workspace_with_the_locked_offline_flags() {
     );
 }
 
-// --- messages ---------------------------------------------------------------------------
-
 const fn sample_stream() -> &'static str {
     concat!(
         r#"{"reason":"compiler-artifact","package_id":"path+file:///w/demo#0.1.0","manifest_path":"/w/demo/Cargo.toml","target":{"kind":["lib"],"crate_types":["lib"],"name":"demo","src_path":"/w/demo/src/lib.rs","edition":"2024","doc":true,"doctest":true,"test":true},"profile":{"opt_level":"0","debuginfo":2,"debug_assertions":true,"overflow_checks":true,"test":true},"features":[],"filenames":["/w/target/debug/deps/libdemo-abc.rmeta"],"executable":null,"fresh":false}"#,
@@ -356,8 +345,6 @@ fn other_message_kinds_are_typed_and_a_line_that_is_not_one_is_refused() {
     assert!(error.to_string().contains("line 2"), "{error}");
 }
 
-// --- dep-info ---------------------------------------------------------------------------
-
 #[test]
 fn dep_info_lists_the_prerequisites_of_the_first_rule_with_escapes_undone() {
     let text = "/t/deps/demo-abc.d: src/lib.rs src/with\\ space.rs \\\n  crates/x/src/mod.rs\n\n/t/deps/libdemo-abc.rmeta: src/lib.rs\n\nsrc/lib.rs:\n";
@@ -389,8 +376,6 @@ fn the_dep_info_file_sits_beside_the_artifact_without_the_lib_prefix() {
         dep_info_path(Path::new("/t/debug/deps/libdemo-abc.rlib")),
         Some(PathBuf::from("/t/debug/deps/demo-abc.d"))
     );
-    // A test binary has no extension on Unix, and its dep-info is its own
-    // name with `.d` appended.
     assert_eq!(
         dep_info_path(Path::new("/t/debug/deps/demo-abc")),
         Some(PathBuf::from("/t/debug/deps/demo-abc.d"))

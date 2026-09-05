@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mjutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! What a run measures: one test, named the way a person names it, with a
-//! stable identity of its own.
+//! What a run measures: one test, named the way a person names it, with a stable identity of its own.
 
 #![expect(
     clippy::expect_used,
@@ -15,8 +14,6 @@ use mjutest_cli::targets::{
 use mjutest_cli::trace::Recorder;
 use mjutest_cli::watch::Watch;
 use rust_mutants::runner::Cancel;
-
-// --- the listing ------------------------------------------------------------------
 
 #[test]
 fn a_terse_listing_is_read_and_a_benchmark_is_not_a_test() {
@@ -52,12 +49,9 @@ fn a_listing_that_is_not_one_yields_nothing_rather_than_a_guess() {
     ] {
         assert!(parse_list(text.as_bytes()).is_empty(), "{text:?}");
     }
-    // The summary line of a non-terse listing is not a test either.
     let mixed = "a::b: test\n\n2 tests, 0 benchmarks\n";
     assert_eq!(parse_list(mixed.as_bytes()).len(), 1);
 }
-
-// --- identity ----------------------------------------------------------------------
 
 #[test]
 fn a_test_is_named_by_its_package_its_unit_and_its_path() {
@@ -69,8 +63,6 @@ fn a_test_is_named_by_its_package_its_unit_and_its_path() {
             .all(|c| c.is_ascii_hexdigit() && !c.is_uppercase())
     );
 
-    // Every field is part of the name, and no two of them can be confused
-    // for one another.
     let mut seen = std::collections::BTreeSet::new();
     for (package, unit, path) in [
         ("core", UnitKind::Lib, "tests::plain"),
@@ -87,7 +79,6 @@ fn a_test_is_named_by_its_package_its_unit_and_its_path() {
         );
     }
 
-    // It does not move when a line does.
     assert_eq!(target_id("core", UnitKind::Lib, "tests::plain"), id);
     for kind in UnitKind::ALL {
         assert_eq!(UnitKind::parse(kind.name()), Some(kind));
@@ -102,10 +93,7 @@ fn a_binary_with_its_own_harness_is_one_target_and_says_so() {
     assert_ne!(id, target_id("core", UnitKind::Test, "anything"));
 }
 
-// --- enumerating a real binary --------------------------------------------------------
-
-/// Builds a fixture's test binaries the way a run does, and returns the
-/// units they came from.
+/// Builds a fixture's test binaries the way a run does, and returns the units they came from.
 fn built_units(fixture: &str) -> (Vec<Unit>, tempfile::TempDir) {
     use mjutest_cli::build::{BuildOptions, Cargo, Flavour, Selection, build};
     use rust_mutants::cargo::{Driver, LocateOptions, Metadata, MetadataOptions, Toolchain};

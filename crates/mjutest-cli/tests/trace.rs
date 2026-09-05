@@ -2,9 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The runner's trace: diagnostic exhaust under the rules of ADR 0002.
-//!
-//! Never a claim, never a failure, honest about what it lost. The engine
-//! records its own stream in its own vocabulary; this one is the run's.
 
 #![expect(
     clippy::expect_used,
@@ -32,8 +29,7 @@ fn stepping_clock() -> Clock {
     )
 }
 
-/// A recorder over a memory sink, which is what a test reads back: the
-/// recorder owns its sink and answers with what the sink kept.
+/// A recorder over a memory sink, which is what a test reads back: the recorder owns its sink and answers with what the sink kept.
 fn recording() -> Recorder {
     Recorder::new(
         Sink::Memory(MemorySink::unbounded()),
@@ -56,8 +52,6 @@ fn types(events: &[Event]) -> Vec<String> {
         .map(|event| event.payload.type_name().to_owned())
         .collect()
 }
-
-// --- the recording -----------------------------------------------------------------
 
 #[test]
 fn the_disabled_recorder_keeps_nothing_and_says_so() {
@@ -193,8 +187,6 @@ fn a_recording_ends_once_and_keeps_nothing_after() {
     assert_eq!(run.verdict, "ASSURED", "the first end is the one");
 }
 
-// --- what an event may carry -------------------------------------------------------
-
 #[test]
 fn an_exec_event_carries_environment_names_and_never_a_value() {
     let trace = recording();
@@ -270,8 +262,6 @@ fn a_progress_note_and_an_artifact_are_records_of_their_own() {
     );
 }
 
-// --- what a sink may lose ----------------------------------------------------------
-
 #[test]
 fn a_full_ring_drops_its_oldest_and_the_run_end_says_how_many() {
     let trace = Recorder::new(
@@ -315,8 +305,6 @@ fn the_default_ring_holds_the_last_events_of_a_run_that_asked_for_no_trace() {
 fn a_sink_that_cannot_write_costs_the_count_and_never_the_run() {
     let dir = tempfile::tempdir().expect("a temporary directory");
     let sink = DirSink::create(&dir.path().join("recording")).expect("the sink");
-    // Closing the stream is the reachable version of "the disk is gone":
-    // everything after it fails to write.
     sink.close().expect("closed");
 
     let trace = Recorder::new(Sink::Dir(sink), stepping_clock(), start());
@@ -347,8 +335,6 @@ fn a_tee_keeps_what_one_sink_keeps_when_the_other_cannot() {
         "a full disk must not cost the ring the last thing the run did"
     );
 }
-
-// --- what a reader finds -----------------------------------------------------------
 
 #[test]
 fn a_directory_sink_writes_one_json_object_per_line_and_the_reader_reads_it_back() {
@@ -400,8 +386,6 @@ fn the_reader_reports_a_gap_a_missing_end_and_what_the_run_said_it_dropped() {
         "{gapped:?}"
     );
 }
-
-// --- the wire shape ----------------------------------------------------------------
 
 #[test]
 fn the_wire_shape_is_the_recorded_one() {

@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mjutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Argument parsing. This module knows the command tree and nothing about
-//! executing it.
+//! Argument parsing. This module knows the command tree and nothing about executing it.
 
 use std::ffi::OsString;
 use std::path::PathBuf;
@@ -34,16 +33,12 @@ pub struct Cli {
 #[derive(Debug, Clone, Subcommand)]
 pub enum Command {
     /// List the candidates the rules propose, before the compiler has ruled.
-    ///
-    /// Fast: the workspace is copied and type-checked, but nothing is
-    /// instrumented and nothing is built.
     List {
         /// Which workspace to read.
         #[command(flatten)]
         scope: Scope,
     },
-    /// Catalog the mutants the compiler accepts, and the candidates it
-    /// refused with its own words.
+    /// Catalog the mutants the compiler accepts, and the candidates it refused with its own words.
     Catalog {
         /// Which workspace to read.
         #[command(flatten)]
@@ -79,12 +74,7 @@ pub enum Command {
         #[arg(value_name = "PREFIX")]
         mutant: String,
     },
-    /// Print one file as the engine rewrites it, guards and runtime
-    /// included.
-    ///
-    /// The tree is copied and type-checked, but nothing is built and
-    /// nothing is validated: what it prints is every candidate the rules
-    /// propose, which is what a person debugging a guard wants to see.
+    /// Print one file as the engine rewrites it, guards and runtime included.
     Instrument {
         /// Which workspace to read.
         #[command(flatten)]
@@ -127,8 +117,7 @@ pub struct Scope {
     pub switches: Switches,
 }
 
-/// The plain yes-or-no choices, kept together so the scope reads as what it
-/// selects rather than as a row of flags.
+/// The plain yes-or-no choices, kept together so the scope reads as what it selects rather than as a row of flags.
 #[expect(
     clippy::struct_excessive_bools,
     reason = "each is one command line flag, and a flag is a bool wherever it is stored"
@@ -187,8 +176,7 @@ impl Command {
     }
 }
 
-/// A command that could not be parsed, or a request to print help or the
-/// version, rendered for the stream it belongs on.
+/// A command that could not be parsed, or a request to print help or the version, rendered for the stream it belongs on.
 #[derive(Debug)]
 pub struct Usage {
     /// The text to write, newline-terminated.
@@ -202,7 +190,6 @@ pub struct Usage {
 /// Parses `args`, program name first.
 ///
 /// # Errors
-///
 /// Returns the rendered usage error, help text, or version text.
 pub fn parse<I>(args: I) -> Result<Cli, Usage>
 where

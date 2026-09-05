@@ -1,19 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mjutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! A prepared workspace: every accepted mutant instrumented into one build,
-//! and the test binaries that build produced.
-//!
-//! [`prepare`] runs the phases in order — discover, instrument, validate,
-//! build, verify — and each one's refusals are kept rather than smoothed
-//! over: a candidate the compiler refused is a [`Rejection`] with the
-//! compiler's own words, a place discovery passed over is a [`Skip`] with
-//! its reason, and a tree that fails its own tests before any mutant is
-//! live stops the run.
-//!
-//! A session is `Send + Sync` and every execution takes `&self`, so a
-//! consumer may run mutants in parallel across the targets one build
-//! produced.
+//! A prepared workspace: every accepted mutant instrumented into one build, and the test binaries that build produced.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -49,8 +37,7 @@ pub struct PrepareOptions {
     pub exclude: Vec<Pattern>,
     /// The member packages to mutate. Empty means every member.
     pub packages: Vec<String>,
-    /// Run every test target once with nothing active, and refuse to hand
-    /// back a session whose instrumented baseline does not pass.
+    /// Run every test target once with nothing active, and refuse to hand back a session whose instrumented baseline does not pass.
     pub verify: bool,
     /// How many validation rounds before falling back to bisection.
     pub max_rounds: u32,
@@ -79,11 +66,9 @@ impl Default for PrepareOptions {
 /// One mutant execution to make.
 #[derive(Debug, Clone, Default)]
 pub struct Request {
-    /// The mutant, by full identity or by any prefix of at least four hex
-    /// characters that names exactly one.
+    /// The mutant, by full identity or by any prefix of at least four hex characters that names exactly one.
     pub mutant: String,
-    /// The target to run it against. `None` runs every target until one
-    /// kills it, which is what "does any test catch this?" means.
+    /// The target to run it against. `None` runs every target until one kills it, which is what "does any test catch this?" means.
     pub target: Option<String>,
     /// One test to run, by its libtest path. `None` runs the whole target.
     pub test: Option<String>,
@@ -103,8 +88,7 @@ pub struct Session {
     targets: Vec<TestTarget>,
     scratch: PathBuf,
     mutant_timeout: Option<Duration>,
-    /// The files as they were before instrumentation, so a position can be
-    /// counted in the file a person would open rather than in the rewrite.
+    /// The files as they were before instrumentation, so a position can be counted in the file a person would open rather than in the rewrite.
     sources: BTreeMap<String, Vec<u8>>,
     /// Which package each mutant belongs to.
     packages: BTreeMap<u32, String>,
@@ -153,8 +137,7 @@ impl Session {
         self.workspace.snapshot_root()
     }
 
-    /// Where a mutant's edit is in the file a person would open, counted
-    /// in the pristine bytes rather than in the rewrite.
+    /// Where a mutant's edit is in the file a person would open, counted in the pristine bytes rather than in the rewrite.
     #[must_use]
     pub fn position(&self, mutant: &Mutant) -> Option<Position> {
         let source = self.sources.get(&mutant.candidate.path)?;
@@ -174,8 +157,7 @@ impl Session {
         self.workspace.toolchain()
     }
 
-    /// The name of the directory the source root sits in, which is what a
-    /// report calls the workspace.
+    /// The name of the directory the source root sits in, which is what a report calls the workspace.
     #[must_use]
     pub fn root_name(&self) -> String {
         self.workspace
@@ -188,7 +170,6 @@ impl Session {
     /// The mutant a prefix names.
     ///
     /// # Errors
-    ///
     /// [`SessionError::UnknownMutant`] when no mutant matches, when several
     /// do, or when the prefix is too short to be worth resolving.
     pub fn resolve(&self, prefix: &str) -> Result<&Mutant, EngineError> {
@@ -201,12 +182,7 @@ impl Session {
 
     /// Runs one mutant and reports what the tests said.
     ///
-    /// With no target named, every target runs until one kills the mutant:
-    /// a mutant is dead as soon as any test notices it, and running the
-    /// rest afterwards would only cost time.
-    ///
     /// # Errors
-    ///
     /// [`SessionError::UnknownMutant`], [`SessionError::UnknownTarget`], and
     /// [`SessionError::NoTargets`].
     pub fn exec(&self, request: &Request, cancel: &Cancel) -> Result<MutantResult, EngineError> {
@@ -244,12 +220,47 @@ impl Session {
         last.ok_or_else(|| EngineError::from(SessionError::NoTargets))
     }
 
-    /// Every way the snapshot stopped matching the tree that was
-    /// instrumented: what a test wrote into the tree every later mutant is
-    /// measured against.
+    /// Runs one target with no mutant active: the original control.
     ///
     /// # Errors
+    /// [`SessionError::UnknownTarget`] and [`SessionError::NoTargets`].
+    pub fn control(&self, request: &Request, cancel: &Cancel) -> Result<MutantResult, EngineError> {
+        let targets = self.selected(request.target.as_deref())?;
+        let context = Context {
+            base_env: &self.workspace.base_env,
+            active: None,
+        };
+        let timeout = request.timeout.or(self.mutant_timeout);
+        let mut last = None;
+        for target in targets {
+            let mut exec = ExecRequest::new(target)
+                .with_args(request.args.clone())
+                .with_timeout(timeout)
+                .with_scratch(&self.scratch);
+            if let Some(test) = &request.test {
+                exec = exec.with_test(test.clone());
+            }
+            let result = execute::exec(&exec, &context, cancel, &self.workspace.trace);
+            self.workspace.trace.mutant_exec(MutantExecRecord {
+                id: String::new(),
+                index: u32::MAX,
+                target: target.id.clone(),
+                outcome: result.outcome.name().to_owned(),
+                exit_code: result.exit_code,
+                duration_ms: u64::try_from(result.duration.as_millis()).unwrap_or(u64::MAX),
+                tests_run: result.tests_run,
+            });
+            if result.outcome != crate::outcome::Outcome::Survived || cancel.is_cancelled() {
+                return Ok(result);
+            }
+            last = Some(result);
+        }
+        last.ok_or_else(|| EngineError::from(SessionError::NoTargets))
+    }
+
+    /// Every way the snapshot stopped matching the tree that was instrumented: what a test wrote into the tree every later mutant is measured against.
     ///
+    /// # Errors
     /// The snapshot's walk failures and refusals.
     pub fn changes(&self) -> Result<Vec<Drift>, EngineError> {
         Ok(self.workspace.snapshot.redigest()?)
@@ -258,7 +269,6 @@ impl Session {
     /// Removes the snapshot, or preserves it, and reports what was kept.
     ///
     /// # Errors
-    ///
     /// A snapshot directory that could not be removed.
     pub fn close(self) -> Result<Vec<PathBuf>, EngineError> {
         self.workspace.close()
@@ -288,13 +298,7 @@ impl Session {
 
 /// Catalogs what would be mutated, without instrumenting anything.
 ///
-/// The pristine check still runs, because which files a unit compiled is a
-/// question only the compiler answers, but nothing is rewritten and nothing
-/// is built. What comes back is every candidate the rules propose, before
-/// the compiler has ruled on any of them.
-///
 /// # Errors
-///
 /// The pristine gate and the failures of discovery.
 pub fn preview(
     workspace: &Workspace,
@@ -332,8 +336,7 @@ fn selection(options: &PrepareOptions) -> Result<Selection<'static>, EngineError
     Ok(Selection::rules(&REGISTRY, &names)?)
 }
 
-/// Compiles the tree as it was copied, which is both the gate a run stands
-/// on and the source of every unit's file set.
+/// Compiles the tree as it was copied, which is both the gate a run stands on and the source of every unit's file set.
 fn pristine(
     workspace: &Workspace,
     options: &PrepareOptions,
@@ -361,7 +364,6 @@ fn pristine(
 /// Discovers, instruments, validates, builds, and verifies.
 ///
 /// # Errors
-///
 /// Every failure of the phases it runs.
 pub fn prepare(
     workspace: Workspace,
@@ -398,15 +400,9 @@ pub fn prepare(
         &trace,
     )?;
 
-    // The rewrite was intended, so it stops being drift: from here, drift
-    // means a test wrote into the tree every later mutant is measured
-    // against.
     let mut workspace = workspace;
     workspace.snapshot.reseal()?;
 
-    // The last attempt validation made is the build that compiled, so the
-    // binaries it produced are the ones this session runs: no second build,
-    // and no chance of the two disagreeing.
     let targets = execute::targets_of(
         &last_build,
         &workspace.metadata.packages,
@@ -451,8 +447,7 @@ pub fn prepare(
     })
 }
 
-/// Instruments the tree and lets the compiler say which mutants are real,
-/// returning what it established and the build it ended with.
+/// Instruments the tree and lets the compiler say which mutants are real, returning what it established and the build it ended with.
 #[expect(
     clippy::too_many_arguments,
     reason = "every argument is a distinct fact of the run, and bundling them would only move the list"
@@ -486,8 +481,7 @@ fn establish(
     Ok((validated, writer.last_build))
 }
 
-/// Reads every mutable file of the snapshot and pairs its candidates with
-/// their catalog entries, which is everything instrumentation needs.
+/// Reads every mutable file of the snapshot and pairs its candidates with their catalog entries, which is everything instrumentation needs.
 type Planned = (BTreeMap<String, Vec<u8>>, BTreeMap<String, Vec<Placement>>);
 
 fn plan_tree(
@@ -525,21 +519,14 @@ fn lines(bytes: &[u8]) -> u64 {
 }
 
 /// How many lines the rewritten body holds, the appended runtime excluded.
-///
-/// Equal to the pristine file's line count or a guard moved something,
-/// which is the one invariant every position downstream depends on.
 fn body_lines(file: &FileOutput) -> u64 {
     let text = file.text.as_bytes();
-    file.text.rfind("\n#[doc(hidden)]").map_or_else(
-        || lines(text),
-        // Up to and including the newline that ends the body.
-        |at| lines(text.get(..=at).unwrap_or(text)),
-    )
+    file.text
+        .rfind("\n#[doc(hidden)]")
+        .map_or_else(|| lines(text), |at| lines(text.get(..=at).unwrap_or(text)))
 }
 
-/// Runs every target once with nothing active. A tree whose instrumented
-/// baseline fails is one whose every later result would be about the
-/// instrumentation rather than about a mutant.
+/// Runs every target once with nothing active. A tree whose instrumented baseline fails is one whose every later result would be about the instrumentation rather than about a mutant.
 fn verify(
     workspace: &Workspace,
     targets: &[TestTarget],
@@ -568,8 +555,7 @@ fn verify(
     Ok(())
 }
 
-/// Instruments the snapshot with a set of mutants left out and compiles it:
-/// the [`Compile`] seam validation drives.
+/// Instruments the snapshot with a set of mutants left out and compiles it: the [`Compile`] seam validation drives.
 struct TreeCompiler<'a> {
     workspace: &'a Workspace,
     sources: &'a BTreeMap<String, Vec<u8>>,
@@ -577,8 +563,7 @@ struct TreeCompiler<'a> {
     catalog: &'a Catalog,
     cancel: &'a Cancel,
     timeout: Option<Duration>,
-    /// The messages of the last attempt that compiled, which name the test
-    /// binaries this session will run.
+    /// The messages of the last attempt that compiled, which name the test binaries this session will run.
     last_build: Vec<crate::cargo::Message>,
 }
 
@@ -615,9 +600,6 @@ impl Compile for TreeCompiler<'_> {
             )?;
             files.push(file);
         }
-        // The build validation ends with is the build the mutants execute:
-        // some refusals only happen once code is generated, so checking
-        // alone would accept a mutant the run cannot build.
         let compiled = compile(
             &self.workspace.driver(self.cancel),
             &CompileOptions {
@@ -640,8 +622,7 @@ impl Compile for TreeCompiler<'_> {
     }
 }
 
-/// The name a target id takes, re-exported so a caller can build one
-/// without knowing the shape.
+/// The name a target id takes, re-exported so a caller can build one without knowing the shape.
 #[must_use]
 pub fn target_name(package: &str, kind: TargetKind, name: &str) -> String {
     target_id(package, kind, name)

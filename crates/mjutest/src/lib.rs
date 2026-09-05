@@ -2,28 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Immutable integration-resource metadata for ordinary Rust tests.
-//!
-//! The `mjutest` assurance runner reads this metadata from source; nothing
-//! here runs at test time. A test that needs an externally managed resource
-//! says so with the attribute, and stays an ordinary `#[test]`:
-//!
-//! ```
-//! #[mjutest::integration("postgres", "redis")]
-//! // #[test] goes here as usual; the attribute changes nothing about the test.
-//! fn repository_round_trips() {
-//!     // an ordinary test body
-//! }
-//! # repository_round_trips();
-//! ```
-//!
-//! Projects that would rather not depend on this crate write the equivalent
-//! directive as a comment above the test instead:
-//!
-//! ```text
-//! //mjutest:resources postgres redis
-//! #[test]
-//! fn repository_round_trips() {}
-//! ```
 
 #![forbid(unsafe_code)]
 
@@ -86,11 +64,9 @@ impl Scope {
         }
     }
 
-    /// A test that requires one or more capabilities. Names are trimmed and
-    /// deduplicated in first-seen order.
+    /// A test that requires one or more capabilities. Names are trimmed and deduplicated in first-seen order.
     ///
     /// # Errors
-    ///
     /// Refuses an empty list and a blank name.
     pub fn integration<I, S>(capabilities: I) -> Result<Self, InvalidScope>
     where

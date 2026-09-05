@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mjutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Coverage: which regions of which files one test reached, in the units
-//! the tools actually use.
+//! Coverage: which regions of which files one test reached, in the units the tools actually use.
 
 #![expect(
     clippy::expect_used,
@@ -18,8 +17,6 @@ use mjutest_cli::coverage::{
     Block, CoverageErrorKind, INSTRUMENT_FLAG, PROFILE_ENV, Point, REGION_KIND_CODE, Region,
     parse_export,
 };
-
-// --- reading an export ------------------------------------------------------------
 
 const EXPORT: &str = r#"{
   "type": "llvm.coverage.json.export",
@@ -172,8 +169,6 @@ fn a_block_holds_a_position_by_its_line_and_byte_column() {
     );
 }
 
-// --- refusals -----------------------------------------------------------------------
-
 #[test]
 fn an_export_that_is_not_one_is_refused_rather_than_read_in_part() {
     for bad in [
@@ -195,10 +190,7 @@ fn the_flags_the_tools_are_driven_with_are_frozen() {
     assert_eq!(PROFILE_ENV, "LLVM_PROFILE_FILE");
 }
 
-// --- the real tools, on a real workspace ------------------------------------------------
-
-/// Builds a fixture with instrumentation, runs one test, and reports what
-/// it covered — the whole path a run takes for one target.
+/// Builds a fixture with instrumentation, runs one test, and reports what it covered — the whole path a run takes for one target.
 struct Measured {
     root: PathBuf,
     files: Vec<mjutest_cli::coverage::FileRegions>,
@@ -231,8 +223,6 @@ fn measure(fixture: &str, test: &str) -> Measured {
     let trace = Recorder::disabled();
     let engine_trace = rust_mutants::trace::Recorder::disabled();
 
-    // The instrumentation flag reaches rustc through the environment, so a
-    // .cargo/config.toml's own rustflags are not silently replaced.
     let mut env: Vec<(OsString, OsString)> = std::env::vars_os()
         .filter(|(name, _)| name != "RUSTFLAGS" && name != "CARGO_ENCODED_RUSTFLAGS")
         .collect();
@@ -330,9 +320,6 @@ fn a_region_column_is_a_byte_column_and_the_fixture_holds_the_tool_to_it() {
     let instrumented = mjutest_cli::coverage::instrumented(&measured.files);
     assert!(!covered.is_empty(), "the test covered something");
 
-    // The comparison on the line of `大きい方` has a byte column and a
-    // character column twelve apart. Exactly one region is the comparison,
-    // and asking for it by its byte span finds it.
     let text = std::fs::read_to_string(&source).expect("read");
     let (line_number, line) = text
         .lines()
@@ -376,8 +363,6 @@ fn a_region_column_is_a_byte_column_and_the_fixture_holds_the_tool_to_it() {
         "and not its character span, which is what reading the wrong unit looks like"
     );
 
-    // The function nothing calls is instrumented and uncovered, which is
-    // what "no test reaches this" looks like.
     let (unused_line, unused) = text
         .lines()
         .enumerate()

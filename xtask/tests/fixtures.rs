@@ -77,7 +77,6 @@ fn a_path_dependency_inside_the_fixture_is_allowed_and_every_other_kind_is_not()
         );
     }
 
-    // Every dependency table is checked, target-specific ones included.
     write(
         dir.path(),
         "Cargo.toml",

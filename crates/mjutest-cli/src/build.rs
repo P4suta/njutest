@@ -2,22 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Building the workspace's tests, in one of two flavours.
-//!
-//! A run builds twice at most: plainly, and with coverage instrumentation.
-//! They are separate builds into separate layers because `RUSTFLAGS` are
-//! part of every fingerprint, so sharing a directory would rebuild
-//! everything each time the flavour changed.
-//!
-//! The instrumented build passes `--target <host triple>` as well. Without
-//! it, cargo applies `RUSTFLAGS` to build scripts and proc macros too — code
-//! that runs at compile time, whose coverage nobody asked for and whose
-//! instrumentation only slows the build and writes profiles a run then has
-//! to ignore.
-//!
-//! A workspace that does not compile is not an error here. It is a
-//! [`Built`] carrying what the compiler said, because a build failure is a
-//! finding about the code under test and belongs in the report rather than
-//! in a diagnostic on the way out.
 
 use std::ffi::{OsStr, OsString};
 use std::path::PathBuf;
@@ -38,8 +22,7 @@ use crate::watch::Watch;
 pub enum Flavour {
     /// What the project's tests are, unmodified.
     Native,
-    /// The same, instrumented, so a run can see which regions each test
-    /// reached.
+    /// The same, instrumented, so a run can see which regions each test reached.
     Coverage,
 }
 
@@ -52,9 +35,7 @@ pub struct Selection {
     pub features: Vec<String>,
     /// `--all-features`.
     pub all_features: bool,
-    /// Whether the default features stay on. `false` is
-    /// `--no-default-features`, written positively so a reader of a
-    /// configuration is not counting negations.
+    /// Whether the default features stay on. `false` is `--no-default-features`, written positively so a reader of a configuration is not counting negations.
     pub default_features: bool,
 }
 
@@ -90,8 +71,7 @@ pub struct BuildOptions {
     pub flavour: Flavour,
     /// `--target-dir`: the base cache layer for this flavour.
     pub target_dir: PathBuf,
-    /// `CARGO_TARGET_DIR` for anything the build itself starts — a build
-    /// script that spawns cargo lands here rather than in the base layer.
+    /// `CARGO_TARGET_DIR` for anything the build itself starts — a build script that spawns cargo lands here rather than in the base layer.
     pub scratch_build_dir: PathBuf,
     /// The environment the command runs with.
     pub env: Vec<(OsString, OsString)>,
@@ -106,8 +86,7 @@ pub struct BuildOptions {
 pub struct Built {
     /// The test binaries, with the environment their processes run with.
     pub units: Vec<Unit>,
-    /// What the compiler said, when it refused. A workspace that does not
-    /// compile is a finding, not an error.
+    /// What the compiler said, when it refused. A workspace that does not compile is a finding, not an error.
     pub failure: Option<String>,
     /// What this build could not honour, by name.
     pub limitations: Vec<String>,
@@ -146,7 +125,6 @@ impl BuildError {
 /// Builds the workspace's tests without running them.
 ///
 /// # Errors
-///
 /// [`BuildError::NotRun`] when cargo could not be started, and
 /// [`BuildError::Unreadable`] when what it printed is not the message stream
 /// this version understands.
@@ -194,8 +172,7 @@ pub fn build(
     })
 }
 
-/// The command line, in a fixed order so two runs of the same request are
-/// the same command.
+/// The command line, in a fixed order so two runs of the same request are the same command.
 fn arguments(toolchain: &Toolchain, options: &BuildOptions) -> Vec<OsString> {
     let mut arguments: Vec<OsString> = vec![
         "test".into(),
@@ -236,8 +213,7 @@ fn arguments(toolchain: &Toolchain, options: &BuildOptions) -> Vec<OsString> {
     arguments
 }
 
-/// The environment the build runs with: the run's own, the scratch layer for
-/// anything it starts, and the flags the flavour needs.
+/// The environment the build runs with: the run's own, the scratch layer for anything it starts, and the flags the flavour needs.
 fn environment(options: &BuildOptions, limitations: &mut Vec<String>) -> Vec<(OsString, OsString)> {
     let mut env = options.env.clone();
     set(
@@ -257,8 +233,6 @@ fn environment(options: &BuildOptions, limitations: &mut Vec<String>) -> Vec<(Os
     }
     if let Some(flags) = rustflags::encoded(&options.env, &configured, &[COVERAGE_FLAG]) {
         set(&mut env, "CARGO_ENCODED_RUSTFLAGS", flags);
-        // The two say the same thing to different cargo versions, and a
-        // stale plain one would be read by anything that prefers it.
         env.retain(|(key, _)| key != OsStr::new("RUSTFLAGS"));
     }
     env

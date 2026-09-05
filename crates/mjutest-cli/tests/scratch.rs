@@ -2,11 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Where a run writes, and who it belongs to.
-//!
-//! ADR 0006: two questions must be answerable about a directory found in a
-//! temporary root — who made this, and is anybody still using it. The lock
-//! answers the second and the marker answers the first, and neither of them
-//! may fail a run.
 
 #![expect(
     clippy::indexing_slicing,
@@ -19,14 +14,10 @@ use jiff::Timestamp;
 use mjutest_cli::scratch::{DIR_PREFIX, MARKER_SCHEMA, Scratch};
 use rust_mutants::tempowner;
 
-/// The real moment, because the sweep judges an unowned directory by its
-/// age on the filesystem: a made-up "now" months away from the file times
-/// would call every directory a leftover.
+/// The real moment, because the sweep judges an unowned directory by its age on the filesystem: a made-up "now" months away from the file times would call every directory a leftover.
 fn now() -> Timestamp {
     Timestamp::now()
 }
-
-// --- what a run gets ---------------------------------------------------------------
 
 #[test]
 fn a_scratch_is_named_for_its_run_and_holds_the_places_a_run_writes() {
@@ -78,8 +69,6 @@ fn a_round_directory_is_made_under_the_scratch_and_nowhere_else() {
     );
 }
 
-// --- what happens to it ------------------------------------------------------------
-
 #[test]
 fn closing_a_scratch_removes_everything_it_made() {
     let parent = tempfile::tempdir().expect("a temporary root");
@@ -106,8 +95,6 @@ fn a_kept_scratch_survives_and_says_it_was_kept_on_purpose() {
 #[test]
 fn creating_a_scratch_collects_what_an_earlier_run_abandoned() {
     let parent = tempfile::tempdir().expect("a temporary root");
-    // A run that was killed leaves its marker and releases its lock with the
-    // process; this is that directory, without the killing.
     let abandoned = parent.path().join(format!("{DIR_PREFIX}earlier"));
     fs::create_dir_all(abandoned.join("build")).expect("the directory");
     tempowner::claim_as(&abandoned, now(), MARKER_SCHEMA)
@@ -132,8 +119,6 @@ fn a_sweep_leaves_alone_what_a_run_kept_on_purpose() {
     assert_eq!(scratch.swept().kept, 1);
     assert!(kept[0].is_dir(), "{}", kept[0].display());
 }
-
-// --- what may not fail a run -------------------------------------------------------
 
 #[test]
 fn a_directory_this_run_cannot_claim_costs_the_claim_and_not_the_run() {

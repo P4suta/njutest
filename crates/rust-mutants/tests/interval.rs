@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mjutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! The interval forest: the four relations two spans can stand in, and the
-//! two traversal orders.
+//! The interval forest: the four relations two spans can stand in, and the two traversal orders.
 
 #![expect(
     clippy::expect_used,
@@ -91,7 +90,6 @@ fn identical_spans_become_alternatives_in_insertion_order() {
 
 #[test]
 fn a_nested_span_attaches_to_the_smallest_enclosing_span() {
-    // Deliberately scrambled: the innermost candidate is discovered first.
     let (forest, conflicts) = build(vec![
         item(4, 8, "inner"),
         item(22, 28, "tail"),
@@ -174,8 +172,6 @@ fn partial_overlap_evicts_the_later_span_whichever_order_they_arrive_in() {
 
 #[test]
 fn an_evicted_span_leaves_the_forest_open_for_the_spans_it_would_have_enclosed() {
-    // "right" straddles "left" and is evicted; "tail" sits inside where "right"
-    // would have been and still finds its place as a root.
     let (forest, conflicts) = build(vec![
         item(0, 10, "left"),
         item(5, 15, "right"),
@@ -279,7 +275,6 @@ proptest! {
                 _ => prop_assert!(false, "unexpected reason"),
             }
         }
-        // The forest is a function of the multiset, not of the order.
         let mut reversed = items;
         reversed.reverse();
         let (again, _) = build(reversed);

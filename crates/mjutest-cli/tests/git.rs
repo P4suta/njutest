@@ -1,14 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mjutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! What the repository was when the run started, or that it could not be
-//! asked.
-//!
-//! A report names the commit it verified, and a reader who cannot see that
-//! name has to take the run's word for what "the code" was. So git is asked
-//! through the same supervised process every other command goes through, and
-//! when it cannot answer the report says so explicitly rather than leaving
-//! the fields empty.
+//! What the repository was when the run started, or that it could not be asked.
 
 #![expect(
     clippy::expect_used,
@@ -37,10 +30,7 @@ fn ask(root: &Path) -> mjutest_cli::report::Git {
     git::describe(root, &env(), Watch::new(&cancel, &trace))
 }
 
-/// A repository with one commit, built with git's own plumbing so the
-/// fixture is the same on every machine: `commit-tree` writes a commit
-/// without consulting anybody's configuration, and the identity comes from
-/// the environment rather than from a global file.
+/// A repository with one commit, built with git's own plumbing so the fixture is the same on every machine: `commit-tree` writes a commit without consulting anybody's configuration, and the identity comes from the environment rather than from a global file.
 fn repository() -> tempfile::TempDir {
     let dir = tempfile::tempdir().expect("a temporary directory");
     let run = |args: &[&str]| -> String {

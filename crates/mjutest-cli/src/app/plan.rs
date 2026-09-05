@@ -2,15 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! `mjutest plan`: what a run would do, without doing it.
-//!
-//! It builds — there is no way to know what tests exist without asking the
-//! binaries that hold them — but it runs none of them and writes no report.
-//! The build is the plain one rather than the instrumented one, because a
-//! plan does not measure coverage and a plan that warmed the wrong layer
-//! would make the run after it slower rather than faster.
-//!
-//! `--why` is the part that earns the command. A reader who disagrees with
-//! what a run measured needs to see the reason, not the result.
 
 use std::io::Write;
 
@@ -124,10 +115,6 @@ fn selected(
 }
 
 /// Where a plan builds.
-///
-/// A plan builds, so it needs a directory, and a directory this program
-/// makes has an owner like every other (ADR 0006). It is removed when the
-/// plan ends, which is what makes a plan cheap to run twice.
 fn workplace(
     environment: &Environment,
 ) -> Result<crate::scratch::Scratch, crate::scratch::ScratchError> {

@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mjutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! One site for every v1 rule, plus the shapes the walker has to get right:
-//! nested modules, methods, closures, match arms, multi-line conditions.
+//! One site for every v1 rule, plus the shapes the walker has to get right: nested modules, methods, closures, match arms, multi-line conditions.
 
 pub fn literals(flag: bool) -> bool {
     let a = true;

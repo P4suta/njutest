@@ -7,8 +7,7 @@ use std::io::{self, BufRead};
 
 use super::event::{Event, Payload};
 
-/// Why a stream could not be read. Fail-closed: a malformed line is an
-/// error naming the line, never an event skipped in silence.
+/// Why a stream could not be read. Fail-closed: a malformed line is an error naming the line, never an event skipped in silence.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum ReadError {
@@ -41,11 +40,9 @@ impl ReadError {
     }
 }
 
-/// Reads every event of a JSON Lines stream, in stream order. Blank lines
-/// are skipped; anything else that is not one event is an error.
+/// Reads every event of a JSON Lines stream, in stream order. Blank lines are skipped; anything else that is not one event is an error.
 ///
 /// # Errors
-///
 /// See [`ReadError`].
 pub fn read_events(reader: impl BufRead) -> Result<Vec<Event>, ReadError> {
     let mut events = Vec::new();
@@ -69,8 +66,7 @@ pub fn read_events(reader: impl BufRead) -> Result<Vec<Event>, ReadError> {
 pub enum Problem {
     /// The first event is not `run-start`: the beginning was lost.
     MissingRunStart,
-    /// The last event is not `run-end`: the run was killed, or the end was
-    /// lost.
+    /// The last event is not `run-end`: the run was killed, or the end was lost.
     MissingRunEnd,
     /// A sequence number was skipped: the sink lost the events between.
     SequenceGap {
@@ -83,8 +79,7 @@ pub enum Problem {
     Dropped(u64),
 }
 
-/// Says what is wrong with a recording: a missing start or end, sequence
-/// gaps, and the drops the run-end admits to. Empty for a complete recording.
+/// Says what is wrong with a recording: a missing start or end, sequence gaps, and the drops the run-end admits to. Empty for a complete recording.
 #[must_use]
 pub fn check(events: &[Event]) -> Vec<Problem> {
     let mut problems = Vec::new();

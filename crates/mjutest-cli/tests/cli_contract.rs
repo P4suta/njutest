@@ -1,9 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mjutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! The command-line contract of the `mjutest` binary: what `--version` and
-//! `--help` print, and the exit code of a usage error, which is `3` — the
-//! code of invalid input — and not clap's default.
+//! The command-line contract of the `mjutest` binary: what `--version` and `--help` print, and the exit code of a usage error, which is `3` — the code of invalid input — and not clap's default.
 
 #![expect(
     clippy::expect_used,
@@ -58,7 +56,6 @@ fn help_flag_matches_the_recorded_help_text() {
 
 #[test]
 fn a_bare_invocation_prints_the_help_to_stdout_and_exits_0() {
-    // goatest: "A bare `goatest` prints the help text."
     let output = mjutest(&[]);
     assert_eq!(output.status.code(), Some(0));
     let golden = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testdata/help.golden");
@@ -88,8 +85,6 @@ fn an_unknown_flag_is_invalid_input_and_exits_3() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("--no-such-flag"), "{stderr}");
 }
-
-// --- the command tree --------------------------------------------------------------
 
 #[test]
 fn every_subcommand_has_its_own_recorded_help() {
@@ -125,8 +120,6 @@ fn a_subcommand_given_a_flag_it_does_not_know_is_invalid_input() {
     assert!(stderr.starts_with("mjutest: "), "{stderr}");
     assert!(stderr.contains("--no-such-flag"), "{stderr}");
 }
-
-// --- doctor ------------------------------------------------------------------------
 
 #[test]
 fn doctor_names_every_tool_a_run_needs_and_whether_it_is_there() {
@@ -173,8 +166,6 @@ fn doctor_without_a_toolchain_says_so_and_refuses_rather_than_guessing() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("missing"), "{stdout}");
 }
-
-// --- init --------------------------------------------------------------------------
 
 #[test]
 fn init_writes_a_skeleton_that_loads_as_exactly_the_defaults() {

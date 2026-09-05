@@ -2,19 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! One directory per run, and everything the run writes below it.
-//!
-//! [ADR 0006] asks two questions of any directory found in a temporary root:
-//! who made this, and is anybody still using it. The marker answers the
-//! first — for a person, and for the one bit a sweep reads — and the lock
-//! answers the second, because a lock that can be taken means its holder is
-//! gone while a process id wraps.
-//!
-//! Neither may cost the run. A scratch that cannot be claimed is still a
-//! scratch: the run writes into it and says, as a limitation, that it could
-//! not claim it. Only being unable to make a directory at all is an error,
-//! because then there is nowhere to work.
-//!
-//! [ADR 0006]: https://github.com/P4suta/mjutest/blob/main/docs/adr/0006-every-temporary-directory-has-an-owner.md
 
 use std::fs;
 use std::io;
@@ -31,8 +18,7 @@ pub const DIR_PREFIX: &str = "mjutest-run-";
 /// The marker schema of a directory this program made.
 pub const MARKER_SCHEMA: &str = "mjutest-temp-owner-v1";
 
-/// The scratch cache layer: what a suite's own cargo commands write into,
-/// so they never reach the layer the run builds from.
+/// The scratch cache layer: what a suite's own cargo commands write into, so they never reach the layer the run builds from.
 pub const BUILD_DIR_NAME: &str = "build";
 
 /// Where instrumented test processes write their coverage profiles.
@@ -79,11 +65,9 @@ pub struct Scratch {
 }
 
 impl Scratch {
-    /// Sweeps `parent` of what earlier runs left, makes this run's
-    /// directory below it, and claims it.
+    /// Sweeps `parent` of what earlier runs left, makes this run's directory below it, and claims it.
     ///
     /// # Errors
-    ///
     /// [`ScratchError::Unusable`] when a directory cannot be made. Failing
     /// to claim one is not an error: see [`Scratch::is_claimed`].
     pub fn create(parent: &Path, run_id: &str, now: Timestamp) -> Result<Self, ScratchError> {
@@ -129,11 +113,9 @@ impl Scratch {
         self.dir.join(OUTPUT_DIR_NAME)
     }
 
-    /// A directory for one round of work, made if it is not there yet.
-    /// Asking twice asks for the same place.
+    /// A directory for one round of work, made if it is not there yet. Asking twice asks for the same place.
     ///
     /// # Errors
-    ///
     /// [`ScratchError::Unusable`] when it cannot be made.
     pub fn round_dir(&self, name: &str) -> Result<PathBuf, ScratchError> {
         let path = self.dir.join(name);
@@ -144,8 +126,7 @@ impl Scratch {
         Ok(path)
     }
 
-    /// Whether this run holds the directory's lock. A run that does not
-    /// still works here, and says so with [`UNCLAIMED_LIMITATION`].
+    /// Whether this run holds the directory's lock. A run that does not still works here, and says so with [`UNCLAIMED_LIMITATION`].
     #[must_use]
     pub const fn is_claimed(&self) -> bool {
         self.owner.is_some()
@@ -157,13 +138,7 @@ impl Scratch {
         &self.swept
     }
 
-    /// Releases the lock and removes everything the run wrote, answering
-    /// with what was preserved: nothing.
-    ///
-    /// Infallible by design (ADR 0006: none of this can fail a run). A
-    /// directory that will not go away is the next run's sweep to collect,
-    /// never this run's verdict, so there is no error for a caller to
-    /// mishandle.
+    /// Releases the lock and removes everything the run wrote, answering with what was preserved: nothing.
     #[must_use]
     pub fn close(mut self) -> Vec<PathBuf> {
         self.disarmed = true;
@@ -171,14 +146,7 @@ impl Scratch {
         Vec::new()
     }
 
-    /// Records the keep in the marker, releases the lock, and leaves
-    /// everything where it is, answering with what was preserved.
-    ///
-    /// The marker is rewritten before the lock goes, so a later sweep reads
-    /// "kept" rather than finding an unlocked directory and concluding it
-    /// was abandoned. Infallible for the same reason [`Scratch::close`] is:
-    /// a marker that cannot be rewritten costs the keep its recording, not
-    /// the run its verdict.
+    /// Records the keep in the marker, releases the lock, and leaves everything where it is, answering with what was preserved.
     #[must_use]
     pub fn keep(mut self) -> Vec<PathBuf> {
         self.disarmed = true;
@@ -188,9 +156,7 @@ impl Scratch {
         vec![self.dir.clone()]
     }
 
-    /// Releases the lock, then removes the tree. The lock goes first
-    /// everywhere: on Windows an open handle inside a directory is what
-    /// makes the removal fail.
+    /// Releases the lock, then removes the tree. The lock goes first everywhere: on Windows an open handle inside a directory is what makes the removal fail.
     fn remove(&mut self) {
         if let Some(owner) = self.owner.as_mut() {
             drop(owner.release());
@@ -200,8 +166,7 @@ impl Scratch {
 }
 
 impl Drop for Scratch {
-    /// Best effort, so an early return leaves nothing behind;
-    /// [`Scratch::close`] and [`Scratch::keep`] are the authority.
+    /// Best effort, so an early return leaves nothing behind; [`Scratch::close`] and [`Scratch::keep`] are the authority.
     fn drop(&mut self) {
         if !self.disarmed {
             self.remove();

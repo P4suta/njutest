@@ -1,17 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mjutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! The cargo boundary: locating the toolchain, reading `cargo metadata`,
-//! parsing `--message-format=json`, and reading dep-info to learn which
-//! files a unit really compiled.
-//!
-//! Everything here is a small serde shape over what cargo and rustc print,
-//! read fail-closed: a line that is not a message, a metadata document
-//! without its packages, or a version banner without its `release:` is an
-//! error naming what was wrong, never a guess. The module never reads the
-//! process environment: the composition root hands it the search path and
-//! the environment a child should see, and the snapshot directory the
-//! commands run in decides which rustup toolchain answers.
+//! The cargo boundary: locating the toolchain, reading `cargo metadata`, parsing `--message-format=json`, and reading dep-info to learn which files a unit really compiled.
 
 mod compile;
 mod depinfo;
@@ -37,8 +27,7 @@ pub use messages::{
 pub use metadata::{Metadata, MetadataOptions, Package, Target};
 pub use version::{VersionInfo, parse_version};
 
-/// Everything a cargo command needs besides its arguments: the toolchain,
-/// the directory to run in, the cancellation flag, and the trace.
+/// Everything a cargo command needs besides its arguments: the toolchain, the directory to run in, the cancellation flag, and the trace.
 #[derive(Debug, Clone, Copy)]
 pub struct Driver<'a> {
     /// The located toolchain.
@@ -106,10 +95,6 @@ pub struct CargoError {
 }
 
 /// What underlies a cargo failure.
-///
-/// Named rather than boxed: there are two, a caller that can see which one
-/// it has can act on it, and the compiler is what says when a third
-/// arrives.
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum CargoSource {

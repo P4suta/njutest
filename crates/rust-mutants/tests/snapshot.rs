@@ -1,9 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mjutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! The snapshot: a disposable, byte-exact copy of a source tree at a stable
-//! name, with a manifest, a frozen workspace digest, drift detection, and a
-//! guarded cleanup.
+//! The snapshot: a disposable, byte-exact copy of a source tree at a stable name, with a manifest, a frozen workspace digest, drift detection, and a guarded cleanup.
 
 #![expect(
     clippy::expect_used,
@@ -71,8 +69,7 @@ fn options(fx: &Fixture) -> Options {
     Options::new(&fx.dest)
 }
 
-/// Every manifest entry names a byte-identical copy with the right size and
-/// digest.
+/// Every manifest entry names a byte-identical copy with the right size and digest.
 fn assert_manifest_matches(source: &Path, snap: &rust_mutants::snapshot::Snapshot) {
     for entry in snap.manifest() {
         let src = fs::read(source.join(&entry.rel_path)).expect("read source");
@@ -92,8 +89,6 @@ fn snapshot_dirs(dest: &Path) -> Vec<PathBuf> {
     dirs
 }
 
-// --- the digest recipe ---------------------------------------------------
-
 #[test]
 fn the_constants_are_frozen() {
     assert_eq!(WORKSPACE_DOMAIN, "rust-mutants-workspace-v1");
@@ -107,7 +102,6 @@ fn the_constants_are_frozen() {
 
 #[test]
 fn the_workspace_digest_matches_the_independently_minted_vectors() {
-    // Minted with a Python implementation of the recipe in the package docs.
     assert_eq!(
         workspace_digest(&[]),
         "13ff85f1943353b06f3d51ff611a31542f667b429529586787b2c517b93fe27f"
@@ -126,7 +120,6 @@ fn the_workspace_digest_matches_the_independently_minted_vectors() {
         workspace_digest(&[manifest.clone(), main.clone()]),
         "c4025b0efb8471560c6870f50e6a61da20c06037f117b27be81163230c2e56e5"
     );
-    // The recipe hashes what it is given: it does not sort.
     assert_eq!(
         workspace_digest(&[main, manifest]),
         "75fa0f6b0c5e9ffe505a090ebe0dcafe10335946d62dde0daccbaf33e6d6ed5f"
@@ -149,7 +142,6 @@ fn the_stable_name_is_the_prefix_plus_sixteen_hex_of_the_path_digest() {
         stable_name(Path::new("/home/alice/project")),
         "rust-mutants-snap-9c2098df26004b24"
     );
-    // Two spellings of one directory are two names: no cleaning, no resolving.
     assert_eq!(
         stable_name(Path::new("/home/alice/project/")),
         "rust-mutants-snap-f83c1dd91efbeafc"
@@ -159,8 +151,6 @@ fn the_stable_name_is_the_prefix_plus_sixteen_hex_of_the_path_digest() {
         DIR_PREFIX.len() + STABLE_NAME_HEX_LENGTH
     );
 }
-
-// --- create ---------------------------------------------------------------
 
 #[test]
 fn create_copies_the_tree_byte_for_byte_and_records_a_sorted_manifest() {
@@ -202,7 +192,6 @@ fn create_copies_the_tree_byte_for_byte_and_records_a_sorted_manifest() {
     );
     assert_eq!(snap.workspace_digest(), workspace_digest(snap.manifest()));
 
-    // The owner files live beside the tree, never inside it.
     assert!(snap.dir().join(tempowner::LOCK_NAME).exists());
     assert!(snap.dir().join(tempowner::MARKER_NAME).exists());
     assert!(!snap.root().join(tempowner::MARKER_NAME).exists());
@@ -254,7 +243,6 @@ fn create_preserves_file_permissions_and_makes_directories_writable() {
         "the copy has to be writable by its owner"
     );
 
-    // Restore so the temp directory can be removed.
     fs::set_permissions(&locked_dir, fs::Permissions::from_mode(0o755)).expect("restore");
     snap.cleanup().expect("cleanup");
 }
@@ -271,8 +259,6 @@ fn a_relative_or_missing_source_root_is_refused_before_anything_is_created() {
     assert!(relative.to_string().contains("RM1002"), "{relative}");
     assert!(snapshot_dirs(&fx.dest).is_empty(), "nothing was created");
 }
-
-// --- exclusions ---------------------------------------------------------------
 
 #[test]
 fn git_and_the_report_directories_are_always_excluded_and_patterns_skip_whole_directories() {
@@ -303,7 +289,6 @@ fn git_and_the_report_directories_are_always_excluded_and_patterns_skip_whole_di
         !snap.root().join("target").exists(),
         "an excluded directory is not descended"
     );
-    // The parents of an excluded directory are still copied, empty.
     assert!(snap.root().join("reports").is_dir());
     assert!(!snap.root().join("reports/mutation").exists());
     assert!(!snap.root().join("out/custom").exists());
@@ -321,8 +306,6 @@ fn a_configured_report_directory_that_escapes_the_root_is_an_invalid_option() {
     }
     assert!(snapshot_dirs(&fx.dest).is_empty());
 }
-
-// --- refusals -------------------------------------------------------------------
 
 #[cfg(unix)]
 #[test]
@@ -385,8 +368,6 @@ fn a_file_that_cannot_be_read_fails_the_copy_and_removes_the_partial_snapshot() 
         "the partial copy is removed"
     );
 }
-
-// --- the stable name and its fallbacks ----------------------------------------
 
 #[test]
 fn a_second_live_snapshot_of_the_same_root_falls_back_to_a_random_name() {
@@ -469,8 +450,6 @@ fn a_young_unowned_stable_directory_is_spared_and_the_name_not_taken() {
     );
 }
 
-// --- redigest ---------------------------------------------------------------------
-
 #[test]
 fn redigest_reports_added_removed_and_changed_paths_sorted_and_is_empty_for_a_clean_tree() {
     let fx = fixture();
@@ -552,8 +531,6 @@ fn redigest_of_a_removed_tree_names_the_absolute_root() {
     assert_eq!(Path::new(error.path()), snap.root());
 }
 
-// --- keep, cleanup, drop -------------------------------------------------------
-
 #[test]
 fn cleanup_removes_the_whole_directory_and_releases_the_lock_first() {
     let fx = fixture();
@@ -584,7 +561,6 @@ fn keep_records_the_decision_in_the_marker_and_cleanup_becomes_a_no_op() {
     assert!(read_marker(&dir).expect("marker").kept);
     snap.cleanup().expect("cleanup is a no-op after keep");
     assert!(dir.join(TREE_NAME).join("Cargo.toml").exists());
-    // And the next sweep obeys the marker.
     let swept = tempowner::sweep(&fx.dest, &[DIR_PREFIX], now()).expect("sweep");
     assert_eq!(swept.kept, 1);
     assert!(swept.removed.is_empty());
@@ -668,8 +644,6 @@ fn the_cleanup_guard_refuses_anything_that_does_not_look_like_a_snapshot_directo
     }
 }
 
-// --- properties -------------------------------------------------------------------
-
 mod properties {
     use std::collections::BTreeMap;
 
@@ -678,8 +652,6 @@ mod properties {
     use super::*;
 
     fn tree() -> impl Strategy<Value = BTreeMap<String, Vec<u8>>> {
-        // Directories are always d<n> and files always f<n>, so a file and a
-        // directory can never share a name.
         let component = (0u8..3).prop_map(|n| format!("d{n}"));
         let leaf = (0u8..4).prop_map(|n| format!("f{n}.rs"));
         let path = (prop::collection::vec(component, 0..3), leaf).prop_map(|(dirs, leaf)| {
@@ -725,7 +697,6 @@ fn resealing_absorbs_an_intended_rewrite_so_later_drift_means_a_test_wrote() {
     let mut snap = create(&fx.source, &options(&fx), now()).expect("create");
     let before = snap.workspace_digest().to_owned();
 
-    // Instrumentation: the tree is rewritten on purpose.
     fs::write(
         snap.root().join("src/main.rs"),
         b"fn main() { guarded() }\n",
@@ -751,7 +722,6 @@ fn resealing_absorbs_an_intended_rewrite_so_later_drift_means_a_test_wrote() {
         "the rewrite is the new baseline"
     );
 
-    // Now a test writes into the tree, and that is drift.
     write(snap.root(), "testdata/golden.txt", b"updated by a test\n");
     let drifts = snap.redigest().expect("redigest");
     assert_eq!(drifts.len(), 1);

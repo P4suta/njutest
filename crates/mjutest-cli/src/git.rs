@@ -2,18 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What the repository was when the run started.
-//!
-//! A report names the commit it verified, because a reader who cannot see
-//! that name has to take the run's word for what "the code" was. Git is
-//! asked through the same supervised process every other command goes
-//! through, with the environment the run was given rather than this
-//! process's.
-//!
-//! Nothing here fails a run. A machine without git, a directory that is not
-//! a repository, a git that answers something unexpected — all of them
-//! produce the explicit unavailable state ([`crate::report::Git`]), which a
-//! report pairs with the `git-metadata-unavailable` limitation. An empty
-//! string would read as "nothing to say"; this reads as "we asked".
 
 use std::ffi::OsString;
 use std::path::Path;
@@ -28,10 +16,6 @@ use crate::watch::Watch;
 pub const UNAVAILABLE_LIMITATION: &str = "git-metadata-unavailable";
 
 /// Asks git about the tree at `root`.
-///
-/// Answers with [`Git::unavailable`] whenever any part of the answer is
-/// missing: a half-known repository is worse than an unknown one, because a
-/// commit without a dirty flag names code that may never have been built.
 #[must_use]
 pub fn describe(root: &Path, env: &[(OsString, OsString)], watch: Watch<'_>) -> Git {
     let Some(commit) = ask(root, env, &["rev-parse", "HEAD"], watch) else {
@@ -40,8 +24,6 @@ pub fn describe(root: &Path, env: &[(OsString, OsString)], watch: Watch<'_>) -> 
     let Some(branch) = ask(root, env, &["rev-parse", "--abbrev-ref", "HEAD"], watch) else {
         return Git::unavailable();
     };
-    // `--porcelain` covers untracked files as well as modified ones: a file
-    // git has never seen is still part of what was built.
     let Some(status) = ask(root, env, &["status", "--porcelain"], watch) else {
         return Git::unavailable();
     };
@@ -55,8 +37,7 @@ pub fn describe(root: &Path, env: &[(OsString, OsString)], watch: Watch<'_>) -> 
     }
 }
 
-/// The trimmed output of one git command, or nothing when it could not be
-/// run or did not succeed. A `HEAD` that resolves to nothing is nothing.
+/// The trimmed output of one git command, or nothing when it could not be run or did not succeed. A `HEAD` that resolves to nothing is nothing.
 fn ask(
     root: &Path,
     env: &[(OsString, OsString)],
@@ -76,8 +57,6 @@ fn ask(
         return None;
     }
     let answer = String::from_utf8_lossy(&asked.stdout).trim().to_owned();
-    // `status --porcelain` answers with nothing when the tree is clean, and
-    // that is an answer; the others never do.
     if answer.is_empty() && arguments.first() != Some(&"status") {
         return None;
     }

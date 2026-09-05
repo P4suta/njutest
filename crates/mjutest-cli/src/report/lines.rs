@@ -2,21 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The record stream: one line per fact, tab-separated, the kind first.
-//!
-//! This is what a pipe reads and what a person skims, so it is ordered for
-//! reading — identity, then what ran, then what it found, then the verdict
-//! last, where `tail -1` will find it.
-//!
-//! Everything in a record that this program did not write is escaped: a
-//! test's failure message, a provider's diagnostic, a limitation's detail.
-//! A newline inside one of those would end the record and start another,
-//! and a reader filtering for `LIMITATION` would read a limitation the run
-//! never stated. So a value can hold no newline, no tab, no carriage
-//! return, and no terminal escape — [`escape`] spells each one out instead.
-//!
-//! Unlike [`super::json::document`], this projection does not audit. A
-//! report that contradicts itself is exactly the one a person needs to look
-//! at, and refusing to show it would hide the bug rather than surface it.
 
 use super::{Report, TargetStatus};
 
@@ -202,8 +187,7 @@ fn append(out: &mut String, field: &str) {
     out.push_str(&escape(field));
 }
 
-/// Adds a field that may not be there, and ends the record either way. A
-/// record never ends in an empty field: absent is absent.
+/// Adds a field that may not be there, and ends the record either way. A record never ends in an empty field: absent is absent.
 fn append_optional(out: &mut String, field: Option<&str>) {
     if let Some(field) = field {
         append(out, field);
@@ -211,12 +195,7 @@ fn append_optional(out: &mut String, field: Option<&str>) {
     out.push('\n');
 }
 
-/// The text of `value` with nothing in it that a terminal or a reader would
-/// act on: no record separator, no field separator, no cursor movement, no
-/// colour.
-///
-/// A backslash is escaped first, so `C:\n` and a newline do not read as the
-/// same text once escaped.
+/// The text of `value` with nothing in it that a terminal or a reader would act on: no record separator, no field separator, no cursor movement, no colour.
 #[must_use]
 pub fn escape(value: &str) -> String {
     let mut out = String::with_capacity(value.len());
@@ -226,8 +205,6 @@ pub fn escape(value: &str) -> String {
             '\n' => out.push_str(r"\n"),
             '\r' => out.push_str(r"\r"),
             '\t' => out.push_str(r"\t"),
-            // Every control character is two hex digits at most: the last
-            // one is U+009F.
             other if other.is_control() => {
                 let code = u32::from(other);
                 out.push_str("\\u{");
@@ -253,8 +230,7 @@ const fn status_name(status: TargetStatus) -> &'static str {
     }
 }
 
-/// The wire name of a value the model serializes, taken from the model so
-/// the two projections can never drift.
+/// The wire name of a value the model serializes, taken from the model so the two projections can never drift.
 fn wire_name<T: serde::Serialize>(value: &T) -> String {
     serde_json::to_value(value)
         .ok()

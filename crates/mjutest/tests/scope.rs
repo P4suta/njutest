@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mjutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Ported from goatest's `api_test.go`: the metadata is small, immutable, and
-//! strict about blank names.
+//! Ported from goatest's `api_test.go`: the metadata is small, immutable, and strict about blank names.
 
 use mjutest::{InvalidScope, Scope, ScopeKind};
 

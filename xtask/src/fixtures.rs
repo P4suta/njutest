@@ -2,10 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Conventions of the fixture projects under `fixtures/`.
-//!
-//! Each is an independent cargo workspace with a committed lock file and no
-//! dependencies, so the integration suites can drive it offline and a
-//! fixture that fails on purpose never fails this workspace.
 
 use std::path::Path;
 
@@ -88,8 +84,7 @@ fn check_manifest(text: &str) -> Vec<String> {
     problems
 }
 
-/// Every dependency table a manifest can hold: the three at the top, the
-/// three under each `[target.<cfg>]`, and the workspace's own.
+/// Every dependency table a manifest can hold: the three at the top, the three under each `[target.<cfg>]`, and the workspace's own.
 fn check_dependencies(table: &toml::Table, problems: &mut Vec<String>) {
     const KINDS: [&str; 3] = ["dependencies", "dev-dependencies", "build-dependencies"];
     let mut holders: Vec<&toml::Table> = vec![table];
@@ -122,9 +117,7 @@ fn check_dependencies(table: &toml::Table, problems: &mut Vec<String>) {
     }
 }
 
-/// Whether a dependency is a path inside the fixture: a table with a `path`
-/// that neither escapes nor is absolute, and no source that would need a
-/// network (`git`, a registry, or a bare version requirement).
+/// Whether a dependency is a path inside the fixture: a table with a `path` that neither escapes nor is absolute, and no source that would need a network (`git`, a registry, or a bare version requirement).
 fn is_local_path_dependency(value: &toml::Value) -> bool {
     let toml::Value::Table(spec) = value else {
         return false;

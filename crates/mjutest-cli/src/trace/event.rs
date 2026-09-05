@@ -1,28 +1,17 @@
 // SPDX-FileCopyrightText: 2026 mjutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! The wire shape of one trace event: an envelope of sequence number and
-//! moment around a typed record.
-//!
-//! The vocabulary grows with every phase of the run; the envelope and the
-//! `run-start` / `run-end` pair are frozen. The engine records its own
-//! stream in its own vocabulary, so a trace directory holds two files and a
-//! reader can tell which program said what.
+//! The wire shape of one trace event: an envelope of sequence number and moment around a typed record.
 
 use serde::{Deserialize, Serialize};
 
 use crate::config::Contract;
 use crate::report::{Accounting, RunKind};
 
-/// The schema name carried by every `run-start` event. It names the recipe
-/// version; a future shape becomes `mjutest-trace-v2`.
+/// The schema name carried by every `run-start` event. It names the recipe version; a future shape becomes `mjutest-trace-v2`.
 pub const SCHEMA: &str = "mjutest-trace-v1";
 
 /// One event of a recording.
-///
-/// The envelope is `seq` (monotonic from 1, in delivery order), `timestamp`
-/// (RFC 3339, UTC), `elapsed_ms` (since the recording started), and the
-/// record's `type` with its fields.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Event {
     /// Monotonic from 1; delivery order is sequence order.
@@ -142,10 +131,6 @@ pub struct PhaseRecord {
 }
 
 /// One executed process.
-///
-/// The environment is reduced to its names and the capture to its digest
-/// before the record reaches a sink: a trace keeps the shape of an execution
-/// and none of its secrets.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct ExecRecord {
     /// The command line, verbatim.
@@ -156,9 +141,7 @@ pub struct ExecRecord {
     pub env_names: Vec<String>,
     /// The bound the caller put on it.
     pub timeout_ms: Option<u64>,
-    /// What it exited with, when it exited at all. Absent is absent: the
-    /// engine's sentinel does not travel, because a reader would have to
-    /// know it to avoid reading it as a status.
+    /// What it exited with, when it exited at all. Absent is absent: the engine's sentinel does not travel, because a reader would have to know it to avoid reading it as a status.
     pub exit_code: Option<i32>,
     /// Whether the bound is why it stopped.
     pub timed_out: bool,
@@ -180,9 +163,7 @@ pub struct ExecRecord {
 }
 
 impl ExecRecord {
-    /// The record of one supervised run: the spec's command line, directory,
-    /// environment names, and timeout, and the result's exit code, timeout
-    /// flag, duration, output, and error.
+    /// The record of one supervised run: the spec's command line, directory, environment names, and timeout, and the result's exit code, timeout flag, duration, output, and error.
     #[must_use]
     pub fn of(spec: &rust_mutants::runner::Spec, result: &rust_mutants::runner::RunResult) -> Self {
         Self {
@@ -261,12 +242,8 @@ pub struct RunRecord {
     pub accounting: Option<Accounting>,
     /// The error that ended the run, when one did.
     pub error: Option<String>,
-    /// Events the sink kept before this one. A recording cannot count the
-    /// event it is writing, so this is the honest number rather than a
-    /// guess that the last one lands.
+    /// Events the sink kept before this one. A recording cannot count the event it is writing, so this is the honest number rather than a guess that the last one lands.
     pub events_emitted: u64,
-    /// Events the sink lost before this one. A recording is honest about
-    /// its own losses; a reader finds anything lost afterwards as a
-    /// sequence gap.
+    /// Events the sink lost before this one. A recording is honest about its own losses; a reader finds anything lost afterwards as a sequence gap.
     pub events_dropped: u64,
 }

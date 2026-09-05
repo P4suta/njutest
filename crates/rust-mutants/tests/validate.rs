@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mjutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Validation: the compiler decides which mutants are real, one at a time,
-//! with its own words attached to every refusal.
+//! Validation: the compiler decides which mutants are real, one at a time, with its own words attached to every refusal.
 
 #![expect(
     clippy::expect_used,
@@ -31,11 +30,7 @@ use rust_mutants::validate::{
 
 static REGISTRY: Registry = Registry::canonical();
 
-// --- a scripted compiler ------------------------------------------------------------
-
-/// Instruments one file for real, then decides the outcome from a script:
-/// which mutants are poison, and whether their diagnostic points inside the
-/// branch (attributable) or somewhere else (not).
+/// Instruments one file for real, then decides the outcome from a script: which mutants are poison, and whether their diagnostic points inside the branch (attributable) or somewhere else (not).
 struct Scripted {
     path: String,
     source: Vec<u8>,
@@ -99,8 +94,6 @@ impl Compile for Scripted {
             ));
         }
         for index in self.unattributable.intersection(&live) {
-            // A diagnostic pointing at the file's very first byte, which no
-            // branch covers.
             messages.push(error_at(&self.path, 0, 1, *index));
         }
         let success = messages.is_empty();
@@ -131,8 +124,6 @@ fn run(scripted: &mut Scripted) -> Result<Validated, ValidateError> {
 }
 
 const SOURCE: &str = "pub fn f(a: i32, b: i32) -> i32 {\n    let c = a + b;\n    let d = a - b;\n    let e = a * b;\n    c + d + e\n}\n";
-
-// --- attribution ----------------------------------------------------------------------
 
 #[test]
 fn an_error_inside_a_branch_belongs_to_that_mutant_and_one_outside_belongs_to_nobody() {
@@ -194,8 +185,6 @@ fn a_warning_is_not_a_rejection() {
     assert!(attributed.condemned.is_empty());
     assert!(attributed.unattributed.is_empty());
 }
-
-// --- the round loop -------------------------------------------------------------------
 
 #[test]
 fn a_tree_that_compiles_is_accepted_whole_in_one_round() {
@@ -292,8 +281,6 @@ fn a_pristine_tree_that_does_not_compile_is_not_the_mutants_fault() {
     assert!(error.to_string().contains("RM4001"), "{error}");
 }
 
-// --- the real compiler ------------------------------------------------------------------
-
 /// Instruments a copy of a fixture and compiles it with a real cargo.
 struct CargoScripted {
     root: PathBuf,
@@ -335,8 +322,6 @@ impl Compile for CargoScripted {
                 trace: &trace,
             },
             &CompileOptions {
-                // The build validation ends with is the build the run
-                // executes: some refusals only happen once code is generated.
                 kind: CompileKind::Tests,
                 target_dir: Some(self.target.clone()),
                 locked: true,
@@ -515,7 +500,6 @@ fn the_compiler_decides_which_mutants_are_real_and_says_why_for_each() {
     );
     assert!(validated.rounds >= 2);
 
-    // The tree left behind holds exactly the accepted mutants and compiles.
     let final_attempt = fixture
         .attempt(&validated.rejections.iter().map(|r| r.index).collect())
         .expect("attempt");

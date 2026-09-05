@@ -2,26 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What a run measures: one test, named the way a person names it.
-//!
-//! A target here is a single `#[test]`, not a binary. The whole design rests
-//! on that: coverage is measured per test so a mutant can be routed to the
-//! tests that reach it, and a kill is attributed to the test that caught it.
-//! One binary holds many targets, and a run starts it once per target.
-//!
-//! # Identity
-//!
-//! A target's identity is `sha256` over the domain `mjutest-target-v1`, the
-//! package, the unit kind, and the libtest path, and no line number: the
-//! path *is* the semantic position, and a test that moved down a file is the
-//! same test. That is what lets a cached result survive an edit elsewhere in
-//! the file.
-//!
-//! # A binary with its own harness
-//!
-//! `harness = false` means libtest is not there to be asked, so `--list`
-//! answers nothing. Such a binary is one target whose path is
-//! [`WHOLE_BINARY`], and the report carries that as a limitation rather than
-//! pretending the tests inside it were routed.
 
 use std::ffi::OsString;
 use std::path::PathBuf;
@@ -34,8 +14,7 @@ use sha2::{Digest as _, Sha256};
 use crate::error::{self, ErrorCode};
 use crate::watch::Watch;
 
-/// The domain separator hashed first for every target identity. It carries
-/// the recipe version.
+/// The domain separator hashed first for every target identity. It carries the recipe version.
 pub const TARGET_DOMAIN: &str = "mjutest-target-v1";
 
 /// How much of the digest a target identity spells out.
@@ -44,8 +23,7 @@ pub const TARGET_ID_HEX_LENGTH: usize = 16;
 /// The path of the one target a binary with its own harness has.
 pub const WHOLE_BINARY: &str = "";
 
-/// How long listing a binary's tests may take. Listing is a process start
-/// and a print; a binary that has not answered by now is not going to.
+/// How long listing a binary's tests may take. Listing is a process start and a print; a binary that has not answered by now is not going to.
 pub const LIST_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// The kind of compilation unit a test lives in.
@@ -108,10 +86,7 @@ pub struct Unit {
     pub executable: PathBuf,
     /// The directory it runs in.
     pub cwd: PathBuf,
-    /// The complete environment its processes run with: the run's own, what
-    /// cargo sets for this target, and the scratch build layer. An argument
-    /// rather than an inheritance, so a listing and an execution see the
-    /// same machine and a test can say what that is.
+    /// The complete environment its processes run with: the run's own, what cargo sets for this target, and the scratch build layer. An argument rather than an inheritance, so a listing and an execution see the same machine and a test can say what that is.
     pub env: Vec<(OsString, OsString)>,
 }
 
@@ -126,8 +101,7 @@ pub struct Target {
     pub unit: UnitKind,
     /// The cargo target's name.
     pub unit_name: String,
-    /// The libtest path, or [`WHOLE_BINARY`] for a binary with its own
-    /// harness.
+    /// The libtest path, or [`WHOLE_BINARY`] for a binary with its own harness.
     pub path: String,
     /// Whether libtest will skip it unless asked.
     pub ignored: bool,
@@ -135,8 +109,7 @@ pub struct Target {
     pub executable: PathBuf,
     /// The directory it runs in.
     pub cwd: PathBuf,
-    /// The complete environment its process runs with, from the unit it
-    /// came from.
+    /// The complete environment its process runs with, from the unit it came from.
     pub env: Vec<(OsString, OsString)>,
 }
 
@@ -156,8 +129,7 @@ impl Target {
         )
     }
 
-    /// Whether the whole binary is the target, because libtest is not there
-    /// to be asked.
+    /// Whether the whole binary is the target, because libtest is not there to be asked.
     #[must_use]
     pub fn is_whole_binary(&self) -> bool {
         self.path == WHOLE_BINARY
@@ -199,10 +171,6 @@ pub struct Entry {
 }
 
 /// Reads a `--list --format terse` listing.
-///
-/// A line that is not `path: test` or `path: benchmark` yields nothing:
-/// a listing that could not be read is no listing, never a shorter one,
-/// because a shorter one is exactly what a missed test looks like.
 #[must_use]
 pub fn parse_list(stdout: &[u8]) -> Vec<Entry> {
     String::from_utf8_lossy(stdout)
@@ -270,14 +238,7 @@ impl TargetError {
 
 /// Asks a built binary what tests it holds.
 ///
-/// A binary that cannot answer — `harness = false`, or a harness that does
-/// not implement `--list` — is one target for the whole binary rather than
-/// an error: the tests inside it are real, and a run that refused to
-/// measure them would be less useful than one that says it could not route
-/// them.
-///
 /// # Errors
-///
 /// [`TargetErrorKind::ListFailed`] when the binary could not be started at
 /// all, which is not the same as a binary that answered differently.
 pub fn enumerate(unit: &Unit, watch: Watch<'_>) -> Result<Vec<Target>, TargetError> {
@@ -300,11 +261,6 @@ pub fn enumerate(unit: &Unit, watch: Watch<'_>) -> Result<Vec<Target>, TargetErr
             message: format!("cannot start the test binary: {error}"),
         });
     }
-    // Measured: a libtest harness holding no tests answers `--list` with
-    // exit 0 and no lines, while a binary with a harness of its own does not
-    // understand the flag at all. The difference matters — the first has
-    // nothing to measure, and calling that a target would make every run of
-    // a library without tests report a target it could not find.
     if !listed.ok() {
         return Ok(vec![whole_binary(unit)]);
     }
@@ -330,7 +286,6 @@ pub fn enumerate(unit: &Unit, watch: Watch<'_>) -> Result<Vec<Target>, TargetErr
         })
         .collect();
     if targets.is_empty() {
-        // Benchmarks only: nothing this runner measures.
         return Ok(Vec::new());
     }
     targets.sort_by(|a, b| a.path.cmp(&b.path));
@@ -353,10 +308,6 @@ fn whole_binary(unit: &Unit) -> Target {
 }
 
 /// Which of a binary's tests libtest will skip unless asked.
-///
-/// A binary that will not answer this second question is not an error: the
-/// worst outcome is that a run treats an ignored test as ordinary and reads
-/// its "0 passed, 1 ignored" honestly anyway.
 fn ignored_paths(unit: &Unit, watch: Watch<'_>) -> std::collections::BTreeSet<String> {
     let mut spec = Spec::new([
         unit.executable.as_os_str().to_owned(),

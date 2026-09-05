@@ -2,18 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! A workspace a test can hand to the thing it is testing.
-//!
-//! Copying a fixture is the right move when a test is about one of the
-//! recorded projects. It is the wrong move when a test is about *one*
-//! property — a package that does not compile, a suite with no tests at all,
-//! a repository with a commit — because then the reader has to go and find
-//! the fixture to know what the test is even saying.
-//!
-//! A [`Repo`] says it in the test. The tree lives in a temporary directory
-//! that goes away with the value, and every project it writes is
-//! self-contained: its own `[workspace]` table so cargo does not look
-//! upwards, its own committed lock file, and no dependencies at all, so it
-//! builds `--locked --offline` on a machine with no network.
 
 #![expect(
     clippy::expect_used,
@@ -28,8 +16,6 @@ use std::process::Command;
 #[derive(Debug)]
 pub struct Repo {
     root: PathBuf,
-    // The directory is removed when this is dropped, which is what bounds a
-    // test's mess to the test.
     _dir: tempfile::TempDir,
 }
 
@@ -44,7 +30,6 @@ impl Repo {
     /// An empty temporary directory to build a workspace in.
     ///
     /// # Panics
-    ///
     /// When a temporary directory cannot be made, which a test cannot
     /// continue without.
     #[must_use]
@@ -67,7 +52,6 @@ impl Repo {
     /// Writes `contents` at `relative`, making the directories above it.
     ///
     /// # Panics
-    ///
     /// When the file cannot be written.
     pub fn write(&self, relative: &str, contents: &str) {
         let path = self.root.join(relative);
@@ -78,10 +62,6 @@ impl Repo {
     }
 
     /// Starts a package named `name` at the workspace root.
-    ///
-    /// The manifest carries an empty `[workspace]` table and no
-    /// dependencies, and a lock file naming only itself, so the project
-    /// builds offline against no registry.
     #[must_use]
     pub fn package(&self, name: &str) -> Package<'_> {
         self.write(
@@ -115,15 +95,9 @@ impl Repo {
         }
     }
 
-    /// Makes the tree a git repository with one commit holding everything
-    /// written so far.
-    ///
-    /// Built with git's own plumbing, so the fixture is the same on every
-    /// machine: `commit-tree` writes a commit without consulting anybody's
-    /// configuration, and the identity comes from the environment.
+    /// Makes the tree a git repository with one commit holding everything written so far.
     ///
     /// # Panics
-    ///
     /// When git is not there or refuses, which a test asking for a
     /// repository cannot continue without.
     pub fn commit(&self) {
@@ -187,8 +161,7 @@ impl Package<'_> {
     }
 }
 
-/// A Rust file with the header every file in this repository carries, so a
-/// tree a test builds passes the same conventions the fixtures do.
+/// A Rust file with the header every file in this repository carries, so a tree a test builds passes the same conventions the fixtures do.
 fn source(name: &str, body: &str) -> String {
     format!(
         "// SPDX-FileCopyrightText: 2026 mjutest contributors\n\

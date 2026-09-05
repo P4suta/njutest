@@ -2,12 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! POSIX supervision: a process group per child.
-//!
-//! A process group is a number rather than an ownership relation: a
-//! descendant that calls `setpgid` or `setsid` leaves it and stops being
-//! covered. That is a real hole and there is no POSIX way to close it, which
-//! is why supervision here is best effort while the Windows path is exact.
-//! In practice a test binary and the helpers it spawns stay in the group.
 
 use std::os::unix::process::{CommandExt as _, ExitStatusExt as _};
 use std::process::{Child, Command, ExitStatus};
@@ -22,8 +16,7 @@ pub(super) const SUPERVISOR_KIND: &str = "process-group";
 /// Owns the process group of one child.
 #[derive(Debug, Default)]
 pub(super) struct Supervisor {
-    /// The group id, which is the child's pid: a new group has the child as
-    /// its leader.
+    /// The group id, which is the child's pid: a new group has the child as its leader.
     pgid: Option<Pid>,
 }
 
@@ -35,37 +28,30 @@ pub(super) struct Supervisor {
     reason = "the same signatures as the Windows supervisor, which can fail and holds a handle"
 )]
 impl Supervisor {
-    /// Nothing to allocate up front: the group is created by the kernel as
-    /// part of starting the child.
+    /// Nothing to allocate up front: the group is created by the kernel as part of starting the child.
     pub(super) fn new() -> Result<Self, RunnerError> {
         Ok(Self::default())
     }
 
-    /// Asks the kernel to put the child in a new process group of its own.
-    /// Any descendant it later creates inherits that group, which is what
-    /// makes a single kill reach the tree.
+    /// Asks the kernel to put the child in a new process group of its own. Any descendant it later creates inherits that group, which is what makes a single kill reach the tree.
     pub(super) fn configure(&self, command: &mut Command) {
         command.process_group(0);
     }
 
-    /// Records the group id. Nothing can fail: had the group not been set up
-    /// the child would not have started at all.
+    /// Records the group id. Nothing can fail: had the group not been set up the child would not have started at all.
     pub(super) fn adopt(&mut self, child: &Child) -> Result<(), RunnerError> {
         self.pgid = i32::try_from(child.id()).ok().and_then(Pid::from_raw);
         Ok(())
     }
 
-    /// SIGTERM to the whole group: the chance to run deferred cleanup and
-    /// flush the output that is the evidence for why the mutant timed out.
+    /// SIGTERM to the whole group: the chance to run deferred cleanup and flush the output that is the evidence for why the mutant timed out.
     pub(super) fn terminate_gently(&self) {
         if let Some(pgid) = self.pgid {
             let _sent = kill_process_group(pgid, Signal::TERM);
         }
     }
 
-    /// SIGKILL to the whole group, after the grace period a hung test ignores.
-    /// The kill goes to the group while the child is still un-reaped, so the
-    /// pid the group is named after cannot yet have been recycled.
+    /// SIGKILL to the whole group, after the grace period a hung test ignores. The kill goes to the group while the child is still un-reaped, so the pid the group is named after cannot yet have been recycled.
     pub(super) fn terminate_forcefully(&self) {
         if let Some(pgid) = self.pgid {
             let _sent = kill_process_group(pgid, Signal::KILL);
@@ -76,9 +62,7 @@ impl Supervisor {
     pub(super) fn release(&mut self) {}
 }
 
-/// The child's status, mapping a signal death to the shell's 128 + N
-/// convention: 137 for a SIGKILL is both distinguishable from "no status at
-/// all" and what every other tool on the machine prints.
+/// The child's status, mapping a signal death to the shell's 128 + N convention: 137 for a SIGKILL is both distinguishable from "no status at all" and what every other tool on the machine prints.
 pub(super) fn exit_code(status: ExitStatus) -> i32 {
     status
         .code()

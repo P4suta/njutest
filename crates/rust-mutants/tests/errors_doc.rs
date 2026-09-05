@@ -1,9 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mjutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Every error code the engine can report is documented, and every documented
-//! code exists. The table in `docs/errors.md` is the reader-facing ledger;
-//! this test keeps it from drifting from the code in either direction.
+//! Every error code the engine can report is documented, and every documented code exists. The table in `docs/errors.md` is the reader-facing ledger; this test keeps it from drifting from the code in either direction.
 
 #![expect(
     clippy::expect_used,

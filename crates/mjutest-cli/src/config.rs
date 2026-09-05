@@ -2,20 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! `.mjutest.toml`: optional, strict, and defaulted.
-//!
-//! A missing file is the defaults, and the defaults are what the contract
-//! says they are. A present file is read strictly: an unknown key, a
-//! malformed value, or any `version` other than `1` ends the run rather
-//! than being ignored. A configuration a run silently reinterpreted would
-//! make its report a claim about something else.
-//!
-//! Two rules are worth stating on their own, because both are about what a
-//! report may contain. An `environment` entry is a variable *name*: a value
-//! would be recorded in the report and in the evidence digest, and a
-//! configuration file is not the place to leak one. And mjutest owns the
-//! libtest flags that change routing, repetition, selection, the output
-//! protocol, or completeness — a run that let `--skip` through would be
-//! measuring a suite other than the one it names.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -38,8 +24,7 @@ pub const DEFAULT_CACHE_MAX_BYTES: u64 = 5 * 1024 * 1024 * 1024;
 /// How long a cached outcome is kept when the file does not say.
 pub const DEFAULT_CACHE_TTL: Duration = Duration::from_hours(720);
 
-/// How much of the machine-wide build cache is kept when the file does not
-/// say.
+/// How much of the machine-wide build cache is kept when the file does not say.
 pub const DEFAULT_BUILD_MAX_BYTES: u64 = 8 * 1024 * 1024 * 1024;
 
 /// How many run directories are kept when the file does not say.
@@ -60,8 +45,7 @@ pub const RESERVED_ENV_PREFIX: &str = "RUST_TEST_";
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Contract {
-    /// The soundness phase is a static inventory, and a non-empty one is a
-    /// limitation rather than a failure.
+    /// The soundness phase is a static inventory, and a non-empty one is a limitation rather than a failure.
     #[default]
     #[serde(rename = "standard-v1")]
     StandardV1,
@@ -119,8 +103,7 @@ impl Default for Config {
 pub struct Project {
     /// The cargo packages to verify. Empty is every workspace member.
     pub packages: Vec<String>,
-    /// Workspace-relative globs to leave out, which the report carries as
-    /// an explicit limitation.
+    /// Workspace-relative globs to leave out, which the report carries as an explicit limitation.
     pub exclude: Vec<String>,
 }
 
@@ -170,8 +153,7 @@ pub struct Cache {
     pub ttl: Duration,
     /// How much of the machine-wide build cache is kept.
     pub build_max_bytes: u64,
-    /// Where that build cache lives. `None` is below the user cache
-    /// directory.
+    /// Where that build cache lives. `None` is below the user cache directory.
     #[serde(deserialize_with = "optional_path", serialize_with = "as_path")]
     pub build_dir: Option<PathBuf>,
 }
@@ -261,8 +243,7 @@ pub struct Generation {
 pub struct Acceptance {
     /// The mutant, by identity or by a prefix that names exactly one.
     pub id: String,
-    /// Why it was accepted. Required: an acceptance without a reason is a
-    /// suppression, and a report cannot audit one.
+    /// Why it was accepted. Required: an acceptance without a reason is a suppression, and a report cannot audit one.
     pub reason: String,
     /// When the acceptance lapses.
     #[serde(default)]
@@ -344,7 +325,6 @@ impl Config {
     /// Reads `.mjutest.toml` from `root`, or the defaults when there is none.
     ///
     /// # Errors
-    ///
     /// See [`ConfigErrorKind`].
     pub fn load(root: &Path) -> Result<Self, ConfigError> {
         let path = root.join(FILE_NAME);
@@ -367,7 +347,6 @@ impl Config {
     /// Reads a configuration from text, naming `path` in any error.
     ///
     /// # Errors
-    ///
     /// See [`ConfigErrorKind`].
     pub fn parse(text: &str, path: &Path) -> Result<Self, ConfigError> {
         let config: Self = toml::from_str(text).map_err(|error| {
@@ -451,11 +430,7 @@ fn allowed_test_arg(argument: &str) -> bool {
     ALLOWED_TEST_ARGS.contains(&name)
 }
 
-/// Whether an environment entry is a name rather than an assignment, and one
-/// a run does not own.
-///
-/// The refusal never repeats the value: a message that quoted it would put
-/// it in a log, which is exactly what naming-only is for.
+/// Whether an environment entry is a name rather than an assignment, and one a run does not own.
 fn check_environment_name(entry: &str) -> Result<(), String> {
     if let Some((name, _)) = entry.split_once('=') {
         return Err(format!(
@@ -473,12 +448,7 @@ fn check_environment_name(entry: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// A parse error on one line: the whole of what the parser said, with its
-/// line breaks folded away.
-///
-/// The first line alone would say "TOML parse error at line 2, column 11"
-/// and never which key was wrong, which is the only part a reader can act
-/// on.
+/// A parse error on one line: the whole of what the parser said, with its line breaks folded away.
 fn one_line(error: &toml::de::Error) -> String {
     error
         .to_string()
@@ -489,14 +459,9 @@ fn one_line(error: &toml::de::Error) -> String {
         .join("; ")
 }
 
-/// A duration in the syntax Go writes: a sequence of decimal numbers, each
-/// with a unit, as in `10m` or `2h45m30s`.
-///
-/// It is the syntax goatest's configuration uses, and a configuration that
-/// travelled between the two tools should mean the same thing in both.
+/// A duration in the syntax Go writes: a sequence of decimal numbers, each with a unit, as in `10m` or `2h45m30s`.
 ///
 /// # Errors
-///
 /// Returns what is wrong with the text.
 pub fn parse_duration(text: &str) -> Result<Duration, String> {
     if text.is_empty() {
@@ -544,8 +509,7 @@ fn duration<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Duratio
     parse_duration(&text).map_err(serde::de::Error::custom)
 }
 
-/// Reads a path, treating the empty string as absent, which is how the
-/// skeleton spells "the default".
+/// Reads a path, treating the empty string as absent, which is how the skeleton spells "the default".
 fn optional_path<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Option<PathBuf>, D::Error> {
@@ -554,10 +518,6 @@ fn optional_path<'de, D: serde::Deserializer<'de>>(
 }
 
 /// The annotated skeleton `mjutest init` writes.
-///
-/// Loading it untouched yields exactly [`Config::default`], which a test
-/// checks: a skeleton whose comments and defaults disagreed would teach the
-/// wrong thing.
 #[must_use]
 pub fn skeleton() -> String {
     let timeout = DEFAULT_TIMEOUT.as_secs() / 60;
@@ -621,8 +581,7 @@ contract = \"standard-v1\"        # \"standard-v1\" | \"deep-v1\"
     )
 }
 
-/// A [`Duration`] as whole milliseconds, so the digest of a configuration
-/// does not depend on how a person spelled `10m`.
+/// A [`Duration`] as whole milliseconds, so the digest of a configuration does not depend on how a person spelled `10m`.
 fn as_millis<S: serde::Serializer>(value: &Duration, serializer: S) -> Result<S::Ok, S::Error> {
     serializer.serialize_u128(value.as_millis())
 }
@@ -644,12 +603,9 @@ fn as_path<S: serde::Serializer>(
 }
 
 impl Config {
-    /// The effective configuration, rendered canonically: every field, in
-    /// declaration order, with durations as milliseconds so two spellings of
-    /// the same bound are one configuration.
+    /// The effective configuration, rendered canonically: every field, in declaration order, with durations as milliseconds so two spellings of the same bound are one configuration.
     ///
     /// # Errors
-    ///
     /// Nothing a caller can act on; a configuration that cannot be rendered
     /// is an invariant failure and answers with the empty document.
     #[must_use]
@@ -657,8 +613,7 @@ impl Config {
         serde_json::to_string(self).unwrap_or_else(|_error| String::from("{}"))
     }
 
-    /// The SHA-256 of [`Config::canonical`], which is what a report records
-    /// and what a cached result is keyed on.
+    /// The SHA-256 of [`Config::canonical`], which is what a report records and what a cached result is keyed on.
     #[must_use]
     pub fn digest(&self) -> String {
         hex::encode(Sha256::digest(self.canonical().as_bytes()))

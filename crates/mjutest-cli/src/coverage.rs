@@ -2,32 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Which regions of which files one test reached.
-//!
-//! A run builds the tree once with `-C instrument-coverage`, then starts
-//! each test binary once per target with `LLVM_PROFILE_FILE` pointing at a
-//! file of its own. `llvm-profdata merge` and `llvm-cov export` turn what
-//! that wrote into regions, and the regions of the tests that ran are what
-//! routes a mutant: a mutant no test's regions cover is one no test could
-//! have noticed, and running it would prove nothing.
-//!
-//! # Columns are bytes, and rustc's are not
-//!
-//! An `llvm-cov` region is `[line_start, column_start, line_end,
-//! column_end, count, file_id, expanded_file_id, kind]`, the columns are
-//! 1-based **byte** columns, and the end is exclusive.
-//!
-//! rustc's *diagnostic* columns are character columns, so one toolchain
-//! uses both units and neither is a safe default. The engine records a byte
-//! column and a character column for every mutant; the byte one is what
-//! compares with a coverage region. `fixtures/fixture-unicode` is where a
-//! test holds the tools to that answer, by asking for the exact region of
-//! an expression whose two columns differ.
-//!
-//! # `%p` in the profile name
-//!
-//! The name carries `%p`, so a test that forks writes one file per process
-//! and the merge picks all of them up. A test whose child did the work
-//! would otherwise contribute nothing, and its mutant would look unreached.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -43,13 +17,10 @@ pub const INSTRUMENT_FLAG: &str = "-C instrument-coverage";
 /// Where a test process writes what it executed.
 pub const PROFILE_ENV: &str = "LLVM_PROFILE_FILE";
 
-/// The region kind that is ordinary code. Every other kind — an expansion,
-/// a skipped region, a gap, a branch — says something about the shape of
-/// the source rather than about what ran.
+/// The region kind that is ordinary code. Every other kind — an expansion, a skipped region, a gap, a branch — says something about the shape of the source rather than about what ran.
 pub const REGION_KIND_CODE: u32 = 0;
 
-/// A place in a file: a 1-based line and a 1-based byte column, which is
-/// the unit `llvm-cov` reports regions in.
+/// A place in a file: a 1-based line and a 1-based byte column, which is the unit `llvm-cov` reports regions in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Point {
     /// The 1-based line.
@@ -92,12 +63,7 @@ pub struct Block {
 }
 
 impl Block {
-    /// Whether `position` in `file` lies inside this block. The column is
-    /// a byte column; see the module documentation.
-    ///
-    /// The end is exclusive, which is what `llvm-cov` means by it: a region
-    /// that ends where the next begins must not claim the next one's first
-    /// character.
+    /// Whether `position` in `file` lies inside this block. The column is a byte column; see the module documentation.
     #[must_use]
     pub fn contains(&self, file: &Path, position: Point) -> bool {
         self.file == file && position >= self.start && position < self.end
@@ -182,13 +148,7 @@ struct Function {
 
 /// Reads a coverage export into the regions of each file.
 ///
-/// Fail-closed: a document that is not an export, a region tuple that is
-/// not one, or a `file_id` naming no file is an error rather than a
-/// shorter answer. A shorter answer here is exactly what "no test reaches
-/// this mutant" looks like, and that is a claim.
-///
 /// # Errors
-///
 /// [`CoverageErrorKind::Unreadable`].
 pub fn parse_export(json: &[u8]) -> Result<Vec<FileRegions>, CoverageError> {
     let refuse = |message: String| CoverageError {
@@ -254,8 +214,7 @@ fn read_region(function: &Function, region: &[u64]) -> Result<(PathBuf, Region),
     ))
 }
 
-/// The blocks a run really executed: the code regions with a non-zero
-/// count, deduplicated, in file and position order.
+/// The blocks a run really executed: the code regions with a non-zero count, deduplicated, in file and position order.
 #[must_use]
 pub fn covered(files: &[FileRegions]) -> BTreeSet<Block> {
     files
@@ -273,8 +232,7 @@ pub fn covered(files: &[FileRegions]) -> BTreeSet<Block> {
         .collect()
 }
 
-/// The regions a build instrumented, whether or not they ran: every code
-/// region of the export.
+/// The regions a build instrumented, whether or not they ran: every code region of the export.
 #[must_use]
 pub fn instrumented(files: &[FileRegions]) -> BTreeSet<Block> {
     files
@@ -292,8 +250,7 @@ pub fn instrumented(files: &[FileRegions]) -> BTreeSet<Block> {
         .collect()
 }
 
-/// The two LLVM tools a coverage run drives, as rustup ships them beside
-/// the compiler.
+/// The two LLVM tools a coverage run drives, as rustup ships them beside the compiler.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Tools {
     /// `llvm-profdata`, which merges what the processes wrote.
@@ -305,14 +262,7 @@ pub struct Tools {
 impl Tools {
     /// Finds the tools beside the compiler that will build the tree.
     ///
-    /// They live in the toolchain rather than on the `PATH`, and they have
-    /// to be the toolchain's own: a profile written by one LLVM version is
-    /// not readable by another, and a mismatch is a wrong answer rather
-    /// than an error. `rustc --print target-libdir` names the directory
-    /// they sit beside.
-    ///
     /// # Errors
-    ///
     /// [`CoverageErrorKind::ToolsMissing`] when rustc could not be asked or
     /// the component is not installed.
     pub fn locate(
@@ -367,7 +317,6 @@ impl Tools {
     /// Merges what one target's processes wrote into one profile.
     ///
     /// # Errors
-    ///
     /// [`CoverageErrorKind::ToolFailed`] with what the tool said.
     pub fn merge(
         &self,
@@ -413,7 +362,6 @@ impl Tools {
     /// Turns a merged profile and the binary that wrote it into regions.
     ///
     /// # Errors
-    ///
     /// [`CoverageErrorKind::ToolFailed`] and the refusals of
     /// [`parse_export`].
     pub fn export(
@@ -432,8 +380,6 @@ impl Tools {
             std::ffi::OsString::from("--format=text"),
             binary.as_os_str().to_owned(),
         ]);
-        // The export of a large workspace is large, and a truncated one
-        // would read as "no test reaches this".
         spec.structured_stdout = Some(1 << 30);
         let exported = run(&spec, watch.cancel);
         watch.trace.exec(ExecRecord::of(&spec, &exported));
@@ -465,8 +411,7 @@ fn executable_name(stem: &str) -> String {
     }
 }
 
-/// The profile file pattern one target writes to: `%p` per process, so a
-/// test that forks is measured whole.
+/// The profile file pattern one target writes to: `%p` per process, so a test that forks is measured whole.
 #[must_use]
 pub fn profile_pattern(directory: &Path, target_id: &str) -> PathBuf {
     directory.join(format!("{target_id}.%p.profraw"))
@@ -475,7 +420,6 @@ pub fn profile_pattern(directory: &Path, target_id: &str) -> PathBuf {
 /// The raw profiles one target wrote, in name order.
 ///
 /// # Errors
-///
 /// [`CoverageErrorKind::NothingWritten`] when the directory cannot be read.
 pub fn written_profiles(directory: &Path, target_id: &str) -> Result<Vec<PathBuf>, CoverageError> {
     let entries = std::fs::read_dir(directory).map_err(|error| CoverageError {

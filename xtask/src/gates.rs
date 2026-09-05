@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mjutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! The gates applied to this repository: each one reads the tree, hands it to
-//! the pure checker of its module, and renders the answer.
+//! The gates applied to this repository: each one reads the tree, hands it to the pure checker of its module, and renders the answer.
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -11,8 +10,7 @@ use walkdir::WalkDir;
 
 use crate::{deps, devgates, fixtures, lints as lint_scan, release, reportdiff};
 
-/// The root of this workspace, resolved from the xtask manifest at compile
-/// time so the gates do not depend on the working directory.
+/// The root of this workspace, resolved from the xtask manifest at compile time so the gates do not depend on the working directory.
 #[must_use]
 pub fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -26,9 +24,6 @@ pub fn workspace_root() -> PathBuf {
 pub struct GateFailure(pub String);
 
 /// Every Rust file the repository commits, tests included.
-///
-/// The lint gate scans all of them: an `#[allow]` in a test hides a lint
-/// exactly as well as one in production.
 #[must_use]
 pub fn all_sources(root: &Path) -> Vec<PathBuf> {
     let mut files = Vec::new();
@@ -54,7 +49,6 @@ pub fn all_sources(root: &Path) -> Vec<PathBuf> {
 /// Refuses `#[allow]` and `Box<dyn Trait>` anywhere in the repository.
 ///
 /// # Errors
-///
 /// Every finding, one per line, or a file that could not be read or parsed.
 pub fn lints(root: &Path) -> Result<String, GateFailure> {
     let files = all_sources(root);
@@ -82,10 +76,6 @@ pub fn lints(root: &Path) -> Result<String, GateFailure> {
 }
 
 /// The production source files the seam ratchet scans.
-///
-/// Every `.rs` below a crate's `src/` and below `xtask/src/`, except the
-/// devkit, test support modules, and anything under a `tests`, `benches`, or
-/// `examples` directory.
 #[must_use]
 pub fn production_sources(root: &Path) -> Vec<PathBuf> {
     let mut files = Vec::new();
@@ -135,7 +125,6 @@ fn relative_slash(root: &Path, path: &Path) -> String {
 /// The seam ratchet against `xtask/seam_allowlist.txt`.
 ///
 /// # Errors
-///
 /// Returns a disagreement between the scan and the ledger, or an unreadable file.
 pub fn devgates(root: &Path) -> Result<String, GateFailure> {
     let mut found = Vec::new();
@@ -167,7 +156,6 @@ pub fn devgates(root: &Path) -> Result<String, GateFailure> {
 /// Dependency direction between the workspace crates.
 ///
 /// # Errors
-///
 /// Returns every edge the direction rule refuses, or a `cargo metadata` failure.
 pub fn deps(root: &Path) -> Result<String, GateFailure> {
     let metadata = cargo_metadata::MetadataCommand::new()
@@ -214,7 +202,6 @@ pub fn deps(root: &Path) -> Result<String, GateFailure> {
 /// Conventions of the fixture projects.
 ///
 /// # Errors
-///
 /// Returns every convention a fixture breaks.
 pub fn fixtures(root: &Path) -> Result<String, GateFailure> {
     let dir = root.join("fixtures");
@@ -250,7 +237,6 @@ pub fn fixtures(root: &Path) -> Result<String, GateFailure> {
 /// Version consistency between the workspace and the release manifest.
 ///
 /// # Errors
-///
 /// Returns every inconsistency.
 pub fn release_check(root: &Path) -> Result<String, GateFailure> {
     let read = |relative: &str| {
@@ -292,7 +278,6 @@ pub fn release_check(root: &Path) -> Result<String, GateFailure> {
 /// Every gate, in order, stopping at the first failure.
 ///
 /// # Errors
-///
 /// Returns the first gate's failure.
 pub fn all(root: &Path) -> Result<String, GateFailure> {
     let mut report = String::new();
@@ -305,7 +290,6 @@ pub fn all(root: &Path) -> Result<String, GateFailure> {
 /// What changed between two stored reports.
 ///
 /// # Errors
-///
 /// A document that could not be read, or is not JSON.
 pub fn report_diff(before: &Path, after: &Path) -> Result<String, GateFailure> {
     let read = |path: &Path| -> Result<String, GateFailure> {

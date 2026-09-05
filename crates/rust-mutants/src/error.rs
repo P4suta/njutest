@@ -1,19 +1,9 @@
 // SPDX-FileCopyrightText: 2026 mjutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Failure modes of the engine, each with a stable code documented in
-//! `docs/errors.md`.
-//!
-//! A code is the searchable name of a failure: what a person greps the
-//! documentation and the issue tracker for. The test `errors_doc` keeps the
-//! table in `docs/errors.md` and [`error_codes`] equal in both directions.
+//! Failure modes of the engine, each with a stable code documented in `docs/errors.md`.
 
 /// A stable, searchable identifier for one failure mode.
-///
-/// Codes are `RM` followed by four digits. The first digit names the area:
-/// `0` the engine's own contract, `1` workspace and snapshot, `2` discovery,
-/// `3` instrumentation, `4` validation, `5` execution, `6` probing,
-/// `7` process supervision, `9` internal invariants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ErrorCode {
     /// The code, e.g. `RM0001`.
@@ -40,7 +30,6 @@ const INTERRUPTED: ErrorCode = ErrorCode {
 };
 
 macro_rules! snapshot_code {
-    // Named for the first area it served; every subsystem code is minted with it.
     ($name:ident, $code:literal, $summary:literal) => {
         pub(crate) const $name: ErrorCode = ErrorCode {
             code: $code,
@@ -252,12 +241,10 @@ pub enum EngineError {
     /// The caller cancelled the operation before it completed.
     #[error("the operation was interrupted before it completed")]
     Interrupted,
-    /// The source tree could not be copied into a disposable snapshot, or
-    /// the snapshot could not be removed.
+    /// The source tree could not be copied into a disposable snapshot, or the snapshot could not be removed.
     #[error(transparent)]
     Snapshot(#[from] crate::snapshot::SnapshotError),
-    /// The toolchain could not be located or driven, or what it printed
-    /// could not be read.
+    /// The toolchain could not be located or driven, or what it printed could not be read.
     #[error(transparent)]
     Cargo(#[from] crate::cargo::CargoError),
     /// The workspace's files could not be turned into a catalog.
@@ -269,8 +256,7 @@ pub enum EngineError {
     /// Which candidates are real mutants could not be established.
     #[error(transparent)]
     Validate(#[from] crate::validate::ValidateError),
-    /// The workspace could not be prepared, or a request against a prepared
-    /// one could not be answered.
+    /// The workspace could not be prepared, or a request against a prepared one could not be answered.
     #[error(transparent)]
     Session(#[from] crate::workspace::SessionError),
     /// The rules asked for are not the registry's.

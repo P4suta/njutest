@@ -2,11 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Finding the run a command was asked about.
-//!
-//! A command given no run means the latest one, and a command given a name
-//! means exactly that one. What it never means is "the closest thing I could
-//! find": a command asked about a run that is not there says so, because an
-//! answer about a different run is worse than no answer.
 
 use std::path::{Path, PathBuf};
 
@@ -48,7 +43,6 @@ impl RunError {
 /// The run `named`, or the latest one when nothing was named.
 ///
 /// # Errors
-///
 /// [`RunError::NotFound`] when there is no such run, or none at all.
 pub fn resolve(root: &Path, named: Option<&str>) -> Result<String, RunError> {
     let Some(run) = named else {
@@ -85,7 +79,6 @@ pub fn recording(root: &Path, run: &str) -> PathBuf {
 /// The document one run wrote, as text.
 ///
 /// # Errors
-///
 /// [`RunError::NotFound`] when the document is not there.
 pub fn document(root: &Path, run: &str) -> Result<String, RunError> {
     let path = directory(root, run).join(reports::DOCUMENT_NAME);
@@ -97,7 +90,6 @@ pub fn document(root: &Path, run: &str) -> Result<String, RunError> {
 /// The report one run wrote.
 ///
 /// # Errors
-///
 /// [`RunError::NotFound`] when the document is not there and
 /// [`RunError::Unreadable`] when it is not one this version understands.
 pub fn report(root: &Path, run: &str) -> Result<Report, RunError> {

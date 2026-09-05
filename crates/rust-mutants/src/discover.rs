@@ -1,20 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mjutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Discovery over a whole workspace: which files are mutable, which are
-//! passed over as a whole and why, and the catalog that results.
-//!
-//! The per-file walk lives in [`crate::syntax`]; this module decides which
-//! files to walk. That decision is the compiler's, read from dep-info: a
-//! file is mutable when a library or binary unit compiled it outside its
-//! test configuration. A file only a test unit compiled is a
-//! `test-only-file` skip, a proc-macro crate's files are `proc-macro-crate`
-//! skips, a `#![no_std]` crate's files are `no-std-crate` skips, and a file
-//! the include and exclude patterns removed is an `excluded` skip. Each of
-//! those is still walked, so its count says how many candidates the reason
-//! hid. Integration tests, benches, examples, and build scripts are
-//! structural — never mutated, never a skip — because no decision about a
-//! particular place was made.
+//! Discovery over a whole workspace: which files are mutable, which are passed over as a whole and why, and the catalog that results.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -34,14 +21,11 @@ use crate::trace::{DiscoverFileRecord, Recorder, SkipCount};
 pub struct DiscoverOptions<'r> {
     /// The rules to apply.
     pub selection: Selection<'r>,
-    /// Patterns a file must match to be mutable, against its
-    /// workspace-relative path. Empty includes everything.
+    /// Patterns a file must match to be mutable, against its workspace-relative path. Empty includes everything.
     pub include: Vec<Pattern>,
     /// Patterns that remove a file again; an exclude always wins.
     pub exclude: Vec<Pattern>,
-    /// The member packages to discover in, by name. Empty means every
-    /// member. A package left out is not a skip: nothing was decided about
-    /// it.
+    /// The member packages to discover in, by name. Empty means every member. A package left out is not a skip: nothing was decided about it.
     pub packages: Vec<String>,
 }
 
@@ -63,8 +47,7 @@ pub struct FileReport {
     pub package: String,
     /// Candidates the file yielded; zero for a file skipped as a whole.
     pub candidates: usize,
-    /// The skips: the walk's own for a mutable file, or the one whole-file
-    /// reason with the count of candidates it hid.
+    /// The skips: the walk's own for a mutable file, or the one whole-file reason with the count of candidates it hid.
     pub skips: Vec<Skip>,
     /// The whole-file reason, when there is one.
     pub whole_file: Option<SkipReason>,
@@ -174,11 +157,9 @@ pub struct Input<'a> {
     pub units: &'a [Unit],
 }
 
-/// Finds every candidate in the workspace, walking the files its units
-/// compiled. The trace receives one `discover-file` event per file.
+/// Finds every candidate in the workspace, walking the files its units compiled. The trace receives one `discover-file` event per file.
 ///
 /// # Errors
-///
 /// See [`DiscoverError`].
 pub fn discover(
     input: &Input<'_>,
@@ -256,8 +237,7 @@ fn selected_members<'m>(
         .collect()
 }
 
-/// Gives every file of every target its role, from the units that compiled
-/// the target, keeping the higher-priority role when targets disagree.
+/// Gives every file of every target its role, from the units that compiled the target, keeping the higher-priority role when targets disagree.
 struct Assigner<'a> {
     root: &'a Path,
     units: &'a [Unit],
@@ -326,8 +306,7 @@ impl Assigner<'_> {
     }
 }
 
-/// Whether the crate root at `rel` declares `#![no_std]`. A root that does
-/// not parse is answered `false` here; the walk reports the parse failure.
+/// Whether the crate root at `rel` declares `#![no_std]`. A root that does not parse is answered `false` here; the walk reports the parse failure.
 fn crate_root_is_no_std(root: &Path, rel: &str) -> bool {
     std::fs::read_to_string(root.join(rel))
         .ok()
@@ -383,8 +362,7 @@ fn report(discovery: &FileDiscovery, package: &str, whole_file: Option<SkipReaso
     }
 }
 
-/// The trace record: the walk's decisions for a mutable file, the one
-/// whole-file tally otherwise.
+/// The trace record: the walk's decisions for a mutable file, the one whole-file tally otherwise.
 fn record(discovery: &FileDiscovery, report: &FileReport) -> DiscoverFileRecord {
     match report.whole_file {
         None => discovery.trace_record(),

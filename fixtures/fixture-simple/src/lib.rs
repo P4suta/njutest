@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mjutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! The smallest workspace the engine can open: one library with a unit
-//! test, one integration test, and a helper module only the tests compile.
+//! The smallest workspace the engine can open: one library with a unit test, one integration test, and a helper module only the tests compile.
 
 #[cfg(test)]
 mod testutil;

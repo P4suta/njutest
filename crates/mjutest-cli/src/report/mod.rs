@@ -2,19 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What a completed verification says, and what a durable one must satisfy.
-//!
-//! JSON is the canonical model; every other projection is derived from it.
-//! The shape is the contract in `docs/report-v1.md`: a report names the
-//! schema, the run, what was verified, what ran, what it established, and
-//! every limitation on the claim. What it never carries is a percentage.
-//!
-//! [`audit::validate_for_persistence`] is the gate a report passes before it
-//! is written. A JSON Schema can say that a field is an integer; it cannot
-//! say that the numbers add up, that the verdict is the one the accounting
-//! supports, or that a fact recorded as unavailable is not also present.
-//! Those are the invariants that make a report auditable rather than merely
-//! well-formed, and a report that fails one is a bug in this program, not a
-//! finding about the code under test.
 
 pub mod audit;
 pub mod json;
@@ -22,15 +9,13 @@ pub mod lines;
 
 use serde::{Deserialize, Serialize};
 
-/// Names the contract, and names the toolchain so a reader never confuses
-/// it with goatest's report of the same shape.
+/// Names the contract, and names the toolchain so a reader never confuses it with goatest's report of the same shape.
 pub const SCHEMA: &str = "mjutest-assurance-report-v1";
 
 /// The version of that shape.
 pub const SCHEMA_VERSION: u32 = 1;
 
-/// The sentinel a report uses where a fact was not available. An empty
-/// string would read as "nothing to say"; this reads as "we asked".
+/// The sentinel a report uses where a fact was not available. An empty string would read as "nothing to say"; this reads as "we asked".
 pub const UNAVAILABLE: &str = "unavailable";
 
 /// What a run concluded.
@@ -88,10 +73,6 @@ pub enum RunKind {
 }
 
 /// A place in a file.
-///
-/// Two columns, because one toolchain uses two units: an `llvm-cov` region
-/// counts bytes and a rustc diagnostic counts characters. Both are derived
-/// from the same byte offset, so they cannot disagree.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Position {
@@ -184,10 +165,6 @@ pub struct Repository {
 }
 
 /// What git said about the tree, or that it could not be asked.
-///
-/// Every field is present either way: an unavailable fact is
-/// [`UNAVAILABLE`], never an empty string, because an empty string reads as
-/// "nothing to say" and this has to read as "we asked and could not know".
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Git {
@@ -250,8 +227,7 @@ pub struct TargetAccounting {
     pub failed: u32,
     /// How many were skipped, by libtest or by the run.
     pub skipped: u32,
-    /// How many could not be found at all, which is fail-closed rather than
-    /// a pass.
+    /// How many could not be found at all, which is fail-closed rather than a pass.
     pub missing: u32,
 }
 
@@ -390,9 +366,6 @@ pub enum FindingKind {
 }
 
 /// One thing a run found wrong with the code under test.
-///
-/// A finding is a claim about the project, which is what separates it from a
-/// [`Limitation`] — a claim the run is declining to make about itself.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Finding {
@@ -420,9 +393,6 @@ impl Finding {
 }
 
 /// One thing a report cannot claim, and why.
-///
-/// A limitation is not an apology: it is the part of the claim the run is
-/// refusing to make, stated in the report so a reader never has to infer it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Limitation {
@@ -523,8 +493,7 @@ impl Report {
         }
     }
 
-    /// Puts the targets in the canonical order: slowest first, then by
-    /// identity, so two runs of the same work produce the same document.
+    /// Puts the targets in the canonical order: slowest first, then by identity, so two runs of the same work produce the same document.
     pub fn sort_targets(&mut self) {
         self.targets.sort_by(|a, b| {
             b.duration_ms

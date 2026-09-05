@@ -2,11 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The two builds a run performs, against real cargo and real fixtures.
-//!
-//! The instrumented one is the one worth watching: it has to land in its own
-//! layer, keep the project's own flags, and actually write a profile when a
-//! test process runs — otherwise coverage routing would silently measure
-//! nothing and every mutant would look unreachable.
 
 #![expect(
     clippy::expect_used,
@@ -32,8 +27,6 @@ struct Built0 {
 }
 
 fn env() -> Vec<(OsString, OsString)> {
-    // Enough for cargo and rustc to work, and nothing else: what the run is
-    // given is what the run sees.
     std::env::vars_os()
         .filter(|(key, _)| {
             matches!(
@@ -109,8 +102,6 @@ fn build_fixture(fixture: &str, flavour: Flavour, packages: &[&str]) -> Built0 {
     }
 }
 
-// --- the plain build ----------------------------------------------------------------
-
 #[test]
 fn a_plain_build_produces_the_test_binaries_in_the_layer_it_was_given() {
     let outcome = build_fixture("fixture-simple", Flavour::Native, &[]);
@@ -178,8 +169,6 @@ fn only_the_packages_that_were_asked_for_are_built() {
         "the whole workspace was not built"
     );
 }
-
-// --- the instrumented build ---------------------------------------------------------
 
 #[test]
 fn an_instrumented_build_lands_under_the_host_triple_and_writes_a_profile_when_it_runs() {

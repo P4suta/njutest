@@ -2,12 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The canonical projection of a report, and the schema that publishes it.
-//!
-//! Two locks hold the schema to the model. The document a populated report
-//! writes must validate, so a field the model gained and the schema never
-//! heard of fails here (every object is closed). And every object in the
-//! schema must require everything it declares, so a field the schema
-//! declares and the model never writes fails here too.
 
 #![expect(
     clippy::expect_used,
@@ -151,8 +145,6 @@ fn problems(document: &serde_json::Value) -> Vec<String> {
         .collect()
 }
 
-// --- the document ------------------------------------------------------------------
-
 #[test]
 fn the_document_is_indented_and_ends_in_exactly_one_newline() {
     let text = json::document(&populated()).expect("a sound report is written");
@@ -212,8 +204,6 @@ fn the_document_matches_the_recorded_one() {
     mjutest_devkit::golden::golden(&golden, text.as_bytes()).expect("the recorded document");
 }
 
-// --- the published schema ----------------------------------------------------------
-
 #[test]
 fn the_published_schema_accepts_a_populated_document() {
     let text = json::document(&populated()).expect("a sound report is written");
@@ -240,8 +230,7 @@ fn the_published_schema_refuses_a_document_missing_a_field() {
     assert!(!problems(&document).is_empty(), "every field is required");
 }
 
-/// Closed and complete: the second half of the lock. Without this an object
-/// could declare a property the model never writes, and nothing would say so.
+/// Closed and complete: the second half of the lock. Without this an object could declare a property the model never writes, and nothing would say so.
 #[test]
 fn every_object_in_the_schema_is_closed_and_requires_all_it_declares() {
     fn walk(node: &serde_json::Value, at: &str, faults: &mut Vec<String>) {

@@ -1,16 +1,9 @@
 // SPDX-FileCopyrightText: 2026 mjutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Failure modes of the runner, each with a stable code documented in
-//! `docs/errors.md`.
+//! Failure modes of the runner, each with a stable code documented in `docs/errors.md`.
 
 /// A stable, searchable identifier for one failure mode.
-///
-/// Codes are `MJ` followed by four digits. The first digit names the area:
-/// `0` the command line and its contract, `1` configuration, `2` repository
-/// and evidence identity, `3` targets and baseline, `4` coverage,
-/// `5` mutation, `6` reports and stores, `7` providers, `8` caches and
-/// temporary directories, `9` internal invariants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ErrorCode {
     /// The code, e.g. `MJ0001`.
@@ -146,9 +139,7 @@ pub enum RunnerError {
     /// The workspace could not be built.
     #[error(transparent)]
     Build(#[from] crate::build::BuildError),
-    /// The engine refused. Its codes are `RM`-prefixed and live in the
-    /// engine's half of `docs/errors.md`; a runner that renamed them would
-    /// make a user's report unsearchable.
+    /// The engine refused. Its codes are `RM`-prefixed and live in the engine's half of `docs/errors.md`; a runner that renamed them would make a user's report unsearchable.
     #[error(transparent)]
     Engine(#[from] rust_mutants::EngineError),
 }

@@ -1,13 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mjutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! The catalog: candidates identified, deduplicated, ordered canonically,
-//! and assigned the dense indices the generated runtime is built from.
-//!
-//! Catalog order is canonical rather than chronological: it is a pure
-//! function of the candidate set, so two discovery passes over the same
-//! workspace produce the same order, the same dense indices, and therefore
-//! the same generated runtime array.
+//! The catalog: candidates identified, deduplicated, ordered canonically, and assigned the dense indices the generated runtime is built from.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -24,12 +18,7 @@ use crate::span::Span;
 /// The domain separator of the catalog digest.
 pub const CATALOG_DOMAIN: &str = "rust-mutants-catalog-v1";
 
-/// One proposed edit: replace the bytes of `span` in `path` with
-/// `replacement`. The unit discovery produces and the catalog consumes.
-///
-/// `original` and `replacement` are bytes, not text: they are spliced
-/// verbatim, so the original keeps whatever whitespace, comments, and line
-/// endings the file had.
+/// One proposed edit: replace the bytes of `span` in `path` with `replacement`. The unit discovery produces and the catalog consumes.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Candidate {
     /// The workspace-relative source path with forward slashes.
@@ -40,8 +29,7 @@ pub struct Candidate {
     pub span: Span,
     /// Exactly the bytes `span` covers in the source file.
     pub original: Vec<u8>,
-    /// What those bytes become. Empty for a deletion, and never equal to
-    /// `original`: replacing bytes with themselves is not a mutation.
+    /// What those bytes become. Empty for a deletion, and never equal to `original`: replacing bytes with themselves is not a mutation.
     pub replacement: Vec<u8>,
     /// The lowercase hex SHA-256 of the whole source file.
     pub source_digest: String,
@@ -57,8 +45,7 @@ pub enum CandidateError {
     /// The candidate's rule is not the registered one.
     #[error(transparent)]
     Rule(#[from] RuleError),
-    /// The original text is not the length of the span: the span and the
-    /// text were not taken from the same file at the same moment.
+    /// The original text is not the length of the span: the span and the text were not taken from the same file at the same moment.
     #[error("{path} {span} covers {span_len} bytes, original text is {original_len} bytes")]
     OriginalLengthMismatch {
         /// The file.
@@ -102,15 +89,10 @@ impl Candidate {
     /// Whether the candidate is internally coherent.
     ///
     /// # Errors
-    ///
     /// Returns the first incoherence: an invalid identity, an original text
     /// that is not the span's length, or a replacement identical to it.
     pub fn validate(&self) -> Result<(), CandidateError> {
         self.identity().validate()?;
-        // The length check proves the span and the original text were taken
-        // from the same file at the same moment: an off-by-one in a discovery
-        // rule would otherwise mint a valid-looking ID for an edit that
-        // splices garbage.
         if u64::from(self.span.len()) != u64::try_from(self.original.len()).unwrap_or(u64::MAX) {
             return Err(CandidateError::OriginalLengthMismatch {
                 path: self.path.clone(),
@@ -119,12 +101,6 @@ impl Candidate {
                 original_len: self.original.len(),
             });
         }
-        // The no-op check proves the edit is an edit at all: a replacement
-        // identical to the original compiles by construction and survives
-        // every test, inflating the denominator for a mutation that does not
-        // exist. An empty span is still a legal insertion point, so what this
-        // rejects is exactly the pair that changes nothing, deletions of
-        // nothing included.
         if self.replacement == self.original {
             return Err(CandidateError::NoOpReplacement {
                 path: self.path.clone(),
@@ -151,7 +127,6 @@ impl Candidate {
     /// The candidate's stable mutant ID.
     ///
     /// # Errors
-    ///
     /// Returns the validation failure; an incoherent candidate never mints an ID.
     pub fn id(&self) -> Result<String, CandidateError> {
         self.validate()?;
@@ -159,12 +134,10 @@ impl Candidate {
     }
 }
 
-/// A cataloged candidate: identified, deduplicated, and assigned its dense
-/// runtime index.
+/// A cataloged candidate: identified, deduplicated, and assigned its dense runtime index.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Mutant {
-    /// The position in the generated runtime's activation array: the
-    /// catalog's own order, densely assigned from zero.
+    /// The position in the generated runtime's activation array: the catalog's own order, densely assigned from zero.
     pub index: u32,
     /// The full 64 hex character stable identity.
     pub id: String,
@@ -180,8 +153,7 @@ pub struct Mutant {
 pub enum DuplicateReason {
     /// The same rule proposed the same edit twice; both carry one mutant ID.
     Identical,
-    /// A different rule proposed the same byte edit at the same span, and the
-    /// more local rule won.
+    /// A different rule proposed the same byte edit at the same span, and the more local rule won.
     Shadowed,
 }
 
@@ -194,16 +166,14 @@ impl fmt::Display for DuplicateReason {
     }
 }
 
-/// A candidate the catalog dropped. Kept rather than discarded so `explain`
-/// can answer "why is there no mutant for this rule here?".
+/// A candidate the catalog dropped. Kept rather than discarded so `explain` can answer "why is there no mutant for this rule here?".
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Duplicate {
     /// Why the candidate lost.
     pub reason: DuplicateReason,
     /// The losing candidate.
     pub dropped: Candidate,
-    /// The losing candidate's mutant ID. Equal to `winner_id` for an
-    /// identical duplicate.
+    /// The losing candidate's mutant ID. Equal to `winner_id` for an identical duplicate.
     pub dropped_id: String,
     /// The ID of the mutant that was kept.
     pub winner_id: String,
@@ -220,12 +190,7 @@ pub struct DisplayCollision {
     pub ids: Vec<String>,
 }
 
-/// Truncating full IDs to the display length would produce an ambiguous
-/// short form.
-///
-/// Returned, never panicked: a collision among 20 hex characters is
-/// astronomically unlikely but not impossible, and the honest response is a
-/// diagnosable error rather than a silently ambiguous selector.
+/// Truncating full IDs to the display length would produce an ambiguous short form.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub struct DisplayCollisionError {
     /// The display length that collided.
@@ -303,16 +268,12 @@ pub enum PrefixError {
 }
 
 /// Accumulates candidates and produces a catalog.
-///
-/// `build` is a pipeline, in this order: validate, identify, deduplicate,
-/// sort canonically, assign dense indices, then check display IDs.
 #[derive(Debug, Clone)]
 pub struct Builder {
     registry: Registry,
     candidates: Vec<Candidate>,
     display_len: usize,
-    /// One source digest per path, so a contradiction is caught where it is
-    /// introduced instead of surfacing as an unexplainable ID.
+    /// One source digest per path, so a contradiction is caught where it is introduced instead of surfacing as an unexplainable ID.
     digests: BTreeMap<String, String>,
     /// One original text per (path, span), for the same reason.
     originals: BTreeMap<(String, Span), Vec<u8>>,
@@ -343,9 +304,7 @@ impl Builder {
         }
     }
 
-    /// Overrides the display ID length. It exists so tests can force the
-    /// collision path real SHA-256 output will not produce; no production
-    /// caller changes it. An out-of-range value falls back to the default.
+    /// Overrides the display ID length. It exists so tests can force the collision path real SHA-256 output will not produce; no production caller changes it. An out-of-range value falls back to the default.
     #[must_use]
     pub const fn with_display_length(mut self, length: usize) -> Self {
         self.display_len = length;
@@ -364,11 +323,9 @@ impl Builder {
         self.candidates.is_empty()
     }
 
-    /// Validates a candidate and queues it. Insertion order does not affect
-    /// the resulting catalog.
+    /// Validates a candidate and queues it. Insertion order does not affect the resulting catalog.
     ///
     /// # Errors
-    ///
     /// Returns the refusal: an incoherent candidate, an unregistered rule, or
     /// a contradiction with a candidate already queued.
     pub fn add(&mut self, candidate: Candidate) -> Result<(), CandidateError> {
@@ -402,7 +359,6 @@ impl Builder {
     /// Adds candidates in order, stopping at the first refused one.
     ///
     /// # Errors
-    ///
     /// See [`Builder::add`].
     pub fn add_all<I>(&mut self, candidates: I) -> Result<(), CandidateError>
     where
@@ -417,7 +373,6 @@ impl Builder {
     /// Produces the catalog.
     ///
     /// # Errors
-    ///
     /// Returns the first candidate that cannot be identified, a display ID
     /// collision, or a candidate count the runtime index cannot address.
     pub fn build(self) -> Result<Catalog, BuildError> {
@@ -441,10 +396,6 @@ impl Builder {
                 position,
             });
         }
-        // Canonical order first, so that everything downstream — deduplication,
-        // dense indices, the catalog digest — is a pure function of the set of
-        // candidates and never of the order they were discovered in. Paths are
-        // compared byte-wise; no locale or Unicode collation is involved.
         entries.sort_by(|x, y| {
             x.candidate
                 .path
@@ -488,15 +439,7 @@ struct Entry {
     position: usize,
 }
 
-/// Keeps one candidate per distinct edit — the same bytes replaced by the
-/// same bytes in the same file; the rule is deliberately not part of the
-/// key — and records the rest.
-///
-/// The winner is the candidate that comes first in canonical order, which
-/// for one edit means the lowest registry position: the earlier row of the
-/// operator table. Families are listed from the most local edit (a boolean
-/// literal) to the least local (deleting a statement), so table position is
-/// a usable, explainable, and above all stable proxy for locality.
+/// Keeps one candidate per distinct edit — the same bytes replaced by the same bytes in the same file; the rule is deliberately not part of the key — and records the rest.
 fn dedup(sorted: Vec<Entry>) -> (Vec<Entry>, Vec<Duplicate>) {
     let mut winners: BTreeMap<(String, Span, Vec<u8>), (String, Rule)> = BTreeMap::new();
     let mut kept = Vec::with_capacity(sorted.len());
@@ -531,8 +474,7 @@ fn dedup(sorted: Vec<Entry>) -> (Vec<Entry>, Vec<Duplicate>) {
     (kept, duplicates)
 }
 
-/// An out-of-range display length falls back to the default, and the catalog
-/// records the length it really proved unique rather than the one asked for.
+/// An out-of-range display length falls back to the default, and the catalog records the length it really proved unique rather than the one asked for.
 const fn effective_display_length(requested: usize) -> usize {
     if requested == 0 || requested > ID_HEX_LENGTH {
         DISPLAY_ID_LENGTH
@@ -567,8 +509,7 @@ fn check_display_ids(mutants: &[Mutant], length: usize) -> Result<(), DisplayCol
     }
 }
 
-/// The catalog's identity: the ordered list of mutant IDs, under the
-/// catalog domain, with the count, all length-prefixed as in the ID recipe.
+/// The catalog's identity: the ordered list of mutant IDs, under the catalog domain, with the count, all length-prefixed as in the ID recipe.
 fn catalog_digest(mutants: &[Mutant]) -> Result<String, CandidateError> {
     let mut hasher = Sha256::new();
     write_length_prefixed(&mut hasher, CATALOG_DOMAIN)?;
@@ -607,8 +548,7 @@ impl Catalog {
         &self.mutants
     }
 
-    /// The candidates deduplication dropped, in catalog order of the dropped
-    /// candidate.
+    /// The candidates deduplication dropped, in catalog order of the dropped candidate.
     #[must_use]
     pub fn duplicates(&self) -> &[Duplicate] {
         &self.duplicates
@@ -620,9 +560,7 @@ impl Catalog {
         self.display_len
     }
 
-    /// The catalog digest: SHA-256 over the domain separator, the mutant
-    /// count, and every mutant ID in order, all length-prefixed exactly as in
-    /// the mutant ID recipe.
+    /// The catalog digest: SHA-256 over the domain separator, the mutant count, and every mutant ID in order, all length-prefixed exactly as in the mutant ID recipe.
     #[must_use]
     pub fn digest(&self) -> &str {
         &self.digest
@@ -656,11 +594,9 @@ impl Catalog {
             .find(|mutant| mutant.display_id == display_id)
     }
 
-    /// Resolves a user-supplied ID prefix, as `--mutant` accepts. It refuses
-    /// to guess: a prefix matching two mutants is an error naming both.
+    /// Resolves a user-supplied ID prefix, as `--mutant` accepts. It refuses to guess: a prefix matching two mutants is an error naming both.
     ///
     /// # Errors
-    ///
     /// Returns an invalid, unmatched, or ambiguous prefix.
     pub fn resolve_prefix(&self, prefix: &str) -> Result<&Mutant, PrefixError> {
         if prefix.len() < MIN_PREFIX_LENGTH || prefix.len() > ID_HEX_LENGTH || !is_lower_hex(prefix)

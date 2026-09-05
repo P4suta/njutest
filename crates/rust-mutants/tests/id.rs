@@ -2,14 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The identity recipe, frozen as of v1.
-//!
-//! The expected IDs were produced by an independent implementation of the
-//! recipe written from the specification prose (a Python script), not by
-//! this crate. If a change to `id.rs` moves any of these values, the change
-//! has renamed every mutant rust-mutants has ever reported: cached outcomes,
-//! `--mutant` selectors, and every expectation in every user's configuration
-//! break at once. The correct way to change the recipe is a new domain
-//! separator, `rust-mutants-id-v2`.
 
 #![expect(
     clippy::expect_used,
@@ -57,8 +49,6 @@ const VECTORS: [Vector; 5] = [
         want_id: "566154251b7671b0d67431bf92ae9e1821ac42893033b853fe30f065e89b391f",
     },
     Vector {
-        // Byte-for-byte the same edit in a CRLF checkout of the same file.
-        // This is why .gitattributes pins `* -text`.
         name: "crlf source",
         path: "crates/a/src/score.rs",
         rule_name: "eq-to-neq",
@@ -70,8 +60,6 @@ const VECTORS: [Vector; 5] = [
         want_id: "21d8328cfe52381f13d0eac368c03ba3c1b24c178fd423c8ace31a53a74c12ff",
     },
     Vector {
-        // A non-ASCII path proves the length prefix counts UTF-8 bytes, not
-        // characters: "日本語" is three characters and nine bytes.
         name: "unicode path",
         path: "crates/a/src/日本語/テスト.rs",
         rule_name: "true-to-false",
@@ -83,9 +71,6 @@ const VECTORS: [Vector; 5] = [
         want_id: "d829a40d00aae8e3d57ea65aaddba9a75ca7dfd41028ba658aeaeec33be4174c",
     },
     Vector {
-        // Statement deletion: the replacement is empty, so its field is a bare
-        // four-byte zero prefix and its digest is the SHA-256 of the empty
-        // string. No special case anywhere.
         name: "empty replacement",
         path: "crates/a/src/walk.rs",
         rule_name: "delete-call-statement",
@@ -97,9 +82,6 @@ const VECTORS: [Vector; 5] = [
         want_id: "23f8ac0600c01b56c03c1415894ea7f93fdde228178e57f7810aa8c157c11690",
     },
     Vector {
-        // Same edit as the first vector with the rule version bumped. A rule
-        // that changes what it emits must re-mint its mutants rather than
-        // silently inheriting cached outcomes.
         name: "rule version bump",
         path: "crates/a/src/score.rs",
         rule_name: "eq-to-neq",
@@ -357,8 +339,6 @@ fn normalize_path_canonicalizes_and_refuses_paths_outside_the_workspace() {
         ("crates/b/../a/score.rs", "crates/a/score.rs"),
         ("crates/日本語/テスト.rs", "crates/日本語/テスト.rs"),
         ("main.rs", "main.rs"),
-        // A colon after something that is not a letter is a directory whose
-        // name contains a colon, which POSIX allows.
         ("1:/repo/score.rs", "1:/repo/score.rs"),
     ];
     for (input, want) in ok {

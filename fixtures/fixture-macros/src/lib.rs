@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mjutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Macro invocations are skipped whole; a proc-macro crate is skipped as a
-//! crate.
+//! Macro invocations are skipped whole; a proc-macro crate is skipped as a crate.
 
 use fixture_macros_derive::Noop;
 

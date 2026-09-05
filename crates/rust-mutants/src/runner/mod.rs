@@ -1,35 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mjutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Starts one child process, supervises its whole process tree, and returns
-//! what happened.
-//!
-//! This is the only place in the engine that creates processes, and it is
-//! deliberately small: no worker pool, no retry, no shell. A mutation run
-//! executes thousands of test binaries, every one of them a program written
-//! by somebody else that may hang, may fork, and may leave descendants
-//! behind. The single job of this module is that when the engine decides a
-//! child's time is up, nothing survives it.
-//!
-//! [`Spec::argv`] is an argument vector, never a command line: nothing is
-//! expanded, split, quoted, or interpreted by a shell.
-//!
-//! Killing only the process that was started is the bug this module exists
-//! to avoid. On Windows supervision is exact: a Job Object with
-//! kill-on-close is created before the child starts, the child is created
-//! suspended and assigned to it before it has run an instruction, and every
-//! process it later creates joins the job. On POSIX it is best effort: the
-//! child gets its own process group and a kill is sent to the group, SIGTERM
-//! first and SIGKILL after [`TERMINATION_GRACE`]; a descendant that calls
-//! `setsid` leaves the group. Fail-closed means fail-closed: a child that
-//! cannot be supervised is killed rather than run.
-//!
-//! [`RunResult`] separates three things that are easy to conflate: a child
-//! that ran and failed is not an error (a non-zero exit code is data); a
-//! child that was killed reports [`EXIT_CODE_UNAVAILABLE`]; a timeout and a
-//! cancellation are distinguished by [`RunResult::timed_out`] alone.
-//! Output is combined stdout and stderr in the order the child wrote it,
-//! through one pipe, capped by keeping the tail.
+//! Starts one child process, supervises its whole process tree, and returns what happened.
 
 pub mod output;
 
@@ -53,21 +25,12 @@ use output::TailBuffer;
 pub use output::{DEFAULT_OUTPUT_LIMIT, HeadBuffer, MIN_OUTPUT_LIMIT, OUTPUT_TRUNCATED_PREFIX};
 
 /// [`RunResult::exit_code`] when there is no exit status to report.
-///
-/// The process never started, or it was killed by this module. Negative on
-/// purpose: no process exits with a negative status, so a caller that
-/// forgets to check [`RunResult::timed_out`] cannot mistake it for zero.
 pub const EXIT_CODE_UNAVAILABLE: i32 = -1;
 
-/// How long a POSIX process group is given to shut down after SIGTERM before
-/// it is sent SIGKILL. Windows has no equivalent phase.
+/// How long a POSIX process group is given to shut down after SIGTERM before it is sent SIGKILL. Windows has no equivalent phase.
 pub const TERMINATION_GRACE: Duration = Duration::from_secs(2);
 
-/// How long [`run`] waits for the output pipe to reach EOF after the child
-/// itself has exited.
-///
-/// A descendant that outlived its parent still holds the write end, and
-/// "read until every writer closes" is never for an orphaned daemon.
+/// How long [`run`] waits for the output pipe to reach EOF after the child itself has exited.
 pub const IO_DRAIN_GRACE: Duration = Duration::from_secs(2);
 
 /// A cooperative cancellation flag shared between the caller and a run.
@@ -97,26 +60,17 @@ impl Cancel {
 #[derive(Debug, Clone, Default)]
 #[non_exhaustive]
 pub struct Spec {
-    /// The argument vector, executable first. Each element becomes exactly
-    /// one argument to the child. A bare program name is resolved through
-    /// `PATH`; anything with a separator is used as given.
+    /// The argument vector, executable first. Each element becomes exactly one argument to the child. A bare program name is resolved through `PATH`; anything with a separator is used as given.
     pub argv: Vec<OsString>,
     /// The child's working directory. `None` means this process's directory.
     pub dir: Option<PathBuf>,
-    /// The child's complete environment. `None` inherits this process's
-    /// environment, which is convenient for one-shot probes; the engine
-    /// composes the full set explicitly for mutant executions.
+    /// The child's complete environment. `None` inherits this process's environment, which is convenient for one-shot probes; the engine composes the full set explicitly for mutant executions.
     pub env: Option<Vec<(OsString, OsString)>>,
     /// Bounds the child's wall-clock run time. `None` means no timeout.
     pub timeout: Option<Duration>,
-    /// Caps the retained combined output in bytes. `None` selects
-    /// [`DEFAULT_OUTPUT_LIMIT`]; anything below [`MIN_OUTPUT_LIMIT`] is raised
-    /// to it so the truncation notice still fits inside the budget.
+    /// Caps the retained combined output in bytes. `None` selects [`DEFAULT_OUTPUT_LIMIT`]; anything below [`MIN_OUTPUT_LIMIT`] is raised to it so the truncation notice still fits inside the budget.
     pub output_limit: Option<usize>,
-    /// Captures stdout on its own, head-capped at this many bytes, for a
-    /// child that writes structured data (JSON lines) to stdout and chatter
-    /// to stderr — `cargo metadata`, `cargo check --message-format=json`.
-    /// `None` merges stdout into [`RunResult::output`] with stderr.
+    /// Captures stdout on its own, head-capped at this many bytes, for a child that writes structured data (JSON lines) to stdout and chatter to stderr — `cargo metadata`, `cargo check --message-format=json`. `None` merges stdout into [`RunResult::output`] with stderr.
     pub structured_stdout: Option<usize>,
 }
 
@@ -135,14 +89,11 @@ impl Spec {
     }
 }
 
-/// A failure to start or supervise a process — never a process that ran and
-/// failed.
+/// A failure to start or supervise a process — never a process that ran and failed.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum RunnerError {
-    /// The process tree could not be placed under supervision. Always fatal
-    /// to the run: the engine does not execute a test binary it cannot
-    /// guarantee it can kill.
+    /// The process tree could not be placed under supervision. Always fatal to the run: the engine does not execute a test binary it cannot guarantee it can kill.
     #[error("could not supervise the child process tree: {message}")]
     SupervisionUnavailable {
         /// What failed.
@@ -166,8 +117,7 @@ pub enum RunnerError {
         /// What is wrong.
         message: &'static str,
     },
-    /// The child was started and supervised but the operating system refused
-    /// to say how it ended, which leaves the exit code untrustworthy.
+    /// The child was started and supervised but the operating system refused to say how it ended, which leaves the exit code untrustworthy.
     #[error("could not collect the child process's exit status: {source}")]
     ProcessWaitFailed {
         /// The failure.
@@ -180,23 +130,15 @@ pub enum RunnerError {
 #[derive(Debug)]
 #[non_exhaustive]
 pub struct RunResult {
-    /// The child's exit status, or [`EXIT_CODE_UNAVAILABLE`]. On POSIX a
-    /// death by signal is reported as 128 + N.
+    /// The child's exit status, or [`EXIT_CODE_UNAVAILABLE`]. On POSIX a death by signal is reported as 128 + N.
     pub exit_code: i32,
-    /// Whether [`Spec::timeout`] expired and the tree was killed. The only
-    /// field that distinguishes a timeout from a cancellation.
+    /// Whether [`Spec::timeout`] expired and the tree was killed. The only field that distinguishes a timeout from a cancellation.
     pub timed_out: bool,
-    /// The wall-clock time the run took, supervision and killing included:
-    /// the engine derives mutant timeouts from baseline durations, and a
-    /// budget that excluded this overhead would be one the same work could
-    /// exceed.
+    /// The wall-clock time the run took, supervision and killing included: the engine derives mutant timeouts from baseline durations, and a budget that excluded this overhead would be one the same work could exceed.
     pub duration: Duration,
-    /// Combined stdout and stderr in the order the child wrote them, capped
-    /// at the effective output limit by keeping the tail. Stderr alone when
-    /// [`Spec::structured_stdout`] is set.
+    /// Combined stdout and stderr in the order the child wrote them, capped at the effective output limit by keeping the tail. Stderr alone when [`Spec::structured_stdout`] is set.
     pub output: Vec<u8>,
-    /// The child's stdout when [`Spec::structured_stdout`] is set, head-capped
-    /// at that many bytes; empty otherwise.
+    /// The child's stdout when [`Spec::structured_stdout`] is set, head-capped at that many bytes; empty otherwise.
     pub stdout: Vec<u8>,
     /// Whether `stdout` was cut at the cap.
     pub stdout_truncated: bool,
@@ -212,11 +154,7 @@ impl RunResult {
     }
 }
 
-/// Starts the process described by `spec`, supervises its whole process
-/// tree, and returns when it has finished, timed out, or been cancelled.
-///
-/// The tree is killed on both the timeout and the cancellation path and is
-/// never left running. Safe to call from many threads at once.
+/// Starts the process described by `spec`, supervises its whole process tree, and returns when it has finished, timed out, or been cancelled.
 #[must_use]
 pub fn run(spec: &Spec, cancel: &Cancel) -> RunResult {
     let started = Instant::now();
@@ -245,9 +183,6 @@ pub fn run(spec: &Spec, cancel: &Cancel) -> RunResult {
             Vec::new(),
         );
     }
-    // A run that is already cancelled is a cancellation, not a start failure:
-    // the engine draining a Ctrl-C should see its queued work come back as
-    // cancelled rather than as thousands of errored mutants.
     if cancel.is_cancelled() {
         return unavailable(None, Vec::new());
     }
@@ -270,8 +205,6 @@ pub fn run(spec: &Spec, cancel: &Cancel) -> RunResult {
         .timeout
         .map(|timeout| started.checked_add(timeout).unwrap_or(started));
     let outcome = await_exit(&supervisor, &exited, deadline, cancel);
-    // Bound the wait for the pipe to reach EOF after the child exited: an
-    // orphaned descendant still holding the write end must not stall the run.
     let _drained = eof.recv_timeout(IO_DRAIN_GRACE);
     let (stdout, stdout_truncated) = head.map_or((Vec::new(), false), |(head, eof)| {
         let _drained = eof.recv_timeout(IO_DRAIN_GRACE);
@@ -317,8 +250,7 @@ struct Failed {
     output: Vec<u8>,
 }
 
-/// The first half of [`run`]: supervision, the pipes, the spawn, the reader
-/// threads, and adoption. On any failure the child, if any, is dead.
+/// The first half of [`run`]: supervision, the pipes, the spawn, the reader threads, and adoption. On any failure the child, if any, is dead.
 fn start(spec: &Spec, program: &OsString) -> Result<Started, Failed> {
     let failed = |error: RunnerError| Failed {
         error,
@@ -330,8 +262,6 @@ fn start(spec: &Spec, program: &OsString) -> Result<Started, Failed> {
             source,
         })
     };
-    // Supervision is established before anything is running, so a machine
-    // that cannot supervise never gets as far as spawning a child.
     let mut supervisor = sys::Supervisor::new().map_err(failed)?;
     let tail = Arc::new(TailBuffer::new(
         spec.output_limit.unwrap_or(DEFAULT_OUTPUT_LIMIT),
@@ -355,8 +285,6 @@ fn start(spec: &Spec, program: &OsString) -> Result<Started, Failed> {
             return Err(start_failed(source));
         }
     };
-    // The command holds the parent's copies of the write ends; they must go
-    // so that the readers see EOF when the child's tree is gone.
     drop(command);
     let head = structured.map(|(limit, reader)| {
         let head = Arc::new(HeadBuffer::new(limit));
@@ -367,8 +295,6 @@ fn start(spec: &Spec, program: &OsString) -> Result<Started, Failed> {
     let capture = Arc::clone(&tail);
     let eof = spawn_reader(merged, move |bytes| capture.write(bytes));
 
-    // Fail closed: an unsupervised child is one this module cannot promise
-    // to kill, and on Windows an unadopted child is also still suspended.
     if let Err(error) = supervisor.adopt(&child) {
         let _killed = child.kill();
         let _reaped = child.wait();
@@ -391,17 +317,14 @@ fn start(spec: &Spec, program: &OsString) -> Result<Started, Failed> {
     })
 }
 
-/// A command with its pipes attached: the merged reader, and the structured
-/// stdout reader with its cap when the spec asked for one.
+/// A command with its pipes attached: the merged reader, and the structured stdout reader with its cap when the spec asked for one.
 struct Wired {
     command: Command,
     merged: io::PipeReader,
     structured: Option<(usize, io::PipeReader)>,
 }
 
-/// Builds the command and the pipes it writes to. No stdin: a test binary
-/// that reads from the terminal would hang. One pipe for both streams
-/// unless stdout is wanted whole, so the interleaving is the child's own.
+/// Builds the command and the pipes it writes to. No stdin: a test binary that reads from the terminal would hang. One pipe for both streams unless stdout is wanted whole, so the interleaving is the child's own.
 fn wire(spec: &Spec, program: &OsString) -> io::Result<Wired> {
     let (merged, stderr) = io::pipe()?;
     let mut command = Command::new(program);
@@ -430,8 +353,7 @@ fn wire(spec: &Spec, program: &OsString) -> io::Result<Wired> {
     })
 }
 
-/// Reads a pipe to EOF on its own thread, handing every chunk to `sink`,
-/// and signals EOF through the returned receiver.
+/// Reads a pipe to EOF on its own thread, handing every chunk to `sink`, and signals EOF through the returned receiver.
 fn spawn_reader(
     reader: io::PipeReader,
     sink: impl Fn(&[u8]) + Send + 'static,
@@ -465,8 +387,7 @@ enum Exit {
 /// How often the wait loop looks at the cancellation flag.
 const POLL_INTERVAL: Duration = Duration::from_millis(25);
 
-/// Waits for the child to exit, the deadline to pass, or the cancellation
-/// flag to be raised — and in the latter two cases ends the tree.
+/// Waits for the child to exit, the deadline to pass, or the cancellation flag to be raised — and in the latter two cases ends the tree.
 fn await_exit(
     supervisor: &sys::Supervisor,
     exited: &mpsc::Receiver<io::Result<ExitStatus>>,
@@ -493,8 +414,7 @@ fn await_exit(
     }
 }
 
-/// Ends the tree, politely first where the platform has a polite phase, and
-/// waits for the child to be reaped.
+/// Ends the tree, politely first where the platform has a polite phase, and waits for the child to be reaped.
 fn terminate(supervisor: &sys::Supervisor, exited: &mpsc::Receiver<io::Result<ExitStatus>>) {
     supervisor.terminate_gently();
     if exited.recv_timeout(TERMINATION_GRACE).is_ok() {
@@ -509,6 +429,5 @@ use unix as sys;
 #[cfg(windows)]
 use windows as sys;
 
-/// The mechanism this platform supervises with: `process-group` or
-/// `job-object`. Diagnostic, for traces and `doctor`.
+/// The mechanism this platform supervises with: `process-group` or `job-object`. Diagnostic, for traces and `doctor`.
 pub const SUPERVISOR_KIND: &str = sys::SUPERVISOR_KIND;

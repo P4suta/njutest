@@ -56,8 +56,6 @@ fn target(id: &str, name: &str, status: TargetStatus, duration_ms: u64) -> Targe
     }
 }
 
-// --- the shape ---------------------------------------------------------------------
-
 #[test]
 fn a_new_report_names_the_schema_the_run_and_what_it_ran_on() {
     let report = sound();
@@ -115,8 +113,6 @@ fn git_is_either_available_with_its_facts_or_explicitly_not() {
     };
     assert!(available.available);
 }
-
-// --- the invariants ------------------------------------------------------------------
 
 #[test]
 fn a_sound_report_has_nothing_to_report() {
@@ -202,7 +198,6 @@ fn a_report_that_says_nothing_ran_cannot_say_it_is_assured() {
             .any(|violation| matches!(violation, Violation::NothingObserved)),
         "{violations:?}"
     );
-    // The same report is fine once it says so.
     report.verdict = Verdict::Insufficient;
     report.limitations.push(Limitation::new(
         "no-targets",
@@ -260,8 +255,6 @@ fn a_violation_says_what_is_wrong_in_words_a_reader_can_act_on() {
         assert!(!said.contains("Violation"), "{said}");
     }
 }
-
-// --- what a verdict and its findings must agree on --------------------------------
 
 #[test]
 fn an_assurance_that_names_a_finding_is_two_claims_at_once() {

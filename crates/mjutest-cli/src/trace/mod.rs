@@ -2,23 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The runner's trace: what a run did while it did it, as diagnostic exhaust.
-//!
-//! The rules are those of [ADR 0002]. A trace is never evidence: it takes no
-//! part in a verdict or in the identity a cached result is keyed on, never
-//! costs the run (sink failures are counted, never returned), keeps no
-//! secret (an exec event carries variable names alone, and output is
-//! digested rather than serialized), and is honest about loss (every
-//! recording ends with `events_emitted` and `events_dropped`).
-//!
-//! This is the run's own stream. The engine records a second one in its own
-//! vocabulary, so a recording directory holds both and a reader can always
-//! tell which program said what.
-//!
-//! The disabled trace is [`Recorder::disabled`]. Call sites record
-//! unconditionally, which keeps the traced and untraced paths identical; the
-//! disabled recorder costs a branch on an `Option`.
-//!
-//! [ADR 0002]: https://github.com/P4suta/mjutest/blob/main/docs/adr/0002-trace-is-not-evidence.md
 
 mod event;
 mod reader;
@@ -43,19 +26,13 @@ pub use sink::{
 
 use crate::report::Accounting;
 
-/// A source of the current moment: the recorder's one seam, so a test can
-/// freeze time and a golden can freeze the wire shape.
-///
-/// A closed set rather than a boxed closure. The two clocks a program needs
-/// are the wall and one that steps predictably, and naming them means a
-/// reader of a recorder can see which it has.
+/// A source of the current moment: the recorder's one seam, so a test can freeze time and a golden can freeze the wire shape.
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum Clock {
     /// The moment it actually is.
     Wall,
-    /// One that starts at `origin` and advances by `step` each reading, so a
-    /// recording is the same bytes every time it is made.
+    /// One that starts at `origin` and advances by `step` each reading, so a recording is the same bytes every time it is made.
     Stepping {
         /// The first moment it answers with.
         origin: Timestamp,
@@ -96,11 +73,6 @@ impl Clock {
 }
 
 /// Turns the events of a run into a stream a sink keeps.
-///
-/// Cloning shares the recording: every clone records into the same stream,
-/// and sequencing and delivery happen under one lock, so events reach the
-/// sink in strictly increasing sequence order however many threads record
-/// at once.
 #[derive(Clone)]
 pub struct Recorder {
     inner: Option<Arc<Inner>>,
@@ -143,8 +115,7 @@ impl Recorder {
         Self { inner: None }
     }
 
-    /// Starts a recording into `sink`, reading the moment from `clock`, and
-    /// emits its `run-start` event.
+    /// Starts a recording into `sink`, reading the moment from `clock`, and emits its `run-start` event.
     #[must_use]
     pub fn new(sink: Sink, clock: Clock, start: StartRecord) -> Self {
         let started = clock.now();
@@ -166,10 +137,6 @@ impl Recorder {
     }
 
     /// Every event a memory sink of this recording kept, oldest first.
-    ///
-    /// This is what a diagnostics bundle reads from a run that asked for no
-    /// trace: the ring holds the last moments of the run, and nothing had to
-    /// be written to disk to have them.
     #[must_use]
     pub fn events(&self) -> Vec<Event> {
         self.inner
@@ -184,10 +151,7 @@ impl Recorder {
         self.inner.is_some()
     }
 
-    /// Records the beginning of a phase and returns the guard that ends it.
-    /// The guard ends the phase once, on [`Phase::end`] or on drop, so a
-    /// caller may hold it for a scope. Phases may nest; each guard times its
-    /// own.
+    /// Records the beginning of a phase and returns the guard that ends it. The guard ends the phase once, on [`Phase::end`] or on drop, so a caller may hold it for a scope. Phases may nest; each guard times its own.
     pub fn phase(&self, name: impl Into<String>) -> Phase {
         let name = name.into();
         let started = self.now();
@@ -209,11 +173,6 @@ impl Recorder {
     }
 
     /// Records one executed process.
-    ///
-    /// Environment entries are reduced to their names, sorted and
-    /// deduplicated, and the capture is digested, so the event carries the
-    /// shape of the execution and none of its secrets. The raw capture rides
-    /// along for a sink that preserves it and is never serialized.
     pub fn exec(&self, mut record: ExecRecord) {
         record.env_names = environment_names(&record.env_names);
         if !record.output.is_empty() {
@@ -243,14 +202,7 @@ impl Recorder {
         });
     }
 
-    /// Closes the recording with the verdict, what the run counted, the
-    /// error that ended it if there was one, and the event accounting, then
-    /// closes the sink.
-    ///
-    /// `events_emitted` counts the events the sink kept and `events_dropped`
-    /// the ones it could not. A sink that reports its own drops is the
-    /// authority; otherwise the recorder counts the emissions that failed. A
-    /// recording ends once, and anything recorded afterwards is not kept.
+    /// Closes the recording with the verdict, what the run counted, the error that ended it if there was one, and the event accounting, then closes the sink.
     pub fn run_end(&self, verdict: &str, accounting: Option<Accounting>, error: Option<String>) {
         let Some(inner) = &self.inner else {
             return;
@@ -295,8 +247,7 @@ impl Recorder {
         self.emit_at(moment, payload);
     }
 
-    /// Stamps and delivers one event under the lock, which is what keeps
-    /// sequence order and delivery order the same order.
+    /// Stamps and delivers one event under the lock, which is what keeps sequence order and delivery order the same order.
     fn emit_at(&self, moment: Timestamp, payload: Payload) {
         let Some(inner) = &self.inner else {
             return;
@@ -373,9 +324,7 @@ fn millis_between(from: Timestamp, to: Timestamp) -> u64 {
     u64::try_from(to.duration_since(from).as_millis()).unwrap_or(0)
 }
 
-/// The sorted, deduplicated variable names of an environment description.
-/// Entries arriving as `NAME=value` are reduced to `NAME`, which is the only
-/// half a trace is allowed to keep.
+/// The sorted, deduplicated variable names of an environment description. Entries arriving as `NAME=value` are reduced to `NAME`, which is the only half a trace is allowed to keep.
 fn environment_names(entries: &[String]) -> Vec<String> {
     let mut names: Vec<String> = entries
         .iter()

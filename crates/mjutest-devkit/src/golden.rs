@@ -2,13 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Byte-exact golden-file comparison.
-//!
-//! A golden file records what a contract produced the last time somebody
-//! looked at it. The comparison is bytes, never a normalized text: a trailing
-//! newline, a CRLF, and a non-UTF-8 byte are all differences. Without
-//! `UPDATE_GOLDEN=1` the comparison is read-only, and a missing file is a
-//! failure rather than a silent first recording, so a golden test can never
-//! pass by accident on a fresh checkout.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -46,13 +39,7 @@ pub enum GoldenError {
 
 /// Compares `got` against the bytes of the golden file at `path`.
 ///
-/// With `update` false the comparison is read-only: a missing file is
-/// [`GoldenError::Missing`], never a silent first recording. With `update`
-/// true the file is (re)written with `got`, parents included, and the
-/// comparison passes.
-///
 /// # Errors
-///
 /// Returns the mismatch, the missing file, or the I/O failure.
 pub fn compare_golden(path: &Path, got: &[u8], update: bool) -> Result<(), GoldenError> {
     let io = |source| GoldenError::Io {
@@ -109,9 +96,6 @@ fn render_diff(want: &[u8], got: &[u8]) -> String {
 }
 
 /// Reports whether `UPDATE_GOLDEN=1` asked for golden files to be rewritten.
-///
-/// This is the one environment read of the devkit: tests are the composition
-/// root of their own process, and `cargo test` accepts no flag of its own.
 #[must_use]
 pub fn update_requested() -> bool {
     std::env::var_os("UPDATE_GOLDEN").is_some_and(|value| value == "1")
@@ -120,7 +104,6 @@ pub fn update_requested() -> bool {
 /// [`compare_golden`] driven by [`update_requested`].
 ///
 /// # Errors
-///
 /// See [`compare_golden`].
 pub fn golden(path: &Path, got: &[u8]) -> Result<(), GoldenError> {
     compare_golden(path, got, update_requested())

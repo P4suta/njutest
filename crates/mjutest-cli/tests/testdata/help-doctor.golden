@@ -1,10 +1,6 @@
-Report the toolchain and the tools a run needs.
-
-Exits 0 when a standard-v1 run could go ahead on this machine and 3 when it could not. What only a
-deep-v1 run or a later phase needs is reported as optional and costs nothing.
+Report the toolchain and the tools a run needs
 
 Usage: mjutest doctor
 
 Options:
-  -h, --help
-          Print help (see a summary with '-h')
+  -h, --help  Print help

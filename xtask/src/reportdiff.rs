@@ -2,16 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What changed between two assurance reports.
-//!
-//! A pull request that changes what a run *does* changes what a run
-//! *reports*, and the second is much easier to read. This compares two
-//! stored documents — the verdict, the accounting, the targets, the
-//! findings, the limitations — without running either, so a reviewer can
-//! see the consequence of a change rather than reason about it.
-//!
-//! It deliberately says nothing about time. Two runs on two machines differ
-//! in duration for reasons that have nothing to do with the change, and a
-//! diff that led with that would train a reader to skim it.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -60,7 +50,6 @@ pub enum DiffError {
 /// Everything that differs, in a fixed order.
 ///
 /// # Errors
-///
 /// [`DiffError::Unreadable`] for a document that is not JSON.
 pub fn compare(before: (&str, &str), after: (&str, &str)) -> Result<Vec<Change>, DiffError> {
     let left = parse(before)?;

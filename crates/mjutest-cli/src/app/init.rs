@@ -2,11 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! `mjutest init`: write the annotated configuration skeleton.
-//!
-//! The skeleton is the two active defaults and every other section as
-//! commented guidance, and a test loads the untouched file and asserts it is
-//! exactly `Config::default()` — so what `init` writes can never drift from
-//! what configuring nothing does.
 
 use std::io::Write;
 

@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mjutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! The engine trace: diagnostic exhaust under the rules of ADR 0002. Never a
-//! claim, never a failure, honest about drops.
+//! The engine trace: diagnostic exhaust under the rules of ADR 0002. Never a claim, never a failure, honest about drops.
 
 #![expect(
     clippy::expect_used,
@@ -30,14 +29,12 @@ fn stepping_clock() -> Clock {
     )
 }
 
-/// A recorder over a memory sink, which is what a test reads back: the
-/// recorder owns its sink and answers with what the sink kept.
+/// A recorder over a memory sink, which is what a test reads back: the recorder owns its sink and answers with what the sink kept.
 fn recording() -> Recorder {
     Recorder::new(Sink::Memory(MemorySink::unbounded()), stepping_clock())
 }
 
-/// A directory sink that has been closed, so everything written to it
-/// fails: the reachable form of "the disk is gone".
+/// A directory sink that has been closed, so everything written to it fails: the reachable form of "the disk is gone".
 fn broken(dir: &std::path::Path) -> Sink {
     let sink = DirSink::create(&dir.join("recording")).expect("the sink");
     sink.close().expect("closed");
@@ -58,8 +55,6 @@ fn exec(argv: &[&str]) -> ExecRecord {
     }
 }
 
-// --- the disabled trace -----------------------------------------------------
-
 #[test]
 fn a_disabled_recorder_records_nothing_and_every_call_is_a_no_op() {
     let recorder = Recorder::disabled();
@@ -71,8 +66,6 @@ fn a_disabled_recorder_records_nothing_and_every_call_is_a_no_op() {
     recorder.run_end("ok", None);
     assert!(!Recorder::clone(&recorder).is_enabled());
 }
-
-// --- the recording --------------------------------------------------------------
 
 #[test]
 fn the_schema_is_frozen() {
@@ -207,8 +200,6 @@ fn events_are_sequenced_in_delivery_order_across_threads() {
     }
 }
 
-// --- secrets and output -------------------------------------------------------------
-
 #[test]
 fn exec_keeps_environment_names_only_sorted_and_deduplicated_and_digests_the_output() {
     let recorder = recording();
@@ -245,8 +236,6 @@ fn exec_keeps_environment_names_only_sorted_and_deduplicated_and_digests_the_out
     assert!(line.contains("\"exit_code\":101"), "{line}");
 }
 
-// --- honesty about drops ------------------------------------------------------------
-
 #[test]
 fn a_sink_that_cannot_write_is_counted_never_returned() {
     let temp = tempfile::tempdir().expect("tempdir");
@@ -255,8 +244,6 @@ fn a_sink_that_cannot_write_is_counted_never_returned() {
         recorder.note("n", &i.to_string());
     }
     recorder.run_end("ok", None);
-    // Nothing to assert on the sink: it kept nothing, and the point is that
-    // the run reached its end regardless.
     assert!(recorder.events().is_empty());
 }
 
@@ -294,8 +281,6 @@ fn a_sink_that_counts_its_own_drops_is_the_authority() {
     let events = recorder.events();
     assert_eq!(events.len(), 4, "the ring keeps the newest four");
     assert_eq!(types(&events), ["note", "note", "note", "run-end"]);
-    // The accounting is taken before run-end itself is emitted, which evicts
-    // one more: an honest off-by-one a reader can see in the ring itself.
     match &events[3].payload {
         Payload::RunEnd { run } => {
             assert_eq!(run.events_dropped, 2);
@@ -304,8 +289,6 @@ fn a_sink_that_counts_its_own_drops_is_the_authority() {
         other => panic!("{other:?}"),
     }
 }
-
-// --- sinks ------------------------------------------------------------------------------
 
 #[test]
 fn a_recording_writes_one_json_line_per_event_and_the_reader_round_trips() {
@@ -369,10 +352,8 @@ fn a_recording_writes_one_json_line_per_event_and_the_reader_round_trips() {
         ]
     );
     assert!(check(&events).is_empty(), "{:?}", check(&events));
-    // The golden freezes the wire shape.
     let golden = mjutest_devkit::paths::workspace_root()
         .join("crates/rust-mutants/tests/testdata/trace/basic.golden");
-    // The engine version changes with every release; the shape does not.
     let stable = text.replace(rust_mutants::VERSION, "<version>");
     mjutest_devkit::golden::golden(&golden, stable.as_bytes()).expect("golden");
 }
@@ -437,8 +418,6 @@ fn dir_sink_claims_its_directory_exclusively_and_preserves_output_beside_the_str
     );
 }
 
-// --- the reader -----------------------------------------------------------------------
-
 #[test]
 fn the_reader_refuses_a_malformed_line_and_names_it() {
     let text = "{\"seq\":1,\"type\":\"run-start\",\"schema\":\"rust-mutants-trace-v1\",\"engine\":\"0\",\"timestamp\":\"2027-01-15T08:00:00Z\",\"elapsed_ms\":0}\nnot json\n";
@@ -476,7 +455,5 @@ fn check_reports_sequence_gaps_a_missing_run_end_and_drops() {
     recorder.run_end("ok", None);
     let problems = check(&recorder.events());
     assert!(problems.contains(&Problem::MissingRunStart), "{problems:?}");
-    // One drop before run-end was emitted; the ring lost another to run-end
-    // itself, which the accounting cannot know.
     assert!(problems.contains(&Problem::Dropped(1)), "{problems:?}");
 }

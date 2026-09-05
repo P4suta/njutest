@@ -1,9 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mjutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Version consistency: the workspace version, the release-please manifest,
-//! and every member manifest inheriting it must agree, so a release tag names
-//! one version everywhere.
+//! Version consistency: the workspace version, the release-please manifest, and every member manifest inheriting it must agree, so a release tag names one version everywhere.
 
 /// The `[workspace.package].version` of the root manifest, if it has one.
 #[must_use]
@@ -18,7 +16,6 @@ pub fn workspace_version(root_manifest: &str) -> Option<String> {
 }
 
 fn manifest_version(release_manifest: &str) -> Option<String> {
-    // `{ ".": "0.1.0" }` — small enough to read without a JSON crate.
     let start = release_manifest.find("\".\"")?;
     let rest = release_manifest.get(start.checked_add(3)?..)?;
     let colon = rest.find(':')?;
@@ -28,8 +25,7 @@ fn manifest_version(release_manifest: &str) -> Option<String> {
     value.get(..end).map(ToOwned::to_owned)
 }
 
-/// Every inconsistency between the root manifest, the release-please
-/// manifest, and the member manifests `(label, text)`.
+/// Every inconsistency between the root manifest, the release-please manifest, and the member manifests `(label, text)`.
 #[must_use]
 pub fn check(root_manifest: &str, release_manifest: &str, members: &[(&str, &str)]) -> Vec<String> {
     let mut problems = Vec::new();

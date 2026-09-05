@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mjutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Whole-workspace discovery over the fixtures: which files are mutable,
-//! which are skipped as a whole and why, and the catalog that results.
+//! Whole-workspace discovery over the fixtures: which files are mutable, which are skipped as a whole and why, and the catalog that results.
 
 #![expect(
     clippy::expect_used,
@@ -202,7 +201,6 @@ fn a_nested_member_reports_workspace_relative_paths_and_a_binary_is_mutable() {
         ]
     );
     assert_eq!(discovery.catalog.len(), 12);
-    // Integration tests are structural: never mutated, never a skip.
     assert!(discovery.files.iter().all(|f| !f.path.contains("tests/")));
 }
 

@@ -2,18 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! One verification, from a request to a report.
-//!
-//! The shape is fixed and the phases fill it in: identity, then what ran,
-//! then what that supports. Nothing here decides to be optimistic — the
-//! verdict is derived from what was observed, and
-//! [`crate::report::audit::validate_for_persistence`] refuses to write a
-//! report whose verdict its own numbers do not support.
-//!
-//! What this release does not do is execute mutants, so every run states
-//! [`MUTATION_LIMITATION`] and no run reaches an assurance: a suite that
-//! passes says only that it passes, and the question mjutest exists to
-//! answer — whether those tests would notice a change — has not been asked
-//! yet.
 
 use std::path::PathBuf;
 
@@ -73,7 +61,6 @@ pub struct Outcome {
 /// Runs one verification.
 ///
 /// # Errors
-///
 /// Whatever stopped a phase from observing anything: no scratch directory,
 /// no toolchain, a build that could not be started, a coverage tool that
 /// failed. A workspace that does not compile and a test that fails are not
@@ -158,8 +145,7 @@ pub fn run(
     Ok(Outcome { report, kept })
 }
 
-/// The report as it is before anything has run: what the run is, what it
-/// was asked to verify, and what it already knows it will not claim.
+/// The report as it is before anything has run: what the run is, what it was asked to verify, and what it already knows it will not claim.
 fn identity(request: &Request) -> Report {
     let mut report = Report::new(&request.run_id, RunKind::Full, request.config.contract);
     report.timing.started = request.started.to_string();
@@ -179,9 +165,7 @@ fn identity(request: &Request) -> Report {
     report
 }
 
-/// The toolchain that will build the tree, and what it says the workspace
-/// holds. Located inside the workspace, so a `rust-toolchain.toml` there is
-/// what answers.
+/// The toolchain that will build the tree, and what it says the workspace holds. Located inside the workspace, so a `rust-toolchain.toml` there is what answers.
 fn locate(
     request: &Request,
     environment: &Environment,
@@ -219,11 +203,7 @@ fn locate(
     Ok((toolchain, metadata))
 }
 
-/// Where the instrumented build goes: the machine's coverage layer, or a
-/// directory inside this run's scratch when that layer cannot be used. A
-/// build cache is never a reason to fail ([ADR 0005] §7).
-///
-/// [ADR 0005]: https://github.com/P4suta/mjutest/blob/main/docs/adr/0005-build-cache-mjutest-owns.md
+/// Where the instrumented build goes: the machine's coverage layer, or a directory inside this run's scratch when that layer cannot be used. A build cache is never a reason to fail ([ADR 0005] §7).
 fn layer_for(
     toolchain: &rust_mutants::cargo::Toolchain,
     environment: &Environment,
@@ -313,10 +293,6 @@ fn absorb(report: &mut Report, baseline: &baseline::Baseline) {
 }
 
 /// What the observations support.
-///
-/// Never an assurance in this release: the mutation phase has not run, so
-/// the question "would these tests notice a change" was never asked, and a
-/// suite that passes says only that it passes.
 const fn verdict(report: &Report) -> Verdict {
     if report.findings.is_empty() {
         Verdict::Insufficient

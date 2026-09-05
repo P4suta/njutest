@@ -1,21 +1,14 @@
 // SPDX-FileCopyrightText: 2026 mjutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! The wire shape of one trace event: an envelope of sequence number and
-//! moment around a typed record. The vocabulary grows with every phase of
-//! the engine; the envelope and the run-start / run-end pair are frozen.
+//! The wire shape of one trace event: an envelope of sequence number and moment around a typed record. The vocabulary grows with every phase of the engine; the envelope and the run-start / run-end pair are frozen.
 
 use serde::{Deserialize, Serialize};
 
-/// The schema name carried by every `run-start` event. It names the recipe
-/// version; a future shape becomes `rust-mutants-trace-v2`.
+/// The schema name carried by every `run-start` event. It names the recipe version; a future shape becomes `rust-mutants-trace-v2`.
 pub const SCHEMA: &str = "rust-mutants-trace-v1";
 
 /// One event of a recording.
-///
-/// The envelope is `seq` (monotonic from 1, in delivery order), `timestamp`
-/// (RFC 3339, UTC), `elapsed_ms` (since the recording started), and the
-/// record's `type` with its fields.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Event {
     /// Monotonic from 1; delivery order is sequence order.
@@ -194,10 +187,6 @@ pub struct SnapshotRecord {
 }
 
 /// One process execution.
-///
-/// The recorder reduces `env_names` to names and digests `output` into
-/// `output_bytes` and `output_sha256`; a caller may hand over the raw entries
-/// and the raw capture and the event keeps neither.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct ExecRecord {
     /// The command line, verbatim.
@@ -205,8 +194,7 @@ pub struct ExecRecord {
     /// The working directory.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dir: Option<String>,
-    /// The names of the environment variables set for the process. Never a
-    /// value: the recorder strips `=value` from every entry.
+    /// The names of the environment variables set for the process. Never a value: the recorder strips `=value` from every entry.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub env_names: Vec<String>,
     /// The timeout, if one applied.
@@ -239,8 +227,7 @@ pub struct ExecRecord {
     pub output: Vec<u8>,
 }
 
-/// Every decision syntactic discovery took in one file: each site with the
-/// guard form it got or the reason it was passed over, and the skip tallies.
+/// Every decision syntactic discovery took in one file: each site with the guard form it got or the reason it was passed over, and the skip tallies.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DiscoverFileRecord {
     /// The workspace-relative path.
@@ -262,8 +249,7 @@ pub struct SiteRecord {
     pub line: u32,
     /// The 1-based byte column of the edit.
     pub column: u32,
-    /// The rule, or the skip reason for a site that is not a rule's (a macro
-    /// invocation).
+    /// The rule, or the skip reason for a site that is not a rule's (a macro invocation).
     pub rule: String,
     /// The guard form (`C`, `E`, `S`) of a candidate.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -293,8 +279,7 @@ pub struct InstrumentRecord {
     pub module: String,
     /// Lines before the rewrite.
     pub lines_before: u64,
-    /// Lines after it, the appended runtime excluded: equal to
-    /// `lines_before` or the rewrite moved something.
+    /// Lines after it, the appended runtime excluded: equal to `lines_before` or the rewrite moved something.
     pub lines_after: u64,
 }
 

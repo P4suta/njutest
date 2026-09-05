@@ -2,12 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! `mjutest doctor`: what this machine can and cannot do.
-//!
-//! The point is to fail here rather than three minutes into a run. A tool a
-//! `standard-v1` run needs is **required**, and its absence exits 3; a tool
-//! only `deep-v1` or a later phase needs is **optional**, and its absence is
-//! a line and nothing more — the same distinction a report draws between a
-//! failure and a limitation.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -25,8 +19,7 @@ use crate::watch::Watch;
 enum Need {
     /// A standard-v1 run cannot go ahead without it.
     Required,
-    /// A later phase or a deeper contract wants it; a run says so as a
-    /// limitation rather than failing.
+    /// A later phase or a deeper contract wants it; a run says so as a limitation rather than failing.
     Optional,
 }
 
@@ -56,8 +49,7 @@ impl Finding {
     }
 }
 
-/// Reports the toolchain and the tools, and exits 3 when a required one is
-/// missing.
+/// Reports the toolchain and the tools, and exits 3 when a required one is missing.
 pub fn run(
     _arguments: Doctor,
     environment: &Environment,
@@ -85,8 +77,7 @@ pub fn run(
     EXIT_ERROR
 }
 
-/// Everything this machine was asked about, in reading order: what a run
-/// needs first, then what it would only like.
+/// Everything this machine was asked about, in reading order: what a run needs first, then what it would only like.
 fn examine(environment: &Environment) -> Vec<Finding> {
     let cancel = Cancel::new();
     let trace = Recorder::disabled();
@@ -167,8 +158,7 @@ struct Probe<'a> {
 }
 
 impl Probe<'_> {
-    /// The first line the tool prints, or nothing when it is not there. A
-    /// tool that is absent is not an error here: that is the answer.
+    /// The first line the tool prints, or nothing when it is not there. A tool that is absent is not an error here: that is the answer.
     fn version_of(&self, program: &str, arguments: &[&str]) -> Option<String> {
         let program = self.resolve(program)?;
         let mut spec = Spec::new(

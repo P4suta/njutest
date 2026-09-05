@@ -1,10 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mjutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! The coverage export comes from another program, and a run that
-//! misreads it routes every mutant wrongly while looking perfectly healthy.
-//! So the reader never panics, and what it accepts describes real regions:
-//! a block that ended before it began would make `contains` answer nonsense.
+//! The coverage export comes from another program, and a run that misreads it routes every mutant wrongly while looking perfectly healthy. So the reader never panics, and what it accepts describes real regions: a block that ended before it began would make `contains` answer nonsense.
 
 #![no_main]
 
@@ -23,7 +20,6 @@ fuzz_target!(|data: &[u8]| {
             );
         }
     }
-    // Everything a test reached is something the build instrumented.
     let reached = covered(&files);
     let built = instrumented(&files);
     assert!(reached.is_subset(&built));

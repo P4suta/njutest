@@ -2,13 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Half-open byte ranges into one source file.
-//!
-//! Spans are byte offsets, never line/column pairs and never character
-//! indices: the engine splices original bytes rather than pretty-printing an
-//! AST, so comments, alignment, and CRLF line endings survive a mutation
-//! untouched. Offsets are `u32` because a source file larger than 4 GiB is
-//! not a case worth carrying 64-bit arithmetic for, and the narrower type
-//! keeps a span `Copy` and cheap inside the catalog.
 
 use std::fmt;
 
@@ -37,9 +30,6 @@ pub enum SpanError {
 }
 
 /// A half-open byte range `[start, end)` into one source file.
-///
-/// Ordered by start byte, then by end byte. The default span is the valid
-/// empty range at offset 0.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
 pub struct Span {
     /// The first byte covered.
@@ -51,11 +41,7 @@ pub struct Span {
 impl Span {
     /// The half-open span `[start, end)`.
     ///
-    /// An empty span (`start == end`) is legal: it denotes an insertion point
-    /// rather than a stretch of replaceable text.
-    ///
     /// # Errors
-    ///
     /// Returns [`SpanError::Reversed`] when `end` precedes `start`.
     pub const fn new(start: u32, end: u32) -> Result<Self, SpanError> {
         if end < start {
@@ -67,7 +53,6 @@ impl Span {
     /// Whether the span is well formed.
     ///
     /// # Errors
-    ///
     /// Returns [`SpanError::Reversed`] when the end precedes the start.
     pub const fn validate(self) -> Result<(), SpanError> {
         if self.end < self.start {
@@ -91,8 +76,7 @@ impl Span {
         self.len() == 0
     }
 
-    /// Whether `other` lies entirely within `self`. A span contains itself,
-    /// and an empty span sitting on either boundary counts as contained.
+    /// Whether `other` lies entirely within `self`. A span contains itself, and an empty span sitting on either boundary counts as contained.
     #[must_use]
     pub const fn contains(self, other: Self) -> bool {
         self.start <= other.start && other.end <= self.end
@@ -104,12 +88,9 @@ impl Span {
         self.contains(other) && !(self.start == other.start && self.end == other.end)
     }
 
-    /// Whether the spans share at least one byte. Empty spans overlap
-    /// nothing, including each other, wherever they sit.
+    /// Whether the spans share at least one byte. Empty spans overlap nothing, including each other, wherever they sit.
     #[must_use]
     pub const fn overlaps(self, other: Self) -> bool {
-        // [a, b) and [c, d) share a byte exactly when a < d and c < b, and
-        // neither is empty.
         let starts_before_other_ends = self.start < other.end;
         let other_starts_before_end = other.start < self.end;
         !self.is_empty() && !other.is_empty() && starts_before_other_ends && other_starts_before_end
@@ -118,7 +99,6 @@ impl Span {
     /// The bytes the span covers in `source`, without copying.
     ///
     /// # Errors
-    ///
     /// Returns [`SpanError::Reversed`] or [`SpanError::OutOfRange`] rather than
     /// panicking: spans travel through caches and reports and may outlive the
     /// source they were minted from.

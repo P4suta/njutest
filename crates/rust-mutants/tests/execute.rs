@@ -13,8 +13,6 @@ use rust_mutants::execute::{
 use rust_mutants::outcome::Outcome;
 use rust_mutants::runner::EXIT_CODE_UNAVAILABLE;
 
-// --- the libtest summary ----------------------------------------------------------
-
 #[test]
 fn the_summary_line_is_read_whatever_the_counts_say() {
     let cases: [(&str, Option<Summary>); 6] = [
@@ -68,8 +66,6 @@ fn the_summary_line_is_read_whatever_the_counts_say() {
     for (text, expected) in cases {
         assert_eq!(parse_summary(text.as_bytes()), expected, "{text:?}");
     }
-    // The last summary wins: a binary that printed one per suite ends with
-    // the one that speaks for the run.
     let two = "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n";
     assert_eq!(parse_summary(two.as_bytes()).expect("a summary").failed, 1);
 }
@@ -100,8 +96,6 @@ fn a_summary_counts_what_ran() {
     );
 }
 
-// --- outcomes ---------------------------------------------------------------------
-
 const fn result(exit_code: i32) -> Observation {
     Observation {
         unstarted: false,
@@ -123,33 +117,26 @@ const fn green() -> Summary {
 
 #[test]
 fn the_exit_status_is_read_in_one_fixed_order() {
-    // A process that never started is an error, whatever else is true.
     let mut failed = result(EXIT_CODE_UNAVAILABLE);
     failed.unstarted = true;
     assert_eq!(outcome_of(failed, None), Outcome::Errored);
 
-    // A timeout is a timeout, even though the exit status is unavailable.
     let mut timed_out = result(EXIT_CODE_UNAVAILABLE);
     timed_out.timed_out = true;
     assert_eq!(outcome_of(timed_out, None), Outcome::TimedOut);
 
-    // Cancelled: no status, no timeout, no error.
     assert_eq!(
         outcome_of(result(EXIT_CODE_UNAVAILABLE), None),
         Outcome::NotRun
     );
 
-    // A stale catalog is the engine's own fault, never a survivor.
     assert_eq!(outcome_of(result(97), Some(green())), Outcome::Errored);
 
-    // Anything else non-zero is a failing test, which is a kill.
     assert_eq!(outcome_of(result(101), None), Outcome::Killed);
     assert_eq!(outcome_of(result(1), None), Outcome::Killed);
 
-    // Zero with tests that ran is a survivor.
     assert_eq!(outcome_of(result(0), Some(green())), Outcome::Survived);
 
-    // Zero with nothing run is not a survivor: nothing observed the mutant.
     let empty = Some(Summary {
         ok: true,
         passed: 0,
@@ -160,12 +147,8 @@ fn the_exit_status_is_read_in_one_fixed_order() {
     });
     assert_eq!(outcome_of(result(0), empty), Outcome::Inconclusive);
 
-    // Zero with no summary at all: a harness that says nothing cannot be
-    // read as evidence.
     assert_eq!(outcome_of(result(0), None), Outcome::Inconclusive);
 }
-
-// --- targets ------------------------------------------------------------------------
 
 #[test]
 fn a_target_is_named_by_package_kind_and_name() {
@@ -182,8 +165,6 @@ fn a_target_is_named_by_package_kind_and_name() {
     }
     assert_eq!(TargetKind::parse("bench"), None);
 }
-
-// --- the environment ------------------------------------------------------------------
 
 fn target() -> TestTarget {
     TestTarget {
@@ -254,8 +235,6 @@ fn the_environment_is_the_base_plus_cargos_own_plus_the_activation() {
         "no name appears twice: {names:?}"
     );
 
-    // With nothing active, the variables are absent rather than empty: an
-    // empty one would be a baseline the runtime has to reason about.
     let baseline = environment(&base, &target(), None, None);
     let names: Vec<String> = baseline
         .iter()

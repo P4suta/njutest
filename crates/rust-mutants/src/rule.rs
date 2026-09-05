@@ -1,32 +1,19 @@
 // SPDX-FileCopyrightText: 2026 mjutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! The operator table: families, rules, tiers, and the registry that fixes
-//! their order.
-//!
-//! This module knows a rule's name, version, family, and tier, and nothing
-//! about how to match or rewrite Rust syntax. Matching lives in `syntax` and
-//! rewriting in `instrument`; the separation is what lets the identity
-//! recipe and the catalog be tested without a toolchain in the loop.
+//! The operator table: families, rules, tiers, and the registry that fixes their order.
 
 use std::fmt;
 
 /// A profile level.
-///
-/// Tiers are monotonically inclusive — `balanced ⊂ strong ⊂ all` — by
-/// construction: a profile at one tier selects every rule at that tier and
-/// every lower one. The order is a contract; tiers are only appended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[non_exhaustive]
 pub enum Tier {
-    /// The default profile: operators whose survivors almost always point at
-    /// a real gap in the tests.
+    /// The default profile: operators whose survivors almost always point at a real gap in the tests.
     Balanced,
-    /// Adds operators that are valuable but noisier in code that manipulates
-    /// bits for performance rather than for meaning.
+    /// Adds operators that are valuable but noisier in code that manipulates bits for performance rather than for meaning.
     Strong,
-    /// Adds statement deletion, the classic source of equivalent mutants in
-    /// logging and metrics code.
+    /// Adds statement deletion, the classic source of equivalent mutants in logging and metrics code.
     All,
 }
 
@@ -63,9 +50,7 @@ impl fmt::Display for Tier {
     }
 }
 
-/// An operator family: the unit of selection for `--operator`, and, through
-/// its position in the canonical table, the deduplication tiebreak — an
-/// earlier family is the more local edit.
+/// An operator family: the unit of selection for `--operator`, and, through its position in the canonical table, the deduplication tiebreak — an earlier family is the more local edit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Family {
@@ -175,12 +160,6 @@ const fn v1(family: Family, name: &'static str, tier: Tier) -> Rule {
 }
 
 /// The v1 operator table, in the exact order of `docs/engine/operators.md`.
-///
-/// Order is a contract: registry position breaks deduplication ties, and
-/// `list` output and the catalog schema are generated from this table. Every
-/// v1 rule is at version 1. When a rule's emission changes, its version is
-/// bumped in place; rows are never reordered, because reordering would change
-/// which of two identical edits wins deduplication.
 pub const CANONICAL_TABLE: [Rule; CANONICAL_RULE_COUNT] = [
     v1(Family::BooleanLiteral, "true-to-false", Tier::Balanced),
     v1(Family::BooleanLiteral, "false-to-true", Tier::Balanced),
@@ -260,8 +239,7 @@ pub const CANONICAL_TABLE: [Rule; CANONICAL_RULE_COUNT] = [
     ),
 ];
 
-/// Whether a rule name is well formed: non-empty, and free of whitespace and
-/// of the `@` that separates the version in the rendered form.
+/// Whether a rule name is well formed: non-empty, and free of whitespace and of the `@` that separates the version in the rendered form.
 fn valid_name(name: &str) -> bool {
     !name.is_empty() && !name.contains([' ', '\t', '\r', '\n', '@'])
 }
@@ -328,9 +306,7 @@ pub enum RuleError {
     },
 }
 
-/// An ordered, immutable set of rules. Position in the registry is table
-/// order, family-major, and is the deterministic tiebreak the catalog uses
-/// when two families produce the same byte edit.
+/// An ordered, immutable set of rules. Position in the registry is table order, family-major, and is the deterministic tiebreak the catalog uses when two families produce the same byte edit.
 #[derive(Debug, Clone, Copy)]
 pub struct Registry {
     rules: &'static [Rule],
@@ -345,12 +321,9 @@ impl Registry {
         }
     }
 
-    /// A registry from rules in table order, validating the invariants the
-    /// catalog relies on: valid metadata, unique names, one tier per family,
-    /// and contiguous families.
+    /// A registry from rules in table order, validating the invariants the catalog relies on: valid metadata, unique names, one tier per family, and contiguous families.
     ///
     /// # Errors
-    ///
     /// Returns the first invariant the table breaks.
     pub fn new(rules: &'static [Rule]) -> Result<Self, RuleError> {
         let registry = Self { rules };
@@ -358,11 +331,9 @@ impl Registry {
         Ok(registry)
     }
 
-    /// Whether the registry's table satisfies every invariant: valid
-    /// metadata, unique names, one tier per family, contiguous families.
+    /// Whether the registry's table satisfies every invariant: valid metadata, unique names, one tier per family, contiguous families.
     ///
     /// # Errors
-    ///
     /// Returns the first invariant the table breaks.
     pub fn validate(&self) -> Result<(), RuleError> {
         for (index, rule) in self.rules.iter().enumerate() {
@@ -393,9 +364,6 @@ impl Registry {
                         second: rule.tier,
                     });
                 }
-                // The family must be contiguous: the previous rule has to
-                // belong to it, otherwise table position no longer identifies
-                // a family block and the dedup tiebreak stops being explainable.
                 if !matches!(earlier.last(), Some(previous) if previous.family == rule.family) {
                     return Err(RuleError::FamilySplit {
                         family: rule.family,
@@ -475,11 +443,9 @@ impl Registry {
             .collect()
     }
 
-    /// Whether `rule` is registered with exactly this metadata. A name match
-    /// with a different version or family is an error, never a near miss.
+    /// Whether `rule` is registered with exactly this metadata. A name match with a different version or family is an error, never a near miss.
     ///
     /// # Errors
-    ///
     /// Returns [`RuleError::UnknownRule`] or [`RuleError::Mismatch`].
     pub fn verify(&self, rule: Rule) -> Result<(), RuleError> {
         let registered = self

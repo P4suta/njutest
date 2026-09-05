@@ -2,14 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The attribute macros behind `mjutest::integration` and `mjutest::unit`.
-//!
-//! Both are identity transformations of the function they annotate: the
-//! metadata is read from source by the assurance runner, never at runtime.
-//! What the macros add is a compile-time check that the declaration can be
-//! read — string-literal capability names, none of them blank, at least one
-//! for `integration`, none for `unit`, and a function to attach them to.
-//! A refused declaration keeps the function (so no second error follows it)
-//! and adds a compile error at the declaration.
 
 #![forbid(unsafe_code)]
 
@@ -20,12 +12,6 @@ use syn::punctuated::Punctuated;
 use syn::{LitStr, Token};
 
 /// Declares that the annotated test needs the named managed resources.
-///
-/// ```ignore
-/// #[mjutest::integration("postgres", "redis")]
-/// #[test]
-/// fn repository_round_trips() {}
-/// ```
 #[proc_macro_attribute]
 pub fn integration(attribute: TokenStream, item: TokenStream) -> TokenStream {
     let item = TokenStream2::from(item);
@@ -33,12 +19,6 @@ pub fn integration(attribute: TokenStream, item: TokenStream) -> TokenStream {
 }
 
 /// Declares that the annotated test needs no managed resource.
-///
-/// ```ignore
-/// #[mjutest::unit]
-/// #[test]
-/// fn adds() {}
-/// ```
 #[proc_macro_attribute]
 pub fn unit(attribute: TokenStream, item: TokenStream) -> TokenStream {
     let item = TokenStream2::from(item);

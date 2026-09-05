@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mjutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! The catalog is a pure function of the candidate set: validated,
-//! identified, deduplicated, canonically ordered, densely indexed.
+//! The catalog is a pure function of the candidate set: validated, identified, deduplicated, canonically ordered, densely indexed.
 
 #![expect(
     clippy::expect_used,
@@ -39,7 +38,6 @@ fn candidate((path, rule, span, original, replacement): Edit<'_>) -> Candidate {
     }
 }
 
-// Minted by the Python reference implementation of the recipe.
 const ID_A: &str = "80d0bd6ede781c3eb430fd8335de916e77333b0e3c3d10f1f134cdd566379b41";
 const ID_B: &str = "febc861aa0e6bd6983317697bac848217184777186171d4589b1f2bf0e343f4a";
 const CATALOG_DIGEST_AB: &str = "0e6fab7d3e66510bdacf680fec254d8bfa89a7be44334b0e08b2415a6422a2cf";
@@ -318,8 +316,6 @@ fn an_empty_catalog_has_a_digest_and_nothing_else() {
 
 #[test]
 fn resolve_prefix_refuses_to_guess() {
-    // Spans 39 and 200 of this file share the first four hex digits of their
-    // identities (found by search with the reference implementation).
     let first = candidate((
         "crates/a/src/a.rs",
         "true-to-false",

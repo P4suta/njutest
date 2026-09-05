@@ -2,29 +2,13 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Making a report comparable with the one a run made yesterday.
-//!
-//! Most of an assurance report is a claim about the code; a little of it is
-//! a fact about the moment — when the run started, how long each target
-//! took, what commit was checked out, which compiler built it. Those change
-//! every run and say nothing about the project, so a golden that kept them
-//! would fail every time and teach a reader to stop looking at the diff.
-//!
-//! [`normalize`] replaces exactly those with fixed placeholders, and
-//! replaces them *in place* rather than removing them: a field that
-//! disappeared would hide a field that stopped being written.
 
 use std::collections::BTreeSet;
 
 /// What a normalized field is replaced with.
 pub const PLACEHOLDER: &str = "<volatile>";
 
-/// A report with everything that changes between two runs of the same work
-/// replaced by [`PLACEHOLDER`], so what is left is what the run claimed.
-///
-/// Durations become `0` rather than the placeholder, because a reader
-/// comparing two reports still wants to see the *shape* of the timing —
-/// which targets exist and in what order — and the canonical order is by
-/// duration.
+/// A report with everything that changes between two runs of the same work replaced by [`PLACEHOLDER`], so what is left is what the run claimed.
 #[must_use]
 pub fn normalize(document: &serde_json::Value) -> serde_json::Value {
     let volatile: BTreeSet<&str> = [
@@ -51,8 +35,7 @@ pub fn normalize(document: &serde_json::Value) -> serde_json::Value {
     walk(document, &volatile)
 }
 
-/// The field a normalized report zeroes rather than blanks: a reader
-/// comparing two reports still wants the shape of the timing.
+/// The field a normalized report zeroes rather than blanks: a reader comparing two reports still wants the shape of the timing.
 const DURATION: &str = "duration_ms";
 
 fn walk(value: &serde_json::Value, volatile: &BTreeSet<&str>) -> serde_json::Value {
@@ -75,11 +58,6 @@ fn walk(value: &serde_json::Value, volatile: &BTreeSet<&str>) -> serde_json::Val
         serde_json::Value::Array(items) => {
             let mut normalized: Vec<serde_json::Value> =
                 items.iter().map(|item| walk(item, volatile)).collect();
-            // A list ordered by something this function just flattened has
-            // no order left, and a golden of it would turn on the timing of
-            // the machine that recorded it. Records carrying an identity go
-            // in that order instead; the canonical order is a contract of
-            // its own, tested where it is decided.
             if normalized
                 .iter()
                 .all(|item| item.get("id").and_then(serde_json::Value::as_str).is_some())
@@ -97,8 +75,7 @@ fn walk(value: &serde_json::Value, volatile: &BTreeSet<&str>) -> serde_json::Val
     }
 }
 
-/// The placeholder for one value, keeping `null` as `null`: "the run had no
-/// merge base" is a claim, not a moment.
+/// The placeholder for one value, keeping `null` as `null`: "the run had no merge base" is a claim, not a moment.
 fn placeholder(value: &serde_json::Value) -> serde_json::Value {
     if value.is_null() {
         serde_json::Value::Null

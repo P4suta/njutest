@@ -2,28 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Renders one Rust fragment on a single line, preserving its meaning.
-//!
-//! The guard forms splice a mutated copy of a statement into the same line
-//! the original occupies, so the copy has to fit on one line however the
-//! author wrote it — a call broken across five lines, a raw string holding a
-//! here-document, a comment in the middle of a condition. The
-//! line-preservation invariant is what makes this necessary.
-//!
-//! The mechanism is byte folding checked by re-lexing, not pretty-printing.
-//! The fragment is lexed once; every token is reproduced from its own bytes,
-//! and the whitespace between two tokens is kept verbatim when it holds no
-//! line break and no comment, and becomes one space otherwise. Two kinds of
-//! token are re-spelled, each a literal that carries a line break inside
-//! itself: a raw string, byte string, or C string spanning lines becomes the
-//! escaped literal of the same value, and a string continued across lines
-//! with a trailing backslash becomes the same value on one line. Comments are
-//! dropped; a doc comment, which the lexer reads as a `#[doc = …]` attribute,
-//! is rendered as that attribute.
-//!
-//! The output contains no `\n` and no `\r`, and re-lexes to the token stream
-//! it was rendered from. Both are verified on every call rather than trusted,
-//! because a folding bug would otherwise produce a plausible-looking mutant
-//! that compiles as a different program.
 
 /// Why a fragment could not be flattened.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -62,7 +40,6 @@ use proc_macro2::{Delimiter, Literal, TokenStream, TokenTree};
 /// Renders `src` on one line.
 ///
 /// # Errors
-///
 /// Returns a fragment that does not lex, a literal that cannot be re-spelled,
 /// or a postcondition violation.
 pub fn flatten(src: &str) -> Result<String, FlattenError> {
@@ -75,16 +52,11 @@ pub fn flatten(src: &str) -> Result<String, FlattenError> {
     for leaf in &leaves {
         if let Some(end) = previous_end {
             match src.get(end..leaf.start) {
-                // A doc comment's `#` written where the comment was would
-                // touch the token before it and change that token's
-                // spacing, which is a different stream.
                 Some("") if leaf.synthesized(src) => out.push(' '),
                 Some("") => {}
                 Some(gap) if gap.bytes().all(|byte| byte == b' ' || byte == b'\t') => {
                     out.push_str(gap);
                 }
-                // A line break, a comment, or a synthesized token whose span
-                // overlaps its neighbour: one space keeps the tokens apart.
                 _ => out.push(' '),
             }
         }
@@ -92,10 +64,6 @@ pub fn flatten(src: &str) -> Result<String, FlattenError> {
         previous_end = Some(previous_end.map_or(leaf.end, |end| end.max(leaf.end)));
     }
 
-    // Postconditions. Both failures are bugs in this module rather than
-    // anything the caller did, and both are checked because the cost is one
-    // lex of a statement and the cost of not checking is a silently
-    // miscompiled mutant.
     if let Some(byte) = out.find(['\n', '\r']) {
         return Err(FlattenError::NotFlat { byte });
     }
@@ -121,14 +89,6 @@ struct Leaf {
 
 impl Leaf {
     /// Whether the token is not what the source says at that place.
-    ///
-    /// A doc comment is the case that matters: the lexer expands `/// x`
-    /// into `#[doc = " x"]`, so a leaf whose source begins with `/` is
-    /// written as `#`. Writing that `#` where the comment was would put it
-    /// against the token before it and change that token's spacing, which
-    /// is a different stream — so an empty gap before one of these still
-    /// becomes a space. A re-spelled string literal is synthesized too,
-    /// and costs at most one space nobody can see.
     fn synthesized(&self, src: &str) -> bool {
         src.get(self.start..self.end)
             .is_none_or(|text| !text.starts_with(&self.text))
@@ -186,9 +146,7 @@ fn collect_leaves(
     Ok(())
 }
 
-/// A leaf spelled from its own source bytes when they are that token, and
-/// from the token's canonical text otherwise — which is what a token the
-/// lexer synthesized from a doc comment gets.
+/// A leaf spelled from its own source bytes when they are that token, and from the token's canonical text otherwise — which is what a token the lexer synthesized from a doc comment gets.
 fn leaf_from(src: &str, range: std::ops::Range<usize>, canonical: &str) -> Leaf {
     let text = match src.get(range.clone()) {
         Some(bytes) if bytes == canonical => bytes.to_owned(),
@@ -201,9 +159,7 @@ fn leaf_from(src: &str, range: std::ops::Range<usize>, canonical: &str) -> Leaf 
     }
 }
 
-/// Re-spells a literal that carries a line break as the escaped literal of
-/// the same value: the value is what the compiler sees, CRLF normalized to
-/// LF and a backslash continuation folded away.
+/// Re-spells a literal that carries a line break as the escaped literal of the same value: the value is what the compiler sees, CRLF normalized to LF and a backslash continuation folded away.
 fn respell(literal: &Literal) -> Result<String, FlattenError> {
     let spelled = literal.to_string();
     let refuse = || FlattenError::Literal {
@@ -239,8 +195,7 @@ fn normalize_crlf(bytes: &[u8]) -> Vec<u8> {
     out
 }
 
-/// Whether two streams are the same tokens: same shape, same identifiers and
-/// punctuation, and literals of the same value.
+/// Whether two streams are the same tokens: same shape, same identifiers and punctuation, and literals of the same value.
 fn same_tokens(want: &TokenStream, got: &TokenStream) -> Result<(), String> {
     let want: Vec<TokenTree> = want.clone().into_iter().collect();
     let got: Vec<TokenTree> = got.clone().into_iter().collect();

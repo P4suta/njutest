@@ -1,14 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mjutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! The commands that read what a run left behind: `report`, `trace`,
-//! `diagnostics`, and the one that says what a run would do without doing
-//! it, `plan`.
-//!
-//! All four are about a run that already happened, or one that has not
-//! happened yet, so none of them may invent anything. A command asked about
-//! a run that is not there says so and exits 3 rather than answering about
-//! some other run.
+//! The commands that read what a run left behind: `report`, `trace`, `diagnostics`, and the one that says what a run would do without doing it, `plan`.
 
 #![expect(
     clippy::expect_used,
@@ -55,10 +48,6 @@ fn mjutest(fixture: &Fixture, args: &[&str]) -> Output {
         .current_dir(&fixture.root)
         .env_clear()
         .env("NO_COLOR", "1")
-        // Its own build cache, not the developer's: the layer under
-        // XDG_CACHE_HOME is shared by every run that names it, and two
-        // suites building different trees into one layer is a test with a
-        // side effect on the machine it runs on.
         .env("XDG_CACHE_HOME", fixture.root.join(".cache"))
         .envs(std::env::vars_os().filter(|(key, _)| {
             matches!(
@@ -86,8 +75,6 @@ fn verified(name: &str) -> Fixture {
 fn stdout(output: &Output) -> String {
     String::from_utf8_lossy(&output.stdout).into_owned()
 }
-
-// --- report --------------------------------------------------------------------------
 
 #[test]
 fn report_prints_the_records_of_the_latest_run() {
@@ -140,8 +127,6 @@ fn report_without_a_run_at_all_says_so() {
         String::from_utf8_lossy(&output.stderr)
     );
 }
-
-// --- trace ---------------------------------------------------------------------------
 
 #[test]
 fn trace_summary_counts_the_events_and_finds_nothing_wrong_with_a_complete_recording() {
@@ -230,8 +215,6 @@ fn trace_stream(fixture: &Fixture) -> PathBuf {
         .join(mjutest_cli::trace::FILE_NAME)
 }
 
-// --- diagnostics ---------------------------------------------------------------------
-
 #[test]
 fn diagnostics_bundles_the_report_and_the_recording_of_one_run() {
     let fixture = verified("fixture-baseline");
@@ -269,8 +252,6 @@ fn diagnostics_of_a_run_that_never_happened_is_an_error() {
     let output = mjutest(&fixture, &["diagnostics", "20200101T000000Z-000000"]);
     assert_eq!(output.status.code(), Some(3));
 }
-
-// --- plan ----------------------------------------------------------------------------
 
 #[test]
 fn plan_names_every_target_a_run_would_measure_without_measuring_one() {

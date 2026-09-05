@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mjutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! `cargo --message-format=json`: artifacts, compiler messages, and the
-//! build's end.
+//! `cargo --message-format=json`: artifacts, compiler messages, and the build's end.
 
 use std::path::PathBuf;
 
@@ -42,8 +41,7 @@ pub struct Artifact {
     pub target: Target,
     /// The profile.
     pub profile: Profile,
-    /// The files produced: `.rmeta` for a check, `.rlib` and binaries for
-    /// a build.
+    /// The files produced: `.rmeta` for a check, `.rlib` and binaries for a build.
     #[serde(default)]
     pub filenames: Vec<PathBuf>,
     /// The executable, for a binary or a test harness.
@@ -108,12 +106,10 @@ impl Diagnostic {
     }
 }
 
-/// One span of a diagnostic. Byte offsets are what attribution uses;
-/// columns are characters, for people.
+/// One span of a diagnostic. Byte offsets are what attribution uses; columns are characters, for people.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct DiagnosticSpan {
-    /// The file, relative to the directory rustc ran in (the workspace
-    /// root) unless absolute.
+    /// The file, relative to the directory rustc ran in (the workspace root) unless absolute.
     pub file_name: String,
     /// The first byte.
     pub byte_start: u32,
@@ -145,11 +141,9 @@ fn diagnostic_code<'de, D: serde::Deserializer<'de>>(
     Ok(Option::<Code>::deserialize(deserializer)?.map(|code| code.code))
 }
 
-/// Parses every line of a `--message-format=json` stream. Blank lines are
-/// skipped; a line that is not a message is an error naming the line.
+/// Parses every line of a `--message-format=json` stream. Blank lines are skipped; a line that is not a message is an error naming the line.
 ///
 /// # Errors
-///
 /// [`CargoErrorKind::MessageUnparsable`].
 pub fn parse_messages(stdout: &[u8]) -> Result<Vec<Message>, CargoError> {
     let text = String::from_utf8_lossy(stdout);
