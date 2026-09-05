@@ -94,7 +94,7 @@ fn examine(environment: &Environment) -> Vec<Finding> {
     .ok();
     let tools = toolchain
         .as_ref()
-        .and_then(|located| Tools::locate(located, &dir, Watch::new(&cancel, &trace)).ok());
+        .and_then(|located| Tools::locate(located, &dir, &Watch::new(&cancel, &trace)).ok());
     let probe = Probe {
         environment,
         dir: &dir,

@@ -7,6 +7,7 @@
 
 pub mod cargo;
 pub mod catalog;
+pub mod coverage;
 pub mod discover;
 pub mod duration;
 pub mod error;

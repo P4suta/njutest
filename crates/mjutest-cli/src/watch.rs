@@ -28,3 +28,13 @@ impl<'a> Watch<'a> {
         self.cancel.is_cancelled()
     }
 }
+
+impl rust_mutants::runner::Watch for Watch<'_> {
+    fn cancel(&self) -> &Cancel {
+        self.cancel
+    }
+
+    fn exec(&self, spec: &rust_mutants::runner::Spec, result: &rust_mutants::runner::RunResult) {
+        self.trace.exec(crate::trace::ExecRecord::of(spec, result));
+    }
+}

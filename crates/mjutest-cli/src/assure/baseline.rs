@@ -173,7 +173,7 @@ pub fn run_resuming(
         });
     }
 
-    let tools = Tools::locate(workspace.toolchain, &options.root, watch)?;
+    let tools = Tools::locate(workspace.toolchain, &options.root, &watch)?;
     let mut baseline = Baseline {
         limitations: built.limitations,
         ..Baseline::default()
@@ -230,9 +230,9 @@ fn measure(
         let profiles = written_profiles(&options.profiles_dir, &target.id)?;
         if !profiles.is_empty() {
             let merged = options.profiles_dir.join(format!("{}.profdata", target.id));
-            tools.merge(&profiles, &merged, watch)?;
+            tools.merge(&profiles, &merged, &watch)?;
             let files = relative(
-                tools.export(&merged, &target.executable, watch)?,
+                tools.export(&merged, &target.executable, &watch)?,
                 &options.root,
             );
             reached = covered(&files);

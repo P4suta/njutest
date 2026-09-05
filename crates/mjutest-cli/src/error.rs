@@ -219,3 +219,9 @@ pub const fn error_codes() -> &'static [ErrorCode] {
         CACHE_CORRUPT,
     ]
 }
+
+impl From<rust_mutants::coverage::CoverageError> for RunnerError {
+    fn from(source: rust_mutants::coverage::CoverageError) -> Self {
+        Self::Coverage(source.into())
+    }
+}

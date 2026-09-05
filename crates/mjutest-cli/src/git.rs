@@ -7,11 +7,9 @@ use std::ffi::OsString;
 use std::path::Path;
 
 use rust_mutants::git::{Asking, Facts};
-use rust_mutants::runner::{RunResult, Spec};
 
 use crate::evidence::tree::EXCLUDED_DIRECTORIES;
 use crate::report::{Git, UNAVAILABLE};
-use crate::trace::{ExecRecord, Recorder};
 use crate::watch::Watch;
 
 pub use rust_mutants::git::{Change, DEFAULT_BASE};
@@ -19,16 +17,10 @@ pub use rust_mutants::git::{Change, DEFAULT_BASE};
 /// The limitation a report states when git could not be asked.
 pub const UNAVAILABLE_LIMITATION: &str = "git-metadata-unavailable";
 
-impl rust_mutants::git::Observer for Recorder {
-    fn exec(&self, spec: &Spec, result: &RunResult) {
-        Self::exec(self, ExecRecord::of(spec, result));
-    }
-}
-
 /// Asks git about the tree at `root`.
 #[must_use]
 pub fn describe(root: &Path, env: &[(OsString, OsString)], watch: Watch<'_>) -> Git {
-    let Some(facts) = rust_mutants::git::facts(&asking(root, env, watch)) else {
+    let Some(facts) = rust_mutants::git::facts(&asking(root, env, &watch)) else {
         return Git::unavailable();
     };
     let Facts {
@@ -62,20 +54,19 @@ pub fn changed(
     base: &str,
     watch: Watch<'_>,
 ) -> Option<Change> {
-    rust_mutants::git::changed(&asking(root, env, watch), base)
+    rust_mutants::git::changed(&asking(root, env, &watch), base)
 }
 
 /// Where a run asks git, leaving out the directories a run writes rather than verifies.
 const fn asking<'a>(
     root: &'a Path,
     env: &'a [(OsString, OsString)],
-    watch: Watch<'a>,
-) -> Asking<'a, Recorder> {
+    watch: &'a Watch<'a>,
+) -> Asking<'a, Watch<'a>> {
     Asking {
         root,
         env,
         excluded: &EXCLUDED_DIRECTORIES,
-        cancel: watch.cancel,
-        observer: watch.trace,
+        watch,
     }
 }

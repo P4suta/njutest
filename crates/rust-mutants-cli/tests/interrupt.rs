@@ -102,12 +102,16 @@ fn a_run_that_is_interrupted_exits_130_and_leaves_no_process_and_no_snapshot_beh
     );
     let temp = dir.path().join("temp");
     std::fs::create_dir_all(&temp).expect("mkdir");
+    let cache = dir.path().join("cache");
+    std::fs::create_dir_all(&cache).expect("mkdir");
 
     let mut child = Command::new(env!("CARGO_BIN_EXE_rust-mutants"))
         .args(["run", "--offline", "--locked", "--tier", "all"])
         .args(["--root", &root.to_string_lossy()])
         .env("NO_COLOR", "1")
         .env("TMPDIR", &temp)
+        .env("XDG_CACHE_HOME", &cache)
+        .env("FIXTURE_SIMPLE_PAUSE_MS", "400")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()

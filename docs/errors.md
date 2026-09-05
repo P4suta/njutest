@@ -74,6 +74,10 @@ first digit names an area:
 | `RM5004` | No test target of the session answers to the name given. |
 | `RM5005` | The workspace builds no test target, so no mutant can be measured. |
 | `RM5006` | The instrumented tree could not be written. |
+| `RM6001` | A coverage export could not be read. |
+| `RM6002` | The LLVM tools the toolchain ships are not installed (`rustup component add llvm-tools`). |
+| `RM6003` | `llvm-profdata` or `llvm-cov` failed. |
+| `RM6004` | A test process wrote no coverage profile at all: the build was not instrumented, or the process did not exit normally. |
 | `RM9001` | A rule name the canonical registry does not know. |
 | `RM9002` | A pattern the caller gave is not a pattern. |
 | `RM9003` | A duration the caller gave is not a duration: an empty text, a number without a unit, a unit without a number, an unknown unit, or a number no duration can hold. |

@@ -141,7 +141,7 @@ fn a_file_only_the_test_unit_compiles_is_a_test_only_file_skip() {
     assert_eq!(
         table(&discovery),
         [
-            row("src/lib.rs", "fixture-simple", 6, "test-code:3"),
+            row("src/lib.rs", "fixture-simple", 6, "test-code:5"),
             row("src/testutil.rs", "fixture-simple", 0, "test-only-file:2"),
         ]
     );
@@ -180,7 +180,7 @@ fn a_file_only_the_test_unit_compiles_is_a_test_only_file_skip() {
         .iter()
         .map(|s| (s.reason.name(), s.count))
         .collect();
-    assert_eq!(total, [("test-code", 3), ("test-only-file", 2)]);
+    assert_eq!(total, [("test-code", 5), ("test-only-file", 2)]);
 }
 
 #[test]

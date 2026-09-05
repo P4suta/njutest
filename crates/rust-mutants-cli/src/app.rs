@@ -139,12 +139,13 @@ fn selected(
         .to_string_lossy()
         .into_owned();
     let excluded = [report_directory.as_str(), "target"];
+    let trace = rust_mutants::trace::Recorder::disabled();
+    let watch = rust_mutants::runner::Watched::new(cancel, &trace);
     let asking = rust_mutants::git::Asking {
         root: &settings.root,
         env: &environment.vars,
         excluded: &excluded,
-        cancel,
-        observer: &rust_mutants::trace::Recorder::disabled(),
+        watch: &watch,
     };
     let change = rust_mutants::git::changed(&asking, base).ok_or_else(|| {
         CliError::ChangeSetUnavailable {

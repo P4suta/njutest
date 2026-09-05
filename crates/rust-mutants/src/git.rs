@@ -11,7 +11,7 @@ use std::ffi::OsString;
 use std::path::Path;
 
 use crate::glob::Pattern;
-use crate::runner::{Cancel, RunResult, Spec, run};
+use crate::runner::{Spec, Watch, run};
 
 /// The revision a change set is computed against when the caller names none.
 pub const DEFAULT_BASE: &str = "HEAD";
@@ -19,31 +19,17 @@ pub const DEFAULT_BASE: &str = "HEAD";
 /// The pattern a run about an empty change set mutates within. No file is called this.
 pub const NOTHING_CHANGED: &str = ".rust-mutants-nothing-changed";
 
-/// What a caller is told about each process this module ran.
-pub trait Observer {
-    /// Records one finished git invocation.
-    fn exec(&self, spec: &Spec, result: &RunResult);
-}
-
-impl Observer for crate::trace::Recorder {
-    fn exec(&self, spec: &Spec, result: &RunResult) {
-        Self::exec(self, crate::trace::ExecRecord::of(spec, result));
-    }
-}
-
-/// Where to ask git, with what environment, and who hears about it.
+/// Where to ask git, with what environment, and under whose watch.
 #[derive(Debug)]
-pub struct Asking<'a, O> {
+pub struct Asking<'a, W> {
     /// The directory the commands run in.
     pub root: &'a Path,
     /// The environment the commands run with.
     pub env: &'a [(OsString, OsString)],
     /// Directories whose contents are written by a run rather than verified by one, as workspace-relative prefixes.
     pub excluded: &'a [&'a str],
-    /// Raised when the caller should stop.
-    pub cancel: &'a Cancel,
-    /// Told about every process this module ran.
-    pub observer: &'a O,
+    /// What stops the commands, and who hears that they ran.
+    pub watch: &'a W,
 }
 
 /// What the repository was when it was asked.
@@ -70,7 +56,7 @@ pub struct Change {
 
 /// What the repository at `root` was, or nothing when git could not be asked.
 #[must_use]
-pub fn facts<O: Observer>(asking: &Asking<'_, O>) -> Option<Facts> {
+pub fn facts<W: Watch>(asking: &Asking<'_, W>) -> Option<Facts> {
     let commit = ask(
         asking,
         Empty::Refuse,
@@ -100,7 +86,7 @@ pub fn facts<O: Observer>(asking: &Asking<'_, O>) -> Option<Facts> {
 ///
 /// Returns nothing when git could not be asked or does not know `base`.
 #[must_use]
-pub fn changed<O: Observer>(asking: &Asking<'_, O>, base: &str) -> Option<Change> {
+pub fn changed<W: Watch>(asking: &Asking<'_, W>, base: &str) -> Option<Change> {
     let merge_base = ask(
         asking,
         Empty::Refuse,
@@ -193,8 +179,8 @@ fn porcelain_path(line: &str) -> Option<String> {
 }
 
 /// The output of one git command, or nothing when it could not be run or did not succeed.
-fn ask<O: Observer>(
-    asking: &Asking<'_, O>,
+fn ask<W: Watch>(
+    asking: &Asking<'_, W>,
     empty: Empty,
     shape: Shape,
     arguments: &[&str],
@@ -206,8 +192,8 @@ fn ask<O: Observer>(
     spec.env = Some(asking.env.to_vec());
     spec.structured_stdout = Some(1 << 20);
 
-    let asked = run(&spec, asking.cancel);
-    asking.observer.exec(&spec, &asked);
+    let asked = run(&spec, asking.watch.cancel());
+    asking.watch.exec(&spec, &asked);
     if asked.error.is_some() || asked.exit_code != 0 {
         return None;
     }

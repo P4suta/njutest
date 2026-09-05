@@ -169,7 +169,7 @@ fn preparing_catalogs_instruments_validates_and_builds() {
         .iter()
         .map(|skip| (skip.reason.name(), skip.count))
         .collect();
-    assert_eq!(skips, [("test-code", 3), ("test-only-file", 2)]);
+    assert_eq!(skips, [("test-code", 5), ("test-only-file", 2)]);
 
     let targets: Vec<&str> = session
         .targets()

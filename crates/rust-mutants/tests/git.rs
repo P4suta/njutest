@@ -7,8 +7,18 @@ use std::ffi::OsString;
 
 use mjutest_devkit::repo::Repo;
 use rust_mutants::git::{Asking, Change, DEFAULT_BASE, Facts, changed, facts};
-use rust_mutants::runner::Cancel;
+use rust_mutants::runner::{Cancel, Watched};
 use rust_mutants::trace::Recorder;
+
+fn cancel() -> &'static Cancel {
+    static CANCEL: std::sync::OnceLock<Cancel> = std::sync::OnceLock::new();
+    CANCEL.get_or_init(Cancel::new)
+}
+
+fn recorder() -> &'static Recorder {
+    static RECORDER: std::sync::OnceLock<Recorder> = std::sync::OnceLock::new();
+    RECORDER.get_or_init(Recorder::disabled)
+}
 
 fn environment() -> Vec<(OsString, OsString)> {
     std::env::vars_os()
@@ -24,8 +34,7 @@ fn environment() -> Vec<(OsString, OsString)> {
 struct Asked {
     repo: Repo,
     env: Vec<(OsString, OsString)>,
-    cancel: Cancel,
-    trace: Recorder,
+    watch: Watched<'static>,
     excluded: Vec<&'static str>,
 }
 
@@ -34,19 +43,17 @@ impl Asked {
         Self {
             repo: Repo::new(),
             env: environment(),
-            cancel: Cancel::new(),
-            trace: Recorder::disabled(),
+            watch: Watched::new(cancel(), recorder()),
             excluded,
         }
     }
 
-    fn asking(&self) -> Asking<'_, Recorder> {
+    fn asking(&self) -> Asking<'_, Watched<'_>> {
         Asking {
             root: self.repo.root(),
             env: &self.env,
             excluded: &self.excluded,
-            cancel: &self.cancel,
-            observer: &self.trace,
+            watch: &self.watch,
         }
     }
 

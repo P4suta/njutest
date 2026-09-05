@@ -18,8 +18,18 @@ pub fn is_even(n: i32) -> bool {
 
 #[cfg(test)]
 mod tests {
+    fn pause() {
+        let Ok(text) = std::env::var("FIXTURE_SIMPLE_PAUSE_MS") else {
+            return;
+        };
+        if let Ok(milliseconds) = text.parse::<u64>() {
+            std::thread::sleep(std::time::Duration::from_millis(milliseconds));
+        }
+    }
+
     #[test]
     fn max_picks_the_larger() {
+        pause();
         assert_eq!(super::max(1, 2), 2);
         assert_eq!(super::max(3, 2), 3);
         assert_eq!(super::testutil::sample(), 7);

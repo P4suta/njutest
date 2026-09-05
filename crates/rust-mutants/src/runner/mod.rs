@@ -160,6 +160,45 @@ impl RunResult {
     }
 }
 
+/// What a supervised command runs under: the flag that stops it, and who hears that it ran.
+///
+/// A caller that keeps no record implements [`Watch::exec`] as nothing, so
+/// the code that runs commands never branches on whether anybody is listening.
+pub trait Watch {
+    /// Raised when the caller should stop.
+    fn cancel(&self) -> &Cancel;
+
+    /// Records one finished process.
+    fn exec(&self, spec: &Spec, result: &RunResult);
+}
+
+/// The watch the engine's own commands run under: this run's cancellation and this run's trace.
+#[derive(Debug, Clone, Copy)]
+pub struct Watched<'a> {
+    /// Raised when the run should stop.
+    pub cancel: &'a Cancel,
+    /// Where the run records what it did.
+    pub trace: &'a crate::trace::Recorder,
+}
+
+impl<'a> Watched<'a> {
+    /// A watch over `cancel` that records into `trace`.
+    #[must_use]
+    pub const fn new(cancel: &'a Cancel, trace: &'a crate::trace::Recorder) -> Self {
+        Self { cancel, trace }
+    }
+}
+
+impl Watch for Watched<'_> {
+    fn cancel(&self) -> &Cancel {
+        self.cancel
+    }
+
+    fn exec(&self, spec: &Spec, result: &RunResult) {
+        self.trace.exec(crate::trace::ExecRecord::of(spec, result));
+    }
+}
+
 /// Starts the process described by `spec`, supervises its whole process tree, and returns when it has finished, timed out, or been cancelled.
 #[must_use]
 pub fn run(spec: &Spec, cancel: &Cancel) -> RunResult {

@@ -83,6 +83,30 @@ pub const WRITE_FAILED: ErrorCode = ErrorCode {
     summary: "a report or configuration file that could not be written",
 };
 
+/// A coverage export that could not be read.
+pub const COVERAGE_UNREADABLE: ErrorCode = ErrorCode {
+    code: "RM6001",
+    summary: "a coverage export that could not be read",
+};
+
+/// The LLVM tools the toolchain ships, not installed.
+pub const COVERAGE_TOOLS_MISSING: ErrorCode = ErrorCode {
+    code: "RM6002",
+    summary: "the LLVM tools the toolchain ships are not installed",
+};
+
+/// One of the LLVM tools failed.
+pub const COVERAGE_TOOL_FAILED: ErrorCode = ErrorCode {
+    code: "RM6003",
+    summary: "llvm-profdata or llvm-cov failed",
+};
+
+/// A test process wrote no coverage profile at all.
+pub const COVERAGE_NOTHING_WRITTEN: ErrorCode = ErrorCode {
+    code: "RM6004",
+    summary: "a test process wrote no coverage profile at all",
+};
+
 /// A change set that git could not be asked for.
 pub const CHANGE_SET_UNAVAILABLE: ErrorCode = ErrorCode {
     code: "RM0010",
@@ -402,6 +426,10 @@ pub const fn error_codes() -> &'static [ErrorCode] {
         SESSION_UNKNOWN_TARGET,
         SESSION_NO_TARGETS,
         SESSION_WRITE_FAILED,
+        COVERAGE_UNREADABLE,
+        COVERAGE_TOOLS_MISSING,
+        COVERAGE_TOOL_FAILED,
+        COVERAGE_NOTHING_WRITTEN,
         RULE_UNKNOWN,
         GLOB_INVALID,
         DURATION_INVALID,
