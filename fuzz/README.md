@@ -16,6 +16,7 @@ property or the code, never in the input.
 | `glob` | never panics; a literal pattern matches its own spelling |
 | `splice` | never panics; an accepted set yields a monotone offset map of the right length |
 | `normalize_path` | never panics; a normalized path is a fixed point |
+| `discover_file` | never panics; every candidate validates, is spanned from the source, sits inside its site; deterministic |
 
 ```sh
 mise run fuzz:smoke                     # every target, 256 runs each

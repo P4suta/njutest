@@ -5,10 +5,25 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # Operators
 
-**Status: designed, not implemented.** The v1 table, fixed before the code:
-eleven families, thirty-six rules, named `family` / `rule@version`. The
-version enters the mutant identity, so changing a rule's output is a new
-version and every old identity lapses with it.
+**Status: discovery implemented (`rust_mutants::syntax`); instrumentation
+and validation follow.** The v1 table, fixed before the code: eleven
+families, thirty-six rules, named `family` / `rule@version`. The version
+enters the mutant identity, so changing a rule's output is a new version and
+every old identity lapses with it. The golden
+`crates/rust-mutants/tests/testdata/syntax/families.golden` shows every
+rule's candidate on one input, with its guard form and site.
+
+Discovery is syntax-first: a rule fires on a token shape (`a + b`, `x?`,
+`0..n`, `return e`), and the compiler settles later whether the edit
+type-checks. Return replacements read the signature — `-> bool` offers
+`return-true`, `-> Result<..>` `return-ok-default`, `-> Option<..>` both
+`return-some-default` and `return-default`, anything else `return-default` —
+and never propose a value the code already spells (`0`, `false`, `""`, `()`,
+`None`, `Ok(())`, `Default::default()`, `T::new()`). A range swap changes
+the expression's type, so its guard sits at the enclosing statement or `let`
+initializer, where the types meet again. A `&&`/`||` with a `let` operand
+and an `if let`/`while let` condition are left alone: they cannot be
+negated or swapped and compile.
 
 Type-directed splits are impossible without a type checker
 ([ADR 0008](../adr/0008-compiler-validated-acceptance-and-the-type-witness-pass.md)),

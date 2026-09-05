@@ -66,6 +66,11 @@ pub enum Payload {
         /// The record.
         exec: ExecRecord,
     },
+    /// One file was searched for candidates.
+    DiscoverFile {
+        /// The record.
+        discover: DiscoverFileRecord,
+    },
     /// A free-form note: progress, a decision, a limitation.
     Note {
         /// The record.
@@ -89,6 +94,7 @@ impl Payload {
             Self::Open { .. } => "open",
             Self::Snapshot { .. } => "snapshot",
             Self::Exec { .. } => "exec",
+            Self::DiscoverFile { .. } => "discover-file",
             Self::Note { .. } => "note",
             Self::RunEnd { .. } => "run-end",
         }
@@ -201,6 +207,49 @@ pub struct ExecRecord {
     /// The raw capture, for a sink that preserves it. Never serialized.
     #[serde(skip)]
     pub output: Vec<u8>,
+}
+
+/// Every decision syntactic discovery took in one file: each site with the
+/// guard form it got or the reason it was passed over, and the skip tallies.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DiscoverFileRecord {
+    /// The workspace-relative path.
+    pub path: String,
+    /// Candidates the file yielded.
+    pub candidates: u32,
+    /// Every site, in source order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sites: Vec<SiteRecord>,
+    /// The skip tallies.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skips: Vec<SkipCount>,
+}
+
+/// One site discovery decided on.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SiteRecord {
+    /// The 1-based line of the edit.
+    pub line: u32,
+    /// The 1-based byte column of the edit.
+    pub column: u32,
+    /// The rule, or the skip reason for a site that is not a rule's (a macro
+    /// invocation).
+    pub rule: String,
+    /// The guard form (`C`, `E`, `S`) of a candidate.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub form: Option<String>,
+    /// Why the site was passed over, when it was.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skip: Option<String>,
+}
+
+/// How many sites one reason passed over.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SkipCount {
+    /// The reason's name.
+    pub reason: String,
+    /// The tally.
+    pub count: u32,
 }
 
 /// A free-form note.

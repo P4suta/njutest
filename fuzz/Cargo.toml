@@ -50,6 +50,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "discover_file"
+path = "fuzz_targets/discover_file.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "normalize_path"
 path = "fuzz_targets/normalize_path.rs"
 test = false

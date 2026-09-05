@@ -25,8 +25,8 @@ use jiff::Timestamp;
 use sha2::{Digest as _, Sha256};
 
 pub use event::{
-    Event, ExecRecord, NoteRecord, OpenRecord, Payload, PhaseRecord, RunRecord, SCHEMA,
-    SnapshotRecord, SweepRecord,
+    DiscoverFileRecord, Event, ExecRecord, NoteRecord, OpenRecord, Payload, PhaseRecord, RunRecord,
+    SCHEMA, SiteRecord, SkipCount, SnapshotRecord, SweepRecord,
 };
 pub use reader::{Problem, ReadError, check, read_events};
 pub use sink::{
@@ -145,6 +145,11 @@ impl Recorder {
     /// Records a snapshot, taken or refused.
     pub fn snapshot(&self, record: SnapshotRecord) {
         self.emit(Payload::Snapshot { snapshot: record });
+    }
+
+    /// Records the decisions discovery took in one file.
+    pub fn discover_file(&self, record: DiscoverFileRecord) {
+        self.emit(Payload::DiscoverFile { discover: record });
     }
 
     /// Records one executed process.

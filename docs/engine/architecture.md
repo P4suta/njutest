@@ -89,10 +89,19 @@ token, so the warnings guards provoke never trip a `#![deny(warnings)]`.
 ## Skips, stated
 
 `const-context`, `macro-invocation`, `cfg-attribute`, `test-code`,
-`no-std-crate`, `proc-macro-crate`, `test-only-file`. Each is counted and
-named; `rust-mutants why-skipped` lists them. A skip is a decision the tool
-made and says; a rejection (a mutant the compiler refused) is a fact about
-the program and is reported with the diagnostic.
+`unsupported-site`, `excluded`, `test-only-file`, `proc-macro-crate`,
+`no-std-crate`. Each is counted and named; `rust-mutants why-skipped` lists
+them. A skip is a decision the tool made and says; a rejection (a mutant the
+compiler refused) is a fact about the program and is reported with the
+diagnostic.
+
+The per-file walk (`rust_mutants::syntax`) keeps walking inside a region it
+will not mutate and counts every candidate it would have produced under the
+outermost reason, so the tallies say how much code each reason hides. A
+macro invocation counts once, since its body is tokens the walker does not
+parse. Whole-file reasons (`excluded`, `test-only-file`, `proc-macro-crate`,
+`no-std-crate`) are decided by the workspace layer from cargo metadata and
+dep-info, not by the walk.
 
 ## Execution
 
