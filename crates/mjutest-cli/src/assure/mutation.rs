@@ -442,7 +442,7 @@ fn routed(
     baseline: &[Measured],
     judging: &Judging<'_>,
 ) -> Route {
-    let route = route::route(
+    let mut route = route::route(
         &mutant.candidate.path,
         position.map(|at| crate::coverage::Point {
             line: at.line,
@@ -451,13 +451,34 @@ fn routed(
         baseline,
         &judging.options.instrumented,
     );
+    if let Some(proof) = judging.subject.session.branch(mutant.index) {
+        route = route::discharge(
+            route,
+            &route::Proven {
+                path: &mutant.candidate.path,
+                body: route::Body {
+                    start: crate::coverage::Point {
+                        line: proof.body_start.line,
+                        column: proof.body_start.byte_column,
+                    },
+                    end: crate::coverage::Point {
+                        line: proof.body_end.line,
+                        column: proof.body_end.byte_column,
+                    },
+                },
+                baseline,
+                instrumented: &judging.options.instrumented,
+            },
+        );
+    }
     judging.watch.trace.note(
         "route",
         &format!(
-            "{} {} {} targets",
+            "{} {} {} targets, {} discharged",
             mutant.display_id,
             route.granularity(),
-            route.reaching().len()
+            route.reaching().len(),
+            route.discharged().len()
         ),
     );
     route
@@ -545,6 +566,9 @@ fn judge(
 ) -> Result<Disposition, crate::error::RunnerError> {
     let (session, baseline) = (judging.subject.session, judging.subject.baseline);
     let (options, watch) = (judging.options, judging.watch);
+    if let Route::Discharged { .. } = route {
+        return Ok(Disposition::Survived { route });
+    }
     if route.reaching().is_empty() {
         return Ok(Disposition::Unreached);
     }

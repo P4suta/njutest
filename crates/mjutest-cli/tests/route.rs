@@ -7,7 +7,7 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use mjutest_cli::assure::baseline::Measured;
-use mjutest_cli::assure::route::{Fallback, Route, route};
+use mjutest_cli::assure::route::{Body, Fallback, Proven, Route, discharge, route};
 use mjutest_cli::coverage::{Block, Point};
 use mjutest_cli::report::TargetStatus;
 use mjutest_cli::targets::{Target, UnitKind};
@@ -228,4 +228,153 @@ fn a_route_cannot_say_it_reached_nothing_and_name_targets_anyway() {
     let one = mjutest_cli::assure::route::Reaching::new(vec!["a".to_owned()])
         .expect("one target is one route");
     assert_eq!(one.as_slice(), ["a"]);
+}
+
+/// The body a narrowed condition gates.
+const fn body(from: (u32, u32), to: (u32, u32)) -> Body {
+    Body {
+        start: at(from.0, from.1),
+        end: at(to.0, to.1),
+    }
+}
+
+#[test]
+fn a_test_that_never_took_the_branch_is_removed_without_being_run() {
+    let gated = block("src/lib.rs", (10, 20), (12, 6));
+    let took = measured(
+        "took",
+        1,
+        TargetStatus::Passed,
+        &[block("src/lib.rs", (10, 8), (10, 18)), gated.clone()],
+    );
+    let did_not = measured(
+        "did-not",
+        1,
+        TargetStatus::Passed,
+        &[block("src/lib.rs", (10, 8), (10, 18))],
+    );
+    let baseline = [took, did_not];
+    let seen = instrumented(&[block("src/lib.rs", (10, 8), (10, 18)), gated]);
+
+    let route = route("src/lib.rs", Some(at(10, 12)), &baseline, &seen);
+    assert_eq!(route.reaching().len(), 2, "both touched the position");
+
+    let narrowed = discharge(
+        route,
+        &Proven {
+            path: "src/lib.rs",
+            body: body((10, 20), (12, 6)),
+            baseline: &baseline,
+            instrumented: &seen,
+        },
+    );
+    assert_eq!(narrowed.reaching(), ["took"]);
+    assert_eq!(narrowed.discharged(), ["did-not"]);
+    assert_eq!(narrowed.granularity(), "block");
+}
+
+#[test]
+fn a_mutant_every_test_was_discharged_for_is_resolved_without_one_execution() {
+    let gated = block("src/lib.rs", (10, 20), (12, 6));
+    let never = measured(
+        "never",
+        1,
+        TargetStatus::Passed,
+        &[block("src/lib.rs", (10, 8), (10, 18))],
+    );
+    let baseline = [never];
+    let seen = instrumented(&[block("src/lib.rs", (10, 8), (10, 18)), gated]);
+
+    let narrowed = discharge(
+        route("src/lib.rs", Some(at(10, 12)), &baseline, &seen),
+        &Proven {
+            path: "src/lib.rs",
+            body: body((10, 20), (12, 6)),
+            baseline: &baseline,
+            instrumented: &seen,
+        },
+    );
+    assert_eq!(narrowed.granularity(), "discharged");
+    assert!(narrowed.reaching().is_empty());
+    assert_eq!(narrowed.discharged(), ["never"]);
+}
+
+#[test]
+fn a_body_nothing_instrumented_discharges_nobody() {
+    let touched = measured(
+        "touched",
+        1,
+        TargetStatus::Passed,
+        &[block("src/lib.rs", (10, 8), (10, 18))],
+    );
+    let baseline = [touched];
+    let seen = instrumented(&[block("src/lib.rs", (10, 8), (10, 18))]);
+
+    let narrowed = discharge(
+        route("src/lib.rs", Some(at(10, 12)), &baseline, &seen),
+        &Proven {
+            path: "src/lib.rs",
+            body: body((10, 20), (12, 6)),
+            baseline: &baseline,
+            instrumented: &seen,
+        },
+    );
+    assert_eq!(
+        narrowed.reaching(),
+        ["touched"],
+        "no target's silence about a body nothing measured means anything"
+    );
+    assert!(narrowed.discharged().is_empty());
+}
+
+#[test]
+fn a_route_decided_by_file_is_never_narrowed_by_a_proof() {
+    let touched = measured(
+        "touched",
+        1,
+        TargetStatus::Passed,
+        &[block("src/lib.rs", (10, 8), (10, 18))],
+    );
+    let baseline = [touched];
+    let seen = instrumented(&[block("src/lib.rs", (10, 8), (10, 18))]);
+    let by_file = route("src/lib.rs", None, &baseline, &seen);
+    assert_eq!(by_file.granularity(), "file");
+
+    let narrowed = discharge(
+        by_file,
+        &Proven {
+            path: "src/lib.rs",
+            body: body((10, 20), (12, 6)),
+            baseline: &baseline,
+            instrumented: &seen,
+        },
+    );
+    assert_eq!(narrowed.granularity(), "file");
+    assert_eq!(narrowed.reaching(), ["touched"]);
+}
+
+#[test]
+fn a_target_restored_from_a_checkpoint_carries_no_regions_to_argue_with() {
+    let gated = block("src/lib.rs", (10, 20), (12, 6));
+    let mut restored = measured(
+        "restored",
+        1,
+        TargetStatus::Passed,
+        &[block("src/lib.rs", (0, 0), (u32::MAX, u32::MAX))],
+    );
+    restored.restored = true;
+    let baseline = [restored];
+    let seen = instrumented(&[block("src/lib.rs", (10, 8), (10, 18)), gated]);
+
+    let narrowed = discharge(
+        route("src/lib.rs", Some(at(10, 12)), &baseline, &seen),
+        &Proven {
+            path: "src/lib.rs",
+            body: body((10, 20), (12, 6)),
+            baseline: &baseline,
+            instrumented: &seen,
+        },
+    );
+    assert_eq!(narrowed.reaching(), ["restored"]);
+    assert!(narrowed.discharged().is_empty());
 }

@@ -79,6 +79,15 @@ pub enum Route {
         reaching: Reaching,
         /// How many touched the file at all, which is what this narrowed down from.
         file_candidates: usize,
+        /// The tests a branch proof removed without running them, in the order they would have run.
+        discharged: Vec<String>,
+    },
+    /// Every test that could have noticed was discharged by a branch proof: that no test takes the branch the mutation narrows is the finding.
+    Discharged {
+        /// The tests that were removed without being run.
+        discharged: Vec<String>,
+        /// How many touched the file at all.
+        file_candidates: usize,
     },
     /// Every test that touched the file, because the position could not narrow it with evidence.
     File {
@@ -100,6 +109,7 @@ impl Route {
     pub const fn granularity(&self) -> &'static str {
         match self {
             Self::Block { .. } => "block",
+            Self::Discharged { .. } => "discharged",
             Self::File { .. } => "file",
             Self::Unreached { .. } => "unreached",
         }
@@ -110,7 +120,7 @@ impl Route {
     pub fn reaching(&self) -> &[String] {
         match self {
             Self::Block { reaching, .. } | Self::File { reaching, .. } => reaching.as_slice(),
-            Self::Unreached { .. } => &[],
+            Self::Discharged { .. } | Self::Unreached { .. } => &[],
         }
     }
 
@@ -119,7 +129,7 @@ impl Route {
     pub const fn fallback(&self) -> Option<Fallback> {
         match self {
             Self::File { fallback, .. } => Some(*fallback),
-            Self::Block { .. } | Self::Unreached { .. } => None,
+            Self::Block { .. } | Self::Discharged { .. } | Self::Unreached { .. } => None,
         }
     }
 
@@ -130,9 +140,122 @@ impl Route {
             Self::Block {
                 file_candidates, ..
             }
+            | Self::Discharged {
+                file_candidates, ..
+            }
             | Self::Unreached { file_candidates } => *file_candidates,
             Self::File { reaching, .. } => reaching.as_slice().len(),
         }
+    }
+
+    /// The tests a branch proof removed without running them.
+    #[must_use]
+    pub fn discharged(&self) -> &[String] {
+        match self {
+            Self::Block { discharged, .. } | Self::Discharged { discharged, .. } => discharged,
+            Self::File { .. } | Self::Unreached { .. } => &[],
+        }
+    }
+}
+
+/// What a branch proof narrows a route with.
+#[derive(Debug, Clone, Copy)]
+pub struct Proven<'a> {
+    /// The file the mutation is in.
+    pub path: &'a str,
+    /// The body the narrowed condition gates.
+    pub body: Body,
+    /// What the baseline measured.
+    pub baseline: &'a [Measured],
+    /// Every region the build instrumented.
+    pub instrumented: &'a BTreeSet<Block>,
+}
+
+/// The span of the body a narrowed condition gates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Body {
+    /// Where the opening brace is.
+    pub start: Point,
+    /// Where the closing brace is.
+    pub end: Point,
+}
+
+impl Body {
+    /// Whether `point` lies inside the body.
+    #[must_use]
+    pub fn holds(&self, point: Point) -> bool {
+        let after_start = (point.line, point.column) >= (self.start.line, self.start.column);
+        let before_end = (point.line, point.column) <= (self.end.line, self.end.column);
+        after_start && before_end
+    }
+}
+
+/// Removes from `route` every target that took the same branch on both programs.
+///
+/// C' implies C and the whole condition is inert, so a target during which no
+/// statement of the gated body ran evaluated the condition to false every time
+/// it was evaluated, evaluated the narrowed one to false there too, and ran
+/// identically on the two programs. It cannot have observed the mutation.
+///
+/// The narrowing applies only where the evidence carries it: on a route decided
+/// by region with no fallback, never on one decided by file, and only where the
+/// body was instrumented at all — otherwise no target's silence about it means
+/// anything. A target restored from a checkpoint carries no regions to argue
+/// with and is never discharged.
+#[must_use]
+pub fn discharge(route: Route, proof: &Proven<'_>) -> Route {
+    let Proven {
+        path,
+        body,
+        baseline,
+        instrumented,
+    } = *proof;
+    let Route::Block {
+        reaching,
+        file_candidates,
+        discharged,
+    } = route
+    else {
+        return route;
+    };
+    let file = Path::new(path);
+    if !instrumented
+        .iter()
+        .any(|block| block.file == file && body.holds(block.start))
+    {
+        return Route::Block {
+            reaching,
+            file_candidates,
+            discharged,
+        };
+    }
+    let mut kept = Vec::new();
+    let mut removed = discharged;
+    for id in reaching.as_slice() {
+        let Some(measured) = baseline.iter().find(|one| &one.target.id == id) else {
+            kept.push(id.clone());
+            continue;
+        };
+        let ran_the_body = measured
+            .covered
+            .iter()
+            .any(|block| block.file == file && body.holds(block.start));
+        if measured.restored || ran_the_body {
+            kept.push(id.clone());
+        } else {
+            removed.push(id.clone());
+        }
+    }
+    match Reaching::new(kept) {
+        Some(reaching) => Route::Block {
+            reaching,
+            file_candidates,
+            discharged: removed,
+        },
+        None => Route::Discharged {
+            discharged: removed,
+            file_candidates,
+        },
     }
 }
 
@@ -178,6 +301,7 @@ pub fn route(
         |reaching| Route::Block {
             reaching,
             file_candidates: candidates.len(),
+            discharged: Vec::new(),
         },
     )
 }
