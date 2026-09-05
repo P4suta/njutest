@@ -5,7 +5,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # CI usage
 
-**Status: contract only.** The binaries do not verify anything yet.
+**Status: implemented.** Every job named here exists in `.github/workflows/`.
 
 A repository will run mjutest from a tagged release or a checkout:
 

@@ -7,8 +7,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 **Status: the runner's recorder, sinks, and reader are implemented**
 (`mjutest_cli::trace`), as is the engine's ([engine/trace](engine/trace.md)).
-The vocabulary below is ported from goatest's trace v1; the events marked
-*with its phase* arrive with the phase that emits them.
+The vocabulary below is ported from goatest's trace v1.
 
 A recording holds two streams, because two programs record. The runner's is
 `mjutest-trace-v1` and the engine's is `rust-mutants-trace-v1`, each naming

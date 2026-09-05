@@ -5,7 +5,9 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # Architecture
 
-**Status: the engine is implemented, and the runner reaches verdicts.**
+**Status: implemented, and 0.1.0.** Both products do what the pages under
+this directory say they do; [`roadmap.md`](roadmap.md) says which milestone
+each part came from.
 `rust-mutants` discovers, instruments, validates, and executes mutants and
 has a command line. `mjutest verify` runs every test of a workspace on its
 own under coverage instrumentation, records what each one reached, and

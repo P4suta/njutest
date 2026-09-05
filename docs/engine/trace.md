@@ -5,8 +5,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # Engine trace
 
-**Status: recorder, sinks, and reader implemented (M1 step 3); the
-vocabulary grows with every step after it.** `rust_mutants::trace` holds
+**Status: implemented.** `rust_mutants::trace` holds
 the `Recorder`, the `Sink` trait with `MemorySink`, `WriterSink`, and
 `DirSink`, and `read_events` / `check` for reading a stream back.
 

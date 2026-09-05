@@ -5,8 +5,8 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # Operators
 
-**Status: discovery and instrumentation implemented
-(`rust_mutants::syntax`, `rust_mutants::instrument`); validation follows.** The v1 table, fixed before the code: eleven
+**Status: implemented** (`rust_mutants::syntax`, `rust_mutants::instrument`,
+`rust_mutants::validate`). The v1 table, fixed before the code: eleven
 families, thirty-six rules, named `family` / `rule@version`. The version
 enters the mutant identity, so changing a rule's output is a new version and
 every old identity lapses with it. The golden

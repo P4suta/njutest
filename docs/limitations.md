@@ -5,27 +5,20 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # Current limitations and deferred work
 
-**Status: scaffold.** The list grows with each milestone; every limitation
+**Status: implemented.** Every name here is one a report can carry; the list grows with each release, and every limitation
 below is stated fail-closed.
 
-- The engine (`rust-mutants`) works end to end, and so does `mjutest
-  verify`: a baseline of every test on its own under coverage, then every
-  mutation the compiler accepts routed to the tests that reach it. A kill is
-  paired — the same test must pass on the original right now, and the kill
-  must reproduce — so a flake cannot be reported as strength.
-- The proofs that would narrow routing further (the infection probe, the
-  branch proof) arrive in M5, so a mutant reaching many tests is run against
-  all of them until one kills it.
-- Nothing is reused between runs yet (`workspace-digest-not-computed`): the
-  evidence identity and the cache arrive in M4, so a second run of unchanged
-  code repeats the first.
-- A mutant no measured test reaches is reported as surviving. The package
-  suite that would settle it arrives with the evidence work; until then
-  "nothing reached it" and "nothing noticed it" are one finding, and the
-  detail says which.
-- The evidence identity of the tree is not computed
-  (`workspace-digest-not-computed`), so nothing is reused between runs. It
-  arrives in M4 with the cache.
+- A tree whose identity could not be computed reuses nothing
+  (`workspace-digest-not-computed`) and is reused by nothing: a run that
+  cannot say what it looked at cannot answer for another run's inputs.
+- A mutant no measured test reaches is reported as surviving, with a detail
+  that says which of "nothing reached it" and "nothing noticed it" it is.
+  They are one finding because they are one gap in the suite.
+- A test that writes into the tree while it is being measured makes every
+  later mutation a measurement of what it wrote
+  (`tree-written-during-measurement`). One instrumented snapshot cannot
+  isolate that the way a per-mutant build would; the run says so rather than
+  reporting the later results as if it had.
 
 ## Decided in advance
 
@@ -34,16 +27,28 @@ below is stated fail-closed.
   reported as surviving.
 - A `harness = false` test target is one target per binary
   (`custom-harness-whole-binary`).
-- cargo-fuzz targets are discovered from v1 but executed only from M7; until
-  then `fuzz-not-executed` is a limitation, and without a nightly toolchain
-  it stays one.
+- Fuzz targets are found always and driven only when `[fuzz] run` says so;
+  a tree that holds targets nobody asked to drive carries
+  `fuzz-not-executed`. Without cargo-fuzz on a nightly toolchain, a run that
+  was asked to drive them carries `cargo-fuzz-unavailable` and a
+  `not-measured` finding instead.
 - `standard-v1` does not execute anything about `unsafe` code; it
-  inventories it and says so (`soundness-not-executed`). `deep-v1` needs Miri.
+  inventories it and says so (`soundness-not-executed`). `deep-v1` interprets
+  the suite under Miri and refuses to run at all without it (`MJ7001`), and
+  what Miri will not interpret is `miri-unsupported` rather than a pass. A
+  sanitizer the configuration asks for and the toolchain will not run is
+  `sanitizer-unavailable`; every sanitizer run also carries
+  `sanitizer-standard-library-not-instrumented`.
 - Repository reads are not observed at run time. A package that uses a
   directory-reading API keys the whole snapshot for evidence reuse; nothing
   is excluded from testing.
 - Mutation inside macro invocations, `const` contexts, `#[cfg]`-guarded code,
   and `#![no_std]` crates is skipped with a stated reason.
+- Coverage routing says nothing about a place its export never instrumented,
+  and such a mutant is run everywhere. A tree that configures its own
+  `rustflags` is not routed by coverage at all
+  (`coverage-refused-configured-rustflags`), because a coverage build would
+  have to replace them.
 - One workspace per run. Path dependencies outside the workspace root are
   refused unless explicitly allowed as read-only.
 - Symbolic links in the evidence tree are rejected.
