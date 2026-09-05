@@ -5,9 +5,11 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # Assurance contract v1
 
-**Status: contract only.** Inherited from goatest's assurance contract v1 with
-the Rust toolchain in place of the Go one; implemented by the milestones of
-the [roadmap](roadmap.md).
+**Status: the baseline, the routing, the mutation phase, and the verdicts are
+implemented.** Inherited from goatest's assurance contract v1 with the Rust
+toolchain in place of the Go one; the proofs that narrow routing further, the
+evidence reuse, the resources, and `deep-v1` arrive with the milestones of the
+[roadmap](roadmap.md).
 
 ## Meaning
 

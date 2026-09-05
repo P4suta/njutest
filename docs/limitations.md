@@ -16,6 +16,13 @@ below is stated fail-closed.
 - The proofs that would narrow routing further (the infection probe, the
   branch proof) arrive in M5, so a mutant reaching many tests is run against
   all of them until one kills it.
+- Nothing is reused between runs yet (`workspace-digest-not-computed`): the
+  evidence identity and the cache arrive in M4, so a second run of unchanged
+  code repeats the first.
+- A mutant no measured test reaches is reported as surviving. The package
+  suite that would settle it arrives with the evidence work; until then
+  "nothing reached it" and "nothing noticed it" are one finding, and the
+  detail says which.
 - The evidence identity of the tree is not computed
   (`workspace-digest-not-computed`), so nothing is reused between runs. It
   arrives in M4 with the cache.
