@@ -5,9 +5,9 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # Assurance report v1
 
-**Status: the model and its audit are implemented; the projections arrive
-with the phases that fill them** — JSON, schema, and lines in M2, HTML,
-SARIF, and JUnit in M3.
+**Status: the model, its audit, the JSON projection, and the published
+schema are implemented** (`mjutest_cli::report`). Lines arrive later in M2;
+HTML, SARIF, and JUnit in M3.
 
 The first public report contract is `mjutest-assurance-report-v1`. The
 schema value names the toolchain so a reader never confuses it with goatest's
@@ -57,8 +57,13 @@ If Git is unavailable, the report uses the explicit `available=false` state
 and `unavailable` sentinels together with `git-metadata-unavailable`; an empty
 value is invalid.
 
-The JSON Schema — generated from the report types, every object closed with
-`additionalProperties: false` — rejects unknown fields. Rust validation
+The JSON Schema is published at `schema/mjutest-assurance-report-v1.json`
+and copied into each run directory. Every object is closed with
+`additionalProperties: false` and requires everything it declares, which is
+what holds it to the model in both directions: a field the model gained and
+the schema never heard of fails validation of a populated document, and a
+field the schema declares and the model never writes fails because it is
+required and absent. Rust validation
 additionally enforces arithmetic, scope/verdict, acceptance, cache, and
 unavailable-metadata invariants that JSON Schema alone cannot express
 (`report::audit::validate_for_persistence`).

@@ -1,0 +1,282 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/P4suta/mjutest/schema/mjutest-assurance-report-v1.json",
+  "title": "mjutest assurance report v1",
+  "description": "One completed verification: what was asked, what ran, what it established, and every limitation on the claim. There is no percentage in this document, by design — a verdict is a claim a reader can check, and a coverage number is not.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "schema_version",
+    "run_id",
+    "run_kind",
+    "contract",
+    "verdict",
+    "tool",
+    "toolchain",
+    "repository",
+    "scope",
+    "timing",
+    "accounting",
+    "targets",
+    "mutants",
+    "limitations"
+  ],
+  "properties": {
+    "schema": { "const": "mjutest-assurance-report-v1" },
+    "schema_version": { "const": 1 },
+    "run_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The run's identity, which is also its directory name under reports/runs."
+    },
+    "run_kind": {
+      "enum": ["full", "changed", "scoped"],
+      "description": "How much of the workspace the run looked at. It bounds which verdicts the run may reach."
+    },
+    "contract": { "enum": ["standard-v1", "deep-v1"] },
+    "verdict": {
+      "enum": [
+        "ASSURED",
+        "CHANGE_ASSURED",
+        "SCOPE_ASSURED",
+        "DEFECT",
+        "INSUFFICIENT",
+        "ERROR"
+      ],
+      "description": "What the run concluded. The three assurances differ only in scope; INSUFFICIENT is what a run says when the evidence supports no claim either way."
+    },
+    "tool": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mjutest", "rust_mutants"],
+      "properties": {
+        "mjutest": { "type": "string", "minLength": 1 },
+        "rust_mutants": { "type": "string", "minLength": 1 }
+      }
+    },
+    "toolchain": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rustc", "cargo", "target", "os", "arch"],
+      "properties": {
+        "rustc": { "type": "string", "minLength": 1 },
+        "cargo": { "type": "string", "minLength": 1 },
+        "target": { "type": "string", "minLength": 1 },
+        "os": { "type": "string", "minLength": 1 },
+        "arch": { "type": "string", "minLength": 1 }
+      }
+    },
+    "repository": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "root_name",
+        "packages",
+        "workspace_digest",
+        "configuration_digest",
+        "git"
+      ],
+      "properties": {
+        "root_name": { "type": "string", "minLength": 1 },
+        "packages": { "type": "array", "items": { "type": "string" } },
+        "workspace_digest": { "$ref": "#/$defs/opaque" },
+        "configuration_digest": { "$ref": "#/$defs/opaque" },
+        "git": { "$ref": "#/$defs/git" }
+      }
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requested_packages", "resolved_packages", "excluded"],
+      "properties": {
+        "requested_packages": { "type": "array", "items": { "type": "string" } },
+        "resolved_packages": { "type": "array", "items": { "type": "string" } },
+        "excluded": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "timing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["started", "finished", "duration_ms"],
+      "properties": {
+        "started": { "type": "string", "minLength": 1 },
+        "finished": { "type": "string", "minLength": 1 },
+        "duration_ms": { "$ref": "#/$defs/count" }
+      }
+    },
+    "accounting": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["targets", "mutants", "soundness"],
+      "properties": {
+        "targets": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Every selected target has exactly one terminal state, so passed + failed + skipped + missing equals selected.",
+          "required": ["selected", "passed", "failed", "skipped", "missing"],
+          "properties": {
+            "selected": { "$ref": "#/$defs/count" },
+            "passed": { "$ref": "#/$defs/count" },
+            "failed": { "$ref": "#/$defs/count" },
+            "skipped": { "$ref": "#/$defs/count" },
+            "missing": { "$ref": "#/$defs/count" }
+          }
+        },
+        "mutants": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "reused_killed and reused_survived are parts of killed and survived, not additions to them.",
+          "required": [
+            "cataloged",
+            "rejected",
+            "executed",
+            "killed",
+            "survived",
+            "timed_out",
+            "unreached",
+            "accepted",
+            "reused_killed",
+            "reused_survived"
+          ],
+          "properties": {
+            "cataloged": { "$ref": "#/$defs/count" },
+            "rejected": { "$ref": "#/$defs/count" },
+            "executed": { "$ref": "#/$defs/count" },
+            "killed": { "$ref": "#/$defs/count" },
+            "survived": { "$ref": "#/$defs/count" },
+            "timed_out": { "$ref": "#/$defs/count" },
+            "unreached": { "$ref": "#/$defs/count" },
+            "accepted": { "$ref": "#/$defs/count" },
+            "reused_killed": { "$ref": "#/$defs/count" },
+            "reused_survived": { "$ref": "#/$defs/count" }
+          }
+        },
+        "soundness": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["unsafe_items", "packages_with_unsafe", "executed"],
+          "properties": {
+            "unsafe_items": { "$ref": "#/$defs/count" },
+            "packages_with_unsafe": { "$ref": "#/$defs/count" },
+            "executed": {
+              "type": "boolean",
+              "description": "False under standard-v1, where the phase is a static inventory and a non-empty one is a limitation."
+            }
+          }
+        }
+      }
+    },
+    "targets": {
+      "type": "array",
+      "description": "Every selected target, slowest first and then by identity, so two runs of the same work produce the same document.",
+      "items": { "$ref": "#/$defs/target" }
+    },
+    "mutants": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/mutant" }
+    },
+    "limitations": {
+      "type": "array",
+      "description": "The parts of the claim the run refuses to make, stated so a reader never has to infer them.",
+      "items": { "$ref": "#/$defs/limitation" }
+    }
+  },
+  "$defs": {
+    "count": { "type": "integer", "minimum": 0 },
+    "opaque": {
+      "type": "string",
+      "minLength": 1,
+      "description": "A SHA-256 in lower-case hex, or the sentinel \"unavailable\"."
+    },
+    "git": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Either git could be asked and every field says what it said, or it could not and every field is the explicit unavailable state — never an empty string, which would read as \"nothing to say\".",
+      "required": [
+        "available",
+        "commit",
+        "branch",
+        "dirty",
+        "merge_base",
+        "changed_files"
+      ],
+      "properties": {
+        "available": { "type": "boolean" },
+        "commit": { "type": "string", "minLength": 1 },
+        "branch": { "type": "string", "minLength": 1 },
+        "dirty": { "type": "boolean" },
+        "merge_base": { "type": ["string", "null"] },
+        "changed_files": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "position": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Two 1-based columns, because one toolchain uses two units: an llvm-cov region counts UTF-8 bytes and a rustc diagnostic counts Unicode scalars. Both come from one byte offset, so they cannot disagree.",
+      "required": ["line", "column", "character_column"],
+      "properties": {
+        "line": { "type": "integer", "minimum": 1 },
+        "column": { "type": "integer", "minimum": 1 },
+        "character_column": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "package", "status", "duration_ms", "message"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "package": { "type": "string", "minLength": 1 },
+        "status": {
+          "enum": ["passed", "failed", "skipped", "missing"],
+          "description": "A target that could not be found is missing, which is fail-closed rather than a pass."
+        },
+        "duration_ms": { "$ref": "#/$defs/count" },
+        "message": { "type": ["string", "null"] }
+      }
+    },
+    "mutant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "display_id",
+        "path",
+        "position",
+        "rule",
+        "outcome",
+        "killed_by",
+        "reused",
+        "provenance"
+      ],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "display_id": { "type": "string", "minLength": 1 },
+        "path": { "type": "string", "minLength": 1 },
+        "position": { "$ref": "#/$defs/position" },
+        "rule": { "type": "string", "minLength": 1 },
+        "outcome": { "type": "string", "minLength": 1 },
+        "killed_by": {
+          "type": ["string", "null"],
+          "description": "The identity of the target that noticed it, when one did."
+        },
+        "reused": { "type": "boolean" },
+        "provenance": {
+          "type": ["string", "null"],
+          "description": "The run this disposition came from, when it was reused."
+        }
+      }
+    },
+    "limitation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "detail"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "detail": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

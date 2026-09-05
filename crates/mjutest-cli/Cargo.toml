@@ -39,6 +39,7 @@ thiserror = { workspace = true }
 toml = { workspace = true }
 
 [dev-dependencies]
+jsonschema = { workspace = true }
 mjutest-devkit = { workspace = true }
 tempfile = { workspace = true }
 

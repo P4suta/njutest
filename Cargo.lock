@@ -627,6 +627,7 @@ dependencies = [
  "clap",
  "hex",
  "jiff",
+ "jsonschema",
  "mjutest-devkit",
  "rust-mutants",
  "serde",

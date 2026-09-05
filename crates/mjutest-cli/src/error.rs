@@ -78,6 +78,21 @@ code!(
     "MJ4004",
     "a test process wrote no coverage profile at all"
 );
+code!(
+    REPORT_UNSERIALIZABLE,
+    "MJ6001",
+    "the report could not be written as JSON"
+);
+code!(
+    REPORT_UNREADABLE,
+    "MJ6002",
+    "a document is not the assurance report this version understands"
+);
+code!(
+    REPORT_UNSOUND,
+    "MJ6003",
+    "the report contradicts itself and was not written"
+);
 
 /// Every failure the runner reports.
 #[derive(Debug, thiserror::Error)]
@@ -95,6 +110,9 @@ pub enum RunnerError {
     /// Coverage could not be read.
     #[error(transparent)]
     Coverage(#[from] crate::coverage::CoverageError),
+    /// A report could not be written or read.
+    #[error(transparent)]
+    Report(#[from] crate::report::json::ReportError),
 }
 
 impl RunnerError {
@@ -106,6 +124,7 @@ impl RunnerError {
             Self::Config(error) => error.code(),
             Self::Target(error) => error.code(),
             Self::Coverage(error) => error.code(),
+            Self::Report(error) => error.code(),
         }
     }
 }
@@ -124,5 +143,8 @@ pub const fn error_codes() -> &'static [ErrorCode] {
         COVERAGE_TOOLS_MISSING,
         COVERAGE_TOOL_FAILED,
         COVERAGE_NOTHING_WRITTEN,
+        REPORT_UNSERIALIZABLE,
+        REPORT_UNREADABLE,
+        REPORT_UNSOUND,
     ]
 }

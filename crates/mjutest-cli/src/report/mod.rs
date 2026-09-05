@@ -17,6 +17,7 @@
 //! finding about the code under test.
 
 pub mod audit;
+pub mod json;
 
 use serde::{Deserialize, Serialize};
 
@@ -91,6 +92,7 @@ pub enum RunKind {
 /// counts bytes and a rustc diagnostic counts characters. Both are derived
 /// from the same byte offset, so they cannot disagree.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Position {
     /// The 1-based line.
     pub line: u32,
@@ -119,6 +121,7 @@ impl Position {
 
 /// What produced the report.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Tool {
     /// The runner's version.
     pub mjutest: String,
@@ -137,6 +140,7 @@ impl Default for Tool {
 
 /// What compiled and ran the code.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Toolchain {
     /// The whole of `rustc -vV`'s first line.
     pub rustc: String,
@@ -164,6 +168,7 @@ impl Default for Toolchain {
 
 /// What the repository was when the run started.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Repository {
     /// The name of the workspace root directory.
     pub root_name: String,
@@ -183,6 +188,7 @@ pub struct Repository {
 /// [`UNAVAILABLE`], never an empty string, because an empty string reads as
 /// "nothing to say" and this has to read as "we asked and could not know".
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Git {
     /// Whether git could be asked at all.
     pub available: bool,
@@ -221,6 +227,7 @@ impl Default for Git {
 
 /// What the run was asked to verify and what it settled on.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Scope {
     /// The packages the caller asked for; empty is the whole workspace.
     pub requested_packages: Vec<String>,
@@ -232,6 +239,7 @@ pub struct Scope {
 
 /// How many targets there were and what became of them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TargetAccounting {
     /// How many the run selected.
     pub selected: u32,
@@ -259,6 +267,7 @@ impl TargetAccounting {
 
 /// How many mutants there were and what became of them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MutantAccounting {
     /// How many the catalog held.
     pub cataloged: u32,
@@ -284,6 +293,7 @@ pub struct MutantAccounting {
 
 /// The soundness phase's inventory.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SoundnessAccounting {
     /// How many `unsafe` blocks, functions, impls, and traits were found.
     pub unsafe_items: u32,
@@ -295,6 +305,7 @@ pub struct SoundnessAccounting {
 
 /// Everything a run counted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Accounting {
     /// The targets.
     pub targets: TargetAccounting,
@@ -320,6 +331,7 @@ pub enum TargetStatus {
 
 /// One target the run selected.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TargetRecord {
     /// The stable identity.
     pub id: String,
@@ -337,6 +349,7 @@ pub struct TargetRecord {
 
 /// What became of one mutant.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MutantRecord {
     /// The full identity.
     pub id: String,
@@ -363,6 +376,7 @@ pub struct MutantRecord {
 /// A limitation is not an apology: it is the part of the claim the run is
 /// refusing to make, stated in the report so a reader never has to infer it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Limitation {
     /// The stable name a reader can grep for.
     pub name: String,
@@ -383,6 +397,7 @@ impl Limitation {
 
 /// When a run happened and how long it took.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Timing {
     /// When it started, RFC 3339.
     pub started: String,
