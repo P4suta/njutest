@@ -34,6 +34,7 @@ first digit names an area:
 | `RM0007` | A stored run report that is not there or cannot be read. |
 | `RM0008` | A file a command would write that is already there, and `--force` was not given. |
 | `RM0009` | A report or configuration file that could not be written. |
+| `RM0010` | A change set git could not be asked for: the tree is not a repository, or it does not know the revision. A run that could not see what changed never reads as a run that saw nothing change. |
 | `RM1001` | Snapshot options that cannot be honoured, such as a report directory that is absolute or climbs out of the source root. |
 | `RM1002` | A source root that is relative, cannot be read, or is not a directory. |
 | `RM1003` | An operating system failure while reading a tree: a directory that cannot be listed, an entry that cannot be stat'ed. |

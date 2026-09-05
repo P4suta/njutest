@@ -53,6 +53,19 @@ pub enum CliError {
         #[source]
         source: crate::run::ShardError,
     },
+    /// A change set git could not be asked for.
+    #[error(
+        "{}: git could not be asked what differs from {base} in {}; a run that could not see \
+         what changed is not a run that saw nothing change",
+        error::CHANGE_SET_UNAVAILABLE.code,
+        root.display()
+    )]
+    ChangeSetUnavailable {
+        /// The tree that was asked about.
+        root: PathBuf,
+        /// The revision it was compared against.
+        base: String,
+    },
     /// A file the command had to write could not be written.
     #[error("{}: writing {}: {source}", error::WRITE_FAILED.code, path.display())]
     WriteFailed {
@@ -81,6 +94,7 @@ impl CliError {
             Self::ReportMissing { .. } => error::REPORT_MISSING,
             Self::FileExists { .. } => error::FILE_EXISTS,
             Self::Shard { .. } => error::CONFIG_INVALID,
+            Self::ChangeSetUnavailable { .. } => error::CHANGE_SET_UNAVAILABLE,
             Self::WriteFailed { .. } => error::WRITE_FAILED,
         }
     }

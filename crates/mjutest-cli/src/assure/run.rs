@@ -645,29 +645,10 @@ fn package_id(metadata: &Metadata, name: &str) -> Option<String> {
         .map(|package| package.id.clone())
 }
 
-/// The files a change set names, as patterns the engine mutates within. An empty list is every file, so a change set that names no Rust file at all gets one pattern nothing matches: a run about nothing changing must mutate nothing, not everything.
+/// The files a change set names, as the patterns the engine mutates within. A run that is not about a change set restricts nothing.
 fn within(change: Option<&git::Change>) -> Vec<rust_mutants::glob::Pattern> {
-    let Some(change) = change else {
-        return Vec::new();
-    };
-    let sources: Vec<&String> = change
-        .files
-        .iter()
-        .filter(|path| std::path::Path::new(path).extension() == Some(std::ffi::OsStr::new("rs")))
-        .collect();
-    if sources.is_empty() {
-        return rust_mutants::glob::Pattern::compile(NOTHING_CHANGED)
-            .map(|pattern| vec![pattern])
-            .unwrap_or_default();
-    }
-    sources
-        .into_iter()
-        .filter_map(|path| rust_mutants::glob::Pattern::compile(path).ok())
-        .collect()
+    change.map_or_else(Vec::new, |change| rust_mutants::git::within(change, &[]))
 }
-
-/// The pattern a run about an empty change set mutates within. No file is called this.
-pub const NOTHING_CHANGED: &str = ".mjutest-nothing-changed";
 
 fn record(report: &mut Report, mutation: &mutation::Mutation, accepted: &BTreeSet<String>) {
     report.accounting.mutants = mutation.accounting(accepted);

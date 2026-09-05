@@ -92,6 +92,19 @@ accepted. `catalog --json` prints one `rust-mutants/catalog` document.
 `run` exits 0 when the tests noticed the mutant, 1 when they did not, and 2
 when nothing was established, so a script can act on the answer.
 
+`--changed` and `--changed-from <REV>` mutate only the files that differ from
+a revision, committed and not. They narrow `--include` rather than widening
+it, and a change set that names no Rust file selects nothing rather than
+everything. A tree git cannot be asked about, or a revision it does not know,
+ends the command with `RM0010`: a run that could not see what changed must
+never look like a run that saw nothing change.
+
+`run --shard K/N` runs one part of the catalog, cut by index, and `merge`
+reassembles the parts into the report the whole would have written. A run
+reads back what an earlier run of this exact tree established unless
+`--no-cache` is given; `cache` says what is stored and `cache --gc` removes
+what no run still owns.
+
 ## Guards
 
 Three forms. **Form C** for a position that is syntactically boolean (an

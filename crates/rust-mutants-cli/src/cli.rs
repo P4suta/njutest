@@ -166,6 +166,12 @@ pub struct Scope {
     /// Never mutate files matching this pattern. Repeatable.
     #[arg(long = "exclude", value_name = "GLOB")]
     pub exclude: Vec<String>,
+    /// Mutate only the files that differ from `HEAD`, committed and not. Narrows `--include` rather than widening it.
+    #[arg(long, conflicts_with = "changed_from")]
+    pub changed: bool,
+    /// Mutate only the files that differ from this revision.
+    #[arg(long, value_name = "REV")]
+    pub changed_from: Option<String>,
     /// Only mutate these packages. Repeatable.
     #[arg(long = "package", short = 'p', value_name = "NAME")]
     pub packages: Vec<String>,

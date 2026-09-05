@@ -83,7 +83,10 @@ fn workspace_command(
         settings.open_options(scope, environment)?,
         cancel,
     )?;
-    let options = settings.prepare_options()?;
+    let mut options = settings.prepare_options()?;
+    if let Some(base) = base_of(scope) {
+        options.include = selected(&settings, base, environment, cancel)?;
+    }
     match command {
         cli::Command::List { .. }
         | cli::Command::WhySkipped { .. }
@@ -109,6 +112,50 @@ fn workspace_command(
             code
         }
     }
+}
+
+/// The revision a change set is computed against, when the command line asked for one at all.
+fn base_of(scope: &cli::Scope) -> Option<&str> {
+    scope
+        .changed_from
+        .as_deref()
+        .or_else(|| scope.changed.then_some(rust_mutants::git::DEFAULT_BASE))
+}
+
+/// The patterns a change set selects, narrowing what the configuration already selected.
+///
+/// A tree git cannot be asked about ends the command: a run that could not see
+/// what changed must never look like a run that saw nothing change.
+fn selected(
+    settings: &Settings,
+    base: &str,
+    environment: &Environment,
+    cancel: &Cancel,
+) -> Result<Vec<rust_mutants::glob::Pattern>, CliError> {
+    let report_directory = settings
+        .config
+        .reports
+        .directory
+        .to_string_lossy()
+        .into_owned();
+    let excluded = [report_directory.as_str(), "target"];
+    let asking = rust_mutants::git::Asking {
+        root: &settings.root,
+        env: &environment.vars,
+        excluded: &excluded,
+        cancel,
+        observer: &rust_mutants::trace::Recorder::disabled(),
+    };
+    let change = rust_mutants::git::changed(&asking, base).ok_or_else(|| {
+        CliError::ChangeSetUnavailable {
+            root: settings.root.clone(),
+            base: base.to_owned(),
+        }
+    })?;
+    Ok(rust_mutants::git::within(
+        &change,
+        &settings.prepare_options()?.include,
+    ))
 }
 
 /// What a command that only needs discovery prints.

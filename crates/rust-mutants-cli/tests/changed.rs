@@ -1,0 +1,124 @@
+// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! Mutating what changed: what a change set selects, and what it refuses to guess.
+
+#![expect(
+    clippy::expect_used,
+    reason = "a test reports a setup failure by panicking and asserts with panics"
+)]
+
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
+
+struct Fixture {
+    root: PathBuf,
+    temp: PathBuf,
+    _dir: tempfile::TempDir,
+}
+
+fn fixture() -> Fixture {
+    let dir = tempfile::Builder::new()
+        .prefix("rust-mutants-changed-")
+        .tempdir()
+        .expect("tempdir");
+    let root = dir.path().join("fixture-workspace");
+    copy_dir(
+        &mjutest_devkit::paths::fixtures_dir().join("fixture-workspace"),
+        &root,
+    );
+    let temp = dir.path().join("temp");
+    std::fs::create_dir_all(&temp).expect("mkdir");
+    Fixture {
+        root,
+        temp,
+        _dir: dir,
+    }
+}
+
+fn copy_dir(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).expect("mkdir");
+    for entry in std::fs::read_dir(from).expect("read_dir") {
+        let entry = entry.expect("entry");
+        if entry.file_name() == "target" {
+            continue;
+        }
+        let destination = to.join(entry.file_name());
+        if entry.file_type().expect("type").is_dir() {
+            copy_dir(&entry.path(), &destination);
+        } else {
+            std::fs::copy(entry.path(), &destination).expect("copy");
+        }
+    }
+}
+
+fn against(fixture: &Fixture, args: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_rust-mutants"))
+        .env("NO_COLOR", "1")
+        .env("TMPDIR", &fixture.temp)
+        .args(args)
+        .args(["--root", &fixture.root.to_string_lossy()])
+        .output()
+        .expect("rust-mutants runs")
+}
+
+fn stdout(output: &Output) -> String {
+    String::from_utf8_lossy(&output.stdout).into_owned()
+}
+
+#[test]
+fn a_change_set_selects_the_files_that_differ_and_leaves_the_rest_alone() {
+    let fixture = fixture();
+    mjutest_devkit::repo::commit_tree(&fixture.root);
+    let util = fixture.root.join("crates/core/src/util.rs");
+    let mut widened = std::fs::read_to_string(&util).expect("read");
+    widened.push_str("\npub fn extra(a: i32) -> i32 { a + 1 }\n");
+    std::fs::write(&util, widened).expect("write");
+
+    let whole = stdout(&against(&fixture, &["list"]));
+    assert!(whole.contains("crates/core/src/lib.rs"), "{whole}");
+    assert!(whole.contains("crates/core/src/util.rs"), "{whole}");
+
+    let output = against(&fixture, &["list", "--changed"]);
+    let listed = stdout(&output);
+    assert!(output.status.success(), "{output:?}");
+    assert!(listed.contains("crates/core/src/util.rs"), "{listed}");
+    assert!(
+        !listed.contains("crates/core/src/lib.rs"),
+        "a file that did not change is not in the change set: {listed}"
+    );
+}
+
+#[test]
+fn a_change_set_that_names_no_rust_file_selects_nothing_rather_than_everything() {
+    let fixture = fixture();
+    mjutest_devkit::repo::commit_tree(&fixture.root);
+    std::fs::write(fixture.root.join("README.md"), "changed\n").expect("write");
+
+    let output = against(&fixture, &["list", "--changed"]);
+    let listed = stdout(&output);
+    assert!(output.status.success(), "{output:?}");
+    assert!(
+        !listed.contains(".rs:"),
+        "a run about nothing changing must mutate nothing: {listed}"
+    );
+}
+
+#[test]
+fn a_tree_git_cannot_be_asked_about_ends_the_command_rather_than_reading_as_nothing_changed() {
+    let fixture = fixture();
+    let output = against(&fixture, &["list", "--changed"]);
+    let complaint = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    assert!(complaint.contains("RM0010"), "{complaint}");
+}
+
+#[test]
+fn a_revision_git_does_not_know_ends_the_command() {
+    let fixture = fixture();
+    mjutest_devkit::repo::commit_tree(&fixture.root);
+    let output = against(&fixture, &["list", "--changed-from", "no-such-revision"]);
+    let complaint = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    assert!(complaint.contains("no-such-revision"), "{complaint}");
+}

@@ -12,6 +12,7 @@ pub mod duration;
 pub mod error;
 pub mod execute;
 pub mod flatten;
+pub mod git;
 pub mod glob;
 pub mod id;
 pub mod instrument;

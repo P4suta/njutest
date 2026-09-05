@@ -83,6 +83,12 @@ pub const WRITE_FAILED: ErrorCode = ErrorCode {
     summary: "a report or configuration file that could not be written",
 };
 
+/// A change set that git could not be asked for.
+pub const CHANGE_SET_UNAVAILABLE: ErrorCode = ErrorCode {
+    code: "RM0010",
+    summary: "a change set git could not be asked for, which is never read as nothing changing",
+};
+
 macro_rules! snapshot_code {
     ($name:ident, $code:literal, $summary:literal) => {
         pub(crate) const $name: ErrorCode = ErrorCode {
@@ -356,6 +362,7 @@ pub const fn error_codes() -> &'static [ErrorCode] {
         REPORT_MISSING,
         FILE_EXISTS,
         WRITE_FAILED,
+        CHANGE_SET_UNAVAILABLE,
         SNAPSHOT_INVALID_OPTIONS,
         SNAPSHOT_SOURCE_ROOT,
         SNAPSHOT_WALK,
