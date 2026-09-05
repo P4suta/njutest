@@ -68,6 +68,8 @@ pub struct Config {
     pub execution: Execution,
     /// What is kept between runs.
     pub cache: Cache,
+    /// How mutants are proved about before they are executed.
+    pub mutation: Mutation,
     /// What is kept under `reports/`.
     pub reports: Reports,
     /// The `deep-v1` soundness phase.
@@ -88,6 +90,7 @@ impl Default for Config {
             project: Project::default(),
             execution: Execution::default(),
             cache: Cache::default(),
+            mutation: Mutation::default(),
             reports: Reports::default(),
             soundness: Soundness::default(),
             resources: BTreeMap::new(),
@@ -140,6 +143,14 @@ impl Default for Execution {
             jobs: 0,
         }
     }
+}
+
+/// How mutants are proved about before they are executed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct Mutation {
+    /// Build and run the probe tree, which says which tests could not have noticed a return replacement however far they ran. It costs one more build and one more run of the suite, and saves every execution it discharges.
+    pub probe: bool,
 }
 
 /// What is kept between runs.

@@ -3,7 +3,7 @@
 
 //! Which tests could possibly notice one mutation.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use crate::assure::baseline::Measured;
@@ -187,6 +187,44 @@ impl Body {
         let after_start = (point.line, point.column) >= (self.start.line, self.start.column);
         let before_end = (point.line, point.column) <= (self.end.line, self.end.column);
         after_start && before_end
+    }
+}
+
+/// Removes from `route` every target the probe recorded as never having infected this mutant.
+///
+/// A test that never reached the mutation with a state the mutation would have
+/// changed cannot have killed it, however far it ran afterwards. The narrowing
+/// applies only where the probe asked about this mutant at all, and only to
+/// targets whose own log this run could read: a target the probe says nothing
+/// about is a target that stays.
+#[must_use]
+pub fn uninfected(route: Route, mutant: u32, infected: &BTreeMap<String, BTreeSet<u32>>) -> Route {
+    let Route::Block {
+        reaching,
+        file_candidates,
+        discharged,
+    } = route
+    else {
+        return route;
+    };
+    let mut kept = Vec::new();
+    let mut removed = discharged;
+    for id in reaching.as_slice() {
+        match infected.get(id) {
+            Some(seen) if !seen.contains(&mutant) => removed.push(id.clone()),
+            _ => kept.push(id.clone()),
+        }
+    }
+    match Reaching::new(kept) {
+        Some(reaching) => Route::Block {
+            reaching,
+            file_candidates,
+            discharged: removed,
+        },
+        None => Route::Discharged {
+            discharged: removed,
+            file_candidates,
+        },
     }
 }
 

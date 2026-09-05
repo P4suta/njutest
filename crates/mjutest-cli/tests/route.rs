@@ -7,7 +7,7 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use mjutest_cli::assure::baseline::Measured;
-use mjutest_cli::assure::route::{Body, Fallback, Proven, Route, discharge, route};
+use mjutest_cli::assure::route::{Body, Fallback, Proven, Route, discharge, route, uninfected};
 use mjutest_cli::coverage::{Block, Point};
 use mjutest_cli::report::TargetStatus;
 use mjutest_cli::targets::{Target, UnitKind};
@@ -377,4 +377,95 @@ fn a_target_restored_from_a_checkpoint_carries_no_regions_to_argue_with() {
     );
     assert_eq!(narrowed.reaching(), ["restored"]);
     assert!(narrowed.discharged().is_empty());
+}
+
+/// What the probe recorded, by target.
+fn infected(entries: &[(&str, &[u32])]) -> std::collections::BTreeMap<String, BTreeSet<u32>> {
+    entries
+        .iter()
+        .map(|(target, seen)| {
+            (
+                (*target).to_owned(),
+                seen.iter().copied().collect::<BTreeSet<u32>>(),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn a_test_that_never_infected_a_mutant_is_removed_without_being_run() {
+    let touched = block("src/lib.rs", (10, 8), (10, 18));
+    let baseline = [
+        measured(
+            "did",
+            1,
+            TargetStatus::Passed,
+            std::slice::from_ref(&touched),
+        ),
+        measured(
+            "did-not",
+            1,
+            TargetStatus::Passed,
+            std::slice::from_ref(&touched),
+        ),
+    ];
+    let seen = instrumented(&[touched]);
+    let route = route("src/lib.rs", Some(at(10, 12)), &baseline, &seen);
+    assert_eq!(route.reaching().len(), 2);
+
+    let narrowed = uninfected(route, 7, &infected(&[("did", &[7]), ("did-not", &[9])]));
+    assert_eq!(narrowed.reaching(), ["did"]);
+    assert_eq!(narrowed.discharged(), ["did-not"]);
+}
+
+#[test]
+fn a_target_the_probe_says_nothing_about_stays() {
+    let touched = block("src/lib.rs", (10, 8), (10, 18));
+    let baseline = [
+        measured(
+            "known",
+            1,
+            TargetStatus::Passed,
+            std::slice::from_ref(&touched),
+        ),
+        measured(
+            "unknown",
+            1,
+            TargetStatus::Passed,
+            std::slice::from_ref(&touched),
+        ),
+    ];
+    let seen = instrumented(&[touched]);
+    let narrowed = uninfected(
+        route("src/lib.rs", Some(at(10, 12)), &baseline, &seen),
+        7,
+        &infected(&[("known", &[7])]),
+    );
+    let mut left = narrowed.reaching().to_vec();
+    left.sort();
+    assert_eq!(
+        left,
+        ["known", "unknown"],
+        "a log this run could not read tells it nothing about that target"
+    );
+}
+
+#[test]
+fn a_mutant_no_test_infected_is_resolved_without_one_execution() {
+    let touched = block("src/lib.rs", (10, 8), (10, 18));
+    let baseline = [measured(
+        "never",
+        1,
+        TargetStatus::Passed,
+        std::slice::from_ref(&touched),
+    )];
+    let seen = instrumented(&[touched]);
+    let narrowed = uninfected(
+        route("src/lib.rs", Some(at(10, 12)), &baseline, &seen),
+        7,
+        &infected(&[("never", &[])]),
+    );
+    assert_eq!(narrowed.granularity(), "discharged");
+    assert!(narrowed.reaching().is_empty());
+    assert_eq!(narrowed.discharged(), ["never"]);
 }

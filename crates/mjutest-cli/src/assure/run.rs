@@ -582,6 +582,7 @@ fn prepare(
             packages: request.packages.clone(),
             include: within(request.changed.as_ref()),
             verify: true,
+            probe: request.config.mutation.probe,
             build_timeout: Some(request.config.execution.timeout),
             mutant_timeout: Some(request.config.execution.timeout),
             ..rust_mutants::session::PrepareOptions::default()

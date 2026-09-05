@@ -451,6 +451,10 @@ fn routed(
         baseline,
         &judging.options.instrumented,
     );
+    let probed = judging.subject.session.probed();
+    if probed.asked.contains(&mutant.index) {
+        route = route::uninfected(route, mutant.index, &probed.infected);
+    }
     if let Some(proof) = judging.subject.session.branch(mutant.index) {
         route = route::discharge(
             route,
