@@ -3,6 +3,7 @@
 
 //! Syntactic discovery: the candidates one file yields, each with the guard site the instrumenter will use, and every place deliberately passed over, each with its reason.
 
+pub mod branch;
 mod position;
 mod rules;
 mod walk;
@@ -73,6 +74,8 @@ pub struct Found {
     pub position: Position,
     /// The rewrite site.
     pub hint: SiteHint,
+    /// What a branch proof about this edit would rest on, once the compiler has vouched for its witnesses. `None` where the syntax supports no proof.
+    pub branch: Option<branch::Claim>,
 }
 
 /// Why a place produced no candidate. Declared in rank order, which is the order skips are reported in.

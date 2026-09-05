@@ -8,10 +8,11 @@ use std::collections::BTreeMap;
 use proc_macro2::{TokenStream, TokenTree};
 use syn::spanned::Spanned;
 use syn::{
-    Attribute, Block, Expr, ImplItem, Item, Macro, Meta, Pat, ReturnType, Signature, Stmt,
+    Attribute, BinOp, Block, Expr, ImplItem, Item, Macro, Meta, Pat, ReturnType, Signature, Stmt,
     TraitItem, Type, Visibility,
 };
 
+use super::branch;
 use super::position::LineIndex;
 use super::rules::{
     binary_swap, has_let, is_compound_assignment, is_connective, is_default_spelling, is_not,
@@ -152,6 +153,8 @@ pub(super) struct Walker<'a> {
     suppressed: Option<SkipReason>,
     frames: Vec<Frame>,
     mod_depth: u32,
+    /// What a proof would rest on for each `if` or `while` condition being walked, innermost last.
+    gates: Vec<Option<branch::Prepared>>,
 }
 
 impl<'a> Walker<'a> {
@@ -173,6 +176,7 @@ impl<'a> Walker<'a> {
             suppressed: None,
             frames: Vec::new(),
             mod_depth: 0,
+            gates: Vec::new(),
         }
     }
 
@@ -260,10 +264,16 @@ impl<'a> Walker<'a> {
             allow_at: self.frames.last().and_then(|frame| frame.allow_at),
         };
         let position = self.index.position(self.src, edit.span.start);
+        let branch = self
+            .gates
+            .last()
+            .and_then(Option::as_ref)
+            .and_then(|gate| gate.claim(rule_name, edit.span));
         self.found.push(Found {
             candidate,
             position,
             hint,
+            branch,
         });
         self.decide(edit.span.start, rule_name, Outcome::Candidate(site.form));
     }
@@ -793,7 +803,10 @@ impl<'a> Walker<'a> {
 
     fn walk_if(&mut self, i: &syn::ExprIf, ctx: Ctx) {
         self.negate("negate-condition", &i.cond);
+        let gate = self.gate(&i.cond, &i.then_branch);
+        self.gates.push(gate);
         self.walk_expr(&i.cond, ctx.boolean());
+        self.gates.pop();
         self.walk_block(&i.then_branch, false);
         if let Some((_, else_branch)) = &i.else_branch {
             self.walk_expr(else_branch, ctx.value());
@@ -802,8 +815,28 @@ impl<'a> Walker<'a> {
 
     fn walk_while(&mut self, w: &syn::ExprWhile, ctx: Ctx) {
         self.negate("negate-loop-condition", &w.cond);
+        let gate = self.gate(&w.cond, &w.body);
+        self.gates.push(gate);
         self.walk_expr(&w.cond, ctx.boolean());
+        self.gates.pop();
         self.walk_block(&w.body, false);
+    }
+
+    /// What a proof about this condition would rest on, or nothing when the syntax supports none.
+    fn gate(&self, condition: &Expr, body: &Block) -> Option<branch::Prepared> {
+        let expr = |e: &Expr| self.span(e);
+        let operator = |op: &BinOp| self.span(op);
+        branch::prepare(
+            branch::Gate {
+                condition,
+                body: self.span(body),
+                statements: body.stmts.len(),
+            },
+            &branch::Spans {
+                expr: &expr,
+                operator: &operator,
+            },
+        )
     }
 
     fn walk_match(&mut self, m: &syn::ExprMatch, ctx: Ctx) {
