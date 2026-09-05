@@ -20,6 +20,9 @@
 
 use super::{Report, TargetStatus};
 
+/// The record stream inside a run directory.
+pub const FILE_NAME: &str = "mjutest-assurance-report-v1.lines";
+
 /// The whole report as records, each line terminated.
 #[must_use]
 pub fn stream(report: &Report) -> String {

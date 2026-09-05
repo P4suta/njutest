@@ -8,10 +8,16 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 **Status: scaffold.** The list grows with each milestone; every limitation
 below is stated fail-closed.
 
-- The engine (`rust-mutants`) works end to end. The runner (`mjutest`)
-  reads its configuration, names the tests it would measure, and reads
-  coverage; the phases that turn those into a verdict arrive in M2 and M3,
-  and until then `mjutest` prints its help and exits.
+- The engine (`rust-mutants`) works end to end. `mjutest verify` measures a
+  baseline — every test once, on its own, under coverage instrumentation —
+  and writes a report; the mutation phase arrives in M3, so every run states
+  `mutation-phase-not-implemented` and no run reaches an assurance. A suite
+  that passes says only that it passes: whether those tests would notice a
+  change has not been asked yet, and a verdict that claimed otherwise would
+  be the one thing this program exists not to do.
+- The evidence identity of the tree is not computed
+  (`workspace-digest-not-computed`), so nothing is reused between runs. It
+  arrives in M4 with the cache.
 
 ## Decided in advance
 

@@ -110,6 +110,13 @@ pub struct Request {
 #[derive(Debug, Clone, Subcommand)]
 #[non_exhaustive]
 pub enum Command {
+    /// Verify the workspace and report a verdict.
+    ///
+    /// Every test runs once, on its own, under coverage instrumentation.
+    /// The verdict is written to the report directory and to standard
+    /// output; progress goes to standard error, so redirecting the output
+    /// gives a report and not a report with a progress log in it.
+    Verify(Verify),
     /// Write an annotated .mjutest.toml.
     ///
     /// The skeleton is the defaults with every other section as commented
@@ -122,6 +129,51 @@ pub enum Command {
     /// when it could not. What only a deep-v1 run or a later phase needs is
     /// reported as optional and costs nothing.
     Doctor(Doctor),
+}
+
+/// `mjutest verify`.
+#[derive(Debug, Clone, clap::Args)]
+pub struct Verify {
+    /// The workspace to verify. The working directory by default.
+    #[arg(long, value_name = "DIR")]
+    pub directory: Option<PathBuf>,
+    /// The configuration file. `.mjutest.toml` beside the workspace by
+    /// default; a missing one is the defaults.
+    #[arg(long, value_name = "PATH")]
+    pub config: Option<PathBuf>,
+    /// Verify only this package. Repeatable; the default is every member.
+    #[arg(long = "package", short = 'p', value_name = "NAME")]
+    pub packages: Vec<String>,
+    /// How to write progress.
+    #[arg(long, value_enum, default_value_t = Ui::Plain)]
+    pub ui: Ui,
+    /// Record what the run does, under DIR or `.mjutest/trace/<run>`.
+    ///
+    /// Written as `--trace` or `--trace=DIR`: the equals sign is required,
+    /// because `--trace some/path` would otherwise be ambiguous with a
+    /// positional argument.
+    #[arg(
+        long,
+        value_name = "DIR",
+        num_args = 0..=1,
+        require_equals = true,
+        default_missing_value = ""
+    )]
+    pub trace: Option<String>,
+    /// Keep the directories the run worked in.
+    #[arg(long)]
+    pub keep_temp: bool,
+    /// Pass --offline to every cargo command.
+    #[arg(long)]
+    pub offline: bool,
+    /// Pass --locked to every cargo command.
+    #[arg(long)]
+    pub locked: bool,
+    /// Arguments for the test binaries. Only the flags mjutest does not own
+    /// are allowed: --test-threads, --include-ignored, --nocapture,
+    /// --show-output.
+    #[arg(last = true, value_name = "TEST ARGS")]
+    pub test_args: Vec<String>,
 }
 
 /// `mjutest init`.

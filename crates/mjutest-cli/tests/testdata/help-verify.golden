@@ -1,0 +1,50 @@
+Verify the workspace and report a verdict.
+
+Every test runs once, on its own, under coverage instrumentation. The verdict is written to the
+report directory and to standard output; progress goes to standard error, so redirecting the output
+gives a report and not a report with a progress log in it.
+
+Usage: mjutest verify [OPTIONS] [-- <TEST ARGS>...]
+
+Arguments:
+  [TEST ARGS]...
+          Arguments for the test binaries. Only the flags mjutest does not own are allowed:
+          --test-threads, --include-ignored, --nocapture, --show-output
+
+Options:
+      --directory <DIR>
+          The workspace to verify. The working directory by default
+
+      --config <PATH>
+          The configuration file. `.mjutest.toml` beside the workspace by default; a missing one is
+          the defaults
+
+  -p, --package <NAME>
+          Verify only this package. Repeatable; the default is every member
+
+      --ui <UI>
+          How to write progress
+
+          Possible values:
+          - plain: Lines a person reads
+          - jsonl: One JSON object per line, for a program
+          
+          [default: plain]
+
+      --trace[=<DIR>]
+          Record what the run does, under DIR or `.mjutest/trace/<run>`.
+          
+          Written as `--trace` or `--trace=DIR`: the equals sign is required, because `--trace
+          some/path` would otherwise be ambiguous with a positional argument.
+
+      --keep-temp
+          Keep the directories the run worked in
+
+      --offline
+          Pass --offline to every cargo command
+
+      --locked
+          Pass --locked to every cargo command
+
+  -h, --help
+          Print help (see a summary with '-h')

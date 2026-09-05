@@ -30,7 +30,18 @@ use crate::error::RunnerError;
 use crate::report::TargetStatus;
 use crate::targets::{Target, enumerate};
 use crate::trace::{ExecRecord, ProgressRecord};
+use crate::ui::Notes;
 use crate::watch::Watch;
+
+/// The compiled workspace a phase works against: one argument, so a phase
+/// that also takes options, notes, and a watch still reads.
+#[derive(Debug, Clone, Copy)]
+pub struct Workspace<'a> {
+    /// The located toolchain.
+    pub toolchain: &'a Toolchain,
+    /// What `cargo metadata` said the workspace holds.
+    pub packages: &'a [Package],
+}
 
 /// What to measure, and where to put what measuring produces.
 #[derive(Debug, Clone)]
@@ -93,15 +104,15 @@ pub struct Baseline {
 /// holds, and a coverage tool that failed. A test that fails is not an
 /// error: it is a [`Measured`] that failed.
 pub fn run(
-    toolchain: &Toolchain,
-    packages: &[Package],
+    workspace: Workspace<'_>,
     options: &BaselineOptions,
+    notes: &mut dyn Notes,
     watch: Watch<'_>,
 ) -> Result<Baseline, RunnerError> {
     let phase = watch.trace.phase("baseline");
     let built = build::build(
-        toolchain,
-        packages,
+        workspace.toolchain,
+        workspace.packages,
         &BuildOptions {
             root: options.root.clone(),
             selection: options.selection.clone(),
@@ -123,7 +134,7 @@ pub fn run(
         });
     }
 
-    let tools = Tools::locate(toolchain, &options.root, watch)?;
+    let tools = Tools::locate(workspace.toolchain, &options.root, watch)?;
     let mut baseline = Baseline {
         limitations: built.limitations,
         ..Baseline::default()
@@ -134,11 +145,13 @@ pub fn run(
     }
     let total = u64::try_from(selected.len()).unwrap_or(u64::MAX);
     for (index, target) in selected.into_iter().enumerate() {
+        let done = u64::try_from(index).unwrap_or(u64::MAX).saturating_add(1);
         watch.trace.progress(ProgressRecord {
             message: target.name(),
-            done: Some(u64::try_from(index).unwrap_or(u64::MAX).saturating_add(1)),
+            done: Some(done),
             total: Some(total),
         });
+        notes.progress(&target.name(), done, total);
         let (measured, seen) = measure(&tools, &target, options, watch)?;
         baseline.instrumented.extend(seen);
         baseline.targets.push(measured);

@@ -99,6 +99,11 @@ code!(
     "MJ6002",
     "a document is not the assurance report this version understands"
 );
+code!(
+    REPORT_NOT_KEPT,
+    "MJ6004",
+    "the report could not be written where a reader will look for it"
+);
 code!(SCRATCH_UNUSABLE, "MJ8001", "the run has nowhere to work");
 code!(
     BUILD_CACHE_UNUSABLE,
@@ -136,6 +141,11 @@ pub enum RunnerError {
     /// The workspace could not be built.
     #[error(transparent)]
     Build(#[from] crate::build::BuildError),
+    /// The engine refused. Its codes are `RM`-prefixed and live in the
+    /// engine's half of `docs/errors.md`; a runner that renamed them would
+    /// make a user's report unsearchable.
+    #[error(transparent)]
+    Engine(#[from] rust_mutants::EngineError),
 }
 
 impl RunnerError {
@@ -150,6 +160,13 @@ impl RunnerError {
             Self::Report(error) => error.code(),
             Self::Scratch(error) => error.code(),
             Self::Build(error) => error.code(),
+            Self::Engine(error) => {
+                let engine = error.code();
+                ErrorCode {
+                    code: engine.code,
+                    summary: engine.summary,
+                }
+            }
         }
     }
 }
@@ -174,6 +191,7 @@ pub const fn error_codes() -> &'static [ErrorCode] {
         REPORT_UNSERIALIZABLE,
         REPORT_UNREADABLE,
         REPORT_UNSOUND,
+        REPORT_NOT_KEPT,
         SCRATCH_UNUSABLE,
         BUILD_CACHE_UNUSABLE,
     ]

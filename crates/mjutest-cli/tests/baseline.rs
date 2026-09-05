@@ -26,7 +26,7 @@
 use std::collections::BTreeSet;
 use std::ffi::OsString;
 
-use mjutest_cli::assure::baseline::{Baseline, BaselineOptions, run, status_of};
+use mjutest_cli::assure::baseline::{Baseline, BaselineOptions, Workspace, run, status_of};
 use mjutest_cli::build::{Cargo, Selection};
 use mjutest_cli::coverage::Block;
 use mjutest_cli::report::TargetStatus;
@@ -83,8 +83,10 @@ fn measure(fixture: &str) -> (Baseline, tempfile::TempDir) {
     std::fs::create_dir_all(&profiles).expect("somewhere for the profiles");
 
     let baseline = run(
-        &toolchain,
-        &metadata.packages,
+        Workspace {
+            toolchain: &toolchain,
+            packages: &metadata.packages,
+        },
         &BaselineOptions {
             root,
             selection: Selection::default(),
@@ -99,6 +101,7 @@ fn measure(fixture: &str) -> (Baseline, tempfile::TempDir) {
             timeout: None,
             test_args: Vec::new(),
         },
+        &mut mjutest_cli::ui::Silent,
         Watch::new(&cancel, &trace),
     )
     .expect("the baseline runs");

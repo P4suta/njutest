@@ -24,10 +24,12 @@ pub mod coverage;
 pub mod error;
 pub mod git;
 pub mod report;
+pub mod run_id;
 pub mod rustflags;
 pub mod scratch;
 pub mod targets;
 pub mod trace;
+pub mod ui;
 pub mod watch;
 
 use std::ffi::OsString;

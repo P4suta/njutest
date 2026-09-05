@@ -9,6 +9,8 @@
 
 pub mod doctor;
 pub mod init;
+pub mod reports;
+pub mod verify;
 
 use std::io::Write;
 
@@ -24,6 +26,7 @@ pub fn run(
     match &request.command {
         Command::Init(arguments) => init::run(*arguments, environment, stdout, stderr),
         Command::Doctor(arguments) => doctor::run(*arguments, environment, stdout, stderr),
+        Command::Verify(arguments) => verify::run(arguments, environment, stdout, stderr),
     }
 }
 
