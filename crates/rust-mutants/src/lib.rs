@@ -32,6 +32,7 @@ pub mod snapshot;
 pub mod span;
 pub mod splice;
 pub mod tempowner;
+pub mod trace;
 
 pub use error::{EngineError, ErrorCode};
 
