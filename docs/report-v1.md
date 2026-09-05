@@ -68,6 +68,14 @@ additionally enforces arithmetic, scope/verdict, acceptance, cache, and
 unavailable-metadata invariants that JSON Schema alone cannot express
 (`report::audit::validate_for_persistence`).
 
+A **finding** is a claim about the project — a build that does not compile,
+a failing test, a target that could not be found, a surviving mutant, a
+timeout. A **limitation** is the opposite: a claim the run declines to make
+about itself. The audit holds the verdict and the findings to each other,
+because a report must not say two things at once: an assurance is the claim
+that nothing was found, so it carries no findings, and a `DEFECT` a reader
+cannot see named is not one they can act on, so it carries at least one.
+
 `targets` is canonically ordered by descending duration, then ascending target
 ID. A mutant disposition may say `reused: true` with a `provenance`; the
 accounting carries `reused_killed` and `reused_survived`, each part of

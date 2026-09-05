@@ -112,6 +112,7 @@
       "provenance": "20260904T101500Z-123456"
     }
   ],
+  "findings": [],
   "limitations": [
     {
       "name": "doctests-not-routed",

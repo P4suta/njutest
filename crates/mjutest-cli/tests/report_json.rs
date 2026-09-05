@@ -133,6 +133,7 @@ fn populated() -> Report {
             reused: true,
             provenance: Some("20260904T101500Z-123456".to_owned()),
         }],
+        findings: Vec::new(),
         limitations: vec![Limitation::new(
             "doctests-not-routed",
             "doctests run once and are not routed to mutants",

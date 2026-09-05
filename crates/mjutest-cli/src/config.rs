@@ -22,6 +22,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest as _, Sha256};
 
 use crate::error::{self, ErrorCode};
 
@@ -70,7 +71,7 @@ pub enum Contract {
 }
 
 /// Everything `.mjutest.toml` can say.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Config {
     /// The schema version. Only `1` is understood.
@@ -113,7 +114,7 @@ impl Default for Config {
 }
 
 /// What is under verification.
-#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Project {
     /// The cargo packages to verify. Empty is every workspace member.
@@ -124,7 +125,7 @@ pub struct Project {
 }
 
 /// How tests are built and run.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Execution {
     /// Cargo features to enable.
@@ -138,7 +139,7 @@ pub struct Execution {
     /// Environment variable *names* a test process may see.
     pub environment: Vec<String>,
     /// The upper bound on one executed command.
-    #[serde(deserialize_with = "duration")]
+    #[serde(deserialize_with = "duration", serialize_with = "as_millis")]
     pub timeout: Duration,
     /// How many mutation workers. Zero means the logical CPUs, capped.
     pub jobs: u32,
@@ -159,19 +160,19 @@ impl Default for Execution {
 }
 
 /// What is kept between runs.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Cache {
     /// How much of the outcome cache is kept.
     pub max_bytes: u64,
     /// How long a cached outcome is kept.
-    #[serde(deserialize_with = "duration")]
+    #[serde(deserialize_with = "duration", serialize_with = "as_millis")]
     pub ttl: Duration,
     /// How much of the machine-wide build cache is kept.
     pub build_max_bytes: u64,
     /// Where that build cache lives. `None` is below the user cache
     /// directory.
-    #[serde(deserialize_with = "optional_path")]
+    #[serde(deserialize_with = "optional_path", serialize_with = "as_path")]
     pub build_dir: Option<PathBuf>,
 }
 
@@ -187,7 +188,7 @@ impl Default for Cache {
 }
 
 /// What is kept under `reports/`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Reports {
     /// How many run directories are kept.
@@ -203,7 +204,7 @@ impl Default for Reports {
 }
 
 /// The `deep-v1` soundness phase.
-#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Soundness {
     /// Flags for Miri.
@@ -213,13 +214,17 @@ pub struct Soundness {
 }
 
 /// One integration resource a run may start.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Resource {
     /// The provider to run.
     pub command: Vec<String>,
     /// How long it may take to become ready.
-    #[serde(default = "default_resource_timeout", deserialize_with = "duration")]
+    #[serde(
+        default = "default_resource_timeout",
+        deserialize_with = "duration",
+        serialize_with = "as_millis"
+    )]
     pub timeout: Duration,
     /// Several tests may use it at once.
     #[serde(default)]
@@ -237,7 +242,7 @@ const fn default_resource_timeout() -> Duration {
 }
 
 /// The provider that writes candidate tests.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Generation {
     /// The provider to run.
@@ -251,7 +256,7 @@ pub struct Generation {
 }
 
 /// One surviving mutant a reviewer accepted.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Acceptance {
     /// The mutant, by identity or by a prefix that names exactly one.
@@ -614,4 +619,48 @@ contract = \"standard-v1\"        # \"standard-v1\" | \"deep-v1\"
         build_max_bytes = DEFAULT_BUILD_MAX_BYTES,
         keep = DEFAULT_REPORTS_KEEP,
     )
+}
+
+/// A [`Duration`] as whole milliseconds, so the digest of a configuration
+/// does not depend on how a person spelled `10m`.
+fn as_millis<S: serde::Serializer>(value: &Duration, serializer: S) -> Result<S::Ok, S::Error> {
+    serializer.serialize_u128(value.as_millis())
+}
+
+/// A path as the text it came from, empty for none.
+#[allow(
+    clippy::ref_option,
+    reason = "serde's serialize_with hands the field by reference, whatever its shape"
+)]
+fn as_path<S: serde::Serializer>(
+    value: &Option<PathBuf>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    serializer.serialize_str(
+        &value
+            .as_ref()
+            .map_or_else(String::new, |path| path.to_string_lossy().into_owned()),
+    )
+}
+
+impl Config {
+    /// The effective configuration, rendered canonically: every field, in
+    /// declaration order, with durations as milliseconds so two spellings of
+    /// the same bound are one configuration.
+    ///
+    /// # Errors
+    ///
+    /// Nothing a caller can act on; a configuration that cannot be rendered
+    /// is an invariant failure and answers with the empty document.
+    #[must_use]
+    pub fn canonical(&self) -> String {
+        serde_json::to_string(self).unwrap_or_else(|_error| String::from("{}"))
+    }
+
+    /// The SHA-256 of [`Config::canonical`], which is what a report records
+    /// and what a cached result is keyed on.
+    #[must_use]
+    pub fn digest(&self) -> String {
+        hex::encode(Sha256::digest(self.canonical().as_bytes()))
+    }
 }

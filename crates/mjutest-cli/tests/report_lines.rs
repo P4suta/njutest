@@ -26,8 +26,8 @@
 use std::path::Path;
 
 use mjutest_cli::report::{
-    Limitation, MutantRecord, Position, Report, RunKind, TargetAccounting, TargetRecord,
-    TargetStatus, Verdict, lines,
+    Finding, FindingKind, Limitation, MutantRecord, Position, Report, RunKind, TargetAccounting,
+    TargetRecord, TargetStatus, Verdict, lines,
 };
 
 fn report() -> Report {
@@ -84,6 +84,11 @@ fn report() -> Report {
         reused: false,
         provenance: None,
     }];
+    report.findings = vec![Finding::new(
+        FindingKind::SurvivingMutant,
+        "cccccccc",
+        "no test noticed the edit at crates/core/src/lib.rs:12",
+    )];
     report.limitations = vec![Limitation::new(
         "mutation-phase-not-implemented",
         "no mutant was executed, so nothing is claimed about the tests' strength",
@@ -225,4 +230,31 @@ fn the_stream_matches_the_recorded_one() {
     let text = lines::stream(&report());
     let golden = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testdata/report.golden.lines");
     mjutest_devkit::golden::golden(&golden, text.as_bytes()).expect("the recorded stream");
+}
+
+#[test]
+fn a_finding_is_a_record_of_its_own_that_names_its_kind() {
+    let text = lines::stream(&report());
+    let record = records(&text, "FINDING")
+        .into_iter()
+        .next()
+        .expect("the finding");
+    let fields: Vec<&str> = record.split('\t').collect();
+    assert_eq!(fields[0], "FINDING");
+    assert_eq!(fields[1], "surviving-mutant", "the model's own wire name");
+    assert_eq!(fields[2], "cccccccc");
+    assert!(fields[3].contains("no test noticed"), "{record}");
+}
+
+#[test]
+fn a_finding_detail_cannot_forge_a_verdict() {
+    let mut report = report();
+    report.findings[0].detail = "all clear\nVERDICT\tASSURED".to_owned();
+    let text = lines::stream(&report);
+    assert_eq!(
+        records(&text, "VERDICT").len(),
+        1,
+        "the one the report reached, and no more: {text}"
+    );
+    assert!(text.ends_with("VERDICT\tINSUFFICIENT\n"), "{text}");
 }

@@ -9,5 +9,6 @@ SOUNDNESS	unsafe_items=0	packages=0	executed=false
 TARGET	failed	40ms	0123456789abcdef	core/lib/adds::works	assertion failed: left == right
 TARGET	passed	12ms	fedcba9876543210	core/lib/adds::rounds
 MUTANT	survived	cccccccc	crates/core/src/lib.rs:12:9	lt-to-le@1
+FINDING	surviving-mutant	cccccccc	no test noticed the edit at crates/core/src/lib.rs:12
 LIMITATION	mutation-phase-not-implemented	no mutant was executed, so nothing is claimed about the tests' strength
 VERDICT	INSUFFICIENT

@@ -61,6 +61,15 @@ pub fn stream(report: &Report) -> String {
         }
         out.push('\n');
     }
+    for finding in &report.findings {
+        let kind = wire_name(&finding.kind);
+        record(&mut out, "FINDING", &[kind.as_str(), &finding.subject]);
+        append(&mut out, &finding.detail);
+        if let Some(position) = finding.position {
+            append(&mut out, &format!("{}:{}", position.line, position.column));
+        }
+        out.push('\n');
+    }
     for limitation in &report.limitations {
         record(&mut out, "LIMITATION", &[&limitation.name]);
         append(&mut out, &limitation.detail);

@@ -57,6 +57,15 @@ pub enum Violation {
         /// Which field.
         field: String,
     },
+    /// A verdict and the findings do not agree.
+    FindingsDisagree {
+        /// What the report claims.
+        verdict: Verdict,
+        /// How many findings it carries.
+        findings: usize,
+        /// Why that cannot be.
+        because: String,
+    },
     /// Something the report must state as a limitation is not stated.
     MissingLimitation {
         /// The limitation's name.
@@ -76,6 +85,14 @@ impl fmt::Display for Violation {
                 f,
                 "the report selected {selected} targets but accounts for {accounted}; \
                  every selected target has exactly one terminal state"
+            ),
+            Self::FindingsDisagree {
+                verdict,
+                findings,
+                because,
+            } => write!(
+                f,
+                "the report concludes {verdict:?} with {findings} findings; {because}"
             ),
             Self::TargetRecordsDisagree { counted, recorded } => write!(
                 f,
@@ -124,7 +141,29 @@ pub fn validate_for_persistence(report: &Report) -> Vec<Violation> {
     check_targets(report, &mut violations);
     check_verdict(report, &mut violations);
     check_git(report, &mut violations);
+    check_findings(report, &mut violations);
     violations
+}
+
+/// A verdict and the findings say the same thing, or the report says two
+/// things at once.
+fn check_findings(report: &Report, violations: &mut Vec<Violation>) {
+    let findings = report.findings.len();
+    if report.verdict.is_assurance() && findings > 0 {
+        violations.push(Violation::FindingsDisagree {
+            verdict: report.verdict,
+            findings,
+            because: "an assurance is the claim that nothing was found".to_owned(),
+        });
+    }
+    if report.verdict == Verdict::Defect && findings == 0 {
+        violations.push(Violation::FindingsDisagree {
+            verdict: report.verdict,
+            findings,
+            because: "a defect a reader cannot see named is not a defect they can act on"
+                .to_owned(),
+        });
+    }
 }
 
 /// The fields every report says something in.

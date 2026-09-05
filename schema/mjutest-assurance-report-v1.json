@@ -20,6 +20,7 @@
     "accounting",
     "targets",
     "mutants",
+    "findings",
     "limitations"
   ],
   "properties": {
@@ -176,6 +177,11 @@
       "type": "array",
       "items": { "$ref": "#/$defs/mutant" }
     },
+    "findings": {
+      "type": "array",
+      "description": "What the run found wrong with the code under test. A finding is a claim about the project; a limitation is a claim the run declines to make about itself.",
+      "items": { "$ref": "#/$defs/finding" }
+    },
     "limitations": {
       "type": "array",
       "description": "The parts of the claim the run refuses to make, stated so a reader never has to infer them.",
@@ -266,6 +272,27 @@
         "provenance": {
           "type": ["string", "null"],
           "description": "The run this disposition came from, when it was reused."
+        }
+      }
+    },
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "subject", "detail", "position"],
+      "properties": {
+        "kind": {
+          "enum": [
+            "build-failure",
+            "failing-test",
+            "target-missing",
+            "surviving-mutant",
+            "timeout"
+          ]
+        },
+        "subject": { "type": "string", "minLength": 1 },
+        "detail": { "type": "string", "minLength": 1 },
+        "position": {
+          "oneOf": [{ "$ref": "#/$defs/position" }, { "type": "null" }]
         }
       }
     },

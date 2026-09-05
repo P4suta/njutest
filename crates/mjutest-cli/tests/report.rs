@@ -18,8 +18,8 @@
 
 use mjutest_cli::report::audit::{Violation, validate_for_persistence};
 use mjutest_cli::report::{
-    Git, Limitation, Position, Report, RunKind, SCHEMA, TargetAccounting, TargetRecord,
-    TargetStatus, Verdict,
+    Finding, FindingKind, Git, Limitation, Position, Report, RunKind, SCHEMA, TargetAccounting,
+    TargetRecord, TargetStatus, Verdict,
 };
 
 /// A report that satisfies every invariant, for a test to break one thing in.
@@ -267,4 +267,53 @@ fn a_violation_says_what_is_wrong_in_words_a_reader_can_act_on() {
         assert!(said.len() > 20, "{said}");
         assert!(!said.contains("Violation"), "{said}");
     }
+}
+
+// --- what a verdict and its findings must agree on --------------------------------
+
+#[test]
+fn an_assurance_that_names_a_finding_is_two_claims_at_once() {
+    let mut report = sound();
+    report.findings = vec![Finding::new(
+        FindingKind::SurvivingMutant,
+        "cccccccc",
+        "nothing noticed it",
+    )];
+    let violations = validate_for_persistence(&report);
+    assert!(
+        violations
+            .iter()
+            .any(|violation| matches!(violation, Violation::FindingsDisagree { .. })),
+        "{violations:?}"
+    );
+    assert!(
+        violations[0].to_string().contains("nothing was found"),
+        "{}",
+        violations[0]
+    );
+}
+
+#[test]
+fn a_defect_a_reader_cannot_see_named_is_not_one_they_can_act_on() {
+    let mut report = sound();
+    report.verdict = Verdict::Defect;
+    let violations = validate_for_persistence(&report);
+    assert!(
+        violations
+            .iter()
+            .any(|violation| matches!(violation, Violation::FindingsDisagree { .. })),
+        "{violations:?}"
+    );
+}
+
+#[test]
+fn a_defect_that_names_what_it_found_is_sound() {
+    let mut report = sound();
+    report.verdict = Verdict::Defect;
+    report.findings = vec![Finding::new(
+        FindingKind::FailingTest,
+        "a1",
+        "assertion failed",
+    )];
+    assert_eq!(validate_for_persistence(&report), Vec::new());
 }

@@ -372,6 +372,53 @@ pub struct MutantRecord {
     pub provenance: Option<String>,
 }
 
+/// What kind of thing a run found.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+#[non_exhaustive]
+pub enum FindingKind {
+    /// The workspace does not compile.
+    BuildFailure,
+    /// A test of the workspace fails.
+    FailingTest,
+    /// A test target could not be found, so nothing was observed about it.
+    TargetMissing,
+    /// A mutant nothing noticed.
+    SurvivingMutant,
+    /// A target that ran out of time.
+    Timeout,
+}
+
+/// One thing a run found wrong with the code under test.
+///
+/// A finding is a claim about the project, which is what separates it from a
+/// [`Limitation`] — a claim the run is declining to make about itself.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Finding {
+    /// What kind of thing it is.
+    pub kind: FindingKind,
+    /// What it is about: a target identity, a mutant, a package.
+    pub subject: String,
+    /// One sentence a person can act on.
+    pub detail: String,
+    /// Where it is, when the run knows.
+    pub position: Option<Position>,
+}
+
+impl Finding {
+    /// A finding of `kind` about `subject`.
+    #[must_use]
+    pub fn new(kind: FindingKind, subject: &str, detail: &str) -> Self {
+        Self {
+            kind,
+            subject: subject.to_owned(),
+            detail: detail.to_owned(),
+            position: None,
+        }
+    }
+}
+
 /// One thing a report cannot claim, and why.
 ///
 /// A limitation is not an apology: it is the part of the claim the run is
@@ -440,6 +487,8 @@ pub struct Report {
     pub targets: Vec<TargetRecord>,
     /// Every mutant it has something to say about.
     pub mutants: Vec<MutantRecord>,
+    /// Everything it found wrong with the code under test.
+    pub findings: Vec<Finding>,
     /// Everything it is not claiming.
     pub limitations: Vec<Limitation>,
 }
@@ -469,6 +518,7 @@ impl Report {
             accounting: Accounting::default(),
             targets: Vec::new(),
             mutants: Vec::new(),
+            findings: Vec::new(),
             limitations: Vec::new(),
         }
     }
