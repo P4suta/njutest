@@ -22,6 +22,7 @@ pub mod cli;
 pub mod config;
 pub mod coverage;
 pub mod error;
+pub mod git;
 pub mod report;
 pub mod rustflags;
 pub mod scratch;
