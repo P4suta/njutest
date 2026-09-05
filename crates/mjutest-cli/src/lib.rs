@@ -25,7 +25,6 @@ pub mod watch;
 
 use std::ffi::OsString;
 use std::io::Write;
-use std::process::ExitCode;
 
 /// The version of this runner, as recorded in every report.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -36,18 +35,18 @@ pub fn run_from<I>(
     environment: &cli::Environment,
     stdout: &mut dyn Write,
     stderr: &mut dyn Write,
-) -> ExitCode
+) -> u8
 where
     I: IntoIterator<Item = OsString>,
 {
     match cli::parse(args) {
-        Ok(request) => ExitCode::from(app::run(&request, environment, stdout, stderr)),
+        Ok(request) => app::run(&request, environment, stdout, stderr),
         Err(usage) => {
             let stream: &mut dyn Write = if usage.to_stderr { stderr } else { stdout };
             let _written = stream
                 .write_all(usage.text.as_bytes())
                 .and_then(|()| stream.flush());
-            ExitCode::from(usage.exit_code)
+            usage.exit_code
         }
     }
 }

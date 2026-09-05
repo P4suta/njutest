@@ -49,7 +49,7 @@ pub fn run(
         },
         stderr,
     );
-    let cancel = rust_mutants::runner::Cancel::new();
+    let cancel = environment.cancel.clone();
     let watch = Watch::new(&cancel, &trace);
     let request = Request {
         root: root.clone(),

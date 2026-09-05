@@ -22,7 +22,7 @@ pub fn run(
         .directory
         .clone()
         .unwrap_or_else(|| environment.working_directory.clone());
-    let cancel = rust_mutants::runner::Cancel::new();
+    let cancel = environment.cancel.clone();
     let trace = Recorder::disabled();
     let watch = Watch::new(&cancel, &trace);
     let cargo = Cargo {

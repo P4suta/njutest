@@ -116,7 +116,9 @@ fn a_run_that_is_interrupted_exits_130_and_leaves_no_process_and_no_snapshot_beh
 
     let mut reader = BufReader::new(child.stdout.take().expect("stdout is piped"));
     let mut line = String::new();
-    let deadline = Instant::now() + Duration::from_secs(300);
+    let deadline = Instant::now()
+        .checked_add(Duration::from_secs(300))
+        .expect("a deadline five minutes out");
     loop {
         line.clear();
         let read = reader.read_line(&mut line).expect("read");

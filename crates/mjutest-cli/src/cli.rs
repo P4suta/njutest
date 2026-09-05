@@ -6,6 +6,8 @@
 use std::ffi::{OsStr, OsString};
 use std::path::PathBuf;
 
+use rust_mutants::runner::Cancel;
+
 use clap::{Parser, Subcommand, ValueEnum};
 
 /// `ASSURED`, `CHANGE_ASSURED`, `SCOPE_ASSURED`, `RESOLVED`, or `COMPLETED`.
@@ -35,6 +37,8 @@ pub struct Environment {
     pub temp_directory: PathBuf,
     /// The user's cache directory, which the build cache lives under.
     pub cache_directory: PathBuf,
+    /// Raised when the process is asked to stop. The composition root owns the signals; every phase reads this flag.
+    pub cancel: Cancel,
 }
 
 impl Environment {

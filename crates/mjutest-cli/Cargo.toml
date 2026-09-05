@@ -35,11 +35,13 @@ rust-mutants = { workspace = true }
 sha2 = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+signal-hook = { workspace = true }
 thiserror = { workspace = true }
 toml = { workspace = true }
 toml_edit = { workspace = true }
 
 [dev-dependencies]
+rustix = { workspace = true }
 criterion = { workspace = true }
 jsonschema = { workspace = true }
 mjutest-devkit = { workspace = true }

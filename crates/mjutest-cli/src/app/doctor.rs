@@ -79,7 +79,7 @@ pub fn run(
 
 /// Everything this machine was asked about, in reading order: what a run needs first, then what it would only like.
 fn examine(environment: &Environment) -> Vec<Finding> {
-    let cancel = Cancel::new();
+    let cancel = environment.cancel.clone();
     let trace = Recorder::disabled();
     let dir = environment.working_directory.clone();
     let toolchain = Toolchain::locate(
