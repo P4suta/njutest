@@ -52,7 +52,10 @@ fn verify(fixture: &Fixture, extra: &[&str]) -> Output {
         .current_dir(&fixture.root)
         .env_clear()
         .env("NO_COLOR", "1")
-        .env("XDG_CACHE_HOME", fixture.root.join(".cache"))
+        .env(
+            "XDG_CACHE_HOME",
+            mjutest_devkit::paths::cache_beside(&fixture.root).expect("a cache directory"),
+        )
         .env(
             "TMPDIR",
             mjutest_devkit::paths::temp_beside(&fixture.root).expect("a temporary directory"),
@@ -297,4 +300,133 @@ fn a_workspace_with_no_tests_at_all_observed_nothing_and_says_so() {
         "a suite with nothing in it assures nothing: {stdout}"
     );
     drop(repo);
+}
+
+#[test]
+fn a_second_run_of_the_same_work_reads_the_first_run_back_rather_than_doing_it_again() {
+    let fixture = fixture("fixture-assured");
+    let first = verify(&fixture, &[]);
+    assert_eq!(
+        first.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    let established = document(&fixture);
+    assert_eq!(established["provenance"]["cached"], false);
+    assert_eq!(
+        established["provenance"]["source_run_id"],
+        serde_json::Value::Null
+    );
+    let identity = established["provenance"]["identity"]
+        .as_str()
+        .expect("an identity")
+        .to_owned();
+    assert_eq!(identity.len(), 64, "{identity}");
+    assert!(
+        !established["limitations"]
+            .as_array()
+            .expect("limitations")
+            .iter()
+            .any(|one| one["name"] == "workspace-digest-not-computed"),
+        "a run that measured the tree does not say it could not: {established}"
+    );
+
+    let second = verify(&fixture, &[]);
+    assert_eq!(
+        second.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&second.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&second.stderr).is_empty(),
+        "{}",
+        String::from_utf8_lossy(&second.stderr)
+    );
+    let reused = document(&fixture);
+    assert_eq!(reused["provenance"]["cached"], true, "{reused}");
+    assert_eq!(reused["provenance"]["identity"], identity);
+    assert_eq!(
+        reused["provenance"]["source_run_id"], established["run_id"],
+        "a reused answer names the run that established it"
+    );
+    assert_ne!(reused["run_id"], established["run_id"]);
+    assert_eq!(reused["verdict"], established["verdict"]);
+    assert_eq!(reused["accounting"], established["accounting"]);
+
+    let afresh = verify(&fixture, &["--no-cache"]);
+    assert_eq!(afresh.status.code(), Some(0));
+    assert_eq!(
+        document(&fixture)["provenance"]["cached"],
+        false,
+        "a run told to establish everything afresh does"
+    );
+}
+
+#[test]
+fn a_tree_that_changed_is_a_different_question_and_is_answered_again() {
+    let fixture = fixture("fixture-assured");
+    assert_eq!(verify(&fixture, &[]).status.code(), Some(0));
+    let before = document(&fixture)["provenance"]["identity"]
+        .as_str()
+        .expect("an identity")
+        .to_owned();
+
+    let path = fixture.root.join("src/lib.rs");
+    let source = std::fs::read_to_string(&path).expect("the source");
+    std::fs::write(&path, format!("{source}\n// one more line\n")).expect("write");
+
+    assert_eq!(verify(&fixture, &[]).status.code(), Some(0));
+    let after = document(&fixture);
+    assert_ne!(
+        after["provenance"]["identity"], before,
+        "a byte of the tree is part of what the run is about"
+    );
+    assert_eq!(
+        after["provenance"]["cached"], false,
+        "nothing was stored for this question yet"
+    );
+}
+
+#[test]
+fn a_run_leaves_nothing_in_the_tree_it_verified_but_its_own_reports() {
+    let fixture = fixture("fixture-assured");
+    let before = listing(&fixture.root);
+    assert_eq!(verify(&fixture, &[]).status.code(), Some(0));
+    let after = listing(&fixture.root);
+    let added: Vec<&String> = after
+        .iter()
+        .filter(|path| !before.contains(*path))
+        .collect();
+    assert!(
+        added.iter().all(|path| path.starts_with("reports/")),
+        "an instrumented build writes its own coverage profiles, and they belong in the \
+         directory the run works in rather than in the tree it is about: {added:?}"
+    );
+}
+
+/// Every file under `root`, as slash-separated relative paths.
+fn listing(root: &Path) -> std::collections::BTreeSet<String> {
+    let mut found = std::collections::BTreeSet::new();
+    let mut pending = vec![(root.to_path_buf(), String::new())];
+    while let Some((directory, prefix)) = pending.pop() {
+        let Ok(entries) = std::fs::read_dir(&directory) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let relative = if prefix.is_empty() {
+                name
+            } else {
+                format!("{prefix}/{name}")
+            };
+            if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+                pending.push((entry.path(), relative));
+            } else {
+                found.insert(relative);
+            }
+        }
+    }
+    found
 }

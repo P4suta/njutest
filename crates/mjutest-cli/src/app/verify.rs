@@ -9,15 +9,22 @@ use std::path::{Path, PathBuf};
 use jiff::Timestamp;
 
 use crate::app::reports;
+use crate::assure::identity::{self, Evidence};
 use crate::assure::run::{self, Request};
 use crate::build::Cargo;
+use crate::cache::lock::{self, Lease};
+use crate::cache::store::Store;
 use crate::cli::{EXIT_ERROR, Environment, Verify};
 use crate::config::Config;
+use crate::evidence::digest::Mode;
 use crate::report::lines;
 use crate::run_id;
 use crate::trace::{DirSink, Recorder, Sink, StartRecord};
 use crate::ui;
 use crate::watch::Watch;
+
+/// How long a run waits for another run of the same inputs before doing the work itself.
+pub const LEASE_TIMEOUT: std::time::Duration = std::time::Duration::from_mins(30);
 
 /// Runs a verification.
 pub fn run(
@@ -51,9 +58,94 @@ pub fn run(
     );
     let cancel = environment.cancel.clone();
     let watch = Watch::new(&cancel, &trace);
+    let evidence = evidence_of(
+        arguments,
+        &Asked {
+            root: &root,
+            config: &config,
+            environment,
+        },
+        &cancel,
+    );
+    let store = store_of(environment, &config);
+    let asking = Asking {
+        store: &store,
+        identity: &evidence.identity,
+        run_id: &identity,
+        started,
+        root: &root,
+    };
+    let _lease = if arguments.no_cache || !evidence.is_known() {
+        None
+    } else {
+        match settled(
+            &asking,
+            arguments,
+            &cancel,
+            Streams {
+                out: stdout,
+                err: stderr,
+            },
+        ) {
+            Settled::Answered(code) => return code,
+            Settled::Establish(lease) => lease,
+        }
+    };
+    establish(
+        &Establishing {
+            arguments,
+            environment,
+            root: &root,
+            config,
+            identity: &identity,
+            started,
+            evidence: &evidence,
+            store: &store,
+            trace: &trace,
+            watch,
+        },
+        Streams {
+            out: stdout,
+            err: stderr,
+        },
+    )
+}
+
+/// Everything one verification needs to establish its own answer.
+struct Establishing<'a> {
+    arguments: &'a Verify,
+    environment: &'a Environment,
+    root: &'a Path,
+    config: Config,
+    identity: &'a str,
+    started: Timestamp,
+    evidence: &'a Evidence,
+    store: &'a Store,
+    trace: &'a Recorder,
+    watch: Watch<'a>,
+}
+
+/// Runs the verification, writes what it concluded, and stores it for the next run of the same inputs.
+fn establish(establishing: &Establishing<'_>, streams: Streams<'_>) -> u8 {
+    let Establishing {
+        arguments,
+        environment,
+        root,
+        identity,
+        started,
+        evidence,
+        store,
+        trace,
+        watch,
+        ..
+    } = *establishing;
+    let Streams {
+        out: stdout,
+        err: stderr,
+    } = streams;
     let request = Request {
-        root: root.clone(),
-        config,
+        root: root.to_path_buf(),
+        config: establishing.config.clone(),
         packages: arguments.packages.clone(),
         test_args: arguments.test_args.clone(),
         cargo: Cargo {
@@ -61,9 +153,10 @@ pub fn run(
             locked: arguments.locked,
         },
         keep_temp: arguments.keep_temp,
-        run_id: identity.clone(),
+        run_id: identity.to_owned(),
         started,
-        engine_trace: engine_recorder(arguments, &root, &identity),
+        engine_trace: engine_recorder(arguments, root, identity),
+        evidence: evidence.clone(),
     };
     let result = {
         let mut notes = ui::Notes::of(arguments.ui, stderr);
@@ -84,27 +177,246 @@ pub fn run(
         Some(report.accounting),
         None,
     );
-    let kept = match reports::keep(&root, &report) {
-        Ok(kept) => kept,
-        Err(error) => {
-            super::diagnose(stderr, &error.to_string());
-            return EXIT_ERROR;
-        }
-    };
-    let removed = reports::retain(&root, request_keep(&request));
-    {
-        let mut notes = ui::Notes::of(arguments.ui, stderr);
-        notes.note("report", &kept.document.display().to_string());
-        for path in &removed {
-            notes.note("retired", &path.display().to_string());
-        }
-        for path in &outcome.kept {
-            notes.note("kept", &path.display().to_string());
-        }
+    if let Some(code) = persist(
+        &Persisting {
+            root,
+            report: &report,
+            request: &request,
+            store,
+            store_it: !arguments.no_cache && evidence.is_known(),
+            kept: &outcome.kept,
+        },
+        arguments,
+        stderr,
+    ) {
+        return code;
     }
 
     let _written = stdout.write_all(lines::stream(&report).as_bytes());
     report.verdict.exit_code()
+}
+
+/// What a run was asked to verify, before anything has been established about it.
+struct Asked<'a> {
+    root: &'a Path,
+    config: &'a Config,
+    environment: &'a Environment,
+}
+
+/// What this run is, as numbers, or nothing when the tree could not be read. A tree that cannot be measured is a limitation the report states, not a reason to refuse to verify it.
+fn evidence_of(
+    arguments: &Verify,
+    asked: &Asked<'_>,
+    cancel: &rust_mutants::runner::Cancel,
+) -> Evidence {
+    let Asked {
+        root,
+        config,
+        environment,
+    } = *asked;
+    let toolchain = rust_mutants::cargo::Toolchain::locate(
+        &rust_mutants::cargo::LocateOptions {
+            cargo: None,
+            search_path: environment
+                .vars
+                .iter()
+                .find(|(name, _)| name == "PATH")
+                .map(|(_, value)| value.clone()),
+            env: Some(environment.vars.clone()),
+        },
+        root,
+        cancel,
+    );
+    let Ok(toolchain) = toolchain else {
+        return Evidence::default();
+    };
+    let mode = if arguments.packages.is_empty() && config.project.packages.is_empty() {
+        Mode::Full
+    } else {
+        Mode::Scoped {
+            packages: if arguments.packages.is_empty() {
+                config.project.packages.clone()
+            } else {
+                arguments.packages.clone()
+            },
+        }
+    };
+    let machine = identity::Machine {
+        toolchain: &toolchain.to_string(),
+        platform: toolchain.host(),
+    };
+    identity::of(
+        &identity::Asked {
+            root,
+            config,
+            machine: &machine,
+            vars: &environment.vars,
+            elsewhere: &[&environment.cache_directory],
+        },
+        mode,
+    )
+    .unwrap_or_default()
+}
+
+/// The store of earlier answers, bounded the way the configuration says.
+fn store_of(environment: &Environment, config: &Config) -> Store {
+    Store::new(
+        &environment.cache_directory,
+        config.cache.max_bytes,
+        config.cache.ttl,
+    )
+}
+
+/// Waits for whatever run is already establishing this identity, so the same work is not done twice at once. A claim that cannot be taken is not a reason to refuse: the run does the work again rather than not at all.
+fn claim(
+    asking: &Asking<'_>,
+    arguments: &Verify,
+    cancel: &rust_mutants::runner::Cancel,
+    stderr: &mut dyn Write,
+) -> Option<Lease> {
+    let path = asking.store.lease(asking.identity);
+    let mut waited = false;
+    let taken = lock::claim(&path, LEASE_TIMEOUT, cancel, &mut || waited = true);
+    let mut notes = ui::Notes::of(arguments.ui, stderr);
+    if waited {
+        notes.note("waiting", "another run of the same inputs is under way");
+    }
+    match taken {
+        Ok(lease) => Some(lease),
+        Err(error) => {
+            notes.note("unclaimed", &error.to_string());
+            None
+        }
+    }
+}
+
+/// The two streams a command writes to.
+struct Streams<'a> {
+    out: &'a mut dyn Write,
+    err: &'a mut dyn Write,
+}
+
+/// A finished run and everywhere it goes.
+struct Persisting<'a> {
+    root: &'a Path,
+    report: &'a crate::report::Report,
+    request: &'a Request,
+    store: &'a Store,
+    store_it: bool,
+    kept: &'a [PathBuf],
+}
+
+/// Writes the report where a reader will look for it, retires what the configuration no longer keeps, and stores the answer for the next run of the same inputs. Returns the exit code only when the report could not be written, which is the one failure that stops the run from having answered at all.
+fn persist(persisting: &Persisting<'_>, arguments: &Verify, stderr: &mut dyn Write) -> Option<u8> {
+    let Persisting {
+        root,
+        report,
+        request,
+        store,
+        store_it,
+        kept,
+    } = *persisting;
+    let written = match reports::keep(root, report) {
+        Ok(written) => written,
+        Err(error) => {
+            super::diagnose(stderr, &error.to_string());
+            return Some(EXIT_ERROR);
+        }
+    };
+    let removed = reports::retain(root, request_keep(request));
+    let stored = store_it.then(|| store.put(report)).and_then(Result::err);
+    let mut notes = ui::Notes::of(arguments.ui, stderr);
+    notes.note("report", &written.document.display().to_string());
+    for path in &removed {
+        notes.note("retired", &path.display().to_string());
+    }
+    for path in kept {
+        notes.note("kept", &path.display().to_string());
+    }
+    if let Some(error) = stored {
+        notes.note("not-stored", &error.to_string());
+    }
+    None
+}
+
+/// Whether an earlier run of the same inputs has already answered, and the claim this run holds while it establishes its own.
+enum Settled {
+    /// An earlier run answered, and this is the exit code.
+    Answered(u8),
+    /// Nothing is stored; the claim this run holds while it establishes one.
+    Establish(Option<Lease>),
+}
+
+/// Asks the store, waits for whoever is already establishing this identity, and asks again.
+fn settled(
+    asking: &Asking<'_>,
+    arguments: &Verify,
+    cancel: &rust_mutants::runner::Cancel,
+    streams: Streams<'_>,
+) -> Settled {
+    let Streams {
+        out: stdout,
+        err: stderr,
+    } = streams;
+    if let Reuse::Answered(code) = reuse(asking, stdout, stderr) {
+        return Settled::Answered(code);
+    }
+    let lease = claim(asking, arguments, cancel, stderr);
+    if lease.is_some()
+        && let Reuse::Answered(code) = reuse(asking, stdout, stderr)
+    {
+        return Settled::Answered(code);
+    }
+    Settled::Establish(lease)
+}
+
+/// What a run needs to ask the store of earlier answers.
+struct Asking<'a> {
+    store: &'a Store,
+    identity: &'a str,
+    run_id: &'a str,
+    started: Timestamp,
+    root: &'a Path,
+}
+
+/// Whether this run has to establish anything at all.
+enum Reuse {
+    /// An earlier run of the same inputs answered, and this is the exit code.
+    Answered(u8),
+    /// Nothing is stored, or what is stored cannot be believed.
+    Establish,
+}
+
+/// Reads back what an earlier run of the same inputs established, and writes it as this run's report.
+fn reuse(asking: &Asking<'_>, stdout: &mut dyn Write, stderr: &mut dyn Write) -> Reuse {
+    let Asking {
+        store,
+        identity,
+        run_id,
+        started,
+        root,
+    } = *asking;
+    let stored = match store.get(identity) {
+        Ok(Some(stored)) => stored,
+        Ok(None) => return Reuse::Establish,
+        Err(error) => {
+            super::diagnose(stderr, &error.to_string());
+            return Reuse::Establish;
+        }
+    };
+    let mut report = stored.clone();
+    run_id.clone_into(&mut report.run_id);
+    report.provenance.cached = true;
+    report.provenance.source_run_id = Some(stored.run_id);
+    report.timing.started = started.to_string();
+    report.timing.finished = Timestamp::now().to_string();
+    report.timing.duration_ms = 0;
+    if let Err(error) = reports::keep(root, &report) {
+        super::diagnose(stderr, &error.to_string());
+        return Reuse::Establish;
+    }
+    let _written = stdout.write_all(lines::stream(&report).as_bytes());
+    Reuse::Answered(report.verdict.exit_code())
 }
 
 /// How many run directories to keep.

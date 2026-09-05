@@ -86,16 +86,15 @@ impl ScanError {
 
 /// Reads `root` and digests it: the files under verification into [`Scan::tree`], the fuzz corpora into [`Scan::corpus`].
 ///
-/// `exclude` are the configuration's own patterns, and `target_directory` is what cargo said its build directory is, absolute or relative to `root`. Neither counts.
+/// `exclude` are the configuration's own patterns. `elsewhere` are directories a run writes rather than reads that are not in [`EXCLUDED_DIRECTORIES`] — cargo's build directory, the user's cache directory — named absolutely or relative to `root`. Neither counts.
 ///
 /// # Errors
 /// See [`ScanError`].
-pub fn scan(
-    root: &Path,
-    exclude: &[Pattern],
-    target_directory: Option<&Path>,
-) -> Result<Scan, ScanError> {
-    let target = target_directory.and_then(|path| relative_to(root, path));
+pub fn scan(root: &Path, exclude: &[Pattern], elsewhere: &[&Path]) -> Result<Scan, ScanError> {
+    let written: Vec<String> = elsewhere
+        .iter()
+        .filter_map(|path| relative_to(root, path))
+        .collect();
     let mut tree: BTreeMap<String, String> = BTreeMap::new();
     let mut corpus: BTreeMap<String, String> = BTreeMap::new();
     let mut files = 0u32;
@@ -132,8 +131,7 @@ pub fn scan(
                 continue;
             }
             if kind.is_dir() {
-                if is_excluded_directory(&relative) || Some(relative.as_str()) == target.as_deref()
-                {
+                if is_excluded_directory(&relative) || written.contains(&relative) {
                     continue;
                 }
                 pending.push((path, relative));

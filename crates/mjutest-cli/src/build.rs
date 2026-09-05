@@ -214,6 +214,9 @@ fn arguments(toolchain: &Toolchain, options: &BuildOptions) -> Vec<OsString> {
     arguments
 }
 
+/// Where the profiles an instrumented build script writes go. They are the build's, not any test's, and no target's coverage is ever merged from them; naming a directory inside the scratch keeps them out of the tree under verification, which would otherwise be a different tree after every run.
+pub const BUILD_PROFILES: &str = "build-profiles";
+
 /// The environment the build runs with: the run's own, the scratch layer for anything it starts, and the flags the flavour needs.
 fn environment(options: &BuildOptions, limitations: &mut Vec<String>) -> Vec<(OsString, OsString)> {
     let mut env = options.env.clone();
@@ -236,6 +239,15 @@ fn environment(options: &BuildOptions, limitations: &mut Vec<String>) -> Vec<(Os
         set(&mut env, "CARGO_ENCODED_RUSTFLAGS", flags);
         env.retain(|(key, _)| key != OsStr::new("RUSTFLAGS"));
     }
+    set(
+        &mut env,
+        crate::coverage::PROFILE_ENV,
+        options
+            .scratch_build_dir
+            .join(BUILD_PROFILES)
+            .join("%p-%m.profraw")
+            .into_os_string(),
+    );
     env
 }
 

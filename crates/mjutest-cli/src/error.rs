@@ -107,6 +107,16 @@ code!(
     "MJ2001",
     "the tree a run is about could not be read"
 );
+code!(
+    CACHE_UNUSABLE,
+    "MJ8003",
+    "the store of earlier answers could not be used"
+);
+code!(
+    CACHE_CORRUPT,
+    "MJ8004",
+    "a stored answer is not the answer it claims to be"
+);
 code!(SCRATCH_UNUSABLE, "MJ8001", "the run has nowhere to work");
 code!(
     BUILD_CACHE_UNUSABLE,
@@ -135,6 +145,9 @@ pub enum RunnerError {
     /// The tree a run is about could not be read.
     #[error(transparent)]
     Evidence(#[from] crate::evidence::tree::ScanError),
+    /// The store of earlier answers could not be used.
+    #[error(transparent)]
+    Cache(#[from] crate::cache::store::CacheError),
     /// Coverage could not be read.
     #[error(transparent)]
     Coverage(#[from] crate::coverage::CoverageError),
@@ -161,6 +174,7 @@ impl RunnerError {
             Self::Config(error) => error.code(),
             Self::Target(error) => error.code(),
             Self::Evidence(error) => error.code(),
+            Self::Cache(error) => error.code(),
             Self::Coverage(error) => error.code(),
             Self::Report(error) => error.code(),
             Self::Scratch(error) => error.code(),
@@ -201,5 +215,7 @@ pub const fn error_codes() -> &'static [ErrorCode] {
         RUN_NOT_FOUND,
         SCRATCH_UNUSABLE,
         BUILD_CACHE_UNUSABLE,
+        CACHE_UNUSABLE,
+        CACHE_CORRUPT,
     ]
 }

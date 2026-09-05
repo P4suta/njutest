@@ -4,6 +4,7 @@
 //! What each command does, once the command line has been understood.
 
 pub mod accept;
+pub mod cache;
 pub mod diagnostics;
 pub mod doctor;
 pub mod explain;
@@ -28,6 +29,7 @@ pub fn run(
 ) -> u8 {
     match &request.command {
         Command::Init(arguments) => init::run(*arguments, environment, stdout, stderr),
+        Command::Cache(arguments) => cache::run(arguments, environment, stdout, stderr),
         Command::Doctor(arguments) => doctor::run(*arguments, environment, stdout, stderr),
         Command::Verify(arguments) => verify::run(arguments, environment, stdout, stderr),
         Command::Plan(arguments) => plan::run(arguments, environment, stdout, stderr),

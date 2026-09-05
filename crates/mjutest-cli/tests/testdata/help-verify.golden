@@ -39,5 +39,9 @@ Options:
       --locked
           Pass --locked to every cargo command
 
+      --no-cache
+          Establish everything afresh instead of reading back what an earlier run of the same inputs
+          established
+
   -h, --help
           Print help (see a summary with '-h')

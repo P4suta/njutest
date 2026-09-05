@@ -120,9 +120,26 @@ pub enum Command {
     Diagnostics(Diagnostics),
     /// Report the toolchain and the tools a run needs.
     Doctor(Doctor),
+    /// Say what earlier runs left behind, and collect what is no longer an answer.
+    Cache(Cache),
+}
+
+/// `mjutest cache`.
+#[derive(Debug, Clone, clap::Args)]
+pub struct Cache {
+    /// The workspace whose configuration bounds the store. The working directory by default.
+    #[arg(long, value_name = "DIR")]
+    pub directory: Option<PathBuf>,
+    /// Remove what has expired, then the oldest of what is left until the store is under its size.
+    #[arg(long)]
+    pub gc: bool,
 }
 
 /// `mjutest verify`.
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each is one command line flag, and a flag is a bool wherever it is stored"
+)]
 #[derive(Debug, Clone, clap::Args)]
 pub struct Verify {
     /// The workspace to verify. The working directory by default.
@@ -155,6 +172,9 @@ pub struct Verify {
     /// Pass --locked to every cargo command.
     #[arg(long)]
     pub locked: bool,
+    /// Establish everything afresh instead of reading back what an earlier run of the same inputs established.
+    #[arg(long)]
+    pub no_cache: bool,
     /// Arguments for the test binaries. Only the flags mjutest does not own are allowed: --test-threads, --include-ignored, --nocapture, --show-output.
     #[arg(last = true, value_name = "TEST ARGS")]
     pub test_args: Vec<String>,

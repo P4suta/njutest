@@ -50,10 +50,6 @@
   ],
   "limitations": [
     {
-      "detail": "the evidence identity of the tree is not computed in this release, so no result can be reused between runs",
-      "name": "workspace-digest-not-computed"
-    },
-    {
       "detail": "git could not be asked, so the run cannot name the commit it verified",
       "name": "git-metadata-unavailable"
     },

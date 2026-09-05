@@ -38,7 +38,23 @@ pub fn cargo_binary() -> PathBuf {
 /// # Errors
 /// The directory could not be created, which means the test has no place to work.
 pub fn temp_beside(root: &Path) -> std::io::Result<PathBuf> {
-    let dir = root.parent().unwrap_or(root).join("mjutest-devkit-temp");
+    beside(root, "mjutest-devkit-temp")
+}
+
+/// A directory beside `root` for the caches a run keeps between runs.
+///
+/// It has to be outside the tree: a cache inside the tree under verification
+/// would change the tree's own digest every time a run wrote to it, and no
+/// second run of the same work would ever look like one.
+///
+/// # Errors
+/// The directory could not be created, which means the test has no place to work.
+pub fn cache_beside(root: &Path) -> std::io::Result<PathBuf> {
+    beside(root, "mjutest-devkit-cache")
+}
+
+fn beside(root: &Path, name: &str) -> std::io::Result<PathBuf> {
+    let dir = root.parent().unwrap_or(root).join(name);
     fs::create_dir_all(&dir)?;
     Ok(dir)
 }

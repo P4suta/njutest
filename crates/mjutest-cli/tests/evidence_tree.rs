@@ -14,7 +14,7 @@ use mjutest_cli::evidence::tree::{EXCLUDED_DIRECTORIES, Scan, dependencies, scan
 use mjutest_devkit::repo::Repo;
 
 fn read(root: &Path) -> Scan {
-    scan(root, &[], None).expect("the tree reads")
+    scan(root, &[], &[]).expect("the tree reads")
 }
 
 fn repo() -> Repo {
@@ -76,9 +76,9 @@ fn the_target_directory_cargo_names_is_left_out_wherever_it_is() {
         before,
         "an unremarkable directory counts"
     );
-    let with = scan(repo.root(), &[], Some(Path::new("elsewhere"))).expect("the tree reads");
-    let without =
-        scan(repo.root(), &[], Some(&repo.root().join("elsewhere"))).expect("the tree reads");
+    let with = scan(repo.root(), &[], &[Path::new("elsewhere")]).expect("the tree reads");
+    let absolute = repo.root().join("elsewhere");
+    let without = scan(repo.root(), &[], &[absolute.as_path()]).expect("the tree reads");
     assert_eq!(
         with.tree, without.tree,
         "cargo names its target directory absolutely and a configuration may name it relatively"
@@ -108,7 +108,7 @@ fn a_pattern_the_configuration_excludes_is_left_out_too() {
     let excluded = scan(
         repo.root(),
         &[rust_mutants::glob::Pattern::compile("**/generated.rs").expect("a pattern")],
-        None,
+        &[],
     )
     .expect("the tree reads")
     .tree;
@@ -141,7 +141,7 @@ fn a_symbolic_link_is_read_as_the_link_it_is_and_never_followed() {
 
 #[test]
 fn a_missing_root_says_so_rather_than_reading_as_an_empty_tree() {
-    let error = scan(Path::new("/no/such/tree/anywhere"), &[], None)
+    let error = scan(Path::new("/no/such/tree/anywhere"), &[], &[])
         .expect_err("a tree that is not there is not an empty tree");
     assert!(error.to_string().contains("MJ2"), "{error}");
 }

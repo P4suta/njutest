@@ -68,7 +68,10 @@ fn interrupted_by(signal: rustix::process::Signal, expected: i32) {
         .current_dir(&root)
         .env_clear()
         .env("NO_COLOR", "1")
-        .env("XDG_CACHE_HOME", root.join(".cache"))
+        .env(
+            "XDG_CACHE_HOME",
+            mjutest_devkit::paths::cache_beside(&root).expect("a cache directory"),
+        )
         .env(
             "TMPDIR",
             mjutest_devkit::paths::temp_beside(&root).expect("a temporary directory"),

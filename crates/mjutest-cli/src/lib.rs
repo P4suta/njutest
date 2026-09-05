@@ -9,6 +9,7 @@ pub mod app;
 pub mod assure;
 pub mod build;
 pub mod build_cache;
+pub mod cache;
 pub mod cli;
 pub mod config;
 pub mod coverage;

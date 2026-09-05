@@ -24,7 +24,7 @@ use crate::ui::Notes;
 use crate::watch::Watch;
 use crate::{build_cache, rustflags};
 
-/// The limitation a run states while the evidence identity is not computed.
+/// The limitation a run states when the tree could not be read as one number.
 pub const DIGEST_LIMITATION: &str = "workspace-digest-not-computed";
 
 /// The limitation a run states when a test wrote into the tree it was being measured in.
@@ -51,6 +51,8 @@ pub struct Request {
     pub started: Timestamp,
     /// Where the engine records its own stream.
     pub engine_trace: rust_mutants::trace::Recorder,
+    /// What this run is, as numbers. Empty when the tree could not be read, which states a limitation rather than failing the run.
+    pub evidence: crate::assure::identity::Evidence,
 }
 
 /// What one run produced.
@@ -162,17 +164,30 @@ fn identity(request: &Request) -> Report {
     report.timing.started = request.started.to_string();
     report.repository.root_name = root_name(&request.root);
     report.repository.configuration_digest = request.config.digest();
-    UNAVAILABLE.clone_into(&mut report.repository.workspace_digest);
+    if request.evidence.is_known() {
+        report
+            .repository
+            .workspace_digest
+            .clone_from(&request.evidence.tree);
+        report
+            .provenance
+            .identity
+            .clone_from(&request.evidence.identity);
+    } else {
+        UNAVAILABLE.clone_into(&mut report.repository.workspace_digest);
+    }
     report.scope.requested_packages = requested(request);
     report
         .scope
         .excluded
         .clone_from(&request.config.project.exclude);
-    report.limitations.push(Limitation::new(
-        DIGEST_LIMITATION,
-        "the evidence identity of the tree is not computed in this release, so no result \
-         can be reused between runs",
-    ));
+    if !request.evidence.is_known() {
+        report.limitations.push(Limitation::new(
+            DIGEST_LIMITATION,
+            "the tree could not be read as one number, so no result of this run can be \
+             reused by another",
+        ));
+    }
     report
 }
 

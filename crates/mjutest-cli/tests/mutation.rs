@@ -52,7 +52,10 @@ fn verify(fixture: &Fixture, extra: &[&str]) -> Output {
         .current_dir(&fixture.root)
         .env_clear()
         .env("NO_COLOR", "1")
-        .env("XDG_CACHE_HOME", fixture.root.join(".cache"))
+        .env(
+            "XDG_CACHE_HOME",
+            mjutest_devkit::paths::cache_beside(&fixture.root).expect("a cache directory"),
+        )
         .env(
             "TMPDIR",
             mjutest_devkit::paths::temp_beside(&fixture.root).expect("a temporary directory"),
@@ -233,7 +236,10 @@ fn mjutest(fixture: &Fixture, args: &[&str]) -> Output {
         .current_dir(&fixture.root)
         .env_clear()
         .env("NO_COLOR", "1")
-        .env("XDG_CACHE_HOME", fixture.root.join(".cache"))
+        .env(
+            "XDG_CACHE_HOME",
+            mjutest_devkit::paths::cache_beside(&fixture.root).expect("a cache directory"),
+        )
         .env(
             "TMPDIR",
             mjutest_devkit::paths::temp_beside(&fixture.root).expect("a temporary directory"),
