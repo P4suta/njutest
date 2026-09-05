@@ -155,6 +155,7 @@ pub fn build(
             let mut env = spec.env.clone().unwrap_or_default();
             env.retain(|(key, _)| !target.cargo_env.iter().any(|(name, _)| name == key));
             env.extend(target.cargo_env.iter().cloned());
+            set(&mut env, "CARGO", toolchain.cargo().as_os_str().to_owned());
             Unit {
                 package: target.package,
                 kind: UnitKind::of(target.kind),

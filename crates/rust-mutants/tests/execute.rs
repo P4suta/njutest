@@ -7,7 +7,7 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use rust_mutants::execute::{
-    ExecRequest, Observation, Summary, TargetKind, TestTarget, environment, outcome_of,
+    Context, ExecRequest, Observation, Summary, TargetKind, TestTarget, environment, outcome_of,
     parse_summary, target_id,
 };
 use rust_mutants::outcome::Outcome;
@@ -199,7 +199,15 @@ fn the_environment_is_the_base_plus_cargos_own_plus_the_activation() {
         (OsString::from("TMPDIR"), OsString::from("/tmp")),
     ];
     let scratch = Path::new("/scratch/worker-3");
-    let env = environment(&base, &target(), Some(("abc", "digest")), Some(scratch));
+    let env = environment(
+        &Context {
+            base_env: &base,
+            cargo: None,
+            active: Some(("abc", "digest")),
+        },
+        &target(),
+        Some(scratch),
+    );
     let lookup = |key: &str| -> Option<String> {
         env.iter()
             .find(|(name, _)| name == key)
@@ -235,7 +243,15 @@ fn the_environment_is_the_base_plus_cargos_own_plus_the_activation() {
         "no name appears twice: {names:?}"
     );
 
-    let baseline = environment(&base, &target(), None, None);
+    let baseline = environment(
+        &Context {
+            base_env: &base,
+            cargo: None,
+            active: None,
+        },
+        &target(),
+        None,
+    );
     let names: Vec<String> = baseline
         .iter()
         .map(|(name, _)| name.to_string_lossy().into_owned())
@@ -272,5 +288,51 @@ fn a_request_names_the_arguments_the_binary_receives() {
             "--exact",
             "--test-threads=1"
         ]
+    );
+}
+
+#[test]
+fn a_test_process_learns_which_cargo_built_it() {
+    let target = TestTarget {
+        id: "core/lib/core".to_owned(),
+        package: "core".to_owned(),
+        kind: TargetKind::Lib,
+        name: "core".to_owned(),
+        executable: PathBuf::from("/nowhere"),
+        cwd: PathBuf::from("/nowhere"),
+        cargo_env: Vec::new(),
+    };
+    let composed = environment(
+        &Context {
+            base_env: &[],
+            cargo: Some(Path::new("/opt/toolchain/bin/cargo")),
+            active: None,
+        },
+        &target,
+        None,
+    );
+    let cargo = composed
+        .iter()
+        .find(|(name, _)| name == "CARGO")
+        .map(|(_, value)| value.clone());
+    assert_eq!(
+        cargo,
+        Some(OsString::from("/opt/toolchain/bin/cargo")),
+        "cargo sets CARGO to an absolute path for every process it runs, and a test that \
+         spawns cargo reads it"
+    );
+
+    let without = environment(
+        &Context {
+            base_env: &[],
+            cargo: None,
+            active: None,
+        },
+        &target,
+        None,
+    );
+    assert!(
+        !without.iter().any(|(name, _)| name == "CARGO"),
+        "a caller that names no cargo says nothing about it"
     );
 }

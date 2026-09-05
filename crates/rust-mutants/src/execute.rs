@@ -222,11 +222,11 @@ pub const fn outcome_of(observed: Observation, summary: Option<Summary>) -> Outc
 /// The environment one test process runs with: the base the workspace was opened with, the variables cargo sets for the target, the activation, and a temporary directory of the worker's own.
 #[must_use]
 pub fn environment(
-    base: &[(OsString, OsString)],
+    context: &Context<'_>,
     target: &TestTarget,
-    active: Option<(&str, &str)>,
     scratch: Option<&Path>,
 ) -> Vec<(OsString, OsString)> {
+    let (base, active, cargo) = (context.base_env, context.active, context.cargo);
     let mut env: BTreeMap<OsString, OsString> = base
         .iter()
         .filter(|(name, _)| {
@@ -237,6 +237,9 @@ pub fn environment(
         .cloned()
         .collect();
     env.extend(target.cargo_env.iter().cloned());
+    if let Some(cargo) = cargo {
+        env.insert(OsString::from("CARGO"), cargo.as_os_str().to_owned());
+    }
     if let Some((id, catalog)) = active {
         env.insert(OsString::from(ACTIVE_ENV), OsString::from(id));
         env.insert(OsString::from(CATALOG_ENV), OsString::from(catalog));
@@ -324,6 +327,8 @@ impl<'a> ExecRequest<'a> {
 pub struct Context<'a> {
     /// The environment the workspace was opened with.
     pub base_env: &'a [(OsString, OsString)],
+    /// The cargo that built the tree, which cargo itself puts in `CARGO` for every process it runs.
+    pub cargo: Option<&'a Path>,
     /// The mutant to activate: `(identity, catalog digest)`.
     pub active: Option<(&'a str, &'a str)>,
 }
@@ -359,12 +364,7 @@ pub fn exec(
     let target = request.target;
     let mut spec = Spec::new(request.argv());
     spec.dir = Some(target.cwd.clone());
-    spec.env = Some(environment(
-        context.base_env,
-        target,
-        context.active,
-        request.scratch.as_deref(),
-    ));
+    spec.env = Some(environment(context, target, request.scratch.as_deref()));
     spec.timeout = request.timeout;
     let result = run(&spec, cancel);
     trace.exec(ExecRecord::of(&spec, &result));

@@ -190,6 +190,7 @@ impl Session {
         let targets = self.selected(request.target.as_deref())?;
         let context = Context {
             base_env: &self.workspace.base_env,
+            cargo: Some(self.workspace.toolchain.cargo()),
             active: Some((mutant.id.as_str(), self.catalog.digest())),
         };
         let timeout = request.timeout.or(self.mutant_timeout);
@@ -228,6 +229,7 @@ impl Session {
         let targets = self.selected(request.target.as_deref())?;
         let context = Context {
             base_env: &self.workspace.base_env,
+            cargo: Some(self.workspace.toolchain.cargo()),
             active: None,
         };
         let timeout = request.timeout.or(self.mutant_timeout);
@@ -536,6 +538,7 @@ fn verify(
     let phase = workspace.trace.phase("verify");
     let context = Context {
         base_env: &workspace.base_env,
+        cargo: Some(workspace.toolchain.cargo()),
         active: None,
     };
     for target in targets {
