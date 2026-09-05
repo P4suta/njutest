@@ -16,5 +16,7 @@
 //! not exactly the document says nothing at all.
 
 pub mod form;
+pub mod instrument;
 pub mod log;
 pub mod runtime;
+pub mod tree;

@@ -76,6 +76,8 @@ pub struct Found {
     pub hint: SiteHint,
     /// What a branch proof about this edit would rest on, once the compiler has vouched for its witnesses. `None` where the syntax supports no proof.
     pub branch: Option<branch::Claim>,
+    /// What a probe of this edit would ask, when evaluating the expression a second time is not itself an event. `None` where no probe can be stated.
+    pub probe: Option<crate::probe::form::Question>,
 }
 
 /// Why a place produced no candidate. Declared in rank order, which is the order skips are reported in.

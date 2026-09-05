@@ -7,6 +7,12 @@ mod guards;
 mod runtime;
 pub mod witness;
 
+/// The name a generated module of `stem` can take in `text`, dodging every identifier the file spells.
+#[must_use]
+pub fn module_named_for(text: &str, stem: &str) -> String {
+    runtime::module_named(text, stem)
+}
+
 use std::collections::BTreeSet;
 use std::fmt;
 

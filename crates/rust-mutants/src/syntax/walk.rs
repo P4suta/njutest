@@ -20,6 +20,7 @@ use super::rules::{
 };
 use super::{Decision, Form, Found, Selection, SiteHint, SkipReason};
 use crate::catalog::Candidate;
+use crate::probe::form::Question;
 use crate::span::Span;
 
 /// What the enclosing function returns, as far as its signature says.
@@ -131,6 +132,8 @@ struct Edit {
     span: Span,
     replacement: Vec<u8>,
     site: Option<Site>,
+    /// What a probe of this edit would ask, when one can be stated at all.
+    probe: Option<Question>,
 }
 
 /// What became of a site.
@@ -274,6 +277,7 @@ impl<'a> Walker<'a> {
             position,
             hint,
             branch,
+            probe: edit.probe,
         });
         self.decide(edit.span.start, rule_name, Outcome::Candidate(site.form));
     }
@@ -530,6 +534,7 @@ impl<'a> Walker<'a> {
                         span: stmt_span,
                         replacement: Vec::new(),
                         site,
+                        probe: None,
                     },
                 );
             }
@@ -541,6 +546,7 @@ impl<'a> Walker<'a> {
                             span: stmt_span,
                             replacement: Vec::new(),
                             site,
+                            probe: None,
                         },
                     );
                 }
@@ -551,6 +557,7 @@ impl<'a> Walker<'a> {
                         span: question,
                         replacement: Vec::new(),
                         site,
+                        probe: None,
                     },
                 );
             }
@@ -560,6 +567,7 @@ impl<'a> Walker<'a> {
                     span: stmt_span,
                     replacement: Vec::new(),
                     site,
+                    probe: None,
                 },
             ),
             Expr::Binary(b) if is_compound_assignment(&b.op) => {
@@ -569,6 +577,7 @@ impl<'a> Walker<'a> {
                         span: stmt_span,
                         replacement: Vec::new(),
                         site,
+                        probe: None,
                     },
                 );
             }
@@ -721,6 +730,7 @@ impl<'a> Walker<'a> {
                         span: edit,
                         replacement: replacement.as_bytes().to_vec(),
                         site,
+                        probe: None,
                     },
                 );
             }
@@ -747,6 +757,7 @@ impl<'a> Walker<'a> {
                     span: own,
                     replacement: operand,
                     site: Self::site_for(ctx, own),
+                    probe: None,
                 },
             );
             let inner = if ctx.kind == Kind::Bool {
@@ -776,6 +787,7 @@ impl<'a> Walker<'a> {
                     span: own,
                     replacement: replacement.as_bytes().to_vec(),
                     site: Self::site_for(ctx, own),
+                    probe: None,
                 },
             );
         }
@@ -797,6 +809,7 @@ impl<'a> Walker<'a> {
                 span,
                 replacement,
                 site,
+                probe: None,
             },
         );
     }
@@ -894,6 +907,7 @@ impl<'a> Walker<'a> {
             form: Form::E,
             span,
         });
+        let probeable = crate::probe::form::is_effect_free(expr);
         let offer = |walker: &mut Self, rule: &str, replacement: &str| {
             walker.emit(
                 rule,
@@ -901,6 +915,7 @@ impl<'a> Walker<'a> {
                     span,
                     replacement: replacement.as_bytes().to_vec(),
                     site,
+                    probe: probeable.then(|| Question::of(rule)).flatten(),
                 },
             );
         };
@@ -941,6 +956,7 @@ impl<'a> Walker<'a> {
                 span: edit,
                 replacement: b".unwrap()".to_vec(),
                 site: Self::site_for(ctx, own),
+                probe: None,
             },
         );
         self.walk_expr(&t.expr, ctx.value());
@@ -960,6 +976,7 @@ impl<'a> Walker<'a> {
                     span: edit,
                     replacement: replacement.as_bytes().to_vec(),
                     site: ctx.stmt,
+                    probe: None,
                 },
             );
         }

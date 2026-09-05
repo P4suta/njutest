@@ -39,6 +39,8 @@ pub struct PrepareOptions {
     pub packages: Vec<String>,
     /// Run every test target once with nothing active, and refuse to hand back a session whose instrumented baseline does not pass.
     pub verify: bool,
+    /// Build and run the probe tree, which says which tests could not have noticed a return replacement however far they ran.
+    pub probe: bool,
     /// How many validation rounds before falling back to bisection.
     pub max_rounds: u32,
     /// How long a build may take.
@@ -56,6 +58,7 @@ impl Default for PrepareOptions {
             exclude: Vec::new(),
             packages: Vec::new(),
             verify: true,
+            probe: false,
             max_rounds: crate::validate::DEFAULT_MAX_ROUNDS,
             build_timeout: None,
             mutant_timeout: None,
@@ -94,6 +97,8 @@ pub struct Session {
     packages: BTreeMap<u32, String>,
     /// The branch proof of every mutant that has one, by catalog index.
     proofs: BTreeMap<u32, crate::syntax::branch::Proof>,
+    /// What the probe pass established, empty when it did not run.
+    probed: crate::probe::tree::Probed,
 }
 
 impl Session {
@@ -174,6 +179,12 @@ impl Session {
         self.proofs.len()
     }
 
+    /// What the probe pass established: which mutants it could ask about, and what each target infected.
+    #[must_use]
+    pub const fn probed(&self) -> &crate::probe::tree::Probed {
+        &self.probed
+    }
+
     /// The name of the directory the source root sits in, which is what a report calls the workspace.
     #[must_use]
     pub fn root_name(&self) -> String {
@@ -209,6 +220,7 @@ impl Session {
             base_env: &self.workspace.base_env,
             cargo: Some(self.workspace.toolchain.cargo()),
             active: Some((mutant.id.as_str(), self.catalog.digest())),
+            probe: None,
         };
         let timeout = request.timeout.or(self.mutant_timeout);
         let mut last = None;
@@ -248,6 +260,7 @@ impl Session {
             base_env: &self.workspace.base_env,
             cargo: Some(self.workspace.toolchain.cargo()),
             active: None,
+            probe: None,
         };
         let timeout = request.timeout.or(self.mutant_timeout);
         let mut last = None;
@@ -380,6 +393,65 @@ fn pristine(
     }
 }
 
+/// The test binaries the instrumented build produced, and the directory their processes work in.
+fn built(
+    workspace: &Workspace,
+    last_build: &[crate::cargo::Message],
+    options: &PrepareOptions,
+    watching: (&Cancel, &crate::trace::Recorder),
+) -> Result<(Vec<TestTarget>, PathBuf), EngineError> {
+    let (cancel, trace) = watching;
+    let targets = execute::targets_of(
+        last_build,
+        &workspace.metadata.packages,
+        Some(&workspace.target_dir),
+    );
+    if targets.is_empty() {
+        return Err(EngineError::from(SessionError::NoTargets));
+    }
+    trace.build(BuildRecord {
+        targets: targets.iter().map(|target| target.id.clone()).collect(),
+    });
+    let scratch = workspace.target_dir.join("scratch");
+    std::fs::create_dir_all(&scratch).map_err(|source| SessionError::WriteFailed {
+        path: scratch.display().to_string(),
+        source,
+    })?;
+    if options.verify {
+        verify(workspace, &targets, &scratch, cancel)?;
+    }
+    Ok((targets, scratch))
+}
+
+/// What the two proof layers establish before anything is instrumented: which tests could not have noticed a return replacement, and which branch proofs the compiler vouches for.
+type Layers = (
+    crate::probe::tree::Probed,
+    BTreeMap<u32, crate::syntax::branch::Proof>,
+);
+
+fn layers(
+    asking: &crate::prove::Asking<'_>,
+    cancel: &Cancel,
+    trace: &crate::trace::Recorder,
+) -> Result<Layers, EngineError> {
+    let probed = if asking.options.probe {
+        crate::probe::tree::establish(
+            &crate::probe::tree::Asking {
+                workspace: asking.workspace,
+                discovery: asking.discovery,
+                sources: asking.sources,
+                options: asking.options,
+            },
+            cancel,
+            trace,
+        )?
+    } else {
+        crate::probe::tree::Probed::default()
+    };
+    let proofs = crate::prove::establish(asking, cancel, trace)?;
+    Ok((probed, proofs))
+}
+
 /// Discovers, instruments, validates, builds, and verifies.
 ///
 /// # Errors
@@ -409,7 +481,7 @@ pub fn prepare(
 
     let (sources, placements) = plan_tree(workspace.snapshot_root(), &discovery)?;
 
-    let proofs = crate::prove::establish(
+    let (probed, proofs) = layers(
         &crate::prove::Asking {
             workspace: &workspace,
             discovery: &discovery,
@@ -432,28 +504,7 @@ pub fn prepare(
 
     let mut workspace = workspace;
     workspace.snapshot.reseal()?;
-
-    let targets = execute::targets_of(
-        &last_build,
-        &workspace.metadata.packages,
-        Some(&workspace.target_dir),
-    );
-    if targets.is_empty() {
-        return Err(EngineError::from(SessionError::NoTargets));
-    }
-    trace.build(BuildRecord {
-        targets: targets.iter().map(|target| target.id.clone()).collect(),
-    });
-
-    let scratch = workspace.target_dir.join("scratch");
-    std::fs::create_dir_all(&scratch).map_err(|source| SessionError::WriteFailed {
-        path: scratch.display().to_string(),
-        source,
-    })?;
-
-    if options.verify {
-        verify(&workspace, &targets, &scratch, cancel)?;
-    }
+    let (targets, scratch) = built(&workspace, &last_build, options, (cancel, &trace))?;
     phase.end();
     let packages = discovery
         .candidates
@@ -470,6 +521,7 @@ pub fn prepare(
         sources,
         packages,
         proofs,
+        probed,
         validated,
         targets,
         scratch,
@@ -569,6 +621,7 @@ fn verify(
         base_env: &workspace.base_env,
         cargo: Some(workspace.toolchain.cargo()),
         active: None,
+        probe: None,
     };
     for target in targets {
         let request = ExecRequest::new(target).with_scratch(scratch);
