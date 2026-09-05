@@ -215,13 +215,13 @@ fn measure(fixture: &str, test: &str) -> Measured {
     use std::ffi::OsString;
 
     use mjutest_cli::coverage::{Tools, profile_pattern, written_profiles};
+    use mjutest_cli::trace::Recorder;
     use mjutest_cli::watch::Watch;
     use rust_mutants::cargo::{
         CompileKind, CompileOptions, Driver, LocateOptions, Message, Metadata, MetadataOptions,
         Toolchain, compile,
     };
     use rust_mutants::runner::{Cancel, Spec, run};
-    use rust_mutants::trace::Recorder;
 
     let root = mjutest_devkit::paths::fixtures_dir().join(fixture);
     let target = tempfile::Builder::new()
@@ -234,6 +234,7 @@ fn measure(fixture: &str, test: &str) -> Measured {
         .expect("tempdir");
     let cancel = Cancel::new();
     let trace = Recorder::disabled();
+    let engine_trace = rust_mutants::trace::Recorder::disabled();
 
     // The instrumentation flag reaches rustc through the environment, so a
     // .cargo/config.toml's own rustflags are not silently replaced.
@@ -259,7 +260,7 @@ fn measure(fixture: &str, test: &str) -> Measured {
         toolchain: &toolchain,
         dir: &root,
         cancel: &cancel,
-        trace: &trace,
+        trace: &engine_trace,
     };
     let _metadata = Metadata::load(
         &driver,

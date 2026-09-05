@@ -320,8 +320,8 @@ impl Tools {
         dir: &Path,
         watch: Watch<'_>,
     ) -> Result<Self, CoverageError> {
+        use crate::trace::ExecRecord;
         use rust_mutants::runner::{Spec, run};
-        use rust_mutants::trace::ExecRecord;
 
         let refuse = |message: String| CoverageError {
             kind: CoverageErrorKind::ToolsMissing,
@@ -375,8 +375,8 @@ impl Tools {
         into: &Path,
         watch: Watch<'_>,
     ) -> Result<(), CoverageError> {
+        use crate::trace::ExecRecord;
         use rust_mutants::runner::{Spec, run};
-        use rust_mutants::trace::ExecRecord;
 
         if raw.is_empty() {
             return Err(CoverageError {
@@ -422,8 +422,8 @@ impl Tools {
         binary: &Path,
         watch: Watch<'_>,
     ) -> Result<Vec<FileRegions>, CoverageError> {
+        use crate::trace::ExecRecord;
         use rust_mutants::runner::{Spec, run};
-        use rust_mutants::trace::ExecRecord;
 
         let mut spec = Spec::new([
             self.cov.as_os_str().to_owned(),

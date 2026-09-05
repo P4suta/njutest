@@ -1,0 +1,502 @@
+// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! The runner's trace: diagnostic exhaust under the rules of ADR 0002.
+//!
+//! Never a claim, never a failure, honest about what it lost. The engine
+//! records its own stream in its own vocabulary; this one is the run's.
+
+#![allow(
+    clippy::expect_used,
+    clippy::unwrap_used,
+    clippy::panic,
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    clippy::as_conversions,
+    clippy::too_many_lines,
+    clippy::type_complexity,
+    clippy::string_slice,
+    reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
+)]
+
+use std::fs;
+use std::io::{self, Write};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+
+use jiff::Timestamp;
+use mjutest_cli::trace::{
+    ArtifactRecord, Clock, DirSink, Event, ExecRecord, FILE_NAME, MemorySink, Payload, Problem,
+    ProgressRecord, RING_CAPACITY, Recorder, SCHEMA, Sink, StartRecord, TeeSink, WriterSink, check,
+    read_events,
+};
+use sha2::{Digest as _, Sha256};
+
+/// A clock that advances one second per reading, from a fixed origin.
+fn stepping_clock() -> Clock {
+    let ticks = AtomicU64::new(0);
+    Box::new(move || {
+        let tick = ticks.fetch_add(1, Ordering::SeqCst);
+        Timestamp::from_second(1_800_000_000 + i64::try_from(tick).expect("small"))
+            .expect("in range")
+    })
+}
+
+/// A memory sink shared with the recorder, so a test can read what was kept.
+fn memory() -> (Arc<MemorySink>, Box<dyn Sink>) {
+    let sink = Arc::new(MemorySink::unbounded());
+    (Arc::clone(&sink), Box::new(SharedSink(Arc::clone(&sink))))
+}
+
+/// Forwards to a shared sink: the recorder owns a box, the test keeps the Arc.
+struct SharedSink(Arc<MemorySink>);
+
+impl Sink for SharedSink {
+    fn emit(&self, event: &Event) -> io::Result<()> {
+        self.0.emit(event)
+    }
+
+    fn dropped(&self) -> Option<u64> {
+        self.0.dropped()
+    }
+
+    fn close(&self) -> io::Result<()> {
+        self.0.close()
+    }
+}
+
+fn start() -> StartRecord {
+    StartRecord::of(
+        "20260905T081500Z-abcdef",
+        mjutest_cli::report::RunKind::Full,
+        mjutest_cli::config::Contract::StandardV1,
+    )
+}
+
+fn types(events: &[Event]) -> Vec<String> {
+    events
+        .iter()
+        .map(|event| event.payload.type_name().to_owned())
+        .collect()
+}
+
+// --- the recording -----------------------------------------------------------------
+
+#[test]
+fn the_disabled_recorder_keeps_nothing_and_says_so() {
+    let trace = Recorder::disabled();
+    assert!(!trace.is_enabled());
+    trace.note("phase", "nothing is listening");
+    trace.phase("baseline").end();
+    trace.run_end("ASSURED", None, None);
+}
+
+#[test]
+fn a_recording_opens_with_run_start_and_closes_with_run_end() {
+    let (sink, boxed) = memory();
+    let trace = Recorder::new(boxed, stepping_clock(), start());
+    trace.note("note", "in between");
+    trace.run_end("ASSURED", None, None);
+
+    let events = sink.events();
+    assert_eq!(types(&events), ["run-start", "note", "run-end"]);
+    let Payload::RunStart { start } = &events[0].payload else {
+        panic!("a run-start first: {:?}", events[0]);
+    };
+    assert_eq!(start.schema, SCHEMA);
+    assert_eq!(start.schema, "mjutest-trace-v1");
+    assert_eq!(start.mjutest, mjutest_cli::VERSION);
+    assert_eq!(start.rust_mutants, rust_mutants::VERSION);
+    assert_eq!(start.run_id, "20260905T081500Z-abcdef");
+    let Payload::RunEnd { run } = &events[2].payload else {
+        panic!("a run-end last: {:?}", events[2]);
+    };
+    assert_eq!(run.verdict, "ASSURED");
+    assert_eq!(
+        run.events_emitted, 2,
+        "the run-start and the note; a recording cannot count the event it is writing"
+    );
+    assert_eq!(run.events_dropped, 0);
+}
+
+#[test]
+fn sequence_numbers_run_from_one_and_the_elapsed_time_is_measured_from_the_start() {
+    let (sink, boxed) = memory();
+    let trace = Recorder::new(boxed, stepping_clock(), start());
+    trace.note("a", "one");
+    trace.note("b", "two");
+    trace.run_end("ERROR", None, None);
+
+    let events = sink.events();
+    assert_eq!(
+        events.iter().map(|event| event.seq).collect::<Vec<_>>(),
+        [1, 2, 3, 4]
+    );
+    assert_eq!(
+        events
+            .iter()
+            .map(|event| event.elapsed_ms)
+            .collect::<Vec<_>>(),
+        [0, 1_000, 2_000, 3_000],
+        "the stepping clock advances one second per reading"
+    );
+    assert!(events[0].timestamp.starts_with("2027-01-15T"), "RFC 3339");
+}
+
+#[test]
+fn a_phase_ends_once_whether_the_caller_ends_it_or_drops_it() {
+    let (sink, boxed) = memory();
+    let trace = Recorder::new(boxed, stepping_clock(), start());
+    {
+        let phase = trace.phase("baseline");
+        phase.end();
+    }
+    drop(trace.phase("mutation"));
+    trace.run_end("INSUFFICIENT", None, None);
+
+    let events = sink.events();
+    assert_eq!(
+        types(&events),
+        [
+            "run-start",
+            "phase-start",
+            "phase-end",
+            "phase-start",
+            "phase-end",
+            "run-end"
+        ]
+    );
+    let Payload::PhaseEnd { phase } = &events[2].payload else {
+        panic!("a phase-end: {:?}", events[2]);
+    };
+    assert_eq!(phase.name, "baseline");
+    assert_eq!(phase.duration_ms, Some(1_000));
+}
+
+#[test]
+fn phases_nest_and_each_guard_times_its_own() {
+    let (sink, boxed) = memory();
+    let trace = Recorder::new(boxed, stepping_clock(), start());
+    let outer = trace.phase("verify");
+    let inner = trace.phase("baseline");
+    inner.end();
+    outer.end();
+    trace.run_end("ASSURED", None, None);
+
+    let events = sink.events();
+    assert_eq!(
+        types(&events),
+        [
+            "run-start",
+            "phase-start",
+            "phase-start",
+            "phase-end",
+            "phase-end",
+            "run-end"
+        ]
+    );
+    let durations: Vec<Option<u64>> = events
+        .iter()
+        .filter_map(|event| match &event.payload {
+            Payload::PhaseEnd { phase } => Some(phase.duration_ms),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(durations, [Some(1_000), Some(3_000)]);
+}
+
+#[test]
+fn a_recording_ends_once_and_keeps_nothing_after() {
+    let (sink, boxed) = memory();
+    let trace = Recorder::new(boxed, stepping_clock(), start());
+    trace.run_end("ASSURED", None, None);
+    trace.note("late", "after the end");
+    trace.run_end("DEFECT", None, None);
+
+    let events = sink.events();
+    assert_eq!(types(&events), ["run-start", "run-end"]);
+    let Payload::RunEnd { run } = &events[1].payload else {
+        panic!("a run-end: {:?}", events[1]);
+    };
+    assert_eq!(run.verdict, "ASSURED", "the first end is the one");
+}
+
+// --- what an event may carry -------------------------------------------------------
+
+#[test]
+fn an_exec_event_carries_environment_names_and_never_a_value() {
+    let (sink, boxed) = memory();
+    let trace = Recorder::new(boxed, stepping_clock(), start());
+    trace.exec(ExecRecord {
+        argv: vec!["cargo".to_owned(), "test".to_owned()],
+        env_names: vec![
+            "RUSTFLAGS".to_owned(),
+            "AWS_SECRET_ACCESS_KEY".to_owned(),
+            "RUSTFLAGS".to_owned(),
+        ],
+        ..ExecRecord::default()
+    });
+    trace.run_end("ASSURED", None, None);
+
+    let events = sink.events();
+    let Payload::Exec { exec } = &events[1].payload else {
+        panic!("an exec: {:?}", events[1]);
+    };
+    assert_eq!(
+        exec.env_names,
+        ["AWS_SECRET_ACCESS_KEY", "RUSTFLAGS"],
+        "sorted and deduplicated"
+    );
+    let line = serde_json::to_string(&events[1]).expect("one line");
+    assert!(!line.contains("secret-value"), "{line}");
+}
+
+#[test]
+fn an_exec_event_digests_the_output_rather_than_carrying_it() {
+    let (sink, boxed) = memory();
+    let trace = Recorder::new(boxed, stepping_clock(), start());
+    let output = b"error: something a person would want to grep for".to_vec();
+    trace.exec(ExecRecord {
+        argv: vec!["cargo".to_owned()],
+        output: output.clone(),
+        ..ExecRecord::default()
+    });
+    trace.run_end("DEFECT", None, None);
+
+    let events = sink.events();
+    let Payload::Exec { exec } = &events[1].payload else {
+        panic!("an exec: {:?}", events[1]);
+    };
+    assert_eq!(exec.output_bytes, output.len() as u64);
+    assert_eq!(
+        exec.output_sha256.as_deref(),
+        Some(hex::encode(Sha256::digest(&output)).as_str())
+    );
+    let line = serde_json::to_string(&events[1]).expect("one line");
+    assert!(
+        !line.contains("would want to grep"),
+        "the capture rides along for a sink that preserves it, never onto the wire: {line}"
+    );
+}
+
+#[test]
+fn a_progress_note_and_an_artifact_are_records_of_their_own() {
+    let (sink, boxed) = memory();
+    let trace = Recorder::new(boxed, stepping_clock(), start());
+    trace.progress(ProgressRecord {
+        message: "running targets".to_owned(),
+        done: Some(3),
+        total: Some(7),
+    });
+    trace.artifact(ArtifactRecord {
+        kind: "kept-temp".to_owned(),
+        path: "/tmp/mjutest-run-abcdef".to_owned(),
+        bytes: Some(4_096),
+    });
+    trace.run_end("ASSURED", None, None);
+
+    assert_eq!(
+        types(&sink.events()),
+        ["run-start", "progress", "artifact", "run-end"]
+    );
+}
+
+// --- what a sink may lose ----------------------------------------------------------
+
+#[test]
+fn a_full_ring_drops_its_oldest_and_the_run_end_says_how_many() {
+    let sink = Arc::new(MemorySink::bounded(3));
+    let trace = Recorder::new(
+        Box::new(SharedSink(Arc::clone(&sink))),
+        stepping_clock(),
+        start(),
+    );
+    for index in 0..5_u32 {
+        trace.note("fill", &index.to_string());
+    }
+    trace.run_end("ASSURED", None, None);
+
+    let events = sink.events();
+    assert_eq!(events.len(), 3, "the newest three");
+    let Payload::RunEnd { run } = &events[2].payload else {
+        panic!("a run-end last: {:?}", events[2]);
+    };
+    assert_eq!(
+        run.events_dropped, 3,
+        "the run-start and the first two notes, which is all it could know about"
+    );
+    assert_eq!(run.events_emitted, 3);
+    let problems = check(&events);
+    assert!(
+        problems.contains(&Problem::Dropped(3)),
+        "the reader repeats what the run admitted: {problems:?}"
+    );
+    assert!(
+        problems.contains(&Problem::MissingRunStart),
+        "and sees that the beginning itself is gone, which the run-end could not say: {problems:?}"
+    );
+}
+
+#[test]
+fn the_default_ring_holds_the_last_events_of_a_run_that_asked_for_no_trace() {
+    assert_eq!(RING_CAPACITY, 4096);
+    let sink = MemorySink::bounded(RING_CAPACITY);
+    assert_eq!(sink.events().len(), 0);
+}
+
+#[test]
+fn a_sink_that_cannot_write_costs_the_count_and_never_the_run() {
+    struct Broken;
+    impl Sink for Broken {
+        fn emit(&self, _event: &Event) -> io::Result<()> {
+            Err(io::Error::other("the disk is gone"))
+        }
+    }
+    let trace = Recorder::new(Box::new(Broken), stepping_clock(), start());
+    trace.note("note", "into the void");
+    trace.run_end("ASSURED", None, None);
+}
+
+#[test]
+fn a_tee_keeps_what_both_sinks_keep_and_survives_one_of_them_failing() {
+    struct Broken;
+    impl Sink for Broken {
+        fn emit(&self, _event: &Event) -> io::Result<()> {
+            Err(io::Error::other("the disk is gone"))
+        }
+    }
+    let sink = Arc::new(MemorySink::unbounded());
+    let tee = TeeSink::new(vec![
+        Box::new(Broken),
+        Box::new(SharedSink(Arc::clone(&sink))),
+    ]);
+    let trace = Recorder::new(Box::new(tee), stepping_clock(), start());
+    trace.note("note", "kept by one of them");
+    trace.run_end("ASSURED", None, None);
+
+    assert_eq!(types(&sink.events()), ["run-start", "note", "run-end"]);
+}
+
+// --- what a reader finds -----------------------------------------------------------
+
+#[test]
+fn a_directory_sink_writes_one_json_object_per_line_and_the_reader_reads_it_back() {
+    let dir = tempfile::tempdir().expect("a temporary directory");
+    let recording = dir.path().join("trace/20260905T081500Z-1234");
+    let sink = DirSink::create(&recording).expect("the sink");
+    let trace = Recorder::new(Box::new(sink), stepping_clock(), start());
+    trace.phase("baseline").end();
+    trace.run_end("ASSURED", None, None);
+
+    let path = recording.join(FILE_NAME);
+    let text = fs::read_to_string(&path).expect("the stream");
+    assert_eq!(text.lines().count(), 4, "{text}");
+    for line in text.lines() {
+        let value: serde_json::Value = serde_json::from_str(line).expect("one object per line");
+        assert!(value.get("type").is_some(), "{line}");
+        assert!(value.get("seq").is_some(), "{line}");
+    }
+    let events = read_events(io::BufReader::new(
+        fs::File::open(&path).expect("the stream opens"),
+    ))
+    .expect("the events read back");
+    assert_eq!(
+        types(&events),
+        ["run-start", "phase-start", "phase-end", "run-end"]
+    );
+    assert!(check(&events).is_empty(), "{:?}", check(&events));
+}
+
+#[test]
+fn the_reader_reports_a_gap_a_missing_end_and_what_the_run_said_it_dropped() {
+    let (sink, boxed) = memory();
+    let trace = Recorder::new(boxed, stepping_clock(), start());
+    trace.note("a", "one");
+    trace.note("b", "two");
+    let mut events = sink.events();
+
+    let unfinished = check(&events);
+    assert!(
+        unfinished.contains(&Problem::MissingRunEnd),
+        "a stream with no end is a run that did not finish: {unfinished:?}"
+    );
+
+    events.remove(1);
+    let gapped = check(&events);
+    assert!(
+        gapped
+            .iter()
+            .any(|problem| matches!(problem, Problem::SequenceGap { .. })),
+        "{gapped:?}"
+    );
+}
+
+#[test]
+fn a_writer_sink_puts_the_stream_where_the_caller_points_it() {
+    #[derive(Clone, Default)]
+    struct Shared(Arc<Mutex<Vec<u8>>>);
+    impl Write for Shared {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.0
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let shared = Shared::default();
+    let trace = Recorder::new(
+        Box::new(WriterSink::new(Box::new(shared.clone()))),
+        stepping_clock(),
+        start(),
+    );
+    trace.run_end("ASSURED", None, None);
+    let written = shared
+        .0
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
+    let text = String::from_utf8(written).expect("UTF-8");
+    assert_eq!(text.lines().count(), 2, "{text}");
+}
+
+// --- the wire shape ----------------------------------------------------------------
+
+#[test]
+fn the_wire_shape_is_the_recorded_one() {
+    let (sink, boxed) = memory();
+    let trace = Recorder::new(boxed, stepping_clock(), start());
+    let phase = trace.phase("baseline");
+    trace.exec(ExecRecord {
+        argv: vec!["cargo".to_owned(), "test".to_owned(), "--no-run".to_owned()],
+        dir: Some("/w".to_owned()),
+        env_names: vec!["CARGO_TARGET_DIR".to_owned()],
+        timeout_ms: Some(600_000),
+        exit_code: Some(0),
+        duration_ms: 1_200,
+        output: b"ok".to_vec(),
+        ..ExecRecord::default()
+    });
+    trace.progress(ProgressRecord {
+        message: "1 of 2".to_owned(),
+        done: Some(1),
+        total: Some(2),
+    });
+    phase.end();
+    trace.note("limitation", "mutation-phase-not-implemented");
+    trace.run_end("INSUFFICIENT", None, None);
+
+    let mut lines = Vec::new();
+    for event in sink.events() {
+        lines.extend_from_slice(serde_json::to_string(&event).expect("one line").as_bytes());
+        lines.push(b'\n');
+    }
+    let golden =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testdata/trace.golden.jsonl");
+    mjutest_devkit::golden::golden(&golden, &lines).expect("the recorded stream");
+}

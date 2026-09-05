@@ -26,8 +26,8 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
+use crate::trace::ExecRecord;
 use rust_mutants::runner::{Spec, run};
-use rust_mutants::trace::ExecRecord;
 use sha2::{Digest as _, Sha256};
 
 use crate::error::{self, ErrorCode};

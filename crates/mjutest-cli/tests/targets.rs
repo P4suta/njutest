@@ -20,9 +20,9 @@
 use mjutest_cli::targets::{
     Entry, EntryKind, TARGET_DOMAIN, Unit, UnitKind, WHOLE_BINARY, enumerate, parse_list, target_id,
 };
+use mjutest_cli::trace::Recorder;
 use mjutest_cli::watch::Watch;
 use rust_mutants::runner::Cancel;
-use rust_mutants::trace::Recorder;
 
 // --- the listing ------------------------------------------------------------------
 
@@ -124,7 +124,7 @@ fn built_units(fixture: &str) -> (Vec<Unit>, tempfile::TempDir) {
         .tempdir()
         .expect("tempdir");
     let cancel = Cancel::new();
-    let trace = Recorder::disabled();
+    let engine_trace = rust_mutants::trace::Recorder::disabled();
     let toolchain = Toolchain::locate(
         &LocateOptions {
             cargo: Some(mjutest_devkit::paths::cargo_binary()),
@@ -138,7 +138,7 @@ fn built_units(fixture: &str) -> (Vec<Unit>, tempfile::TempDir) {
         toolchain: &toolchain,
         dir: &dir,
         cancel: &cancel,
-        trace: &trace,
+        trace: &engine_trace,
     };
     let metadata = Metadata::load(
         &driver,

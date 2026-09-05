@@ -8,9 +8,13 @@
 //! sides — "should this still be happening?" and "what happened?" — and
 //! because passing them as one argument keeps every signature that starts a
 //! process short enough to read.
+//!
+//! The recorder here is the run's own ([`crate::trace`]). The engine keeps a
+//! second recording in its own vocabulary, which it is handed separately;
+//! neither stream is ever mistaken for the other.
 
+use crate::trace::Recorder;
 use rust_mutants::runner::Cancel;
-use rust_mutants::trace::Recorder;
 
 /// Cancellation and the trace, as one argument.
 #[derive(Debug, Clone, Copy)]

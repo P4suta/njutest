@@ -20,6 +20,7 @@ pub mod coverage;
 pub mod error;
 pub mod report;
 pub mod targets;
+pub mod trace;
 pub mod watch;
 
 use std::ffi::OsString;
