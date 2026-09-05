@@ -44,6 +44,11 @@ first digit names an area:
 | `RM1016` | A `--message-format=json` line is not a message. |
 | `RM2001` | A dep-info file has no rule to read. |
 | `RM2002` | An artifact's dep-info file could not be read, so the files its unit compiled are unknown. |
+| `RM2003` | A source file a unit compiled could not be read. |
+| `RM2004` | A source file the compiler accepted does not parse as Rust for the engine's parser, which may lag the compiler; the file and position are named. |
+| `RM2005` | A unit compiled a file outside the workspace root, which the snapshot does not hold. |
+| `RM2006` | The candidates could not be assembled into a catalog: a display-id collision or an incoherent candidate. |
+| `RM2007` | A selected package is not a workspace member. |
 
 ## mjutest
 

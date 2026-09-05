@@ -7,9 +7,10 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
-use super::locate::{Toolchain, command_failed};
-use super::{CargoError, CargoErrorKind};
-use crate::runner::{Cancel, run};
+use super::locate::command_failed;
+use super::{CargoError, CargoErrorKind, Driver};
+use crate::runner::run;
+use crate::trace::ExecRecord;
 
 /// How much `cargo metadata` output is kept. A workspace whose metadata is
 /// larger than this is not one the engine is going to instrument anyway.
@@ -169,18 +170,14 @@ impl Metadata {
         })
     }
 
-    /// Runs `cargo metadata --format-version 1` inside `dir` and parses it.
+    /// Runs `cargo metadata --format-version 1` in the driver's directory and
+    /// parses it.
     ///
     /// # Errors
     ///
     /// [`CargoErrorKind::CommandFailed`] with cargo's own words when the
     /// command fails, and [`CargoErrorKind::MetadataUnparsable`] otherwise.
-    pub fn load(
-        toolchain: &Toolchain,
-        dir: &Path,
-        options: MetadataOptions,
-        cancel: &Cancel,
-    ) -> Result<Self, CargoError> {
+    pub fn load(driver: &Driver<'_>, options: MetadataOptions) -> Result<Self, CargoError> {
         let mut args = vec!["metadata", "--format-version", "1"];
         if options.locked {
             args.push("--locked");
@@ -188,9 +185,10 @@ impl Metadata {
         if options.offline {
             args.push("--offline");
         }
-        let mut spec = toolchain.command(dir, args);
+        let mut spec = driver.toolchain.command(driver.dir, args);
         spec.structured_stdout = Some(METADATA_OUTPUT_LIMIT);
-        let result = run(&spec, cancel);
+        let result = run(&spec, driver.cancel);
+        driver.trace.exec(ExecRecord::of(&spec, &result));
         if !result.ok() {
             return Err(command_failed(&spec, &result));
         }

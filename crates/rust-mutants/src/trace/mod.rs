@@ -34,6 +34,48 @@ pub use sink::{
     TRUNCATION_MARKER, WriterSink,
 };
 
+impl ExecRecord {
+    /// The record of one supervised run: the spec's command line, directory,
+    /// environment names, and timeout, and the result's exit code, timeout
+    /// flag, duration, output, and error. The recorder digests the output
+    /// and strips the environment values on emission.
+    #[must_use]
+    pub fn of(spec: &crate::runner::Spec, result: &crate::runner::RunResult) -> Self {
+        Self {
+            argv: spec
+                .argv
+                .iter()
+                .map(|arg| arg.to_string_lossy().into_owned())
+                .collect(),
+            dir: spec
+                .dir
+                .as_ref()
+                .map(|dir| dir.to_string_lossy().into_owned()),
+            env_names: spec
+                .env
+                .as_ref()
+                .map(|env| {
+                    env.iter()
+                        .map(|(key, _)| key.to_string_lossy().into_owned())
+                        .collect()
+                })
+                .unwrap_or_default(),
+            timeout_ms: spec
+                .timeout
+                .map(|timeout| u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX)),
+            exit_code: result.exit_code,
+            timed_out: result.timed_out,
+            duration_ms: u64::try_from(result.duration.as_millis()).unwrap_or(u64::MAX),
+            output_bytes: 0,
+            output_sha256: None,
+            output_truncated: false,
+            output_path: None,
+            error: result.error.as_ref().map(ToString::to_string),
+            output: result.output.clone(),
+        }
+    }
+}
+
 /// A source of the current moment: the recorder's one seam, so a test can
 /// freeze time and a golden can freeze the wire shape.
 pub type Clock = Box<dyn Fn() -> Timestamp + Send + Sync>;

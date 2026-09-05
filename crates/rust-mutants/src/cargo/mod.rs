@@ -13,6 +13,7 @@
 //! the environment a child should see, and the snapshot directory the
 //! commands run in decides which rustup toolchain answers.
 
+mod check;
 mod depinfo;
 mod locate;
 mod messages;
@@ -20,9 +21,13 @@ mod metadata;
 mod version;
 
 use std::fmt;
+use std::path::Path;
 
 use crate::error::{self, ErrorCode};
+use crate::runner::Cancel;
+use crate::trace::Recorder;
 
+pub use check::{CheckOptions, Checked, check};
 pub use depinfo::{Unit, dep_info_path, parse_dep_info, units_from_check};
 pub use locate::{LocateOptions, Toolchain, resolve_executable};
 pub use messages::{
@@ -30,6 +35,20 @@ pub use messages::{
 };
 pub use metadata::{Metadata, MetadataOptions, Package, Target};
 pub use version::{VersionInfo, parse_version};
+
+/// Everything a cargo command needs besides its arguments: the toolchain,
+/// the directory to run in, the cancellation flag, and the trace.
+#[derive(Debug, Clone, Copy)]
+pub struct Driver<'a> {
+    /// The located toolchain.
+    pub toolchain: &'a Toolchain,
+    /// The directory every command runs in: the workspace (snapshot) root.
+    pub dir: &'a Path,
+    /// Cooperative cancellation.
+    pub cancel: &'a Cancel,
+    /// The trace every command records into.
+    pub trace: &'a Recorder,
+}
 
 /// The failure modes of this module, each with a stable code.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

@@ -24,11 +24,12 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use rust_mutants::cargo::{
-    CargoError, CargoErrorKind, Diagnostic, LocateOptions, Message, Metadata, MetadataOptions,
-    Toolchain, dep_info_path, parse_dep_info, parse_messages, parse_version, resolve_executable,
-    units_from_check,
+    CargoError, CargoErrorKind, Diagnostic, Driver, LocateOptions, Message, Metadata,
+    MetadataOptions, Toolchain, dep_info_path, parse_dep_info, parse_messages, parse_version,
+    resolve_executable, units_from_check,
 };
 use rust_mutants::runner::{Cancel, run};
+use rust_mutants::trace::Recorder;
 
 fn fixture(name: &str) -> PathBuf {
     mjutest_devkit::paths::fixtures_dir().join(name)
@@ -233,7 +234,15 @@ fn metadata_is_loaded_from_a_workspace_with_the_locked_offline_flags() {
         locked: true,
         offline: true,
     };
-    let metadata = Metadata::load(&tc, &dir, options, &Cancel::new()).expect("metadata");
+    let cancel = Cancel::new();
+    let trace = Recorder::disabled();
+    let driver = Driver {
+        toolchain: &tc,
+        dir: &dir,
+        cancel: &cancel,
+        trace: &trace,
+    };
+    let metadata = Metadata::load(&driver, options).expect("metadata");
     assert_eq!(metadata.workspace_root, dir);
     let mut members: Vec<&str> = metadata.members().map(|p| p.name.as_str()).collect();
     members.sort_unstable();
@@ -265,7 +274,16 @@ fn metadata_is_loaded_from_a_workspace_with_the_locked_offline_flags() {
     }
 
     let not_a_workspace = tempfile::tempdir().expect("tempdir");
-    let error = Metadata::load(&tc, not_a_workspace.path(), options, &Cancel::new()).unwrap_err();
+    let error = Metadata::load(
+        &Driver {
+            toolchain: &tc,
+            dir: not_a_workspace.path(),
+            cancel: &cancel,
+            trace: &trace,
+        },
+        options,
+    )
+    .unwrap_err();
     assert_eq!(error.kind(), CargoErrorKind::CommandFailed);
     assert!(error.to_string().contains("RM1014"), "{error}");
     assert!(

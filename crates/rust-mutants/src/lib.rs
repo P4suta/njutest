@@ -21,6 +21,7 @@
 
 pub mod cargo;
 pub mod catalog;
+pub mod discover;
 pub mod error;
 pub mod flatten;
 pub mod glob;

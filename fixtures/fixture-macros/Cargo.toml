@@ -1,0 +1,14 @@
+# SPDX-FileCopyrightText: 2026 mjutest contributors
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+[package]
+name = "fixture-macros"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+members = ["crates/derive"]
+
+[dependencies]
+fixture-macros-derive = { path = "crates/derive" }

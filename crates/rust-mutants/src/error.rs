@@ -127,6 +127,31 @@ snapshot_code!(
     "RM2002",
     "an artifact's dep-info file could not be read"
 );
+snapshot_code!(
+    DISCOVER_FILE_UNREADABLE,
+    "RM2003",
+    "a source file a unit compiled could not be read"
+);
+snapshot_code!(
+    DISCOVER_PARSE_FAILED,
+    "RM2004",
+    "a source file the compiler accepted does not parse as Rust for the engine"
+);
+snapshot_code!(
+    DISCOVER_OUTSIDE_ROOT,
+    "RM2005",
+    "a unit compiled a file outside the workspace root"
+);
+snapshot_code!(
+    DISCOVER_CATALOG_FAILED,
+    "RM2006",
+    "the candidates could not be assembled into a catalog"
+);
+snapshot_code!(
+    DISCOVER_UNKNOWN_PACKAGE,
+    "RM2007",
+    "a selected package is not a workspace member"
+);
 
 /// Every failure the engine reports.
 #[derive(Debug, thiserror::Error)]
@@ -143,6 +168,9 @@ pub enum EngineError {
     /// could not be read.
     #[error(transparent)]
     Cargo(#[from] crate::cargo::CargoError),
+    /// The workspace's files could not be turned into a catalog.
+    #[error(transparent)]
+    Discover(#[from] crate::discover::DiscoverError),
 }
 
 impl EngineError {
@@ -153,6 +181,7 @@ impl EngineError {
             Self::Interrupted => INTERRUPTED,
             Self::Snapshot(error) => error.code(),
             Self::Cargo(error) => error.code(),
+            Self::Discover(error) => error.code(),
         }
     }
 }
@@ -180,5 +209,10 @@ pub const fn error_codes() -> &'static [ErrorCode] {
         CARGO_MESSAGE_UNPARSABLE,
         DEP_INFO_UNREADABLE,
         DEP_INFO_MISSING,
+        DISCOVER_FILE_UNREADABLE,
+        DISCOVER_PARSE_FAILED,
+        DISCOVER_OUTSIDE_ROOT,
+        DISCOVER_CATALOG_FAILED,
+        DISCOVER_UNKNOWN_PACKAGE,
     ]
 }

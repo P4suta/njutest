@@ -381,7 +381,10 @@ impl<'a> Walker<'a> {
                     }
                 }
             }
-            Item::Macro(m) => self.macro_site(&m.mac),
+            // A `macro_rules!` definition is not a place code runs: its body
+            // is counted at every invocation. Any other item-level macro is
+            // an invocation.
+            Item::Macro(m) if !m.mac.path.is_ident("macro_rules") => self.macro_site(&m.mac),
             _ => {}
         }
     }

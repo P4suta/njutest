@@ -7,8 +7,9 @@ enforced by `cargo xtask fixtures`:
 - `Cargo.toml` carries an empty `[workspace]` table, so cargo never looks
   upwards and a fixture that fails on purpose cannot fail this workspace.
 - `Cargo.lock` is committed. Fixtures build with `--locked --offline`.
-- No dependencies of any kind: a dependency would need a registry, and the
-  suites run offline.
+- The only dependencies are paths inside the fixture itself, such as a
+  proc-macro member: anything else would need a registry, and the suites run
+  offline.
 - Every `.rs` and `Cargo.toml` starts with the SPDX header used across the
   repository.
 - Fast: baselines are measured, and derived timeouts scale with the slowest

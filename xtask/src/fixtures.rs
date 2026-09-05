@@ -12,10 +12,10 @@ use std::path::Path;
 use walkdir::WalkDir;
 
 /// The rule, for the failure message.
-pub const RULE: &str = "A fixture is an independent cargo project: its Cargo.toml carries an empty \
-    [workspace] table so cargo does not look upwards, its Cargo.lock is committed, it declares no \
-    dependencies of any kind, and every .rs and Cargo.toml starts with the SPDX header. See \
-    fixtures/README.md.";
+pub const RULE: &str = "A fixture is an independent cargo project: its Cargo.toml carries a \
+    [workspace] table so cargo does not look upwards, its Cargo.lock is committed, its only \
+    dependencies are paths inside itself (fixtures build offline against no registry), and every \
+    .rs and Cargo.toml starts with the SPDX header. See fixtures/README.md.";
 
 const SPDX_HEADER: [&str; 2] = [
     "SPDX-FileCopyrightText: 2026 mjutest contributors",
@@ -84,14 +84,62 @@ fn check_manifest(text: &str) -> Vec<String> {
                 .to_owned(),
         );
     }
-    for key in ["dependencies", "dev-dependencies", "build-dependencies"] {
-        if let Some(toml::Value::Table(deps)) = table.get(key)
-            && !deps.is_empty()
-        {
-            problems.push(format!(
-                "Cargo.toml declares [{key}]; fixtures have no dependencies"
-            ));
+    check_dependencies(&table, &mut problems);
+    problems
+}
+
+/// Every dependency table a manifest can hold: the three at the top, the
+/// three under each `[target.<cfg>]`, and the workspace's own.
+fn check_dependencies(table: &toml::Table, problems: &mut Vec<String>) {
+    const KINDS: [&str; 3] = ["dependencies", "dev-dependencies", "build-dependencies"];
+    let mut holders: Vec<&toml::Table> = vec![table];
+    if let Some(toml::Value::Table(workspace)) = table.get("workspace") {
+        holders.push(workspace);
+    }
+    if let Some(toml::Value::Table(targets)) = table.get("target") {
+        holders.extend(targets.values().filter_map(|value| match value {
+            toml::Value::Table(target) => Some(target),
+            _ => None,
+        }));
+    }
+    let tables = holders.into_iter().flat_map(|holder| {
+        KINDS
+            .into_iter()
+            .filter_map(move |kind| match holder.get(kind) {
+                Some(toml::Value::Table(deps)) => Some(deps),
+                _ => None,
+            })
+    });
+    for deps in tables {
+        for (name, value) in deps {
+            if !is_local_path_dependency(value) {
+                problems.push(format!(
+                    "Cargo.toml: dependency {name:?} is not a path inside the fixture; \
+                     fixtures build offline against no registry"
+                ));
+            }
         }
     }
-    problems
+}
+
+/// Whether a dependency is a path inside the fixture: a table with a `path`
+/// that neither escapes nor is absolute, and no source that would need a
+/// network (`git`, a registry, or a bare version requirement).
+fn is_local_path_dependency(value: &toml::Value) -> bool {
+    let toml::Value::Table(spec) = value else {
+        return false;
+    };
+    if ["git", "registry", "registry-index"]
+        .iter()
+        .any(|key| spec.contains_key(*key))
+    {
+        return false;
+    }
+    let Some(toml::Value::String(path)) = spec.get("path") else {
+        return false;
+    };
+    !path.starts_with('/')
+        && !path.starts_with('\\')
+        && !path.contains(':')
+        && path.split(['/', '\\']).all(|component| component != "..")
 }

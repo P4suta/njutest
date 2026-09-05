@@ -75,10 +75,14 @@ fn every_variant_reports_a_declared_code() {
     )
     .expect_err("a relative path is refused");
     let cargo = rust_mutants::cargo::parse_dep_info("").expect_err("empty dep-info is refused");
+    let discover = rust_mutants::discover::DiscoverError::UnknownPackage {
+        name: "x".to_owned(),
+    };
     let samples = [
         rust_mutants::EngineError::Interrupted,
         rust_mutants::EngineError::from(snapshot),
         rust_mutants::EngineError::from(cargo),
+        rust_mutants::EngineError::from(discover),
     ];
     for sample in &samples {
         assert!(

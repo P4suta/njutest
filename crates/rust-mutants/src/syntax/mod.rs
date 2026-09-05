@@ -38,7 +38,8 @@
 //! constant context, code behind a `cfg`, test code — is still walked, and
 //! every candidate it would have produced is counted under the outermost
 //! reason. A macro invocation counts once, because its body is tokens the
-//! walker does not parse. [`FileDiscovery::trace_record`] carries every
+//! walker does not parse; a `macro_rules!` definition is not a place code
+//! runs and is not counted. [`FileDiscovery::trace_record`] carries every
 //! decision for the trace, and `rust-mutants why-skipped` tallies them.
 //!
 //! # Determinism
