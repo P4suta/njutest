@@ -8,6 +8,7 @@
 pub mod cargo;
 pub mod catalog;
 pub mod discover;
+pub mod duration;
 pub mod error;
 pub mod execute;
 pub mod flatten;

@@ -26,6 +26,10 @@ first digit names an area:
 | Code | Meaning |
 | --- | --- |
 | `RM0001` | The caller cancelled the operation before it completed. |
+| `RM0002` | A configuration file that could not be read. |
+| `RM0003` | A configuration file that is not the document this version understands: an unknown key, a malformed value, a duration that is not a duration. |
+| `RM0004` | A configuration that parses but says something a run cannot honour: an expectation without a reason, a harness flag the engine owns, a report directory outside the workspace. |
+| `RM0005` | A configuration whose `version` is not one this release understands. |
 | `RM1001` | Snapshot options that cannot be honoured, such as a report directory that is absolute or climbs out of the source root. |
 | `RM1002` | A source root that is relative, cannot be read, or is not a directory. |
 | `RM1003` | An operating system failure while reading a tree: a directory that cannot be listed, an entry that cannot be stat'ed. |
@@ -67,6 +71,7 @@ first digit names an area:
 | `RM5006` | The instrumented tree could not be written. |
 | `RM9001` | A rule name the canonical registry does not know. |
 | `RM9002` | A pattern the caller gave is not a pattern. |
+| `RM9003` | A duration the caller gave is not a duration: an empty text, a number without a unit, a unit without a number, an unknown unit, or a number no duration can hold. |
 
 ## mjutest
 

@@ -24,9 +24,39 @@ const GLOB_INVALID: ErrorCode = ErrorCode {
     summary: "a pattern the caller gave is not a pattern",
 };
 
+/// A duration that is not a duration.
+const DURATION_INVALID: ErrorCode = ErrorCode {
+    code: "RM9003",
+    summary: "a duration the caller gave is not a duration",
+};
+
 const INTERRUPTED: ErrorCode = ErrorCode {
     code: "RM0001",
     summary: "the caller cancelled the operation before it completed",
+};
+
+/// A configuration file that could not be read. The command line reports it; the ledger of `RM` codes is one, so it lives here.
+pub const CONFIG_UNREADABLE: ErrorCode = ErrorCode {
+    code: "RM0002",
+    summary: "a configuration file that could not be read",
+};
+
+/// A configuration file that is not the document this version understands.
+pub const CONFIG_UNPARSABLE: ErrorCode = ErrorCode {
+    code: "RM0003",
+    summary: "a configuration file that is not the document this version understands",
+};
+
+/// A configuration that parses but says something a run cannot honour.
+pub const CONFIG_INVALID: ErrorCode = ErrorCode {
+    code: "RM0004",
+    summary: "a configuration that parses but says something a run cannot honour",
+};
+
+/// A configuration whose `version` is not one this release understands.
+pub const CONFIG_UNSUPPORTED_VERSION: ErrorCode = ErrorCode {
+    code: "RM0005",
+    summary: "a configuration whose version is not one this release understands",
 };
 
 macro_rules! snapshot_code {
@@ -265,6 +295,9 @@ pub enum EngineError {
     /// A pattern the caller gave is not a pattern.
     #[error(transparent)]
     Glob(#[from] crate::glob::GlobError),
+    /// A duration the caller gave is not a duration.
+    #[error(transparent)]
+    Duration(#[from] crate::duration::DurationError),
 }
 
 impl EngineError {
@@ -281,15 +314,20 @@ impl EngineError {
             Self::Session(error) => error.code(),
             Self::Rule(_) => RULE_UNKNOWN,
             Self::Glob(_) => GLOB_INVALID,
+            Self::Duration(_) => DURATION_INVALID,
         }
     }
 }
 
-/// Every code the engine can report, in code order.
+/// Every code the rust-mutants product reports, the engine's and the command line's alike, in code order.
 #[must_use]
 pub const fn error_codes() -> &'static [ErrorCode] {
     &[
         INTERRUPTED,
+        CONFIG_UNREADABLE,
+        CONFIG_UNPARSABLE,
+        CONFIG_INVALID,
+        CONFIG_UNSUPPORTED_VERSION,
         SNAPSHOT_INVALID_OPTIONS,
         SNAPSHOT_SOURCE_ROOT,
         SNAPSHOT_WALK,
@@ -331,5 +369,6 @@ pub const fn error_codes() -> &'static [ErrorCode] {
         SESSION_WRITE_FAILED,
         RULE_UNKNOWN,
         GLOB_INVALID,
+        DURATION_INVALID,
     ]
 }

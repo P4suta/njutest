@@ -459,48 +459,12 @@ fn one_line(error: &toml::de::Error) -> String {
         .join("; ")
 }
 
-/// A duration in the syntax Go writes: a sequence of decimal numbers, each with a unit, as in `10m` or `2h45m30s`.
+/// A duration: a sequence of decimal numbers, each with a unit, as in `10m` or `2h45m30s`. Both products read the one spelling, which the engine owns.
 ///
 /// # Errors
 /// Returns what is wrong with the text.
-pub fn parse_duration(text: &str) -> Result<Duration, String> {
-    if text.is_empty() {
-        return Err("a duration cannot be empty".to_owned());
-    }
-    let mut total = Duration::ZERO;
-    let mut rest = text;
-    let mut parts = 0u32;
-    while !rest.is_empty() {
-        let digits = rest
-            .find(|character: char| !character.is_ascii_digit())
-            .unwrap_or(rest.len());
-        if digits == 0 {
-            return Err(format!("{text:?} has a unit without a number"));
-        }
-        let (number, tail) = rest.split_at(digits);
-        let value: u64 = number
-            .parse()
-            .map_err(|_error| format!("{text:?} holds a number too large to be a duration"))?;
-        let unit_length = tail
-            .find(|character: char| character.is_ascii_digit())
-            .unwrap_or(tail.len());
-        let (unit, tail) = tail.split_at(unit_length);
-        let scale = match unit {
-            "ns" => Duration::from_nanos(1),
-            "us" | "µs" => Duration::from_micros(1),
-            "ms" => Duration::from_millis(1),
-            "s" => Duration::from_secs(1),
-            "m" => Duration::from_secs(60),
-            "h" => Duration::from_secs(3600),
-            "" => return Err(format!("{text:?} has a number without a unit")),
-            other => return Err(format!("{text:?} holds the unknown unit {other:?}")),
-        };
-        total =
-            total.saturating_add(scale.saturating_mul(u32::try_from(value).unwrap_or(u32::MAX)));
-        rest = tail;
-        parts = parts.saturating_add(1);
-    }
-    Ok(total)
+pub fn parse_duration(text: &str) -> Result<Duration, rust_mutants::duration::DurationError> {
+    rust_mutants::duration::parse(text)
 }
 
 /// Reads a duration written the way the contract describes.

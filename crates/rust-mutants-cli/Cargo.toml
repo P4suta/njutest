@@ -26,6 +26,8 @@ doc = false
 clap = { workspace = true }
 rust-mutants = { workspace = true }
 serde = { workspace = true }
+thiserror = { workspace = true }
+toml = { workspace = true }
 serde_json = { workspace = true }
 
 [dev-dependencies]
