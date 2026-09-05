@@ -302,3 +302,19 @@ fn a_defect_that_names_what_it_found_is_sound() {
     )];
     assert_eq!(validate_for_persistence(&report), Vec::new());
 }
+
+#[test]
+fn a_run_that_looked_at_part_of_a_workspace_does_not_assure_all_of_it() {
+    let mut report = sound();
+    report.run_kind = RunKind::Scoped;
+    let violations = validate_for_persistence(&report);
+    assert!(
+        violations
+            .iter()
+            .any(|violation| matches!(violation, Violation::VerdictUnsupported { .. })),
+        "{violations:?}"
+    );
+
+    report.verdict = Verdict::ScopeAssured;
+    assert_eq!(validate_for_persistence(&report), Vec::new());
+}

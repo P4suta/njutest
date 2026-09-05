@@ -216,6 +216,20 @@ fn check_verdict(report: &Report, violations: &mut Vec<Violation>) {
     if !report.verdict.is_assurance() {
         return;
     }
+    let scoped = match report.run_kind {
+        crate::report::RunKind::Full => Verdict::Assured,
+        crate::report::RunKind::Changed => Verdict::ChangeAssured,
+        crate::report::RunKind::Scoped => Verdict::ScopeAssured,
+    };
+    if report.verdict != scoped {
+        violations.push(Violation::VerdictUnsupported {
+            verdict: report.verdict,
+            because: format!(
+                "a {:?} run assures only what it looked at, which is {scoped:?}",
+                report.run_kind
+            ),
+        });
+    }
     let targets = report.accounting.targets;
     if targets.selected == 0 {
         violations.push(Violation::NothingObserved);

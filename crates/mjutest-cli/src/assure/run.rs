@@ -158,7 +158,7 @@ pub fn run(
 
 /// The report as it is before anything has run: what the run is, what it was asked to verify, and what it already knows it will not claim.
 fn identity(request: &Request) -> Report {
-    let mut report = Report::new(&request.run_id, RunKind::Full, request.config.contract);
+    let mut report = Report::new(&request.run_id, kind_of(request), request.config.contract);
     report.timing.started = request.started.to_string();
     report.repository.root_name = root_name(&request.root);
     report.repository.configuration_digest = request.config.digest();
@@ -174,6 +174,18 @@ fn identity(request: &Request) -> Report {
          can be reused between runs",
     ));
     report
+}
+
+/// How much of the workspace this run looked at.
+///
+/// A run that named packages looked at those, and the contract reserves
+/// `ASSURED` for a run that looked at everything.
+fn kind_of(request: &Request) -> RunKind {
+    if requested(request).is_empty() {
+        RunKind::Full
+    } else {
+        RunKind::Scoped
+    }
 }
 
 /// The toolchain that will build the tree, and what it says the workspace holds. Located inside the workspace, so a `rust-toolchain.toml` there is what answers.
@@ -428,10 +440,13 @@ fn verdict(report: &Report) -> Verdict {
     }
     let observed = report.accounting.targets.passed > 0;
     let asked = report.accounting.mutants.executed > 0;
-    if observed && asked {
-        Verdict::Assured
-    } else {
-        Verdict::Insufficient
+    if !observed || !asked {
+        return Verdict::Insufficient;
+    }
+    match report.run_kind {
+        RunKind::Full => Verdict::Assured,
+        RunKind::Changed => Verdict::ChangeAssured,
+        RunKind::Scoped => Verdict::ScopeAssured,
     }
 }
 
