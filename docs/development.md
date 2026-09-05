@@ -73,6 +73,15 @@ same switch for the compile-error goldens of the attribute macros.
 exists to have a known fate under mutation, a table of every mutant and its
 expected outcome. See [fixtures/README.md](../fixtures/README.md).
 
+### Fuzz targets
+
+`fuzz/` is a standalone cargo-fuzz crate (nightly, sanitizer) with one target
+per fail-closed parser or byte transformation of the engine; each target
+states one property in its doc comment and `fuzz/README.md` lists them.
+`mise run fuzz:smoke` runs every target briefly; the `fuzz` workflow does the
+same on a pull request that touches the engine and spends real time weekly.
+A crash reproducer worth keeping becomes a regular test.
+
 ### Error codes
 
 Every error variant carries a code; `docs/errors.md` is the ledger, and a

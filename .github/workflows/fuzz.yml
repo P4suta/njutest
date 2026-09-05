@@ -1,0 +1,82 @@
+# SPDX-FileCopyrightText: 2026 mjutest contributors
+# SPDX-License-Identifier: MIT OR Apache-2.0
+#
+# cargo-fuzz against the engine's fail-closed parsers and byte
+# transformations (fuzz/README.md lists the targets and their properties).
+# A pull request that touches the engine or the harness gets a short smoke;
+# the weekly run spends real time. A crash is uploaded as an artifact and is
+# a test to write, never an input to blame.
+name: fuzz
+
+on:
+  pull_request:
+    paths:
+      - "crates/rust-mutants/**"
+      - "fuzz/**"
+      - ".github/workflows/fuzz.yml"
+  schedule:
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fuzz-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  fuzz:
+    name: fuzz (${{ matrix.target }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [flatten, trace_reader, glob, splice, normalize_path]
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      # Fuzzing needs nightly for the sanitizer; the `toolchain` input
+      # overrides the pinned action's branch default.
+      - uses: dtolnay/rust-toolchain@f133eefe930d61f0d9371efd474daf0125ed3dd1 # stable branch
+        with:
+          toolchain: nightly
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: fuzz
+      - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2.85.3
+        with:
+          tool: cargo-fuzz@0.13.2
+      - name: Fetch the locked dependency graph
+        working-directory: fuzz
+        run: cargo fetch --locked
+      - name: Build
+        working-directory: fuzz
+        env:
+          TARGET: ${{ matrix.target }}
+        run: cargo fuzz build "$TARGET"
+      - name: Run
+        working-directory: fuzz
+        env:
+          TARGET: ${{ matrix.target }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT" = "pull_request" ]; then
+            budget="-runs=5000"
+          else
+            budget="-max_total_time=1500"
+          fi
+          cargo fuzz run "$TARGET" -- "$budget" -max_len=4096
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: fuzz-artifacts-${{ matrix.target }}
+          path: fuzz/artifacts/
+          if-no-files-found: ignore
