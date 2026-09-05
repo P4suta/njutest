@@ -82,6 +82,15 @@ is created in, are arguments ([ADR 0001](../adr/0001-seam-policy.md)); the
 composition root is the only place that names the process environment, and
 `cargo xtask devgates` refuses any other.
 
+### The command line
+
+`rust-mutants list` and `why-skipped` copy and type-check the workspace and
+stop there: fast, and honest that nothing has been ruled on yet. `catalog`,
+`explain`, and `run` prepare it, so what they report is what the compiler
+accepted. `catalog --json` prints one `rust-mutants/catalog` document.
+`run` exits 0 when the tests noticed the mutant, 1 when they did not, and 2
+when nothing was established, so a script can act on the answer.
+
 ## Guards
 
 Three forms. **Form C** for a position that is syntactically boolean (an

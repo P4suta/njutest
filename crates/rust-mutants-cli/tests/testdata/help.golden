@@ -4,7 +4,16 @@ rust-mutants copies the workspace into a disposable snapshot, instruments every 
 the selected files once, builds the test binaries once, and activates one mutant per test process
 through an environment variable. The source workspace is never modified.
 
-Usage: rust-mutants
+Usage: rust-mutants <COMMAND>
+
+Commands:
+  list         List the candidates the rules propose, before the compiler has ruled
+  catalog      Catalog the mutants the compiler accepts, and the candidates it refused with its own
+               words
+  run          Run one mutant and report what the tests said
+  explain      Say everything known about one mutant
+  why-skipped  Tally why places were passed over
+  help         Print this message or the help of the given subcommand(s)
 
 Options:
   -h, --help

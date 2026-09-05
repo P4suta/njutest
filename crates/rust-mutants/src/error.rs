@@ -28,6 +28,12 @@ const RULE_UNKNOWN: ErrorCode = ErrorCode {
     summary: "a rule name the canonical registry does not know",
 };
 
+/// A pattern that is not a pattern.
+const GLOB_INVALID: ErrorCode = ErrorCode {
+    code: "RM9002",
+    summary: "a pattern the caller gave is not a pattern",
+};
+
 const INTERRUPTED: ErrorCode = ErrorCode {
     code: "RM0001",
     summary: "the caller cancelled the operation before it completed",
@@ -270,6 +276,9 @@ pub enum EngineError {
     /// The rules asked for are not the registry's.
     #[error(transparent)]
     Rule(#[from] crate::rule::RuleError),
+    /// A pattern the caller gave is not a pattern.
+    #[error(transparent)]
+    Glob(#[from] crate::glob::GlobError),
 }
 
 impl EngineError {
@@ -285,6 +294,7 @@ impl EngineError {
             Self::Validate(error) => error.code(),
             Self::Session(error) => error.code(),
             Self::Rule(_) => RULE_UNKNOWN,
+            Self::Glob(_) => GLOB_INVALID,
         }
     }
 }
@@ -334,5 +344,6 @@ pub const fn error_codes() -> &'static [ErrorCode] {
         SESSION_NO_TARGETS,
         SESSION_WRITE_FAILED,
         RULE_UNKNOWN,
+        GLOB_INVALID,
     ]
 }

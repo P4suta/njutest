@@ -634,6 +634,9 @@ dependencies = [
  "clap",
  "mjutest-devkit",
  "rust-mutants",
+ "serde",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]

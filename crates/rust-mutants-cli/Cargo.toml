@@ -25,9 +25,12 @@ doc = false
 [dependencies]
 clap = { workspace = true }
 rust-mutants = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
 
 [dev-dependencies]
 mjutest-devkit = { workspace = true }
+tempfile = { workspace = true }
 
 [lints]
 workspace = true

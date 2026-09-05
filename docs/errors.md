@@ -66,6 +66,7 @@ first digit names an area:
 | `RM5005` | The workspace builds no test target, so no mutant can be measured. |
 | `RM5006` | The instrumented tree could not be written. |
 | `RM9001` | A rule name the canonical registry does not know. |
+| `RM9002` | A pattern the caller gave is not a pattern. |
 
 ## mjutest
 

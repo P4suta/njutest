@@ -239,6 +239,78 @@ impl Session {
     }
 }
 
+/// Catalogs what would be mutated, without instrumenting anything.
+///
+/// The pristine check still runs, because which files a unit compiled is a
+/// question only the compiler answers, but nothing is rewritten and nothing
+/// is built. What comes back is every candidate the rules propose, before
+/// the compiler has ruled on any of them.
+///
+/// # Errors
+///
+/// The pristine gate and the failures of discovery.
+pub fn preview(
+    workspace: &Workspace,
+    options: &PrepareOptions,
+    cancel: &Cancel,
+) -> Result<discover::Discovery, EngineError> {
+    let trace = workspace.trace.clone();
+    let phase = trace.phase("preview");
+    let checked = pristine(workspace, options, cancel)?;
+    let discovery = discover::discover(
+        &discover::Input {
+            root: workspace.snapshot_root(),
+            metadata: &workspace.metadata,
+            units: &checked.units,
+        },
+        &DiscoverOptions {
+            selection: selection(options)?,
+            include: options.include.clone(),
+            exclude: options.exclude.clone(),
+            packages: options.packages.clone(),
+        },
+        &trace,
+    )?;
+    phase.end();
+    Ok(discovery)
+}
+
+/// The rules a set of options selects.
+fn selection(options: &PrepareOptions) -> Result<Selection<'static>, EngineError> {
+    static REGISTRY: Registry = Registry::canonical();
+    if options.operators.is_empty() {
+        return Ok(Selection::tier(&REGISTRY, options.tier));
+    }
+    let names: Vec<&str> = options.operators.iter().map(String::as_str).collect();
+    Ok(Selection::rules(&REGISTRY, &names)?)
+}
+
+/// Compiles the tree as it was copied, which is both the gate a run stands
+/// on and the source of every unit's file set.
+fn pristine(
+    workspace: &Workspace,
+    options: &PrepareOptions,
+    cancel: &Cancel,
+) -> Result<crate::cargo::Compiled, EngineError> {
+    let checked = compile(
+        &workspace.driver(cancel),
+        &CompileOptions {
+            kind: CompileKind::Check,
+            target_dir: Some(workspace.target_dir.clone()),
+            locked: workspace.locked,
+            offline: workspace.offline,
+            timeout: Workspace::timeout(options.build_timeout),
+        },
+    )?;
+    if checked.success {
+        Ok(checked)
+    } else {
+        Err(EngineError::from(SessionError::PristineBroken {
+            first: crate::validate::first_error_of(&checked.messages),
+        }))
+    }
+}
+
 /// Discovers, instruments, validates, builds, and verifies.
 ///
 /// # Errors
@@ -251,30 +323,7 @@ pub fn prepare(
 ) -> Result<Session, EngineError> {
     let trace = workspace.trace.clone();
     let phase = trace.phase("prepare");
-    let registry = Registry::canonical();
-    let selection = if options.operators.is_empty() {
-        Selection::tier(&registry, options.tier)
-    } else {
-        let names: Vec<&str> = options.operators.iter().map(String::as_str).collect();
-        Selection::rules(&registry, &names)?
-    };
-
-    let checked = compile(
-        &workspace.driver(cancel),
-        &CompileOptions {
-            kind: CompileKind::Check,
-            target_dir: Some(workspace.target_dir.clone()),
-            locked: workspace.locked,
-            offline: workspace.offline,
-            timeout: Workspace::timeout(options.build_timeout),
-        },
-    )?;
-    if !checked.success {
-        return Err(EngineError::from(SessionError::PristineBroken {
-            first: crate::validate::first_error_of(&checked.messages),
-        }));
-    }
-
+    let checked = pristine(&workspace, options, cancel)?;
     let discovery = discover::discover(
         &discover::Input {
             root: workspace.snapshot_root(),
@@ -282,7 +331,7 @@ pub fn prepare(
             units: &checked.units,
         },
         &DiscoverOptions {
-            selection,
+            selection: selection(options)?,
             include: options.include.clone(),
             exclude: options.exclude.clone(),
             packages: options.packages.clone(),
