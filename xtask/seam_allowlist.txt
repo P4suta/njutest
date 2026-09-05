@@ -1,0 +1,7 @@
+# Seam ledger (ADR 0001). One `path:kind:name` per line, sorted.
+#
+# This file may shrink and never grow. A package-level seam a test overwrites
+# forces every test in the package to run alone, and a read of the process
+# environment or an exit outside the composition root hides a decision from
+# the options that should carry it. Adding a line here is a reviewed exception
+# recorded in docs/adr/0001-seam-policy.md, not the fix.

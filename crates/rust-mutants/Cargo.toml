@@ -1,0 +1,25 @@
+# SPDX-FileCopyrightText: 2026 mjutest contributors
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+[package]
+name = "rust-mutants"
+description = "Mutation testing engine for Rust: one instrumented snapshot, every compilable mutant behind a guard, one environment variable per test process"
+keywords = ["mutation-testing", "testing", "cargo", "assurance"]
+categories = ["development-tools::testing"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+readme.workspace = true
+
+[dependencies]
+thiserror = { workspace = true }
+
+[dev-dependencies]
+mjutest-devkit = { workspace = true }
+
+[lints]
+workspace = true

@@ -1,0 +1,158 @@
+# SPDX-FileCopyrightText: 2026 mjutest contributors
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+[workspace]
+resolver = "3"
+members = ["crates/*", "xtask"]
+# Fixture projects are independent cargo workspaces the integration tests
+# drive with a real `cargo`; they are never built as part of this workspace.
+exclude = ["fixtures/*", "fuzz"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/P4suta/mjutest"
+homepage = "https://github.com/P4suta/mjutest"
+authors = ["mjutest contributors"]
+readme = "README.md"
+
+[workspace.lints.rust]
+# `deny`, not `forbid`: the process supervisor and the temporary-directory
+# owner need Windows FFI (Job Objects, LockFileEx) in exactly two modules,
+# which carry `#[allow(unsafe_code, reason = ...)]`. Every crate that needs
+# none carries `#![forbid(unsafe_code)]` at its root.
+unsafe_code = "deny"
+non_ascii_idents = "deny"
+
+unused = { level = "deny", priority = -1 }
+future_incompatible = { level = "deny", priority = -1 }
+
+missing_docs = "deny"
+missing_debug_implementations = "deny"
+missing_copy_implementations = "deny"
+unreachable_pub = "deny"
+unused_qualifications = "deny"
+elided_lifetimes_in_paths = "deny"
+unused_lifetimes = "deny"
+single_use_lifetimes = "deny"
+redundant_lifetimes = "deny"
+trivial_casts = "deny"
+trivial_numeric_casts = "deny"
+let_underscore_drop = "deny"
+meta_variable_misuse = "deny"
+unit_bindings = "deny"
+variant_size_differences = "deny"
+ambiguous_negative_literals = "deny"
+
+[workspace.lints.rustdoc]
+broken_intra_doc_links = "deny"
+private_intra_doc_links = "deny"
+bare_urls = "deny"
+
+[workspace.lints.clippy]
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+
+# Restriction lints, enabled deliberately. An `#[allow]` needs a reason.
+allow_attributes_without_reason = "deny"
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+dbg_macro = "deny"
+indexing_slicing = "deny"
+string_slice = "deny"
+as_conversions = "deny"
+clone_on_ref_ptr = "deny"
+lossy_float_literal = "deny"
+rc_buffer = "deny"
+verbose_file_reads = "deny"
+str_to_string = "deny"
+mem_forget = "deny"
+arithmetic_side_effects = "deny"
+cognitive_complexity = "deny"
+let_underscore_must_use = "deny"
+map_err_ignore = "deny"
+panic_in_result_fn = "deny"
+unwrap_in_result = "deny"
+try_err = "deny"
+unused_result_ok = "deny"
+create_dir = "deny"
+error_impl_error = "deny"
+mutex_atomic = "deny"
+mutex_integer = "deny"
+rc_mutex = "deny"
+string_add = "deny"
+assertions_on_result_states = "deny"
+exit = "deny"
+
+# Allowed: the fix would rename well-named types, or is outside our control
+# (transitive dependency versions).
+module_name_repetitions = "allow"
+multiple_crate_versions = "allow"
+
+[workspace.dependencies]
+# Internal crates. Version and path together so a member can be published.
+rust-mutants = { version = "0.1.0", path = "crates/rust-mutants" }
+mjutest = { version = "0.1.0", path = "crates/mjutest" }
+mjutest-macros = { version = "0.1.0", path = "crates/mjutest-macros" }
+mjutest-devkit = { version = "0.1.0", path = "crates/mjutest-devkit" }
+
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2"
+sha2 = "0.11"
+hex = "0.4"
+# syn 2: the instrumentation never pretty-prints, so `printing` stays off.
+syn = { version = "2", default-features = false, features = [
+  "full",
+  "parsing",
+  "visit",
+  "extra-traits",
+  "clone-impls",
+] }
+proc-macro2 = { version = "1.0", default-features = false, features = ["span-locations"] }
+quote = "1.0"
+toml = "1.1"
+toml_edit = "0.25"
+schemars = "1.2"
+clap = { version = "4.6", features = ["derive", "wrap_help"] }
+rustix = { version = "1.1", features = ["fs", "process"] }
+windows-sys = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_Storage_FileSystem",
+  "Win32_System_JobObjects",
+  "Win32_System_Threading",
+] }
+jiff = "0.2"
+globset = "0.4"
+walkdir = "2.5"
+cargo_metadata = "0.23"
+similar = { version = "3.2", default-features = false, features = ["text"] }
+
+# Test-only.
+tempfile = "3.27"
+proptest = "1.11"
+jsonschema = "0.53"
+trybuild = "1.0"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+panic = "abort"
+opt-level = 3
+
+[profile.dev.package."*"]
+opt-level = 1
+
+# cargo-mutants (the external tool that mutates *this* repository) builds with
+# this profile: see .cargo/mutants.toml.
+[profile.mutants]
+inherits = "test"
+debug = "none"

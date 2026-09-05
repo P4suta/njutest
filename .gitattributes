@@ -1,0 +1,5 @@
+# Byte-exact checkouts everywhere. Mutant identities hash exact source bytes,
+# and the instrumentation goldens and fixture full-ID goldens depend on them,
+# so Git must never rewrite line endings: a CRLF checkout would change every
+# source digest and therefore every mutant ID.
+* -text

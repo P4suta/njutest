@@ -1,0 +1,47 @@
+# bacon configuration. Launch with `bacon` for the default `check` job, or
+# `bacon clippy` / `bacon test` / `bacon nextest` / `bacon doc`.
+#
+# Config reference: https://dystroy.org/bacon/config/
+
+default_job = "check"
+
+[jobs.check]
+command = ["cargo", "check", "--workspace", "--all-targets", "--color", "always"]
+need_stdout = false
+watch = ["crates", "xtask"]
+on_change_strategy = "kill_then_restart"
+
+[jobs.clippy]
+command = [
+  "cargo",
+  "clippy",
+  "--workspace",
+  "--all-targets",
+  "--all-features",
+  "--color",
+  "always",
+  "--",
+  "-D",
+  "warnings",
+]
+need_stdout = false
+
+[jobs.test]
+command = ["cargo", "test", "--workspace", "--all-targets", "--color", "always"]
+need_stdout = true
+
+[jobs.nextest]
+command = ["cargo", "nextest", "run", "--workspace", "--all-targets", "--color", "always"]
+need_stdout = true
+
+[jobs.doc]
+command = [
+  "cargo",
+  "doc",
+  "--workspace",
+  "--no-deps",
+  "--document-private-items",
+  "--color",
+  "always",
+]
+need_stdout = false

@@ -1,0 +1,7 @@
+# taplo (TOML formatter and linter) configuration.
+exclude = ["target/**", "fixtures/**/target/**"]
+
+[formatting]
+align_entries = false
+column_width = 100
+reorder_keys = false

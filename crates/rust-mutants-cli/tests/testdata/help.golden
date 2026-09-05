@@ -1,0 +1,14 @@
+Mutation testing for Rust and Cargo.
+
+rust-mutants copies the workspace into a disposable snapshot, instruments every compilable mutant of
+the selected files once, builds the test binaries once, and activates one mutant per test process
+through an environment variable. The source workspace is never modified.
+
+Usage: rust-mutants
+
+Options:
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version

@@ -1,0 +1,95 @@
+# SPDX-FileCopyrightText: 2026 mjutest contributors
+# SPDX-License-Identifier: MIT OR Apache-2.0
+#
+# Tool pins and the task runner. `justfile` is a thin wrapper over these.
+# The cargo-tool versions mirror CI's install-action pins
+# (.github/workflows/ci.yml) for local == CI parity — bump them together.
+
+[tools]
+rust = "1.98.0"
+actionlint = "1.7.12"
+taplo = "0.10.0"
+typos = "1.48.0"
+lefthook = "2.1.9"
+committed = "1.1.11"
+"cargo:cargo-nextest" = "0.9.140"
+"cargo:cargo-deny" = "0.19.7"
+"cargo:cargo-llvm-cov" = "0.9.0"
+"cargo:cargo-audit" = "0.22.2"
+"cargo:cargo-mutants" = "27.1.0"
+
+[tasks.bootstrap]
+description = "Fetch the locked dependency graph and install the git hooks"
+run = ["cargo fetch --locked", "lefthook install"]
+
+[tasks.doctor]
+description = "Report which development tools are present and whether their versions match the pins"
+run = "bash scripts/doctor.sh"
+
+[tasks.build]
+description = "Build every crate and every target"
+run = "cargo build --locked --workspace --all-targets"
+
+[tasks.fmt]
+description = "Format Rust and TOML"
+run = ["cargo fmt --all", "taplo fmt"]
+
+[tasks."fmt:check"]
+description = "Check Rust and TOML formatting without rewriting files"
+run = ["cargo fmt --all -- --check", "taplo fmt --check", "taplo lint"]
+
+[tasks.clippy]
+description = "Lint every target with warnings denied"
+run = "cargo clippy --locked --workspace --all-targets --all-features -- -D warnings"
+
+[tasks.doc]
+description = "Build rustdoc with broken links and warnings denied"
+env = { RUSTDOCFLAGS = "-D warnings" }
+run = "cargo doc --locked --workspace --no-deps --document-private-items"
+
+[tasks.gates]
+description = "Run the repository gates: seam ratchet, dependency direction, fixture conventions, release consistency"
+run = [
+  "cargo xtask devgates",
+  "cargo xtask deps",
+  "cargo xtask fixtures",
+  "cargo xtask release-check",
+]
+
+[tasks.lint]
+description = "Run clippy, rustdoc, the repository gates, spelling, TOML, and workflow linters"
+depends = ["clippy", "doc", "gates"]
+run = ["typos", "actionlint"]
+
+[tasks."test:fast"]
+description = "Run the unit tests of every crate (no doctests, no toolchain-driven end-to-end tests)"
+run = "cargo nextest run --locked --workspace --all-targets --status-level fail"
+run_windows = "cargo nextest run --locked --workspace --all-targets --status-level fail"
+
+[tasks."test:doc"]
+description = "Run the doctests, which nextest does not"
+run = "cargo test --locked --workspace --doc"
+
+[tasks.test]
+description = "Run the complete suite: every target through nextest, then the doctests"
+depends = ["test:fast", "test:doc"]
+
+[tasks.coverage]
+description = "Measure region coverage with the ratchet CI enforces (never lower the floor)"
+run = "cargo llvm-cov --locked --workspace --all-targets --all-features --summary-only --fail-under-regions 80"
+
+[tasks.deny]
+description = "Check licenses, advisories, bans, and sources"
+run = "cargo deny --locked check"
+
+[tasks.audit]
+description = "Check the dependency graph against the RustSec advisory database"
+run = "cargo audit --deny warnings"
+
+[tasks.mutants]
+description = "Run cargo-mutants, the external mutation tester, against this workspace"
+run = "cargo mutants --config .cargo/mutants.toml --workspace"
+
+[tasks.check]
+description = "Run every local gate in the order CI runs them"
+run = ["mise run fmt:check", "mise run build", "mise run test", "mise run lint", "mise run deny"]

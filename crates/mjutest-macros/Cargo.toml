@@ -1,0 +1,29 @@
+# SPDX-FileCopyrightText: 2026 mjutest contributors
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+[package]
+name = "mjutest-macros"
+description = "Attribute macros of the mjutest crate; depend on `mjutest` instead"
+keywords = ["testing", "assurance", "integration-tests"]
+categories = ["development-tools::testing"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+readme.workspace = true
+
+[lib]
+proc-macro = true
+
+[dependencies]
+# A proc-macro crate is built on its own by consumers (trybuild included), so
+# it must ask for the compiler-bridge features itself instead of relying on
+# feature unification inside this workspace.
+proc-macro2 = { workspace = true, features = ["proc-macro"] }
+syn = { workspace = true, features = ["proc-macro"] }
+
+[lints]
+workspace = true

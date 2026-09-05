@@ -1,0 +1,34 @@
+# SPDX-FileCopyrightText: 2026 mjutest contributors
+# SPDX-License-Identifier: MIT OR Apache-2.0
+name: setup-rust
+description: Pinned Rust toolchain (from rust-toolchain.toml) + mold + cargo cache (+ optional tools), shared by every CI job.
+
+inputs:
+  components:
+    description: 'Comma-separated rustup components in addition to rust-toolchain.toml, e.g. "rustfmt, clippy".'
+    required: false
+    default: ""
+  targets:
+    description: 'Comma-separated rustup targets.'
+    required: false
+    default: ""
+  tools:
+    description: 'Comma-separated cargo tools for taiki-e/install-action, e.g. "cargo-nextest@0.9.140". Pin to mise.toml.'
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    # No `toolchain` input: the action reads rust-toolchain.toml, which is the
+    # one place the version is pinned.
+    - uses: dtolnay/rust-toolchain@f133eefe930d61f0d9371efd474daf0125ed3dd1 # stable branch, toolchain from rust-toolchain.toml
+      with:
+        components: ${{ inputs.components }}
+        targets: ${{ inputs.targets }}
+    - uses: rui314/setup-mold@9c9c13bf4c3f1adef0cc596abc155580bcb04444 # v1
+    - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+    - if: ${{ inputs.tools != '' }}
+      uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2.85.3
+      with:
+        tool: ${{ inputs.tools }}

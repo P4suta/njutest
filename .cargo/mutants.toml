@@ -1,0 +1,19 @@
+# cargo-mutants: the external mutation tester CI runs weekly against *this*
+# repository (mutation.yml). It is one of two independent measurements of how
+# strong this suite is; the other is `mise run dogfood`, which runs mjutest and
+# rust-mutants on themselves. A survivor here is a test to write or an
+# acceptance to record with a reason, never something to leave silently.
+
+exclude_globs = [
+  "fixtures/**",
+  "xtask/**",
+  # Composition roots are stdin/stdout/exit-code wiring pinned by CLI contract
+  # tests; the behaviour behind them is mutated through the library crates.
+  "crates/*/src/main.rs",
+]
+
+profile = "mutants"
+test_tool = "cargo"
+# Mutated code trips warnings the workspace denies; a lint failure is not a
+# kill.
+cap_lints = true

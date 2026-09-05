@@ -1,0 +1,23 @@
+# typos (https://github.com/crate-ci/typos) configuration.
+# Named `_typos.toml` so it doesn't shadow Cargo features matching on `typos.*`.
+
+[default]
+extend-ignore-identifiers-re = [
+  "[A-Fa-f0-9]{7,}",  # git SHAs and content digests
+  "U\\+[0-9A-Fa-f]+", # Unicode codepoint references
+]
+
+[default.extend-words]
+mut = "mut"           # Rust keyword
+mutants = "mutants"
+Yasunobu = "Yasunobu"
+
+[files]
+extend-exclude = [
+  "target/",
+  "*.lock",
+  "*.golden",     # instrumentation output compared byte for byte
+  "*.input",
+  "fixtures/",    # deliberately weak, odd, or non-ASCII code under test
+  "CHANGELOG.md",
+]

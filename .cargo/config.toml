@@ -1,0 +1,17 @@
+# Project-level cargo config.
+#
+# Linker policy: mold/lld are NOT forced here at the project level because
+# doing so would break any environment that doesn't ship the linker. CI sets
+# the linker through the setup-rust composite action instead, and a developer
+# who wants the speedup locally can put the per-target stanza in
+# ~/.cargo/config.toml.
+
+[alias]
+xtask = "run --quiet --locked --package xtask --"
+
+[net]
+# CI on slow / flaky networks benefits from extra retries on registry fetches.
+retry = 10
+
+[term]
+verbose = false

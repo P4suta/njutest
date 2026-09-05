@@ -1,0 +1,75 @@
+# mjutest — lefthook hooks. Runs straight on the host (cargo + typos).
+#
+# Enable after clone:  `lefthook install` (bootstrap.sh does it)
+# Disable:             `lefthook uninstall`
+#
+# Strictness policy:
+# - pre-commit is the gentle pass: format-and-restage, deny obvious mistakes.
+# - pre-push is the strict gate: no writes; every check that can run locally
+#   runs here. If anything fails, the push is blocked.
+
+pre-commit:
+  parallel: true
+  skip:
+    - rebase
+    - merge
+  commands:
+    rust-fmt:
+      glob: "*.rs"
+      run: cargo fmt --all
+      stage_fixed: true
+    rust-clippy:
+      glob: "*.{rs,toml}"
+      run: cargo clippy --workspace --all-targets -- -D warnings
+    typos:
+      run: typos
+    taplo:
+      glob: "*.toml"
+      run: command -v taplo >/dev/null 2>&1 && taplo fmt {staged_files} || true
+      stage_fixed: true
+    actionlint:
+      glob: ".github/**/*.{yml,yaml}"
+      run: command -v actionlint >/dev/null 2>&1 && actionlint || true
+
+commit-msg:
+  commands:
+    committed:
+      run: committed --commit-file {1}
+
+pre-push:
+  parallel: true
+  skip:
+    - rebase
+  commands:
+    rust-fmt-check:
+      run: cargo fmt --all -- --check
+    rust-clippy:
+      run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+    rust-test:
+      run: cargo test --workspace --all-targets
+    rust-doc:
+      run: cargo doc --workspace --no-deps --document-private-items
+      env:
+        RUSTDOCFLAGS: "-D warnings"
+    gates:
+      run: cargo xtask devgates
+    typos:
+      run: typos
+    deny:
+      run: command -v cargo-deny >/dev/null && cargo deny --all-features check || true
+    taplo:
+      run: if command -v taplo >/dev/null 2>&1; then taplo fmt --check && taplo lint; fi
+    actionlint:
+      run: if command -v actionlint >/dev/null 2>&1; then actionlint; fi
+
+post-merge:
+  commands:
+    cargo-fetch-warm:
+      glob: "{Cargo.toml,Cargo.lock,crates/*/Cargo.toml}"
+      run: cargo fetch --quiet || true
+
+post-checkout:
+  commands:
+    cargo-fetch-warm:
+      glob: "{Cargo.toml,Cargo.lock,crates/*/Cargo.toml}"
+      run: cargo fetch --quiet || true

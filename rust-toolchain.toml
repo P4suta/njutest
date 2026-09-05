@@ -1,0 +1,9 @@
+# SPDX-FileCopyrightText: 2026 mjutest contributors
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+[toolchain]
+channel = "1.98.0"
+# llvm-tools: `llvm-profdata` and `llvm-cov` are how mjutest reads coverage,
+# and how CI measures its own.
+components = ["rustfmt", "clippy", "llvm-tools"]
+profile = "minimal"

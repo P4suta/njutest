@@ -1,0 +1,25 @@
+# SPDX-FileCopyrightText: 2026 mjutest contributors
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+[package]
+name = "mjutest"
+description = "Attach integration-resource metadata to ordinary Rust tests for the mjutest assurance runner"
+keywords = ["testing", "assurance", "integration-tests"]
+categories = ["development-tools::testing"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+readme.workspace = true
+
+[dependencies]
+mjutest-macros = { workspace = true }
+
+[dev-dependencies]
+trybuild = { workspace = true }
+
+[lints]
+workspace = true

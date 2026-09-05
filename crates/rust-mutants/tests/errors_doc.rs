@@ -1,0 +1,74 @@
+// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! Every error code the engine can report is documented, and every documented
+//! code exists. The table in `docs/errors.md` is the reader-facing ledger;
+//! this test keeps it from drifting from the code in either direction.
+
+#![allow(
+    clippy::expect_used,
+    clippy::unwrap_used,
+    clippy::panic,
+    clippy::indexing_slicing,
+    reason = "a test reports a setup failure by panicking, and asserts with panics"
+)]
+
+use std::collections::BTreeSet;
+
+use rust_mutants::error::error_codes;
+
+fn documented_codes(prefix: &str) -> BTreeSet<String> {
+    let path = mjutest_devkit::paths::workspace_root().join("docs/errors.md");
+    let text = std::fs::read_to_string(&path).expect("docs/errors.md");
+    text.lines()
+        .filter_map(|line| {
+            let cell = line.strip_prefix("| `")?;
+            let (code, _) = cell.split_once('`')?;
+            code.starts_with(prefix).then(|| code.to_owned())
+        })
+        .collect()
+}
+
+#[test]
+fn every_engine_error_code_is_documented_and_every_documented_code_exists() {
+    let in_code: BTreeSet<String> = error_codes().iter().map(|c| c.code.to_owned()).collect();
+    assert!(
+        !in_code.is_empty(),
+        "the engine must declare its error codes"
+    );
+    let in_docs = documented_codes("RM");
+    assert_eq!(
+        in_code, in_docs,
+        "docs/errors.md and rust_mutants::error::error_codes disagree"
+    );
+}
+
+#[test]
+fn error_codes_are_unique_well_formed_and_sorted() {
+    let codes: Vec<&str> = error_codes().iter().map(|c| c.code).collect();
+    let unique: BTreeSet<&str> = codes.iter().copied().collect();
+    assert_eq!(unique.len(), codes.len(), "duplicate codes: {codes:?}");
+    let mut sorted = codes.clone();
+    sorted.sort_unstable();
+    assert_eq!(codes, sorted, "codes are listed in code order");
+    for code in &codes {
+        assert!(
+            code.len() == 6
+                && code.starts_with("RM")
+                && code.chars().skip(2).all(|c| c.is_ascii_digit()),
+            "malformed code {code}"
+        );
+    }
+}
+
+#[test]
+fn every_variant_reports_a_declared_code() {
+    let declared: BTreeSet<&str> = error_codes().iter().map(|c| c.code).collect();
+    let samples = [rust_mutants::EngineError::Interrupted];
+    for sample in &samples {
+        assert!(
+            declared.contains(sample.code().code),
+            "{sample:?} reports an undeclared code"
+        );
+    }
+}

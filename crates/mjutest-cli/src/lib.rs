@@ -1,0 +1,48 @@
+// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! The mjutest assurance runner.
+//!
+//! mjutest is an orchestrator, not a test framework. It connects ordinary
+//! Cargo tests with coverage routing, the rust-mutants engine, paired kill
+//! confirmation, a soundness phase, targeted fuzzing, explicit integration
+//! resources, and reviewable repair candidates, and it reports a verdict —
+//! `ASSURED`, `DEFECT`, `INSUFFICIENT`, `ERROR` — instead of a percentage.
+//!
+//! [`run_from`] is the entry point the binary calls; the crate is a library
+//! so that every layer below the command line can be driven by a test.
+
+#![forbid(unsafe_code)]
+
+pub mod cli;
+pub mod error;
+
+use std::ffi::OsString;
+use std::io::Write;
+use std::process::ExitCode;
+
+/// The version of this runner, as recorded in every report.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Runs the command line described by `args` (program name first) and
+/// returns its exit code, writing to the two streams it was given.
+///
+/// Exit codes: `0` an assured, resolved, or completed operation; `1`
+/// `DEFECT` or `REPRODUCED`; `2` `INSUFFICIENT`; `3` `ERROR`, invalid input,
+/// or an infrastructure failure; `130` interrupted; `143` terminated.
+pub fn run_from<I>(args: I, stdout: &mut dyn Write, stderr: &mut dyn Write) -> ExitCode
+where
+    I: IntoIterator<Item = OsString>,
+{
+    match cli::parse(args) {
+        Ok(_request) => ExitCode::from(cli::EXIT_ASSURED),
+        Err(usage) => {
+            let stream: &mut dyn Write = if usage.to_stderr { stderr } else { stdout };
+            // A closed stream is the reader's choice, not a failure of ours.
+            let _written = stream
+                .write_all(usage.text.as_bytes())
+                .and_then(|()| stream.flush());
+            ExitCode::from(usage.exit_code)
+        }
+    }
+}

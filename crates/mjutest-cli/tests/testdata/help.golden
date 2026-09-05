@@ -1,0 +1,23 @@
+An audit-oriented assurance runner for Rust.
+
+mjutest connects ordinary Cargo tests with coverage routing, mutation testing through rust-mutants,
+paired kill confirmation, a soundness phase, targeted fuzzing, explicit integration resources, and
+reviewable repair candidates. It reports a verdict — ASSURED, DEFECT, INSUFFICIENT, ERROR — and
+never a percentage.
+
+Usage: mjutest
+
+Options:
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
+
+Exit codes:
+  0    ASSURED, CHANGE_ASSURED, SCOPE_ASSURED, RESOLVED, or COMPLETED
+  1    DEFECT or REPRODUCED
+  2    INSUFFICIENT
+  3    ERROR, invalid input, or an infrastructure failure
+  130  interrupted
+  143  terminated

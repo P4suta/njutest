@@ -1,0 +1,33 @@
+# SPDX-FileCopyrightText: 2026 mjutest contributors
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+[package]
+name = "rust-mutants-cli"
+description = "Command line for the rust-mutants mutation testing engine"
+keywords = ["mutation-testing", "testing", "cargo", "cli"]
+categories = ["development-tools::testing", "command-line-utilities"]
+default-run = "rust-mutants"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+readme.workspace = true
+
+[[bin]]
+name = "rust-mutants"
+path = "src/main.rs"
+# The binary is one function; its documentation is the library's.
+doc = false
+
+[dependencies]
+clap = { workspace = true }
+rust-mutants = { workspace = true }
+
+[dev-dependencies]
+mjutest-devkit = { workspace = true }
+
+[lints]
+workspace = true

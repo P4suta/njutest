@@ -1,0 +1,50 @@
+# doc_markdown: domain terms that need no backticks in docs.
+doc-valid-idents = [
+  "..",
+  "GitHub",
+  "UTF-8",
+  "UTF-16",
+  "SARIF",
+  "JUnit",
+  "JSON",
+  "TOML",
+  "RFC3339",
+  "LLVM",
+  "OCaml",
+  "Stryker",
+  "Miri",
+  "ThreadSanitizer",
+]
+
+# Complexity thresholds — tighter than clippy's defaults.
+too-many-arguments-threshold = 4
+too-many-lines-threshold = 80
+cognitive-complexity-threshold = 18
+type-complexity-threshold = 250
+max-fn-params-bools = 1
+enum-variant-name-threshold = 2
+enum-variant-size-threshold = 256
+
+msrv = "1.98.0"
+
+# Tests may unwrap/expect/panic; production code stays strict.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+
+# Pre-1.0: API is not export-stable yet.
+avoid-breaking-exported-api = false
+
+pass-by-value-size-limit = 128
+
+disallowed-methods = [
+  { path = "std::mem::forget", reason = "leaks destructors; use `ManuallyDrop` or explicit drop" },
+  { path = "std::env::set_var", reason = "races with other threads; wire the value through Options instead" },
+  { path = "std::env::remove_var", reason = "see std::env::set_var" },
+  { path = "std::process::exit", reason = "bypasses destructors; return an ExitCode from main. The generated mutant runtime is the one exception and is not this crate's source" },
+]
+
+disallowed-types = [
+  { path = "once_cell::sync::Lazy", reason = "use std::sync::LazyLock" },
+  { path = "once_cell::sync::OnceCell", reason = "use std::sync::OnceLock" },
+]
