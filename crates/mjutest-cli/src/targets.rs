@@ -135,6 +135,9 @@ pub struct Target {
     pub executable: PathBuf,
     /// The directory it runs in.
     pub cwd: PathBuf,
+    /// The complete environment its process runs with, from the unit it
+    /// came from.
+    pub env: Vec<(OsString, OsString)>,
 }
 
 impl Target {
@@ -319,6 +322,7 @@ pub fn enumerate(unit: &Unit, watch: Watch<'_>) -> Result<Vec<Target>, TargetErr
             path: entry.path,
             executable: unit.executable.clone(),
             cwd: unit.cwd.clone(),
+            env: unit.env.clone(),
         })
         .collect();
     if targets.is_empty() {
@@ -340,6 +344,7 @@ fn whole_binary(unit: &Unit) -> Target {
         ignored: false,
         executable: unit.executable.clone(),
         cwd: unit.cwd.clone(),
+        env: unit.env.clone(),
     }
 }
 

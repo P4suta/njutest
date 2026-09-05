@@ -133,6 +133,9 @@ pub enum RunnerError {
     /// The run has nowhere to work.
     #[error(transparent)]
     Scratch(#[from] crate::scratch::ScratchError),
+    /// The workspace could not be built.
+    #[error(transparent)]
+    Build(#[from] crate::build::BuildError),
 }
 
 impl RunnerError {
@@ -146,6 +149,7 @@ impl RunnerError {
             Self::Coverage(error) => error.code(),
             Self::Report(error) => error.code(),
             Self::Scratch(error) => error.code(),
+            Self::Build(error) => error.code(),
         }
     }
 }
