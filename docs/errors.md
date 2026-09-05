@@ -87,6 +87,7 @@ first digit names an area:
 | `MJ1003` | The configuration says something a run cannot honour: a harness flag mjutest owns, an environment assignment, a resource that is both shared and exclusive, an acceptance without a reason. |
 | `MJ1004` | The configuration names a version this release does not understand. |
 | `MJ1005` | A configuration file is already there, and `init` was not told to replace it. |
+| `MJ2001` | The tree a run is about could not be read: a directory that cannot be listed, a file that cannot be read, a lock file that is not the document cargo writes. |
 | `MJ3001` | A test binary could not be asked what tests it holds. |
 | `MJ3002` | The build could not be run: cargo would not start, or was stopped. A workspace that does not *compile* is a finding in the report, not this. |
 | `MJ3003` | The build's output is not the message stream this version understands. |

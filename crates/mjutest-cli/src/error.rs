@@ -102,6 +102,11 @@ code!(
     "MJ6004",
     "the report could not be written where a reader will look for it"
 );
+code!(
+    EVIDENCE_UNREADABLE,
+    "MJ2001",
+    "the tree a run is about could not be read"
+);
 code!(SCRATCH_UNUSABLE, "MJ8001", "the run has nowhere to work");
 code!(
     BUILD_CACHE_UNUSABLE,
@@ -127,6 +132,9 @@ pub enum RunnerError {
     /// A unit's tests could not be named.
     #[error(transparent)]
     Target(#[from] crate::targets::TargetError),
+    /// The tree a run is about could not be read.
+    #[error(transparent)]
+    Evidence(#[from] crate::evidence::tree::ScanError),
     /// Coverage could not be read.
     #[error(transparent)]
     Coverage(#[from] crate::coverage::CoverageError),
@@ -152,6 +160,7 @@ impl RunnerError {
             Self::Interrupted => INTERRUPTED,
             Self::Config(error) => error.code(),
             Self::Target(error) => error.code(),
+            Self::Evidence(error) => error.code(),
             Self::Coverage(error) => error.code(),
             Self::Report(error) => error.code(),
             Self::Scratch(error) => error.code(),
@@ -177,6 +186,7 @@ pub const fn error_codes() -> &'static [ErrorCode] {
         CONFIG_INVALID,
         CONFIG_UNSUPPORTED_VERSION,
         CONFIG_EXISTS,
+        EVIDENCE_UNREADABLE,
         TARGET_LIST_FAILED,
         BUILD_FAILED,
         BUILD_UNREADABLE,
