@@ -39,12 +39,12 @@ takes the clock as an argument, which is how the golden in
 | `snapshot` | files copied, bytes, digest, refusals |
 | `exec` | every process: argv verbatim, dir, environment variable names, timeout, exit code, duration, output digest |
 | `note` | a free-form note: progress, a decision, a limitation |
+| `instrument` | per file: guards placed, the runtime module's name, and the line count before and after, which must be equal |
+| `validate-round` | per round: how many were condemned going in, whether the tree compiled, which mutant each error was attributed to with the compiler's first line, and the errors no branch accounts for |
+| `bisect` | per isolation: how many suspects, which offenders it named, how many compilations it cost |
+| `build` | the test binaries the build produced |
+| `mutant-exec` | id, index, target, outcome, exit code, duration, tests run |
 | `discover-file` | per file: candidates found, and every site with its form (`C`, `E`, `S`) or its skip reason |
-| `validate-round` | per round: files instrumented, diagnostics read, which mutant each error was attributed to, files left unattributed |
-| `bisect` | per bisect step: the set tried and the verdict |
-| `instrument` | per file: guards placed, runtime identifier chosen, lines preserved |
-| `build` | the test-binary build and the targets it produced |
-| `mutant-exec` | id, target, args verbatim, outcome, duration, tests run |
 | `probe-exec` | target, outcome, infected count |
 | `witness` | per candidate: the witness placed and whether it checked |
 | `run-end` | `events_emitted`, `events_dropped` |

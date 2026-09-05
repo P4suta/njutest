@@ -25,8 +25,9 @@ use jiff::Timestamp;
 use sha2::{Digest as _, Sha256};
 
 pub use event::{
-    DiscoverFileRecord, Event, ExecRecord, NoteRecord, OpenRecord, Payload, PhaseRecord, RunRecord,
-    SCHEMA, SiteRecord, SkipCount, SnapshotRecord, SweepRecord,
+    AttributionRecord, BisectRecord, BuildRecord, DiscoverFileRecord, Event, ExecRecord,
+    InstrumentRecord, MutantExecRecord, NoteRecord, OpenRecord, Payload, PhaseRecord, RunRecord,
+    SCHEMA, SiteRecord, SkipCount, SnapshotRecord, SweepRecord, ValidateRoundRecord,
 };
 pub use reader::{Problem, ReadError, check, read_events};
 pub use sink::{
@@ -214,6 +215,31 @@ impl Recorder {
             record.output_sha256 = Some(hex::encode(Sha256::digest(&record.output)));
         }
         self.emit(Payload::Exec { exec: record });
+    }
+
+    /// Records one file rewritten to hold its mutants.
+    pub fn instrument(&self, record: InstrumentRecord) {
+        self.emit(Payload::Instrument { instrument: record });
+    }
+
+    /// Records one validation round.
+    pub fn validate_round(&self, record: ValidateRoundRecord) {
+        self.emit(Payload::ValidateRound { round: record });
+    }
+
+    /// Records one narrowing of suspects by halving.
+    pub fn bisect(&self, record: BisectRecord) {
+        self.emit(Payload::Bisect { bisect: record });
+    }
+
+    /// Records the test binaries a build produced.
+    pub fn build(&self, record: BuildRecord) {
+        self.emit(Payload::Build { build: record });
+    }
+
+    /// Records one mutant executed against one target.
+    pub fn mutant_exec(&self, record: MutantExecRecord) {
+        self.emit(Payload::MutantExec { mutant: record });
     }
 
     /// Records a free-form note.

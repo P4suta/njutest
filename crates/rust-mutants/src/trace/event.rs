@@ -71,6 +71,31 @@ pub enum Payload {
         /// The record.
         discover: DiscoverFileRecord,
     },
+    /// One file was rewritten to hold its mutants.
+    Instrument {
+        /// The record.
+        instrument: InstrumentRecord,
+    },
+    /// One round of "condemn what the compiler refused and compile again".
+    ValidateRound {
+        /// The record.
+        round: ValidateRoundRecord,
+    },
+    /// The suspects of an unattributable failure were narrowed by halving.
+    Bisect {
+        /// The record.
+        bisect: BisectRecord,
+    },
+    /// The test binaries were named.
+    Build {
+        /// The record.
+        build: BuildRecord,
+    },
+    /// One mutant was executed against one target.
+    MutantExec {
+        /// The record.
+        mutant: MutantExecRecord,
+    },
     /// A free-form note: progress, a decision, a limitation.
     Note {
         /// The record.
@@ -95,6 +120,11 @@ impl Payload {
             Self::Snapshot { .. } => "snapshot",
             Self::Exec { .. } => "exec",
             Self::DiscoverFile { .. } => "discover-file",
+            Self::Instrument { .. } => "instrument",
+            Self::ValidateRound { .. } => "validate-round",
+            Self::Bisect { .. } => "bisect",
+            Self::Build { .. } => "build",
+            Self::MutantExec { .. } => "mutant-exec",
             Self::Note { .. } => "note",
             Self::RunEnd { .. } => "run-end",
         }
@@ -250,6 +280,89 @@ pub struct SkipCount {
     pub reason: String,
     /// The tally.
     pub count: u32,
+}
+
+/// One file rewritten to hold its mutants.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InstrumentRecord {
+    /// The workspace-relative path.
+    pub path: String,
+    /// How many guards were placed.
+    pub guards: u32,
+    /// The name the generated runtime module took.
+    pub module: String,
+    /// Lines before the rewrite.
+    pub lines_before: u64,
+    /// Lines after it, the appended runtime excluded: equal to
+    /// `lines_before` or the rewrite moved something.
+    pub lines_after: u64,
+}
+
+/// One validation round.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ValidateRoundRecord {
+    /// Which round, from 1.
+    pub round: u32,
+    /// How many mutants were left out of this attempt.
+    pub condemned: u32,
+    /// Whether the tree compiled.
+    pub success: bool,
+    /// The mutants an error was inside of, and what the compiler said.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attributed: Vec<AttributionRecord>,
+    /// The errors no branch accounts for, rendered.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unattributed: Vec<String>,
+}
+
+/// One error attributed to one mutant.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AttributionRecord {
+    /// The mutant's dense catalog index.
+    pub index: u32,
+    /// The compiler's error code, when it had one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+    /// The first line of what it said.
+    pub said: String,
+}
+
+/// One narrowing of suspects by halving.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BisectRecord {
+    /// How many mutants were still live when it started.
+    pub suspects: u32,
+    /// The mutants it named.
+    pub offenders: Vec<u32>,
+    /// How many compilations it cost.
+    pub attempts: u32,
+}
+
+/// The test binaries a build produced.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BuildRecord {
+    /// The target ids, in order.
+    pub targets: Vec<String>,
+}
+
+/// One mutant executed against one target.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MutantExecRecord {
+    /// The mutant's full identity.
+    pub id: String,
+    /// The mutant's dense catalog index.
+    pub index: u32,
+    /// The target that ran.
+    pub target: String,
+    /// What the execution established.
+    pub outcome: String,
+    /// The exit status, or the runner's stand-in.
+    pub exit_code: i32,
+    /// How long it took.
+    pub duration_ms: u64,
+    /// How many tests ran, when the harness said.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tests_run: Option<u32>,
 }
 
 /// A free-form note.

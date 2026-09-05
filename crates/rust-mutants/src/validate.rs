@@ -40,7 +40,7 @@ use crate::catalog::Catalog;
 use crate::error::{self, ErrorCode};
 use crate::instrument::{FileOutput, InstrumentError};
 use crate::span::Span;
-use crate::trace::Recorder;
+use crate::trace::{AttributionRecord, BisectRecord, Recorder, ValidateRoundRecord};
 
 /// How many rounds of "condemn what was attributed and recompile" are tried
 /// before the remaining suspects are isolated by bisection.
@@ -297,24 +297,27 @@ pub fn validate(
         let attempt = compile.attempt(&condemned)?;
         rounds = rounds.saturating_add(1);
         if attempt.success {
-            trace.note(
-                "validate-round",
-                &format!(
-                    "round {rounds}: the tree compiles with {} condemned",
-                    condemned.len()
-                ),
-            );
+            trace.validate_round(ValidateRoundRecord {
+                round: rounds,
+                condemned: u32::try_from(condemned.len()).unwrap_or(u32::MAX),
+                success: true,
+                attributed: Vec::new(),
+                unattributed: Vec::new(),
+            });
             break;
         }
         let attributed = attribute(&attempt.files, &attempt.messages);
-        trace.note(
-            "validate-round",
-            &format!(
-                "round {rounds}: {} attributed, {} unattributed",
-                attributed.condemned.len(),
-                attributed.unattributed.len()
-            ),
-        );
+        trace.validate_round(ValidateRoundRecord {
+            round: rounds,
+            condemned: u32::try_from(condemned.len()).unwrap_or(u32::MAX),
+            success: false,
+            attributed: attributions(&attributed),
+            unattributed: attributed
+                .unattributed
+                .iter()
+                .map(|said| first_line(said))
+                .collect(),
+        });
         record(&attributed, &mut diagnostics);
         let progressed = !attributed.condemned.is_subset(&condemned);
         condemned.extend(attributed.condemned.iter().copied());
@@ -362,6 +365,29 @@ pub fn validate(
         rounds,
         bisections,
     })
+}
+
+/// What a round attributed, for the trace.
+fn attributions(attributed: &Attributed) -> Vec<AttributionRecord> {
+    attributed
+        .condemned
+        .iter()
+        .map(|index| AttributionRecord {
+            index: *index,
+            code: attributed.codes.get(index).cloned().flatten(),
+            said: attributed
+                .diagnostics
+                .get(index)
+                .map(|said| first_line(said))
+                .unwrap_or_default(),
+        })
+        .collect()
+}
+
+/// The first line of a rendered diagnostic, which is the one that says what
+/// went wrong.
+fn first_line(said: &str) -> String {
+    said.lines().next().unwrap_or(said).to_owned()
 }
 
 /// Keeps the first thing the compiler said about each condemned mutant.
@@ -412,13 +438,11 @@ fn settle(
     };
     let offenders = isolation.isolate(&live)?;
     let attempts = isolation.attempts;
-    trace.note(
-        "validate-bisect",
-        &format!(
-            "isolated {} offenders in {attempts} attempts",
-            offenders.len()
-        ),
-    );
+    trace.bisect(BisectRecord {
+        suspects: u32::try_from(live.len()).unwrap_or(u32::MAX),
+        offenders: offenders.clone(),
+        attempts,
+    });
     let mut settled = Settled {
         condemned: offenders.iter().copied().collect(),
         diagnostics: BTreeMap::new(),

@@ -30,6 +30,7 @@ use crate::rule::{Registry, Tier};
 use crate::runner::Cancel;
 use crate::snapshot::Drift;
 use crate::syntax::{Found, Selection, Skip};
+use crate::trace::{BuildRecord, InstrumentRecord, MutantExecRecord};
 use crate::validate::{
     Attempt, Compile, Rejection, ValidateError, ValidateOptions, Validated, validate,
 };
@@ -189,6 +190,15 @@ impl Session {
                 exec = exec.with_test(test.clone());
             }
             let result = execute::exec(&exec, &context, cancel, &self.workspace.trace);
+            self.workspace.trace.mutant_exec(MutantExecRecord {
+                id: mutant.id.clone(),
+                index: mutant.index,
+                target: target.id.clone(),
+                outcome: result.outcome.name().to_owned(),
+                exit_code: result.exit_code,
+                duration_ms: u64::try_from(result.duration.as_millis()).unwrap_or(u64::MAX),
+                tests_run: result.tests_run,
+            });
             if result.outcome.detected() || cancel.is_cancelled() {
                 return Ok(result);
             }
@@ -368,6 +378,9 @@ pub fn prepare(
     if targets.is_empty() {
         return Err(EngineError::from(SessionError::NoTargets));
     }
+    trace.build(BuildRecord {
+        targets: targets.iter().map(|target| target.id.clone()).collect(),
+    });
 
     let scratch = workspace.target_dir.join("scratch");
     std::fs::create_dir_all(&scratch).map_err(|source| SessionError::WriteFailed {
@@ -458,6 +471,24 @@ fn plan_tree(
     Ok((sources, placements))
 }
 
+/// How many lines a byte string holds.
+fn lines(bytes: &[u8]) -> u64 {
+    u64::try_from(crate::splice::count_lines(bytes)).unwrap_or(u64::MAX)
+}
+
+/// How many lines the rewritten body holds, the appended runtime excluded.
+///
+/// Equal to the pristine file's line count or a guard moved something,
+/// which is the one invariant every position downstream depends on.
+fn body_lines(file: &FileOutput) -> u64 {
+    let text = file.text.as_bytes();
+    file.text.rfind("\n#[doc(hidden)]").map_or_else(
+        || lines(text),
+        // Up to and including the newline that ends the body.
+        |at| lines(text.get(..=at).unwrap_or(text)),
+    )
+}
+
 /// Runs every target once with nothing active. A tree whose instrumented
 /// baseline fails is one whose every later result would be about the
 /// instrumentation rather than about a mutant.
@@ -522,6 +553,13 @@ impl Compile for TreeCompiler<'_> {
                     message: format!("{path} was never read"),
                 })?;
             let file = instrument_file(path, source, &kept, self.catalog.digest())?;
+            self.workspace.trace.instrument(InstrumentRecord {
+                path: path.clone(),
+                guards: u32::try_from(file.guards.len()).unwrap_or(u32::MAX),
+                module: file.module.clone(),
+                lines_before: lines(source),
+                lines_after: body_lines(&file),
+            });
             std::fs::write(self.workspace.snapshot_root().join(path), &file.text).map_err(
                 |error| ValidateError::AttemptFailed {
                     message: format!("cannot write {path}: {error}"),

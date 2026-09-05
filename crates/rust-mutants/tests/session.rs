@@ -395,3 +395,135 @@ fn keeping_the_temporary_directories_preserves_them_and_says_which() {
     assert!(dir.join("tree/src/lib.rs").is_file(), "kept means kept");
     std::fs::remove_dir_all(&dir).expect("tidy");
 }
+
+#[test]
+fn the_trace_says_what_every_phase_did() {
+    use std::sync::Arc;
+
+    use rust_mutants::trace::{MemorySink, Payload, Recorder, Sink};
+
+    struct Shared(Arc<MemorySink>);
+    impl Sink for Shared {
+        fn emit(&self, event: &rust_mutants::trace::Event) -> std::io::Result<()> {
+            self.0.emit(event)
+        }
+    }
+
+    let fixture = fixture("fixture-rejectable");
+    let sink = Arc::new(MemorySink::unbounded());
+    let recorder = Recorder::wall(Box::new(Shared(Arc::clone(&sink))));
+    let workspace = Workspace::open(
+        &fixture.root,
+        OpenOptions {
+            cargo: Some(mjutest_devkit::paths::cargo_binary()),
+            temp_directory: fixture.temp_root.clone(),
+            env: std::env::vars_os().collect(),
+            locked: true,
+            offline: true,
+            trace: recorder.clone(),
+            ..OpenOptions::default()
+        },
+        &Cancel::new(),
+    )
+    .expect("open");
+    let session = workspace
+        .prepare(
+            &PrepareOptions {
+                tier: Tier::All,
+                verify: false,
+                ..PrepareOptions::default()
+            },
+            &Cancel::new(),
+        )
+        .expect("prepare");
+    let mutant = session.catalog().mutants()[0].display_id.clone();
+    let _result = session
+        .exec(
+            &Request {
+                mutant,
+                ..Request::default()
+            },
+            &Cancel::new(),
+        )
+        .expect("exec");
+    recorder.run_end("ok", None);
+    session.close().expect("close");
+
+    let events = sink.events();
+    let types: Vec<&str> = events
+        .iter()
+        .map(|event| event.payload.type_name())
+        .collect();
+    for expected in [
+        "run-start",
+        "open",
+        "snapshot",
+        "discover-file",
+        "instrument",
+        "validate-round",
+        "build",
+        "mutant-exec",
+        "exec",
+        "run-end",
+    ] {
+        assert!(
+            types.contains(&expected),
+            "{expected} is missing from {types:?}"
+        );
+    }
+
+    // Every validation round is readable, and the refusals name the mutants
+    // and carry the compiler's own words.
+    let rounds: Vec<(u32, bool, usize)> = events
+        .iter()
+        .filter_map(|event| match &event.payload {
+            Payload::ValidateRound { round } => {
+                Some((round.round, round.success, round.attributed.len()))
+            }
+            _ => None,
+        })
+        .collect();
+    assert!(rounds.len() >= 2, "{rounds:?}");
+    assert_eq!(rounds.first().map(|round| round.1), Some(false));
+    assert_eq!(rounds.last().map(|round| round.1), Some(true));
+    let attributed: Vec<(u32, String)> = events
+        .iter()
+        .filter_map(|event| match &event.payload {
+            Payload::ValidateRound { round } => Some(round.attributed.clone()),
+            _ => None,
+        })
+        .flatten()
+        .map(|one| (one.index, one.said))
+        .collect();
+    assert_eq!(attributed.len(), 4, "{attributed:?}");
+    assert!(
+        attributed
+            .iter()
+            .any(|(_, said)| said.contains("cannot subtract")),
+        "{attributed:?}"
+    );
+
+    // Instrumentation says it moved no line.
+    for event in &events {
+        if let Payload::Instrument { instrument } = &event.payload {
+            assert_eq!(
+                instrument.lines_before, instrument.lines_after,
+                "{} moved a line",
+                instrument.path
+            );
+            assert_eq!(instrument.module, "__rm");
+        }
+    }
+
+    // The execution says what it established.
+    let executed: Vec<(&str, &str)> = events
+        .iter()
+        .filter_map(|event| match &event.payload {
+            Payload::MutantExec { mutant } => {
+                Some((mutant.outcome.as_str(), mutant.target.as_str()))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(executed.len(), 1, "{executed:?}");
+}
