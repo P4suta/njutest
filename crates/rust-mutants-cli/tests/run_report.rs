@@ -14,6 +14,8 @@ use std::process::{Command, Output};
 
 struct Fixture {
     root: PathBuf,
+    /// Every snapshot and build cache the run makes goes in here, so the tree a test leaves behind is the tree it took with it.
+    temp: PathBuf,
     _dir: tempfile::TempDir,
 }
 
@@ -24,7 +26,13 @@ fn fixture(name: &str) -> Fixture {
         .expect("tempdir");
     let root = dir.path().join(name);
     copy_dir(&mjutest_devkit::paths::fixtures_dir().join(name), &root);
-    Fixture { root, _dir: dir }
+    let temp = dir.path().join("temp");
+    std::fs::create_dir_all(&temp).expect("mkdir");
+    Fixture {
+        root,
+        temp,
+        _dir: dir,
+    }
 }
 
 fn copy_dir(from: &Path, to: &Path) {
@@ -46,6 +54,7 @@ fn copy_dir(from: &Path, to: &Path) {
 fn against(fixture: &Fixture, args: &[&str]) -> Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_rust-mutants"));
     command.env("NO_COLOR", "1");
+    command.env("TMPDIR", &fixture.temp);
     command.args(args);
     command.args(["--root", &fixture.root.to_string_lossy()]);
     command.output().expect("rust-mutants runs")
@@ -255,6 +264,7 @@ fn a_process_that_already_selects_a_mutant_is_refused_before_anything_runs() {
     let output = Command::new(env!("CARGO_BIN_EXE_rust-mutants"))
         .args(["list", "--root", &fixture.root.to_string_lossy()])
         .env("NO_COLOR", "1")
+        .env("TMPDIR", &fixture.temp)
         .env("RUST_MUTANTS_ACTIVE", "0".repeat(64))
         .output()
         .expect("rust-mutants runs");
@@ -298,4 +308,61 @@ fn doctor_names_the_toolchain_the_workspace_and_where_temporary_trees_go() {
         assert!(text.contains(label), "{label} is missing from {text}");
     }
     assert!(text.contains("rust-mutants-snap-"), "{text}");
+}
+
+#[test]
+fn cache_says_what_a_run_left_in_the_temporary_directory_and_gc_reclaims_it() {
+    let dir = tempfile::Builder::new()
+        .prefix("rust-mutants-cache-")
+        .tempdir()
+        .expect("tempdir");
+    let root = dir.path().join("fixture-simple");
+    copy_dir(
+        &mjutest_devkit::paths::fixtures_dir().join("fixture-simple"),
+        &root,
+    );
+    let temp = dir.path().join("temp");
+    std::fs::create_dir_all(&temp).expect("mkdir");
+
+    let against_temp = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_rust-mutants"))
+            .args(args)
+            .args(["--root", &root.to_string_lossy()])
+            .env("NO_COLOR", "1")
+            .env("TMPDIR", &temp)
+            .output()
+            .expect("rust-mutants runs")
+    };
+
+    let run = against_temp(&["run", "--offline", "--locked", "--no-report"]);
+    assert_eq!(run.status.code(), Some(1), "{}", stdout(&run));
+
+    let listed = Command::new(env!("CARGO_BIN_EXE_rust-mutants"))
+        .arg("cache")
+        .env("NO_COLOR", "1")
+        .env("TMPDIR", &temp)
+        .output()
+        .expect("rust-mutants runs");
+    let text = String::from_utf8_lossy(&listed.stdout).into_owned();
+    assert_eq!(listed.status.code(), Some(0), "{text}");
+    assert!(text.contains("caches      1 reclaimable"), "{text}");
+    assert!(
+        text.contains("snapshots   0 reclaimable"),
+        "a finished run removes its snapshot and keeps its cache: {text}"
+    );
+
+    let collected = Command::new(env!("CARGO_BIN_EXE_rust-mutants"))
+        .args(["cache", "--gc"])
+        .env("NO_COLOR", "1")
+        .env("TMPDIR", &temp)
+        .output()
+        .expect("rust-mutants runs");
+    let text = String::from_utf8_lossy(&collected.stdout).into_owned();
+    assert!(text.contains("caches      1 removed"), "{text}");
+    let left: Vec<PathBuf> = std::fs::read_dir(&temp)
+        .expect("the temporary directory")
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .collect();
+    assert!(left.is_empty(), "gc collects the caches: {left:?}");
 }

@@ -6,6 +6,7 @@
 #![expect(
     clippy::expect_used,
     clippy::indexing_slicing,
+    clippy::create_dir,
     reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
 )]
 
@@ -15,8 +16,8 @@ use std::time::{Duration, SystemTime};
 
 use jiff::Timestamp;
 use rust_mutants::tempowner::{
-    ClaimError, LEGACY_MAX_AGE, LOCK_NAME, MARKER_NAME, MarkerError, SCHEMA, acquire, claim,
-    lock_path, marker_path, read_marker, sweep, sweep_with,
+    ClaimError, LEGACY_MAX_AGE, LOCK_NAME, MARKER_NAME, MarkerError, Role, SCHEMA, acquire, claim,
+    claim_cache, lock_path, marker_path, read_marker, reclaim, sweep, sweep_with,
 };
 
 /// The real clock: the legacy rule compares against real modification times.
@@ -214,4 +215,75 @@ fn a_half_written_marker_does_not_make_a_dead_directory_immortal() {
     fs::write(marker_path(&dir), b"{\"schema\":\"rust-mut").expect("write");
     let result = sweep(parent, &["rust-mutants-snap-"], now()).expect("ok");
     assert_eq!(result.removed, std::slice::from_ref(&dir));
+}
+
+#[test]
+fn a_cache_survives_a_sweep_and_is_reclaimed_only_when_asked() {
+    let parent = tempfile::tempdir().expect("tempdir");
+    let now = Timestamp::from_second(1_700_000_000).expect("a timestamp");
+
+    let cache = parent.path().join("rust-mutants-target-aaaa");
+    fs::create_dir(&cache).expect("mkdir");
+    let mut owner = claim_cache(&cache, now, "rust-mutants-target-owner-v1")
+        .expect("a fresh directory is claimable");
+    owner.release().expect("release");
+
+    let scratch = parent.path().join("rust-mutants-snap-bbbb");
+    fs::create_dir(&scratch).expect("mkdir");
+    claim(&scratch, now)
+        .expect("a fresh directory is claimable")
+        .release()
+        .expect("release");
+
+    let swept = sweep(
+        parent.path(),
+        &["rust-mutants-target-", "rust-mutants-snap-"],
+        now,
+    )
+    .expect("sweep");
+    assert_eq!(
+        swept.removed.len(),
+        1,
+        "a routine sweep reclaims the scratch and spares the cache: {swept:?}"
+    );
+    assert_eq!(swept.cached, 1);
+    assert!(cache.is_dir(), "the cache is what makes a second run fast");
+    assert!(!scratch.is_dir());
+
+    let reclaimed = reclaim(parent.path(), &["rust-mutants-target-"], now).expect("reclaim");
+    assert_eq!(reclaimed.removed.len(), 1, "{reclaimed:?}");
+    assert!(
+        !cache.is_dir(),
+        "asking for the caches to go is what gc means"
+    );
+}
+
+#[test]
+fn a_cache_a_run_is_using_is_not_reclaimed() {
+    let parent = tempfile::tempdir().expect("tempdir");
+    let now = Timestamp::from_second(1_700_000_000).expect("a timestamp");
+    let cache = parent.path().join("rust-mutants-target-cccc");
+    fs::create_dir(&cache).expect("mkdir");
+    let mut owner = claim_cache(&cache, now, "rust-mutants-target-owner-v1")
+        .expect("a fresh directory is claimable");
+
+    let reclaimed = reclaim(parent.path(), &["rust-mutants-target-"], now).expect("reclaim");
+    assert!(reclaimed.removed.is_empty(), "{reclaimed:?}");
+    assert_eq!(reclaimed.live, 1);
+    assert!(cache.is_dir());
+    owner.release().expect("release");
+}
+
+#[test]
+fn a_marker_written_before_roles_existed_still_reads() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    fs::write(
+        dir.path().join(MARKER_NAME),
+        "{\"schema\":\"rust-mutants-temp-owner-v1\",\"pid\":1,\"started\":\"2026-01-01T00:00:00Z\",\
+         \"kept\":false}",
+    )
+    .expect("write");
+    let marker = read_marker(dir.path()).expect("a marker without a role reads");
+    assert_eq!(marker.role, Role::Scratch);
+    assert!(!marker.kept);
 }

@@ -492,25 +492,39 @@ fn newest(directory: &Path) -> Result<PathBuf, CliError> {
 
 fn cache(gc: bool, environment: &Environment, stdout: &mut dyn Write) -> Result<u8, CliError> {
     let parent = &environment.temp_directory;
-    let prefixes = [snapshot::DIR_PREFIX, workspace::TARGET_DIR_PREFIX];
-    let mut text = String::new();
-    let written = writeln!(text, "temp      {}", parent.display());
-    debug_assert!(written.is_ok(), "writing to a String cannot fail");
-    let swept = if gc {
-        tempowner::sweep(parent, &prefixes, Timestamp::now())
+    let now = Timestamp::now();
+    let scratch = [snapshot::DIR_PREFIX];
+    let caches = [workspace::TARGET_DIR_PREFIX];
+    let nothing = |_dir: &Path| Ok(());
+    let (left, taken) = if gc {
+        (
+            tempowner::sweep(parent, &scratch, now),
+            tempowner::reclaim(parent, &caches, now),
+        )
     } else {
-        tempowner::sweep_with(parent, &prefixes, Timestamp::now(), &|_dir| Ok(()))
-    }
-    .map_err(|source| CliError::writing(parent, source))?;
+        (
+            tempowner::sweep_with(parent, &scratch, now, &nothing),
+            tempowner::reclaim_with(parent, &caches, now, &nothing),
+        )
+    };
+    let left = left.map_err(|source| CliError::writing(parent, source))?;
+    let taken = taken.map_err(|source| CliError::writing(parent, source))?;
+    let mut text = String::new();
+    let verb = if gc { "removed" } else { "reclaimable" };
     let written = write!(
         text,
-        "{}   {} directories, {} bytes\nlive      {} still owned by a running process\nkept      {} preserved on purpose\nfailures  {}\n",
-        if gc { "removed" } else { "abandoned" },
-        swept.removed.len(),
-        swept.removed_bytes,
-        swept.live,
-        swept.kept,
-        swept.failures.len(),
+        "temp        {}\ncaches      {} {}, {} bytes; {} still in use\nsnapshots   {} {}, {} bytes; {} still in use, {} preserved on purpose\nfailures    {}\n",
+        parent.display(),
+        taken.removed.len(),
+        verb,
+        taken.removed_bytes,
+        taken.live,
+        left.removed.len(),
+        verb,
+        left.removed_bytes,
+        left.live,
+        left.kept,
+        left.failures.len().saturating_add(taken.failures.len()),
     );
     debug_assert!(written.is_ok(), "writing to a String cannot fail");
     write(stdout, &text);

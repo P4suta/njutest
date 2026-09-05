@@ -64,6 +64,8 @@ use std::path::PathBuf;
 /// A throwaway copy of a fixture, so the tree the command line opens is one nothing else is reading.
 struct Fixture {
     root: PathBuf,
+    /// Every snapshot and build cache the run makes goes in here, so the tree a test leaves behind is the tree it took with it.
+    temp: PathBuf,
     _dir: tempfile::TempDir,
 }
 
@@ -74,7 +76,13 @@ fn fixture(name: &str) -> Fixture {
         .expect("tempdir");
     let root = dir.path().join(name);
     copy_dir(&mjutest_devkit::paths::fixtures_dir().join(name), &root);
-    Fixture { root, _dir: dir }
+    let temp = dir.path().join("temp");
+    std::fs::create_dir_all(&temp).expect("mkdir");
+    Fixture {
+        root,
+        temp,
+        _dir: dir,
+    }
 }
 
 fn copy_dir(from: &Path, to: &Path) {
@@ -97,6 +105,7 @@ fn copy_dir(from: &Path, to: &Path) {
 fn against(fixture: &Fixture, args: &[&str]) -> Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_rust-mutants"));
     command.env("NO_COLOR", "1");
+    command.env("TMPDIR", &fixture.temp);
     command.arg(args[0]);
     command.args(["--root", &fixture.root.to_string_lossy()]);
     command.args(["--tier", "all"]);

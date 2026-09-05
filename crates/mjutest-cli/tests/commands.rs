@@ -49,6 +49,10 @@ fn mjutest(fixture: &Fixture, args: &[&str]) -> Output {
         .env_clear()
         .env("NO_COLOR", "1")
         .env("XDG_CACHE_HOME", fixture.root.join(".cache"))
+        .env(
+            "TMPDIR",
+            mjutest_devkit::paths::temp_beside(&fixture.root).expect("a temporary directory"),
+        )
         .envs(std::env::vars_os().filter(|(key, _)| {
             matches!(
                 key.to_string_lossy().as_ref(),

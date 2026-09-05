@@ -19,6 +19,9 @@ use crate::trace::{OpenRecord, Recorder, SnapshotRecord, SweepRecord};
 /// Where the engine puts the target directory of a run, under the temporary root: one per source root, so successive runs share cargo's incremental state.
 pub const TARGET_DIR_PREFIX: &str = "rust-mutants-target-";
 
+/// The schema a target directory's owner marker names, so a reader can tell a build cache from a run's scratch tree.
+pub const TARGET_OWNER_SCHEMA: &str = "rust-mutants-target-owner-v1";
+
 /// Configures [`Workspace::open`].
 #[derive(Debug, Default)]
 pub struct OpenOptions {
@@ -44,6 +47,12 @@ pub struct OpenOptions {
     pub trace: Recorder,
 }
 
+/// Claims the build cache for the life of this workspace, so a sweep elsewhere leaves it alone while cargo is writing into it. A cache that cannot be claimed is one another run is already using, which is not this run's business and not a reason to fail: cargo takes its own lock.
+fn claim_target(dir: &Path, now: jiff::Timestamp) -> Option<tempowner::Owner> {
+    std::fs::create_dir_all(dir).ok()?;
+    tempowner::claim_cache(dir, now, TARGET_OWNER_SCHEMA).ok()
+}
+
 /// A read-only source tree and the disposable copy of it this run works in.
 #[derive(Debug)]
 pub struct Workspace {
@@ -51,6 +60,8 @@ pub struct Workspace {
     pub(crate) toolchain: Toolchain,
     pub(crate) metadata: Metadata,
     pub(crate) target_dir: PathBuf,
+    /// The claim on that directory: held for the life of the workspace so a concurrent sweep leaves it alone, and released without removing anything.
+    pub(crate) target_owner: Option<tempowner::Owner>,
     pub(crate) base_env: Vec<(OsString, OsString)>,
     pub(crate) swept: SweepResult,
     pub(crate) keep_temp: bool,
@@ -183,12 +194,14 @@ impl Workspace {
                 .strip_prefix(DIR_PREFIX)
                 .unwrap_or_default()
         ));
+        let target_owner = claim_target(&target_dir, now);
         phase.end();
         Ok(Self {
             snapshot,
             toolchain,
             metadata,
             target_dir,
+            target_owner,
             base_env,
             swept,
             keep_temp: options.keep_temp,
@@ -292,6 +305,9 @@ impl Workspace {
     /// # Errors
     /// A snapshot directory that could not be removed.
     pub fn close(mut self) -> Result<Vec<PathBuf>, crate::EngineError> {
+        if let Some(mut owner) = self.target_owner.take() {
+            drop(owner.release());
+        }
         if self.keep_temp {
             let dir = self.snapshot.dir().to_path_buf();
             self.snapshot.keep()?;

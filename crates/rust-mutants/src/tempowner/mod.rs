@@ -24,6 +24,18 @@ pub const MARKER_NAME: &str = "owner.json";
 /// How long an unowned directory must have been untouched before [`sweep`] treats it as a leftover.
 pub const LEGACY_MAX_AGE: Duration = Duration::from_hours(24);
 
+/// What a claimed directory is for. A scratch belongs to one run and goes away with it; a cache is meant to outlive the run that filled it, which is what makes a second run fast.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum Role {
+    /// One run's working tree. A sweep reclaims it as soon as nobody holds its lock.
+    #[default]
+    Scratch,
+    /// A build cache. A sweep spares it however old it is; only a caller that asks for it by name reclaims it.
+    Cache,
+}
+
 /// The JSON document in a claimed directory. Written once at creation and rewritten only to record a deliberate keep.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -36,6 +48,9 @@ pub struct Marker {
     pub started: Timestamp,
     /// Whether the directory was preserved on purpose and is not an orphan.
     pub kept: bool,
+    /// What the directory is for. Absent in a marker written before roles existed, which means a scratch.
+    #[serde(default)]
+    pub role: Role,
 }
 
 /// The lock file inside `dir`.
@@ -102,6 +117,18 @@ pub fn claim(dir: &Path, now: Timestamp) -> Result<Owner, ClaimError> {
 /// # Errors
 /// Those of [`claim`].
 pub fn claim_as(dir: &Path, now: Timestamp, schema: &str) -> Result<Owner, ClaimError> {
+    claim_with(dir, now, schema, Role::Scratch)
+}
+
+/// [`claim_as`] for a build cache: a directory a sweep spares however old it is, because the next run wants what is in it.
+///
+/// # Errors
+/// Those of [`claim`].
+pub fn claim_cache(dir: &Path, now: Timestamp, schema: &str) -> Result<Owner, ClaimError> {
+    claim_with(dir, now, schema, Role::Cache)
+}
+
+fn claim_with(dir: &Path, now: Timestamp, schema: &str, role: Role) -> Result<Owner, ClaimError> {
     let lock = acquire(&lock_path(dir)).map_err(|source| ClaimError::Lock {
         dir: dir.to_path_buf(),
         source,
@@ -116,6 +143,7 @@ pub fn claim_as(dir: &Path, now: Timestamp, schema: &str) -> Result<Owner, Claim
         pid: std::process::id(),
         started: now,
         kept: false,
+        role,
     };
     if let Err(source) = write_marker(dir, &marker) {
         drop(lock);
@@ -261,6 +289,8 @@ pub struct SweepResult {
     pub live: usize,
     /// How many were preserved on purpose.
     pub kept: usize,
+    /// How many are build caches, which a sweep spares.
+    pub cached: usize,
     /// The directories that could not be judged or removed. A failure does not stop the sweep of the others.
     pub failures: Vec<SweepFailure>,
 }
@@ -273,6 +303,38 @@ pub fn sweep(parent: &Path, prefixes: &[&str], now: Timestamp) -> io::Result<Swe
     sweep_with(parent, prefixes, now, &|dir: &Path| fs::remove_dir_all(dir))
 }
 
+/// Removes every unlocked directory under `parent` whose name is prefixed, caches included.
+///
+/// This is what a person means by collecting the caches: [`sweep`] spares
+/// them so that the next run is fast, and this does not.
+///
+/// # Errors
+/// Returns the failure to read `parent` itself.
+pub fn reclaim(parent: &Path, prefixes: &[&str], now: Timestamp) -> io::Result<SweepResult> {
+    reclaim_with(parent, prefixes, now, &|dir: &Path| fs::remove_dir_all(dir))
+}
+
+/// [`reclaim`] with its removal operation as an argument.
+///
+/// # Errors
+/// See [`reclaim`].
+pub fn reclaim_with(
+    parent: &Path,
+    prefixes: &[&str],
+    now: Timestamp,
+    remove: &dyn Fn(&Path) -> io::Result<()>,
+) -> io::Result<SweepResult> {
+    collect(
+        parent,
+        &Pass {
+            prefixes,
+            now,
+            remove,
+            caches_too: true,
+        },
+    )
+}
+
 /// [`sweep`] with its removal operation as an argument, so the "one directory refuses to go" case can be tested without a filesystem persuaded into failing.
 ///
 /// # Errors
@@ -283,6 +345,33 @@ pub fn sweep_with(
     now: Timestamp,
     remove: &dyn Fn(&Path) -> io::Result<()>,
 ) -> io::Result<SweepResult> {
+    collect(
+        parent,
+        &Pass {
+            prefixes,
+            now,
+            remove,
+            caches_too: false,
+        },
+    )
+}
+
+/// What one pass over the temporary directory looks for.
+struct Pass<'a> {
+    prefixes: &'a [&'a str],
+    now: Timestamp,
+    remove: &'a dyn Fn(&Path) -> io::Result<()>,
+    /// Whether a build cache nobody holds counts as reclaimable.
+    caches_too: bool,
+}
+
+fn collect(parent: &Path, pass: &Pass<'_>) -> io::Result<SweepResult> {
+    let Pass {
+        prefixes,
+        now,
+        remove,
+        caches_too,
+    } = *pass;
     let entries = match fs::read_dir(parent) {
         Ok(entries) => entries,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(SweepResult::default()),
@@ -310,9 +399,20 @@ pub fn sweep_with(
             continue;
         }
         let dir = parent.join(&name);
-        match judge(&dir, &entry, now) {
+        let verdict = match judge(&dir, &entry, now) {
+            Ok(Verdict::Cache) if caches_too => match acquire(&lock_path(&dir))? {
+                None => Ok(Verdict::Live),
+                Some(mut lock) => {
+                    lock.release()?;
+                    Ok(Verdict::Abandoned)
+                }
+            },
+            other => other,
+        };
+        match verdict {
             Ok(Verdict::Live) => result.live = result.live.saturating_add(1),
             Ok(Verdict::Kept) => result.kept = result.kept.saturating_add(1),
+            Ok(Verdict::Cache) => result.cached = result.cached.saturating_add(1),
             Ok(Verdict::Spared) => {}
             Ok(Verdict::Abandoned) => {
                 let size = directory_size(&dir);
@@ -337,6 +437,8 @@ enum Verdict {
     Live,
     /// The marker says it was preserved.
     Kept,
+    /// The marker says it is a build cache, which outlives the run that filled it.
+    Cache,
     /// Left alone without being counted: an unowned directory too young to judge. Not a fact about a live owner, so not a number in the result.
     Spared,
 }
@@ -345,6 +447,7 @@ enum Verdict {
 fn judge(dir: &Path, entry: &fs::DirEntry, now: Timestamp) -> io::Result<Verdict> {
     match read_marker(dir) {
         Ok(marker) if marker.kept => return Ok(Verdict::Kept),
+        Ok(marker) if marker.role == Role::Cache => return Ok(Verdict::Cache),
         Err(MarkerError::Missing { .. }) => return legacy(entry, now),
         Ok(_) | Err(_) => {}
     }
