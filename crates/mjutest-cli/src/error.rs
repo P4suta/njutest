@@ -149,6 +149,11 @@ code!(
     "a provider offered an environment variable a run composes itself"
 );
 code!(
+    MIRI_MISSING,
+    "MJ7001",
+    "the toolchain has no miri, and this contract promises interpretation"
+);
+code!(
     GENERATION_PROTOCOL,
     "MJ5006",
     "a generation provider said something this version does not understand"
@@ -194,6 +199,12 @@ pub enum RunnerError {
     /// A provider could not be used.
     #[error(transparent)]
     Provider(#[from] crate::provider::ProviderError),
+    /// The toolchain has no Miri, and the contract promises interpretation.
+    #[error("{}: {message}", MIRI_MISSING.code)]
+    MiriMissing {
+        /// What the toolchain said.
+        message: String,
+    },
     /// A resource could not be leased.
     #[error(transparent)]
     Resource(#[from] crate::resource::ResourceError),
@@ -223,6 +234,7 @@ impl RunnerError {
             Self::Cache(error) => error.code(),
             Self::Coverage(error) => error.code(),
             Self::Provider(error) => error.code(),
+            Self::MiriMissing { .. } => MIRI_MISSING,
             Self::Resource(error) => error.code(),
             Self::Report(error) => error.code(),
             Self::Scratch(error) => error.code(),
@@ -269,6 +281,7 @@ pub const fn error_codes() -> &'static [ErrorCode] {
         REPORT_UNSOUND,
         REPORT_NOT_KEPT,
         RUN_NOT_FOUND,
+        MIRI_MISSING,
         SCRATCH_UNUSABLE,
         BUILD_CACHE_UNUSABLE,
         CACHE_UNUSABLE,

@@ -382,6 +382,8 @@ pub enum FindingKind {
     FlakyTest,
     /// Something a run could not measure, so it claims nothing about it.
     NotMeasured,
+    /// The interpreter found unsoundness in what the compiler cannot check.
+    UndefinedBehaviour,
 }
 
 impl FindingKind {
@@ -389,7 +391,9 @@ impl FindingKind {
     #[must_use]
     pub const fn is_defect(self) -> bool {
         match self {
-            Self::BuildFailure | Self::FailingTest | Self::FlakyTest => true,
+            Self::BuildFailure | Self::FailingTest | Self::FlakyTest | Self::UndefinedBehaviour => {
+                true
+            }
             Self::TargetMissing | Self::SurvivingMutant | Self::Timeout | Self::NotMeasured => {
                 false
             }

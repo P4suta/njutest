@@ -115,5 +115,6 @@ first digit names an area:
 | `MJ8002` | A build cache layer could not be used: it holds files this program did not put there, or it could not be written. Never a reason to fail a run — the command builds without one. |
 | `MJ8003` | The store of earlier answers could not be used, or a report was offered for storage that must not be stored. |
 | `MJ8004` | A stored answer is not the answer it claims to be: a document that does not parse, that does not carry the identity it is filed under, or that does not satisfy the audit every durable report must. |
+| `MJ7001` | The toolchain has no `cargo miri`, and the `deep-v1` contract promises the suite is interpreted. Install it (`rustup +nightly component add miri`) or verify under `standard-v1`. |
 | `MJ8001` | The run has nowhere to work: its scratch directory could not be made. Failing to *claim* one is a limitation, not an error. |
 | `MJ6003` | The report contradicts itself — the numbers do not add up, the verdict is more than what ran supports, a fact recorded as unavailable is also present — so nothing was written. |

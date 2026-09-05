@@ -113,6 +113,7 @@ pub fn run(
 
     notes.phase("soundness");
     take_inventory(&mut report, request, &metadata);
+    interpreted(&mut report, request, (&toolchain, environment), watch)?;
     let layer = layer_for(&toolchain, environment, &scratch, notes)?;
 
     let mut resources = holding(request, environment, &mut report, (notes, watch))?;
@@ -185,6 +186,39 @@ fn surveyed(
         .map(|package| package.name.clone())
         .collect();
     report.scope.resolved_packages = resolved(request, &report.repository.packages);
+}
+
+/// Interprets the suite under Miri when the contract promises it.
+///
+/// # Errors
+/// A toolchain with no Miri, which a contract that promises interpretation
+/// cannot answer for.
+fn interpreted(
+    report: &mut Report,
+    request: &Request,
+    with: (&rust_mutants::cargo::Toolchain, &Environment),
+    watch: Watch<'_>,
+) -> Result<(), RunnerError> {
+    if request.config.contract != crate::config::Contract::DeepV1 {
+        return Ok(());
+    }
+    let (toolchain, environment) = with;
+    let done = super::deep::interpret(
+        &super::deep::Interpreting {
+            root: &request.root,
+            cargo: toolchain.cargo(),
+            env: environment.vars.clone(),
+            packages: &report.scope.resolved_packages,
+            flags: &request.config.soundness.miri_flags,
+            timeout: Some(request.config.execution.timeout),
+            offline: request.cargo.offline,
+        },
+        watch,
+    )?;
+    report.accounting.soundness.executed = done.executed;
+    report.findings.extend(done.findings);
+    report.limitations.extend(done.limitations);
+    Ok(())
 }
 
 /// The limitation a run states when a generation provider could not be asked.

@@ -4,6 +4,7 @@
 //! The phases of one verification, and what coordinates them.
 
 pub mod baseline;
+pub mod deep;
 pub mod identity;
 pub mod mutation;
 pub mod repair;
