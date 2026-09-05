@@ -15,6 +15,7 @@
 #![forbid(unsafe_code)]
 
 pub mod app;
+pub mod build;
 pub mod build_cache;
 pub mod cli;
 pub mod config;

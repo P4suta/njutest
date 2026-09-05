@@ -58,6 +58,12 @@ code!(
     "MJ1005",
     "a configuration file is already there"
 );
+code!(BUILD_FAILED, "MJ3002", "the build could not be run");
+code!(
+    BUILD_UNREADABLE,
+    "MJ3003",
+    "the build's output could not be read"
+);
 code!(
     TARGET_LIST_FAILED,
     "MJ3001",
@@ -155,6 +161,8 @@ pub const fn error_codes() -> &'static [ErrorCode] {
         CONFIG_UNSUPPORTED_VERSION,
         CONFIG_EXISTS,
         TARGET_LIST_FAILED,
+        BUILD_FAILED,
+        BUILD_UNREADABLE,
         COVERAGE_UNREADABLE,
         COVERAGE_TOOLS_MISSING,
         COVERAGE_TOOL_FAILED,

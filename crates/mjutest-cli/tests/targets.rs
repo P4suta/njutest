@@ -115,8 +115,8 @@ fn a_binary_with_its_own_harness_is_one_target_and_says_so() {
 /// Builds a fixture's test binaries the way a run does, and returns the
 /// units they came from.
 fn built_units(fixture: &str) -> (Vec<Unit>, tempfile::TempDir) {
+    use mjutest_cli::build::{BuildOptions, Cargo, Flavour, Selection, build};
     use rust_mutants::cargo::{Driver, LocateOptions, Metadata, MetadataOptions, Toolchain};
-    use rust_mutants::execute::{BuildOptions, build};
 
     let dir = mjutest_devkit::paths::fixtures_dir().join(fixture);
     let target = tempfile::Builder::new()
@@ -125,6 +125,7 @@ fn built_units(fixture: &str) -> (Vec<Unit>, tempfile::TempDir) {
         .expect("tempdir");
     let cancel = Cancel::new();
     let engine_trace = rust_mutants::trace::Recorder::disabled();
+    let trace = Recorder::disabled();
     let toolchain = Toolchain::locate(
         &LocateOptions {
             cargo: Some(mjutest_devkit::paths::cargo_binary()),
@@ -134,41 +135,40 @@ fn built_units(fixture: &str) -> (Vec<Unit>, tempfile::TempDir) {
         &cancel,
     )
     .expect("locate");
-    let driver = Driver {
-        toolchain: &toolchain,
-        dir: &dir,
-        cancel: &cancel,
-        trace: &engine_trace,
-    };
     let metadata = Metadata::load(
-        &driver,
+        &Driver {
+            toolchain: &toolchain,
+            dir: &dir,
+            cancel: &cancel,
+            trace: &engine_trace,
+        },
         MetadataOptions {
             locked: true,
             offline: true,
         },
     )
     .expect("metadata");
-    let targets = build(
-        &driver,
+    let built = build(
+        &toolchain,
         &metadata.packages,
         &BuildOptions {
-            target_dir: Some(target.path().to_path_buf()),
-            locked: true,
-            offline: true,
+            root: dir,
+            selection: Selection::default(),
+            flavour: Flavour::Native,
+            target_dir: target.path().join("layer"),
+            scratch_build_dir: target.path().join("scratch"),
+            env: std::env::vars_os().collect(),
+            cargo: Cargo {
+                offline: true,
+                locked: true,
+            },
+            timeout: None,
         },
+        Watch::new(&cancel, &trace),
     )
     .expect("build");
-    let units = targets
-        .into_iter()
-        .map(|target| Unit {
-            package: target.package,
-            kind: UnitKind::of(target.kind),
-            name: target.name,
-            executable: target.executable,
-            cwd: target.cwd,
-        })
-        .collect();
-    (units, target)
+    assert!(built.failure.is_none(), "{:?}", built.failure);
+    (built.units, target)
 }
 
 #[test]

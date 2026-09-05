@@ -79,6 +79,8 @@ first digit names an area:
 | `MJ1004` | The configuration names a version this release does not understand. |
 | `MJ1005` | A configuration file is already there, and `init` was not told to replace it. |
 | `MJ3001` | A test binary could not be asked what tests it holds. |
+| `MJ3002` | The build could not be run: cargo would not start, or was stopped. A workspace that does not *compile* is a finding in the report, not this. |
+| `MJ3003` | The build's output is not the message stream this version understands. |
 | `MJ4001` | A coverage export could not be read. |
 | `MJ4002` | The LLVM tools the toolchain ships are not installed (`rustup component add llvm-tools`). |
 | `MJ4003` | `llvm-profdata` or `llvm-cov` failed. |

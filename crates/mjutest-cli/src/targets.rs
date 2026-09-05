@@ -23,6 +23,7 @@
 //! [`WHOLE_BINARY`], and the report carries that as a limitation rather than
 //! pretending the tests inside it were routed.
 
+use std::ffi::OsString;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -107,6 +108,11 @@ pub struct Unit {
     pub executable: PathBuf,
     /// The directory it runs in.
     pub cwd: PathBuf,
+    /// The complete environment its processes run with: the run's own, what
+    /// cargo sets for this target, and the scratch build layer. An argument
+    /// rather than an inheritance, so a listing and an execution see the
+    /// same machine and a test can say what that is.
+    pub env: Vec<(OsString, OsString)>,
 }
 
 /// One test a run measures.
@@ -274,11 +280,12 @@ impl TargetError {
 pub fn enumerate(unit: &Unit, watch: Watch<'_>) -> Result<Vec<Target>, TargetError> {
     let mut spec = Spec::new([
         unit.executable.as_os_str().to_owned(),
-        std::ffi::OsString::from("--list"),
-        std::ffi::OsString::from("--format"),
-        std::ffi::OsString::from("terse"),
+        OsString::from("--list"),
+        OsString::from("--format"),
+        OsString::from("terse"),
     ]);
     spec.dir = Some(unit.cwd.clone());
+    spec.env = Some(unit.env.clone());
     spec.timeout = Some(LIST_TIMEOUT);
     spec.structured_stdout = Some(64 << 20);
     let listed = run(&spec, watch.cancel);
@@ -344,12 +351,13 @@ fn whole_binary(unit: &Unit) -> Target {
 fn ignored_paths(unit: &Unit, watch: Watch<'_>) -> std::collections::BTreeSet<String> {
     let mut spec = Spec::new([
         unit.executable.as_os_str().to_owned(),
-        std::ffi::OsString::from("--list"),
-        std::ffi::OsString::from("--ignored"),
-        std::ffi::OsString::from("--format"),
-        std::ffi::OsString::from("terse"),
+        OsString::from("--list"),
+        OsString::from("--ignored"),
+        OsString::from("--format"),
+        OsString::from("terse"),
     ]);
     spec.dir = Some(unit.cwd.clone());
+    spec.env = Some(unit.env.clone());
     spec.timeout = Some(LIST_TIMEOUT);
     spec.structured_stdout = Some(64 << 20);
     let listed = run(&spec, watch.cancel);
