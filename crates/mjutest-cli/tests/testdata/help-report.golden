@@ -1,0 +1,20 @@
+Show what a completed run concluded
+
+Usage: mjutest report [OPTIONS] [RUN]
+
+Arguments:
+  [RUN]
+          The run to show. The latest by default
+
+Options:
+      --format <FORMAT>
+          How to write it
+
+          Possible values:
+          - lines: The record stream
+          - json:  The canonical document, exactly as the run wrote it
+          
+          [default: lines]
+
+  -h, --help
+          Print help (see a summary with '-h')

@@ -7,9 +7,14 @@
 //! writes to the two streams it was handed, so a test drives one exactly as
 //! the binary does and reads back what a person would have seen.
 
+pub mod diagnostics;
 pub mod doctor;
 pub mod init;
+pub mod plan;
 pub mod reports;
+pub mod runs;
+pub mod show;
+pub mod trace;
 pub mod verify;
 
 use std::io::Write;
@@ -27,6 +32,10 @@ pub fn run(
         Command::Init(arguments) => init::run(*arguments, environment, stdout, stderr),
         Command::Doctor(arguments) => doctor::run(*arguments, environment, stdout, stderr),
         Command::Verify(arguments) => verify::run(arguments, environment, stdout, stderr),
+        Command::Plan(arguments) => plan::run(arguments, environment, stdout, stderr),
+        Command::Report(arguments) => show::run(arguments, environment, stdout, stderr),
+        Command::Trace { command } => trace::run(command, environment, stdout, stderr),
+        Command::Diagnostics(arguments) => diagnostics::run(arguments, environment, stdout, stderr),
     }
 }
 

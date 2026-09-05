@@ -8,10 +8,14 @@ never a percentage.
 Usage: mjutest <COMMAND>
 
 Commands:
-  verify  Verify the workspace and report a verdict
-  init    Write an annotated .mjutest.toml
-  doctor  Report the toolchain and the tools a run needs
-  help    Print this message or the help of the given subcommand(s)
+  verify       Verify the workspace and report a verdict
+  init         Write an annotated .mjutest.toml
+  plan         Say what a run would measure, without measuring it
+  report       Show what a completed run concluded
+  trace        Read what a run recorded
+  diagnostics  Bundle everything about one run into one directory
+  doctor       Report the toolchain and the tools a run needs
+  help         Print this message or the help of the given subcommand(s)
 
 Options:
   -h, --help

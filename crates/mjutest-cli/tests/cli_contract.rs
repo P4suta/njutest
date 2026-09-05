@@ -101,7 +101,15 @@ fn an_unknown_flag_is_invalid_input_and_exits_3() {
 
 #[test]
 fn every_subcommand_has_its_own_recorded_help() {
-    for name in ["verify", "init", "doctor"] {
+    for name in [
+        "verify",
+        "plan",
+        "report",
+        "trace",
+        "diagnostics",
+        "init",
+        "doctor",
+    ] {
         let output = mjutest(&[name, "--help"]);
         assert_eq!(
             output.status.code(),

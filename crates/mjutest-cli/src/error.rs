@@ -100,6 +100,11 @@ code!(
     "a document is not the assurance report this version understands"
 );
 code!(
+    RUN_NOT_FOUND,
+    "MJ6005",
+    "there is no such run to answer about"
+);
+code!(
     REPORT_NOT_KEPT,
     "MJ6004",
     "the report could not be written where a reader will look for it"
@@ -192,6 +197,7 @@ pub const fn error_codes() -> &'static [ErrorCode] {
         REPORT_UNREADABLE,
         REPORT_UNSOUND,
         REPORT_NOT_KEPT,
+        RUN_NOT_FOUND,
         SCRATCH_UNUSABLE,
         BUILD_CACHE_UNUSABLE,
     ]

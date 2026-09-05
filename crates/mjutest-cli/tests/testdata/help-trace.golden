@@ -1,0 +1,11 @@
+Read what a run recorded
+
+Usage: mjutest trace <COMMAND>
+
+Commands:
+  summary  What one recording holds, and what is wrong with it
+  diff     What moved between two recordings, without replaying either
+  help     Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help  Print help

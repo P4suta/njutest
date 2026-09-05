@@ -123,6 +123,22 @@ pub enum Command {
     /// guidance, so loading it untouched configures exactly what configuring
     /// nothing would.
     Init(Init),
+    /// Say what a run would measure, without measuring it.
+    ///
+    /// It builds, because there is no way to know what tests exist without
+    /// asking the binaries that hold them, but it runs none of them and
+    /// writes no report.
+    Plan(Plan),
+    /// Show what a completed run concluded.
+    Report(Report),
+    /// Read what a run recorded.
+    Trace {
+        /// What to read.
+        #[command(subcommand)]
+        command: TraceCommand,
+    },
+    /// Bundle everything about one run into one directory.
+    Diagnostics(Diagnostics),
     /// Report the toolchain and the tools a run needs.
     ///
     /// Exits 0 when a standard-v1 run could go ahead on this machine and 3
@@ -187,6 +203,80 @@ pub struct Init {
 /// `mjutest doctor`.
 #[derive(Debug, Clone, Copy, clap::Args)]
 pub struct Doctor {}
+
+/// `mjutest plan`.
+#[derive(Debug, Clone, clap::Args)]
+pub struct Plan {
+    /// The workspace to plan for. The working directory by default.
+    #[arg(long, value_name = "DIR")]
+    pub directory: Option<PathBuf>,
+    /// Plan only this package. Repeatable.
+    #[arg(long = "package", short = 'p', value_name = "NAME")]
+    pub packages: Vec<String>,
+    /// Say what put each target in scope.
+    #[arg(long)]
+    pub why: bool,
+    /// Pass --offline to every cargo command.
+    #[arg(long)]
+    pub offline: bool,
+    /// Pass --locked to every cargo command.
+    #[arg(long)]
+    pub locked: bool,
+}
+
+/// `mjutest report`.
+#[derive(Debug, Clone, clap::Args)]
+pub struct Report {
+    /// The run to show. The latest by default.
+    #[arg(value_name = "RUN")]
+    pub run: Option<String>,
+    /// How to write it.
+    #[arg(long, value_enum, default_value_t = Format::Lines)]
+    pub format: Format,
+}
+
+/// `mjutest diagnostics`.
+#[derive(Debug, Clone, clap::Args)]
+pub struct Diagnostics {
+    /// The run to bundle.
+    #[arg(value_name = "RUN")]
+    pub run: String,
+}
+
+/// `mjutest trace`.
+#[derive(Debug, Clone, Subcommand)]
+#[non_exhaustive]
+pub enum TraceCommand {
+    /// What one recording holds, and what is wrong with it.
+    ///
+    /// Exits 2 when the recording is not whole: a summary of a recording
+    /// with holes in it is a summary of something else.
+    Summary {
+        /// The run to read. The latest by default.
+        #[arg(value_name = "RUN")]
+        run: Option<String>,
+    },
+    /// What moved between two recordings, without replaying either.
+    Diff {
+        /// The earlier run.
+        #[arg(value_name = "RUN-A")]
+        a: String,
+        /// The later run.
+        #[arg(value_name = "RUN-B")]
+        b: String,
+    },
+}
+
+/// How a stored report is written out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, ValueEnum)]
+#[value(rename_all = "lower")]
+pub enum Format {
+    /// The record stream.
+    #[default]
+    Lines,
+    /// The canonical document, exactly as the run wrote it.
+    Json,
+}
 
 /// How a run writes what it is doing while it does it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, ValueEnum)]
