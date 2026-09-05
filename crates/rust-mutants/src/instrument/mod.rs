@@ -120,6 +120,39 @@ pub struct Guard {
     pub site: Span,
 }
 
+/// Where one mutant's own text sits in an instrumented file.
+///
+/// This is what makes a compiler diagnostic attributable: an error whose
+/// span falls inside a branch belongs to exactly that mutant, and one that
+/// falls outside every branch is about the program the user wrote.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Branch {
+    /// The mutant's dense catalog index.
+    pub index: u32,
+    /// The byte range the alternative occupies in the instrumented text.
+    pub span: Span,
+}
+
+/// Moves a range along by `by` bytes.
+const fn shift(span: Span, by: u32) -> Span {
+    Span {
+        start: span.start.saturating_add(by),
+        end: span.end.saturating_add(by),
+    }
+}
+
+/// A rewritten file: its text and where every alternative landed in it.
+struct Rewritten {
+    text: String,
+    branches: Vec<Branch>,
+}
+
+/// A rendered site: its text and where each alternative sits in it.
+struct Rendered {
+    text: String,
+    branches: Vec<(u32, Span)>,
+}
+
 /// One instrumented file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileOutput {
@@ -129,6 +162,9 @@ pub struct FileOutput {
     pub text: String,
     /// Every guard placed, in catalog order.
     pub guards: Vec<Guard>,
+    /// Every alternative branch, in file order: where each mutant's own
+    /// text landed.
+    pub branches: Vec<Branch>,
     /// The name the runtime module took, empty when none was generated.
     pub module: String,
     /// Whether anything was rewritten. A file with no mutants comes back
@@ -316,6 +352,7 @@ pub fn instrument_file(
             path: path.to_owned(),
             text: text.to_owned(),
             guards: Vec::new(),
+            branches: Vec::new(),
             module: String::new(),
             instrumented: false,
         });
@@ -328,27 +365,7 @@ pub fn instrument_file(
     file.check_placements(placements)?;
     let forest = file.forest(placements)?;
 
-    let mut splices = Vec::new();
-    for root in forest.roots() {
-        let rendered = file.render(root)?;
-        splices.push(file.splice(root.span, rendered)?);
-    }
-    splices.extend(File::allow_splices(placements, forest.roots()));
-    splices.sort_by_key(|splice| splice.span.start);
-    let (rewritten, _offsets) = apply(source, &splices).map_err(|error| {
-        InstrumentError::new(
-            InstrumentErrorKind::SpliceFailed,
-            path,
-            format!("the guards could not be applied: {error}"),
-        )
-    })?;
-    let mut text = String::from_utf8(rewritten).map_err(|error| {
-        InstrumentError::new(
-            InstrumentErrorKind::SpliceFailed,
-            path,
-            format!("the rewrite is not valid UTF-8: {error}"),
-        )
-    })?;
+    let Rewritten { mut text, branches } = file.rewrite(source, placements, &forest)?;
     if !text.is_empty() && !text.ends_with('\n') {
         text.push('\n');
     }
@@ -373,6 +390,7 @@ pub fn instrument_file(
         path: path.to_owned(),
         text,
         guards,
+        branches,
         module: file.module,
         instrumented: true,
     })
@@ -484,23 +502,61 @@ impl File<'_> {
         Ok(forest)
     }
 
+    /// Applies every guard and every allow attribute to the file's bytes,
+    /// and reports where each alternative landed in the result.
+    fn rewrite(
+        &self,
+        source: &[u8],
+        placements: &[Placement],
+        forest: &interval::Forest<Placement>,
+    ) -> Result<Rewritten, InstrumentError> {
+        let mut splices = Vec::new();
+        let mut roots = Vec::new();
+        for root in forest.roots() {
+            let rendered = self.render(root)?;
+            splices.push(self.splice(root.span, rendered.text.clone())?);
+            roots.push((root.span, rendered));
+        }
+        splices.extend(Self::allow_splices(placements, forest.roots()));
+        splices.sort_by_key(|splice| splice.span.start);
+        let (rewritten, offsets) = apply(source, &splices).map_err(|error| {
+            self.error(
+                InstrumentErrorKind::SpliceFailed,
+                format!("the guards could not be applied: {error}"),
+            )
+        })?;
+        let text = String::from_utf8(rewritten).map_err(|error| {
+            self.error(
+                InstrumentErrorKind::SpliceFailed,
+                format!("the rewrite is not valid UTF-8: {error}"),
+            )
+        })?;
+        let mut branches: Vec<Branch> = Vec::new();
+        for (span, rendered) in roots {
+            let (at, _exact) = offsets.to_output(span.start);
+            branches.extend(rendered.branches.into_iter().map(|(index, branch)| Branch {
+                index,
+                span: Span {
+                    start: branch.start.saturating_add(at),
+                    end: branch.end.saturating_add(at),
+                },
+            }));
+        }
+        branches.sort_by_key(|branch| (branch.span.start, branch.index));
+        Ok(Rewritten { text, branches })
+    }
+
     /// Renders one site: its alternatives, then its original branch with the
     /// sites nested inside it already rendered.
-    fn render(&self, node: &Node<Placement>) -> Result<String, InstrumentError> {
-        let mut original = String::new();
-        let mut cursor = node.span.start;
-        for child in &node.children {
-            original.push_str(self.slice(Span::new(cursor, child.span.start).map_err(
-                |error| self.error(InstrumentErrorKind::SiteConflict, error.to_string()),
-            )?)?);
-            original.push_str(&self.render(child)?);
-            cursor = child.span.end;
-        }
-        original.push_str(
-            self.slice(Span::new(cursor, node.span.end).map_err(|error| {
-                self.error(InstrumentErrorKind::SiteConflict, error.to_string())
-            })?)?,
-        );
+    ///
+    /// The branch ranges it reports are relative to the start of the text,
+    /// and every nested site's ranges are shifted into it, so a caller that
+    /// knows where the text lands knows where every alternative lands.
+    fn render(&self, node: &Node<Placement>) -> Result<Rendered, InstrumentError> {
+        let Rendered {
+            text: original,
+            branches: nested,
+        } = self.original_branch(node)?;
 
         let site = self.slice(node.span)?;
         let mut alternatives = Vec::with_capacity(node.alternatives.len());
@@ -518,13 +574,13 @@ impl File<'_> {
             .alternatives
             .first()
             .map_or(0, |placement| placement.hint.super_depth);
-        let rendered = guards::compose(
+        let composed = guards::compose(
             form,
             &guards::path(&self.module, depth),
             &alternatives,
             &original,
         );
-        if count_lines(rendered.as_bytes()) != count_lines(site.as_bytes()) {
+        if count_lines(composed.text.as_bytes()) != count_lines(site.as_bytes()) {
             return Err(self.error(
                 InstrumentErrorKind::LinesMoved,
                 format!(
@@ -533,7 +589,57 @@ impl File<'_> {
                 ),
             ));
         }
-        Ok(rendered)
+        let mut branches: Vec<(u32, Span)> = composed
+            .alternatives
+            .iter()
+            .map(|(index, range)| {
+                (
+                    *index,
+                    Span {
+                        start: u32::try_from(range.start).unwrap_or(u32::MAX),
+                        end: u32::try_from(range.end).unwrap_or(u32::MAX),
+                    },
+                )
+            })
+            .collect();
+        let original_at = u32::try_from(composed.original_at).unwrap_or(u32::MAX);
+        branches.extend(
+            nested
+                .iter()
+                .map(|(index, span)| (*index, shift(*span, original_at))),
+        );
+        Ok(Rendered {
+            text: composed.text,
+            branches,
+        })
+    }
+
+    /// The branch that keeps the original: the site's own bytes with every
+    /// site nested inside it already rendered, and their branch ranges
+    /// shifted to where they landed.
+    fn original_branch(&self, node: &Node<Placement>) -> Result<Rendered, InstrumentError> {
+        let bounds = |from: u32, to: u32| {
+            Span::new(from, to)
+                .map_err(|error| self.error(InstrumentErrorKind::SiteConflict, error.to_string()))
+        };
+        let mut text = String::new();
+        let mut branches: Vec<(u32, Span)> = Vec::new();
+        let mut cursor = node.span.start;
+        for child in &node.children {
+            text.push_str(self.slice(bounds(cursor, child.span.start)?)?);
+            let rendered = self.render(child)?;
+            let at = u32::try_from(text.len()).unwrap_or(u32::MAX);
+            branches.extend(
+                rendered
+                    .branches
+                    .iter()
+                    .map(|(index, span)| (*index, shift(*span, at))),
+            );
+            text.push_str(&rendered.text);
+            cursor = child.span.end;
+        }
+        text.push_str(self.slice(bounds(cursor, node.span.end)?)?);
+        Ok(Rendered { text, branches })
     }
 
     /// One alternative: the pristine site with exactly this edit applied,

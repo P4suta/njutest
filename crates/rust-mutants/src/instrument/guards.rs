@@ -21,18 +21,45 @@ pub(super) fn path(module: &str, super_depth: u32) -> String {
     path
 }
 
+/// A composed guard: its text, where each alternative's own text sits in
+/// it, and where the original branch does. The offsets are relative to the
+/// start of the text.
+pub(super) struct Composed {
+    pub(super) text: String,
+    /// One entry per alternative, in the order given: the mutant index and
+    /// the byte range its text occupies.
+    pub(super) alternatives: Vec<(u32, std::ops::Range<usize>)>,
+    /// Where the original branch's text starts.
+    pub(super) original_at: usize,
+}
+
 /// Composes one guard from its alternatives (index and text, in catalog
 /// order) and the original branch.
+///
+/// The offsets it reports are what makes a compiler diagnostic
+/// attributable: an error inside an alternative's range belongs to exactly
+/// that mutant, and one inside the original branch belongs to the program
+/// the user wrote.
 #[must_use]
 pub(super) fn compose(
     form: Form,
     path: &str,
     alternatives: &[(u32, String)],
     original: &str,
-) -> String {
+) -> Composed {
     match form {
         Form::C => selector(path, alternatives, original),
-        Form::E => format!("({})", chain(path, alternatives, original)),
+        Form::E => {
+            let mut composed = chain(path, alternatives, original);
+            composed.text.insert(0, '(');
+            composed.text.push(')');
+            for (_, range) in &mut composed.alternatives {
+                range.start = range.start.saturating_add(1);
+                range.end = range.end.saturating_add(1);
+            }
+            composed.original_at = composed.original_at.saturating_add(1);
+            composed
+        }
         Form::S => chain(path, alternatives, original),
     }
 }
@@ -41,43 +68,62 @@ pub(super) fn compose(
 /// temporary scope of its own. The outer parentheses are load bearing: a
 /// nested Form C site sits inside its parent's `&&` chain, where `&&` binds
 /// tighter than the `||` this composes.
-fn selector(path: &str, alternatives: &[(u32, String)], original: &str) -> String {
-    let mut clauses: Vec<String> = alternatives
-        .iter()
-        .map(|(index, text)| format!("{path}({index}) && ({text})"))
-        .collect();
-    let mut fallback: Vec<String> = alternatives
-        .iter()
-        .map(|(index, _)| format!("!({path}({index}))"))
-        .collect();
-    fallback.push(format!("({original})"));
-    clauses.push(fallback.join(" && "));
-    format!("({})", clauses.join(" || "))
+fn selector(path: &str, alternatives: &[(u32, String)], original: &str) -> Composed {
+    let mut text = String::from("(");
+    let mut spans = Vec::with_capacity(alternatives.len());
+    for (index, alternative) in alternatives {
+        let written = write!(text, "{path}({index}) && (");
+        debug_assert!(written.is_ok(), "writing to a String cannot fail");
+        let start = text.len();
+        text.push_str(alternative);
+        spans.push((*index, start..text.len()));
+        text.push_str(") || ");
+    }
+    for (index, _) in alternatives {
+        let written = write!(text, "!({path}({index})) && ");
+        debug_assert!(written.is_ok(), "writing to a String cannot fail");
+    }
+    text.push('(');
+    let original_at = text.len();
+    text.push_str(original);
+    text.push_str("))");
+    Composed {
+        text,
+        alternatives: spans,
+        original_at,
+    }
 }
 
 /// Forms E and S: a branch chain. Both are the same text; only Form E is
-/// parenthesised by its caller, because it stands where a value does.
-fn chain(path: &str, alternatives: &[(u32, String)], original: &str) -> String {
+/// parenthesised, because it stands where a value does.
+fn chain(path: &str, alternatives: &[(u32, String)], original: &str) -> Composed {
     let mut text = String::new();
+    let mut spans = Vec::with_capacity(alternatives.len());
     for (index, alternative) in alternatives {
-        if text.is_empty() {
-            text.push_str("if ");
-        } else {
-            text.push_str(" else if ");
-        }
-        if alternative.is_empty() {
-            // A deletion: the branch that runs nothing.
-            let written = write!(text, "{path}({index}) {{ }}");
-            debug_assert!(written.is_ok(), "writing to a String cannot fail");
-        } else {
-            let written = write!(text, "{path}({index}) {{ {alternative} }}");
-            debug_assert!(written.is_ok(), "writing to a String cannot fail");
-        }
+        text.push_str(if text.is_empty() { "if " } else { " else if " });
+        let written = write!(text, "{path}({index}) {{ ");
+        debug_assert!(written.is_ok(), "writing to a String cannot fail");
+        let start = text.len();
+        text.push_str(alternative);
+        spans.push((*index, start..text.len()));
+        // A deletion's branch is empty, and `{ }` is what "this statement
+        // does not run" looks like; a second space would only be noise.
+        text.push_str(if alternative.is_empty() { "}" } else { " }" });
     }
     if text.is_empty() {
-        return original.to_owned();
+        return Composed {
+            text: original.to_owned(),
+            alternatives: spans,
+            original_at: 0,
+        };
     }
-    let written = write!(text, " else {{ {original} }}");
-    debug_assert!(written.is_ok(), "writing to a String cannot fail");
-    text
+    text.push_str(" else { ");
+    let original_at = text.len();
+    text.push_str(original);
+    text.push_str(" }");
+    Composed {
+        text,
+        alternatives: spans,
+        original_at,
+    }
 }

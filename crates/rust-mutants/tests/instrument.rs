@@ -345,3 +345,75 @@ fn the_recorded_cases_are_rewritten_exactly_as_recorded() {
         golden_case(name);
     }
 }
+
+#[test]
+fn every_alternative_reports_where_its_own_text_landed() {
+    let source = "pub fn f(a: i32, b: i32) -> bool {\n    if a + 1 > b {\n        return true;\n    }\n    false\n}\n";
+    let selection = Selection::tier(&REGISTRY, Tier::All);
+    let discovery = discover_file("src/lib.rs", source.as_bytes(), &selection).expect("discover");
+    let mut builder = Builder::new();
+    for found in &discovery.candidates {
+        builder.add(found.candidate.clone()).expect("add");
+    }
+    let catalog = builder.build().expect("catalog");
+    let placements = plan_file(&catalog, "src/lib.rs", &discovery.candidates).expect("plan");
+    let file = instrument_file(
+        "src/lib.rs",
+        source.as_bytes(),
+        &placements,
+        catalog.digest(),
+    )
+    .expect("instrument");
+
+    // Every mutant has exactly one branch, and its text is the pristine site
+    // with that one edit applied.
+    let mut indices: Vec<u32> = file.branches.iter().map(|branch| branch.index).collect();
+    indices.sort_unstable();
+    let mut expected: Vec<u32> = catalog
+        .mutants()
+        .iter()
+        .map(|mutant| mutant.index)
+        .collect();
+    expected.sort_unstable();
+    assert_eq!(indices, expected);
+
+    let text_of = |index: u32| -> String {
+        let branch = file
+            .branches
+            .iter()
+            .find(|branch| branch.index == index)
+            .expect("a branch");
+        file.text[branch.span.start as usize..branch.span.end as usize].to_owned()
+    };
+    let by_rule = |rule: &str| -> u32 {
+        catalog
+            .mutants()
+            .iter()
+            .find(|mutant| mutant.candidate.rule.name == rule)
+            .expect(rule)
+            .index
+    };
+    assert_eq!(text_of(by_rule("add-to-sub")), "a - 1");
+    assert_eq!(text_of(by_rule("gt-to-ge")), "a + 1 >= b");
+    assert_eq!(text_of(by_rule("negate-condition")), "!(a + 1 > b)");
+    assert_eq!(text_of(by_rule("true-to-false")), "false");
+
+    // A nested branch sits inside its parent's original branch, never inside
+    // one of its alternatives.
+    let inner = file
+        .branches
+        .iter()
+        .find(|branch| branch.index == by_rule("add-to-sub"))
+        .expect("the nested branch");
+    let outer = file
+        .branches
+        .iter()
+        .find(|branch| branch.index == by_rule("gt-to-ge"))
+        .expect("the enclosing site's alternative");
+    assert!(
+        !outer.span.contains(inner.span),
+        "an alternative carries no nested guard"
+    );
+    let length = u32::try_from(file.text.len()).expect("a small file");
+    assert!(file.branches.iter().all(|branch| branch.span.end <= length));
+}
