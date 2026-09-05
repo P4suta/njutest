@@ -23,6 +23,9 @@ use crate::trace::{DirSink, Recorder, Sink, StartRecord};
 use crate::ui;
 use crate::watch::Watch;
 
+/// Where scheduling state for interrupted runs lives, beside the answers finished runs left.
+pub const CHECKPOINTS: &str = "checkpoints";
+
 /// How long a run waits for another run of the same inputs before doing the work itself.
 pub const LEASE_TIMEOUT: std::time::Duration = std::time::Duration::from_mins(30);
 
@@ -160,6 +163,7 @@ fn establish(establishing: &Establishing<'_>, streams: Streams<'_>) -> u8 {
         engine_trace: engine_recorder(arguments, root, identity),
         evidence: evidence.clone(),
         changed: establishing.changed.clone(),
+        checkpoints: (!arguments.no_cache).then(|| store.root().join(CHECKPOINTS)),
     };
     let result = {
         let mut notes = ui::Notes::of(arguments.ui, stderr);

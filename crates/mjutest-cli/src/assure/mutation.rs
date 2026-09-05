@@ -286,6 +286,45 @@ pub fn run(
     notes: &mut Notes<'_>,
     watch: Watch<'_>,
 ) -> Result<Mutation, crate::error::RunnerError> {
+    let mut nothing = |_judged: &Judged| {};
+    run_resuming(
+        subject,
+        options,
+        &mut Resume {
+            state: None,
+            record: &mut nothing,
+        },
+        crate::assure::baseline::Reporting { notes, watch },
+    )
+}
+
+/// What an interrupted run already judged, and where to record what this one judges.
+#[expect(
+    missing_debug_implementations,
+    reason = "a recorder is a closure the caller owns; there is nothing to print about one"
+)]
+pub struct Resume<'a> {
+    /// The state that run left, or nothing for a run starting cold.
+    pub state: Option<&'a crate::checkpoint::State>,
+    /// Called with each mutant as it finishes, so the caller can save what has been established before it can be lost.
+    pub record: &'a mut dyn FnMut(&Judged),
+}
+
+/// [`run`], continuing from what an interrupted run had already judged.
+///
+/// Only a kill and a confirmed timeout are inherited: both are existential
+/// claims about this exact tree, and a named test noticing a mutant stays true
+/// however the next run routes. Everything else is re-derived.
+///
+/// # Errors
+/// See [`run`].
+pub fn run_resuming(
+    subject: Subject<'_>,
+    options: &MutationOptions,
+    resume: &mut Resume<'_>,
+    reporting: crate::assure::baseline::Reporting<'_, '_>,
+) -> Result<Mutation, crate::error::RunnerError> {
+    let crate::assure::baseline::Reporting { notes, watch } = reporting;
     let (session, baseline) = (subject.session, subject.baseline);
     let phase = watch.trace.phase("mutation");
     let mut mutation = Mutation::default();
@@ -322,7 +361,13 @@ pub fn run(
             column: at.byte_column,
             character_column: at.char_column,
         });
-        let disposition = if let Some(diagnostic) = rejected.get(mutant.id.as_str()) {
+        let disposition = if let Some(saved) = resume
+            .state
+            .and_then(|state| state.mutant(&mutant.id))
+            .and_then(inherited)
+        {
+            saved
+        } else if let Some(diagnostic) = rejected.get(mutant.id.as_str()) {
             Disposition::Rejected {
                 diagnostic: (*diagnostic).to_owned(),
             }
@@ -348,17 +393,29 @@ pub fn run(
             judge(&mut judging, mutant, route)?
         };
 
-        mutation.judged.push(Judged {
+        let judged = Judged {
             id: mutant.id.clone(),
             display_id: mutant.display_id.clone(),
             path: mutant.candidate.path.clone(),
             rule: mutant.candidate.rule.to_string(),
             position,
             disposition,
-        });
+        };
+        (resume.record)(&judged);
+        mutation.judged.push(judged);
     }
     phase.end();
     Ok(mutation)
+}
+
+/// The disposition a checkpoint's record stands for, or nothing when this release does not inherit it.
+fn inherited(saved: &crate::checkpoint::SavedMutant) -> Option<Disposition> {
+    let by = saved.killed_by.clone()?;
+    match saved.disposition.as_str() {
+        "killed" => Some(Disposition::Killed { by }),
+        "timed_out" => Some(Disposition::TimedOut { on: by }),
+        _ => None,
+    }
 }
 
 /// Runs one mutant against the tests its route named, stopping at the first confirmed catch.

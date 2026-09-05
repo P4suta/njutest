@@ -66,6 +66,8 @@ pub struct Measured {
     pub message: Option<String>,
     /// The regions it reached. Empty for a target that did not run.
     pub covered: BTreeSet<Block>,
+    /// Whether this is what an interrupted run observed rather than what this one did. A restored target carries no regions, so it keeps reaching its whole file and is never discharged.
+    pub restored: bool,
 }
 
 /// What one baseline observed.
@@ -93,6 +95,59 @@ pub fn run(
     notes: &mut Notes<'_>,
     watch: Watch<'_>,
 ) -> Result<Baseline, RunnerError> {
+    let mut nothing = |_measured: &Measured| {};
+    run_resuming(
+        workspace,
+        options,
+        &mut Resume {
+            state: None,
+            record: &mut nothing,
+        },
+        Reporting { notes, watch },
+    )
+}
+
+/// Where a phase says what it is doing, and what it is watched by.
+#[expect(
+    missing_debug_implementations,
+    reason = "a stream is a handle to the outside; there is nothing to print about one"
+)]
+pub struct Reporting<'a, 'b> {
+    /// Where progress goes.
+    pub notes: &'a mut Notes<'b>,
+    /// Cancellation and the trace.
+    pub watch: Watch<'a>,
+}
+
+/// What an interrupted run already measured, and where to record what this one measures.
+#[expect(
+    missing_debug_implementations,
+    reason = "a recorder is a closure the caller owns; there is nothing to print about one"
+)]
+pub struct Resume<'a> {
+    /// The state that run left, or nothing for a run starting cold.
+    pub state: Option<&'a crate::checkpoint::State>,
+    /// Called with each target as it finishes, so the caller can save what has been established before it can be lost.
+    pub record: &'a mut dyn FnMut(&Measured),
+}
+
+/// [`run`], continuing from what an interrupted run had already measured.
+///
+/// A target the checkpoint names is not executed again: its terminal state is
+/// the one that run observed, and its coverage is the files it reached rather
+/// than the regions inside them, so it keeps reaching its whole file. A
+/// resumed run therefore executes at least the work a cold run would, never
+/// less.
+///
+/// # Errors
+/// See [`run`].
+pub fn run_resuming(
+    workspace: Workspace<'_>,
+    options: &BaselineOptions,
+    resume: &mut Resume<'_>,
+    reporting: Reporting<'_, '_>,
+) -> Result<Baseline, RunnerError> {
+    let Reporting { notes, watch } = reporting;
     let phase = watch.trace.phase("baseline");
     let built = build::build(
         workspace.toolchain,
@@ -136,8 +191,20 @@ pub fn run(
             total: Some(total),
         });
         notes.progress(&target.name(), done, total);
+        if let Some(saved) = resume.state.and_then(|state| state.target(&target.id)) {
+            baseline.targets.push(Measured {
+                target,
+                status: saved.status,
+                duration_ms: saved.duration_ms,
+                message: saved.message.clone(),
+                covered: saved.coverage(),
+                restored: true,
+            });
+            continue;
+        }
         let (measured, seen) = measure(&tools, &target, options, watch)?;
         baseline.instrumented.extend(seen);
+        (resume.record)(&measured);
         baseline.targets.push(measured);
     }
     phase.end();
@@ -179,6 +246,7 @@ fn measure(
             duration_ms,
             message,
             covered: reached,
+            restored: false,
         },
         seen,
     ))

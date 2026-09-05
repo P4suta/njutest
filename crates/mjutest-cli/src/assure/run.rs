@@ -57,6 +57,8 @@ pub struct Request {
     pub evidence: crate::assure::identity::Evidence,
     /// The change set to mutate within, when the run was asked for one.
     pub changed: Option<git::Change>,
+    /// Where scheduling state for an interrupted run is kept. `None` keeps none, which is what a run told to establish everything afresh does.
+    pub checkpoints: Option<PathBuf>,
 }
 
 /// What one run produced.
@@ -118,29 +120,27 @@ pub fn run(
     let layer = layer_for(&toolchain, environment, &scratch, notes)?;
 
     notes.phase("baseline");
-    let baseline = baseline::run(
+    let restore = resume_state(request, &mut report);
+    let mut journal = Journal::of(request, restore.as_ref());
+    let baseline = baseline::run_resuming(
         Workspace {
             toolchain: &toolchain,
             packages: &metadata.packages,
         },
-        &BaselineOptions {
-            root: request.root.clone(),
-            selection: Selection {
-                packages: report.scope.resolved_packages.clone(),
-                features: request.config.execution.features.clone(),
-                all_features: request.config.execution.all_features,
-                default_features: !request.config.execution.no_default_features,
+        &baseline_options(
+            &Opening {
+                request,
+                environment,
+                scratch: &scratch,
             },
-            cargo: request.cargo,
-            env: environment.vars.clone(),
-            target_dir: layer,
-            scratch_build_dir: scratch.build_dir(),
-            profiles_dir: scratch.profiles_dir(),
-            timeout: Some(request.config.execution.timeout),
-            test_args: request.test_args.clone(),
+            &report,
+            layer,
+        ),
+        &mut baseline::Resume {
+            state: restore.as_ref(),
+            record: &mut |measured| journal.keep_target(measured),
         },
-        notes,
-        watch,
+        baseline::Reporting { notes, watch },
     )?;
     absorb(&mut report, &baseline);
 
@@ -151,12 +151,15 @@ pub fn run(
                 request,
                 environment,
                 baseline: &baseline,
+                restore: restore.as_ref(),
+                journal: &mut journal,
             },
             notes,
             watch,
         )?;
     }
     finish(&mut report, request.started);
+    journal.finished();
     let kept = if request.keep_temp {
         scratch.keep()
     } else {
@@ -200,6 +203,124 @@ fn identity(request: &Request) -> Report {
 
 fn count(value: usize) -> u32 {
     u32::try_from(value).unwrap_or(u32::MAX)
+}
+
+/// What the baseline is asked to build and run.
+fn baseline_options(opening: &Opening<'_>, report: &Report, layer: PathBuf) -> BaselineOptions {
+    let Opening {
+        request,
+        environment,
+        scratch,
+    } = *opening;
+    BaselineOptions {
+        root: request.root.clone(),
+        selection: Selection {
+            packages: report.scope.resolved_packages.clone(),
+            features: request.config.execution.features.clone(),
+            all_features: request.config.execution.all_features,
+            default_features: !request.config.execution.no_default_features,
+        },
+        cargo: request.cargo,
+        env: environment.vars.clone(),
+        target_dir: layer,
+        scratch_build_dir: scratch.build_dir(),
+        profiles_dir: scratch.profiles_dir(),
+        timeout: Some(request.config.execution.timeout),
+        test_args: request.test_args.clone(),
+    }
+}
+
+/// What an interrupted run left for this one, or nothing. A state this release cannot continue from is a state it does not continue from: the run starts cold and says so.
+fn resume_state(request: &Request, report: &mut Report) -> Option<crate::checkpoint::State> {
+    let directory = request.checkpoints.as_ref()?;
+    if !request.evidence.is_known() {
+        return None;
+    }
+    let state = match crate::checkpoint::read(directory, &request.evidence.identity) {
+        Ok(state) => state?,
+        Err(_unusable) => return None,
+    };
+    if state.is_empty() {
+        return None;
+    }
+    report.limitations.push(Limitation::new(
+        crate::checkpoint::RESUMED_LIMITATION,
+        &format!(
+            "an interrupted run had already measured {} targets and established {} mutants; \
+             a restored target carries the files it reached and not the regions inside them, \
+             so it keeps reaching its whole file",
+            state.targets.len(),
+            state.mutants.len()
+        ),
+    ));
+    Some(state)
+}
+
+/// What this run has established so far, written where an interrupted run's successor will find it.
+struct Journal {
+    directory: Option<PathBuf>,
+    state: crate::checkpoint::State,
+}
+
+impl Journal {
+    fn of(request: &Request, restore: Option<&crate::checkpoint::State>) -> Self {
+        let mut state = restore
+            .cloned()
+            .unwrap_or_else(|| crate::checkpoint::State::new(&request.evidence.identity));
+        state.attempts = state.attempts.saturating_add(1);
+        Self {
+            directory: request
+                .checkpoints
+                .clone()
+                .filter(|_directory| request.evidence.is_known()),
+            state,
+        }
+    }
+
+    fn keep_target(&mut self, measured: &baseline::Measured) {
+        self.state.record_target(crate::checkpoint::SavedTarget {
+            id: measured.target.id.clone(),
+            status: measured.status,
+            duration_ms: measured.duration_ms,
+            message: measured.message.clone(),
+            files: measured
+                .covered
+                .iter()
+                .map(|block| block.file.to_string_lossy().into_owned())
+                .collect::<BTreeSet<String>>()
+                .into_iter()
+                .collect(),
+        });
+        self.write();
+    }
+
+    fn keep_mutant(&mut self, judged: &mutation::Judged) {
+        let (disposition, by) = match &judged.disposition {
+            mutation::Disposition::Killed { by } => ("killed", by.clone()),
+            mutation::Disposition::TimedOut { on } => ("timed_out", on.clone()),
+            _ => return,
+        };
+        self.state.record_mutant(crate::checkpoint::SavedMutant {
+            id: judged.id.clone(),
+            disposition: disposition.to_owned(),
+            killed_by: Some(by),
+            duration_ms: 0,
+        });
+        self.write();
+    }
+
+    /// A checkpoint that cannot be written is a run that cannot be continued, which is not a reason to stop the run that is under way.
+    fn write(&self) {
+        if let Some(directory) = &self.directory {
+            drop(crate::checkpoint::write(directory, &self.state));
+        }
+    }
+
+    fn finished(&self) {
+        if let Some(directory) = &self.directory {
+            crate::checkpoint::clear(directory, &self.state.identity);
+        }
+    }
 }
 
 /// Where a run works and what it is about, before it has compiled anything.
@@ -382,6 +503,8 @@ struct Mutating<'a> {
     request: &'a Request,
     environment: &'a Environment,
     baseline: &'a baseline::Baseline,
+    restore: Option<&'a crate::checkpoint::State>,
+    journal: &'a mut Journal,
 }
 
 fn run_mutation(
@@ -398,7 +521,7 @@ fn run_mutation(
         .iter()
         .map(|acceptance| acceptance.id.clone())
         .collect();
-    let mutation = mutation::run(
+    let mutation = mutation::run_resuming(
         Subject {
             session: &session,
             baseline: &mutating.baseline.targets,
@@ -408,8 +531,11 @@ fn run_mutation(
             accepted: accepted.clone(),
             test_args: mutating.request.test_args.clone(),
         },
-        notes,
-        watch,
+        &mut mutation::Resume {
+            state: mutating.restore,
+            record: &mut |judged| mutating.journal.keep_mutant(judged),
+        },
+        baseline::Reporting { notes, watch },
     )?;
     if !session.changes()?.is_empty() {
         mutating.report.limitations.push(Limitation::new(

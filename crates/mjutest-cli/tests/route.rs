@@ -42,6 +42,7 @@ fn measured(id: &str, duration_ms: u64, status: TargetStatus, covered: &[Block])
         duration_ms,
         message: None,
         covered: covered.iter().cloned().collect(),
+        restored: false,
     }
 }
 

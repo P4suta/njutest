@@ -553,3 +553,65 @@ fn a_run_about_a_change_set_it_cannot_see_refuses_rather_than_verifying_nothing(
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+#[test]
+fn a_target_a_checkpoint_names_is_not_measured_again() {
+    let fixture = fixture("fixture-assured");
+    assert_eq!(verify(&fixture, &[]).status.code(), Some(0));
+    let established = document(&fixture);
+    let identity = established["provenance"]["identity"]
+        .as_str()
+        .expect("an identity")
+        .to_owned();
+    let first = &established["targets"][0];
+    let id = first["id"].as_str().expect("a target id").to_owned();
+
+    let store = mjutest_devkit::paths::cache_beside(&fixture.root)
+        .expect("a cache directory")
+        .join("mjutest/outcomes-v1");
+    std::fs::remove_file(store.join(format!("{identity}.json")))
+        .expect("the answer the first run stored");
+    let directory = store.join("checkpoints").join(&identity);
+    std::fs::create_dir_all(&directory).expect("mkdir");
+    std::fs::write(
+        directory.join("checkpoint-v1.json"),
+        serde_json::to_string(&serde_json::json!({
+            "schema": "mjutest-assurance-checkpoint-v1",
+            "identity": identity,
+            "attempts": 1,
+            "targets": [{
+                "id": id,
+                "status": "failed",
+                "duration_ms": 1,
+                "message": "what the interrupted run observed",
+                "files": ["src/lib.rs"],
+            }],
+            "mutants": [],
+        }))
+        .expect("the state renders"),
+    )
+    .expect("write");
+
+    let resumed = verify(&fixture, &[]);
+    assert_eq!(
+        resumed.status.code(),
+        Some(1),
+        "the run took the terminal state the checkpoint carried rather than measuring it \
+         again: {}",
+        String::from_utf8_lossy(&resumed.stderr)
+    );
+    let report = document(&fixture);
+    assert!(
+        names(&report).contains(&"resumed-from-checkpoint".to_owned()),
+        "{report}"
+    );
+    let restored = report["targets"]
+        .as_array()
+        .expect("targets")
+        .iter()
+        .find(|target| target["id"] == serde_json::Value::String(id.clone()))
+        .expect("the target the checkpoint named");
+    assert_eq!(restored["status"], "failed");
+    assert_eq!(restored["message"], "what the interrupted run observed");
+    assert_eq!(report["verdict"], "DEFECT");
+}
