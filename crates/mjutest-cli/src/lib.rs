@@ -17,6 +17,7 @@ pub mod coverage;
 pub mod error;
 pub mod evidence;
 pub mod git;
+pub mod kept;
 pub mod report;
 pub mod run_id;
 pub mod rustflags;

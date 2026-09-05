@@ -377,6 +377,14 @@ fn persist(persisting: &Persisting<'_>, arguments: &Verify, stderr: &mut dyn Wri
     for path in &removed {
         notes.note("retired", &path.display().to_string());
     }
+    if !kept.is_empty() {
+        drop(crate::kept::record(
+            root,
+            &report.run_id,
+            Timestamp::now(),
+            kept,
+        ));
+    }
     for path in kept {
         notes.note("kept", &path.display().to_string());
     }

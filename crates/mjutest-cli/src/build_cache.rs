@@ -33,6 +33,9 @@ pub enum Layer {
 }
 
 impl Layer {
+    /// Every layer, in declaration order.
+    pub const ALL: [Self; 3] = [Self::Native, Self::Coverage, Self::Mutants];
+
     /// The directory name of this layer.
     #[must_use]
     pub const fn dir_name(self) -> &'static str {
@@ -274,4 +277,168 @@ fn sanitize(value: &str) -> String {
     } else {
         cleaned
     }
+}
+
+/// The file cargo takes while it is building. A layer whose lock is held is one a build is using, and no file in it may be removed.
+pub const CARGO_LOCK: &str = ".cargo-lock";
+
+/// The directories inside a layer whose files a collection may remove. Everything cargo keeps outside them — the lock, this program's marker — is left alone.
+pub const COLLECTABLE: [&str; 5] = ["deps", "build", "incremental", ".fingerprint", "examples"];
+
+/// What a collection did.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Swept {
+    /// How many bytes every layer held before the collection.
+    pub before: u64,
+    /// How many bytes went away.
+    pub removed: u64,
+    /// How many files went away.
+    pub files: u32,
+    /// The layers a build was using, which nothing was removed from.
+    pub busy: Vec<PathBuf>,
+}
+
+impl BuildCache {
+    /// How many bytes every layer holds, whichever compiler filled it and whether or not a build is using it. The cache is one thing to collect, not one per toolchain.
+    ///
+    /// # Errors
+    /// Never: a layer that cannot be measured contributes nothing, because
+    /// this number is for a person reading a line rather than for a decision
+    /// that must be exact.
+    #[must_use]
+    pub fn size(&self) -> u64 {
+        self.layers().iter().map(|dir| size_of(dir)).sum()
+    }
+
+    /// Removes the least recently used artifacts until every layer together holds at most `max_bytes`.
+    ///
+    /// Files are removed oldest first, the way `cargo-sweep` does it: cargo
+    /// rebuilds whatever it misses, so the cost of removing too much is time
+    /// and never correctness. A layer whose `.cargo-lock` is held is one a
+    /// build is using, and nothing is removed from it.
+    #[must_use]
+    pub fn collect(&self, max_bytes: u64) -> Swept {
+        let mut swept = Swept::default();
+        let mut artifacts: Vec<(std::time::SystemTime, u64, PathBuf)> = Vec::new();
+        for dir in self.layers() {
+            swept.before = swept.before.saturating_add(size_of(&dir));
+            if is_busy(&dir) {
+                swept.busy.push(dir);
+                continue;
+            }
+            artifacts.extend(collectable(&dir));
+        }
+        if swept.before <= max_bytes {
+            return swept;
+        }
+        artifacts.sort();
+        let mut total = swept.before;
+        for (_modified, bytes, path) in artifacts {
+            if total <= max_bytes {
+                break;
+            }
+            if fs::remove_file(&path).is_err() {
+                continue;
+            }
+            total = total.saturating_sub(bytes);
+            swept.removed = swept.removed.saturating_add(bytes);
+            swept.files = swept.files.saturating_add(1);
+        }
+        swept
+    }
+
+    /// Every layer directory that exists, for every compiler that has filled one.
+    fn layers(&self) -> Vec<PathBuf> {
+        let mut found = Vec::new();
+        for layer in Layer::ALL {
+            let Ok(entries) = fs::read_dir(self.root.join(layer.dir_name())) else {
+                continue;
+            };
+            found.extend(
+                entries
+                    .flatten()
+                    .map(|entry| entry.path())
+                    .filter(|path| path.is_dir()),
+            );
+        }
+        found.sort();
+        found
+    }
+}
+
+/// Whether a build is using this layer right now.
+fn is_busy(dir: &Path) -> bool {
+    let lock = dir.join(CARGO_LOCK);
+    if !lock.exists() {
+        return false;
+    }
+    match rust_mutants::tempowner::acquire(&lock) {
+        Ok(Some(mut held)) => {
+            drop(held.release());
+            false
+        }
+        Ok(None) => true,
+        Err(_unreadable) => true,
+    }
+}
+
+/// Every file a collection may remove from one layer, with when it was last used and how big it is.
+fn collectable(dir: &Path) -> Vec<(std::time::SystemTime, u64, PathBuf)> {
+    let mut found = Vec::new();
+    let Ok(profiles) = fs::read_dir(dir) else {
+        return found;
+    };
+    for profile in profiles.flatten() {
+        for name in COLLECTABLE {
+            let mut pending = vec![profile.path().join(name)];
+            while let Some(current) = pending.pop() {
+                let Ok(entries) = fs::read_dir(&current) else {
+                    continue;
+                };
+                for entry in entries.flatten() {
+                    let Ok(kind) = entry.file_type() else {
+                        continue;
+                    };
+                    if kind.is_dir() {
+                        pending.push(entry.path());
+                    } else if kind.is_file()
+                        && let Ok(metadata) = entry.metadata()
+                    {
+                        found.push((
+                            metadata
+                                .modified()
+                                .unwrap_or(std::time::SystemTime::UNIX_EPOCH),
+                            metadata.len(),
+                            entry.path(),
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    found
+}
+
+/// Every regular file under `dir`, added up. Best effort: the number is for a person reading a line.
+fn size_of(dir: &Path) -> u64 {
+    let mut total = 0u64;
+    let mut pending = vec![dir.to_path_buf()];
+    while let Some(current) = pending.pop() {
+        let Ok(entries) = fs::read_dir(&current) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let Ok(kind) = entry.file_type() else {
+                continue;
+            };
+            if kind.is_dir() {
+                pending.push(entry.path());
+            } else if kind.is_file()
+                && let Ok(metadata) = entry.metadata()
+            {
+                total = total.saturating_add(metadata.len());
+            }
+        }
+    }
+    total
 }
