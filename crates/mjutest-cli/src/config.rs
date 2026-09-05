@@ -74,6 +74,8 @@ pub struct Config {
     pub reports: Reports,
     /// The `deep-v1` soundness phase.
     pub soundness: Soundness,
+    /// The fuzz targets a run may drive.
+    pub fuzz: Fuzz,
     /// The integration resources a run may start, by name.
     pub resources: BTreeMap<String, Resource>,
     /// The provider that writes candidate tests.
@@ -93,6 +95,7 @@ impl Default for Config {
             mutation: Mutation::default(),
             reports: Reports::default(),
             soundness: Soundness::default(),
+            fuzz: Fuzz::default(),
             resources: BTreeMap::new(),
             generation: None,
             acceptance: Vec::new(),
@@ -204,6 +207,29 @@ pub struct Soundness {
     pub miri_flags: Vec<String>,
     /// Sanitizers to run under, on a toolchain that has them.
     pub sanitizers: Vec<String>,
+}
+
+/// The fuzz targets a run may drive.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct Fuzz {
+    /// Drive the targets, rather than only saying they are there.
+    pub run: bool,
+    /// How long one target is driven for.
+    #[serde(deserialize_with = "duration", serialize_with = "as_millis")]
+    pub max_total_time: Duration,
+    /// The targets to drive, by name. Empty is every target the tree holds.
+    pub targets: Vec<String>,
+}
+
+impl Default for Fuzz {
+    fn default() -> Self {
+        Self {
+            run: false,
+            max_total_time: Duration::from_secs(60),
+            targets: Vec::new(),
+        }
+    }
 }
 
 /// One integration resource a run may start.
@@ -526,6 +552,11 @@ contract = \"standard-v1\"        # \"standard-v1\" | \"deep-v1\"
 
 [reports]
 # keep = {keep}                       # run directories kept under reports/runs
+
+[fuzz]
+# run = false                    # drive the fuzz targets, not only find them
+# max_total_time = \"60s\"         # per target
+# targets = []                   # empty = every target the tree holds
 
 [soundness]                      # deep-v1 only
 # miri_flags = []

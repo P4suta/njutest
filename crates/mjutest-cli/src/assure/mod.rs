@@ -5,6 +5,7 @@
 
 pub mod baseline;
 pub mod deep;
+pub mod fuzz;
 pub mod identity;
 pub mod mutation;
 pub mod repair;

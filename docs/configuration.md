@@ -45,6 +45,11 @@ build_dir = ""                  # default: below the user cache directory
 [reports]
 keep = 20                       # run directories kept under reports/runs
 
+[fuzz]
+run = false                    # drive the fuzz targets, not only find them
+max_total_time = "60s"         # per target
+targets = []                   # empty = every target the tree holds
+
 [soundness]                     # deep-v1 only
 miri_flags = []
 sanitizers = []                 # e.g. ["thread"] on nightly

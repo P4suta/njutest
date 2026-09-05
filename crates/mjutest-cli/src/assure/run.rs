@@ -92,21 +92,7 @@ pub fn run(
         &request.run_id,
         request.started,
     )?;
-    open_phase(
-        &mut report,
-        &Opening {
-            request,
-            environment,
-            scratch: &scratch,
-        },
-        watch,
-    );
-    if !report.repository.git.available {
-        report.limitations.push(Limitation::new(
-            git::UNAVAILABLE_LIMITATION,
-            "git could not be asked, so the run cannot name the commit it verified",
-        ));
-    }
+    opened(&mut report, request, environment, (&scratch, watch));
 
     let (toolchain, metadata) = locate(request, environment, watch)?;
     surveyed(&mut report, request, (&toolchain, &metadata));
@@ -160,7 +146,11 @@ pub fn run(
             watch,
         )?;
     }
-    proposed(&mut report, request, environment, (notes, watch));
+    afterwards(
+        &mut report,
+        (request, environment, &toolchain),
+        (notes, watch),
+    );
     released(&mut resources, &mut report);
     finish(&mut report, request.started);
     journal.finished();
@@ -236,6 +226,131 @@ fn deepened(
     report.findings.extend(checked.findings);
     report.limitations.extend(checked.limitations);
     Ok(())
+}
+
+/// What a run reads before it builds anything: the tree, the identity, and the repository.
+fn opened(
+    report: &mut Report,
+    request: &Request,
+    environment: &Environment,
+    within: (&Scratch, Watch<'_>),
+) {
+    let (scratch, watch) = within;
+    open_phase(
+        report,
+        &Opening {
+            request,
+            environment,
+            scratch,
+        },
+        watch,
+    );
+    if !report.repository.git.available {
+        report.limitations.push(Limitation::new(
+            git::UNAVAILABLE_LIMITATION,
+            "git could not be asked, so the run cannot name the commit it verified",
+        ));
+    }
+}
+
+/// What a run does once it has measured: drive the fuzz targets, and ask for repairs for what it found.
+fn afterwards(
+    report: &mut Report,
+    within: (&Request, &Environment, &rust_mutants::cargo::Toolchain),
+    telling: (&mut Notes<'_>, Watch<'_>),
+) {
+    let (request, environment, toolchain) = within;
+    let (notes, watch) = telling;
+    driven(report, request, toolchain, (notes, watch));
+    proposed(report, request, environment, (notes, watch));
+}
+
+/// Drives the fuzz targets the tree holds, when the configuration asks for it, and keeps what crashed one as a candidate for the corpus.
+fn driven(
+    report: &mut Report,
+    request: &Request,
+    toolchain: &rust_mutants::cargo::Toolchain,
+    telling: (&mut Notes<'_>, Watch<'_>),
+) {
+    let (notes, watch) = telling;
+    let held = super::fuzz::targets_of(&request.root);
+    if held.is_empty() {
+        return;
+    }
+    if !request.config.fuzz.run {
+        report.limitations.push(super::fuzz::found(&held));
+        return;
+    }
+    notes.phase("fuzz");
+    let done = super::fuzz::fuzz(
+        &super::fuzz::Fuzzing {
+            root: &request.root,
+            cargo: toolchain.cargo(),
+            env: environment_of(toolchain),
+            targets: &request.config.fuzz.targets,
+            max_total_time: request.config.fuzz.max_total_time,
+            timeout: Some(
+                request
+                    .config
+                    .fuzz
+                    .max_total_time
+                    .saturating_add(request.config.execution.timeout),
+            ),
+        },
+        watch,
+    );
+    report.findings.extend(done.findings);
+    report.limitations.extend(done.limitations);
+    for crash in &done.crashes {
+        kept(report, request, crash);
+    }
+}
+
+/// The environment the fuzzer runs with: the toolchain's own, since a fuzz build is a build.
+fn environment_of(
+    toolchain: &rust_mutants::cargo::Toolchain,
+) -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
+    toolchain
+        .env()
+        .map(<[(std::ffi::OsString, std::ffi::OsString)]>::to_vec)
+        .unwrap_or_default()
+}
+
+/// Keeps one crashing input as a candidate for the corpus.
+///
+/// It is not written into the tree: an input a fuzzer found is a proposal
+/// like any other, and `fix --apply` is what puts it where a later run will
+/// read it.
+fn kept(report: &mut Report, request: &Request, crash: &super::fuzz::Crash) {
+    let proposal = crate::repair::Proposal {
+        kind: crate::repair::Kind::Corpus,
+        path: crash.corpus.clone(),
+        preimage: crate::repair::preimage_of(&request.root, &crash.corpus),
+        digest: hex::encode(<sha2::Sha256 as sha2::Digest>::digest(&crash.content)),
+        content: crash.content.clone(),
+    };
+    if crate::repair::keep(&request.root, &proposal).is_err() {
+        report.limitations.push(Limitation::new(
+            super::fuzz::UNAVAILABLE_LIMITATION,
+            &format!(
+                "the input that crashed {} could not be kept, so it cannot be promoted",
+                crash.target
+            ),
+        ));
+        return;
+    }
+    report.candidates.push(crate::report::CandidateRecord {
+        finding: format!("fuzz:{}", crash.target),
+        mutant: String::new(),
+        kind: crate::repair::Kind::Corpus.name().to_owned(),
+        path: proposal.path,
+        digest: proposal.digest,
+        preimage: proposal.preimage,
+        stability_runs: 0,
+        kill_runs: 1,
+        accepted: true,
+        why: None,
+    });
 }
 
 /// The limitation a run states when a generation provider could not be asked.
