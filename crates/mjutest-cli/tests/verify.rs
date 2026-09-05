@@ -430,3 +430,58 @@ fn listing(root: &Path) -> std::collections::BTreeSet<String> {
     }
     found
 }
+
+#[test]
+fn a_workspace_that_steps_outside_what_the_compiler_guarantees_says_so() {
+    let fixture = fixture("fixture-assured");
+    assert_eq!(verify(&fixture, &[]).status.code(), Some(0));
+    let safe = document(&fixture);
+    assert_eq!(safe["accounting"]["soundness"]["unsafe_items"], 0);
+    assert_eq!(safe["accounting"]["soundness"]["packages_with_unsafe"], 0);
+    assert_eq!(safe["accounting"]["soundness"]["executed"], false);
+    assert!(
+        !names(&safe).contains(&"soundness-not-executed".to_owned()),
+        "a workspace the compiler vouches for has nothing to say here: {safe}"
+    );
+
+    let path = fixture.root.join("tests/doubling.rs");
+    let source = std::fs::read_to_string(&path).expect("the source");
+    std::fs::write(
+        &path,
+        format!(
+            "{source}\n\
+             /// Never called. The contract counts where the compiler stops vouching; it does \
+             not execute it.\n\
+             pub fn peek() -> u8 {{\n\
+             \x20   unsafe {{ core::ptr::null::<u8>().read() }}\n\
+             }}\n"
+        ),
+    )
+    .expect("write");
+
+    assert_eq!(verify(&fixture, &[]).status.code(), Some(0));
+    let unsound = document(&fixture);
+    assert_eq!(unsound["accounting"]["soundness"]["unsafe_items"], 1);
+    assert_eq!(
+        unsound["accounting"]["soundness"]["packages_with_unsafe"],
+        1
+    );
+    assert_eq!(
+        unsound["accounting"]["soundness"]["executed"], false,
+        "this contract counts them rather than executing them"
+    );
+    assert!(
+        names(&unsound).contains(&"soundness-not-executed".to_owned()),
+        "a non-empty inventory is a limitation the report states: {unsound}"
+    );
+}
+
+/// The names of a report's limitations.
+fn names(document: &serde_json::Value) -> Vec<String> {
+    document["limitations"]
+        .as_array()
+        .expect("limitations")
+        .iter()
+        .filter_map(|one| one["name"].as_str().map(str::to_owned))
+        .collect()
+}

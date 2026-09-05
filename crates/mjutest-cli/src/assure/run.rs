@@ -16,13 +16,15 @@ use crate::config::Config;
 use crate::error::RunnerError;
 use crate::git;
 use crate::report::{
-    Finding, FindingKind, Limitation, MutantRecord, Report, RunKind, TargetRecord, TargetStatus,
-    Toolchain, UNAVAILABLE, Verdict,
+    Finding, FindingKind, Limitation, MutantRecord, Report, RunKind, SoundnessAccounting,
+    TargetRecord, TargetStatus, Toolchain, UNAVAILABLE, Verdict,
 };
 use crate::scratch::{self, Scratch};
+use crate::soundness;
 use crate::ui::Notes;
 use crate::watch::Watch;
 use crate::{build_cache, rustflags};
+use rust_mutants::cargo::Metadata;
 
 /// The limitation a run states when the tree could not be read as one number.
 pub const DIGEST_LIMITATION: &str = "workspace-digest-not-computed";
@@ -108,6 +110,9 @@ pub fn run(
         .collect();
     report.scope.resolved_packages = resolved(request, &report.repository.packages);
 
+    notes.phase("soundness");
+    take_inventory(&mut report, request, &metadata);
+
     let layer = layer_for(&toolchain, environment, &scratch, notes)?;
 
     notes.phase("baseline");
@@ -191,6 +196,70 @@ fn identity(request: &Request) -> Report {
     report
 }
 
+fn count(value: usize) -> u32 {
+    u32::try_from(value).unwrap_or(u32::MAX)
+}
+
+/// The limitation a run states when it counted the places the compiler stops vouching for and did not execute any of them.
+pub const SOUNDNESS_LIMITATION: &str = "soundness-not-executed";
+
+/// The limitation a run states when a file it inventoried could not be read as Rust.
+pub const SOUNDNESS_UNREADABLE_LIMITATION: &str = "soundness-source-unreadable";
+
+/// Counts every place a selected package steps outside what the compiler guarantees.
+///
+/// `standard-v1` does not execute any of them: a non-empty inventory is a
+/// limitation the report states rather than a claim it makes (ADR 0009).
+fn take_inventory(report: &mut Report, request: &Request, metadata: &Metadata) {
+    let selected: Vec<(String, PathBuf)> = metadata
+        .packages
+        .iter()
+        .filter(|package| {
+            report.scope.resolved_packages.is_empty()
+                || report.scope.resolved_packages.contains(&package.name)
+        })
+        .filter_map(|package| {
+            let directory = package.manifest_path.parent()?;
+            Some((package.name.clone(), directory.to_path_buf()))
+        })
+        .collect();
+    let Ok(taken) = soundness::inventory(&request.root, &selected) else {
+        report.limitations.push(Limitation::new(
+            SOUNDNESS_UNREADABLE_LIMITATION,
+            "the tree could not be walked for the places the compiler stops vouching for, so \
+             the run makes no claim about them",
+        ));
+        return;
+    };
+    report.accounting.soundness = SoundnessAccounting {
+        unsafe_items: count(taken.items.len()),
+        packages_with_unsafe: count(taken.packages.len()),
+        executed: false,
+    };
+    if !taken.unreadable.is_empty() {
+        report.limitations.push(Limitation::new(
+            SOUNDNESS_UNREADABLE_LIMITATION,
+            &format!(
+                "{} files could not be read as Rust this release understands, so what they \
+                 hold is not in the inventory: {}",
+                taken.unreadable.len(),
+                taken.unreadable.join(", ")
+            ),
+        ));
+    }
+    if !taken.is_empty() {
+        report.limitations.push(Limitation::new(
+            SOUNDNESS_LIMITATION,
+            &format!(
+                "{} places in {} packages step outside what the compiler guarantees, and this \
+                 contract counts them rather than executing them",
+                taken.items.len(),
+                taken.packages.len()
+            ),
+        ));
+    }
+}
+
 /// How much of the workspace this run looked at.
 ///
 /// A run that named packages looked at those, and the contract reserves
@@ -208,13 +277,7 @@ fn locate(
     request: &Request,
     environment: &Environment,
     watch: Watch<'_>,
-) -> Result<
-    (
-        rust_mutants::cargo::Toolchain,
-        rust_mutants::cargo::Metadata,
-    ),
-    RunnerError,
-> {
+) -> Result<(rust_mutants::cargo::Toolchain, Metadata), RunnerError> {
     let toolchain = rust_mutants::cargo::Toolchain::locate(
         &rust_mutants::cargo::LocateOptions {
             cargo: None,
@@ -225,7 +288,7 @@ fn locate(
         watch.cancel,
     )
     .map_err(rust_mutants::EngineError::from)?;
-    let metadata = rust_mutants::cargo::Metadata::load(
+    let metadata = Metadata::load(
         &rust_mutants::cargo::Driver {
             toolchain: &toolchain,
             dir: &request.root,

@@ -20,6 +20,7 @@ pub mod report;
 pub mod run_id;
 pub mod rustflags;
 pub mod scratch;
+pub mod soundness;
 pub mod targets;
 pub mod trace;
 pub mod ui;
