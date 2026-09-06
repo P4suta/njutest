@@ -124,3 +124,4 @@ return-default@135:9 "xs.iter().map(|x| x * 2).filter(|x| *x > 2).collect()"=>"D
 mul-to-div@135:29 "*"=>"/" E["x * 2"]
 gt-to-ge@135:48 ">"=>">=" E["*x > 2"]
 skip test-code 1
+skip open-range 2

@@ -215,7 +215,12 @@ fn every_rule_fires_in_the_families_fixture_exactly_as_the_golden_says() {
     let discovery = run(&prepared, &options(), &Recorder::disabled());
     assert_eq!(
         table(&discovery),
-        [row("src/lib.rs", "fixture-families", 125, "test-code:1")]
+        [row(
+            "src/lib.rs",
+            "fixture-families",
+            125,
+            "test-code:1 open-range:2"
+        )]
     );
     assert_eq!(discovery.catalog.len(), 125);
     assert_eq!(discovery.catalog.duplicates().len(), 0);

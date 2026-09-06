@@ -232,11 +232,14 @@ fn every_place_passed_over_is_counted_under_the_outermost_reason() {
     assert_eq!(
         skips(&d),
         [
-            ("const-context", 6),
+            ("const-context", 4),
             ("macro-invocation", 1),
             ("cfg-attribute", 2),
             ("test-code", 3),
-        ]
+            ("const-fn-body", 2),
+        ],
+        "the body of a const fn is its own reason: what the compiler may evaluate at a call is \
+         not what it evaluates in an initializer"
     );
     for skip in &d.skips {
         assert_eq!(skip.path, "src/lib.rs");
@@ -261,6 +264,9 @@ fn skip_reasons_are_named_explained_and_ranked() {
             "included-expression",
             "generated-outside-workspace",
             "forbidden-lints",
+            "const-fn-body",
+            "let-condition",
+            "open-range",
         ]
     );
     for reason in SkipReason::ALL {

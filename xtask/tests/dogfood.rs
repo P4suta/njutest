@@ -82,15 +82,20 @@ fn the_engine_audit_task_checks_the_recording_before_re_deciding_it() {
 }
 
 #[test]
-fn the_engine_ledger_names_what_it_measures_and_asks_for_the_proof_layer_that_ships() {
+fn the_engine_ledger_names_what_it_measures_and_asks_for_every_proof_layer() {
     let ledger = std::fs::read_to_string(
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../.rust-mutants.toml"),
     )
     .expect("the engine's own ledger");
     assert!(ledger.contains("packages = [\"rust-mutants\"]"), "{ledger}");
     assert!(
-        ledger.contains("coverage = true"),
-        "coverage routing is the one shipped proof layer, and the run is what proves it \
+        !ledger.contains("coverage"),
+        "coverage routing is the default now, and a ledger that asks for a default says \
+         nothing: {ledger}"
+    );
+    assert!(
+        ledger.contains("probe = true"),
+        "the probe is the layer a run has to be told to use, and this run is what proves it \
          removes work: {ledger}"
     );
 }

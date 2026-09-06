@@ -107,11 +107,17 @@ pub enum SkipReason {
     GeneratedOutsideWorkspace,
     /// A file of a crate that forbids a lint the guards' own attribute turns off, which no guard could compile in.
     ForbiddenLints,
+    /// The body of a `const fn`, whose every call the compiler may evaluate, where a runtime guard cannot live.
+    ConstFnBody,
+    /// A condition that binds with `let`, whose parts a guard cannot rearrange without moving the binding out of scope.
+    LetCondition,
+    /// A range with no end, which has no other form to become.
+    OpenRange,
 }
 
 impl SkipReason {
     /// Every reason, in rank order.
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 14] = [
         Self::ConstContext,
         Self::MacroInvocation,
         Self::CfgAttribute,
@@ -123,6 +129,9 @@ impl SkipReason {
         Self::IncludedExpression,
         Self::GeneratedOutsideWorkspace,
         Self::ForbiddenLints,
+        Self::ConstFnBody,
+        Self::LetCondition,
+        Self::OpenRange,
     ];
 
     /// The kebab-case name used in reports and on the command line.
@@ -140,6 +149,9 @@ impl SkipReason {
             Self::IncludedExpression => "included-expression",
             Self::GeneratedOutsideWorkspace => "generated-outside-workspace",
             Self::ForbiddenLints => "forbidden-lints",
+            Self::ConstFnBody => "const-fn-body",
+            Self::LetCondition => "let-condition",
+            Self::OpenRange => "open-range",
         }
     }
 
@@ -178,6 +190,13 @@ impl SkipReason {
             Self::ForbiddenLints => {
                 "the crate forbids a lint the guards' own attribute turns off, and forbid is the one level an allow cannot override, so no guard could compile here whatever it edited"
             }
+            Self::ConstFnBody => {
+                "the expression is in the body of a const fn, which the compiler may evaluate at any call, where a runtime guard cannot live"
+            }
+            Self::LetCondition => {
+                "the condition binds with let, and what a guard would have to rearrange is what the binding is in scope for"
+            }
+            Self::OpenRange => "the range has no end, so there is no other form of it to write",
         }
     }
 
@@ -212,6 +231,8 @@ pub struct Decision {
     pub form: Option<Form>,
     /// The reason of a skip.
     pub skip: Option<SkipReason>,
+    /// What the walker has to say about this decision beyond its reason.
+    pub note: Option<String>,
 }
 
 /// Everything discovery found in one file.

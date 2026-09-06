@@ -276,10 +276,20 @@ condemned on the strength of what a half-finished command printed.
 
 `const-context`, `macro-invocation`, `cfg-attribute`, `test-code`,
 `unsupported-site`, `excluded`, `test-only-file`, `no-std-crate`,
-`included-expression`, `generated-outside-workspace`, `forbidden-lints`. Each is counted and
+`included-expression`, `generated-outside-workspace`, `forbidden-lints`,
+`const-fn-body`, `let-condition`, `open-range`. Each is counted and
 named; `rust-mutants why-skipped` lists them. A skip is a decision the tool made and says; a rejection (a mutant the
 compiler refused) is a fact about the program and is reported with the
 diagnostic.
+
+Every place a rule targets has a decision: a candidate with its guard form, or
+a skip with its reason. A rule that passed over a place without saying so is
+what `crates/rust-mutants/tests/census.rs` refuses, and it is why a `const fn`
+body, a condition that binds with `let`, and a range with no end are reasons
+of their own rather than silence. Two decisions carry a note instead of a
+reason of their own: `identical-replacement` where a rule's replacement is
+what is already written, and `text-mismatch` where the bytes at the span are
+not the operator the rule expects.
 
 The per-file walk (`rust_mutants::syntax`) keeps walking inside a region it
 will not mutate and counts every candidate it would have produced under the

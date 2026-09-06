@@ -79,6 +79,29 @@ enum Kind {
     Place,
 }
 
+/// Where one decision was made, and what the walker has to say about it.
+#[derive(Debug, Clone, Copy)]
+struct At<'a> {
+    offset: u32,
+    rule: &'a str,
+    note: Option<&'a str>,
+}
+
+impl<'a> At<'a> {
+    const fn new(offset: u32, rule: &'a str) -> Self {
+        Self {
+            offset,
+            rule,
+            note: None,
+        }
+    }
+
+    const fn noting(mut self, note: &'a str) -> Self {
+        self.note = Some(note);
+        self
+    }
+}
+
 /// The context an expression is walked in.
 #[derive(Debug, Clone, Copy)]
 struct Ctx {
@@ -273,6 +296,10 @@ impl<'a> Walker<'a> {
         };
         let original = self.text(edit.span).as_bytes().to_vec();
         if original == edit.replacement {
+            self.declined(
+                At::new(edit.span.start, rule_name).noting("identical-replacement"),
+                SkipReason::UnsupportedSite,
+            );
             return;
         }
         let candidate = Candidate {
@@ -312,17 +339,32 @@ impl<'a> Walker<'a> {
     }
 
     fn decide(&mut self, offset: u32, rule: &str, outcome: Outcome) {
+        self.noted(At::new(offset, rule), outcome);
+    }
+
+    /// One decision, with what the walker has to say about it beyond its reason.
+    fn noted(&mut self, at: At<'_>, outcome: Outcome) {
         let (form, skip) = match outcome {
             Outcome::Candidate(form) => (Some(form), None),
             Outcome::Skipped(reason) => (None, Some(reason)),
         };
         self.decisions.push(Decision {
-            offset,
-            position: self.index.position(self.src, offset),
-            rule: rule.to_owned(),
+            offset: at.offset,
+            position: self.index.position(self.src, at.offset),
+            rule: at.rule.to_owned(),
             form,
             skip,
+            note: at.note.map(ToOwned::to_owned),
         });
+    }
+
+    /// One place a rule targeted and passed over, counted and said.
+    fn declined(&mut self, at: At<'_>, reason: SkipReason) {
+        if self.selection.rule(at.rule).is_none() {
+            return;
+        }
+        self.skip(reason);
+        self.noted(at, Outcome::Skipped(reason));
     }
 
     /// A macro invocation in expression or statement position: the arguments of an assertion, or one skip.
@@ -506,7 +548,7 @@ impl<'a> Walker<'a> {
             ret: return_kind(&sig.output),
         };
         if sig.constness.is_some() {
-            self.with_suppression(SkipReason::ConstContext, |walker| {
+            self.with_suppression(SkipReason::ConstFnBody, |walker| {
                 walker.with_frame(frame, |walker| walker.walk_block(block, true));
             });
         } else {
@@ -790,7 +832,14 @@ impl<'a> Walker<'a> {
             let edit = self.span(&b.op);
             let connective_with_let =
                 is_connective(&b.op) && (has_let(&b.left) || has_let(&b.right));
-            if !connective_with_let && self.text(edit) == original {
+            if connective_with_let {
+                self.declined(At::new(edit.start, rule), SkipReason::LetCondition);
+            } else if self.text(edit) != original {
+                self.declined(
+                    At::new(edit.start, rule).noting("text-mismatch"),
+                    SkipReason::UnsupportedSite,
+                );
+            } else {
                 let site = if is_compound_assignment(&b.op) {
                     if ctx.direct_stmt {
                         ctx.stmt
@@ -1057,6 +1106,12 @@ impl<'a> Walker<'a> {
 
     /// A range swap changes the expression's type, so its site is the statement level the context carries, never the range itself.
     fn walk_range(&mut self, r: &syn::ExprRange, ctx: Ctx) {
+        if r.end.is_none() {
+            let at = self.span(&r.limits).start;
+            for rule in ["range-to-inclusive", "inclusive-to-range"] {
+                self.declined(At::new(at, rule), SkipReason::OpenRange);
+            }
+        }
         if r.end.is_some() {
             let edit = self.span(&r.limits);
             let (rule, replacement) = match r.limits {
