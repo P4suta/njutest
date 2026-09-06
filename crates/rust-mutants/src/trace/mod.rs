@@ -14,9 +14,10 @@ use jiff::Timestamp;
 use sha2::{Digest as _, Sha256};
 
 pub use event::{
-    AttributionRecord, BisectRecord, BuildRecord, DiscoverFileRecord, Event, ExecRecord,
-    InstrumentRecord, MutantExecRecord, NoteRecord, OpenRecord, Payload, PhaseRecord, RunRecord,
-    SCHEMA, SiteRecord, SkipCount, SnapshotRecord, SweepRecord, ValidateRoundRecord,
+    AttributionRecord, BisectRecord, BuildRecord, DischargeRecord, DiscoverFileRecord, EVERY_TYPE,
+    Event, ExecRecord, InstrumentRecord, MutantExecRecord, NoteRecord, OpenRecord, Payload,
+    PhaseRecord, ProbeExecRecord, RouteRecord, RunRecord, SCHEMA, SiteRecord, SkipCount,
+    SnapshotRecord, SweepRecord, ValidateRoundRecord, VerifyRecord, WitnessRecord,
 };
 pub use reader::{Problem, ReadError, check, read_events};
 pub use sink::{
@@ -266,6 +267,26 @@ impl Recorder {
     /// Records the test binaries a build produced.
     pub fn build(&self, record: BuildRecord) {
         self.emit(Payload::Build { build: record });
+    }
+
+    /// Records one target run with nothing active.
+    pub fn verify(&self, record: VerifyRecord) {
+        self.emit(Payload::Verify { verify: record });
+    }
+
+    /// Records one target run against the probe tree.
+    pub fn probe_exec(&self, record: ProbeExecRecord) {
+        self.emit(Payload::ProbeExec { probe: record });
+    }
+
+    /// Records one branch claim put to the compiler.
+    pub fn witness(&self, record: WitnessRecord) {
+        self.emit(Payload::Witness { witness: record });
+    }
+
+    /// Records how one mutant's targets were chosen, and which of them ran.
+    pub fn route(&self, record: RouteRecord) {
+        self.emit(Payload::Route { route: record });
     }
 
     /// Records one mutant executed against one target.

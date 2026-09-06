@@ -77,6 +77,11 @@ pub enum Problem {
     },
     /// The recording's own accounting says events were dropped.
     Dropped(u64),
+    /// A phase began and never ended, or ended without beginning: the run was killed inside it, or the boundary was lost.
+    UnbalancedPhase {
+        /// The phase's name.
+        name: String,
+    },
 }
 
 /// Says what is wrong with a recording: a missing start or end, sequence gaps, and the drops the run-end admits to. Empty for a complete recording.
@@ -99,6 +104,7 @@ pub fn check(events: &[Event]) -> Vec<Problem> {
         }
         expected = event.seq.saturating_add(1);
     }
+    problems.extend(unbalanced_phases(events));
     match events.last().map(|e| &e.payload) {
         Some(Payload::RunEnd { run }) => {
             if run.events_dropped > 0 {
@@ -107,5 +113,35 @@ pub fn check(events: &[Event]) -> Vec<Problem> {
         }
         _ => problems.push(Problem::MissingRunEnd),
     }
+    problems
+}
+
+/// Every phase whose beginning and end do not pair up, in the order they began.
+///
+/// A phase is a stack: the end that closes one is the last beginning still
+/// open. What is left on the stack when the recording ends never ended, and an
+/// end with nothing under it never began.
+fn unbalanced_phases(events: &[Event]) -> Vec<Problem> {
+    let mut open: Vec<&str> = Vec::new();
+    let mut problems = Vec::new();
+    for event in events {
+        match &event.payload {
+            Payload::PhaseStart { phase } => open.push(&phase.name),
+            Payload::PhaseEnd { phase } => {
+                match open.iter().rposition(|name| *name == phase.name) {
+                    Some(at) => {
+                        let _closed = open.remove(at);
+                    }
+                    None => problems.push(Problem::UnbalancedPhase {
+                        name: phase.name.clone(),
+                    }),
+                }
+            }
+            _ => {}
+        }
+    }
+    problems.extend(open.into_iter().map(|name| Problem::UnbalancedPhase {
+        name: name.to_owned(),
+    }));
     problems
 }

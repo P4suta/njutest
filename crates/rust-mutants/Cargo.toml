@@ -39,6 +39,7 @@ windows-sys = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
+jsonschema = { workspace = true }
 rust-mutants = { workspace = true, features = ["testkit"] }
 mjutest-devkit = { workspace = true }
 proptest = { workspace = true }

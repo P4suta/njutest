@@ -1884,6 +1884,7 @@ dependencies = [
  "criterion",
  "hex",
  "jiff",
+ "jsonschema",
  "mjutest-devkit",
  "proc-macro2",
  "proptest",

@@ -8,6 +8,33 @@ use serde::{Deserialize, Serialize};
 /// The schema name carried by every `run-start` event. It names the recipe version; a future shape becomes `rust-mutants-trace-v2`.
 pub const SCHEMA: &str = "rust-mutants-trace-v1";
 
+/// Every type a recording can hold, in the order [`Payload::type_name`] answers with.
+///
+/// A reader that knows the vocabulary can say whether it read a recording it
+/// understands whole, and the schema under `schema/` is held to this list by a
+/// test: a type added to one and not the other is a recording no consumer can
+/// validate.
+pub const EVERY_TYPE: [&str; 18] = [
+    "run-start",
+    "phase-start",
+    "phase-end",
+    "open",
+    "snapshot",
+    "exec",
+    "discover-file",
+    "instrument",
+    "validate-round",
+    "bisect",
+    "build",
+    "verify",
+    "probe-exec",
+    "witness",
+    "route",
+    "mutant-exec",
+    "note",
+    "run-end",
+];
+
 /// One event of a recording.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Event {
@@ -84,6 +111,26 @@ pub enum Payload {
         /// The record.
         build: BuildRecord,
     },
+    /// One target was run with nothing active, before anything about a mutant is believed.
+    Verify {
+        /// The record.
+        verify: VerifyRecord,
+    },
+    /// One target was run against the probe tree, which says what it infected.
+    ProbeExec {
+        /// The record.
+        probe: ProbeExecRecord,
+    },
+    /// One branch claim was put to the compiler.
+    Witness {
+        /// The record.
+        witness: WitnessRecord,
+    },
+    /// How one mutant's targets were chosen, and which of them ran.
+    Route {
+        /// The record.
+        route: RouteRecord,
+    },
     /// One mutant was executed against one target.
     MutantExec {
         /// The record.
@@ -117,6 +164,10 @@ impl Payload {
             Self::ValidateRound { .. } => "validate-round",
             Self::Bisect { .. } => "bisect",
             Self::Build { .. } => "build",
+            Self::Verify { .. } => "verify",
+            Self::ProbeExec { .. } => "probe-exec",
+            Self::Witness { .. } => "witness",
+            Self::Route { .. } => "route",
             Self::MutantExec { .. } => "mutant-exec",
             Self::Note { .. } => "note",
             Self::RunEnd { .. } => "run-end",
@@ -328,6 +379,89 @@ pub struct BisectRecord {
 pub struct BuildRecord {
     /// The target ids, in order.
     pub targets: Vec<String>,
+}
+
+/// One target run with nothing active.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VerifyRecord {
+    /// The target.
+    pub target: String,
+    /// What the run established, which for a baseline is what it must not have been.
+    pub outcome: String,
+    /// How many tests ran, when the harness said.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tests_run: Option<u32>,
+    /// How long it took, which is what a derived timeout is five times.
+    pub duration_ms: u64,
+}
+
+/// One target run against the probe tree.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProbeExecRecord {
+    /// The target.
+    pub target: String,
+    /// `measured`, `not-measured`, or `unreadable-log`: a log this release cannot read tells the run nothing.
+    pub outcome: String,
+    /// How many probed sites this target infected, when the log was read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub infected: Option<u32>,
+    /// How long it took.
+    pub duration_ms: u64,
+}
+
+/// One branch claim put to the compiler.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WitnessRecord {
+    /// The candidate's dense catalog index.
+    pub index: u32,
+    /// The witnesses the claim rests on, by name.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub witnesses: Vec<String>,
+    /// Whether the compiler accepted them, which is what makes the claim a proof.
+    pub checked: bool,
+    /// The first line of what refused it, when one did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diagnostic: Option<String>,
+}
+
+/// One target a proof removed from what could have noticed a mutation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DischargeRecord {
+    /// The target.
+    pub target: String,
+    /// The proof that removed it: `branch-never-taken` or `never-infected`.
+    pub proof: String,
+}
+
+/// How one mutant's targets were chosen, and which of them ran.
+///
+/// The vocabulary is the runner's, so one reader reads both recordings: a
+/// `granularity` of `all` is every target, `block` the ones a measurement
+/// places, `discharged` a mutation every target was proved unable to notice,
+/// and `unreached` one no measured target executes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RouteRecord {
+    /// The mutant's short identity.
+    pub mutant: String,
+    /// Its dense catalog index.
+    pub index: u32,
+    /// `all`, `block`, `discharged`, or `unreached`.
+    pub granularity: String,
+    /// What widened the route back to everything, when something did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<String>,
+    /// The targets that could notice the mutation.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reaching: Vec<String>,
+    /// The targets a proof removed, each with the proof's name.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub discharged: Vec<DischargeRecord>,
+    /// The targets that actually ran, in order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub executed: Vec<String>,
+    /// The run this outcome was read back from, when it was not established here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reused: Option<String>,
 }
 
 /// One mutant executed against one target.
