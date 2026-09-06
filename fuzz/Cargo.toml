@@ -101,9 +101,11 @@ name = "engine_config"
 path = "fuzz_targets/engine_config.rs"
 test = false
 doc = false
+bench = false
 
 [[bin]]
 name = "run_report"
 path = "fuzz_targets/run_report.rs"
 test = false
 doc = false
+bench = false

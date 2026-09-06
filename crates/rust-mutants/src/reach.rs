@@ -30,16 +30,13 @@ use crate::trace::Recorder;
 use crate::workspace::{SessionError, Workspace};
 
 /// The limitation a session states when the tree could not be built with instrumentation.
-pub const UNBUILDABLE: &str = "coverage-build-failed";
-
-/// The limitation a session states when the LLVM tools are not installed.
-pub const TOOLS_MISSING: &str = "coverage-tools-missing";
-
+pub use crate::limitation::COVERAGE_BUILD_FAILED as UNBUILDABLE;
 /// The limitation a session states when the tools ran and said nothing usable.
-pub const UNMEASURED: &str = "coverage-not-measured";
-
+pub use crate::limitation::COVERAGE_NOT_MEASURED as UNMEASURED;
 /// The limitation a session states when the project configures its own compiler flags, which a coverage build would have to replace.
-pub const CONFIGURED_FLAGS: &str = "coverage-refused-configured-rustflags";
+pub use crate::limitation::COVERAGE_REFUSED_CONFIGURED_RUSTFLAGS as CONFIGURED_FLAGS;
+/// The limitation a session states when the LLVM tools are not installed.
+pub use crate::limitation::COVERAGE_TOOLS_MISSING as TOOLS_MISSING;
 
 /// The variable a coverage build's flags are put in, which is the encoded form so a value with a space cannot become two flags.
 const ENCODED_RUSTFLAGS: &str = "CARGO_ENCODED_RUSTFLAGS";

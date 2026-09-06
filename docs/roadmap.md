@@ -31,6 +31,29 @@ that lets it be seen, tested, and audited — and both are completion criteria.
 | M9 ✓ | The contracts and the code, said the same way | a timeout is a finding, an acceptance answers only for a mutation nothing noticed, the infection proof fires, a scoped run builds its own packages, mutations are measured `[execution] jobs` at a time, `replay` puts one finding back to the tests, a mutation nothing reached is unreached only where the evidence says so, a library's documentation is a target | typed `route`/`mutant-exec`/`probe-exec` records, every stage timed, `trace summary` naming the slowest commands and reading the engine's recording, `proofaudit` holding the layers to the kills | every page describes what the code does, and `proofaudit --trace` re-decides a real recording with no violations |
 | M10 ✓ | Equivalent mutants, proved | `[mutation] equivalence`: the compiler renders a mutation identically or it does not, and a run says `equivalent` only where the tests ran the position | `rust-mutants equivalence` over a whole catalog, `fixture-equivalent`, ADR 0013 | a mutation nothing could notice is not a finding, and one in code nothing calls still is |
 | M11 ✓ | The Rust-shaped gaps | fifty-one operators, mutation inside the assertion macros, the files `include!` pastes in, `#![no_std]` crates, a proc-macro crate's own tests, mutations routed to a library's documentation | six fixtures with fate tables, the rule-order guard, the skip reasons that are now emitted rather than named, a target cargo runs rather than the engine | every limitation the docs list is one a report carries |
+| E5 ✓ | The engine sees itself | `--trace[=DIR]` on every command, `trace summary`/`check`/`diff`, typed `verify`/`probe-exec`/`witness`/`route` records, sub-phases through `prepare`, `Session::route` as a question anyone can ask, and the byte span and source digest a reader re-mints an identity from | a scripted toolchain the tests drive instead of cargo, the suite cut into an inner loop that starts nothing and a `toolchain_` half that does, `cargo xtask engine-audit` re-deciding a run in nine layers, three committed runs it re-decides, the dogfood ledger and its weekly shard job, and one test per ledger the documentation keeps | every judged mutant leaves one route record, `engine-audit --trace` re-decides three committed runs with no violations, and `mise run test:fast` starts no cargo |
+
+## What E5 closed
+
+The engine could not record what it did. Every path in its command line
+handed the recorder a disabled one, so the only place a person could watch
+the engine decide was the runner's copy of the trace, which stops at the
+engine's edge. It records now, beside its own report, and reads one back with
+`trace summary`, `trace check`, and `trace diff`.
+
+What that made possible is the audit. `cargo xtask engine-audit` re-decides a
+completed run in nine layers with code that never calls the engine's, and
+running it on three real runs of the fixtures found three things the engine
+was getting wrong: merging the parts of a sharded run turned a mutation
+nothing reaches into a broken run rather than a gap in the tests, a mutant
+nobody could decide was reported as a timeout that did not repeat whether or
+not anything had timed out, and the recording of a route named a mutant one
+way where the recording of its execution named it another. The ledger tests
+found four pages that had stopped saying what the code does.
+
+The suite was also paying for a toolchain it did not need: the inner loop is
+now the half that starts no cargo, and the `toolchain_` half runs everything
+it did before.
 
 ## What M9 closed
 

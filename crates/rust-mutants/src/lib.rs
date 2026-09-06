@@ -19,6 +19,7 @@ pub mod glob;
 pub mod id;
 pub mod instrument;
 pub mod interval;
+pub mod limitation;
 pub mod outcome;
 pub mod probe;
 pub mod prove;

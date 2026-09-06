@@ -232,3 +232,39 @@ fn every_finding_kind_has_a_wire_name_that_reads_back() {
     };
     assert_eq!(finding.kind.name(), "surviving-mutant");
 }
+
+#[test]
+fn an_inconclusive_mutant_says_which_of_the_two_things_left_it_undecided() {
+    let silent = {
+        let mut one = judged(0, Outcome::Inconclusive);
+        one.tests_run = Some(0);
+        one
+    };
+    let timed_out = {
+        let mut one = judged(1, Outcome::Inconclusive);
+        one.retried = true;
+        one.tests_run = None;
+        one
+    };
+    let run = of(vec![silent, timed_out]);
+    let findings = run.findings();
+    let detail = |index: u32| {
+        findings
+            .iter()
+            .find(|finding| finding.mutant.as_deref() == Some(&format!("{index:064x}")))
+            .map_or_else(
+                || panic!("a finding for {index}"),
+                |finding| finding.detail.clone(),
+            )
+    };
+    assert!(
+        detail(0).contains("no test ran"),
+        "a target that ran nothing is not a timeout: {}",
+        detail(0)
+    );
+    assert!(
+        detail(1).contains("timed out"),
+        "a timeout that did not repeat says so: {}",
+        detail(1)
+    );
+}

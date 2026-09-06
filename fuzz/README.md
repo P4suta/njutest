@@ -27,9 +27,11 @@ so each has to fail closed rather than plausibly.
 | `coverage_export` | never panics; every accepted region ends where it began or after, and what a test reached is part of what the build instrumented |
 | `libtest_summary` | never panics; a target reaches `Passed` only through a line that counted a passing test, and a timeout is a failure whatever the line said |
 | `report_document` | never panics; an accepted report round-trips, its record stream carries exactly one `VERDICT`, and one that fails the audit is refused by the write path |
+| `engine_config` | never panics; an accepted `.rust-mutants.toml` is one every later stage can honour, checked against the rules the reader states |
+| `run_report` | never panics; an accepted run report renders, and one the reader refuses says why rather than panicking |
 
 ```sh
-mise run fuzz:smoke                     # every target, 256 runs each
+mise run fuzz:smoke                     # every target, 2000 runs each
 cargo +nightly fuzz run flatten         # one target, until interrupted
 cargo +nightly fuzz run flatten -- -runs=100000
 ```

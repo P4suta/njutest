@@ -401,51 +401,46 @@ fn proofs(recorded: Option<&str>, audit: &mut Audit) {
         );
         return;
     };
-    let mut removed: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
-    let mut granularity: BTreeMap<String, String> = BTreeMap::new();
-    let mut reused: BTreeSet<String> = BTreeSet::new();
-    let mut executed: BTreeSet<String> = BTreeSet::new();
-    let mut ran: Vec<(String, String, String)> = Vec::new();
-    for line in recorded.lines().filter(|line| !line.trim().is_empty()) {
-        let Ok(event) = serde_json::from_str::<serde_json::Value>(line) else {
-            continue;
-        };
-        match field(&event, "type").unwrap_or_default().as_str() {
-            "route" => {
-                let Some(route) = event.get("route") else {
-                    continue;
-                };
-                let mutant = field(route, "mutant").unwrap_or_default();
-                granularity.insert(
-                    mutant.clone(),
-                    field(route, "granularity").unwrap_or_default(),
-                );
-                if field(route, "reused").is_some() {
-                    reused.insert(mutant.clone());
-                }
-                let discharged = removed.entry(mutant).or_default();
-                for one in rows(route, "discharged") {
-                    discharged.insert(
-                        field(one, "target").unwrap_or_default(),
-                        field(one, "proof").unwrap_or_default(),
-                    );
-                }
-            }
-            "mutant-exec" => {
-                let Some(execution) = event.get("mutant") else {
-                    continue;
-                };
-                let mutant = field(execution, "mutant").unwrap_or_default();
-                executed.insert(mutant.clone());
-                ran.push((
-                    mutant,
-                    field(execution, "target").unwrap_or_default(),
-                    field(execution, "outcome").unwrap_or_default(),
-                ));
-            }
-            _ => {}
-        }
-    }
+    let routing = crate::route::read(recorded);
+    let removed: BTreeMap<String, BTreeMap<String, String>> = routing
+        .routes
+        .iter()
+        .map(|route| {
+            let discharged = route
+                .discharged
+                .iter()
+                .map(|one| (one.target.clone(), one.proof.clone()))
+                .collect();
+            (route.mutant.clone(), discharged)
+        })
+        .collect();
+    let granularity: BTreeMap<String, String> = routing
+        .routes
+        .iter()
+        .map(|route| (route.mutant.clone(), route.granularity.clone()))
+        .collect();
+    let reused: BTreeSet<String> = routing
+        .routes
+        .iter()
+        .filter(|route| route.reused.is_some())
+        .map(|route| route.mutant.clone())
+        .collect();
+    let executed: BTreeSet<String> = routing
+        .execs
+        .iter()
+        .map(|exec| exec.mutant.clone())
+        .collect();
+    let ran: Vec<(String, String, String)> = routing
+        .execs
+        .iter()
+        .map(|exec| {
+            (
+                exec.mutant.clone(),
+                exec.target.clone(),
+                exec.outcome.clone(),
+            )
+        })
+        .collect();
     if removed.is_empty() && ran.is_empty() {
         notes.unaudited(
             "route",

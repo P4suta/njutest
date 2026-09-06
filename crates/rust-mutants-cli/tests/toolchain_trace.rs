@@ -106,9 +106,9 @@ fn run_with_trace_records_under_the_run_directory_and_ends_with_run_end() {
         end.pointer("/run/outcome")
             .and_then(serde_json::Value::as_str),
         Some(if output.status.code() == Some(0) {
-            "undetected"
-        } else {
             "detected"
+        } else {
+            "undetected"
         }),
         "{end}"
     );

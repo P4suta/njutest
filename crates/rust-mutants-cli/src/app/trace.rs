@@ -123,12 +123,12 @@ pub fn ended(recorder: &Recorder, outcome: &Result<u8, CliError>, cancel: &Cance
     recorder.run_end(verdict, error);
 }
 
-/// How a command ended, in the words a recording uses.
+/// How a command ended, in the words the exit codes are named after.
 const fn verdict_of(code: u8) -> &'static str {
     match code {
-        0 => "undetected",
-        1 => "detected",
-        crate::EXIT_INTERRUPTED => "interrupted",
+        crate::run::EXIT_DETECTED => "detected",
+        crate::run::EXIT_UNDETECTED => "undetected",
+        crate::run::EXIT_INTERRUPTED => "interrupted",
         _ => "failed",
     }
 }

@@ -151,5 +151,30 @@ description = "Point rust-mutants at this workspace and read the score it reache
 run = """
 set -euo pipefail
 cargo build --release --bin rust-mutants
-./target/release/rust-mutants run --locked --offline "$@"
+./target/release/rust-mutants run --locked --offline --trace "$@"
+"""
+
+[tasks."dogfood:engine:audit"]
+description = "Run rust-mutants on its own engine and re-decide the report it wrote"
+run = """
+set -euo pipefail
+cargo build --release --bin rust-mutants
+cargo build --release -p xtask
+./target/release/rust-mutants run --locked --offline --trace "$@" || true
+run="$(ls -dt reports/mutation/*/ | head -1)"
+echo "re-deciding ${run} from its own recording"
+./target/release/rust-mutants trace check --dir "${run}trace"
+./target/release/xtask engine-audit "${run%/}" --trace "${run}trace" --ledger .rust-mutants.toml
+"""
+
+[tasks."engine-audit"]
+description = "Re-decide a stored engine run from its own rows, recording, and ledger"
+run = "cargo run -q -p xtask -- engine-audit \"$@\""
+
+[tasks."trace:check"]
+description = "Say whether a recording is complete: it begins, it ends, and it lost nothing"
+run = """
+set -euo pipefail
+cargo build --bin rust-mutants
+./target/debug/rust-mutants trace check "$@"
 """

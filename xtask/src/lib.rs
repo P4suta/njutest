@@ -7,12 +7,14 @@
 
 pub mod deps;
 pub mod devgates;
+pub mod engineaudit;
 pub mod fixtures;
 pub mod gates;
 pub mod lints;
 pub mod proofaudit;
 pub mod release;
 pub mod reportdiff;
+pub mod route;
 pub mod sbom;
 
 use std::ffi::OsString;
@@ -47,6 +49,20 @@ enum Gate {
         /// The directory the run left its recording in, which is what the proof layers are re-derived from.
         #[arg(long)]
         trace: Option<std::path::PathBuf>,
+    },
+    /// Whether a completed engine run's report is the one its own rows, recording, and ledger support (ADR 0004).
+    EngineAudit {
+        /// The directory the run left its report in.
+        run: std::path::PathBuf,
+        /// The directory the run left its recording in, which is what the trace layer is re-derived from.
+        #[arg(long)]
+        trace: Option<std::path::PathBuf>,
+        /// The reports of the other parts of this catalog, when the run was one part. Repeatable.
+        #[arg(long = "shard", value_name = "REPORT")]
+        shards: Vec<std::path::PathBuf>,
+        /// The configuration file whose accepted survivors the run is held to.
+        #[arg(long, value_name = "FILE")]
+        ledger: Option<std::path::PathBuf>,
     },
     /// What changed between two stored assurance reports.
     ReportDiff {
@@ -92,6 +108,23 @@ where
         Gate::Proofaudit { run, trace } => {
             return audit_run(&run, trace.as_deref(), stdout, stderr);
         }
+        Gate::EngineAudit {
+            run,
+            trace,
+            shards,
+            ledger,
+        } => {
+            return audit_engine(
+                &gates::EngineRun {
+                    run: &run,
+                    trace: trace.as_deref(),
+                    shards: &shards,
+                    ledger: ledger.as_deref(),
+                },
+                stdout,
+                stderr,
+            );
+        }
         Gate::ReportDiff { before, after } => gates::report_diff(&before, &after),
         Gate::Sbom { output } => gates::sbom(&root, output.as_deref()),
         Gate::All => gates::all(&root),
@@ -104,6 +137,24 @@ where
         Err(failure) => {
             let _written = writeln!(stderr, "{failure}");
             ExitCode::FAILURE
+        }
+    }
+}
+
+/// A run whose report could not be read at all is neither a clean audit nor a failed one, so it leaves by an exit code of its own.
+fn audit_engine(
+    asked: &gates::EngineRun<'_>,
+    stdout: &mut dyn Write,
+    stderr: &mut dyn Write,
+) -> ExitCode {
+    match gates::engine_audit(asked) {
+        Ok(audit) => {
+            let _written = writeln!(stdout, "{audit}");
+            ExitCode::from(audit.exit_code())
+        }
+        Err(failure) => {
+            let _written = writeln!(stderr, "{failure}");
+            ExitCode::from(engineaudit::EXIT_UNREADABLE)
         }
     }
 }

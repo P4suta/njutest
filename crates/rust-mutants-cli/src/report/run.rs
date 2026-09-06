@@ -487,12 +487,14 @@ fn score_of(accounting: &Accounting) -> Option<ScoreDocument> {
 }
 
 /// The exit code the whole earns, which is the code the whole would have earned rather than the worst of its parts.
-const fn exit_code_of(merged: &RunDocument) -> u8 {
+fn exit_code_of(merged: &RunDocument) -> u8 {
     if merged.run.interrupted {
         return crate::run::EXIT_INTERRUPTED;
     }
-    let broken = merged.accounting.errored > 0 || merged.accounting.not_run > 0;
-    if broken {
+    if merged.findings.iter().any(|finding| {
+        crate::run::FindingKind::parse(&finding.kind)
+            .is_some_and(crate::run::FindingKind::is_infrastructure)
+    }) {
         return crate::EXIT_USAGE;
     }
     if merged.findings.is_empty() {

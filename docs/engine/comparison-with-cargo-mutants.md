@@ -5,6 +5,8 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # rust-mutants and cargo-mutants
 
+**Status: implemented.** Everything claimed of this engine below is shipped; where a comparison is about a plan rather than a release, it says so on the line.
+
 [cargo-mutants] is the mutation testing tool most Rust projects reach for, and
 it is good. This page says what is different here, so that a reader can tell
 whether the difference is worth anything to them. It is a comparison of

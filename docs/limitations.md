@@ -74,7 +74,20 @@ below is stated fail-closed.
   and such a mutant is run everywhere. A tree that configures its own
   `rustflags` is not routed by coverage at all
   (`coverage-refused-configured-rustflags`), because a coverage build would
-  have to replace them.
+  have to replace them. Three other things leave the measurement empty and
+  route every mutant to every target, exactly as if the layer were not there:
+  a tree that will not build with instrumentation
+  (`coverage-build-failed`), a toolchain whose LLVM tools are not installed
+  (`coverage-tools-missing`), and tools that ran and produced nothing a run
+  could route by (`coverage-not-measured`). The last of these is also stated
+  per target, as `coverage-not-measured:<target id>`, when one target's
+  profile could not be read: that target is kept in every route rather than
+  dropped, because what the measurement says nothing about is run rather than
+  assumed.
+- The probe layer states `probe-tree-not-built` when the instrumented tree it
+  needs could not be built, and `probe-log-unreadable` when a target ran and
+  its infection log could not be read. Neither removes an execution: a layer
+  that could not measure discharges nothing.
 - One workspace per run. Path dependencies outside the workspace root are
   refused unless explicitly allowed as read-only.
 - Symbolic links in the evidence tree are rejected.

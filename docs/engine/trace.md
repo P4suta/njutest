@@ -41,9 +41,11 @@ type. The first event is `run-start` with `schema: "rust-mutants-trace-v1"`
 and the engine version; the last is `run-end` with `outcome`,
 `events_emitted`, and `events_dropped`, where a sink that counts its own
 drops (a full ring, a failed write) is the authority and the recorder's
-observed failures fill in otherwise. The outcome is `undetected` when the
-command found nothing to report, `detected` when it did, `failed` when it
-could not finish, and `interrupted` when it was stopped.
+observed failures fill in otherwise. The outcome is the word the
+command's exit code is named after: `detected` when everything the run
+executed was noticed and there is nothing to report, `undetected` when
+something was not, `failed` when the command itself could not finish, and
+`interrupted` when it was stopped.
 
 An `exec` record carries environment variable *names* only (the recorder
 strips `=value`), and the output as `output_bytes` plus `output_sha256`; a

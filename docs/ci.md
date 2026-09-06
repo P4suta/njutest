@@ -37,8 +37,34 @@ jobs:
 To diagnose a run that only misbehaves on the runner, set `MJUTEST_TRACE: '1'`
 on the verify step and upload `.mjutest/trace/` with the reports.
 
-For this repository itself, the required checks are in `.github/workflows/ci.yml`:
-the three-OS test matrix, lint (fmt, clippy, rustdoc, the `cargo xtask` gates,
-typos, taplo, actionlint, committed), cargo-deny, cargo-audit, and the coverage
-ratchet, all gathered by `ci-success`. `mutation.yml` runs cargo-mutants
-weekly.
+## The workflows of this repository
+
+| Workflow | Jobs | When |
+| --- | --- | --- |
+| `ci.yml` | the three-OS test matrix, lint (fmt, clippy, rustdoc, the `cargo xtask` gates, typos, taplo, actionlint, committed), cargo-deny, cargo-audit, the coverage ratchet, and `ci-success` which gathers them | every push and pull request |
+| `mutation.yml` | `cargo-mutants` over each package | weekly, and on request |
+| `dogfood.yml` | `shard` runs the engine over its own catalog in four parts, and `audit` puts the parts back together, checks each recording, and re-decides every part against the ledger | weekly, and on request |
+| `fuzz.yml` | every fuzz target for a fixed time | weekly, and on an engine pull request |
+| `release-please.yml`, `release.yml` | the release train | on `main`, and on a tag |
+
+The required checks are the ones `ci-success` gathers. `mutation.yml` and
+`dogfood.yml` are the two independent measurements of how strong this suite
+is, and neither gates a pull request: a survivor is a test to write or an
+acceptance to record with a reason, which is work to schedule rather than a
+push to block.
+
+## Dogfooding the engine
+
+`dogfood.yml` runs `rust-mutants` over its own engine with `--coverage
+--trace`, cut into four parts by `--shard K/4` so no part runs into the
+120-minute limit and reports every remaining mutant as interrupted. The
+`audit` job then:
+
+1. merges the four reports into the one the whole would have written,
+2. asks `rust-mutants trace check` whether each recording is complete,
+3. runs `cargo xtask engine-audit <part> --trace <part>/trace --ledger
+   .rust-mutants.toml` over every part, which re-mints every identity,
+   re-tallies every column, holds every row to the recording of what actually
+   ran, and refuses a survivor the ledger does not accept.
+
+The same three steps run locally as `mise run dogfood:engine:audit`.

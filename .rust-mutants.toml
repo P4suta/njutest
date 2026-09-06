@@ -1,0 +1,25 @@
+# SPDX-FileCopyrightText: 2026 mjutest contributors
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# rust-mutants against its own engine. `mise run dogfood:engine:audit` runs
+# this and then re-decides what the run reported from the recording it kept.
+#
+# A survivor here is a test to write or an acceptance to record below with a
+# reason. `cargo xtask engine-audit <run> --ledger .rust-mutants.toml` refuses
+# a run that leaves one unexplained, and refuses an acceptance the run no
+# longer holds.
+
+version = 1
+
+[project]
+packages = ["rust-mutants"]
+
+[mutation]
+tier = "balanced"
+# Coverage routing is the one proof layer that ships, and it is off by default
+# until E6 makes it the default. Until then the ledger asks for it by name.
+coverage = true
+
+[execution]
+offline = true
+locked = true

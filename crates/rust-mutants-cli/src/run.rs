@@ -331,10 +331,19 @@ fn detail(kind: FindingKind, one: &Judged) -> String {
             one.tests_run
                 .map_or_else(|| "the target".to_owned(), |count| format!("{count} tests"))
         ),
-        FindingKind::InconclusiveMutant => format!(
+        FindingKind::InconclusiveMutant if one.retried => format!(
             "{} timed out once and did not do so again, so the run cannot say what the tests \
              noticed",
             one.display_id
+        ),
+        FindingKind::InconclusiveMutant => format!(
+            "no test ran with {} active on {}, so the run cannot say what the tests noticed",
+            one.display_id,
+            if one.target.is_empty() {
+                "any target"
+            } else {
+                &one.target
+            }
         ),
         FindingKind::ErroredMutant => format!(
             "the harness itself failed on {} with exit {}, so nothing about the tests was \

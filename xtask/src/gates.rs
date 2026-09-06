@@ -8,7 +8,9 @@ use std::path::{Path, PathBuf};
 
 use walkdir::WalkDir;
 
-use crate::{deps, devgates, fixtures, lints as lint_scan, proofaudit, release, reportdiff};
+use crate::{
+    deps, devgates, engineaudit, fixtures, lints as lint_scan, proofaudit, release, reportdiff,
+};
 
 /// The root of this workspace, resolved from the xtask manifest at compile time so the gates do not depend on the working directory.
 #[must_use]
@@ -306,6 +308,65 @@ pub fn proofaudit(
         .map(|directory| directory.join("trace.jsonl"))
         .and_then(|path| std::fs::read_to_string(path).ok());
     proofaudit::audit(&label, &text, recorded.as_deref())
+}
+
+/// What one engine run is audited against: its own directory, and everything a layer needs beyond it.
+#[derive(Debug, Clone, Copy)]
+pub struct EngineRun<'a> {
+    /// The directory the run left its report in.
+    pub run: &'a Path,
+    /// The directory the run left its recording in.
+    pub trace: Option<&'a Path>,
+    /// The reports of the other parts of this catalog.
+    pub shards: &'a [PathBuf],
+    /// The configuration file whose accepted survivors the run is held to.
+    pub ledger: Option<&'a Path>,
+}
+
+/// Re-decides one completed engine run from its own report, recording, and ledger.
+///
+/// # Errors
+/// The report that is not there, is not JSON, or is not a run report.
+pub fn engine_audit(asked: &EngineRun<'_>) -> Result<engineaudit::Audit, engineaudit::AuditError> {
+    let path = asked.run.join(engineaudit::REPORT_FILE);
+    let label = path.display().to_string();
+    let text =
+        std::fs::read_to_string(&path).map_err(|source| engineaudit::AuditError::Unreadable {
+            path: label.clone(),
+            source,
+        })?;
+    let recorded = asked
+        .trace
+        .map(|directory| directory.join("trace.jsonl"))
+        .and_then(|path| std::fs::read_to_string(path).ok());
+    let parts: Vec<(String, String)> = asked
+        .shards
+        .iter()
+        .filter_map(|part| {
+            let path = if part.is_dir() {
+                part.join(engineaudit::REPORT_FILE)
+            } else {
+                part.clone()
+            };
+            let text = std::fs::read_to_string(&path).ok()?;
+            Some((path.display().to_string(), text))
+        })
+        .collect();
+    let ledger = asked
+        .ledger
+        .and_then(|path| std::fs::read_to_string(path).ok());
+    engineaudit::audit(
+        &label,
+        &text,
+        &engineaudit::Evidence {
+            recorded: recorded.as_deref(),
+            shards: parts
+                .iter()
+                .map(|(name, text)| (name.clone(), text.as_str()))
+                .collect(),
+            ledger: ledger.as_deref(),
+        },
+    )
 }
 
 /// What a release is made of, as a `CycloneDX` document.

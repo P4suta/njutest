@@ -38,10 +38,10 @@ pub struct Probed {
 }
 
 /// The limitation a run states when the probe tree would not build at all.
-pub const UNBUILDABLE: &str = "probe-tree-not-built";
+pub use crate::limitation::PROBE_TREE_NOT_BUILT as UNBUILDABLE;
 
 /// The limitation a run states when a test's infection log could not be read.
-pub const UNREADABLE_LOG: &str = "probe-log-unreadable";
+pub use crate::limitation::PROBE_LOG_UNREADABLE as UNREADABLE_LOG;
 
 /// What the pass is about.
 #[derive(Debug, Clone, Copy)]

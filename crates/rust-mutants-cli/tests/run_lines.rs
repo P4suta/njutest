@@ -146,3 +146,33 @@ fn an_interrupted_run_says_it_stopped_early() {
     let text = lines(&document);
     assert!(text.contains("INTERRUPTED"), "{text}");
 }
+
+#[test]
+fn merging_the_parts_of_a_run_earns_the_code_the_whole_would_have_earned() {
+    let unreached = || {
+        let mut one = mutant(0, "not_run", false);
+        one.unreached = true;
+        one
+    };
+    let part = |index: u32| {
+        let mut document = document();
+        let mut row = unreached();
+        row.index = index;
+        row.id = format!("{index:064x}");
+        row.display_id = format!("{index:020x}");
+        document.mutants = vec![row];
+        document.findings = vec![FindingDocument {
+            kind: "unreached-mutant".to_owned(),
+            mutant: Some(format!("{index:064x}")),
+            detail: "no measured target reaches it".to_owned(),
+        }];
+        document.run.exit_code = 1;
+        document
+    };
+    let merged = rust_mutants_cli::report::run::merge(&[part(0), part(1)]).expect("one whole");
+    assert_eq!(
+        merged.run.exit_code, 1,
+        "a mutation nothing reaches is a gap in the tests, not a run that broke; the whole \
+         earns what each part earned"
+    );
+}

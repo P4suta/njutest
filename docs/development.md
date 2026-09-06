@@ -5,6 +5,8 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # Development
 
+**Status: implemented.** Every gate, task, and tool named here exists; the catalog near the end says which milestone each arrived in.
+
 This document describes the infrastructure for working on mjutest and
 rust-mutants themselves. The other pages under `docs/` describe the tools;
 this one describes the tests, gates, and diagnostics that hold them to their
@@ -42,6 +44,7 @@ write or an acceptance to record with a reason, never something to leave.
 
 | Gate | Refuses |
 | --- | --- |
+| `lints` | an `#[allow]` anywhere in the repository, tests included, and a `Box<dyn Trait>` |
 | `devgates` | a seam the ledger `xtask/seam_allowlist.txt` does not name, and a ledger line the tree no longer has: `static mut`, a `static` with interior mutability, `thread_local!`, `#[cfg(test)]` outside a `mod tests`, a read of the process environment or an exit outside `main.rs`, an import of test support from production code ([ADR 0001](adr/0001-seam-policy.md)) |
 | `deps` | an internal dependency in the wrong direction ([ADR 0012](adr/0012-one-workspace-two-products.md)) |
 | `fixtures` | a fixture project without a `[workspace]` table, a committed `Cargo.lock`, the SPDX header, or with a dependency that is not a path inside itself |
@@ -72,8 +75,32 @@ leaves the layers `unaudited` rather than passed. This is [ADR 0004](adr/0004-pr
 which ships a proof layer only against a re-implementation that is not asked
 whether it agrees with itself.
 
-`mise run dogfood:audit` is that rule as one command: it runs this workspace
-through the release build, keeps the recording, and re-decides it.
+`cargo xtask engine-audit <run-directory> [--trace <recording>] [--shard
+<report>…] [--ledger .rust-mutants.toml]` is the same rule for the engine's
+own runs. It reads that run's `run-report-v1.json` and re-decides it in nine
+layers, none of which calls the engine's code:
+
+| Layer | Re-derives |
+| --- | --- |
+| `identity` | every `id`, minted again from the row's own path, rule, version, byte span, source digest, and edit; the short form as the head of the full one; the indices of the accepted and the refused as one dense catalog |
+| `accounting` | every column from the rows, and the equations the columns stand in: the outcomes come to `executed`, `executed + not_run` comes to `cataloged`, and `unreached` is never larger than `not_run` |
+| `score` | present exactly when the run decided something, over the columns it is a ratio of |
+| `findings` | each kind as a set equality with the rows in both directions, and every finding as one that names a row |
+| `expectations` | `met`, `stale`, and `unmatched` against the rows they name, and each accepted row against the one claim that accounted for it |
+| `exit` | the code the run returned, from what it found |
+| `merge` | the parts of one catalog: same digests, disjoint indices, and the whole they come to |
+| `trace` | every row against the recording of what actually ran: the target it names ran, its outcome is that execution's, a believed timeout repeated, instrumenting moved no line, every refusal was condemned by a round, a discharged target did not then run, an unreached route ran nothing, and every target the build produced was verified |
+| `ledger` | every survivor as one the ledger accepts with a reason, and every acceptance as one the run still holds |
+
+Its output and exit codes are `proofaudit`'s: one line per remark, a summary
+line, and 0, 1, or 2. Three runs of the fixtures are committed under
+`xtask/tests/testdata/engine-run-*/` and a test re-decides all three, so a
+change that makes the engine disagree with itself fails here rather than in a
+weekly job.
+
+`mise run dogfood:audit` and `mise run dogfood:engine:audit` are those rules as
+one command each: they run this workspace through the release build, keep the
+recording, and re-decide it.
 
 ```console
 $ mise run dogfood:audit
@@ -159,6 +186,23 @@ states one property in its doc comment and `fuzz/README.md` lists them.
 `mise run fuzz:smoke` runs every target briefly; the `fuzz` workflow does the
 same on a pull request that touches the engine and spends real time weekly.
 A crash reproducer worth keeping becomes a regular test.
+`xtask/tests/fuzz_ledger.rs` keeps the four places that name the targets in
+step: the source files, the manifest stanzas (each with `bench = false`, so
+`cargo bench` never builds a sanitizer target), the README rows, and the
+weekly workflow's matrix.
+
+### Ledgers the documentation keeps
+
+A page that names a set the code also names goes stale silently, so each such
+pair is a test: `crates/rust-mutants/tests/docs_ledger.rs` holds the trace
+page to `trace::EVERY_TYPE`, the architecture page's skips to
+`SkipReason::ALL`, the operators page to `CANONICAL_TABLE` and its two counts,
+and the limitations page to `rust_mutants::limitation::ALL`, and refuses a
+page under `docs/` that does not say whether what it describes is
+implemented. `crates/rust-mutants-cli/tests/docs_ledger.rs` holds the
+configuration page to the keys the reader accepts in both directions, and the
+JSON page to `FindingKind::ALL` and the exit codes. `xtask/tests/docs.rs`
+holds `docs/ci.md` to the workflows and the jobs they hold.
 
 ### Error codes
 
