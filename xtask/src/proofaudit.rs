@@ -454,8 +454,23 @@ fn proofs(recorded: Option<&str>, audit: &mut Audit) {
         );
         return;
     }
-    for (mutant, target, outcome) in &ran {
-        if outcome != "killed" && outcome != "timed_out" {
+    discharges(&removed, &ran, &mut notes);
+    reach(&granularity, &reused, &executed, &mut notes);
+    notes.unaudited(
+        "reach",
+        "which regions each target executed is in the coverage profiles, and a completed          run does not keep them, so a route decided by region is held to what it ran and          not re-derived from the measurement it was decided from"
+            .to_owned(),
+    );
+}
+
+/// Every proof that removed a target, against the kills the recording holds: a layer that drops a target which then finds a defect is unsound.
+fn discharges(
+    removed: &BTreeMap<String, BTreeMap<String, String>>,
+    ran: &[(String, String, String)],
+    notes: &mut Notes<'_>,
+) {
+    for (mutant, target, outcome) in ran {
+        if outcome != KILLED && outcome != TIMED_OUT {
             continue;
         }
         let Some(proof) = removed.get(mutant).and_then(|one| one.get(target)) else {
@@ -469,7 +484,6 @@ fn proofs(recorded: Option<&str>, audit: &mut Audit) {
             ),
         );
     }
-    reach(&granularity, &reused, &executed, &mut notes);
 }
 
 /// The reach layer against the recording: a route that claims nothing reaches a mutation may not then run one, and a route that says the evidence does not carry that claim has to run something.

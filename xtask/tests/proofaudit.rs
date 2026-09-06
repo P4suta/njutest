@@ -236,15 +236,14 @@ fn exit_code(directory: &Path) -> i32 {
 #[test]
 fn a_recording_that_agrees_with_itself_has_nothing_to_report() {
     let audit = audited_with_routes(&base());
-    assert_eq!(audit.remarks, [], "{audit}");
-    assert_eq!(audit.violations(), 0);
+    assert_eq!(audit.violations(), 0, "{audit}");
     assert_eq!(audit.exit_code(), 0);
 }
 
 #[test]
 fn an_assurance_the_run_is_wide_enough_to_reach_has_nothing_to_report() {
     let audit = audited_with_routes(&assured());
-    assert_eq!(audit.remarks, [], "{audit}");
+    assert_eq!(audit.violations(), 0, "{audit}");
 }
 
 #[test]
@@ -575,9 +574,11 @@ fn a_document_of_another_schema_cannot_be_audited() {
 #[test]
 fn the_summary_line_says_what_was_re_decided_and_what_it_found() {
     let rendered = audited_with_routes(&base()).to_string();
-    assert_eq!(
-        rendered,
-        format!("proofaudit: {RUN}: 2 mutants and 1 target re-decided; 0 violations, 0 unaudited")
+    assert!(
+        rendered.ends_with(&format!(
+            "proofaudit: {RUN}: 2 mutants and 1 target re-decided; 0 violations, 1 unaudited"
+        )),
+        "{rendered}"
     );
 }
 
@@ -588,7 +589,7 @@ fn every_violation_is_a_line_of_its_own_before_the_summary() {
     let first = lines.next().unwrap_or_default();
     assert!(first.starts_with("violation: findings: "), "{rendered}");
     assert!(first.contains(SURVIVED), "{rendered}");
-    assert!(rendered.ends_with("1 violation, 0 unaudited"), "{rendered}");
+    assert!(rendered.ends_with("1 violation, 1 unaudited"), "{rendered}");
 }
 
 #[test]
@@ -687,4 +688,25 @@ fn proven(audit: &Audit) -> Vec<String> {
         .filter(|remark| remark.layer == Layer::Proofs && remark.standing == Standing::Violated)
         .map(|remark| remark.subject.clone())
         .collect()
+}
+
+#[test]
+fn the_regions_a_route_was_decided_from_are_not_in_the_recording_and_the_audit_says_so() {
+    let audit = audited_with_routes(&base());
+
+    assert!(
+        audit.remarks.iter().any(|remark| {
+            remark.layer == Layer::Proofs
+                && remark.standing == Standing::Unaudited
+                && remark.subject == "reach"
+        }),
+        "the audit re-derives what it can and names what it cannot: which regions a \
+         target executed is in the coverage profiles, and a completed run does not keep \
+         them: {audit}"
+    );
+    assert_eq!(
+        audit.violations(),
+        0,
+        "and not being able to check something is not finding something wrong: {audit}"
+    );
 }
