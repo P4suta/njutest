@@ -14,8 +14,8 @@
 //! order the items came in, so a report's bytes are the same however the
 //! processors were shared out.
 
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Mutex, PoisonError, RwLock};
 
 /// The most workers a run gives itself when the configuration does not say.
 ///
@@ -71,17 +71,43 @@ where
                         break;
                     };
                     let answer = work(at, item);
-                    let mut kept = done
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    let mut kept = done.lock().unwrap_or_else(PoisonError::into_inner);
                     kept.push((at, answer));
                 }
             }));
         }
     });
-    let mut kept = done
-        .into_inner()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut kept = done.into_inner().unwrap_or_else(PoisonError::into_inner);
     kept.sort_by_key(|(at, _)| *at);
     kept.into_iter().map(|(_, answer)| answer).collect()
+}
+
+/// The machine: shared while a run measures several mutations at once, and given to one of them when a budget expires.
+///
+/// A mutation's budget is five times a duration the baseline measured, and a
+/// duration measured while three other test processes were running is a fact
+/// about the load rather than about the mutation. A run that has to decide
+/// whether a budget really expired takes the machine to itself first, so that
+/// the measurement the decision rests on is the one the budget was calibrated
+/// for. It is not a retry policy: one expired budget buys one quiet
+/// measurement, and what that measurement observes is what stands.
+#[derive(Debug, Default)]
+pub struct Quiet(RwLock<()>);
+
+impl Quiet {
+    /// Runs `work` beside whatever else this run is measuring.
+    pub fn shared<R>(&self, work: impl FnOnce() -> R) -> R {
+        let held = self.0.read().unwrap_or_else(PoisonError::into_inner);
+        let answer = work();
+        drop(held);
+        answer
+    }
+
+    /// Runs `work` with nothing else this run started running beside it.
+    pub fn alone<R>(&self, work: impl FnOnce() -> R) -> R {
+        let held = self.0.write().unwrap_or_else(PoisonError::into_inner);
+        let answer = work();
+        drop(held);
+        answer
+    }
 }

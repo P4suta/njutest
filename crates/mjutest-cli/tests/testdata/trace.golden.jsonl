@@ -4,7 +4,7 @@
 {"seq":4,"timestamp":"2027-01-15T08:00:03Z","elapsed_ms":3000,"type":"progress","progress":{"message":"1 of 2","done":1,"total":2}}
 {"seq":5,"timestamp":"2027-01-15T08:00:04Z","elapsed_ms":4000,"type":"phase-end","phase":{"name":"baseline","duration_ms":3000}}
 {"seq":6,"timestamp":"2027-01-15T08:00:05Z","elapsed_ms":5000,"type":"route","route":{"mutant":"9e5cc4f98f8e","granularity":"block","fallback":null,"reaching":["core/test/lib fast"],"discharged":[{"target":"core/test/lib outside","proof":"branch-never-taken"},{"target":"core/test/lib inside","proof":"never-infected"}],"file_candidates":4,"reused":null}}
-{"seq":7,"timestamp":"2027-01-15T08:00:06Z","elapsed_ms":6000,"type":"mutant-exec","mutant":{"mutant":"9e5cc4f98f8e","target":"core/test/lib fast","args":["--exact","tests::adds"],"outcome":"killed","duration_ms":42}}
+{"seq":7,"timestamp":"2027-01-15T08:00:06Z","elapsed_ms":6000,"type":"mutant-exec","mutant":{"mutant":"9e5cc4f98f8e","target":"core/test/lib fast","args":["--exact","tests::adds"],"outcome":"killed","duration_ms":42,"alone":false}}
 {"seq":8,"timestamp":"2027-01-15T08:00:07Z","elapsed_ms":7000,"type":"probe-exec","probe":{"target":"core/test/lib fast","outcome":"not-measured","infected":null}}
 {"seq":9,"timestamp":"2027-01-15T08:00:08Z","elapsed_ms":8000,"type":"note","note":{"kind":"limitation","detail":"mutation-phase-not-implemented"}}
 {"seq":10,"timestamp":"2027-01-15T08:00:09Z","elapsed_ms":9000,"type":"run-end","run":{"verdict":"INSUFFICIENT","accounting":null,"error":null,"events_emitted":9,"events_dropped":0}}

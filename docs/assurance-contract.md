@@ -280,9 +280,22 @@ never removes one. Each mutation command, and the probe command that measures
 the same target, gets five times its measured baseline duration plus five
 seconds, with a 30-second floor; the contract caps calibration at 30 minutes
 for `standard-v1` and five hours for `deep-v1`, and `[execution].timeout` is a
-further upper bound. An expired budget remains inconclusive under every bound.
-The record names the target time ran out under as the **last** of its executed
-targets, stored in execution order. `mjutest replay <finding-id>` bypasses
+further upper bound.
+
+An expired budget buys one measurement with the machine to itself. The budget
+is derived from a duration the baseline measured, and a duration measured
+while other test processes were running is a fact about the load as much as
+about the mutation, so before a run decides that time really ran out it stops
+starting anything else and measures once more. What that measurement observes
+is what stands: a mutation that completes under it was observed completing,
+and only a budget that expires again with nothing else running is a timeout.
+This is not a retry policy — one expired budget buys exactly one quiet
+measurement, and the recording says of every execution whether the machine was
+given to it.
+
+An expired budget remains inconclusive under every bound. The record names the
+target time ran out under as the **last** of its executed targets, stored in
+execution order. `mjutest replay <finding-id>` bypasses
 evidence entirely, which is how a timeout is deliberately re-run.
 
 #### The behaviour key

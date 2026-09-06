@@ -412,6 +412,7 @@ pub fn run_resuming(
         controls: &controls,
         watch,
         infected: infections(baseline, &session.probed().infected),
+        quiet: schedule::Quiet::default(),
     };
 
     let measured = schedule::measure(
@@ -674,6 +675,7 @@ struct Judging<'a> {
     controls: &'a Controls,
     watch: Watch<'a>,
     infected: BTreeMap<String, BTreeSet<u32>>,
+    quiet: schedule::Quiet,
 }
 
 fn judge(
@@ -714,7 +716,34 @@ fn against(
 ) -> Result<Option<Disposition>, crate::error::RunnerError> {
     let (session, options, watch) = (judging.subject.session, judging.options, judging.watch);
     let request = request_for(&mutant.id, measured, &options.test_args);
-    let result = session.exec(&request, watch.cancel)?;
+    let mut result = judging
+        .quiet
+        .shared(|| session.exec(&request, watch.cancel))?;
+    record_exec(
+        watch,
+        &Ran {
+            mutant,
+            measured,
+            request: &request,
+            result: &result,
+            alone: false,
+        },
+    );
+    if quiet_measurement_due(result.outcome, watch.cancel.is_cancelled()) {
+        result = judging
+            .quiet
+            .alone(|| session.exec(&request, watch.cancel))?;
+        record_exec(
+            watch,
+            &Ran {
+                mutant,
+                measured,
+                request: &request,
+                result: &result,
+                alone: true,
+            },
+        );
+    }
     let name = measured.map_or_else(
         || {
             if result.target.is_empty() {
@@ -725,13 +754,6 @@ fn against(
         },
         |one| one.target.name(),
     );
-    watch.trace.mutant_exec(crate::trace::MutantExecRecord {
-        mutant: mutant.display_id.clone(),
-        target: measured.map_or_else(|| SUITE.to_owned(), |one| one.target.id.clone()),
-        args: request.args.clone(),
-        outcome: result.outcome.name().to_owned(),
-        duration_ms: u64::try_from(result.duration.as_millis()).unwrap_or(u64::MAX),
-    });
     match result.outcome {
         Outcome::Survived => Ok(None),
         Outcome::Killed | Outcome::TimedOut => Ok(Some(
@@ -817,6 +839,40 @@ impl Controls {
             .insert(key, failure.clone());
         Ok(failure)
     }
+}
+
+/// One mutation execution and what it was.
+struct Ran<'a> {
+    mutant: &'a Mutant,
+    measured: Option<&'a Measured>,
+    request: &'a Request,
+    result: &'a MutantResult,
+    /// Whether the machine was given to it, which a run does once when a budget expires.
+    alone: bool,
+}
+
+/// One mutation execution, as the recording holds it.
+fn record_exec(watch: Watch<'_>, ran: &Ran<'_>) {
+    watch.trace.mutant_exec(crate::trace::MutantExecRecord {
+        mutant: ran.mutant.display_id.clone(),
+        target: ran
+            .measured
+            .map_or_else(|| SUITE.to_owned(), |one| one.target.id.clone()),
+        args: ran.request.args.clone(),
+        outcome: ran.result.outcome.name().to_owned(),
+        duration_ms: u64::try_from(ran.result.duration.as_millis()).unwrap_or(u64::MAX),
+        alone: ran.alone,
+    });
+}
+
+/// Whether an expired budget has a quiet measurement coming to it.
+///
+/// Only an expired budget does, and only once: a mutation the tests answered
+/// has been answered, and a run that has been asked to stop starts nothing
+/// else.
+#[must_use]
+pub const fn quiet_measurement_due(outcome: Outcome, cancelled: bool) -> bool {
+    matches!(outcome, Outcome::TimedOut) && !cancelled
 }
 
 /// The request the pair confirmation is made with: the one that ran, or the target the package suite found the answer in.

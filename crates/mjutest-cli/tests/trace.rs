@@ -460,6 +460,7 @@ fn a_route_names_every_target_a_proof_discharged_beside_the_proof() {
         args: vec!["--exact".to_owned(), "tests::adds".to_owned()],
         outcome: "killed".to_owned(),
         duration_ms: 42,
+        alone: false,
     });
     trace.probe_exec(ProbeExecRecord {
         target: "core/test/lib fast".to_owned(),
@@ -519,6 +520,7 @@ fn the_wire_shape_is_the_recorded_one() {
         args: vec!["--exact".to_owned(), "tests::adds".to_owned()],
         outcome: "killed".to_owned(),
         duration_ms: 42,
+        alone: false,
     });
     trace.probe_exec(ProbeExecRecord {
         target: "core/test/lib fast".to_owned(),
