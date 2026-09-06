@@ -5,7 +5,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # Roadmap
 
-**Status: M0 to M8 and E2 to E4 are done, and M9 is under way.** What remains of
+**Status: M0 to M9 and E2 to E4 are done.** What remains of
 M8 is the tag itself, which is a decision rather than a change: see
 `docs/release.md`. The user's decisions: one workspace, the engine first,
 the engine a standalone product too, every milestone completed, test-driven
@@ -28,16 +28,18 @@ that lets it be seen, tested, and audited — and both are completion criteria.
 | M7 ✓ | `deep-v1` and fuzz | Miri, sanitizers, cargo-fuzz, corpus promotion | nightly jobs, fuzz fixture | weak test → survivor → fuzz → corpus → fresh kill |
 | E4 ✓ | Engine reports | Stryker projection, offline HTML, TUI, `doctor-v1` | schema validation, TUI snapshots | a Stryker-valid report |
 | M8 ✓ | Release | release workflow, SBOM, provenance, comparison document | release gates, install-surface job | v0.1.0 |
-| M9 | The contracts and the code, said the same way | a timeout is a finding, an acceptance answers only for a mutation nothing noticed, the infection proof fires, a scoped run builds its own packages, mutations are measured `[execution] jobs` at a time, `replay` puts one finding back to the tests, a mutation nothing reached is unreached only where the evidence says so, a library's documentation is a target | typed `route`/`mutant-exec`/`probe-exec` records, every stage timed, `trace summary` naming the slowest commands and reading the engine's recording, `proofaudit` holding the layers to the kills | every page describes what the code does, and `proofaudit --trace` re-decides a real recording with no violations |
+| M9 ✓ | The contracts and the code, said the same way | a timeout is a finding, an acceptance answers only for a mutation nothing noticed, the infection proof fires, a scoped run builds its own packages, mutations are measured `[execution] jobs` at a time, `replay` puts one finding back to the tests, a mutation nothing reached is unreached only where the evidence says so, a library's documentation is a target | typed `route`/`mutant-exec`/`probe-exec` records, every stage timed, `trace summary` naming the slowest commands and reading the engine's recording, `proofaudit` holding the layers to the kills | every page describes what the code does, and `proofaudit --trace` re-decides a real recording with no violations |
 
-## What M9 has left
+## What M9 closed
 
-Each of these is a page promising something the code does not do yet, found by
-reading the two against each other. The ones that are done are in the row
-above.
+Each of these was a page promising something the code did not do, found by
+reading the two against each other: a timeout that raised no finding, an
+acceptance that answered for an outcome nobody could sign off, an infection
+proof that never fired, a scoped run that built every package, `[execution]
+jobs` that nothing read, a `replay` command that was in the help and was not a
+command, a documentation target nothing ran, and a mutation reported as
+reaching nothing on evidence that said no such thing.
 
-- The `generation` suite fails under load and passes in isolation. The baseline
-  is now measured the way the mutations are, so the calibration and the
-  execution share their conditions; what is left is that a budget of five times
-  a measured duration is a fact about one machine at one moment, and a loaded
-  machine is a different one.
+A loaded machine is still a different machine from the one a budget was
+calibrated on, which is why an expired budget now buys one measurement with
+the machine to itself before a run decides that time really ran out.

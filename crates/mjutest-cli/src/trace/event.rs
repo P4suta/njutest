@@ -289,6 +289,8 @@ pub struct MutantExecRecord {
     pub outcome: String,
     /// How long it took.
     pub duration_ms: u64,
+    /// Whether the machine was given to this execution, which a run does once when a budget expires.
+    pub alone: bool,
 }
 
 /// What the probe pass measured for one target.

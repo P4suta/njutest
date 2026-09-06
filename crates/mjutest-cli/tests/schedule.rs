@@ -6,7 +6,9 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-use mjutest_cli::assure::schedule::{CAP, measure, workers};
+use mjutest_cli::assure::mutation::quiet_measurement_due;
+use mjutest_cli::assure::schedule::{CAP, Quiet, measure, workers};
+use rust_mutants::outcome::Outcome;
 
 #[test]
 fn a_run_that_does_not_say_takes_the_processors_it_has_up_to_the_cap() {
@@ -73,4 +75,59 @@ fn more_than_one_item_is_measured_at_a_time() {
         most >= 2,
         "a run that measures one mutation at a time leaves every other processor idle: {most}"
     );
+}
+
+#[test]
+fn a_measurement_given_the_machine_has_nothing_this_run_started_beside_it() {
+    let quiet = Quiet::default();
+    let inside = AtomicUsize::new(0);
+    let alone_ran = AtomicUsize::new(0);
+
+    std::thread::scope(|scope| {
+        for _ in 0..4 {
+            let (quiet, inside) = (&quiet, &inside);
+            drop(scope.spawn(move || {
+                for _ in 0..500 {
+                    quiet.shared(|| {
+                        inside.fetch_add(1, Ordering::SeqCst);
+                        std::thread::yield_now();
+                        inside.fetch_sub(1, Ordering::SeqCst);
+                    });
+                }
+            }));
+        }
+        let (quiet, inside, alone_ran) = (&quiet, &inside, &alone_ran);
+        drop(scope.spawn(move || {
+            for _ in 0..100 {
+                quiet.alone(|| {
+                    assert_eq!(
+                        inside.load(Ordering::SeqCst),
+                        0,
+                        "a budget is five times a duration measured on this machine, and \
+                         the measurement that decides whether it really expired is taken \
+                         with nothing else on it"
+                    );
+                    alone_ran.fetch_add(1, Ordering::SeqCst);
+                });
+            }
+        }));
+    });
+
+    assert_eq!(alone_ran.load(Ordering::SeqCst), 100);
+}
+
+#[test]
+fn only_an_expired_budget_buys_a_quiet_measurement_and_a_stopped_run_buys_nothing() {
+    assert!(quiet_measurement_due(Outcome::TimedOut, false));
+    assert!(
+        !quiet_measurement_due(Outcome::TimedOut, true),
+        "a run that has been asked to stop starts nothing else"
+    );
+    for outcome in Outcome::ALL {
+        assert_eq!(
+            quiet_measurement_due(outcome, false),
+            outcome == Outcome::TimedOut,
+            "a mutation the tests answered has been answered: {outcome:?}"
+        );
+    }
 }
