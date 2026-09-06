@@ -129,13 +129,7 @@ fn put(
             "the mutant it claims to close is not in the patched tree".to_owned(),
         ));
     };
-    let request = ExecRequest {
-        mutant: found.id.clone(),
-        target: None,
-        test: None,
-        args: Vec::new(),
-        timeout: Some(timeout),
-    };
+    let request = ExecRequest::new(found.id.clone()).with_timeout(Some(timeout));
     let mut stable = 0;
     for _attempt in 0..STABILITY_RUNS {
         let ran = session.control(&request, watch.cancel)?;

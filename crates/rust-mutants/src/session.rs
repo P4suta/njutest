@@ -70,7 +70,11 @@ impl Default for PrepareOptions {
 }
 
 /// One mutant execution to make.
+///
+/// Built rather than spelled as a literal, so that a field added later is a
+/// method a caller may ignore instead of a compile error in every caller.
 #[derive(Debug, Clone, Default)]
+#[non_exhaustive]
 pub struct Request {
     /// The mutant, by full identity or by any prefix of at least four hex characters that names exactly one.
     pub mutant: String,
@@ -82,6 +86,45 @@ pub struct Request {
     pub args: Vec<String>,
     /// How long the process may take. `None` uses the session's default.
     pub timeout: Option<Duration>,
+}
+
+impl Request {
+    /// A request for one mutant, named by its identity or by a prefix that names exactly one.
+    #[must_use]
+    pub fn new(mutant: impl Into<String>) -> Self {
+        Self {
+            mutant: mutant.into(),
+            ..Self::default()
+        }
+    }
+
+    /// Runs it against one target rather than against every one until something notices.
+    #[must_use]
+    pub fn with_target(mut self, target: impl Into<String>) -> Self {
+        self.target = Some(target.into());
+        self
+    }
+
+    /// Runs one test of the target, or the whole target again.
+    #[must_use]
+    pub fn test(mut self, test: Option<String>) -> Self {
+        self.test = test;
+        self
+    }
+
+    /// Further arguments for the harness.
+    #[must_use]
+    pub fn with_args(mut self, args: Vec<String>) -> Self {
+        self.args = args;
+        self
+    }
+
+    /// How long the process may take, or the session's own bound.
+    #[must_use]
+    pub const fn with_timeout(mut self, timeout: Option<Duration>) -> Self {
+        self.timeout = timeout;
+        self
+    }
 }
 
 /// Which targets could notice a mutation, and what the route rests on.

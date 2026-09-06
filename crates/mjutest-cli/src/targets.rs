@@ -79,11 +79,14 @@ impl UnitKind {
         use rust_mutants::execute::TargetKind;
         match kind {
             TargetKind::Lib => Self::Lib,
-            TargetKind::Bin => Self::Bin,
             TargetKind::Test => Self::Test,
             TargetKind::Example => Self::Example,
             TargetKind::ProcMacro => Self::ProcMacro,
             TargetKind::Doc => Self::Doc,
+            // A binary, and any kind a later engine adds: it is the shape
+            // that assumes least about what the target is, and a kind this
+            // release does not know is one no unit of this run holds.
+            _ => Self::Bin,
         }
     }
 }

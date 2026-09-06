@@ -345,12 +345,15 @@ fn prepared(
         } => match mutant {
             Some(prefix) => one(
                 session,
-                &Request {
-                    mutant: prefix.clone(),
-                    target: target.clone(),
-                    test: test.clone(),
-                    args: args.clone(),
-                    timeout: Some(settings.config.mutation.timeout),
+                &{
+                    let mut request = Request::new(prefix.clone())
+                        .test(test.clone())
+                        .with_args(args.clone())
+                        .with_timeout(Some(settings.config.mutation.timeout));
+                    if let Some(target) = target {
+                        request = request.with_target(target.clone());
+                    }
+                    request
                 },
                 cancel,
                 stdout,

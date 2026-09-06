@@ -902,11 +902,7 @@ fn narrowed(request: Request, measured: Option<&Measured>, result: &MutantResult
     if measured.is_some() || result.target.is_empty() {
         return request;
     }
-    Request {
-        target: Some(result.target.clone()),
-        test: None,
-        ..request
-    }
+    request.with_target(result.target.clone()).test(None)
 }
 
 /// The name a route that ran the whole package suite answers to, in a recording and in a report.
@@ -915,14 +911,16 @@ pub const SUITE: &str = "package-suite";
 /// The request that runs one mutant against one test, or against every test the session prepared when no proof says which could notice it.
 #[must_use]
 pub fn request_for(mutant: &str, measured: Option<&Measured>, args: &[String]) -> Request {
-    Request {
-        mutant: mutant.to_owned(),
-        target: measured.map(binary_of),
-        test: measured
-            .filter(|one| !one.target.is_whole_binary())
-            .map(|one| one.target.path.clone()),
-        args: args.to_vec(),
-        timeout: None,
+    let request = Request::new(mutant)
+        .test(
+            measured
+                .filter(|one| !one.target.is_whole_binary())
+                .map(|one| one.target.path.clone()),
+        )
+        .with_args(args.to_vec());
+    match measured.map(binary_of) {
+        Some(binary) => request.with_target(binary),
+        None => request,
     }
 }
 

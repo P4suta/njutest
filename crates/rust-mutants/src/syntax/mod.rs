@@ -83,6 +83,7 @@ pub struct Found {
 /// Why a place produced no candidate. Declared in rank order, which is the order skips are reported in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
+#[non_exhaustive]
 pub enum SkipReason {
     /// A constant context: a `const` or `static` initializer, a `const fn` body, a `const` block, an array length, an enum discriminant.
     ConstContext,

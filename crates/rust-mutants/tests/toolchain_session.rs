@@ -178,26 +178,14 @@ fn a_mutant_runs_against_every_target_until_one_kills_it() {
     };
 
     let killed = session
-        .exec(
-            &Request {
-                mutant: by_rule("return-default"),
-                ..Request::default()
-            },
-            &cancel,
-        )
+        .exec(&Request::new(by_rule("return-default")), &cancel)
         .expect("exec");
     assert_eq!(killed.outcome, Outcome::Killed);
     assert_eq!(killed.target, "fixture-simple/lib/fixture_simple");
     assert!(killed.tests_run.unwrap_or_default() > 0);
 
     let survivor = session
-        .exec(
-            &Request {
-                mutant: by_rule("gt-to-ge"),
-                ..Request::default()
-            },
-            &cancel,
-        )
+        .exec(&Request::new(by_rule("gt-to-ge")), &cancel)
         .expect("exec");
     assert_eq!(survivor.outcome, Outcome::Survived);
     assert_eq!(
@@ -207,12 +195,9 @@ fn a_mutant_runs_against_every_target_until_one_kills_it() {
 
     let one = session
         .exec(
-            &Request {
-                mutant: by_rule("return-default"),
-                target: Some("fixture-simple/lib/fixture_simple".to_owned()),
-                test: Some("tests::max_picks_the_larger".to_owned()),
-                ..Request::default()
-            },
+            &Request::new(by_rule("return-default"))
+                .with_target("fixture-simple/lib/fixture_simple".to_owned())
+                .test(Some("tests::max_picks_the_larger".to_owned())),
             &cancel,
         )
         .expect("exec");
@@ -221,12 +206,9 @@ fn a_mutant_runs_against_every_target_until_one_kills_it() {
 
     let nothing = session
         .exec(
-            &Request {
-                mutant: by_rule("return-default"),
-                target: Some("parity".to_owned()),
-                test: Some("no::such::test".to_owned()),
-                ..Request::default()
-            },
+            &Request::new(by_rule("return-default"))
+                .with_target("parity".to_owned())
+                .test(Some("no::such::test".to_owned())),
             &cancel,
         )
         .expect("exec");
@@ -251,34 +233,19 @@ fn a_request_that_names_nothing_is_refused_by_name() {
     let cancel = Cancel::new();
 
     let unknown = session
-        .exec(
-            &Request {
-                mutant: "ffffffff".to_owned(),
-                ..Request::default()
-            },
-            &cancel,
-        )
+        .exec(&Request::new("ffffffff".to_owned()), &cancel)
         .unwrap_err();
     assert!(unknown.to_string().contains("RM5003"), "{unknown}");
 
     let short = session
-        .exec(
-            &Request {
-                mutant: "a".to_owned(),
-                ..Request::default()
-            },
-            &cancel,
-        )
+        .exec(&Request::new("a".to_owned()), &cancel)
         .unwrap_err();
     assert!(short.to_string().contains("RM5003"), "{short}");
 
     let target = session
         .exec(
-            &Request {
-                mutant: session.catalog().mutants()[0].display_id.clone(),
-                target: Some("no-such-target".to_owned()),
-                ..Request::default()
-            },
+            &Request::new(session.catalog().mutants()[0].display_id.clone())
+                .with_target("no-such-target".to_owned()),
             &cancel,
         )
         .unwrap_err();
@@ -377,13 +344,7 @@ fn the_trace_says_what_every_phase_did() {
         .expect("prepare");
     let mutant = session.catalog().mutants()[0].display_id.clone();
     let _result = session
-        .exec(
-            &Request {
-                mutant,
-                ..Request::default()
-            },
-            &Cancel::new(),
-        )
+        .exec(&Request::new(mutant), &Cancel::new())
         .expect("exec");
     recorder.run_end("ok", None);
     session.close().expect("close");
@@ -488,10 +449,7 @@ fn a_target_with_no_tests_in_it_answers_neither_question() {
         .expect("a negate-condition mutant")
         .display_id
         .clone();
-    let request = Request {
-        mutant,
-        ..Request::default()
-    };
+    let request = Request::new(mutant);
 
     let killed = session.exec(&request, &cancel).expect("exec");
     assert_eq!(

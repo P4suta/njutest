@@ -168,22 +168,21 @@ fn a_target_is_named_by_package_kind_and_name() {
 }
 
 fn target() -> TestTarget {
-    TestTarget {
-        id: "demo/test/cli".to_owned(),
-        package: "demo".to_owned(),
-        kind: TargetKind::Test,
-        name: "cli".to_owned(),
-        executable: PathBuf::from("/t/debug/deps/cli-abc"),
-        cwd: PathBuf::from("/w/demo"),
-        cargo_env: vec![
-            (
-                OsString::from("CARGO_MANIFEST_DIR"),
-                OsString::from("/w/demo"),
-            ),
-            (OsString::from("CARGO_PKG_NAME"), OsString::from("demo")),
-        ],
-        through: Vec::new(),
-    }
+    TestTarget::new(
+        "demo/test/cli",
+        "demo",
+        TargetKind::Test,
+        "cli",
+        PathBuf::from("/t/debug/deps/cli-abc"),
+        PathBuf::from("/w/demo"),
+    )
+    .with_cargo_env(vec![
+        (
+            OsString::from("CARGO_MANIFEST_DIR"),
+            OsString::from("/w/demo"),
+        ),
+        (OsString::from("CARGO_PKG_NAME"), OsString::from("demo")),
+    ])
 }
 
 #[test]
@@ -301,16 +300,14 @@ fn a_request_names_the_arguments_the_binary_receives() {
 
 #[test]
 fn a_test_process_learns_which_cargo_built_it() {
-    let target = TestTarget {
-        id: "core/lib/core".to_owned(),
-        package: "core".to_owned(),
-        kind: TargetKind::Lib,
-        name: "core".to_owned(),
-        executable: PathBuf::from("/nowhere"),
-        cwd: PathBuf::from("/nowhere"),
-        cargo_env: Vec::new(),
-        through: Vec::new(),
-    };
+    let target = TestTarget::new(
+        "core/lib/core",
+        "core",
+        TargetKind::Lib,
+        "core",
+        PathBuf::from("/nowhere"),
+        PathBuf::from("/nowhere"),
+    );
     let composed = environment(
         &Context {
             base_env: &[],
@@ -472,4 +469,41 @@ fn the_profile_path_a_coverage_pass_composes_is_the_one_it_gets() {
         .find(|(name, _)| name == "LLVM_PROFILE_FILE")
         .map(|(_, value)| value.clone());
     assert_eq!(value.as_deref(), Some(mine.as_os_str()));
+}
+
+#[test]
+fn a_test_target_built_step_by_step_equals_the_literal_it_replaces() {
+    let built = TestTarget::new(
+        "demo/lib/demo",
+        "demo",
+        TargetKind::Lib,
+        "demo",
+        PathBuf::from("/w/target/debug/deps/demo-1"),
+        PathBuf::from("/w/demo"),
+    )
+    .with_cargo_env(vec![(
+        OsString::from("CARGO_MANIFEST_DIR"),
+        OsString::from("/w/demo"),
+    )])
+    .with_through(vec![OsString::from("test"), OsString::from("--doc")]);
+    assert_eq!(built.id, "demo/lib/demo");
+    assert_eq!(built.package, "demo");
+    assert_eq!(built.kind, TargetKind::Lib);
+    assert_eq!(built.name, "demo");
+    assert_eq!(built.cwd, PathBuf::from("/w/demo"));
+    assert_eq!(built.cargo_env.len(), 1);
+    assert_eq!(built.through.len(), 2);
+
+    let plain = TestTarget::new(
+        "demo/lib/demo",
+        "demo",
+        TargetKind::Lib,
+        "demo",
+        PathBuf::from("/w/target/debug/deps/demo-1"),
+        PathBuf::from("/w/demo"),
+    );
+    assert!(
+        plain.cargo_env.is_empty() && plain.through.is_empty(),
+        "what a builder was not told stays empty rather than being guessed"
+    );
 }

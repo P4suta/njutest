@@ -48,6 +48,7 @@ pub const SPILLED_PROFILE: &str = "spilled-coverage-%p-%m.profraw";
 
 /// The kinds of target that carry tests the engine runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
 pub enum TargetKind {
     /// The library's own unit tests.
     Lib,
@@ -126,7 +127,11 @@ pub fn target_id(package: &str, kind: TargetKind, name: &str) -> String {
 }
 
 /// One built test binary.
+///
+/// Built rather than spelled as a literal, so that a field added later is a
+/// method a caller may ignore instead of a compile error in every caller.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct TestTarget {
     /// `package/kind/name`.
     pub id: String,
@@ -152,6 +157,50 @@ pub struct TestTarget {
     /// `src/lib.rs - f (line 7)`, and a name ending in the line it is on
     /// cannot be the beginning of another one.
     pub through: Vec<OsString>,
+}
+
+impl TestTarget {
+    /// One built test binary, by everything cargo says about it that is not optional.
+    #[must_use]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "these six are what cargo says about a target and none of them has a sensible \
+                  default: a builder that let one be forgotten would build a target that names \
+                  no package or runs in no directory"
+    )]
+    pub fn new(
+        id: impl Into<String>,
+        package: impl Into<String>,
+        kind: TargetKind,
+        name: impl Into<String>,
+        executable: PathBuf,
+        cwd: PathBuf,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            package: package.into(),
+            kind,
+            name: name.into(),
+            executable,
+            cwd,
+            cargo_env: Vec::new(),
+            through: Vec::new(),
+        }
+    }
+
+    /// What cargo sets for this target that the parent environment does not have.
+    #[must_use]
+    pub fn with_cargo_env(mut self, env: Vec<(OsString, OsString)>) -> Self {
+        self.cargo_env = env;
+        self
+    }
+
+    /// The arguments before the harness's own, for a target cargo runs rather than one the engine starts.
+    #[must_use]
+    pub fn with_through(mut self, through: Vec<OsString>) -> Self {
+        self.through = through;
+        self
+    }
 }
 
 /// The libtest summary line of one run.

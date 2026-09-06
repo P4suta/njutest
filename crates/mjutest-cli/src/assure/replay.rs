@@ -119,13 +119,7 @@ pub fn replay(
         .and_then(|found| {
             session
                 .exec(
-                    &ExecRequest {
-                        mutant: found.id.clone(),
-                        target: None,
-                        test: None,
-                        args: Vec::new(),
-                        timeout: replaying.timeout,
-                    },
+                    &ExecRequest::new(found.id.clone()).with_timeout(replaying.timeout),
                     watch.cancel,
                 )
                 .map_err(RunnerError::from)

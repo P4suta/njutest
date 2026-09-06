@@ -135,13 +135,7 @@ fn a_mutant_no_measured_target_reached_is_not_run_at_all() {
     assert_eq!(session.reaches(alone), Some(false));
 
     let result = session
-        .exec(
-            &Request {
-                mutant: alone.id.clone(),
-                ..Request::default()
-            },
-            &Cancel::new(),
-        )
+        .exec(&Request::new(alone.id.clone()), &Cancel::new())
         .expect("exec");
     assert_eq!(
         result.outcome,

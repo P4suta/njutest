@@ -549,13 +549,9 @@ fn execute(
     options: &Options<'_>,
     cancel: &Cancel,
 ) -> Result<Judged, EngineError> {
-    let request = Request {
-        mutant: mutant.id.clone(),
-        target: None,
-        test: None,
-        args: options.args.to_vec(),
-        timeout: Some(options.timeout),
-    };
+    let request = Request::new(mutant.id.clone())
+        .with_args(options.args.to_vec())
+        .with_timeout(Some(options.timeout));
     let first = session.exec(&request, cancel)?;
     let mut duration = first.duration;
     let mut retried = false;

@@ -50,13 +50,7 @@ fn a_test_that_writes_into_the_tree_is_reported_as_drift() {
         .clone();
     let cancel = Cancel::new();
     let _result = session
-        .exec(
-            &Request {
-                mutant: mutant.id,
-                ..Request::default()
-            },
-            &cancel,
-        )
+        .exec(&Request::new(mutant.id), &cancel)
         .expect("exec");
     let drift = session.changes().expect("changes");
     let written: Vec<String> = drift
@@ -82,13 +76,7 @@ fn a_tree_nobody_wrote_to_drifts_in_nothing() {
         .clone();
     let cancel = Cancel::new();
     let _result = session
-        .exec(
-            &Request {
-                mutant: mutant.id,
-                ..Request::default()
-            },
-            &cancel,
-        )
+        .exec(&Request::new(mutant.id), &cancel)
         .expect("exec");
     let drift = session.changes().expect("changes");
     assert!(

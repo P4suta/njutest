@@ -172,11 +172,7 @@ fn a_test_that_killed_a_mutant_is_one_the_probe_recorded_infecting_it() {
         for target in session.targets() {
             let result = session
                 .exec(
-                    &Request {
-                        mutant: mutant.id.clone(),
-                        target: Some(target.id.clone()),
-                        ..Request::default()
-                    },
+                    &Request::new(mutant.id.clone()).with_target(target.id.clone()),
                     &cancel,
                 )
                 .expect("the mutant runs");
