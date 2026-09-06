@@ -9,6 +9,7 @@ pub mod fuzz;
 pub mod identity;
 pub mod mutation;
 pub mod repair;
+pub mod replay;
 pub mod route;
 pub mod run;
 pub mod sanitize;

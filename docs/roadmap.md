@@ -36,9 +36,6 @@ Each of these is a page promising something the code does not do yet, found by
 reading the two against each other. The ones that are done are in the row
 above.
 
-- `mjutest replay <finding-id>` is in the assurance contract, the exit-code
-  table, and the command line's own help, and is not a command. `REPRODUCED`,
-  `RESOLVED`, and `COMPLETED` are verdicts nothing produces.
 - Doctests are run as one target per library, says the contract. They are not
   run at all, and `doctests-not-routed` and `custom-harness-whole-binary` are
   limitation names no report carries.

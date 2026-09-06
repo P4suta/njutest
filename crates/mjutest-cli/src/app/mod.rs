@@ -11,6 +11,7 @@ pub mod explain;
 pub mod fix;
 pub mod init;
 pub mod plan;
+pub mod replay;
 pub mod reports;
 pub mod runs;
 pub mod show;
@@ -38,6 +39,7 @@ pub fn run(
         Command::Explain(arguments) => explain::run(arguments, environment, stdout, stderr),
         Command::Accept(arguments) => accept::run(arguments, environment, stdout, stderr),
         Command::Fix(arguments) => fix::run(arguments, environment, stdout, stderr),
+        Command::Replay(arguments) => replay::run(arguments, environment, stdout, stderr),
         Command::Trace { command } => trace::run(command, environment, stdout, stderr),
         Command::Diagnostics(arguments) => diagnostics::run(arguments, environment, stdout, stderr),
     }

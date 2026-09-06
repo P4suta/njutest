@@ -25,6 +25,10 @@ scope.
 
 Replay is an operation, not a new project assurance. It returns `REPRODUCED`
 when the selected finding remains observable or `RESOLVED` when it does not.
+It reads no evidence, no cache, and no coverage: the finding says nothing
+noticed a mutation, and the way to put that to the tests again is to offer the
+mutation to every test of the tree rather than to the ones a measurement once
+said could reach it. It advances no index and stores no verdict.
 
 ## Fault model
 
