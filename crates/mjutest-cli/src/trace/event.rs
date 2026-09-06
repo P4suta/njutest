@@ -262,9 +262,9 @@ pub struct DischargeRecord {
 pub struct RouteRecord {
     /// The mutant a person types.
     pub mutant: String,
-    /// `block`, `discharged`, `file`, or `unreached`.
+    /// `block`, `discharged`, `file`, `unreached`, or `suite`.
     pub granularity: String,
-    /// What the evidence could not support, on a route the position did not decide.
+    /// What the evidence could not support, on a route the position did not decide: the fallback that took the whole file, or the premise that sent the mutation to the package suite.
     pub fallback: Option<String>,
     /// The targets to run, cheapest first.
     pub reaching: Vec<String>,
@@ -281,7 +281,7 @@ pub struct RouteRecord {
 pub struct MutantExecRecord {
     /// The mutant a person types.
     pub mutant: String,
-    /// The target it ran against.
+    /// The target it ran against, or `package-suite` when no proof said which tests could notice it.
     pub target: String,
     /// The arguments the target was given, verbatim.
     pub args: Vec<String>,

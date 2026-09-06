@@ -21,9 +21,6 @@ use super::tree::Scan;
 /// The domain hashed first for a behaviour key.
 pub const KEY_DOMAIN: &str = "mjutest-mutation-evidence-key-v1";
 
-/// The domain hashed first for a package suite's key, which is what settles a mutant no target reaches.
-pub const SUITE_DOMAIN: &str = "mjutest-suite-key-v1";
-
 /// APIs whose result depends on what is in a directory rather than on what a file says. A package that uses one keys the whole tree: Rust offers no portable, unprivileged observation of what a test actually read, so the selection is static and widens rather than trusts.
 pub const DIRECTORY_READERS: [&str; 7] = [
     "read_dir",
@@ -77,12 +74,6 @@ pub struct Linked {
 #[must_use]
 pub fn behaviour(linked: &Linked, common: &Common) -> String {
     key(KEY_DOMAIN, linked, common)
-}
-
-/// The key of a package suite, which settles a mutant no target reaches.
-#[must_use]
-pub fn suite(linked: &Linked, common: &Common) -> String {
-    key(SUITE_DOMAIN, linked, common)
 }
 
 fn key(domain: &str, linked: &Linked, common: &Common) -> String {

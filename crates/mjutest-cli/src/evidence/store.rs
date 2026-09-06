@@ -78,6 +78,8 @@ pub enum Refusal {
         /// The target that entered the reaching set.
         target: String,
     },
+    /// This run routes no target to the mutant, so the recorded survival is a universal claim over nothing.
+    NothingRouted,
 }
 
 /// What this run knows about the targets a record may name.
@@ -122,6 +124,9 @@ impl Record {
                 standing.vouches(target, key)
             }
             Outcome::Survived { targets } => {
+                if reaching.is_empty() {
+                    return Err(Refusal::NothingRouted);
+                }
                 for target in reaching {
                     let Some(key) = targets.get(target) else {
                         return Err(Refusal::TargetEntered {

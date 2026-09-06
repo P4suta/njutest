@@ -71,11 +71,24 @@ the regions the coverage toolchain cut, are both routed by every target that
 executed the file. A target restored from a checkpoint carries no regions and
 keeps reaching its whole file.
 
-A position that instrumentation describes and no measured target executed
-reaches nothing, and the package suite establishes its disposition, exactly as
-for a mutant in a file no target covers. Such a mutant is `unreached`, not
-`surviving`; both are `survived` in the mutant inventory, so the accounting
-equations below are unaffected by how a mutant was routed.
+Saying that a position reaches nothing is a claim about the code rather than a
+gap in the measurement, and it rests on two premises: that instrumentation
+described the position, so a target's silence about it is a fact, and that
+every measured target carries coverage, so every target's silence is readable.
+A position both premises hold for, and no measured target executed, is
+`unreached`: nothing runs, and the finding says no test executes this code.
+
+Where a premise fails there is no proof, and the fallback is toward running
+more. The package suite — every target the run prepared, in one execution —
+settles the mutation instead, and the route says which premise failed:
+`position-unknown` where the catalog could not say where the mutation is,
+`outside-blocks` where no instrumented region contains the position, and
+`coverage-incomplete` where a measured target carries no coverage at all.
+The suite's answer is an ordinary kill or survival, so no accounting column
+holds a mutation whose disposition rests on an absence of evidence.
+
+`unreached` is not `surviving`; both are `survived` in the mutant inventory,
+so the accounting equations below are unaffected by how a mutant was routed.
 
 ### Discharging a test a branch proof rules out
 

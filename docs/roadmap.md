@@ -28,7 +28,7 @@ that lets it be seen, tested, and audited — and both are completion criteria.
 | M7 ✓ | `deep-v1` and fuzz | Miri, sanitizers, cargo-fuzz, corpus promotion | nightly jobs, fuzz fixture | weak test → survivor → fuzz → corpus → fresh kill |
 | E4 ✓ | Engine reports | Stryker projection, offline HTML, TUI, `doctor-v1` | schema validation, TUI snapshots | a Stryker-valid report |
 | M8 ✓ | Release | release workflow, SBOM, provenance, comparison document | release gates, install-surface job | v0.1.0 |
-| M9 | The contracts and the code, said the same way | a timeout is a finding, an acceptance answers only for a mutation nothing noticed, the infection proof fires, a scoped run builds its own packages, mutations are measured `[execution] jobs` at a time | typed `route`/`mutant-exec`/`probe-exec` records, every stage timed, `trace summary` naming the slowest commands and reading the engine's recording, `proofaudit` holding the layers to the kills | every page describes what the code does, and `proofaudit --trace` re-decides a real recording with no violations |
+| M9 | The contracts and the code, said the same way | a timeout is a finding, an acceptance answers only for a mutation nothing noticed, the infection proof fires, a scoped run builds its own packages, mutations are measured `[execution] jobs` at a time, `replay` puts one finding back to the tests, a mutation nothing reached is unreached only where the evidence says so | typed `route`/`mutant-exec`/`probe-exec` records, every stage timed, `trace summary` naming the slowest commands and reading the engine's recording, `proofaudit` holding the layers to the kills | every page describes what the code does, and `proofaudit --trace` re-decides a real recording with no violations |
 
 ## What M9 has left
 
@@ -39,17 +39,8 @@ above.
 - Doctests are run as one target per library, says the contract. They are not
   run at all, and `doctests-not-routed` and `custom-harness-whole-binary` are
   limitation names no report carries.
-- The `generation` suite fails under load and passes in isolation, and did so
-  before mutations were measured more than one at a time. A mutant's budget is
-  five times its measured baseline duration, and the baseline is measured one
-  target at a time while the mutations are measured `[execution] jobs` at a
-  time, so the calibration and the execution do not share their conditions.
-  Measuring the baseline the same way would close that and shorten the second
-  longest phase of a run at once.
-- A mutation nothing reached is settled by running the package suite, says the
-  contract; `docs/limitations.md` says it is reported as surviving; the code
-  does the second. The decision (2026-09-06) is to do neither exactly: report
-  it as `unreached` where coverage instrumented the position and every measured
-  target carries coverage, and run it where the evidence does not carry that —
-  which is what `evidence::key::suite`, a public function nothing calls, was
-  written for.
+- The `generation` suite fails under load and passes in isolation. The baseline
+  is now measured the way the mutations are, so the calibration and the
+  execution share their conditions; what is left is that a budget of five times
+  a measured duration is a fact about one machine at one moment, and a loaded
+  machine is a different one.

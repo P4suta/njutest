@@ -69,6 +69,57 @@ impl Fallback {
     }
 }
 
+/// Why a mutation no target reached is settled by running the package suite rather than reported as unreached.
+///
+/// Reporting that nothing reaches a position is a claim about the code, and it
+/// rests on two premises: that instrumentation described the position, so a
+/// target's silence about it is a fact rather than a gap, and that every
+/// measured target carries coverage, so every target's silence is readable.
+/// Where a premise fails the run has no proof and runs more, which is the
+/// direction [ADR 0004](../../../../docs/adr/0004-proof-layers-not-budgets.md)
+/// decision 2 requires of a fallback.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Unsettled {
+    /// The catalog could not say where the mutation is, so no target's coverage is about it.
+    PositionUnknown,
+    /// No instrumented region contains the position, so nothing was measured about it.
+    OutsideBlocks,
+    /// A measured target carries no coverage at all, so its silence about the position is not evidence.
+    CoverageIncomplete,
+}
+
+impl Unsettled {
+    /// The wire name a trace and a report use.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::PositionUnknown => "position-unknown",
+            Self::OutsideBlocks => "outside-blocks",
+            Self::CoverageIncomplete => "coverage-incomplete",
+        }
+    }
+
+    /// One sentence a reader can act on.
+    #[must_use]
+    pub const fn detail(self) -> &'static str {
+        match self {
+            Self::PositionUnknown => {
+                "the catalog could not say where the mutation is, so no test's coverage \
+                 is about it and the package suite was run"
+            }
+            Self::OutsideBlocks => {
+                "no instrumented region contains the position, so nothing was measured \
+                 about it and the package suite was run"
+            }
+            Self::CoverageIncomplete => {
+                "a measured test carries no coverage, so its silence about the position \
+                 is not evidence and the package suite was run"
+            }
+        }
+    }
+}
+
 /// The name a branch proof answers to in a route and in a recording.
 pub const BRANCH_NEVER_TAKEN: &str = "branch-never-taken";
 
@@ -116,9 +167,16 @@ pub enum Route {
         /// What the evidence could not support.
         fallback: Fallback,
     },
-    /// The position is instrumented and no test reached it: the mutation lives in code the measured tests never execute.
+    /// The position is instrumented, every measured test carries coverage, and none reached it: the mutation lives in code the measured tests never execute.
     Unreached {
         /// How many tests touched the file without reaching the position.
+        file_candidates: usize,
+    },
+    /// No test reached the position and the evidence does not carry that as a fact, so the package suite runs and settles it.
+    Suite {
+        /// Which premise of an unreached mutation failed.
+        unsettled: Unsettled,
+        /// How many tests touched the file.
         file_candidates: usize,
     },
 }
@@ -132,6 +190,7 @@ impl Route {
             Self::Discharged { .. } => "discharged",
             Self::File { .. } => "file",
             Self::Unreached { .. } => "unreached",
+            Self::Suite { .. } => "suite",
         }
     }
 
@@ -140,8 +199,28 @@ impl Route {
     pub fn reaching(&self) -> &[String] {
         match self {
             Self::Block { reaching, .. } | Self::File { reaching, .. } => reaching.as_slice(),
-            Self::Discharged { .. } | Self::Unreached { .. } => &[],
+            Self::Discharged { .. } | Self::Unreached { .. } | Self::Suite { .. } => &[],
         }
+    }
+
+    /// Which premise of an unreached mutation failed, when the suite is what settles it.
+    #[must_use]
+    pub const fn unsettled(&self) -> Option<Unsettled> {
+        match self {
+            Self::Suite { unsettled, .. } => Some(*unsettled),
+            Self::Block { .. }
+            | Self::Discharged { .. }
+            | Self::File { .. }
+            | Self::Unreached { .. } => None,
+        }
+    }
+
+    /// What widened this route beyond the position, by wire name: the fallback that took the whole file, or the premise that sent it to the package suite.
+    #[must_use]
+    pub fn widened(&self) -> Option<&'static str> {
+        self.fallback()
+            .map(Fallback::name)
+            .or_else(|| self.unsettled().map(Unsettled::name))
     }
 
     /// Why the position did not decide it, when it did not.
@@ -149,7 +228,10 @@ impl Route {
     pub const fn fallback(&self) -> Option<Fallback> {
         match self {
             Self::File { fallback, .. } => Some(*fallback),
-            Self::Block { .. } | Self::Discharged { .. } | Self::Unreached { .. } => None,
+            Self::Block { .. }
+            | Self::Discharged { .. }
+            | Self::Unreached { .. }
+            | Self::Suite { .. } => None,
         }
     }
 
@@ -163,7 +245,10 @@ impl Route {
             | Self::Discharged {
                 file_candidates, ..
             }
-            | Self::Unreached { file_candidates } => *file_candidates,
+            | Self::Unreached { file_candidates }
+            | Self::Suite {
+                file_candidates, ..
+            } => *file_candidates,
             Self::File { reaching, .. } => reaching.as_slice().len(),
         }
     }
@@ -173,7 +258,7 @@ impl Route {
     pub fn discharged(&self) -> &[Discharge] {
         match self {
             Self::Block { discharged, .. } | Self::Discharged { discharged, .. } => discharged,
-            Self::File { .. } | Self::Unreached { .. } => &[],
+            Self::File { .. } | Self::Unreached { .. } | Self::Suite { .. } => &[],
         }
     }
 }
@@ -332,9 +417,13 @@ pub fn route(
     instrumented: &BTreeSet<Block>,
 ) -> Route {
     let file = Path::new(path);
-    let candidates: Vec<&Measured> = baseline
+    let measured: Vec<&Measured> = baseline
         .iter()
         .filter(|measured| measured.status == TargetStatus::Passed)
+        .collect();
+    let candidates: Vec<&Measured> = measured
+        .iter()
+        .copied()
         .filter(|measured| measured.covered.iter().any(|block| block.file == file))
         .collect();
 
@@ -358,10 +447,8 @@ pub fn route(
                 .any(|block| block.contains(file, position))
         })
         .collect();
-    Reaching::new(cheapest_first(&reaching)).map_or(
-        Route::Unreached {
-            file_candidates: candidates.len(),
-        },
+    Reaching::new(cheapest_first(&reaching)).map_or_else(
+        || nothing_reached(&measured, candidates.len()),
         |reaching| Route::Block {
             reaching,
             file_candidates: candidates.len(),
@@ -370,10 +457,26 @@ pub fn route(
     )
 }
 
-/// Every target that touched the file, and why the position did not narrow it. With no candidate at all there is nothing to run and nothing the fallback could have told us, so it is the same answer as unreached.
+/// What a run may say about a position no test reached: that nothing reaches it, where every measured test could have said so, and otherwise that the package suite has to answer.
+fn nothing_reached(measured: &[&Measured], file_candidates: usize) -> Route {
+    if measured.iter().any(|one| one.covered.is_empty()) {
+        Route::Suite {
+            unsettled: Unsettled::CoverageIncomplete,
+            file_candidates,
+        }
+    } else {
+        Route::Unreached { file_candidates }
+    }
+}
+
+/// Every target that touched the file, and why the position did not narrow it. With no candidate at all there is nothing the fallback could have told us either, and an absence of evidence is not the proof an unreached mutation claims: the package suite settles it.
 fn by_file(candidates: &[&Measured], fallback: Fallback) -> Route {
     Reaching::new(cheapest_first(candidates)).map_or(
-        Route::Unreached {
+        Route::Suite {
+            unsettled: match fallback {
+                Fallback::PositionUnknown => Unsettled::PositionUnknown,
+                Fallback::OutsideBlocks => Unsettled::OutsideBlocks,
+            },
             file_candidates: candidates.len(),
         },
         |reaching| Route::File { reaching, fallback },
