@@ -853,3 +853,59 @@ fn a_mutation_only_another_process_reaches_is_settled_by_the_suite_that_reaches_
         "a kill the suite found still names the target that found it: {killers:?}"
     );
 }
+
+#[test]
+fn a_mutation_the_compiler_renders_identically_is_not_a_gap_in_the_tests() {
+    let fixture = fixture("fixture-equivalent");
+    std::fs::write(
+        fixture.root.join(".mjutest.toml"),
+        "# SPDX-FileCopyrightText: 2026 mjutest contributors\n\
+         # SPDX-License-Identifier: MIT OR Apache-2.0\n\n\
+         [mutation]\n\
+         equivalence = true\n",
+    )
+    .expect("the configuration");
+
+    verify(&fixture, &[]);
+    let report = document(&fixture);
+
+    let by_rule = |rule: &str| -> String {
+        report["mutants"]
+            .as_array()
+            .expect("mutants")
+            .iter()
+            .find(|mutant| mutant["rule"] == rule)
+            .and_then(|mutant| mutant["outcome"].as_str())
+            .unwrap_or("none")
+            .to_owned()
+    };
+    assert_eq!(
+        by_rule("add-to-sub@1"),
+        "equivalent",
+        "`n + 0` and `n - 0` are the same instructions at opt-level 2, and the tests ran \
+         the position: {}",
+        report["mutants"]
+    );
+    assert_eq!(
+        by_rule("mul-to-div@1"),
+        "killed",
+        "`n * 2` and `n / 2` are not the same instructions"
+    );
+    assert_eq!(
+        report["accounting"]["mutants"]["equivalent"], 1,
+        "a column of its own, because a reader who cannot tell 'nobody noticed' from \
+         'nobody could have' cannot act on either"
+    );
+
+    let findings: Vec<&str> = report["findings"]
+        .as_array()
+        .expect("findings")
+        .iter()
+        .filter_map(|finding| finding["subject"].as_str())
+        .collect();
+    assert!(
+        !findings.is_empty(),
+        "the mutation of `halved` keeps its finding: nothing calls it, the linker drops it, \
+         and identical artifacts then say the code is untested: {findings:?}"
+    );
+}

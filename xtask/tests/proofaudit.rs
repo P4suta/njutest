@@ -38,6 +38,7 @@ fn base() -> serde_json::Value {
                 "survived": 1,
                 "timed_out": 0,
                 "unreached": 0,
+                "equivalent": 0,
                 "accepted": 0,
                 "reused_killed": 0,
                 "reused_survived": 0

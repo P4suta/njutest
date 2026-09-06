@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use jiff::Timestamp;
 
 use crate::assure::baseline::{self, BaselineOptions, Workspace};
+use crate::assure::equivalence;
 use crate::assure::mutation::{self, MutationOptions, Subject};
 use crate::build::{Cargo, Selection};
 use crate::cli::Environment;
@@ -100,7 +101,7 @@ pub fn run(
 
     notes.phase("soundness");
     watch.trace.stage("soundness");
-    take_inventory(&mut report, request, &metadata);
+    let unsafe_packages = take_inventory(&mut report, request, &metadata);
     deepened(&mut report, request, (&toolchain, environment), watch)?;
     let layer = layer_for(&toolchain, environment, &scratch, notes)?;
 
@@ -138,6 +139,7 @@ pub fn run(
     if baseline.failure.is_none() {
         run_mutation(
             &mut Mutating {
+                unsafe_packages: &unsafe_packages,
                 report: &mut report,
                 request,
                 environment,
@@ -810,7 +812,7 @@ pub const SOUNDNESS_UNREADABLE_LIMITATION: &str = "soundness-source-unreadable";
 ///
 /// `standard-v1` does not execute any of them: a non-empty inventory is a
 /// limitation the report states rather than a claim it makes (ADR 0009).
-fn take_inventory(report: &mut Report, request: &Request, metadata: &Metadata) {
+fn take_inventory(report: &mut Report, request: &Request, metadata: &Metadata) -> BTreeSet<String> {
     let selected: Vec<(String, PathBuf)> = metadata
         .packages
         .iter()
@@ -829,7 +831,7 @@ fn take_inventory(report: &mut Report, request: &Request, metadata: &Metadata) {
             "the tree could not be walked for the places the compiler stops vouching for, so \
              the run makes no claim about them",
         ));
-        return;
+        return BTreeSet::new();
     };
     report.accounting.soundness = SoundnessAccounting {
         unsafe_items: count(taken.items.len()),
@@ -858,6 +860,7 @@ fn take_inventory(report: &mut Report, request: &Request, metadata: &Metadata) {
             ),
         ));
     }
+    taken.packages.iter().cloned().collect()
 }
 
 /// How much of the workspace this run looked at.
@@ -946,6 +949,8 @@ struct Mutating<'a> {
     metadata: &'a Metadata,
     restore: Option<&'a crate::checkpoint::State>,
     journal: &'a mut Journal,
+    /// Every package the soundness inventory found `unsafe` in, which is where "the same instructions" stops meaning "the same behaviour".
+    unsafe_packages: &'a BTreeSet<String>,
 }
 
 fn run_mutation(
@@ -982,17 +987,92 @@ fn run_mutation(
         },
         baseline::Reporting { notes, watch },
     )?;
-    if !session.changes()?.is_empty() {
+    let tree_written = !session.changes()?.is_empty();
+    if tree_written {
         mutating.report.limitations.push(Limitation::new(
             DRIFT_LIMITATION,
             "a test wrote into the tree while it was being measured, so every later \
              mutation was measured against what it wrote",
         ));
     }
+    let mut mutation = mutation;
+    if mutating.request.config.mutation.equivalence {
+        prove_equivalence(
+            &Proving {
+                mutating,
+                session: &session,
+                tree_written,
+            },
+            &mut mutation,
+            (notes, watch),
+        )?;
+    }
     for path in session.close()? {
         notes.note("kept", &path.display().to_string());
     }
     record(mutating.report, &mutation, &accepted);
+    Ok(())
+}
+
+/// What one pass of the equivalence layer is about, as one argument.
+struct Proving<'a> {
+    mutating: &'a Mutating<'a>,
+    session: &'a rust_mutants::session::Session,
+    tree_written: bool,
+}
+
+/// Asks the compiler, about every mutation nothing noticed, whether it renders it identically to the code it mutates.
+///
+/// The layer removes findings and never verdicts: a mutation it does not
+/// answer for keeps the finding it had, and a run it cannot open a tree for
+/// says so and keeps every one of them.
+fn prove_equivalence(
+    proving: &Proving<'_>,
+    mutation: &mut mutation::Mutation,
+    reporting: (&mut Notes<'_>, Watch<'_>),
+) -> Result<(), RunnerError> {
+    let Proving {
+        mutating,
+        session,
+        tree_written,
+    } = *proving;
+    let (notes, watch) = reporting;
+    let asked = equivalence::asked(session, &mutation.judged);
+    if asked.is_empty() {
+        return Ok(());
+    }
+    notes.phase("equivalence");
+    watch.trace.stage("equivalence");
+    let phase = watch.trace.phase("equivalence");
+    let request = mutating.request;
+    let decided = equivalence::prove(
+        &equivalence::Proving {
+            root: &request.root,
+            open: rust_mutants::workspace::OpenOptions {
+                cargo: None,
+                search_path: mutating
+                    .environment
+                    .var("PATH")
+                    .map(std::ffi::OsStr::to_owned),
+                env: mutating.environment.vars.clone(),
+                temp_directory: mutating.environment.temp_directory.clone(),
+                report_directory: Some("reports".to_owned()),
+                exclude: Vec::new(),
+                keep_temp: false,
+                offline: request.cargo.offline,
+                locked: request.cargo.locked,
+                trace: rust_mutants::trace::Recorder::disabled(),
+            },
+            timeout: Some(request.config.execution.timeout),
+            unsafe_packages: mutating.unsafe_packages.clone(),
+            tree_written,
+        },
+        &asked,
+        watch.cancel,
+        &rust_mutants::trace::Recorder::disabled(),
+    )?;
+    equivalence::settle(&mut mutation.judged, &decided, watch);
+    phase.end();
     Ok(())
 }
 

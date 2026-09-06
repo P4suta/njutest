@@ -23,7 +23,7 @@ pub const TARGET_DIR_PREFIX: &str = "rust-mutants-target-";
 pub const TARGET_OWNER_SCHEMA: &str = "rust-mutants-target-owner-v1";
 
 /// Configures [`Workspace::open`].
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct OpenOptions {
     /// The cargo to use: a path, or a bare name to find on `search_path`.
     pub cargo: Option<PathBuf>,

@@ -10,6 +10,7 @@ pub mod catalog;
 pub mod coverage;
 pub mod discover;
 pub mod duration;
+pub mod equivalence;
 pub mod error;
 pub mod execute;
 pub mod flatten;

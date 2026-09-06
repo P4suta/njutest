@@ -24,6 +24,7 @@ const TIMED_OUT: &str = "timed_out";
 const PASSED: &str = "passed";
 const SURVIVING_MUTANT: &str = "surviving-mutant";
 const SUITE: &str = "suite";
+const EQUIVALENT: &str = "equivalent";
 
 /// Why a recording could not be re-decided at all.
 #[derive(Debug, thiserror::Error)]
@@ -610,6 +611,7 @@ fn mutant_columns(recording: &Recording<'_>, audit: &mut Audit) {
         (SURVIVED, SURVIVED),
         (TIMED_OUT, TIMED_OUT),
         (UNREACHED, UNREACHED),
+        (EQUIVALENT, EQUIVALENT),
     ] {
         notes.tally(Column {
             subject: &format!("accounting.mutants.{name}"),
@@ -622,7 +624,8 @@ fn mutant_columns(recording: &Recording<'_>, audit: &mut Audit) {
         .mutants
         .len()
         .saturating_sub(recording.dispositions(REJECTED))
-        .saturating_sub(recording.dispositions(UNREACHED));
+        .saturating_sub(recording.dispositions(UNREACHED))
+        .saturating_sub(recording.dispositions(EQUIVALENT));
     notes.tally(Column {
         subject: "accounting.mutants.executed",
         recorded: column(recording.document, "mutants", "executed"),
@@ -675,11 +678,16 @@ fn equations(recording: &Recording<'_>, audit: &mut Audit) {
         subject: "accounting.mutants",
         relation: Relation::Exactly,
         sides: (
-            sum(&[mutants("rejected"), mutants("executed"), mutants(UNREACHED)]),
+            sum(&[
+                mutants("rejected"),
+                mutants("executed"),
+                mutants(UNREACHED),
+                mutants(EQUIVALENT),
+            ]),
             mutants("cataloged"),
         ),
-        because: "every cataloged mutant was refused by the compiler, reached by nothing, or \
-                  executed",
+        because: "every cataloged mutant was refused by the compiler, reached by nothing, \
+                  rendered identically to what it mutates, or executed",
     });
     notes.holds(Equation {
         subject: "accounting.mutants.executed",
@@ -696,7 +704,7 @@ fn equations(recording: &Recording<'_>, audit: &mut Audit) {
         relation: Relation::AtMost,
         sides: (
             mutants("accepted"),
-            sum(&[mutants(SURVIVED), mutants(UNREACHED)]),
+            sum(&[mutants(SURVIVED), mutants(UNREACHED), mutants(EQUIVALENT)]),
         ),
         because: "an acceptance is a reviewer's answer to a mutation nothing noticed, which is \
                   one nothing reached as much as one every reaching test passed",

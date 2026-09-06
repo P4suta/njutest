@@ -57,6 +57,12 @@ below is stated fail-closed.
   edition 2015 — is `no-std-crate`.
 - A file another file pastes in with `include!` where an expression goes is
   `included-expression`: it is a fragment rather than a program.
+- The equivalence layer is off by default and proves almost nothing on a
+  project that leaves `[profile.test] opt-level` at cargo's default of zero,
+  where two mutations the compiler would render identically at any
+  optimisation level are still two different sets of instructions. It is a
+  fact about the profile the tests run under rather than about the mutation,
+  and the layer answers the question the tests ask rather than an easier one.
 - A procedural macro's own unit tests are measured like any others; what it
   expands to is not (`proc-macro-expansion-not-measured`). A macro decides that
   during the build and a mutation is activated for a test process, so the two

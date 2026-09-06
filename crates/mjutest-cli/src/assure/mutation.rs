@@ -87,6 +87,11 @@ pub enum Disposition {
     },
     /// No measured test reaches it: the mutation lives in code the tests never execute.
     Unreached,
+    /// The tests ran the position and nothing noticed, and the compiler renders the mutation identically to the code it mutates: no test could have noticed.
+    Equivalent {
+        /// How its tests were chosen, which is the premise that separates this from untested code.
+        route: Route,
+    },
     /// A test noticed it and the pair did not agree, so nothing was established either way.
     Unconfirmed {
         /// The test.
@@ -113,6 +118,7 @@ impl Disposition {
             Self::TimedOut { .. } => "timed_out",
             Self::Survived { .. } => "survived",
             Self::Unreached => "unreached",
+            Self::Equivalent { .. } => "equivalent",
             Self::Unconfirmed { .. } => "unconfirmed",
             Self::Errored { .. } => "errored",
         }
@@ -126,7 +132,10 @@ impl Disposition {
             Self::TimedOut { on } | Self::Unconfirmed { on, .. } | Self::Errored { on, .. } => {
                 Some(on)
             }
-            Self::Rejected { .. } | Self::Survived { .. } | Self::Unreached => None,
+            Self::Rejected { .. }
+            | Self::Survived { .. }
+            | Self::Unreached
+            | Self::Equivalent { .. } => None,
         }
     }
 }
@@ -199,6 +208,12 @@ impl Mutation {
                         counts.accepted = counts.accepted.saturating_add(1);
                     }
                 }
+                Disposition::Equivalent { .. } => {
+                    counts.equivalent = counts.equivalent.saturating_add(1);
+                    if accepted.contains(&judged.id) {
+                        counts.accepted = counts.accepted.saturating_add(1);
+                    }
+                }
                 Disposition::Unconfirmed { .. } | Disposition::Errored { .. } => {
                     counts.executed = counts.executed.saturating_add(1);
                 }
@@ -228,7 +243,7 @@ impl Mutation {
 fn answered_by(judged: &Judged, accepted: &BTreeSet<String>) -> bool {
     matches!(
         judged.disposition,
-        Disposition::Survived { .. } | Disposition::Unreached
+        Disposition::Survived { .. } | Disposition::Unreached | Disposition::Equivalent { .. }
     ) && accepted.contains(&judged.id)
 }
 
@@ -275,7 +290,9 @@ fn finding_of(judged: &Judged) -> Option<Finding> {
                 judged.rule, judged.path
             ),
         ),
-        Disposition::Killed { .. } | Disposition::Rejected { .. } => {
+        Disposition::Killed { .. }
+        | Disposition::Rejected { .. }
+        | Disposition::Equivalent { .. } => {
             return None;
         }
     };
