@@ -27,8 +27,11 @@ crates/app/src/main.rs:13:9 delete-call-statement unreached
 crates/core/src/lib.rs:10:5 return-default killed
 crates/core/src/lib.rs:10:8 negate-condition killed
 crates/core/src/lib.rs:10:10 lt-to-le survived
+crates/core/src/lib.rs:11:9 return-default survived
 crates/core/src/lib.rs:12:15 negate-condition killed
 crates/core/src/lib.rs:12:17 gt-to-ge survived
+crates/core/src/lib.rs:13:9 return-default killed
+crates/core/src/lib.rs:15:9 return-default killed
 crates/core/src/lib.rs:21:5 return-default killed
 crates/core/src/util.rs:9:9 delete-compound-assignment killed
 crates/core/src/util.rs:9:13 add-assign-to-sub-assign killed

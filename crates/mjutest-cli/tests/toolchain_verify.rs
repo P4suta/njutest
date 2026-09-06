@@ -128,7 +128,7 @@ fn the_report_is_written_where_a_reader_will_look_and_validates_against_the_sche
     assert_eq!(report["accounting"]["targets"]["selected"], 3);
     assert_eq!(report["accounting"]["targets"]["passed"], 2);
     assert_eq!(report["accounting"]["targets"]["skipped"], 1);
-    assert_eq!(report["findings"].as_array().expect("findings").len(), 2);
+    assert_eq!(report["findings"].as_array().expect("findings").len(), 3);
     assert_eq!(
         report["toolchain"]["target"].as_str().unwrap_or_default(),
         report["toolchain"]["target"].as_str().unwrap_or("x"),
@@ -816,9 +816,9 @@ fn a_mutation_only_another_process_reaches_is_settled_by_the_suite_that_reaches_
     );
     assert_eq!(
         outcomes.iter().filter(|one| **one == "killed").count(),
-        2,
-        "the test runs the binary, the binary calls the library, and two of the three \
-         mutations make it say something else: {outcomes:?}"
+        4,
+        "the test runs the binary, the binary calls the library, and every mutation but \
+         the boundary makes it say something else: {outcomes:?}"
     );
     assert_eq!(
         report["verdict"], "INSUFFICIENT",

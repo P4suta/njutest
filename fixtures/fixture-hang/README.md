@@ -46,4 +46,5 @@ src/lib.rs:15:5 return-default killed
 src/lib.rs:25:5 return-default killed
 src/lib.rs:25:8 negate-condition killed
 src/lib.rs:25:10 gt-to-ge survived
+src/lib.rs:25:16 return-default killed
 ```

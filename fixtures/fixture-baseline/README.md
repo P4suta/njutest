@@ -47,8 +47,11 @@ refuses a difference, and `UPDATE_FATES=1` rewrites the block below.
 src/lib.rs:8:5 return-default killed
 src/lib.rs:8:8 negate-condition killed
 src/lib.rs:8:10 gt-to-ge survived
+src/lib.rs:9:9 return-default killed
 src/lib.rs:10:15 negate-condition killed
 src/lib.rs:10:17 lt-to-le survived
+src/lib.rs:11:9 return-default killed
+src/lib.rs:13:9 return-default unreached
 src/lib.rs:19:5 return-default killed
 src/lib.rs:19:7 mul-to-div killed
 ```

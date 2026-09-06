@@ -277,10 +277,10 @@ condemned on the strength of what a half-finished command printed.
 `const-context`, `macro-invocation`, `cfg-attribute`, `test-code`,
 `unsupported-site`, `excluded`, `test-only-file`, `no-std-crate`,
 `included-expression`, `generated-outside-workspace`, `forbidden-lints`,
-`const-fn-body`, `let-condition`, `open-range`. Each is counted and
-named; `rust-mutants why-skipped` lists them. A skip is a decision the tool made and says; a rejection (a mutant the
-compiler refused) is a fact about the program and is reported with the
-diagnostic.
+`const-fn-body`, `let-condition`, `open-range`, `unstated-return-type`. Each
+is counted and named; `rust-mutants why-skipped` lists them. A skip is a
+decision the tool made and says; a rejection (a mutant the compiler refused)
+is a fact about the program and is reported with the diagnostic.
 
 Every place a rule targets has a decision: a candidate with its guard form, or
 a skip with its reason. A rule that passed over a place without saying so is

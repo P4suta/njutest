@@ -3,7 +3,7 @@
 
 //! The walk over one file's syntax tree.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use proc_macro2::{TokenStream, TokenTree};
 use syn::spanned::Spanned;
@@ -35,12 +35,14 @@ enum ReturnKind {
     Never,
     /// `-> bool`.
     Bool,
-    /// `-> Result<..>` by its last path segment.
-    Result,
-    /// `-> Option<..>` by its last path segment.
-    Option,
+    /// `-> Result<..>` by its last path segment, and whether the syntax can say the `Ok` type has a default.
+    Result(bool),
+    /// `-> Option<..>` by its last path segment, and whether the syntax can say the `Some` type has a default.
+    Option(bool),
     /// Anything else, where only `Default::default()` can be offered.
     Other,
+    /// A type the syntax cannot say has a default, so the replacement is stated rather than guessed.
+    Unstated,
 }
 
 /// Where a statement without a semicolon sits in its block.
@@ -543,9 +545,10 @@ impl<'a> Walker<'a> {
     }
 
     fn walk_fn(&mut self, sig: &Signature, block: &Block, item_start: u32) {
+        let (generic, defaultable) = parameters(&sig.generics);
         let frame = Frame {
             allow_at: Some(item_start),
-            ret: return_kind(&sig.output),
+            ret: return_kind_within(&sig.output, &generic, &defaultable),
         };
         if sig.constness.is_some() {
             self.with_suppression(SkipReason::ConstFnBody, |walker| {
@@ -1067,16 +1070,26 @@ impl<'a> Walker<'a> {
                     offer(self, "return-true", "true");
                 }
             }
-            ReturnKind::Result => {
-                if !is_ok_default(expr) {
+            ReturnKind::Result(inner) => {
+                if !inner {
+                    self.declined(
+                        At::new(span.start, "return-ok-default"),
+                        SkipReason::UnstatedReturnType,
+                    );
+                } else if !is_ok_default(expr) {
                     offer(self, "return-ok-default", "Ok(Default::default())");
                 }
             }
-            ReturnKind::Option => {
+            ReturnKind::Option(inner) => {
                 if !is_default_spelling(expr) {
                     offer(self, "return-default", "Default::default()");
                 }
-                if !is_some_default(expr) {
+                if !inner {
+                    self.declined(
+                        At::new(span.start, "return-some-default"),
+                        SkipReason::UnstatedReturnType,
+                    );
+                } else if !is_some_default(expr) {
                     offer(self, "return-some-default", "Some(Default::default())");
                 }
             }
@@ -1085,7 +1098,47 @@ impl<'a> Walker<'a> {
                     offer(self, "return-default", "Default::default()");
                 }
             }
+            ReturnKind::Unstated => {
+                for rule in ["return-default", "return-ok-default", "return-some-default"] {
+                    self.declined(At::new(span.start, rule), SkipReason::UnstatedReturnType);
+                }
+            }
             ReturnKind::Unknown | ReturnKind::Unit | ReturnKind::Never => {}
+        }
+        self.branches_of(expr);
+    }
+
+    /// Every branch of a returned `if` or `match` is a place the function returns from too.
+    ///
+    /// A replacement of the whole expression is one mutation; a replacement of
+    /// one arm is another, and a suite that notices the first may notice
+    /// nothing about the second. The whole keeps the identity it had, because
+    /// an identity is minted from the bytes an edit replaces and those bytes
+    /// have not moved.
+    fn branches_of(&mut self, expr: &Expr) {
+        match expr {
+            Expr::If(one) => {
+                if let Some(tail) = block_tail(&one.then_branch) {
+                    self.return_site(tail);
+                }
+                if let Some((_, otherwise)) = &one.else_branch {
+                    match otherwise.as_ref() {
+                        Expr::Block(block) => {
+                            if let Some(tail) = block_tail(&block.block) {
+                                self.return_site(tail);
+                            }
+                        }
+                        nested @ Expr::If(_) => self.branches_of(nested),
+                        _ => {}
+                    }
+                }
+            }
+            Expr::Match(one) => {
+                for arm in &one.arms {
+                    self.return_site(&arm.body);
+                }
+            }
+            _ => {}
         }
     }
 
@@ -1161,32 +1214,172 @@ impl<'a> Walker<'a> {
 
 /// What a signature says the function returns.
 fn return_kind(output: &ReturnType) -> ReturnKind {
+    return_kind_within(output, &BTreeSet::new(), &BTreeSet::new())
+}
+
+/// What a return type says about the replacements a rule can offer for it.
+///
+/// `generic` is the type parameters the signature introduces and `defaultable`
+/// the ones something bound to `Default`. A parameter nothing bound is a type
+/// the syntax cannot say has a default, and offering one is a candidate the
+/// compiler refuses: predicting the refusal and stating it is what keeps a
+/// reader from reading a refusal as a fact about the program.
+fn return_kind_within(
+    output: &ReturnType,
+    generic: &BTreeSet<String>,
+    defaultable: &BTreeSet<String>,
+) -> ReturnKind {
     match output {
         ReturnType::Default => ReturnKind::Unit,
-        ReturnType::Type(_, ty) => return_kind_of(ty),
+        ReturnType::Type(_, ty) => return_kind_of(ty, generic, defaultable),
     }
 }
 
-fn return_kind_of(ty: &Type) -> ReturnKind {
+fn return_kind_of(
+    ty: &Type,
+    generic: &BTreeSet<String>,
+    defaultable: &BTreeSet<String>,
+) -> ReturnKind {
     match ty {
         Type::Tuple(t) if t.elems.is_empty() => ReturnKind::Unit,
         Type::Never(_) => ReturnKind::Never,
-        Type::Paren(p) => return_kind_of(&p.elem),
-        Type::Group(g) => return_kind_of(&g.elem),
-        Type::Path(p) => match p
-            .path
-            .segments
-            .last()
-            .map(|s| s.ident.to_string())
-            .as_deref()
-        {
-            Some("bool") => ReturnKind::Bool,
-            Some("Result") => ReturnKind::Result,
-            Some("Option") => ReturnKind::Option,
-            _ => ReturnKind::Other,
-        },
+        Type::Paren(p) => return_kind_of(&p.elem, generic, defaultable),
+        Type::Group(g) => return_kind_of(&g.elem, generic, defaultable),
+        Type::Reference(one) if borrows_a_default(&one.elem) => ReturnKind::Other,
+        Type::ImplTrait(_)
+        | Type::Reference(_)
+        | Type::Ptr(_)
+        | Type::FnPtr(_)
+        | Type::TraitObject(_)
+        | Type::Slice(_)
+        | Type::Macro(_)
+        | Type::Infer(_) => ReturnKind::Unstated,
+        Type::Path(p) if p.qself.is_some() => ReturnKind::Unstated,
+        Type::Path(p) => {
+            let first = p.path.segments.first().map(|s| s.ident.to_string());
+            if p.path.segments.len() > 1
+                && first.as_deref().is_some_and(|name| generic.contains(name))
+            {
+                return ReturnKind::Unstated;
+            }
+            let last = p.path.segments.last();
+            match last.map(|s| s.ident.to_string()).as_deref() {
+                Some("bool") => ReturnKind::Bool,
+                Some("Result") => {
+                    ReturnKind::Result(argument_defaults(last, 0, generic, defaultable))
+                }
+                Some("Option") => {
+                    ReturnKind::Option(argument_defaults(last, 0, generic, defaultable))
+                }
+                Some(name)
+                    if p.path.segments.len() == 1
+                        && generic.contains(name)
+                        && !defaultable.contains(name) =>
+                {
+                    ReturnKind::Unstated
+                }
+                _ => ReturnKind::Other,
+            }
+        }
         _ => ReturnKind::Other,
     }
+}
+
+/// Whether the `nth` type argument of a segment is one the syntax can say has a default.
+///
+/// `Option<T>` and `Result<T, E>` have a default whatever `T` is — `None` and
+/// nothing — but `Some(Default::default())` and `Ok(Default::default())` need
+/// one for `T`, so the inner type is asked about separately.
+fn argument_defaults(
+    segment: Option<&syn::PathSegment>,
+    nth: usize,
+    generic: &BTreeSet<String>,
+    defaultable: &BTreeSet<String>,
+) -> bool {
+    let Some(syn::PathArguments::AngleBracketed(args)) = segment.map(|one| &one.arguments) else {
+        return false;
+    };
+    let mut types = args.args.iter().filter_map(|arg| match arg {
+        syn::GenericArgument::Type(ty) => Some(ty),
+        _ => None,
+    });
+    let Some(ty) = types.nth(nth) else {
+        return false;
+    };
+    !matches!(
+        return_kind_of(ty, generic, defaultable),
+        ReturnKind::Unstated
+    )
+}
+
+/// The value a block ends with, when it ends with one rather than with a statement.
+fn block_tail(block: &Block) -> Option<&Expr> {
+    match block.stmts.last() {
+        Some(Stmt::Expr(expr, None)) => Some(expr),
+        _ => None,
+    }
+}
+
+/// Whether a reference to this type has a default: the standard library gives one to a shared or unique reference to a slice or to `str`, and to no other reference.
+fn borrows_a_default(ty: &Type) -> bool {
+    match ty {
+        Type::Slice(_) => true,
+        Type::Paren(p) => borrows_a_default(&p.elem),
+        Type::Group(g) => borrows_a_default(&g.elem),
+        Type::Path(p) => {
+            p.qself.is_none()
+                && p.path
+                    .segments
+                    .last()
+                    .is_some_and(|segment| segment.ident == "str")
+        }
+        _ => false,
+    }
+}
+
+/// The type parameters a signature introduces, and the ones something bound to `Default`.
+fn parameters(generics: &syn::Generics) -> (BTreeSet<String>, BTreeSet<String>) {
+    let mut named = BTreeSet::new();
+    let mut defaultable = BTreeSet::new();
+    for param in &generics.params {
+        let syn::GenericParam::Type(one) = param else {
+            continue;
+        };
+        let name = one.ident.to_string();
+        if one.bounds.iter().any(spells_default) {
+            let _added = defaultable.insert(name.clone());
+        }
+        let _added = named.insert(name);
+    }
+    let Some(clause) = &generics.where_clause else {
+        return (named, defaultable);
+    };
+    for predicate in &clause.predicates {
+        let syn::WherePredicate::Type(one) = predicate else {
+            continue;
+        };
+        let Type::Path(path) = &one.bounded_ty else {
+            continue;
+        };
+        if path.path.segments.len() != 1 || !one.bounds.iter().any(spells_default) {
+            continue;
+        }
+        if let Some(segment) = path.path.segments.first() {
+            let _added = defaultable.insert(segment.ident.to_string());
+        }
+    }
+    (named, defaultable)
+}
+
+/// Whether one bound is `Default`, by the name it is written with.
+fn spells_default(bound: &syn::TypeParamBound) -> bool {
+    let syn::TypeParamBound::Trait(one) = bound else {
+        return false;
+    };
+    one.path
+        .segments
+        .last()
+        .is_some_and(|segment| segment.ident == "Default")
 }
 
 /// The reason attributes suppress what they decorate: `#[test]` and `#[bench]` are test code, a `cfg` mentioning `test` is test code, and any other `cfg` is a configuration the walker does not evaluate.

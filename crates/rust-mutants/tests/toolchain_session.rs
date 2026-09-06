@@ -128,8 +128,8 @@ fn preparing_catalogs_instruments_validates_and_builds() {
     let before = fingerprint(fixture.root());
     let session = prepare(&fixture);
 
-    assert_eq!(session.catalog().len(), 6);
-    assert_eq!(session.accepted().len(), 6, "{:?}", session.rejections());
+    assert_eq!(session.catalog().len(), 8);
+    assert_eq!(session.accepted().len(), 8, "{:?}", session.rejections());
     assert!(session.rejections().is_empty());
     let skips: Vec<(&str, u32)> = session
         .skips()

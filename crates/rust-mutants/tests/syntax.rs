@@ -208,7 +208,9 @@ fn bitwise_operators_and_match_guards() {
             "return-default@2:5 \"match a & b {\\n        x if x > 1 => x | b,\\n        _ => (a ^ b) << 1 >> 1,\\n    }\"=>\"Default::default()\" E[\"match a & b {\\n        x if x > 1 => x | b,\\n        _ => (a ^ b) << 1 >> 1,\\n    }\"]",
             "band-to-bor@2:13 \"&\"=>\"|\" E[\"a & b\"]",
             "gt-to-ge@3:16 \">\"=>\">=\" C[\"x > 1\"]",
+            "return-default@3:23 \"x | b\"=>\"Default::default()\" E[\"x | b\"]",
             "bor-to-band@3:25 \"|\"=>\"&\" E[\"x | b\"]",
+            "return-default@4:14 \"(a ^ b) << 1 >> 1\"=>\"Default::default()\" E[\"(a ^ b) << 1 >> 1\"]",
             "xor-to-band@4:17 \"^\"=>\"&\" E[\"a ^ b\"]",
             "shl-to-shr@4:22 \"<<\"=>\">>\" E[\"(a ^ b) << 1\"]",
             "shr-to-shl@4:27 \">>\"=>\"<<\" E[\"(a ^ b) << 1 >> 1\"]",
@@ -267,6 +269,7 @@ fn skip_reasons_are_named_explained_and_ranked() {
             "const-fn-body",
             "let-condition",
             "open-range",
+            "unstated-return-type",
         ]
     );
     for reason in SkipReason::ALL {

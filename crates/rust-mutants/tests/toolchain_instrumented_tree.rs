@@ -175,15 +175,18 @@ fn prepare(fixture: &str) -> Tree {
 }
 
 impl Tree {
-    /// The identity of the one mutant of `rule` in the fixture, which the catalog is small enough to name unambiguously.
-    fn mutant(&self, rule: &str) -> String {
+    /// The identity of the one mutant of `rule` over `original` in the fixture.
+    fn mutant(&self, rule: &str, original: &str) -> String {
         let matching: Vec<&rust_mutants::catalog::Mutant> = self
             .catalog
             .mutants()
             .iter()
-            .filter(|mutant| mutant.candidate.rule.name == rule)
+            .filter(|mutant| {
+                mutant.candidate.rule.name == rule
+                    && mutant.candidate.original == original.as_bytes()
+            })
             .collect();
-        assert_eq!(matching.len(), 1, "{rule}: {matching:?}");
+        assert_eq!(matching.len(), 1, "{rule} over {original}: {matching:?}");
         matching[0].id.clone()
     }
 
@@ -222,7 +225,7 @@ fn an_instrumented_tree_builds_and_behaves_exactly_as_it_did_until_a_mutant_is_a
         );
     }
 
-    let killed = tree.mutant("return-default");
+    let killed = tree.mutant("return-default", "if a > b { a } else { b }");
     let result = tree.exec("fixture_simple", Some(&killed), None);
     assert_eq!(
         result.exit_code,
@@ -239,7 +242,7 @@ fn an_instrumented_tree_builds_and_behaves_exactly_as_it_did_until_a_mutant_is_a
     let result = tree.exec("parity", Some(&killed), None);
     assert!(result.ok(), "{}", String::from_utf8_lossy(&result.output));
 
-    let survivor = tree.mutant("gt-to-ge");
+    let survivor = tree.mutant("gt-to-ge", ">");
     let result = tree.exec("fixture_simple", Some(&survivor), None);
     assert!(result.ok(), "{}", String::from_utf8_lossy(&result.output));
 
@@ -251,7 +254,7 @@ fn an_instrumented_tree_builds_and_behaves_exactly_as_it_did_until_a_mutant_is_a
 #[test]
 fn a_stale_catalog_ends_the_test_process_rather_than_reporting_a_survivor() {
     let tree = prepare("fixture-simple");
-    let mutant = tree.mutant("return-default");
+    let mutant = tree.mutant("return-default", "if a > b { a } else { b }");
     let stale = "f".repeat(64);
     let result = tree.exec("fixture_simple", Some(&mutant), Some(&stale));
     assert_eq!(

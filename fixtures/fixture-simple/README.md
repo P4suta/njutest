@@ -36,6 +36,8 @@ refuses a difference, and `UPDATE_FATES=1` rewrites the block below.
 src/lib.rs:11:5 return-default killed
 src/lib.rs:11:8 negate-condition killed
 src/lib.rs:11:10 gt-to-ge survived
+src/lib.rs:11:16 return-default killed
+src/lib.rs:11:27 return-default killed
 src/lib.rs:16:5 return-true killed
 src/lib.rs:16:7 rem-to-mul killed
 src/lib.rs:16:11 eq-to-neq killed

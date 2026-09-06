@@ -141,7 +141,10 @@ src/lib.rs:120:20 add-assign-to-sub-assign unreached
 src/lib.rs:121:13 return-true unreached
 src/lib.rs:121:20 gt-to-ge unreached
 src/lib.rs:125:13 return-default survived
+src/lib.rs:126:22 return-default unreached
 src/lib.rs:127:24 lt-to-le survived
+src/lib.rs:127:31 return-default unreached
+src/lib.rs:128:22 return-default unreached
 src/lib.rs:134:9 return-default unreached
 src/lib.rs:134:29 mul-to-div survived
 src/lib.rs:134:48 gt-to-ge survived

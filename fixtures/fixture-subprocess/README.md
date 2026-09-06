@@ -11,7 +11,7 @@ by a process the test started rather than by the test itself.
 
 | Function | Reached | Fate |
 | --- | --- | --- |
-| `decide` | through the binary | `negate-condition` and both `return` replacements are killed by `the_binary_names_both_sides_of_zero` |
+| `decide` | through the binary | `negate-condition` and every `return` replacement are killed by `the_binary_names_both_sides_of_zero`; `gt-to-ge` survives |
 
 This fixture exists because coverage is read out of the profiles a target's
 processes wrote, and a profile is only readable against the binary that wrote
@@ -31,4 +31,6 @@ refuses a difference, and `UPDATE_FATES=1` rewrites the block below.
 src/lib.rs:8:5 return-default killed
 src/lib.rs:8:8 negate-condition killed
 src/lib.rs:8:10 gt-to-ge survived
+src/lib.rs:8:16 return-default killed
+src/lib.rs:8:36 return-default killed
 ```

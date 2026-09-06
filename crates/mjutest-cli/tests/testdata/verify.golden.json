@@ -2,16 +2,16 @@
   "accounting": {
     "mutants": {
       "accepted": 0,
-      "cataloged": 7,
+      "cataloged": 10,
       "equivalent": 0,
-      "executed": 7,
-      "killed": 5,
+      "executed": 9,
+      "killed": 7,
       "rejected": 0,
       "reused_killed": 0,
       "reused_survived": 0,
       "survived": 2,
       "timed_out": 0,
-      "unreached": 0
+      "unreached": 1
     },
     "soundness": {
       "executed": false,
@@ -48,6 +48,16 @@
         "line": 10
       },
       "subject": "2bcb6eb7d96056277fa1"
+    },
+    {
+      "detail": "no measured test reaches return-default@1 at src/lib.rs: the position is instrumented, every test this run routed with carries coverage, and none of them executes it",
+      "kind": "surviving-mutant",
+      "position": {
+        "character_column": 9,
+        "column": 9,
+        "line": 13
+      },
+      "subject": "97b5a75a9e1efeeff233"
     }
   ],
   "limitations": [
@@ -122,6 +132,21 @@
       "source_run_id": null
     },
     {
+      "display_id": "97b5a75a9e1efeeff233",
+      "id": "97b5a75a9e1efeeff23366ed26389245afc47b6091c7a2595eca2eb5cd052886",
+      "killed_by": null,
+      "outcome": "unreached",
+      "path": "src/lib.rs",
+      "position": {
+        "character_column": 9,
+        "column": 9,
+        "line": 13
+      },
+      "reused": false,
+      "rule": "return-default@1",
+      "source_run_id": null
+    },
+    {
       "display_id": "ae6162ece39e3389335d",
       "id": "ae6162ece39e3389335db4344482a86f8b7e93863b0b492fdf8868cea5b12c7b",
       "killed_by": "fixture-baseline/lib/fixture_baseline tests::sign_names_both_sides_of_zero",
@@ -137,6 +162,21 @@
       "source_run_id": null
     },
     {
+      "display_id": "b6f6f7454e99e11dfd80",
+      "id": "b6f6f7454e99e11dfd807eeea7e2e121461d68b588ccb1a0015d6e75d32adfb1",
+      "killed_by": "fixture-baseline/lib/fixture_baseline tests::sign_names_both_sides_of_zero",
+      "outcome": "killed",
+      "path": "src/lib.rs",
+      "position": {
+        "character_column": 9,
+        "column": 9,
+        "line": 9
+      },
+      "reused": false,
+      "rule": "return-default@1",
+      "source_run_id": null
+    },
+    {
       "display_id": "d0f665a548910bd9ed45",
       "id": "d0f665a548910bd9ed45eae5a3c02fa1e5b826af1bf0ed2ae01a52d493a3961e",
       "killed_by": "fixture-baseline/test/doubling doubling_is_addition_twice",
@@ -149,6 +189,21 @@
       },
       "reused": false,
       "rule": "mul-to-div@1",
+      "source_run_id": null
+    },
+    {
+      "display_id": "ee0a61bc9f91d9acc4cf",
+      "id": "ee0a61bc9f91d9acc4cf69d15879a1df1d4f7892ef853789a1d98cff5979cd4e",
+      "killed_by": "fixture-baseline/lib/fixture_baseline tests::sign_names_both_sides_of_zero",
+      "outcome": "killed",
+      "path": "src/lib.rs",
+      "position": {
+        "character_column": 9,
+        "column": 9,
+        "line": 11
+      },
+      "reused": false,
+      "rule": "return-default@1",
       "source_run_id": null
     },
     {

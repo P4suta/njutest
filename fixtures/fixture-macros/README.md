@@ -39,9 +39,12 @@ refuses a difference, and `UPDATE_FATES=1` rewrites the block below.
 crates/derive/src/lib.rs:11:5 return-default survived
 crates/derive/src/lib.rs:11:8 negate-condition unreached
 crates/derive/src/lib.rs:11:19 gt-to-ge unreached
+crates/derive/src/lib.rs:14:9 return-default unreached
 crates/derive/src/lib.rs:20:5 return-default killed
 crates/derive/src/lib.rs:20:8 negate-condition killed
 crates/derive/src/lib.rs:20:10 gt-to-ge survived
+crates/derive/src/lib.rs:20:16 return-default killed
+crates/derive/src/lib.rs:20:27 return-default killed
 src/lib.rs:21:5 return-default unreached
 src/lib.rs:27:5 return-default unreached
 src/lib.rs:27:13 add-to-sub unreached

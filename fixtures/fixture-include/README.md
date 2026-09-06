@@ -42,5 +42,7 @@ src/items.rs:9:5 return-true killed
 src/items.rs:9:7 gt-to-ge survived
 src/lib.rs:15:5 return-default killed
 src/lib.rs:15:8 negate-condition killed
+src/lib.rs:15:18 return-default killed
 src/lib.rs:15:22 mul-to-div killed
+src/lib.rs:15:35 return-default killed
 ```

@@ -20,12 +20,10 @@ Every mutant the compiler takes here is killed. That is the point of it: a
 shape the walker reads wrongly, or a test that does not cover what it looks
 like it covers, shows up as a survivor rather than as silence somewhere else.
 
-Nothing here is an `unsupported-site`: every place the rules target is a
-place a guard can be written. What the compiler refuses is `return-default`
-and `return-some-default` on a return type the syntax cannot default — `T`
-with no bound, `<F as Future>::Output`. The syntax predicts that refusal and
-this release still offers the candidate; stating it instead is what the
-return-replacement family is due next.
+Nothing here is an `unsupported-site` and nothing here is refused: every place
+the rules target is a place a guard can be written, and the return types the
+syntax cannot say have a default — `T` with no bound, `F::Output` — are stated
+as `unstated-return-type` rather than offered for the compiler to refuse.
 
 Both assertions about the counter are bounded with `take`. A mutation that
 stops the counter stopping has to fail rather than run for ever: an unbounded
@@ -41,13 +39,12 @@ for every candidate the compiler refused. The run is `rust-mutants run
 refuses a difference, and `UPDATE_FATES=1` rewrites the block below.
 
 ```fates
-src/lib.rs:0:0 return-default refused
-src/lib.rs:0:0 return-default refused
-src/lib.rs:0:0 return-some-default refused
 src/lib.rs:19:5 return-true killed
 src/lib.rs:19:11 le-to-lt killed
 src/lib.rs:24:5 return-ok-default killed
 src/lib.rs:24:8 negate-condition killed
+src/lib.rs:25:9 return-ok-default killed
+src/lib.rs:27:9 return-ok-default killed
 src/lib.rs:33:5 return-default killed
 src/lib.rs:36:24 mul-to-div killed
 src/lib.rs:42:5 return-default killed

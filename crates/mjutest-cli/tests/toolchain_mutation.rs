@@ -127,15 +127,15 @@ fn a_gap_the_suite_cannot_see_is_insufficient_and_named() {
     let report = document(&fixture);
     assert_eq!(report["verdict"], "INSUFFICIENT");
     let mutants = &report["accounting"]["mutants"];
-    assert_eq!(mutants["cataloged"], 7);
-    assert_eq!(mutants["killed"], 5);
+    assert_eq!(mutants["cataloged"], 10);
+    assert_eq!(mutants["killed"], 7);
     assert_eq!(
         mutants["survived"], 2,
         "the two boundary mutations only the ignored test would have caught"
     );
 
     let findings = report["findings"].as_array().expect("findings");
-    assert_eq!(findings.len(), 2);
+    assert_eq!(findings.len(), 3);
     let rules: Vec<&str> = report["mutants"]
         .as_array()
         .expect("mutants")
@@ -165,10 +165,10 @@ fn a_mutant_a_reviewer_accepted_stops_being_a_finding() {
         .as_array()
         .expect("mutants")
         .iter()
-        .filter(|mutant| mutant["outcome"] == "survived")
+        .filter(|mutant| mutant["outcome"] == "survived" || mutant["outcome"] == "unreached")
         .filter_map(|mutant| mutant["id"].as_str().map(ToOwned::to_owned))
         .collect();
-    assert_eq!(survivors.len(), 2);
+    assert_eq!(survivors.len(), 3);
 
     let mut configuration = String::from("version = 1\n");
     for id in &survivors {
@@ -188,7 +188,7 @@ fn a_mutant_a_reviewer_accepted_stops_being_a_finding() {
     );
     let report = document(&fixture);
     assert_eq!(report["verdict"], "ASSURED");
-    assert_eq!(report["accounting"]["mutants"]["accepted"], 2);
+    assert_eq!(report["accounting"]["mutants"]["accepted"], 3);
     assert_eq!(
         report["accounting"]["mutants"]["survived"], 2,
         "an acceptance does not rewrite what was measured"
@@ -259,11 +259,19 @@ fn mjutest(fixture: &Fixture, args: &[&str]) -> Output {
 }
 
 fn survivors(fixture: &Fixture) -> Vec<String> {
+    named(fixture, &["survived"])
+}
+
+fn unanswered(fixture: &Fixture) -> Vec<String> {
+    named(fixture, &["survived", "unreached"])
+}
+
+fn named(fixture: &Fixture, outcomes: &[&str]) -> Vec<String> {
     document(fixture)["mutants"]
         .as_array()
         .expect("mutants")
         .iter()
-        .filter(|mutant| mutant["outcome"] == "survived")
+        .filter(|mutant| outcomes.iter().any(|outcome| mutant["outcome"] == *outcome))
         .filter_map(|mutant| mutant["display_id"].as_str().map(ToOwned::to_owned))
         .collect()
 }
@@ -295,15 +303,15 @@ fn explain_refuses_a_prefix_that_names_more_than_one() {
     let output = mjutest(&fixture, &["explain", ""]);
     assert_eq!(output.status.code(), Some(3));
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("names 7 mutants"), "{stderr}");
+    assert!(stderr.contains("names 10 mutants"), "{stderr}");
 }
 
 #[test]
 fn accept_records_the_decision_where_the_next_run_will_read_it() {
     let fixture = fixture("fixture-baseline");
     verify(&fixture, &[]);
-    let names = survivors(&fixture);
-    assert_eq!(names.len(), 2);
+    let names = unanswered(&fixture);
+    assert_eq!(names.len(), 3);
 
     for name in &names {
         let output = mjutest(
@@ -324,7 +332,7 @@ fn accept_records_the_decision_where_the_next_run_will_read_it() {
     }
     let written =
         std::fs::read_to_string(fixture.root.join(".mjutest.toml")).expect("a configuration");
-    assert_eq!(written.matches("[[acceptance]]").count(), 2, "{written}");
+    assert_eq!(written.matches("[[acceptance]]").count(), 3, "{written}");
     assert!(
         written.contains("an ignored test covers this boundary"),
         "{written}"

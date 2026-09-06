@@ -113,11 +113,13 @@ pub enum SkipReason {
     LetCondition,
     /// A range with no end, which has no other form to become.
     OpenRange,
+    /// A return type the syntax cannot say has a default: an `impl Trait`, a reference, a pointer, a function, a type a macro writes, or a generic parameter nothing bound to `Default`.
+    UnstatedReturnType,
 }
 
 impl SkipReason {
     /// Every reason, in rank order.
-    pub const ALL: [Self; 14] = [
+    pub const ALL: [Self; 15] = [
         Self::ConstContext,
         Self::MacroInvocation,
         Self::CfgAttribute,
@@ -132,6 +134,7 @@ impl SkipReason {
         Self::ConstFnBody,
         Self::LetCondition,
         Self::OpenRange,
+        Self::UnstatedReturnType,
     ];
 
     /// The kebab-case name used in reports and on the command line.
@@ -152,6 +155,7 @@ impl SkipReason {
             Self::ConstFnBody => "const-fn-body",
             Self::LetCondition => "let-condition",
             Self::OpenRange => "open-range",
+            Self::UnstatedReturnType => "unstated-return-type",
         }
     }
 
@@ -197,6 +201,9 @@ impl SkipReason {
                 "the condition binds with let, and what a guard would have to rearrange is what the binding is in scope for"
             }
             Self::OpenRange => "the range has no end, so there is no other form of it to write",
+            Self::UnstatedReturnType => {
+                "the return type is one the syntax cannot say has a default: an impl Trait, a reference, a pointer, a function, a type a macro writes, or a generic parameter nothing bound to Default"
+            }
         }
     }
 

@@ -43,6 +43,8 @@ src/lib.rs:22:5 return-default unreached
 src/lib.rs:32:5 return-default inconclusive
 src/lib.rs:32:8 negate-condition unreached
 src/lib.rs:32:10 gt-to-ge unreached
+src/lib.rs:32:16 return-default unreached
 src/lib.rs:32:18 sub-to-add unreached
+src/lib.rs:32:31 return-default unreached
 src/lib.rs:32:33 sub-to-add unreached
 ```

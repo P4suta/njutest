@@ -25,11 +25,26 @@ type-checks. Return replacements read the signature — `-> bool` offers
 `return-true`, `-> Result<..>` `return-ok-default`, `-> Option<..>` both
 `return-some-default` and `return-default`, anything else `return-default` —
 and never propose a value the code already spells (`0`, `false`, `""`, `()`,
-`None`, `Ok(())`, `Default::default()`, `T::new()`). A range swap changes
-the expression's type, so its guard sits at the enclosing statement or `let`
-initializer, where the types meet again. A `&&`/`||` with a `let` operand
-and an `if let`/`while let` condition are left alone: they cannot be
-negated or swapped and compile.
+`None`, `Ok(())`, `Default::default()`, `T::new()`). A signature the syntax
+cannot say has a default is `unstated-return-type` rather than a candidate
+the compiler will refuse: an `impl Trait`, a raw pointer, a function type, a
+type a macro writes, a generic parameter nothing bound to `Default`, and a
+`&mut T` — a reference that is read is defaultable where the syntax says so
+(`&str`, `&[T]`, and the arguments of an `Option` or a `Result` that spell
+one), and a reference that is written is not.
+
+A return site is the whole returned expression and, where that expression is
+an `if` or a `match` whose arms return, each branch of it as well. `fn sign`
+whose body is `if n > 0 { "positive" } else if n < 0 { "negative" } else
+{ "zero" }` therefore carries four return replacements: one that answers for
+the function and one for each of the three answers it chooses between. The
+whole-expression mutant keeps the id it always had; the branch mutants are
+new ones beside it.
+
+A range swap changes the expression's type, so its guard sits at the
+enclosing statement or `let` initializer, where the types meet again. A
+`&&`/`||` with a `let` operand and an `if let`/`while let` condition are left
+alone: they cannot be negated or swapped and compile.
 
 Type-directed splits are impossible without a type checker
 ([ADR 0008](../adr/0008-compiler-validated-acceptance-and-the-type-witness-pass.md)),
