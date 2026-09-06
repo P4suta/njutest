@@ -227,6 +227,27 @@ start failure → `errored`; timed out → `timed_out`; killed by us → `not_ru
 `survived`. A libtest run that matched no test is green and says so:
 `tests_run` carries the count the summary line reported.
 
+### The environment a test process gets
+
+A test process inherits the environment the run was started with, plus what
+cargo sets for its target, minus the four variables a run composes for
+itself: `RUST_MUTANTS_ACTIVE`, `RUST_MUTANTS_CATALOG`, `RUST_MUTANTS_PROBE`,
+and `LLVM_PROFILE_FILE`. The first three decide which mutation is active, and
+an inherited one would make every answer be about somebody else's run. The
+fourth is there because a measurement *of this engine* sets it: an
+instrumented test process that inherited it would write over the very
+measurement that started the run. Removing it is not enough on its own, since
+an instrumented binary with no path writes `default_*.profraw` into its
+working directory, which is the snapshot being measured and which the drift
+check would then report as the project's own tests writing into their tree. So
+a run puts a path of its own in its place, under the temporary directory that
+execution owns. The coverage pass puts its own path there instead, per
+target.
+
+Only the first three are refused on the command line. A run under
+`cargo llvm-cov` is an ordinary thing to want; a run under somebody else's
+activation is not.
+
 ## Identity
 
 ```text

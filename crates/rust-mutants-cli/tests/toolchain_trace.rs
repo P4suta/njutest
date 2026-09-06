@@ -326,3 +326,64 @@ fn a_trace_directory_that_cannot_be_created_costs_one_line_on_stderr_not_the_run
     assert!(said.contains("not recording into"), "{said}");
     assert!(!stdout(&output).is_empty(), "the command still answered");
 }
+
+#[test]
+fn a_recording_never_costs_a_stored_run_its_place_and_neither_grows_forever() {
+    let fixture = Fixture::copy("fixture-simple");
+    fixture.write(
+        ".rust-mutants.toml",
+        b"version = 1\n\n[reports]\nkeep = 2\n",
+    );
+    for _ in 0..3 {
+        let output = against(&fixture, &["run", "--trace", "--tier", "balanced"]);
+        assert!(
+            output.status.code().is_some_and(|code| code < 2),
+            "{}",
+            stderr(&output)
+        );
+    }
+    for _ in 0..3 {
+        let output = against(
+            &fixture,
+            &["run", "--trace", "--no-report", "--tier", "balanced"],
+        );
+        assert!(
+            output.status.code().is_some_and(|code| code < 2),
+            "{}",
+            stderr(&output)
+        );
+    }
+    for _ in 0..3 {
+        let output = against(&fixture, &["list", "--trace"]);
+        assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    }
+    let stored = reports(&fixture);
+    let runs: Vec<PathBuf> = std::fs::read_dir(&stored)
+        .expect("reports")
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.join("run-report-v1.json").is_file())
+        .collect();
+    assert_eq!(runs.len(), 2, "keep = 2 keeps two stored runs: {runs:?}");
+    let recordings: Vec<PathBuf> = std::fs::read_dir(&stored)
+        .expect("reports")
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.is_dir() && !path.join("run-report-v1.json").is_file())
+        .filter(|path| path.file_name().is_some_and(|name| name != "traces"))
+        .collect();
+    assert!(
+        recordings.len() <= 2,
+        "a run that recorded and wrote no report is bounded by the same number rather than \
+         growing forever: {recordings:?}"
+    );
+    let traces: Vec<PathBuf> = std::fs::read_dir(stored.join("traces"))
+        .expect("the traces directory")
+        .flatten()
+        .map(|entry| entry.path())
+        .collect();
+    assert!(
+        traces.len() <= 2,
+        "and so is every other command's recording: {traces:?}"
+    );
+}

@@ -44,6 +44,33 @@ had timed out. It now says that only after a retry, and otherwise says that no
 test ran with the mutation active.
 
 **`prune` no longer counts a directory that holds no run report.** A run
-directory is one with a `run-report-v1.json` in it. If you kept anything else
-under the report directory, it is no longer removed by `reports.keep` and no
-longer costs a run its place.
+directory is one with a `run-report-v1.json` in it, and `reports.keep` bounds
+those, the recordings of runs that wrote no report, and `traces/` as three
+separate sets. Pruning also happens after a command that recorded, not only
+after one that reported, so `--trace` on its own no longer grows the report
+directory without limit. Anything else you kept under the report directory is
+left alone.
+
+**A coverage export whose region ends before it starts is refused.** Such a
+region describes nothing, so `contains` answers no for every point in it and a
+mutation a target really did reach would be routed away from that target. The
+whole measurement is now refused instead, which routes every mutation
+everywhere: what a measurement cannot say is what a run has to run. No export
+`llvm-cov` writes contains one.
+
+**`LLVM_PROFILE_FILE` is composed rather than inherited.** A run sets it to a
+path under the temporary directory each execution owns, or to the coverage
+pass's own path when it is the one measuring. If you were setting it around
+`rust-mutants run` to measure a project's coverage, set it around the build
+instead: an instrumented test process that inherited it wrote over the
+measurement that started the run, and one with no path at all wrote
+`default_*.profraw` into the tree being measured, which the drift report then
+blamed on your tests. Running `rust-mutants` under `cargo llvm-cov` is
+unaffected and is still allowed on the command line; only the three
+`RUST_MUTANTS_*` variables are refused there.
+
+**`RM5002` says what it observed.** It claimed the pristine tree passes, which
+a run never establishes: it type-checks the tree rather than running it. It
+now names the target that failed with nothing active and says that
+`--no-verify` is the way past it.
+

@@ -791,3 +791,39 @@ fn a_committed_run_whose_recording_lost_a_line_is_a_violation() {
         "{audit}"
     );
 }
+
+#[test]
+fn a_run_the_interruption_stopped_is_not_a_run_that_lost_its_routes() {
+    let document = with(serde_json::json!({
+        "run": { "interrupted": true, "exit_code": 130 },
+        "accounting": {
+            "cataloged": 3, "executed": 2, "not_run": 1
+        },
+        "mutants": [{}, {}, {
+            "index": 3, "id": "c".repeat(64), "display_id": "c".repeat(20),
+            "path": "src/lib.rs", "package": "demo",
+            "family": "comparison", "rule": "gt-to-ge", "rule_version": 1,
+            "line": 30, "column": 8,
+            "start_byte": 300, "end_byte": 301, "source_digest": SOURCE,
+            "original": ">", "replacement": ">=",
+            "outcome": "not_run", "target": "", "exit_code": 0,
+            "duration_ms": 0, "tests_run": null, "retried": false,
+            "expected": false, "unreached": false, "source_run_id": null
+        }]
+    }));
+    let audit = audited_with(&document, &recording());
+    let found = violations(&audit, Layer::Trace);
+    assert!(
+        found.is_empty(),
+        "a mutation the interruption never reached is one the recording is silent about by \
+         design: {found:?}"
+    );
+    assert!(
+        audit
+            .of(Layer::Trace)
+            .iter()
+            .any(|remark| remark.standing == Standing::Unaudited
+                && remark.subject == "interrupted"),
+        "and the audit says so rather than passing over it: {audit}"
+    );
+}

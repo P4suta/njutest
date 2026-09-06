@@ -23,6 +23,29 @@ pub const PROBE_ENV: &str = "RUST_MUTANTS_PROBE";
 /// Every variable the engine owns. A test process sees exactly the ones this run set, never one an outer run left behind.
 pub const RESERVED_ENV: [&str; 3] = [ACTIVE_ENV, CATALOG_ENV, PROBE_ENV];
 
+/// The variables a run composes for every test process it starts, which it therefore never lets one inherit.
+///
+/// The three reserved ones say which mutation is active, and an inherited one
+/// would decide what somebody else's run measured. `LLVM_PROFILE_FILE` is the
+/// fourth for a different reason: a measurement of this engine sets it, and an
+/// instrumented test process that inherited it would write over the very
+/// measurement that started the run. Removing it is not enough on its own —
+/// an instrumented binary with no path writes `default_*.profraw` into its
+/// working directory, which is the tree being measured — so a run puts a path
+/// of its own in its place.
+pub const COMPOSED_ENV: [&str; 4] = [
+    ACTIVE_ENV,
+    CATALOG_ENV,
+    PROBE_ENV,
+    crate::coverage::PROFILE_ENV,
+];
+
+/// The name a test process writes its coverage profile under, when the run is not the one measuring.
+///
+/// `%p` is the process and `%m` the binary, which is what keeps two test
+/// processes of one run from writing one file.
+pub const SPILLED_PROFILE: &str = "spilled-coverage-%p-%m.profraw";
+
 /// The kinds of target that carry tests the engine runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum TargetKind {
@@ -270,9 +293,9 @@ pub fn environment(
     let mut env: BTreeMap<OsString, OsString> = base
         .iter()
         .filter(|(name, _)| {
-            !RESERVED_ENV
+            !COMPOSED_ENV
                 .iter()
-                .any(|reserved| name == OsStr::new(reserved))
+                .any(|composed| name == OsStr::new(composed))
         })
         .cloned()
         .collect();
@@ -291,11 +314,20 @@ pub fn environment(
     if let Some(probe) = context.probe {
         env.insert(OsString::from(PROBE_ENV), probe.as_os_str().to_owned());
     }
-    if let Some(profile) = context.profile {
-        env.insert(
-            OsString::from(crate::coverage::PROFILE_ENV),
-            profile.as_os_str().to_owned(),
-        );
+    match (context.profile, scratch) {
+        (Some(profile), _) => {
+            env.insert(
+                OsString::from(crate::coverage::PROFILE_ENV),
+                profile.as_os_str().to_owned(),
+            );
+        }
+        (None, Some(scratch)) => {
+            env.insert(
+                OsString::from(crate::coverage::PROFILE_ENV),
+                scratch.join(SPILLED_PROFILE).into_os_string(),
+            );
+        }
+        (None, None) => {}
     }
     if let Some(scratch) = scratch {
         for name in ["TMPDIR", "TMP", "TEMP"] {

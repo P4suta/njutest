@@ -407,3 +407,69 @@ fn a_runtime_that_named_another_catalog_is_an_error_however_the_process_exited()
          has: a tree rebuilt behind the run's back would otherwise look exactly like a kill"
     );
 }
+
+#[test]
+fn an_inherited_coverage_profile_path_never_reaches_a_test_process() {
+    let base = vec![
+        (OsString::from("PATH"), OsString::from("/usr/bin")),
+        (
+            OsString::from("LLVM_PROFILE_FILE"),
+            OsString::from("default_%p.profraw"),
+        ),
+    ];
+    let scratch = Path::new("/scratch/worker-3");
+    let env = environment(
+        &Context {
+            base_env: &base,
+            cargo: None,
+            sysroot: None,
+            active: Some(("abc", "digest")),
+            probe: None,
+            profile: None,
+        },
+        &target(),
+        Some(scratch),
+    );
+    let lookup = |key: &str| -> Option<String> {
+        env.iter()
+            .find(|(name, _)| name == key)
+            .map(|(_, value)| value.to_string_lossy().into_owned())
+    };
+    let profile = lookup("LLVM_PROFILE_FILE").expect("a path of the run's own");
+    assert_ne!(
+        profile, "default_%p.profraw",
+        "an inherited path would write over the measurement that started the run"
+    );
+    assert!(
+        profile.starts_with("/scratch/worker-3"),
+        "and an instrumented binary with no path writes default_*.profraw into its working \
+         directory, which is the tree being measured: {profile}"
+    );
+    assert_eq!(lookup("PATH").as_deref(), Some("/usr/bin"));
+}
+
+#[test]
+fn the_profile_path_a_coverage_pass_composes_is_the_one_it_gets() {
+    let base = vec![(
+        OsString::from("LLVM_PROFILE_FILE"),
+        OsString::from("inherited.profraw"),
+    )];
+    let mine = Path::new("/scratch/coverage/demo-%m.profraw");
+    let env = environment(
+        &Context {
+            base_env: &base,
+            cargo: None,
+            sysroot: None,
+            active: None,
+            probe: None,
+            profile: Some(mine),
+        },
+        &target(),
+        None,
+    );
+    let value = env
+        .iter()
+        .find(|(name, _)| name == "LLVM_PROFILE_FILE")
+        .map(|(_, value)| value.clone());
+    assert_eq!(value.as_deref(), Some(mine.as_os_str()));
+}

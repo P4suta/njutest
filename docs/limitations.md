@@ -88,6 +88,18 @@ below is stated fail-closed.
   needs could not be built, and `probe-log-unreadable` when a target ran and
   its infection log could not be read. Neither removes an execution: a layer
   that could not measure discharges nothing.
+- A coverage export whose region ends before it starts is refused outright
+  rather than read as far as it goes. Such a region describes nothing, and a
+  reader that kept it would answer "this target did not reach that place" for
+  every place inside it, which removes an execution on evidence that says
+  nothing. Refusing the whole measurement routes every mutation everywhere
+  instead.
+- A run composes `LLVM_PROFILE_FILE` for every test process it starts, so an
+  inherited one never reaches one and an instrumented binary never falls back
+  to `default_*.profraw` in its working directory. Without that, a project
+  measuring its own coverage around a run would have its profiles written into
+  the tree the run is measuring, and the drift report would say the project's
+  tests write into their own tree.
 - One workspace per run. Path dependencies outside the workspace root are
   refused unless explicitly allowed as read-only.
 - Symbolic links in the evidence tree are rejected.

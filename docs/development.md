@@ -205,6 +205,24 @@ step: the source files, the manifest stanzas (each with `bench = false`, so
 `cargo bench` never builds a sanitizer target), the README rows, and the
 weekly workflow's matrix.
 
+### Coverage
+
+The `coverage` job in `ci.yml` runs the suite once under `cargo llvm-cov` and
+then ratchets four numbers: the workspace at 80% of regions, `rust-mutants` at
+87%, `rust-mutants-cli` at 85%, and `xtask` at 80%. Each floor is a little
+under what the suite reaches, so an ordinary change has room and a change that
+drops a whole area does not. **A floor is raised when a suite earns it and
+never lowered**; lowering one is a decision to argue for in the pull request
+that does it.
+
+The job builds the examples inside the coverage environment before running the
+suite. `nextest` builds the test targets and nothing else, and part of this
+suite drives a scripted `cargo` that lives in an example, so without that step
+every suite that uses it fails for want of a binary rather than for a reason.
+The same is true locally: `cargo llvm-cov nextest` needs
+`cargo llvm-cov show-env` and a `cargo build --examples -p rust-mutants` in
+between.
+
 ### Ledgers the documentation keeps
 
 A page that names a set the code also names goes stale silently, so each such

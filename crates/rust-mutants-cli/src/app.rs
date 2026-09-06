@@ -141,6 +141,9 @@ fn workspace_command(
         cancel,
     );
     trace::ended(&recorder, &outcome, cancel);
+    if recorder.is_enabled() {
+        prune(&settings.report_directory(), settings.config.reports.keep);
+    }
     outcome
 }
 
@@ -468,12 +471,12 @@ fn whole(
     write(stdout, &run_report::lines(&document));
     if !no_report {
         let written = store(&settings.report_directory(), id, &document)?;
-        prune(&settings.report_directory(), settings.config.reports.keep);
         let mut line = String::new();
         let ok = writeln!(line, "REPORT    {}", written.display());
         debug_assert!(ok.is_ok(), "writing to a String cannot fail");
         write(stdout, &line);
     }
+    prune(&settings.report_directory(), settings.config.reports.keep);
     Ok(document.run.exit_code)
 }
 
@@ -519,11 +522,37 @@ fn prune(directory: &Path, keep: u32) {
     if keep == 0 {
         return;
     }
-    oldest(&stored_runs(directory), keep);
+    let (runs, recordings) = kept(directory);
+    oldest(&runs, keep);
+    oldest(&recordings, keep);
     oldest(
         &subdirectories(&directory.join(trace::TRACES_DIRECTORY_NAME)),
         keep,
     );
+}
+
+/// The stored runs and, apart from them, the directories a run that wrote no report left a recording in.
+///
+/// A run asked to record and not to report still names itself and still keeps
+/// what it recorded, so those directories are bounded by `keep` of their own
+/// rather than either counting against the stored runs or growing forever.
+fn kept(directory: &Path) -> (Vec<PathBuf>, Vec<PathBuf>) {
+    let mut runs = Vec::new();
+    let mut recordings = Vec::new();
+    for path in subdirectories(directory) {
+        if path
+            .file_name()
+            .is_some_and(|name| name == trace::TRACES_DIRECTORY_NAME)
+        {
+            continue;
+        }
+        if path.join(run_report::FILE_NAME).is_file() {
+            runs.push(path);
+        } else if path.join(trace::RUN_DIRECTORY_NAME).is_dir() {
+            recordings.push(path);
+        }
+    }
+    (runs, recordings)
 }
 
 /// Removes everything but the newest `keep` of `directories`.
@@ -534,14 +563,6 @@ fn oldest(directories: &[PathBuf], keep: u32) {
     for old in directories.iter().take(excess) {
         drop(std::fs::remove_dir_all(old));
     }
-}
-
-/// Every directory under `directory` that holds a run report, oldest first.
-fn stored_runs(directory: &Path) -> Vec<PathBuf> {
-    subdirectories(directory)
-        .into_iter()
-        .filter(|path| path.join(run_report::FILE_NAME).is_file())
-        .collect()
 }
 
 /// Every directory directly under `directory`, in name order.

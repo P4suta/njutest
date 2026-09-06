@@ -140,15 +140,40 @@ jobs:
         env:
           CARGO_NET_OFFLINE: "false"
         run: cargo fetch --locked
+      # `nextest` builds the test targets and nothing else, and part of this
+      # suite drives a scripted `cargo` that lives in an example. Building it
+      # takes the same environment the instrumented run uses, which is what
+      # `show-env` is for.
       - name: Collect coverage (run the suite once)
-        run: cargo llvm-cov --locked --workspace --all-targets --all-features --no-report nextest
+        run: |
+          set -euo pipefail
+          cargo llvm-cov clean --workspace
+          cargo llvm-cov show-env --export-prefix > "$RUNNER_TEMP/coverage-env.sh"
+          . "$RUNNER_TEMP/coverage-env.sh"
+          cargo build --locked --examples -p rust-mutants
+          cargo nextest run --locked --workspace --all-targets --all-features
       - name: Report (lcov + HTML + summary)
         run: |
           cargo llvm-cov report --lcov --output-path lcov.info
           cargo llvm-cov report --html
           cargo llvm-cov report --summary-only
-      - name: Ratchet (never lower; raise it when the suite earns it)
+      # Never lower; raise one when its suite earns it. The floors are a
+      # little under what the suite reaches today, so an ordinary change has
+      # room and a change that drops a whole area does not.
+      - name: Ratchet the workspace
         run: cargo llvm-cov report --summary-only --fail-under-regions 80
+      - name: Ratchet rust-mutants
+        run: >-
+          cargo llvm-cov report --summary-only --fail-under-regions 87
+          --ignore-filename-regex 'crates/(rust-mutants-cli|mjutest|mjutest-cli|mjutest-macros|mjutest-devkit)/|xtask/|fuzz/'
+      - name: Ratchet rust-mutants-cli
+        run: >-
+          cargo llvm-cov report --summary-only --fail-under-regions 85
+          --ignore-filename-regex 'crates/(rust-mutants|mjutest|mjutest-cli|mjutest-macros|mjutest-devkit)/|xtask/|fuzz/'
+      - name: Ratchet xtask
+        run: >-
+          cargo llvm-cov report --summary-only --fail-under-regions 80
+          --ignore-filename-regex 'crates/|fuzz/'
       - name: Upload coverage report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:

@@ -1265,14 +1265,38 @@ fn routed(report: &Report, recorded: &str, notes: &mut Notes<'_>) {
         );
         return;
     }
+    let reused = report
+        .mutants
+        .iter()
+        .filter(|row| row.source_run_id.is_some())
+        .count();
+    if reused > 0 {
+        notes.unaudited(
+            "reuse",
+            format!(
+                "{reused} rows were read back from an earlier run, so this recording says \
+                 nothing about how they were decided"
+            ),
+        );
+    }
+    let stopped = report
+        .mutants
+        .iter()
+        .filter(|row| row.outcome == NOT_RUN && report.interrupted == Some(true))
+        .count();
+    if stopped > 0 {
+        notes.unaudited(
+            "interrupted",
+            format!(
+                "{stopped} rows were never reached because the run was stopped, so there is \
+                 nothing about them to hold the recording to"
+            ),
+        );
+    }
     for row in &report.mutants {
-        if row.source_run_id.is_some() {
-            notes.unaudited(
-                row.label(),
-                "the row was read back from an earlier run, so this recording says nothing \
-                 about how it was decided"
-                    .to_owned(),
-            );
+        if row.source_run_id.is_some()
+            || (row.outcome == NOT_RUN && report.interrupted == Some(true))
+        {
             continue;
         }
         let Some(route) = routing.route_of(&row.id, &row.display_id) else {
