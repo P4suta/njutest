@@ -106,3 +106,70 @@ fn a_document_that_is_not_a_report_is_an_error_that_names_it() {
     let error = compare(("a.json", "{}"), ("b.json", "not json")).expect_err("refused");
     assert!(error.to_string().contains("b.json"), "{error}");
 }
+
+/// One run report, as a run report is shaped.
+fn run_report(mutants: &serde_json::Value, findings: &serde_json::Value, ms: u64) -> String {
+    serde_json::json!({
+        "document_type": "rust-mutants/run-report",
+        "run": { "id": "20260907T000000000Z", "duration_ms": ms, "exit_code": 1 },
+        "accounting": { "cataloged": 2, "executed": 2, "killed": 1, "survived": 1 },
+        "score": { "detected": 1, "decided": 2, "value": 0.5 },
+        "mutants": mutants,
+        "findings": findings,
+    })
+    .to_string()
+}
+
+#[test]
+fn two_run_reports_that_differ_only_in_duration_are_the_same_run() {
+    let rows = serde_json::json!([
+        { "display_id": "aaaa", "outcome": "killed", "duration_ms": 10 },
+        { "display_id": "bbbb", "outcome": "survived", "duration_ms": 20 },
+    ]);
+    let findings =
+        serde_json::json!([{ "kind": "surviving-mutant", "mutant": "bbbb", "detail": "x" }]);
+    assert_eq!(
+        diff(
+            &run_report(&rows, &findings, 812),
+            &run_report(&rows, &findings, 4_211)
+        ),
+        Vec::<String>::new(),
+        "a run that took longer is the same run, and a diff that says so hides the ones that \
+         are not"
+    );
+}
+
+#[test]
+fn a_mutant_that_changed_its_outcome_is_named_with_both_answers() {
+    let before = serde_json::json!([{ "display_id": "aaaa", "outcome": "killed" }]);
+    let after = serde_json::json!([{ "display_id": "aaaa", "outcome": "survived" }]);
+    let empty = serde_json::json!([]);
+    let changes = diff(
+        &run_report(&before, &empty, 10),
+        &run_report(&after, &empty, 10),
+    );
+    assert!(
+        changes.iter().any(|change| change.contains("aaaa")
+            && change.contains("killed")
+            && change.contains("survived")),
+        "{changes:?}"
+    );
+}
+
+#[test]
+fn a_count_and_a_score_that_moved_are_both_shown() {
+    let empty = serde_json::json!([]);
+    let one = run_report(&empty, &empty, 10);
+    let moved = one
+        .replace("\"killed\":1", "\"killed\":2")
+        .replace("0.5", "1.0");
+    let changes = diff(&one, &moved);
+    assert!(
+        changes.iter().any(|change| change.contains("killed")),
+        "{changes:?}"
+    );
+    assert!(
+        changes.iter().any(|change| change.contains("score")),
+        "{changes:?}"
+    );
+}

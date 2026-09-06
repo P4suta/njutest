@@ -215,6 +215,30 @@
           },
           "killed_by": { "type": "array", "items": { "type": "string" } },
           "signal": { "type": "integer" },
+          "not_run_reason": { "enum": ["unreached", "discharged", "interrupted"] },
+          "route": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["granularity", "reaching"],
+            "properties": {
+              "granularity": { "enum": ["all", "block", "discharged", "unreached"] },
+              "fallback": { "type": "string" },
+              "reaching": { "type": "array", "items": { "type": "string" } },
+              "discharged": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["target", "proof"],
+                  "properties": {
+                    "target": { "type": "string" },
+                    "proof": { "type": "string" }
+                  }
+                }
+              },
+              "executed": { "type": "array", "items": { "type": "string" } }
+            }
+          },
           "retried": {
             "type": "boolean",
             "description": "A timeout is believed only after a serial retry timed out again."

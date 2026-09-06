@@ -7,7 +7,7 @@ use std::path::Path;
 
 use rust_mutants_cli::report::run::{
     Accounting, ExpectationDocument, FindingDocument, RunDocument, RunMeta, RunMutantDocument,
-    ScoreDocument, lines,
+    ScoreDocument,
 };
 use rust_mutants_cli::report::{PlatformDocument, SelectionDocument, WorkspaceDocument};
 
@@ -35,6 +35,8 @@ fn mutant(index: u32, outcome: &str, expected: bool) -> RunMutantDocument {
         tests_run: Some(1),
         killed_by: Vec::new(),
         signal: None,
+        not_run_reason: None,
+        route: None,
         retried: false,
         expected,
         unreached: false,
@@ -121,8 +123,11 @@ fn document() -> RunDocument {
 #[test]
 fn a_run_report_reads_as_the_recorded_lines() {
     let golden = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testdata/run-lines.golden");
-    mjutest_devkit::golden::golden(&golden, lines(&document()).as_bytes())
-        .expect("the lines are the recorded ones");
+    mjutest_devkit::golden::golden(
+        &golden,
+        rust_mutants_cli::report::lines(&document()).as_bytes(),
+    )
+    .expect("the lines are the recorded ones");
 }
 
 #[test]
@@ -133,7 +138,7 @@ fn a_run_that_decided_nothing_says_so_rather_than_scoring_zero() {
         cataloged: 0,
         ..document.accounting
     };
-    let text = lines(&document);
+    let text = rust_mutants_cli::report::lines(&document);
     assert!(
         text.contains("SCORE     none; the run decided nothing"),
         "{text}"
@@ -146,7 +151,7 @@ fn an_interrupted_run_says_it_stopped_early() {
     let mut document = document();
     document.run.interrupted = true;
     document.run.exit_code = 130;
-    let text = lines(&document);
+    let text = rust_mutants_cli::report::lines(&document);
     assert!(text.contains("INTERRUPTED"), "{text}");
 }
 

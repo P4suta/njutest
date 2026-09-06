@@ -11,7 +11,7 @@
 use std::time::Duration;
 
 use rust_mutants::outcome::Outcome;
-use rust_mutants_cli::run::{Finding, FindingKind, Judged, Run, Standing, Verified};
+use rust_mutants::run::{Finding, FindingKind, Judged, Run, Standing, Verified};
 
 fn judged(index: u32, outcome: Outcome) -> Judged {
     Judged {
@@ -25,6 +25,8 @@ fn judged(index: u32, outcome: Outcome) -> Judged {
         tests_run: Some(1),
         failed_tests: Vec::new(),
         signal: None,
+        not_run_reason: None,
+        route: None,
         retried: false,
         expected: false,
         unreached: false,

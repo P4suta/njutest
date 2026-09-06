@@ -127,6 +127,18 @@ by increasing granularity finds the mutants that interact rather than
 condemning everything that was live. Those rows have `isolated: false` and say
 which other mutants they were refused with.
 
+**The driver is the engine's.** `run`, the outcome store, the run and catalog
+documents, and everything a run's policy decides now live in
+`rust_mutants::{run, outcomes, report}`; `rust-mutants-cli` re-exports them at
+the paths it used before, so a consumer of the library sees them move and a
+consumer of the command line sees nothing. A mutant row gained
+`not_run_reason` and `route`, both optional.
+
+**`xtask report-diff` reads a mutation run's report.** It compares the
+accounting, the score, the findings, and each mutant's outcome, and says
+nothing about how long the run took: the same tree measured twice takes two
+different amounts of time and establishes one thing.
+
 **The default timeout is derived, not five minutes.** `[mutation] timeout`
 now defaults to `auto`: five times what that target's own baseline took, never
 below thirty seconds, falling back to five minutes for a target nothing

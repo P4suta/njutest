@@ -11,6 +11,7 @@ use rust_mutants::error::{self, ErrorCode};
 use rust_mutants::glob::Pattern;
 use rust_mutants::outcome::Outcome;
 use rust_mutants::rule::{Registry, Tier};
+use rust_mutants::run::Expectation;
 use rust_mutants::session::Timeout;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
@@ -162,27 +163,6 @@ impl Default for Mutation {
             expect: Vec::new(),
         }
     }
-}
-
-/// One mutant whose outcome a reviewer declared in advance, so the run verifies the claim instead of hiding the mutant.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct Expectation {
-    /// The mutant, by identity or by a prefix that names exactly one.
-    pub id: String,
-    /// Why the outcome is what it is. Required: an expectation without a reason is a suppression, and a report cannot audit one.
-    pub reason: String,
-    /// The outcome the run must confirm.
-    #[serde(
-        default = "expected_by_default",
-        deserialize_with = "outcome",
-        serialize_with = "outcome_name"
-    )]
-    pub outcome: Outcome,
-}
-
-const fn expected_by_default() -> Outcome {
-    Outcome::Survived
 }
 
 /// How the workspace is built and the tests are run.
@@ -537,24 +517,6 @@ fn tier<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Tier, D::Error> {
     reason = "serde's serialize_with hands the field by reference, whatever its shape"
 )]
 fn tier_name<S: Serializer>(value: &Tier, serializer: S) -> Result<S::Ok, S::Error> {
-    serializer.serialize_str(value.name())
-}
-
-fn outcome<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Outcome, D::Error> {
-    let text = String::deserialize(deserializer)?;
-    Outcome::parse(&text).ok_or_else(|| {
-        serde::de::Error::custom(format!(
-            "{text:?} is not an outcome; write {}",
-            Outcome::ALL.map(Outcome::name).join(", ")
-        ))
-    })
-}
-
-#[expect(
-    clippy::trivially_copy_pass_by_ref,
-    reason = "serde's serialize_with hands the field by reference, whatever its shape"
-)]
-fn outcome_name<S: Serializer>(value: &Outcome, serializer: S) -> Result<S::Ok, S::Error> {
     serializer.serialize_str(value.name())
 }
 

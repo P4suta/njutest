@@ -9,9 +9,12 @@ pub mod app;
 pub mod cli;
 pub mod config;
 pub mod error;
-pub mod outcomes;
 pub mod report;
-pub mod run;
+
+/// What earlier runs of a tree established, as the engine keeps it.
+pub use rust_mutants::outcomes;
+/// Driving a session, as the engine does it.
+pub use rust_mutants::run;
 pub mod settings;
 pub mod tui;
 

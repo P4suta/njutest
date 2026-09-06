@@ -17,7 +17,7 @@
 
 use std::path::{Path, PathBuf};
 
-use rust_mutants::outcome::Outcome;
+use crate::outcome::Outcome;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 

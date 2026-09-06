@@ -320,7 +320,7 @@ fn prepared(
     match command {
         cli::Command::Catalog { json, .. } => {
             let text = if *json {
-                json_line(&report::document(session, &settings.config))
+                json_line(&report::document(session, &settings.prepare_options()?))
             } else {
                 report::catalog(session)
             };
@@ -431,7 +431,7 @@ fn whole(
     let mut result = run::run(
         session,
         &run::Options {
-            quiet: &rust_mutants::run::Quiet::default(),
+            quiet: &run::Quiet::default(),
             expectations: &settings.config.mutation.expect,
             args,
             shard,
@@ -442,16 +442,9 @@ fn whole(
             }),
         },
         cancel,
-        &mut |judged, position, total| {
-            let mut line = String::new();
-            let written = writeln!(
-                line,
-                "[{position}/{total}] {} {}",
-                judged.display_id,
-                judged.outcome.name()
-            );
-            debug_assert!(written.is_ok(), "writing to a String cannot fail");
-            write(stdout, &line);
+        &mut Progress {
+            stdout,
+            borrowed: std::marker::PhantomData,
         },
     )?;
     result.expectations = run::verify(
@@ -463,7 +456,7 @@ fn whole(
     let document = run_report::document(
         session,
         &result,
-        report::selection_document(&settings.config),
+        report::selection_document(&settings.prepare_options()?),
         &run_report::Meta {
             id,
             started_at: started,
@@ -471,7 +464,7 @@ fn whole(
         },
     );
     write(stdout, "\n");
-    write(stdout, &run_report::lines(&document));
+    write(stdout, &report::lines(&document));
     if !no_report {
         let written = store(&settings.report_directory(), id, &document)?;
         let mut line = String::new();
@@ -739,7 +732,7 @@ fn report_back(
         return Ok(code);
     }
     let projected = match format {
-        cli::Format::Lines | cli::Format::Json => run_report::lines(&document),
+        cli::Format::Lines | cli::Format::Json => report::lines(&document),
         cli::Format::Html => html::document(&document),
         cli::Format::Stryker => json_line(&stryker::project(&document, &root)),
     };
@@ -884,7 +877,7 @@ fn merge(
     match output {
         Some(path) => {
             std::fs::write(path, &text).map_err(|source| CliError::writing(path, source))?;
-            write(stdout, &run_report::lines(&merged));
+            write(stdout, &report::lines(&merged));
         }
         None => write(stdout, &text),
     }
@@ -998,4 +991,25 @@ fn rendered(said: &[Rendered]) -> String {
     );
     debug_assert!(written.is_ok(), "writing to a String cannot fail");
     text
+}
+
+/// The one line a plain run prints for each mutant it has judged.
+struct Progress<'a, 'b> {
+    stdout: &'a mut dyn Write,
+    /// The lifetime the stream borrows from, so an observer can hold it across a whole run.
+    borrowed: std::marker::PhantomData<&'b ()>,
+}
+
+impl run::Observer for Progress<'_, '_> {
+    fn judged(&mut self, judged: &run::Judged, completed: u32, total: u32) {
+        let mut line = String::new();
+        let written = writeln!(
+            line,
+            "[{completed}/{total}] {} {}",
+            judged.display_id,
+            judged.outcome.name()
+        );
+        debug_assert!(written.is_ok(), "writing to a String cannot fail");
+        write(self.stdout, &line);
+    }
 }

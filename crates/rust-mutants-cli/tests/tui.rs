@@ -35,6 +35,8 @@ fn mutant(index: u32, outcome: &str, rule: &str) -> RunMutantDocument {
         tests_run: Some(1),
         killed_by: Vec::new(),
         signal: None,
+        not_run_reason: None,
+        route: None,
         retried: false,
         expected: false,
         unreached: false,

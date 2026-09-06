@@ -4,16 +4,15 @@
 //! The run report: one completed run of every mutant, as a document and as lines a person reads.
 
 use std::collections::BTreeMap;
-use std::fmt::Write as _;
 
+use crate::session::Session;
 use jiff::Timestamp;
-use rust_mutants::session::Session;
 use serde::{Deserialize, Serialize};
 
-use crate::report::{
+use crate::report::catalog::{
     MutantDocument, RejectionDocument, SelectionDocument, SkipDocument, WorkspaceDocument,
 };
-use crate::run::{Finding, Run, Standing};
+use crate::run::{Finding, Run, Standing, count};
 
 /// The name of the shape, so a reader can tell versions apart.
 pub const DOCUMENT_TYPE: &str = "rust-mutants/run-report";
@@ -172,6 +171,12 @@ pub struct RunMutantDocument {
     pub signal: Option<i32>,
     /// Whether a first timeout was retried serially before the outcome was believed.
     pub retried: bool,
+    /// Why it was never executed, when it was not: `unreached`, `discharged`, or `interrupted`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub not_run_reason: Option<String>,
+    /// Which targets could have noticed it, and which of them ran.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub route: Option<RouteDocument>,
     /// Whether a reviewer declared this outcome in advance and the run confirmed the claim.
     pub expected: bool,
     /// Whether no measured target reaches it, which is why it never ran.
@@ -234,7 +239,7 @@ pub fn document(
     RunDocument {
         document_type: DOCUMENT_TYPE.to_owned(),
         schema_version: SCHEMA_VERSION,
-        tool_version: rust_mutants::VERSION.to_owned(),
+        tool_version: crate::VERSION.to_owned(),
         run: RunMeta {
             id: meta.id.to_owned(),
             started_at: meta.started_at.to_string(),
@@ -244,7 +249,7 @@ pub fn document(
             exit_code: run.exit_code(),
             shard: run.shard.map(|shard| shard.to_string()),
         },
-        workspace: crate::report::workspace_document(session),
+        workspace: crate::report::catalog::workspace_document(session),
         selection,
         accounting: Accounting {
             cataloged: tally.cataloged,
@@ -272,12 +277,12 @@ pub fn document(
                 let catalog = session
                     .catalog()
                     .by_index(one.index)
-                    .map(|mutant| crate::report::mutant_document(session, mutant));
+                    .map(|mutant| crate::report::catalog::mutant_document(session, mutant));
                 mutant(one, catalog)
             })
             .collect(),
-        rejections: crate::report::rejection_documents(session),
-        skips: crate::report::skip_documents(session),
+        rejections: crate::report::catalog::rejection_documents(session),
+        skips: crate::report::catalog::skip_documents(session),
         expectations: run
             .expectations
             .iter()
@@ -359,14 +364,69 @@ fn mutant(one: &crate::run::Judged, catalog: Option<MutantDocument>) -> RunMutan
         killed_by: one.failed_tests.clone(),
         signal: one.signal,
         retried: one.retried,
+        not_run_reason: one.not_run_reason.map(|reason| reason.name().to_owned()),
+        route: one.route.clone(),
         expected: one.expected,
         unreached: one.unreached,
         source_run_id: one.source_run_id.clone(),
     }
 }
 
+/// One route, as a document, with the targets an execution of it actually ran.
+#[must_use]
+pub fn route_document(route: &crate::session::Route, executed: Vec<String>) -> RouteDocument {
+    RouteDocument {
+        granularity: route.granularity().to_owned(),
+        fallback: route.fallback().map(ToOwned::to_owned),
+        reaching: route
+            .reaching()
+            .into_iter()
+            .map(ToOwned::to_owned)
+            .collect(),
+        discharged: route
+            .discharged()
+            .iter()
+            .map(|one| DischargeDocument {
+                target: one.target.clone(),
+                proof: one.proof.to_owned(),
+            })
+            .collect(),
+        executed,
+    }
+}
+
 fn millis(value: std::time::Duration) -> u64 {
     u64::try_from(value.as_millis()).unwrap_or(u64::MAX)
+}
+
+/// Which targets could have noticed one mutation, and what became of the ones that ran.
+///
+/// A recording says the same thing, and a run that was not recorded has to be
+/// able to answer it too: `explain` draws a route from the report alone.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RouteDocument {
+    /// `all`, `block`, `discharged`, or `unreached`.
+    pub granularity: String,
+    /// Why the route is wider than the measurement alone would make it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<String>,
+    /// Every target that could have noticed the mutation.
+    pub reaching: Vec<String>,
+    /// Every target a proof removed, with the proof that removed it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub discharged: Vec<DischargeDocument>,
+    /// Every target that ran, in the order the run asked them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub executed: Vec<String>,
+}
+
+/// One target a proof removed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DischargeDocument {
+    /// The target.
+    pub target: String,
+    /// The proof that removed it.
+    pub proof: String,
 }
 
 /// Why the parts of a catalog could not be put back together.
@@ -503,66 +563,11 @@ fn exit_code_of(merged: &RunDocument) -> u8 {
         crate::run::FindingKind::parse(&finding.kind)
             .is_some_and(crate::run::FindingKind::is_infrastructure)
     }) {
-        return crate::EXIT_USAGE;
+        return crate::run::EXIT_FAILED;
     }
     if merged.findings.is_empty() {
         crate::run::EXIT_DETECTED
     } else {
         crate::run::EXIT_UNDETECTED
     }
-}
-
-use crate::run::count;
-
-/// The run as lines a person reads: the tally, the score, and every finding.
-#[must_use]
-pub fn lines(document: &RunDocument) -> String {
-    let a = &document.accounting;
-    let mut text = String::new();
-    let written = write!(
-        text,
-        "run       {}\nworkspace {}\ncatalog   {}\n\n\
-         MUTANTS   cataloged={} refused={} skipped={} executed={}\n\
-         OUTCOMES  killed={} survived={} timed_out={} inconclusive={} errored={} not_run={} \
-         unreached={} expected={}\n",
-        document.run.id,
-        document.workspace.workspace_digest,
-        document.workspace.catalog_digest,
-        a.cataloged,
-        a.refused,
-        a.skipped,
-        a.executed,
-        a.killed,
-        a.survived,
-        a.timed_out,
-        a.inconclusive,
-        a.errored,
-        a.not_run,
-        a.unreached,
-        a.expected,
-    );
-    debug_assert!(written.is_ok(), "writing to a String cannot fail");
-    match &document.score {
-        Some(score) => {
-            let percent = score.value * 100.0;
-            let written = writeln!(
-                text,
-                "SCORE     {percent:.1}%  ({} detected of {} decided)",
-                score.detected, score.decided
-            );
-            debug_assert!(written.is_ok(), "writing to a String cannot fail");
-        }
-        None => text.push_str("SCORE     none; the run decided nothing\n"),
-    }
-    if !document.findings.is_empty() {
-        text.push('\n');
-        for one in &document.findings {
-            let written = writeln!(text, "{:<22} {}", one.kind, one.detail);
-            debug_assert!(written.is_ok(), "writing to a String cannot fail");
-        }
-    }
-    if document.run.interrupted {
-        text.push_str("\nINTERRUPTED  the run stopped before every mutant was executed\n");
-    }
-    text
 }

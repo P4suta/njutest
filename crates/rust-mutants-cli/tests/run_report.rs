@@ -7,6 +7,13 @@ use rust_mutants_cli::config::Config;
 use rust_mutants_cli::outcomes::Keyed;
 use rust_mutants_cli::report::selection_document;
 
+fn options(config: &Config) -> rust_mutants::session::PrepareOptions {
+    rust_mutants::session::PrepareOptions {
+        build: config.build.config(),
+        ..rust_mutants::session::PrepareOptions::default()
+    }
+}
+
 fn keyed(build: &Config) -> Keyed {
     Keyed {
         workspace: "w".to_owned(),
@@ -23,11 +30,15 @@ fn the_build_configuration_enters_the_document_and_the_cache_key() {
     configured.build.features = vec!["extra".to_owned()];
 
     assert_eq!(
-        selection_document(&configured).build,
+        selection_document(&options(&configured)).build,
         vec!["--features".to_owned(), "extra".to_owned()],
         "a reader has to be able to tell which program was measured"
     );
-    assert!(selection_document(&Config::default()).build.is_empty());
+    assert!(
+        selection_document(&options(&Config::default()))
+            .build
+            .is_empty()
+    );
 
     assert_ne!(
         keyed(&configured).key("m"),

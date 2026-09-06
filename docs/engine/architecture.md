@@ -327,6 +327,27 @@ Only the first three are refused on the command line. A run under
 `cargo llvm-cov` is an ordinary thing to want; a run under somebody else's
 activation is not.
 
+## The run
+
+The engine drives its own runs. `rust_mutants::run::run` walks the accepted
+mutants a shard holds, asks `Session::judge` about each, reuses what an earlier
+run of this exact tree established, records a route for every one of them, and
+hands back what it decided; `rust_mutants::report::run::document` turns that
+into the document, and `merge` puts the parts of a sharded run back together.
+The command line renders. Nothing about a run's policy — what a finding is,
+what the exit code says, which mutants a shard holds — lives above the engine
+any more, so a second consumer of the engine gets the same answers rather than
+a second implementation of them.
+
+A caller hears about a run through an `Observer`, whose every method is called
+on the calling thread and has a default that does nothing, so an observer
+implements only what it draws. `Silent` draws nothing.
+
+A mutant that was never executed says why: `unreached`, `discharged`, or
+`interrupted`. Its row also carries the route — which targets could have
+noticed it, which a proof removed, and which of them ran — so a reader can see
+a proof layer remove work without a recording.
+
 ## Describing a session
 
 A session owns a snapshot and the processes that run in it, so it cannot be
