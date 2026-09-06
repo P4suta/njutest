@@ -57,5 +57,12 @@ module in the probe tree, appending to the infection log named by
   version. A reader that does not know a reason knows it is a place that was
   not mutated, which is what the field is for; a reader that must understand
   every reason is reading the explanation beside it, which is prose.
-- `#![no_std]` crates are skipped as a whole with the reason `no-std-crate`:
-  the runtime needs `std::env` and `std::process`.
+- The runtime borrows `std` under a name of its own — `extern crate std as
+  __rm_std` inside the generated module — so a `#![no_std]` crate whose tests
+  run on the host is measured like any other. `#![no_std]` withholds the
+  implicit link and the prelude; it forbids neither an explicit link nor an
+  explicit path, and no `unsafe` is written or needed. What stays a
+  `no-std-crate` skip is a crate the host cannot lend `std` to: one with a
+  `#[panic_handler]` or a `#[global_allocator]` of its own, or `#![no_main]`,
+  each of which `std` also supplies and only one of which may exist. Edition
+  2015 stays skipped because `extern crate` resolves differently there.
