@@ -18,8 +18,8 @@ pub use event::{
     AttributionRecord, BisectRecord, BuildRecord, CacheRecord, DischargeRecord, DiscoverFileRecord,
     EVERY_TYPE, Event, EvidenceRecord, ExecRecord, IdenticalRecord, InstrumentRecord,
     MutantExecRecord, NoteRecord, OpenRecord, Payload, PhaseRecord, ProbeExecRecord, RouteRecord,
-    RunRecord, SCHEMA, SelectRecord, SiteRecord, SkipCount, SnapshotRecord, SweepRecord,
-    TargetRecord, ValidateRoundRecord, VerifyRecord, WitnessRecord,
+    RunRecord, SCHEMA, SelectRecord, SiteRecord, SkipClaimRecord, SkipCount, SnapshotRecord,
+    SweepRecord, TargetRecord, ValidateRoundRecord, VerifyRecord, WitnessRecord,
 };
 pub use reader::{Problem, ReadError, check, read_events};
 pub use sink::{
@@ -284,6 +284,11 @@ impl Recorder {
     /// Records one branch claim put to the compiler.
     pub fn witness(&self, record: WitnessRecord) {
         self.emit(Payload::Witness { witness: record });
+    }
+
+    /// Records one `rust-mutants: skip` marker, and whether it hid anything.
+    pub fn skip_claim(&self, record: SkipClaimRecord) {
+        self.emit(Payload::SkipClaim { claim: record });
     }
 
     /// Records how one mutant's targets were chosen, and which of them ran.

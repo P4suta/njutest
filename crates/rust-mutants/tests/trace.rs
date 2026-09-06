@@ -541,6 +541,12 @@ fn one_of_each_measurement(recorder: &Recorder) {
         checked: true,
         diagnostic: None,
     });
+    recorder.skip_claim(rust_mutants::trace::SkipClaimRecord {
+        path: "src/lib.rs".to_owned(),
+        line: 12,
+        reason: "the bound is the caller's".to_owned(),
+        matched: true,
+    });
     recorder.mutant_exec(rust_mutants::trace::MutantExecRecord {
         id: "b".repeat(64),
         index: 1,

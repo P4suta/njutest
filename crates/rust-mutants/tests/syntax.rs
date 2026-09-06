@@ -303,6 +303,7 @@ fn skip_reasons_are_named_explained_and_ranked() {
             "open-range",
             "unstated-return-type",
             "loop-value",
+            "annotated",
         ]
     );
     for reason in SkipReason::ALL {
@@ -767,5 +768,105 @@ fn a_non_empty_string_becomes_empty() {
         ["string-to-empty@2 \"\\\"hello\\\"\"=>\"\\\"\\\"\" E"],
         "a message nobody checks is a message nobody would miss, and a string already empty \
          has nowhere to go"
+    );
+}
+
+#[test]
+fn an_end_of_line_marker_hides_that_lines_candidates_and_states_the_text() {
+    let src = "fn f(a: i32, b: i32) -> i32 {\n    if a > b { a } else { b } // rust-mutants: skip the bound is the caller's\n}\n";
+    let d = discover(src);
+    assert_coherent(src, &d);
+    assert!(d.candidates.is_empty(), "{:?}", render(&d));
+    assert_eq!(
+        skips(&d),
+        [("annotated", 5)],
+        "every edit that starts on the marked line is hidden, and the count says how many"
+    );
+    let claim = d.annotations.first().expect("a claim");
+    assert_eq!(claim.line, 2);
+    assert!(claim.matched);
+    assert_eq!(claim.reason, "the bound is the caller's");
+    assert!(
+        d.decisions
+            .iter()
+            .all(|one| one.note.as_deref() == Some("the bound is the caller's")),
+        "a reader asking why gets the reason its author wrote: {:?}",
+        d.decisions
+    );
+}
+
+#[test]
+fn an_own_line_marker_hides_the_next_item_statement_arm_or_else_block() {
+    let src = "// rust-mutants: skip generated\nfn f(a: i32) -> i32 {\n    a + 1\n}\nfn g(a: i32, b: i32) -> i32 {\n    let mut n = 0;\n    // rust-mutants: skip measured elsewhere\n    if a > b {\n        n += a;\n    }\n    n + b\n}\n";
+    let d = discover(src);
+    assert_coherent(src, &d);
+    let left: Vec<&str> = d
+        .candidates
+        .iter()
+        .map(|found| found.candidate.rule.name)
+        .collect();
+    assert_eq!(
+        left,
+        ["int-increment", "return-default", "add-to-sub"],
+        "a marker with the line to itself takes the whole of what starts on the next one"
+    );
+    assert_eq!(d.annotations.len(), 2);
+    assert!(d.annotations.iter().all(|claim| claim.matched));
+}
+
+#[test]
+fn a_marker_inside_a_string_is_not_a_marker_and_a_block_comment_marker_is() {
+    let src = "fn f() -> &'static str {\n    \"rust-mutants: skip nothing\"\n}\nfn g(a: i32) -> i32 {\n    /* rust-mutants: skip the offset is a constant */ a + 1\n}\n";
+    let d = discover(src);
+    assert_coherent(src, &d);
+    assert_eq!(d.annotations.len(), 1, "{:?}", d.annotations);
+    assert_eq!(d.annotations[0].line, 5);
+    assert!(
+        render(&d)
+            .iter()
+            .any(|line| line.starts_with("string-to-empty@2")),
+        "a string that says the words is a string: {:?}",
+        render(&d)
+    );
+}
+
+#[test]
+fn a_marker_without_a_reason_is_rm2008_and_an_unknown_directive_is_rm2009() {
+    let selection = Selection::tier(registry(), Tier::All);
+    let bare = "// rust-mutants: skip\nfn f(a: i32) -> i32 {\n    a + 1\n}\n";
+    let error = discover_file("src/lib.rs", bare.as_bytes(), &selection).unwrap_err();
+    assert!(
+        matches!(error, SyntaxError::AnnotationWithoutReason { line: 1, .. }),
+        "{error:?}"
+    );
+    assert_eq!(error.code().code, "RM2008", "{error}");
+    let unknown = "// rust-mutants: hide me\nfn f(a: i32) -> i32 {\n    a + 1\n}\n";
+    let error = discover_file("src/lib.rs", unknown.as_bytes(), &selection).unwrap_err();
+    assert!(
+        matches!(error, SyntaxError::UnknownAnnotation { line: 1, .. }),
+        "{error:?}"
+    );
+    assert_eq!(error.code().code, "RM2009", "{error}");
+}
+
+#[test]
+fn a_marker_that_hides_nothing_is_reported_so_it_can_be_removed() {
+    let src = "// rust-mutants: skip nothing to hide\n// a plain comment\nfn f() {}\n";
+    let d = discover(src);
+    assert_eq!(d.annotations.len(), 1);
+    assert!(
+        !d.annotations[0].matched,
+        "a marker over a place no rule targets is one somebody should take out: {:?}",
+        d.annotations
+    );
+}
+
+#[test]
+fn a_marker_over_cfg_code_is_matched_by_the_sites_the_walker_still_sees() {
+    let src = "// rust-mutants: skip windows only\n#[cfg(windows)]\nfn f(a: i32) -> i32 {\n    a + 1\n}\n";
+    let d = discover(src);
+    assert!(
+        d.annotations[0].matched,
+        "the walker sees the sites whatever the platform, so the answer does not change with it"
     );
 }

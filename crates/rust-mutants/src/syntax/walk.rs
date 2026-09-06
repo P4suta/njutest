@@ -12,6 +12,7 @@ use syn::{
     TraitItem, Type, Visibility,
 };
 
+use super::annotate::Marker;
 use super::branch;
 use super::position::LineIndex;
 use super::rules::{
@@ -20,7 +21,7 @@ use super::rules::{
     is_ok_default, is_some_default, is_true_literal, method_swap, respell_int, terminal_else,
     unary_removal,
 };
-use super::{Decision, Form, Found, Include, Selection, SiteHint, SkipReason, beside};
+use super::{Claim, Decision, Form, Found, Include, Selection, SiteHint, SkipReason, beside};
 use crate::catalog::Candidate;
 use crate::probe::form::Question;
 use crate::span::Span;
@@ -171,6 +172,20 @@ impl Ctx {
     }
 }
 
+/// What one walk of a file decided.
+pub(super) struct Walked {
+    /// The candidates, in the order the walk found them.
+    pub(super) found: Vec<Found>,
+    /// The skip tallies.
+    pub(super) skips: BTreeMap<SkipReason, u32>,
+    /// Every decision, in the order the walk took them.
+    pub(super) decisions: Vec<Decision>,
+    /// Every file this one pastes in.
+    pub(super) includes: Vec<Include>,
+    /// Every marker the file carries.
+    pub(super) annotations: Vec<Claim>,
+}
+
 /// The file being walked.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct Input<'a> {
@@ -217,6 +232,12 @@ pub(super) struct Walker<'a> {
     gates: Vec<Option<branch::Prepared>>,
     /// The loops being walked, innermost last: the label each carries, and whether its breaks decide its value.
     loops: Vec<(Option<String>, bool)>,
+    /// Every `rust-mutants: skip` marker the file carries, in source order.
+    markers: Vec<Marker>,
+    /// Which markers hid a place a rule targets.
+    matched: Vec<bool>,
+    /// The marker whose scope the walk is inside, if any.
+    annotation: Option<usize>,
     includes: Vec<Include>,
 }
 
@@ -241,20 +262,89 @@ impl<'a> Walker<'a> {
             mod_depth: 0,
             gates: Vec::new(),
             loops: Vec::new(),
+            markers: Vec::new(),
+            matched: Vec::new(),
+            annotation: None,
             includes: Vec::new(),
         }
     }
 
     /// The results, unsorted.
-    pub(super) fn finish(
-        self,
-    ) -> (
-        Vec<Found>,
-        BTreeMap<SkipReason, u32>,
-        Vec<Decision>,
-        Vec<Include>,
-    ) {
-        (self.found, self.skips, self.decisions, self.includes)
+    /// Hands the walk the markers it is to honour, before it starts.
+    pub(super) fn annotate(&mut self, markers: Vec<Marker>) {
+        self.matched = vec![false; markers.len()];
+        self.markers = markers;
+    }
+
+    pub(super) fn finish(self) -> Walked {
+        let annotations = self
+            .markers
+            .iter()
+            .enumerate()
+            .map(|(index, marker)| Claim {
+                line: marker.line,
+                reason: marker.reason.clone(),
+                matched: self.matched.get(index).copied().unwrap_or_default(),
+            })
+            .collect();
+        Walked {
+            found: self.found,
+            skips: self.skips,
+            decisions: self.decisions,
+            includes: self.includes,
+            annotations,
+        }
+    }
+
+    /// The marker that speaks about a place starting on `line`, if one does.
+    fn marker_at(&self, line: u32) -> Option<usize> {
+        self.markers.iter().position(|marker| marker.scope == line)
+    }
+
+    /// The line a byte offset sits on.
+    fn line_of(&self, offset: u32) -> u32 {
+        self.index.position(self.src, offset).line
+    }
+
+    /// The lines a marker may sit above to speak about this construct: where its attributes start, and where the first token after them does.
+    fn heading(&self, span: Span, attrs: &[Attribute]) -> [u32; 2] {
+        let outer = self.line_of(span.start);
+        let Some(last) = attrs.last() else {
+            return [outer, outer];
+        };
+        let after = self.span(last).end;
+        let rest = self
+            .src
+            .get(usize::try_from(after).unwrap_or(usize::MAX)..)
+            .unwrap_or_default();
+        let skipped = rest.len().saturating_sub(rest.trim_start().len());
+        let inner = self.line_of(after.saturating_add(u32::try_from(skipped).unwrap_or(0)));
+        [outer, inner]
+    }
+
+    /// Walks a construct under the marker that speaks about it, if one does.
+    ///
+    /// A marker with the line to itself speaks about what follows: the edits
+    /// that start on the next line, and everything inside the item, statement,
+    /// arm, or `else` block that starts there. Attributes are part of what a
+    /// marker may sit above, so either the line the attributes start on or the
+    /// line of the first token after them is the line it speaks about.
+    fn maybe_annotated(&mut self, lines: [u32; 2], walk: impl FnOnce(&mut Self)) {
+        let found = lines
+            .into_iter()
+            .filter_map(|line| self.marker_at(line))
+            .find(|index| {
+                self.markers
+                    .get(*index)
+                    .is_some_and(|marker| marker.own_line)
+            });
+        let Some(index) = found else {
+            walk(self);
+            return;
+        };
+        let annotation = self.annotation.replace(index);
+        self.with_suppression(SkipReason::Annotated, walk);
+        self.annotation = annotation;
     }
 
     /// Records an `include!`, when its argument names a file this run can name.
@@ -321,6 +411,21 @@ impl<'a> Walker<'a> {
             self.decide(edit.span.start, rule_name, Outcome::Skipped(reason));
             return;
         }
+        let line = self.line_of(edit.span.start);
+        if let Some(index) = self.marker_at(line) {
+            let reason = self
+                .markers
+                .get(index)
+                .map_or_else(String::new, |marker| marker.reason.clone());
+            if let Some(claimed) = self.matched.get_mut(index) {
+                *claimed = true;
+            }
+            self.declined(
+                At::new(edit.span.start, rule_name).noting(&reason),
+                SkipReason::Annotated,
+            );
+            return;
+        }
         let Some(site) = edit.site else {
             self.skip(SkipReason::UnsupportedSite);
             self.decide(
@@ -370,6 +475,12 @@ impl<'a> Walker<'a> {
     }
 
     fn skip(&mut self, reason: SkipReason) {
+        if reason == SkipReason::Annotated
+            && let Some(index) = self.annotation
+            && let Some(claimed) = self.matched.get_mut(index)
+        {
+            *claimed = true;
+        }
         let count = self.skips.entry(reason).or_insert(0);
         *count = count.saturating_add(1);
     }
@@ -530,7 +641,10 @@ impl<'a> Walker<'a> {
     }
 
     fn walk_item(&mut self, item: &Item) {
-        self.maybe_suppressed(item_attrs(item), |walker| walker.walk_item_inner(item));
+        let heading = self.heading(self.span(item), item_attrs(item));
+        self.maybe_annotated(heading, |walker| {
+            walker.maybe_suppressed(item_attrs(item), |walker| walker.walk_item_inner(item));
+        });
     }
 
     fn walk_item_inner(&mut self, item: &Item) {
@@ -650,7 +764,10 @@ impl<'a> Walker<'a> {
     fn walk_stmt(&mut self, stmt: &Stmt, role: TailRole) {
         match stmt {
             Stmt::Local(local) => {
-                self.maybe_suppressed(&local.attrs, |walker| walker.walk_local(local));
+                let heading = self.heading(self.span(local), &local.attrs);
+                self.maybe_annotated(heading, |walker| {
+                    walker.maybe_suppressed(&local.attrs, |walker| walker.walk_local(local));
+                });
             }
             Stmt::Item(item) => self.walk_item(item),
             Stmt::Expr(expr, Some(semi)) => {
@@ -658,16 +775,19 @@ impl<'a> Walker<'a> {
                     start: self.span(expr).start,
                     end: self.span(semi).end,
                 };
-                self.maybe_suppressed(expr_attrs(expr), |walker| {
-                    walker.statement_candidates(expr, stmt_span);
-                    walker.deletable_else(expr, stmt_span);
-                    let site = Site {
-                        form: Form::S,
-                        span: stmt_span,
-                    };
-                    let mut ctx = Ctx::new(Kind::Value, Some(site));
-                    ctx.direct_stmt = true;
-                    walker.walk_expr(expr, ctx);
+                let heading = self.heading(stmt_span, expr_attrs(expr));
+                self.maybe_annotated(heading, |walker| {
+                    walker.maybe_suppressed(expr_attrs(expr), |walker| {
+                        walker.statement_candidates(expr, stmt_span);
+                        walker.deletable_else(expr, stmt_span);
+                        let site = Site {
+                            form: Form::S,
+                            span: stmt_span,
+                        };
+                        let mut ctx = Ctx::new(Kind::Value, Some(site));
+                        ctx.direct_stmt = true;
+                        walker.walk_expr(expr, ctx);
+                    });
                 });
             }
             Stmt::Expr(expr, None) => {
@@ -680,14 +800,17 @@ impl<'a> Walker<'a> {
                     },
                     span,
                 };
-                self.maybe_suppressed(expr_attrs(expr), |walker| {
-                    if role == TailRole::NotLast {
-                        walker.deletable_else(expr, span);
-                    }
-                    walker.walk_expr(expr, Ctx::new(Kind::Value, Some(site)));
-                    if role == TailRole::ReturnValue {
-                        walker.return_site(expr);
-                    }
+                let heading = self.heading(span, expr_attrs(expr));
+                self.maybe_annotated(heading, |walker| {
+                    walker.maybe_suppressed(expr_attrs(expr), |walker| {
+                        if role == TailRole::NotLast {
+                            walker.deletable_else(expr, span);
+                        }
+                        walker.walk_expr(expr, Ctx::new(Kind::Value, Some(site)));
+                        if role == TailRole::ReturnValue {
+                            walker.return_site(expr);
+                        }
+                    });
                 });
             }
             Stmt::Macro(m) => {
@@ -1202,20 +1325,22 @@ impl<'a> Walker<'a> {
         self.walk_expr(&m.expr, ctx.value());
         for (position, arm) in m.arms.iter().enumerate() {
             let deletable = deletable_arm(&m.arms, position);
-            self.maybe_suppressed(&arm.attrs, |walker| {
-                walker.walk_arm_head(&arm.pat, deletable);
-                walker.walk_pat_guards(&arm.pat, ctx);
-                let span = walker.span(&arm.body);
-                let site = Site {
-                    form: Form::E,
-                    span,
-                };
-                walker.walk_expr(&arm.body, Ctx::new(Kind::Value, Some(site)));
+            let heading = self.heading(self.span(arm), &arm.attrs);
+            self.maybe_annotated(heading, |walker| {
+                walker.maybe_suppressed(&arm.attrs, |walker| {
+                    walker.walk_arm_head(&arm.pat, deletable);
+                    walker.walk_pat_guards(&arm.pat, ctx);
+                    let span = walker.span(&arm.body);
+                    let site = Site {
+                        form: Form::E,
+                        span,
+                    };
+                    walker.walk_expr(&arm.body, Ctx::new(Kind::Value, Some(site)));
+                });
             });
         }
     }
 
-    /// The guard of an arm is a boolean position; patterns hold no other runtime expression.
     /// What an arm's head offers: a guard that can be made false, so the arm is gone, and one that can be made true, so it stops narrowing.
     ///
     /// An arm that has a guard already is a boolean position like any other,

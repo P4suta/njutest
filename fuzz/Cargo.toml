@@ -60,6 +60,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "annotations"
+path = "fuzz_targets/annotations.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "normalize_path"
 path = "fuzz_targets/normalize_path.rs"
 test = false

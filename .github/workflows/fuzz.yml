@@ -44,6 +44,7 @@ jobs:
           - splice
           - normalize_path
           - discover_file
+          - annotations
           - config
           - coverage_export
           - libtest_summary

@@ -249,6 +249,16 @@ snapshot_code!(
     "a selected package is not a workspace member"
 );
 snapshot_code!(
+    DISCOVER_ANNOTATION_WITHOUT_REASON,
+    "RM2008",
+    "a rust-mutants: skip marker names no reason"
+);
+snapshot_code!(
+    DISCOVER_UNKNOWN_ANNOTATION,
+    "RM2009",
+    "a rust-mutants marker names a directive this release does not know"
+);
+snapshot_code!(
     INSTRUMENT_UNKNOWN_MUTANT,
     "RM3001",
     "a candidate is not in the catalog being instrumented"
@@ -423,6 +433,8 @@ pub const fn error_codes() -> &'static [ErrorCode] {
         DISCOVER_OUTSIDE_ROOT,
         DISCOVER_CATALOG_FAILED,
         DISCOVER_UNKNOWN_PACKAGE,
+        DISCOVER_ANNOTATION_WITHOUT_REASON,
+        DISCOVER_UNKNOWN_ANNOTATION,
         INSTRUMENT_UNKNOWN_MUTANT,
         INSTRUMENT_SOURCE_MISMATCH,
         INSTRUMENT_SITE_CONFLICT,

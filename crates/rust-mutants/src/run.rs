@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 
 use crate::EngineError;
 use crate::catalog::Mutant;
+use crate::discover::SkipClaim;
 use crate::outcome::Outcome;
 use crate::runner::Cancel;
 use crate::session::{Request, Session};
@@ -187,11 +188,13 @@ pub enum FindingKind {
     StaleExpectation,
     /// A reviewer's claim that names no mutant of this catalog.
     UnmatchedExpectation,
+    /// A `rust-mutants: skip` marker that hid nothing, which is a claim about code that has moved or gone.
+    UnmatchedSkip,
 }
 
 impl FindingKind {
     /// Every kind, in the order findings are reported.
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::SurvivingMutant,
         Self::InconclusiveMutant,
         Self::ErroredMutant,
@@ -200,6 +203,7 @@ impl FindingKind {
         Self::DischargedMutant,
         Self::StaleExpectation,
         Self::UnmatchedExpectation,
+        Self::UnmatchedSkip,
     ];
 
     /// The canonical wire name.
@@ -214,6 +218,7 @@ impl FindingKind {
             Self::DischargedMutant => "discharged-mutant",
             Self::StaleExpectation => "stale-expectation",
             Self::UnmatchedExpectation => "unmatched-expectation",
+            Self::UnmatchedSkip => "unmatched-skip",
         }
     }
 
@@ -294,6 +299,8 @@ pub struct Run {
     pub skipped: u32,
     /// How many candidates the compiler refused.
     pub refused: u32,
+    /// Every `rust-mutants: skip` marker of a file the run measures.
+    pub claims: Vec<SkipClaim>,
     /// Whether the run stopped because it was asked to.
     pub interrupted: bool,
     /// Which part of the catalog this run was about, when it was about one.
@@ -396,6 +403,16 @@ impl Run {
                 }),
             }
         }
+        for claim in self.claims.iter().filter(|claim| !claim.matched) {
+            findings.push(Finding {
+                kind: FindingKind::UnmatchedSkip,
+                mutant: None,
+                detail: format!(
+                    "the marker at {}:{} hides nothing: {:?}",
+                    claim.path, claim.line, claim.reason
+                ),
+            });
+        }
         findings
     }
 
@@ -458,7 +475,8 @@ fn detail(kind: FindingKind, one: &Judged) -> String {
         ),
         FindingKind::NotRunMutant
         | FindingKind::StaleExpectation
-        | FindingKind::UnmatchedExpectation => format!(
+        | FindingKind::UnmatchedExpectation
+        | FindingKind::UnmatchedSkip => format!(
             "{} was never executed and nothing cancelled the run",
             one.display_id
         ),
@@ -614,6 +632,7 @@ pub fn run<O: Observer>(
             .iter()
             .fold(0u32, |total, skip| total.saturating_add(skip.count)),
         refused: count(session.rejections().len()),
+        claims: session.claims().to_vec(),
         interrupted: interrupted || cancel.is_cancelled(),
         shard: options.shard,
         duration: started.elapsed(),

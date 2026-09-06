@@ -14,7 +14,7 @@ use crate::id::normalize_path;
 use crate::syntax::{
     FileDiscovery, Found, Selection, Skip, SkipReason, SyntaxError, discover_file,
 };
-use crate::trace::{DiscoverFileRecord, Recorder, SkipCount};
+use crate::trace::{DiscoverFileRecord, Recorder, SkipClaimRecord, SkipCount};
 
 /// Configures [`discover`].
 #[derive(Debug, Clone)]
@@ -53,6 +53,19 @@ pub struct FileReport {
     pub whole_file: Option<SkipReason>,
 }
 
+/// One `rust-mutants: skip` marker, where it sits and whether it hid anything.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkipClaim {
+    /// The workspace-relative path with forward slashes.
+    pub path: String,
+    /// The 1-based line the marker sits on.
+    pub line: u32,
+    /// The reason its author wrote.
+    pub reason: String,
+    /// Whether a place a rule targets starts inside what it speaks about.
+    pub matched: bool,
+}
+
 /// Everything discovery found.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Discovery {
@@ -62,6 +75,8 @@ pub struct Discovery {
     pub candidates: Vec<Located>,
     /// Every skip, in (reason, path) order.
     pub skips: Vec<Skip>,
+    /// Every `rust-mutants: skip` marker of a file the run measures, in (path, line) order. A marker in a file the run passed over is a marker about nothing this run decided.
+    pub claims: Vec<SkipClaim>,
     /// The catalog of the candidates.
     pub catalog: Catalog,
 }
@@ -122,7 +137,7 @@ impl DiscoverError {
     pub const fn code(&self) -> ErrorCode {
         match self {
             Self::Unreadable { .. } => error::DISCOVER_FILE_UNREADABLE,
-            Self::Parse(_) => error::DISCOVER_PARSE_FAILED,
+            Self::Parse(error) => error.code(),
             Self::OutsideRoot { .. } => error::DISCOVER_OUTSIDE_ROOT,
             Self::Catalog(_) | Self::Candidate(_) => error::DISCOVER_CATALOG_FAILED,
             Self::UnknownPackage { .. } => error::DISCOVER_UNKNOWN_PACKAGE,
@@ -187,6 +202,7 @@ pub fn discover(
     let mut files = Vec::new();
     let mut candidates = Vec::new();
     let mut skips = Vec::new();
+    let mut claims: Vec<SkipClaim> = Vec::new();
     let mut builder = Builder::new();
     for (path, package) in &assigner.generated {
         let report = whole_file(path, package, SkipReason::GeneratedOutsideWorkspace);
@@ -220,6 +236,7 @@ pub fn discover(
         let report = report(&discovery, &assignment.package, role);
         trace.discover_file(record(&discovery, &report));
         if role.is_none() {
+            claimed(path, &discovery.annotations, trace, &mut claims);
             for found in discovery.candidates {
                 builder.add(found.candidate.clone())?;
                 candidates.push(Located {
@@ -232,13 +249,38 @@ pub fn discover(
         files.push(report);
     }
     skips.sort();
+    claims.sort_by(|one, other| (&one.path, one.line).cmp(&(&other.path, other.line)));
     let catalog = builder.build()?;
     Ok(Discovery {
         files,
         candidates,
         skips,
+        claims,
         catalog,
     })
+}
+
+/// The markers of one file the run measures, recorded and kept.
+fn claimed(
+    path: &str,
+    annotations: &[crate::syntax::Claim],
+    trace: &Recorder,
+    into: &mut Vec<SkipClaim>,
+) {
+    for claim in annotations {
+        trace.skip_claim(SkipClaimRecord {
+            path: path.to_owned(),
+            line: claim.line,
+            reason: claim.reason.clone(),
+            matched: claim.matched,
+        });
+        into.push(SkipClaim {
+            path: path.to_owned(),
+            line: claim.line,
+            reason: claim.reason.clone(),
+            matched: claim.matched,
+        });
+    }
 }
 
 /// Every file another file pastes in where an expression goes.

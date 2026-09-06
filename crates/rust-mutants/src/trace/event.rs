@@ -14,7 +14,7 @@ pub const SCHEMA: &str = "rust-mutants-trace-v1";
 /// understands whole, and the schema under `schema/` is held to this list by a
 /// test: a type added to one and not the other is a recording no consumer can
 /// validate.
-pub const EVERY_TYPE: [&str; 22] = [
+pub const EVERY_TYPE: [&str; 23] = [
     "run-start",
     "phase-start",
     "phase-end",
@@ -29,6 +29,7 @@ pub const EVERY_TYPE: [&str; 22] = [
     "verify",
     "probe-exec",
     "witness",
+    "skip-claim",
     "route",
     "cache",
     "select",
@@ -130,6 +131,11 @@ pub enum Payload {
         /// The record.
         witness: WitnessRecord,
     },
+    /// One `rust-mutants: skip` marker was read, and either hid something or did not.
+    SkipClaim {
+        /// The record.
+        claim: SkipClaimRecord,
+    },
     /// How one mutant's targets were chosen, and which of them ran.
     Route {
         /// The record.
@@ -190,6 +196,7 @@ impl Payload {
             Self::Build { .. } => "build",
             Self::Verify { .. } => "verify",
             Self::ProbeExec { .. } => "probe-exec",
+            Self::SkipClaim { .. } => "skip-claim",
             Self::Witness { .. } => "witness",
             Self::Route { .. } => "route",
             Self::Cache { .. } => "cache",
@@ -473,6 +480,19 @@ pub struct WitnessRecord {
     /// The first line of what refused it, when one did.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub diagnostic: Option<String>,
+}
+
+/// One `rust-mutants: skip` marker, and whether it hid anything.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SkipClaimRecord {
+    /// The workspace-relative path.
+    pub path: String,
+    /// The 1-based line the marker sits on.
+    pub line: u32,
+    /// The reason its author wrote.
+    pub reason: String,
+    /// Whether a place a rule targets starts inside what it speaks about.
+    pub matched: bool,
 }
 
 /// One target a proof removed from what could have noticed a mutation.

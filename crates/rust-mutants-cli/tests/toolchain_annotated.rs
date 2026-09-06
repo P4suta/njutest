@@ -1,0 +1,85 @@
+// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! The markers an author writes, end to end: what each hides, and the one that hides nothing.
+
+#![expect(
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    reason = "a test reports a setup failure by panicking and reads a document by the names its own fixture put there"
+)]
+
+use std::process::Command;
+
+use mjutest_devkit::fixture::Fixture;
+
+fn run(fixture: &Fixture, extra: &[&str]) -> std::process::Output {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_rust-mutants"));
+    command.env("NO_COLOR", "1");
+    command.env("TMPDIR", fixture.temp());
+    command.env("XDG_CACHE_HOME", fixture.cache());
+    command.arg("run");
+    command.args(["--root", &fixture.root().to_string_lossy()]);
+    command.args(["--tier", "all"]);
+    command.args(["--offline", "--locked", "--no-coverage"]);
+    command.args(extra);
+    command.output().expect("rust-mutants runs")
+}
+
+fn document(fixture: &Fixture) -> serde_json::Value {
+    let directory = fixture.root().join("reports/mutation");
+    let pointer: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(directory.join("latest.json"))
+            .expect("a pointer to the newest run"),
+    )
+    .expect("the pointer is a document");
+    let relative = pointer["document"].as_str().expect("a document path");
+    let text = std::fs::read_to_string(directory.join(relative)).expect("the report");
+    serde_json::from_str(&text).expect("JSON")
+}
+
+#[test]
+fn every_marker_hides_what_it_says_and_the_one_that_hides_nothing_is_a_finding() {
+    let fixture = Fixture::copy("fixture-annotated");
+    let output = run(&fixture, &[]);
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "a marker that hides nothing is a finding: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report = document(&fixture);
+    assert_eq!(
+        report["accounting"]["cataloged"].as_u64(),
+        Some(4),
+        "only what no marker covers is cataloged: {}",
+        report["accounting"]
+    );
+    assert_eq!(
+        report["accounting"]["killed"].as_u64(),
+        Some(4),
+        "{}",
+        report["accounting"]
+    );
+    let findings = report["findings"].as_array().expect("findings");
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    assert_eq!(findings[0]["kind"], "unmatched-skip");
+    assert!(
+        findings[0]["detail"]
+            .as_str()
+            .is_some_and(|detail| detail.contains("nothing starts here")),
+        "the finding names the marker and quotes its reason: {}",
+        findings[0]["detail"]
+    );
+    let annotated = report["skips"]
+        .as_array()
+        .expect("skips")
+        .iter()
+        .find(|skip| skip["reason"] == "annotated")
+        .expect("the annotated tally");
+    assert_eq!(
+        annotated["count"].as_u64(),
+        Some(8),
+        "the tally says how much the markers hid: {annotated}"
+    );
+}

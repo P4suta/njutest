@@ -62,6 +62,8 @@ first digit names an area:
 | `RM2005` | A unit compiled a file outside the workspace root, which the snapshot does not hold. |
 | `RM2006` | The candidates could not be assembled into a catalog: a display-id collision or an incoherent candidate. |
 | `RM2007` | A selected package is not a workspace member. |
+| `RM2008` | A `rust-mutants: skip` marker names no reason; a skip nobody explained is one nobody can review. |
+| `RM2009` | A `rust-mutants:` marker names a directive this release does not know, which is a typo or a newer release's word. |
 | `RM3001` | A candidate is not in the catalog being instrumented, which means the two were computed from different trees. |
 | `RM3002` | The source is not the one the candidates were discovered from. |
 | `RM3003` | Two rewrite sites partially overlap, which a syntax tree cannot produce: an engine bug rather than a fact about the program. |

@@ -23,6 +23,7 @@ so each has to fail closed rather than plausibly.
 | `splice` | never panics; an accepted set yields a monotone offset map of the right length |
 | `normalize_path` | never panics; a normalized path is a fixed point |
 | `discover_file` | never panics; every candidate validates, is spanned from the source, sits inside its site; deterministic |
+| `annotations` | never panics; every marker kept names a reason and a line; no marker means no annotated skip; deterministic |
 | `config` | never panics; an accepted configuration has one canonical rendering and one 64-character digest |
 | `coverage_export` | never panics; every accepted region ends where it began or after, and what a test reached is part of what the build instrumented |
 | `libtest_lines` | never panics; every test name it reports is text that was there, and no line becomes two |

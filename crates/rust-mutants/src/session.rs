@@ -10,7 +10,7 @@ use std::time::Duration;
 use crate::EngineError;
 use crate::cargo::{CompileKind, CompileOptions, compile};
 use crate::catalog::{Catalog, Mutant};
-use crate::discover::{self, DiscoverOptions};
+use crate::discover::{self, DiscoverOptions, SkipClaim};
 use crate::execute::{self, Context, ExecRequest, MutantResult, TargetKind, TestTarget, target_id};
 use crate::glob::Pattern;
 use crate::instrument::{FileOutput, Placement, instrument_file, plan_file};
@@ -420,6 +420,7 @@ pub struct Session {
     workspace: Workspace,
     catalog: Catalog,
     skips: Vec<Skip>,
+    claims: Vec<SkipClaim>,
     validated: Validated,
     targets: Vec<TestTarget>,
     scratch: PathBuf,
@@ -464,6 +465,12 @@ impl Session {
     #[must_use]
     pub fn skips(&self) -> &[Skip] {
         &self.skips
+    }
+
+    /// Every `rust-mutants: skip` marker of a file this session measures, in (path, line) order.
+    #[must_use]
+    pub fn claims(&self) -> &[SkipClaim] {
+        &self.claims
     }
 
     /// The test binaries this session built.
@@ -1550,6 +1557,7 @@ pub fn prepare(
     Ok(Session {
         catalog: discovery.catalog,
         skips: discovery.skips,
+        claims: discovery.claims,
         sources,
         packages,
         proofs,

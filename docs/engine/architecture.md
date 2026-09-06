@@ -282,9 +282,19 @@ condemned on the strength of what a half-finished command printed.
 `unsupported-site`, `excluded`, `test-only-file`, `no-std-crate`,
 `included-expression`, `generated-outside-workspace`, `forbidden-lints`,
 `const-fn-body`, `let-condition`, `open-range`, `unstated-return-type`,
-`loop-value`. Each is counted and named; `rust-mutants why-skipped` lists them. A skip is a
-decision the tool made and says; a rejection (a mutant the compiler refused)
-is a fact about the program and is reported with the diagnostic.
+`loop-value`, `annotated`. Each is counted and named; `rust-mutants
+why-skipped` lists them. A skip is a decision the tool made and says; a
+rejection (a mutant the compiler refused) is a fact about the program and is
+reported with the diagnostic.
+
+A `rust-mutants: skip <reason>` comment is the one skip an author writes.
+Sharing a line with code it hides what starts on that line; alone on a line it
+hides what starts on the next one, item, statement, arm or `else` block and
+all. The reason is required (`RM2008`), `skip` is the only directive
+(`RM2009`), and a marker that hid nothing is an `unmatched-skip` finding
+rather than a comment nobody notices is stale. Markers are read from the gaps
+between tokens, so the words inside a string literal are a string and a
+documentation comment, which is an attribute by then, is never a marker.
 
 Every place a rule targets has a decision: a candidate with its guard form, or
 a skip with its reason. A rule that passed over a place without saying so is

@@ -332,7 +332,8 @@
               "unreached-mutant",
               "discharged-mutant",
               "stale-expectation",
-              "unmatched-expectation"
+              "unmatched-expectation",
+              "unmatched-skip"
             ]
           },
           "mutant": { "oneOf": [{ "type": "null" }, { "type": "string" }] },

@@ -3,6 +3,7 @@
 
 //! Syntactic discovery: the candidates one file yields, each with the guard site the instrumenter will use, and every place deliberately passed over, each with its reason.
 
+mod annotate;
 pub mod branch;
 mod position;
 mod rules;
@@ -121,11 +122,13 @@ pub enum SkipReason {
     UnstatedReturnType,
     /// A jump whose loop decides its value by what it breaks with, so the other jump has no value to carry.
     LoopValue,
+    /// A marker in the source says to pass this place over, and why.
+    Annotated,
 }
 
 impl SkipReason {
     /// Every reason, in rank order.
-    pub const ALL: [Self; 16] = [
+    pub const ALL: [Self; 17] = [
         Self::ConstContext,
         Self::MacroInvocation,
         Self::CfgAttribute,
@@ -142,6 +145,7 @@ impl SkipReason {
         Self::OpenRange,
         Self::UnstatedReturnType,
         Self::LoopValue,
+        Self::Annotated,
     ];
 
     /// The kebab-case name used in reports and on the command line.
@@ -164,6 +168,7 @@ impl SkipReason {
             Self::OpenRange => "open-range",
             Self::UnstatedReturnType => "unstated-return-type",
             Self::LoopValue => "loop-value",
+            Self::Annotated => "annotated",
         }
     }
 
@@ -215,6 +220,9 @@ impl SkipReason {
             Self::LoopValue => {
                 "a loop decides its value by what its breaks carry, and the other jump carries none: a break the syntax writes into one has no value to give it, and a continue carries nothing away"
             }
+            Self::Annotated => {
+                "a rust-mutants: skip marker in the source says to pass this place over, and the reason its author wrote is reported beside it"
+            }
         }
     }
 
@@ -253,6 +261,17 @@ pub struct Decision {
     pub note: Option<String>,
 }
 
+/// One `rust-mutants: skip` marker, and whether it hid anything.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Claim {
+    /// The 1-based line the marker sits on.
+    pub line: u32,
+    /// The reason its author wrote.
+    pub reason: String,
+    /// Whether a place a rule targets starts inside what it speaks about. A marker that hid nothing is one somebody should take out.
+    pub matched: bool,
+}
+
 /// Everything discovery found in one file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileDiscovery {
@@ -270,6 +289,8 @@ pub struct FileDiscovery {
     pub no_std: bool,
     /// Every file this one pastes in with `include!`, in source order.
     pub includes: Vec<Include>,
+    /// Every `rust-mutants: skip` marker the file carries, in source order.
+    pub annotations: Vec<Claim>,
 }
 
 /// One file another file pastes in with `include!`.
@@ -382,6 +403,24 @@ pub enum SyntaxError {
         /// The path.
         path: String,
     },
+    /// A marker names no reason.
+    #[error("{path}:{line}: a rust-mutants: skip marker names no reason")]
+    AnnotationWithoutReason {
+        /// The path.
+        path: String,
+        /// The 1-based line.
+        line: u32,
+    },
+    /// A marker names a directive this release does not know.
+    #[error("{path}:{line}: rust-mutants: {directive} is not a directive this release knows")]
+    UnknownAnnotation {
+        /// The path.
+        path: String,
+        /// The 1-based line.
+        line: u32,
+        /// The directive as written.
+        directive: String,
+    },
     /// The file does not parse as Rust.
     #[error("{path}:{line}:{column}: {message}")]
     Parse {
@@ -394,6 +433,22 @@ pub enum SyntaxError {
         /// The parser's message.
         message: String,
     },
+}
+
+impl SyntaxError {
+    /// The stable code of this failure.
+    #[must_use]
+    pub const fn code(&self) -> crate::error::ErrorCode {
+        match self {
+            Self::NotUtf8 { .. } | Self::TooLarge { .. } | Self::Parse { .. } => {
+                crate::error::DISCOVER_PARSE_FAILED
+            }
+            Self::AnnotationWithoutReason { .. } => {
+                crate::error::DISCOVER_ANNOTATION_WITHOUT_REASON
+            }
+            Self::UnknownAnnotation { .. } => crate::error::DISCOVER_UNKNOWN_ANNOTATION,
+        }
+    }
 }
 
 /// Finds every candidate in one file.
@@ -425,6 +480,26 @@ pub fn discover_file(
         }
     })?;
     let index = LineIndex::new(text);
+    let stream: proc_macro2::TokenStream = syn::parse_str(parsed).map_err(|error| {
+        let start = error.span().start();
+        SyntaxError::Parse {
+            path: path.to_owned(),
+            line: u32::try_from(start.line).unwrap_or(u32::MAX),
+            column: u32::try_from(start.column.saturating_add(1)).unwrap_or(u32::MAX),
+            message: error.to_string(),
+        }
+    })?;
+    let markers = annotate::markers(text, base, &stream, &index).map_err(|error| match error {
+        annotate::MarkerError::WithoutReason { line } => SyntaxError::AnnotationWithoutReason {
+            path: path.to_owned(),
+            line,
+        },
+        annotate::MarkerError::Unknown { line, directive } => SyntaxError::UnknownAnnotation {
+            path: path.to_owned(),
+            line,
+            directive,
+        },
+    })?;
     let input = walk::Input {
         text,
         base,
@@ -432,8 +507,15 @@ pub fn discover_file(
         digest: &source_digest,
     };
     let mut walker = walk::Walker::new(input, selection, &index);
+    walker.annotate(markers);
     let no_std = walker.walk_file(&file);
-    let (mut candidates, skips, mut decisions, includes) = walker.finish();
+    let walk::Walked {
+        found: mut candidates,
+        skips,
+        mut decisions,
+        includes,
+        annotations,
+    } = walker.finish();
 
     let position = |name: &str| selection.registry().position(name).unwrap_or(usize::MAX);
     candidates.sort_by_key(|found| {
@@ -452,6 +534,7 @@ pub fn discover_file(
         skips,
         decisions,
         no_std,
+        annotations,
     })
 }
 
