@@ -531,3 +531,96 @@ fn a_dependency_s_documentation_is_not_this_run_s_to_measure() {
          dev-dependencies, which a lock file for this workspace never pinned"
     );
 }
+
+#[test]
+fn the_trace_of_a_probed_and_covered_run_names_every_layer() {
+    use rust_mutants::trace::{MemorySink, Payload, Recorder, Sink};
+
+    let fixture = Fixture::copy("fixture-coverage");
+    let recorder = Recorder::wall(Sink::Memory(MemorySink::unbounded()));
+    let workspace = Workspace::open(
+        fixture.root(),
+        OpenOptions {
+            cargo: Some(mjutest_devkit::paths::cargo_binary()),
+            temp_directory: fixture.temp().to_path_buf(),
+            env: std::env::vars_os().collect(),
+            locked: true,
+            offline: true,
+            trace: recorder.clone(),
+            ..OpenOptions::default()
+        },
+        &Cancel::new(),
+    )
+    .expect("open");
+    let session = workspace
+        .prepare(
+            &PrepareOptions {
+                probe: true,
+                coverage: true,
+                ..PrepareOptions::default()
+            },
+            &Cancel::new(),
+        )
+        .expect("prepare");
+    recorder.run_end("ok", None);
+    let events = recorder.events();
+
+    let phases: Vec<(String, bool)> = events
+        .iter()
+        .filter_map(|event| match &event.payload {
+            Payload::PhaseStart { phase } => Some((phase.name.clone(), false)),
+            Payload::PhaseEnd { phase } => Some((phase.name.clone(), true)),
+            _ => None,
+        })
+        .collect();
+    let began: Vec<&str> = phases
+        .iter()
+        .filter(|(_, ended)| !ended)
+        .map(|(name, _)| name.as_str())
+        .collect();
+    assert_eq!(
+        began,
+        [
+            "open", "prepare", "pristine", "discover", "plan", "probe", "witness", "coverage",
+            "validate", "build", "verify",
+        ],
+        "every stage of a preparation is a phase a reader can time"
+    );
+    assert!(
+        rust_mutants::trace::check(&events).is_empty(),
+        "every phase that began ended: {:?}",
+        rust_mutants::trace::check(&events)
+    );
+    for (name, ended) in &phases {
+        if *ended {
+            let timed = events.iter().any(|event| {
+                matches!(&event.payload, Payload::PhaseEnd { phase }
+                    if phase.name == *name && phase.duration_ms.is_some())
+            });
+            assert!(timed, "{name} ended without saying how long it took");
+        }
+    }
+
+    let of = |name: &str| {
+        events
+            .iter()
+            .filter(|event| event.payload.type_name() == name)
+            .count()
+    };
+    assert!(of("verify") > 0, "a target was run with nothing active");
+    assert!(
+        of("probe-exec") > 0,
+        "a target was run against the probe tree"
+    );
+    assert!(of("witness") > 0, "a claim was put to the compiler");
+    assert!(of("discover-file") > 0);
+    assert!(of("instrument") > 0);
+
+    let mutant = session.catalog().at(0).expect("a mutant");
+    let route = session.route(mutant);
+    assert!(
+        !route.reaching().is_empty() || route.granularity() == "unreached",
+        "a route either names targets or says nothing reaches it: {route:?}"
+    );
+    session.close().expect("close");
+}

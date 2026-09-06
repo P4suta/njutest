@@ -84,6 +84,189 @@ pub struct Request {
     pub timeout: Option<Duration>,
 }
 
+/// Which targets could notice a mutation, and what the route rests on.
+///
+/// A route is the reach layer of [ADR 0004](../../docs/adr/0004-proof-layers-not-budgets.md):
+/// a rule that removes an execution because evidence the run already holds
+/// says the execution could not observe the mutant. Every fallback is toward
+/// running more, and every one of them is named, so a reader who sees a run go
+/// faster can say which layer did it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Route {
+    /// Every target, because the measurement says nothing about this place.
+    All {
+        /// Which target could notice it: all of them.
+        reaching: Vec<String>,
+        /// Why the route is everything.
+        fallback: Fallback,
+    },
+    /// The targets a measurement places at the mutation, and the ones a proof removed.
+    Block {
+        /// The targets whose measured run covered the position, plus every target the measurement could not read.
+        reaching: Vec<String>,
+        /// The targets a proof removed from what could have noticed the mutation.
+        discharged: Vec<Discharge>,
+        /// Why targets the measurement did not place are in `reaching` anyway.
+        fallback: Option<Fallback>,
+    },
+    /// A mutation every target was proved unable to notice.
+    Discharged {
+        /// Each target, with the proof that removed it.
+        discharged: Vec<Discharge>,
+    },
+    /// A mutation no measured target executes, which nothing needs to run to find out again.
+    Unreached,
+}
+
+/// Why a route is wider than a measurement alone would make it. Every one of these runs more, never less.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Fallback {
+    /// Nothing was measured at all.
+    NotMeasured,
+    /// The mutation's position could not be counted in the file a person would open.
+    PositionUnknown,
+    /// The coverage build instrumented no block holding the position, so the measurement says nothing about it.
+    OutsideBlocks,
+    /// A target ran and its profile could not be read, so what it reached is unknown.
+    CoverageIncomplete,
+}
+
+impl Fallback {
+    /// The name a route record carries.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::NotMeasured => "not-measured",
+            Self::PositionUnknown => "position-unknown",
+            Self::OutsideBlocks => "outside-blocks",
+            Self::CoverageIncomplete => "coverage-incomplete",
+        }
+    }
+}
+
+/// One target a proof removed from what could have noticed a mutation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Discharge {
+    /// The target.
+    pub target: String,
+    /// The proof that removed it.
+    pub proof: &'static str,
+}
+
+impl Route {
+    /// Which targets a measurement puts at `position` of `path`, out of `targets`.
+    ///
+    /// A target that ran and whose profile could not be read is kept: what the
+    /// measurement says nothing about is run rather than assumed.
+    #[must_use]
+    pub fn decide(
+        reached: &crate::reach::Reached,
+        path: &std::path::Path,
+        position: crate::coverage::Point,
+        targets: &[&str],
+    ) -> Self {
+        let everything = |fallback: Fallback| Self::All {
+            reaching: targets.iter().map(|target| (*target).to_owned()).collect(),
+            fallback,
+        };
+        if !reached.measured() {
+            return everything(Fallback::NotMeasured);
+        }
+        let Some(covering) = reached.covering(path, position) else {
+            return everything(Fallback::OutsideBlocks);
+        };
+        let unmeasured: Vec<&str> = targets
+            .iter()
+            .copied()
+            .filter(|target| {
+                reached.limitations.iter().any(|limitation| {
+                    limitation == &format!("{}:{target}", crate::reach::UNMEASURED)
+                })
+            })
+            .collect();
+        let mut reaching: Vec<String> = targets
+            .iter()
+            .copied()
+            .filter(|target| covering.contains(target) || unmeasured.contains(target))
+            .map(str::to_owned)
+            .collect();
+        reaching.dedup();
+        if reaching.is_empty() {
+            return Self::Unreached;
+        }
+        Self::Block {
+            reaching,
+            discharged: Vec::new(),
+            fallback: (!unmeasured.is_empty()).then_some(Fallback::CoverageIncomplete),
+        }
+    }
+
+    /// The granularity a route record carries: `all`, `block`, `discharged`, or `unreached`.
+    #[must_use]
+    pub const fn granularity(&self) -> &'static str {
+        match self {
+            Self::All { .. } => "all",
+            Self::Block { .. } => "block",
+            Self::Discharged { .. } => "discharged",
+            Self::Unreached => "unreached",
+        }
+    }
+
+    /// Why the route is wider than the measurement alone would make it, when it is.
+    #[must_use]
+    pub fn fallback(&self) -> Option<&'static str> {
+        match self {
+            Self::All { fallback, .. } => Some(fallback.name()),
+            Self::Block { fallback, .. } => fallback.map(Fallback::name),
+            Self::Discharged { .. } | Self::Unreached => None,
+        }
+    }
+
+    /// The targets that could notice the mutation.
+    #[must_use]
+    pub fn reaching(&self) -> Vec<&str> {
+        match self {
+            Self::All { reaching, .. } | Self::Block { reaching, .. } => {
+                reaching.iter().map(String::as_str).collect()
+            }
+            Self::Discharged { .. } | Self::Unreached => Vec::new(),
+        }
+    }
+
+    /// The targets a proof removed, each with the proof's name.
+    #[must_use]
+    pub fn discharged(&self) -> &[Discharge] {
+        match self {
+            Self::Block { discharged, .. } | Self::Discharged { discharged } => discharged,
+            Self::All { .. } | Self::Unreached => &[],
+        }
+    }
+
+    /// The record of this decision, with the targets that actually ran.
+    #[must_use]
+    pub fn record(&self, mutant: &Mutant, executed: Vec<String>) -> crate::trace::RouteRecord {
+        crate::trace::RouteRecord {
+            mutant: mutant.display_id.clone(),
+            index: mutant.index,
+            granularity: self.granularity().to_owned(),
+            fallback: self.fallback().map(str::to_owned),
+            reaching: self.reaching().into_iter().map(str::to_owned).collect(),
+            discharged: self
+                .discharged()
+                .iter()
+                .map(|discharge| crate::trace::DischargeRecord {
+                    target: discharge.target.clone(),
+                    proof: discharge.proof.to_owned(),
+                })
+                .collect(),
+            executed,
+            reused: None,
+        }
+    }
+}
+
 /// A prepared workspace.
 #[derive(Debug)]
 pub struct Session {
@@ -105,6 +288,8 @@ pub struct Session {
     reached: crate::reach::Reached,
     /// What the probe pass established, empty when it did not run.
     probed: crate::probe::tree::Probed,
+    /// How long each target's own baseline took, which is what a derived timeout is a multiple of. Empty when nothing was verified.
+    baseline: BTreeMap<String, Duration>,
 }
 
 impl Session {
@@ -209,6 +394,46 @@ impl Session {
                 line: position.line,
                 column: position.byte_column,
             },
+        )
+    }
+
+    /// How long one target's own baseline took, when it was verified.
+    ///
+    /// A timeout a run derives is a multiple of this rather than a number a
+    /// person guessed: a machine that runs the suite in a minute and one that
+    /// takes ten are two machines, and a budget calibrated on one is a wrong
+    /// answer on the other.
+    #[must_use]
+    pub fn baseline(&self, target: &str) -> Option<Duration> {
+        self.baseline.get(target).copied()
+    }
+
+    /// Which targets could notice this mutation, and what the answer rests on.
+    ///
+    /// It is a question, not an instruction: [`Session::exec`] narrows to the
+    /// covering targets exactly as it did before, and nothing here removes an
+    /// execution until a proof layer says so.
+    #[must_use]
+    pub fn route(&self, mutant: &Mutant) -> Route {
+        let targets: Vec<&str> = self
+            .targets
+            .iter()
+            .map(|target| target.id.as_str())
+            .collect();
+        let Some(position) = self.position(mutant) else {
+            return Route::All {
+                reaching: targets.iter().map(|target| (*target).to_owned()).collect(),
+                fallback: Fallback::PositionUnknown,
+            };
+        };
+        Route::decide(
+            &self.reached,
+            std::path::Path::new(&mutant.candidate.path),
+            crate::coverage::Point {
+                line: position.line,
+                column: position.byte_column,
+            },
+            &targets,
         )
     }
 
@@ -484,12 +709,14 @@ fn pristine(
 }
 
 /// The test binaries the instrumented build produced, and the directory their processes work in.
+type Built = (Vec<TestTarget>, PathBuf, BTreeMap<String, Duration>);
+
 fn built(
     workspace: &Workspace,
     last_build: &[crate::cargo::Message],
     options: &PrepareOptions,
     watching: (&Cancel, &crate::trace::Recorder),
-) -> Result<(Vec<TestTarget>, PathBuf), EngineError> {
+) -> Result<Built, EngineError> {
     let (cancel, trace) = watching;
     let mut targets = execute::targets_of(
         last_build,
@@ -517,10 +744,12 @@ fn built(
         path: scratch.display().to_string(),
         source,
     })?;
-    if options.verify {
-        verify(workspace, &targets, &scratch, cancel)?;
-    }
-    Ok((targets, scratch))
+    let baseline = if options.verify {
+        verify(workspace, &targets, &scratch, cancel)?
+    } else {
+        BTreeMap::new()
+    };
+    Ok((targets, scratch, baseline))
 }
 
 /// What cargo is told before the documentation examples' own arguments, so that running them reuses the build this session already made.
@@ -614,7 +843,10 @@ pub fn prepare(
 ) -> Result<Session, EngineError> {
     let trace = workspace.trace.clone();
     let phase = trace.phase("prepare");
+    let pristine_phase = trace.phase("pristine");
     let checked = pristine(&workspace, options, cancel)?;
+    pristine_phase.end();
+    let discover_phase = trace.phase("discover");
     let discovery = discover::discover(
         &discover::Input {
             root: workspace.snapshot_root(),
@@ -630,7 +862,11 @@ pub fn prepare(
         &trace,
     )?;
 
+    discover_phase.end();
+
+    let plan_phase = trace.phase("plan");
     let (sources, placements) = plan_tree(workspace.snapshot_root(), &discovery)?;
+    plan_phase.end();
 
     let (probed, proofs, reached) = layers(
         &crate::prove::Asking {
@@ -643,6 +879,7 @@ pub fn prepare(
         &trace,
     )?;
 
+    let validate_phase = trace.phase("validate");
     let (validated, last_build) = establish(
         &workspace,
         &discovery,
@@ -653,9 +890,13 @@ pub fn prepare(
         &trace,
     )?;
 
+    validate_phase.end();
+
     let mut workspace = workspace;
     workspace.snapshot.reseal()?;
-    let (targets, scratch) = built(&workspace, &last_build, options, (cancel, &trace))?;
+    let build_phase = trace.phase("build");
+    let (targets, scratch, baseline) = built(&workspace, &last_build, options, (cancel, &trace))?;
+    build_phase.end();
     phase.end();
     let packages = discovery
         .candidates
@@ -677,6 +918,7 @@ pub fn prepare(
         validated,
         targets,
         scratch,
+        baseline,
         executions: std::sync::atomic::AtomicU64::new(0),
         mutant_timeout: options.mutant_timeout,
         workspace,
@@ -769,7 +1011,7 @@ fn verify(
     targets: &[TestTarget],
     scratch: &std::path::Path,
     cancel: &Cancel,
-) -> Result<(), EngineError> {
+) -> Result<BTreeMap<String, Duration>, EngineError> {
     let phase = workspace.trace.phase("verify");
     let context = Context {
         base_env: &workspace.base_env,
@@ -779,9 +1021,17 @@ fn verify(
         probe: None,
         profile: None,
     };
+    let mut baseline = BTreeMap::new();
     for target in targets {
         let request = ExecRequest::new(target).with_scratch(scratch);
         let result = execute::exec(&request, &context, cancel, &workspace.trace);
+        workspace.trace.verify(crate::trace::VerifyRecord {
+            target: target.id.clone(),
+            outcome: result.outcome.name().to_owned(),
+            tests_run: result.tests_run,
+            duration_ms: u64::try_from(result.duration.as_millis()).unwrap_or(u64::MAX),
+        });
+        let _kept = baseline.insert(target.id.clone(), result.duration);
         if !matches!(
             result.outcome,
             crate::outcome::Outcome::Survived | crate::outcome::Outcome::Inconclusive
@@ -793,7 +1043,7 @@ fn verify(
         }
     }
     phase.end();
-    Ok(())
+    Ok(baseline)
 }
 
 /// Instruments the snapshot with a set of mutants left out and compiles it: the [`Compile`] seam validation drives.

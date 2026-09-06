@@ -107,7 +107,7 @@ pub fn establish(
     );
     let mut probed = match settled {
         Ok((accepted, files)) => {
-            let outcome = build_and_run(workspace, &running, cancel);
+            let outcome = build_and_run(workspace, &running, cancel, trace);
             restore(&root, sources)?;
             match outcome {
                 Ok(mut probed) => {
@@ -389,6 +389,7 @@ fn build_and_run(
     workspace: &Workspace,
     running: &Running<'_>,
     cancel: &Cancel,
+    trace: &Recorder,
 ) -> Result<Probed, String> {
     let Running {
         catalog,
@@ -431,17 +432,34 @@ fn build_and_run(
             profile: None,
         };
         let request = ExecRequest::new(target).with_timeout(options.mutant_timeout);
-        let result = execute::exec(&request, &context, cancel, &Recorder::disabled());
+        let result = execute::exec(&request, &context, cancel, trace);
+        let duration_ms = u64::try_from(result.duration.as_millis()).unwrap_or(u64::MAX);
+        let record = |outcome: &str, infected: Option<u32>| {
+            trace.probe_exec(crate::trace::ProbeExecRecord {
+                target: target.id.clone(),
+                outcome: outcome.to_owned(),
+                infected,
+                duration_ms,
+            });
+        };
         if result.exit_code == runtime::UNAVAILABLE_EXIT {
+            record("unreadable-log", None);
             probed.limitations.push(UNREADABLE_LOG.to_owned());
             continue;
         }
         let text = std::fs::read_to_string(&log_path).unwrap_or_default();
         match log::read(&text, catalog, count) {
             Ok(infected) => {
+                record(
+                    "measured",
+                    Some(u32::try_from(infected.len()).unwrap_or(u32::MAX)),
+                );
                 probed.infected.insert(target.id.clone(), infected);
             }
-            Err(_unreadable) => probed.limitations.push(UNREADABLE_LOG.to_owned()),
+            Err(_unreadable) => {
+                record("unreadable-log", None);
+                probed.limitations.push(UNREADABLE_LOG.to_owned());
+            }
         }
     }
     Ok(probed)

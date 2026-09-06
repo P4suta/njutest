@@ -97,6 +97,17 @@ pub fn establish(
         let text = String::from_utf8_lossy(source);
         let index = LineIndex::new(&text);
         for claimed in file {
+            trace.witness(crate::trace::WitnessRecord {
+                index: claimed.index,
+                witnesses: claimed
+                    .claim
+                    .witnesses
+                    .iter()
+                    .map(|witness| witness.kind.function().to_owned())
+                    .collect(),
+                checked: !refused.contains(&claimed.index),
+                diagnostic: None,
+            });
             if refused.contains(&claimed.index) {
                 continue;
             }
