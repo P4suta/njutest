@@ -5,6 +5,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod fixture;
 pub mod golden;
 pub mod paths;
 pub mod repo;
