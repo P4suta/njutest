@@ -166,11 +166,13 @@ fn return_replacements_follow_the_signature_and_never_spell_the_default_again() 
             "lt-to-le@2:10 \"<\"=>\"<=\" C[\"x < 0\"]",
             "return-ok-default@3:16 \"Err(String::new())\"=>\"Ok(Default::default())\" E[\"Err(String::new())\"]",
             "return-ok-default@5:5 \"Ok(x)\"=>\"Ok(Default::default())\" E[\"Ok(x)\"]",
+            "return-err-default@5:5 \"Ok(x)\"=>\"Err(Default::default())\" E[\"Ok(x)\"]",
             "return-default@8:5 \"Some(x)\"=>\"Default::default()\" E[\"Some(x)\"]",
             "return-some-default@8:5 \"Some(x)\"=>\"Some(Default::default())\" E[\"Some(x)\"]",
             "return-some-default@11:5 \"None\"=>\"Some(Default::default())\" E[\"None\"]",
             "add-to-sub@14:24 \"+\"=>\"-\" E[\"y + 1\"]",
             "return-default@15:5 \"f(x)\"=>\"Default::default()\" E[\"f(x)\"]",
+            "return-err-default@18:5 \"Ok(())\"=>\"Err(Default::default())\" E[\"Ok(())\"]",
         ]
     );
 }
@@ -192,7 +194,9 @@ fn error_propagation_and_statement_deletion_take_the_statement_site() {
             "add-assign-to-sub-assign@5:10 \"+=\"=>\"-=\" S[\"v[0] += 2;\"]",
             "delete-assignment@6:5 \"v[0] = v[0] * 2;\"=>\"\" S[\"v[0] = v[0] * 2;\"]",
             "mul-to-div@6:17 \"*\"=>\"/\" E[\"v[0] * 2\"]",
+            "return-err-default@7:5 \"Ok(())\"=>\"Err(Default::default())\" E[\"Ok(())\"]",
             "return-ok-default@9:37 \"Ok(1)\"=>\"Ok(Default::default())\" E[\"Ok(1)\"]",
+            "return-err-default@9:37 \"Ok(1)\"=>\"Err(Default::default())\" E[\"Ok(1)\"]",
         ]
     );
 }
@@ -526,4 +530,93 @@ fn forms_display_as_their_letters() {
     assert_eq!(Form::C.to_string(), "C");
     assert_eq!(Form::E.to_string(), "E");
     assert_eq!(Form::S.to_string(), "S");
+}
+
+fn by_rule(discovery: &FileDiscovery, names: &[&str]) -> Vec<String> {
+    discovery
+        .candidates
+        .iter()
+        .filter(|found| names.contains(&found.candidate.rule.name))
+        .map(|found| {
+            format!(
+                "{}@{} {:?}=>{:?} {}",
+                found.candidate.rule.name,
+                found.position.line,
+                String::from_utf8_lossy(&found.candidate.original),
+                String::from_utf8_lossy(&found.candidate.replacement),
+                found.hint.form,
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn a_boolean_method_is_negated_except_where_another_rule_already_asks() {
+    let src = "use std::collections::BTreeMap;\nfn f(s: &str, v: &[i32], m: &BTreeMap<i32, i32>, o: Option<i32>) -> bool {\n    if s.is_empty() {\n        return v.contains(&1);\n    }\n    while s.starts_with(\"a\") {\n        break;\n    }\n    if !m.contains_key(&1) && s.ends_with(\"b\") {\n        return o.is_some();\n    }\n    m.is_empty()\n}\n";
+    let d = discover(src);
+    assert_coherent(src, &d);
+    assert_eq!(
+        by_rule(&d, &["negate-bool-method"]),
+        [
+            "negate-bool-method@4 \"v.contains(&1)\"=>\"!(v.contains(&1))\" E",
+            "negate-bool-method@9 \"s.ends_with(\\\"b\\\")\"=>\"!(s.ends_with(\\\"b\\\"))\" C",
+            "negate-bool-method@12 \"m.is_empty()\"=>\"!(m.is_empty())\" E",
+        ],
+        "the whole of an `if` or `while` condition is what `negate-condition` and \
+         `negate-loop-condition` already ask about, what sits under a `!` is what `remove-not` \
+         asks about, and `is_some` and its three companions are what the swaps ask about"
+    );
+}
+
+#[test]
+fn an_err_default_is_offered_only_where_the_error_type_spells_a_default() {
+    let src = "pub struct BoundError;\nfn a() -> Result<i32, String> {\n    Ok(1)\n}\nfn b() -> Result<i32, Box<dyn std::error::Error>> {\n    Ok(1)\n}\nfn c() -> Result<i32, BoundError> {\n    Ok(1)\n}\n";
+    let d = discover(src);
+    assert_coherent(src, &d);
+    assert_eq!(
+        by_rule(&d, &["return-err-default"]),
+        ["return-err-default@3 \"Ok(1)\"=>\"Err(Default::default())\" E"],
+        "a `String` spells a default; a boxed trait object cannot have one, and a crate's own \
+         error type by convention does not, so offering either is a candidate the compiler \
+         refuses at nearly every `Result` in a program"
+    );
+    assert!(
+        d.skips
+            .iter()
+            .any(|skip| skip.reason == SkipReason::UnstatedReturnType),
+        "and the place it was not offered says why"
+    );
+}
+
+#[test]
+fn iterator_and_slice_method_swaps_edit_only_the_identifier() {
+    let src = "fn f(v: &[i32]) -> bool {\n    let _ = v.iter().skip(1).take(2).sum::<i32>();\n    let _ = v.first();\n    let _ = v.iter().product::<i32>();\n    let _ = v.last();\n    v.iter().all(|n| *n > 0) && v.iter().any(|n| *n > 0)\n}\n";
+    let d = discover(src);
+    assert_coherent(src, &d);
+    assert_eq!(
+        by_rule(
+            &d,
+            &[
+                "skip-to-take",
+                "take-to-skip",
+                "sum-to-product",
+                "product-to-sum",
+                "first-to-last",
+                "last-to-first",
+                "all-to-any",
+                "any-to-all",
+            ]
+        ),
+        [
+            "skip-to-take@2 \"skip\"=>\"take\" E",
+            "take-to-skip@2 \"take\"=>\"skip\" E",
+            "sum-to-product@2 \"sum\"=>\"product\" E",
+            "first-to-last@3 \"first\"=>\"last\" E",
+            "product-to-sum@4 \"product\"=>\"sum\" E",
+            "last-to-first@5 \"last\"=>\"first\" E",
+            "all-to-any@6 \"all\"=>\"any\" C",
+            "any-to-all@6 \"any\"=>\"all\" C",
+        ],
+        "the identifier is the whole of the edit"
+    );
 }

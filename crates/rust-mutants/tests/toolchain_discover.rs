@@ -200,14 +200,14 @@ fn a_nested_member_reports_workspace_relative_paths_and_a_binary_is_mutable() {
             row(
                 "crates/app/src/main.rs",
                 "fixture-app",
-                3,
+                4,
                 "macro-invocation:1"
             ),
             row("crates/core/src/lib.rs", "fixture-core", 9, "test-code:1"),
             row("crates/core/src/util.rs", "fixture-core", 3, ""),
         ]
     );
-    assert_eq!(discovery.catalog.len(), 15);
+    assert_eq!(discovery.catalog.len(), 16);
     assert!(discovery.files.iter().all(|f| !f.path.contains("tests/")));
 }
 
@@ -220,11 +220,11 @@ fn every_rule_fires_in_the_families_fixture_exactly_as_the_golden_says() {
         [row(
             "src/lib.rs",
             "fixture-families",
-            128,
-            "test-code:1 open-range:2"
+            150,
+            "test-code:1 open-range:2 unstated-return-type:2"
         )]
     );
-    assert_eq!(discovery.catalog.len(), 128);
+    assert_eq!(discovery.catalog.len(), 150);
     assert_eq!(discovery.catalog.duplicates().len(), 0);
 }
 
@@ -285,7 +285,7 @@ fn include_and_exclude_patterns_remove_files_and_count_what_they_hid() {
     assert_eq!(
         table(&discovery),
         [
-            row("crates/app/src/main.rs", "fixture-app", 0, "excluded:3"),
+            row("crates/app/src/main.rs", "fixture-app", 0, "excluded:4"),
             row("crates/core/src/lib.rs", "fixture-core", 9, "test-code:1"),
             row("crates/core/src/util.rs", "fixture-core", 3, ""),
         ]
@@ -296,7 +296,7 @@ fn include_and_exclude_patterns_remove_files_and_count_what_they_hid() {
     assert_eq!(
         table(&discovery),
         [
-            row("crates/app/src/main.rs", "fixture-app", 0, "excluded:3"),
+            row("crates/app/src/main.rs", "fixture-app", 0, "excluded:4"),
             row("crates/core/src/lib.rs", "fixture-core", 0, "excluded:9"),
             row("crates/core/src/util.rs", "fixture-core", 3, ""),
         ]
@@ -364,7 +364,7 @@ fn discovery_is_deterministic_and_traced_per_file() {
     assert_eq!(
         files,
         [
-            ("crates/app/src/main.rs".to_owned(), 3),
+            ("crates/app/src/main.rs".to_owned(), 4),
             ("crates/core/src/lib.rs".to_owned(), 9),
             ("crates/core/src/util.rs".to_owned(), 3),
         ]
@@ -468,7 +468,7 @@ fn a_file_pasted_in_where_an_expression_goes_is_a_skip_and_not_the_end_of_the_ru
             row(
                 "src/lib.rs",
                 "fixture-include",
-                5,
+                6,
                 "const-context:1 macro-invocation:1"
             ),
             row(

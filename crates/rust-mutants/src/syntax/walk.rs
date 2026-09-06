@@ -15,9 +15,9 @@ use syn::{
 use super::branch;
 use super::position::LineIndex;
 use super::rules::{
-    arguments, assertion_arity, assertion_is_condition, binary_swap, has_let,
-    is_compound_assignment, is_connective, is_default_spelling, is_not, is_ok_default,
-    is_some_default, is_true_literal, method_swap, unary_removal,
+    arguments, assertion_arity, assertion_is_condition, binary_swap, bool_method, has_let,
+    is_compound_assignment, is_connective, is_default_spelling, is_err_default, is_not,
+    is_ok_default, is_some_default, is_true_literal, method_swap, unary_removal,
 };
 use super::{Decision, Form, Found, Include, Selection, SiteHint, SkipReason, beside};
 use crate::catalog::Candidate;
@@ -35,8 +35,13 @@ enum ReturnKind {
     Never,
     /// `-> bool`.
     Bool,
-    /// `-> Result<..>` by its last path segment, and whether the syntax can say the `Ok` type has a default.
-    Result(bool),
+    /// `-> Result<..>` by its last path segment, and whether the syntax can say each of the two types it names has a default.
+    Result {
+        /// Whether the `Ok` type spells a default.
+        ok: bool,
+        /// Whether the `Err` type spells a default.
+        err: bool,
+    },
     /// `-> Option<..>` by its last path segment, and whether the syntax can say the `Some` type has a default.
     Option(bool),
     /// Anything else, where only `Default::default()` can be offered.
@@ -112,6 +117,8 @@ struct Ctx {
     stmt: Option<Site>,
     /// Whether the expression is the whole of an expression statement.
     direct_stmt: bool,
+    /// Whether another rule already offers to negate this expression whole.
+    negated: bool,
 }
 
 impl Ctx {
@@ -120,6 +127,7 @@ impl Ctx {
             kind,
             stmt,
             direct_stmt: false,
+            negated: false,
         }
     }
 
@@ -128,6 +136,16 @@ impl Ctx {
             kind,
             stmt: self.stmt,
             direct_stmt: false,
+            negated: false,
+        }
+    }
+
+    const fn negated(self, kind: Kind) -> Self {
+        Self {
+            kind,
+            stmt: self.stmt,
+            direct_stmt: false,
+            negated: true,
         }
     }
 
@@ -875,21 +893,39 @@ impl<'a> Walker<'a> {
         }
     }
 
-    /// The one identifier a method-swap edits, when the receiver calls a method whose name says the opposite of another.
+    /// What a method call offers: the one identifier a swap edits, and the negation of a call that answers a question.
+    ///
+    /// A call whose question another rule already asks is left to that rule:
+    /// the whole of an `if` or `while` condition is `negate-condition`'s and
+    /// `negate-loop-condition`'s, what sits under a `!` is `remove-not`'s, and
+    /// `is_some` and its three companions are the swaps'. Each of those places
+    /// carries the other rule's decision, so none of them is silent.
     fn walk_method_name(&mut self, m: &syn::ExprMethodCall, ctx: Ctx) {
-        let Some((rule, replacement)) = method_swap(&m.method.to_string()) else {
-            return;
-        };
+        let name = m.method.to_string();
         let own = self.span(m);
-        self.emit(
-            rule,
-            Edit {
-                span: self.span(&m.method),
-                replacement: replacement.as_bytes().to_vec(),
-                site: Self::site_for(ctx, own),
-                probe: None,
-            },
-        );
+        if let Some((rule, replacement)) = method_swap(&name) {
+            self.emit(
+                rule,
+                Edit {
+                    span: self.span(&m.method),
+                    replacement: replacement.as_bytes().to_vec(),
+                    site: Self::site_for(ctx, own),
+                    probe: None,
+                },
+            );
+        }
+        if bool_method(&name) && !ctx.negated {
+            let replacement = format!("!({})", self.text(own)).into_bytes();
+            self.emit(
+                "negate-bool-method",
+                Edit {
+                    span: own,
+                    replacement,
+                    site: Self::site_for(ctx, own),
+                    probe: None,
+                },
+            );
+        }
     }
 
     fn walk_unary(&mut self, u: &syn::ExprUnary, ctx: Ctx) {
@@ -905,8 +941,12 @@ impl<'a> Walker<'a> {
                     probe: None,
                 },
             );
-            let inner = if ctx.kind == Kind::Bool && is_not(&u.op) {
-                ctx.boolean()
+            let inner = if is_not(&u.op) {
+                ctx.negated(if ctx.kind == Kind::Bool {
+                    Kind::Bool
+                } else {
+                    Kind::Value
+                })
             } else {
                 ctx.value()
             };
@@ -963,7 +1003,7 @@ impl<'a> Walker<'a> {
         self.negate("negate-condition", &i.cond);
         let gate = self.gate(&i.cond, &i.then_branch);
         self.gates.push(gate);
-        self.walk_expr(&i.cond, ctx.boolean());
+        self.walk_expr(&i.cond, ctx.negated(Kind::Bool));
         self.gates.pop();
         self.walk_block(&i.then_branch, false);
         if let Some((_, else_branch)) = &i.else_branch {
@@ -975,7 +1015,7 @@ impl<'a> Walker<'a> {
         self.negate("negate-loop-condition", &w.cond);
         let gate = self.gate(&w.cond, &w.body);
         self.gates.push(gate);
-        self.walk_expr(&w.cond, ctx.boolean());
+        self.walk_expr(&w.cond, ctx.negated(Kind::Bool));
         self.gates.pop();
         self.walk_block(&w.body, false);
     }
@@ -1070,14 +1110,26 @@ impl<'a> Walker<'a> {
                     offer(self, "return-true", "true");
                 }
             }
-            ReturnKind::Result(inner) => {
-                if !inner {
+            ReturnKind::Result { ok, err } => {
+                if ok {
+                    if !is_ok_default(expr) {
+                        offer(self, "return-ok-default", "Ok(Default::default())");
+                    }
+                } else {
                     self.declined(
                         At::new(span.start, "return-ok-default"),
                         SkipReason::UnstatedReturnType,
                     );
-                } else if !is_ok_default(expr) {
-                    offer(self, "return-ok-default", "Ok(Default::default())");
+                }
+                if err {
+                    if !is_err_default(expr) {
+                        offer(self, "return-err-default", "Err(Default::default())");
+                    }
+                } else {
+                    self.declined(
+                        At::new(span.start, "return-err-default"),
+                        SkipReason::UnstatedReturnType,
+                    );
                 }
             }
             ReturnKind::Option(inner) => {
@@ -1099,7 +1151,12 @@ impl<'a> Walker<'a> {
                 }
             }
             ReturnKind::Unstated => {
-                for rule in ["return-default", "return-ok-default", "return-some-default"] {
+                for rule in [
+                    "return-default",
+                    "return-ok-default",
+                    "return-some-default",
+                    "return-err-default",
+                ] {
                     self.declined(At::new(span.start, rule), SkipReason::UnstatedReturnType);
                 }
             }
@@ -1254,7 +1311,7 @@ fn return_kind_of(
         | Type::Slice(_)
         | Type::Macro(_)
         | Type::Infer(_) => ReturnKind::Unstated,
-        Type::Path(p) if p.qself.is_some() => ReturnKind::Unstated,
+        Type::Path(p) if p.qself.is_some() || wraps_a_trait_object(p) => ReturnKind::Unstated,
         Type::Path(p) => {
             let first = p.path.segments.first().map(|s| s.ident.to_string());
             if p.path.segments.len() > 1
@@ -1265,9 +1322,10 @@ fn return_kind_of(
             let last = p.path.segments.last();
             match last.map(|s| s.ident.to_string()).as_deref() {
                 Some("bool") => ReturnKind::Bool,
-                Some("Result") => {
-                    ReturnKind::Result(argument_defaults(last, 0, generic, defaultable))
-                }
+                Some("Result") => ReturnKind::Result {
+                    ok: argument_defaults(last, 0, generic, defaultable),
+                    err: argument_names_a_default(last, 1, defaultable),
+                },
                 Some("Option") => {
                     ReturnKind::Option(argument_defaults(last, 0, generic, defaultable))
                 }
@@ -1312,12 +1370,79 @@ fn argument_defaults(
     )
 }
 
+/// Whether the `nth` type argument of `segment` is one the syntax names a default for.
+///
+/// The `Err` position is read more strictly than the others. A crate's error
+/// type is by convention the crate's own and by convention does not implement
+/// `Default`, so offering `Err(Default::default())` for every named type would
+/// spend a compiler refusal at nearly every `Result` in a program and say
+/// nothing about the tests. The other direction of the same question —
+/// success where the code says failure — is `return-ok-default`, which is
+/// offered wherever the `Ok` type has a default, so nothing is lost.
+fn argument_names_a_default(
+    segment: Option<&syn::PathSegment>,
+    nth: usize,
+    defaultable: &BTreeSet<String>,
+) -> bool {
+    let Some(syn::PathArguments::AngleBracketed(args)) = segment.map(|one| &one.arguments) else {
+        return false;
+    };
+    let mut types = args.args.iter().filter_map(|arg| match arg {
+        syn::GenericArgument::Type(ty) => Some(ty),
+        _ => None,
+    });
+    types
+        .nth(nth)
+        .is_some_and(|ty| names_a_default(ty, defaultable))
+}
+
+/// Whether the syntax names a type the standard library gives a `Default`, or a parameter something bound to it.
+fn names_a_default(ty: &Type, defaultable: &BTreeSet<String>) -> bool {
+    match ty {
+        Type::Tuple(one) => one.elems.is_empty(),
+        Type::Paren(p) => names_a_default(&p.elem, defaultable),
+        Type::Group(g) => names_a_default(&g.elem, defaultable),
+        Type::Reference(one) => one.mutability.is_none() && borrows_a_default(&one.elem),
+        Type::Path(p) if p.qself.is_none() => p.path.segments.last().is_some_and(|segment| {
+            let name = segment.ident.to_string();
+            defaultable.contains(&name) || DEFAULTS.contains(&name.as_str())
+        }),
+        _ => false,
+    }
+}
+
+/// The types the standard library gives a `Default` to that a program is likely to spell as an error.
+const DEFAULTS: [&str; 26] = [
+    "String", "Vec", "VecDeque", "HashMap", "HashSet", "BTreeMap", "BTreeSet", "Option", "bool",
+    "char", "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize",
+    "f32", "f64", "str", "PathBuf",
+];
+
 /// The value a block ends with, when it ends with one rather than with a statement.
 fn block_tail(block: &Block) -> Option<&Expr> {
     match block.stmts.last() {
         Some(Stmt::Expr(expr, None)) => Some(expr),
         _ => None,
     }
+}
+
+/// Whether the type is a pointer the standard library gives no default to: a `Box`, an `Rc`, or an `Arc` around a trait object, which has no size for a default to have.
+fn wraps_a_trait_object(path: &syn::TypePath) -> bool {
+    let Some(segment) = path.path.segments.last() else {
+        return false;
+    };
+    if !matches!(segment.ident.to_string().as_str(), "Box" | "Rc" | "Arc") {
+        return false;
+    }
+    let syn::PathArguments::AngleBracketed(args) = &segment.arguments else {
+        return false;
+    };
+    args.args.iter().any(|arg| {
+        matches!(
+            arg,
+            syn::GenericArgument::Type(Type::TraitObject(_) | Type::ImplTrait(_))
+        )
+    })
 }
 
 /// Whether a reference to this type has a default: the standard library gives one to a shared or unique reference to a slice or to `str`, and to no other reference.

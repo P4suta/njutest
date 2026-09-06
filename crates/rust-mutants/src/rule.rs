@@ -152,7 +152,7 @@ impl fmt::Display for Rule {
 /// The counts of the canonical v1 table, asserted by the registry tests.
 pub const CANONICAL_FAMILY_COUNT: usize = 12;
 /// The number of rules in the canonical v1 table.
-pub const CANONICAL_RULE_COUNT: usize = 51;
+pub const CANONICAL_RULE_COUNT: usize = 61;
 
 const fn v1(family: Family, name: &'static str, tier: Tier) -> Rule {
     Rule {
@@ -178,6 +178,11 @@ pub const CANONICAL_TABLE: [Rule; CANONICAL_RULE_COUNT] = [
         Tier::Balanced,
     ),
     v1(Family::ConditionNegation, "remove-not", Tier::Balanced),
+    v1(
+        Family::ConditionNegation,
+        "negate-bool-method",
+        Tier::Balanced,
+    ),
     v1(Family::BooleanConnective, "and-to-or", Tier::Balanced),
     v1(Family::BooleanConnective, "or-to-and", Tier::Balanced),
     v1(Family::Comparison, "eq-to-neq", Tier::Balanced),
@@ -206,6 +211,11 @@ pub const CANONICAL_TABLE: [Rule; CANONICAL_RULE_COUNT] = [
         Tier::Balanced,
     ),
     v1(Family::ReturnReplacement, "return-true", Tier::Balanced),
+    v1(
+        Family::ReturnReplacement,
+        "return-err-default",
+        Tier::Balanced,
+    ),
     v1(
         Family::ErrorPropagation,
         "question-to-unwrap",
@@ -277,6 +287,14 @@ pub const CANONICAL_TABLE: [Rule; CANONICAL_RULE_COUNT] = [
     v1(Family::MethodSwap, "is-err-to-is-ok", Tier::Strong),
     v1(Family::MethodSwap, "max-to-min", Tier::Strong),
     v1(Family::MethodSwap, "min-to-max", Tier::Strong),
+    v1(Family::MethodSwap, "all-to-any", Tier::Strong),
+    v1(Family::MethodSwap, "any-to-all", Tier::Strong),
+    v1(Family::MethodSwap, "first-to-last", Tier::Strong),
+    v1(Family::MethodSwap, "last-to-first", Tier::Strong),
+    v1(Family::MethodSwap, "skip-to-take", Tier::Strong),
+    v1(Family::MethodSwap, "take-to-skip", Tier::Strong),
+    v1(Family::MethodSwap, "sum-to-product", Tier::Strong),
+    v1(Family::MethodSwap, "product-to-sum", Tier::Strong),
     v1(
         Family::StatementDeletion,
         "delete-call-statement",
@@ -333,6 +351,16 @@ pub enum RuleError {
         /// The disagreeing tier.
         second: Tier,
     },
+    /// The table's tiers decrease, so one profile's rules are not a prefix of the next one's.
+    #[error("position {position} is at tier {second}, below the {first} above it")]
+    TierOutOfOrder {
+        /// Where the tier dropped.
+        position: usize,
+        /// The tier of the rule above.
+        first: Tier,
+        /// The lower tier.
+        second: Tier,
+    },
     /// A family's rules are not contiguous in table order.
     #[error("family {family} resumes at position {position}; families are contiguous")]
     FamilySplit {
@@ -372,7 +400,7 @@ impl Registry {
         }
     }
 
-    /// A registry from rules in table order, validating the invariants the catalog relies on: valid metadata, unique names, one tier per family, and contiguous families.
+    /// A registry from rules in table order, validating the invariants the catalog relies on: valid metadata, unique names, one tier per family, contiguous families, and tiers that never decrease.
     ///
     /// # Errors
     /// Returns the first invariant the table breaks.
@@ -382,7 +410,7 @@ impl Registry {
         Ok(registry)
     }
 
-    /// Whether the registry's table satisfies every invariant: valid metadata, unique names, one tier per family, contiguous families.
+    /// Whether the registry's table satisfies every invariant: valid metadata, unique names, one tier per family, contiguous families, tiers that never decrease.
     ///
     /// # Errors
     /// Returns the first invariant the table breaks.
@@ -400,6 +428,15 @@ impl Registry {
                 });
             }
             let earlier = self.rules.get(..index).unwrap_or_default();
+            if let Some(previous) = earlier.last()
+                && rule.tier < previous.tier
+            {
+                return Err(RuleError::TierOutOfOrder {
+                    position: index,
+                    first: previous.tier,
+                    second: rule.tier,
+                });
+            }
             if let Some(first) = earlier.iter().position(|seen| seen.name == rule.name) {
                 return Err(RuleError::DuplicateRule {
                     name: rule.name.to_owned(),

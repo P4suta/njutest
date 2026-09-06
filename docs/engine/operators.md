@@ -6,7 +6,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 # Operators
 
 **Status: implemented** (`rust_mutants::syntax`, `rust_mutants::instrument`,
-`rust_mutants::validate`). The v1 table: twelve families, fifty-one rules,
+`rust_mutants::validate`). The v1 table: twelve families, sixty-one rules,
 named `family` / `rule@version`. The version enters the mutant identity, so
 changing a rule's output is a new version and every old identity lapses with
 it. Adding a rule does not: what enters an identity is the rule's own name and
@@ -54,21 +54,30 @@ type-check. Replacements derive from the token, never from a string.
 | Family | Rules | Tier |
 | --- | --- | --- |
 | `boolean-literal` | `true-to-false`, `false-to-true` | balanced |
-| `condition-negation` | `negate-condition`, `negate-loop-condition`, `remove-not` | balanced |
+| `condition-negation` | `negate-condition`, `negate-loop-condition`, `remove-not`, `negate-bool-method` | balanced |
 | `boolean-connective` | `and-to-or`, `or-to-and` | balanced |
 | `comparison` | `eq-to-neq`, `neq-to-eq`, `lt-to-le`, `le-to-lt`, `gt-to-ge`, `ge-to-gt` | balanced |
 | `range` | `range-to-inclusive`, `inclusive-to-range` | balanced |
 | `arithmetic` | `add-to-sub`, `sub-to-add`, `mul-to-div`, `div-to-mul`, `rem-to-mul`, `remove-unary-minus` | balanced |
-| `return-replacement` | `return-default`, `return-ok-default`, `return-some-default`, `return-true` | balanced |
+| `return-replacement` | `return-default`, `return-ok-default`, `return-some-default`, `return-true`, `return-err-default` | balanced |
 | `error-propagation` | `question-to-unwrap`, `ignore-question-statement` | balanced |
 | `bitwise` | `band-to-bor`, `bor-to-band`, `xor-to-band`, `shl-to-shr`, `shr-to-shl` | strong |
 | `compound-assignment` | `add-assign-to-sub-assign`, `sub-assign-to-add-assign`, `mul-assign-to-div-assign`, `div-assign-to-mul-assign`, `rem-assign-to-mul-assign`, `band-assign-to-bor-assign`, `bor-assign-to-band-assign`, `xor-assign-to-band-assign`, `shl-assign-to-shr-assign`, `shr-assign-to-shl-assign` | strong |
-| `method-swap` | `is-some-to-is-none`, `is-none-to-is-some`, `is-ok-to-is-err`, `is-err-to-is-ok`, `max-to-min`, `min-to-max` | strong |
+| `method-swap` | `is-some-to-is-none`, `is-none-to-is-some`, `is-ok-to-is-err`, `is-err-to-is-ok`, `max-to-min`, `min-to-max`, `all-to-any`, `any-to-all`, `first-to-last`, `last-to-first`, `skip-to-take`, `take-to-skip`, `sum-to-product`, `product-to-sum` | strong |
 | `statement-deletion` | `delete-call-statement`, `delete-assignment`, `delete-compound-assignment` | all |
 
 `balanced ⊂ strong ⊂ all`, which the table's order carries: it is
 non-decreasing in tier, so each profile's rules are a prefix of the next
-one's.
+one's, and `tiers_never_decrease_down_the_table` is what holds it there.
+
+`negate-bool-method` asks the opposite of a call that answers a question —
+`is_*`, `has_*`, `contains`, `contains_key`, `starts_with`, `ends_with` — by
+wrapping it in a `!`. It stays out of three places another rule already asks
+about: the whole of an `if` or `while` condition, which is
+`negate-condition`'s and `negate-loop-condition`'s; a call directly under a
+`!`, which is `remove-not`'s; and `is_some`, `is_none`, `is_ok`, `is_err`,
+which are the swaps'. Every one of those places carries the other rule's
+decision, so leaving it is not silence.
 
 A method swap edits the method's identifier and nothing else. It reads no
 type, so `is_none` on a receiver that has no such method is a mutation the

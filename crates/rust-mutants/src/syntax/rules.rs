@@ -93,8 +93,33 @@ pub(super) fn method_swap(name: &str) -> Option<(&'static str, &'static str)> {
         "is_err" => ("is-err-to-is-ok", "is_ok"),
         "max" => ("max-to-min", "min"),
         "min" => ("min-to-max", "max"),
+        "all" => ("all-to-any", "any"),
+        "any" => ("any-to-all", "all"),
+        "first" => ("first-to-last", "last"),
+        "last" => ("last-to-first", "first"),
+        "skip" => ("skip-to-take", "take"),
+        "take" => ("take-to-skip", "skip"),
+        "sum" => ("sum-to-product", "product"),
+        "product" => ("product-to-sum", "sum"),
         _ => return None,
     })
+}
+
+/// Whether a method's name says it answers a question, so that asking the opposite question is a mutation.
+///
+/// The four `Option` and `Result` predicates are left out: a swap already
+/// asks the opposite of each of them, and two rules writing the same question
+/// at one span is one mutation reported twice.
+pub(super) fn bool_method(name: &str) -> bool {
+    if matches!(name, "is_some" | "is_none" | "is_ok" | "is_err") {
+        return false;
+    }
+    name.starts_with("is_")
+        || name.starts_with("has_")
+        || matches!(
+            name,
+            "contains" | "contains_key" | "starts_with" | "ends_with"
+        )
 }
 
 /// The last path segment of `expr` when it is a bare path.
@@ -147,6 +172,11 @@ pub(super) fn is_default_spelling(expr: &Expr) -> bool {
 /// Whether `expr` is `Ok(<default>)`.
 pub(super) fn is_ok_default(expr: &Expr) -> bool {
     unary_call(expr, "Ok").is_some_and(is_default_spelling)
+}
+
+/// Whether `expr` is `Err(<default>)`.
+pub(super) fn is_err_default(expr: &Expr) -> bool {
+    unary_call(expr, "Err").is_some_and(is_default_spelling)
 }
 
 /// Whether `expr` is `Some(<default>)`.

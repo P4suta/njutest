@@ -21,6 +21,7 @@ for every candidate the compiler refused. The run is `rust-mutants run
 refuses a difference, and `UPDATE_FATES=1` rewrites the block below.
 
 ```fates
+crates/app/src/main.rs:0:0 skip-to-take refused
 crates/app/src/main.rs:12:8 negate-condition killed
 crates/app/src/main.rs:12:16 ge-to-gt not_run
 crates/app/src/main.rs:13:9 delete-call-statement unreached

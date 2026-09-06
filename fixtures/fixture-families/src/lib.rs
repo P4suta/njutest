@@ -135,6 +135,24 @@ pub mod inner {
     }
 }
 
+pub fn sequences(v: &[i32], s: &str) -> i32 {
+    let head = v.first().copied().unwrap_or(0);
+    let tail = v.last().copied().unwrap_or(0);
+    let some = v.iter().skip(1).take(2).sum::<i32>();
+    let rest = v.iter().product::<i32>();
+    if v.iter().all(|n| *n > 0) && s.contains('x') {
+        return head + tail;
+    }
+    if v.iter().any(|n| *n < 0) || s.starts_with('a') {
+        return some;
+    }
+    rest
+}
+
+pub fn parsed(s: &str) -> Result<i32, String> {
+    s.parse::<i32>().map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     #[test]

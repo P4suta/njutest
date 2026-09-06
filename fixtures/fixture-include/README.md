@@ -40,6 +40,7 @@ refuses a difference, and `UPDATE_FATES=1` rewrites the block below.
 ```fates
 src/items.rs:9:5 return-true killed
 src/items.rs:9:7 gt-to-ge survived
+src/lib.rs:14:33 sum-to-product killed
 src/lib.rs:15:5 return-default killed
 src/lib.rs:15:8 negate-condition killed
 src/lib.rs:15:18 return-default killed
