@@ -5,6 +5,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod fake_cargo;
 pub mod fixture;
 pub mod golden;
 pub mod paths;
