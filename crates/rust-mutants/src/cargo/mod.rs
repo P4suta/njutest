@@ -20,7 +20,7 @@ use crate::error::{self, ErrorCode};
 use crate::runner::Cancel;
 use crate::trace::Recorder;
 
-pub use compile::{CompileKind, CompileOptions, Compiled, compile};
+pub use compile::{BuildConfig, CompileKind, CompileOptions, Compiled, compile, compile_arguments};
 pub use depinfo::{Unit, dep_info_path, parse_dep_info, units_of};
 
 pub use locate::{LocateOptions, Toolchain, command_failed, resolve_executable};

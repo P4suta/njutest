@@ -96,7 +96,8 @@
         "operators": { "type": "array", "items": { "type": "string" } },
         "include": { "type": "array", "items": { "type": "string" } },
         "exclude": { "type": "array", "items": { "type": "string" } },
-        "packages": { "type": "array", "items": { "type": "string" } }
+        "packages": { "type": "array", "items": { "type": "string" } },
+        "build": { "type": "array", "items": { "type": "string" } }
       }
     },
     "accounting": {
@@ -212,6 +213,8 @@
           "tests_run": {
             "oneOf": [{ "type": "null" }, { "type": "integer", "minimum": 0 }]
           },
+          "killed_by": { "type": "array", "items": { "type": "string" } },
+          "signal": { "type": "integer" },
           "retried": {
             "type": "boolean",
             "description": "A timeout is believed only after a serial retry timed out again."

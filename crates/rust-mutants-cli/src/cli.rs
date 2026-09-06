@@ -215,6 +215,18 @@ pub struct Scope {
     /// Let the build read this directory from outside the root, copying it beside the tree. Repeatable.
     #[arg(long = "allow-outside", value_name = "DIR")]
     pub allow_outside: Vec<PathBuf>,
+    /// Compile with these cargo features. Repeatable, and each may be a comma-separated list.
+    #[arg(long = "features", value_name = "LIST", value_delimiter = ',')]
+    pub features: Vec<String>,
+    /// Compile for this target triple instead of the host. Not `run --target`, which names a test target.
+    #[arg(long = "build-target", value_name = "TRIPLE")]
+    pub build_target: Option<String>,
+    /// Compile with this cargo profile.
+    #[arg(long, value_name = "NAME")]
+    pub profile: Option<String>,
+    /// How many compilation jobs cargo may run at once.
+    #[arg(long = "build-jobs", value_name = "N")]
+    pub build_jobs: Option<u32>,
     /// Never start this target, by the id a report names it with. Repeatable.
     #[arg(long = "skip-target", value_name = "PKG/KIND/NAME")]
     pub skip_targets: Vec<String>,
@@ -254,6 +266,12 @@ pub struct Switches {
     /// Leave a library's documented examples out of the targets.
     #[arg(long)]
     pub no_doctests: bool,
+    /// Compile with every feature of every selected package.
+    #[arg(long)]
+    pub all_features: bool,
+    /// Compile with the default features off.
+    #[arg(long)]
+    pub no_default_features: bool,
 }
 
 /// The tiers, as the command line spells them.

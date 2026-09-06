@@ -70,6 +70,7 @@ fn prepare(name: &str) -> Prepared {
             offline: true,
             timeout: None,
             env: Vec::new(),
+            build: rust_mutants::cargo::BuildConfig::default(),
         },
     )
     .expect("check");
@@ -422,6 +423,7 @@ fn the_check_records_an_exec_event_and_keeps_the_messages() {
             offline: true,
             timeout: None,
             env: Vec::new(),
+            build: rust_mutants::cargo::BuildConfig::default(),
         },
     )
     .expect("check");

@@ -41,6 +41,8 @@ pub struct Config {
     pub version: u32,
     /// What is mutated.
     pub project: Project,
+    /// What the project is compiled as.
+    pub build: Build,
     /// How mutants are proposed and executed.
     pub mutation: Mutation,
     /// How the workspace is built and the tests are run.
@@ -54,6 +56,7 @@ impl Default for Config {
         Self {
             version: 1,
             project: Project::default(),
+            build: Build::default(),
             mutation: Mutation::default(),
             execution: Execution::default(),
             reports: Reports::default(),
@@ -78,6 +81,46 @@ pub struct Project {
     /// beside the tree, which makes the measurement about a tree that is not
     /// the one on disk: a decision for a person rather than one a run takes.
     pub allow_outside: Vec<String>,
+}
+
+/// What the project is compiled as.
+///
+/// Cargo compiles a different program for a different feature set, target
+/// triple, or profile. A run that measures one of them while the project
+/// ships another measures a program nobody runs, so these are the words a
+/// person would have typed, passed on unchanged. An empty name and a zero are
+/// what nobody said.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct Build {
+    /// The features to turn on.
+    pub features: Vec<String>,
+    /// Turn on every feature of every selected package.
+    pub all_features: bool,
+    /// Leave the default features off.
+    pub no_default_features: bool,
+    /// The target triple to compile for. Empty is the host.
+    pub target: String,
+    /// The cargo profile to compile with. Empty is each command's own default.
+    pub profile: String,
+    /// How many compilation jobs cargo may run at once. Zero lets cargo choose.
+    pub jobs: u32,
+}
+
+impl Build {
+    /// What the engine is told to compile.
+    #[must_use]
+    pub fn config(&self) -> rust_mutants::cargo::BuildConfig {
+        let named = |value: &str| (!value.is_empty()).then(|| value.to_owned());
+        rust_mutants::cargo::BuildConfig {
+            features: self.features.clone(),
+            all_features: self.all_features,
+            no_default_features: self.no_default_features,
+            target: named(&self.target),
+            profile: named(&self.profile),
+            jobs: (self.jobs > 0).then_some(self.jobs),
+        }
+    }
 }
 
 /// How mutants are proposed and executed.
@@ -505,6 +548,14 @@ version = 1
 # include = []                   # workspace-relative globs a file must match
 # exclude = []                   # workspace-relative globs that remove a file
 # allow_outside = []             # directories outside the root the build may read
+
+[build]
+# features = []                   # cargo features to turn on
+# all_features = false            # every feature of every selected package
+# no_default_features = false     # leave the default features off
+# target = \"\"                     # target triple; empty = the host
+# profile = \"\"                    # cargo profile; empty = each command's default
+# jobs = 0                        # cargo compilation jobs; 0 = cargo decides
 
 [mutation]
 # tier = \"{tier}\"            # {tiers}

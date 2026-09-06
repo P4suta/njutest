@@ -139,6 +139,7 @@ fn measure(
             offline: workspace.offline,
             timeout: Workspace::timeout(options.build_timeout),
             env: instrumenting(&workspace.base_env, &flags),
+            build: options.build.clone(),
         },
     );
     let Ok(built) = built else {

@@ -201,6 +201,9 @@ pub struct SelectionDocument {
     pub exclude: Vec<String>,
     /// The packages.
     pub packages: Vec<String>,
+    /// The cargo arguments the run compiled with, which say which program was measured.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub build: Vec<String>,
 }
 
 /// One accepted mutant.
@@ -319,6 +322,7 @@ pub fn selection_document(config: &crate::config::Config) -> SelectionDocument {
         include: config.project.include.clone(),
         exclude: config.project.exclude.clone(),
         packages: config.project.packages.clone(),
+        build: config.build.config().arguments(),
     }
 }
 

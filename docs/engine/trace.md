@@ -75,7 +75,7 @@ shape, and every line is checked against
 | `probe-exec` | target, outcome, infected count |
 | `witness` | per candidate: the witness placed, whether it checked, and the diagnostic that refused it |
 | `route` | per judged mutant: granularity, what widened it, the targets that could notice, the ones a proof discharged, the ones that ran, and the run an answer was reused from |
-| `mutant-exec` | id, index, target, outcome, exit code, duration, tests run |
+| `mutant-exec` | id, index, target, outcome, exit code, duration, tests run, signal, failed tests |
 | `note` | a free-form note: progress, a decision, a limitation |
 | `run-end` | `outcome`, `events_emitted`, `events_dropped` |
 

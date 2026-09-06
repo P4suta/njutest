@@ -61,6 +61,8 @@ pub struct PrepareOptions {
     /// It costs a `cargo test --doc` for every mutation no other target
     /// noticed, which is why it is a switch.
     pub doctests: bool,
+    /// What the project is compiled as: its features, target, profile, and how many jobs cargo may use.
+    pub build: crate::cargo::BuildConfig,
     /// Targets never to start, by the id a report names them with.
     ///
     /// A target whose tests are about the text of what the compiler said —
@@ -87,6 +89,7 @@ impl Default for PrepareOptions {
             build_timeout: None,
             mutant_timeout: None,
             doctests: true,
+            build: crate::cargo::BuildConfig::default(),
             skip_targets: Vec::new(),
         }
     }
@@ -674,6 +677,8 @@ impl Session {
                 exit_code: result.exit_code,
                 duration_ms: u64::try_from(result.duration.as_millis()).unwrap_or(u64::MAX),
                 tests_run: result.tests_run,
+                signal: result.signal,
+                failed_tests: result.failed_tests.clone(),
             });
             if result.outcome.detected() || cancel.is_cancelled() {
                 return Ok(result);
@@ -722,6 +727,8 @@ impl Session {
                 exit_code: result.exit_code,
                 duration_ms: u64::try_from(result.duration.as_millis()).unwrap_or(u64::MAX),
                 tests_run: result.tests_run,
+                signal: result.signal,
+                failed_tests: result.failed_tests.clone(),
             });
             if cancel.is_cancelled()
                 || (result.outcome != crate::outcome::Outcome::Survived && spoke(&result))
@@ -845,6 +852,7 @@ fn pristine(
             offline: workspace.offline,
             timeout: Workspace::timeout(options.build_timeout),
             env: Vec::new(),
+            build: options.build.clone(),
         },
     )?;
     if checked.success {
@@ -1003,6 +1011,10 @@ const fn unreached() -> MutantResult {
         output: Vec::new(),
         summary: None,
         tests_run: None,
+        signal: None,
+        failed_tests: Vec::new(),
+        passed_tests: Vec::new(),
+        ignored_tests: Vec::new(),
     }
 }
 
@@ -1122,6 +1134,7 @@ fn establish(
         timeout: Workspace::timeout(options.build_timeout),
         last_build: Vec::new(),
         packages: options.packages.clone(),
+        build: options.build.clone(),
     };
     let validated = validate(
         &discovery.catalog,
@@ -1237,6 +1250,8 @@ struct TreeCompiler<'a> {
     last_build: Vec<crate::cargo::Message>,
     /// The member packages the run is about, which are the ones whose test binaries it will start.
     packages: Vec<String>,
+    /// What the project is compiled as, which every attempt compiles the same way.
+    build: crate::cargo::BuildConfig,
 }
 
 impl Compile for TreeCompiler<'_> {
@@ -1282,6 +1297,7 @@ impl Compile for TreeCompiler<'_> {
                 offline: self.workspace.offline,
                 timeout: self.timeout,
                 env: Vec::new(),
+                build: self.build.clone(),
             },
         )?;
         let success = compiled.success;

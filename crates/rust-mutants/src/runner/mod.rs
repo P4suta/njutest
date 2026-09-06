@@ -150,6 +150,8 @@ pub struct RunResult {
     pub stdout_truncated: bool,
     /// Set only when the process could not be started or supervised.
     pub error: Option<RunnerError>,
+    /// The signal the process died from, on the platforms that have them. A process that exited normally, and every process on Windows, has none.
+    pub signal: Option<i32>,
 }
 
 impl RunResult {
@@ -211,6 +213,7 @@ pub fn run(spec: &Spec, cancel: &Cancel) -> RunResult {
         stdout: Vec::new(),
         stdout_truncated: false,
         error,
+        signal: None,
     };
     let Some(program) = spec.argv.first() else {
         return unavailable(
@@ -259,13 +262,14 @@ pub fn run(spec: &Spec, cancel: &Cancel) -> RunResult {
     supervisor.release();
     let output = tail.capture();
     let duration = started.elapsed();
-    let (exit_code, timed_out, error) = match outcome {
-        Exit::Killed { timed_out } => (EXIT_CODE_UNAVAILABLE, timed_out, None),
-        Exit::Status(Ok(status)) => (sys::exit_code(status), false, None),
+    let (exit_code, timed_out, error, signal) = match outcome {
+        Exit::Killed { timed_out } => (EXIT_CODE_UNAVAILABLE, timed_out, None, None),
+        Exit::Status(Ok(status)) => (sys::exit_code(status), false, None, sys::signal(status)),
         Exit::Status(Err(source)) => (
             EXIT_CODE_UNAVAILABLE,
             false,
             Some(RunnerError::ProcessWaitFailed { source }),
+            None,
         ),
     };
     RunResult {
@@ -276,6 +280,7 @@ pub fn run(spec: &Spec, cancel: &Cancel) -> RunResult {
         stdout,
         stdout_truncated,
         error,
+        signal,
     }
 }
 

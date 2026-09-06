@@ -76,6 +76,7 @@ pub fn establish(
             offline: workspace.offline,
             timeout: Workspace::timeout(options.build_timeout),
             env: Vec::new(),
+            build: options.build.clone(),
         },
     );
     restore(&root, sources)?;

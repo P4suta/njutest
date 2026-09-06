@@ -164,6 +164,12 @@ pub struct RunMutantDocument {
     pub duration_ms: u64,
     /// How many tests ran, when the harness said.
     pub tests_run: Option<u32>,
+    /// Every test that failed with the mutant active, which is what noticed it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub killed_by: Vec<String>,
+    /// The signal the last execution died from, on the platforms that have them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signal: Option<i32>,
     /// Whether a first timeout was retried serially before the outcome was believed.
     pub retried: bool,
     /// Whether a reviewer declared this outcome in advance and the run confirmed the claim.
@@ -350,6 +356,8 @@ fn mutant(one: &crate::run::Judged, catalog: Option<MutantDocument>) -> RunMutan
         exit_code: one.exit_code,
         duration_ms: millis(one.duration),
         tests_run: one.tests_run,
+        killed_by: one.failed_tests.clone(),
+        signal: one.signal,
         retried: one.retried,
         expected: one.expected,
         unreached: one.unreached,

@@ -12,8 +12,9 @@
 use std::path::{Path, PathBuf};
 
 use rust_mutants::cargo::{
-    CargoError, CargoErrorKind, Diagnostic, LocateOptions, Message, Metadata, Toolchain,
-    dep_info_path, parse_dep_info, parse_messages, parse_version,
+    BuildConfig, CargoError, CargoErrorKind, CompileKind, CompileOptions, Diagnostic,
+    LocateOptions, Message, Metadata, Toolchain, compile_arguments, dep_info_path, parse_dep_info,
+    parse_messages, parse_version,
 };
 use rust_mutants::runner::Cancel;
 
@@ -299,4 +300,81 @@ fn a_build_script_that_wrote_nowhere_says_so_rather_than_guessing() {
     };
     assert_eq!(script.out_dir, None);
     assert!(script.env.is_empty());
+}
+
+#[test]
+fn compile_arguments_spell_every_build_option_once() {
+    let options = CompileOptions {
+        kind: CompileKind::Tests,
+        packages: vec!["one".to_owned()],
+        target_dir: Some(PathBuf::from("/tmp/out")),
+        locked: true,
+        offline: true,
+        build: BuildConfig {
+            features: vec!["a".to_owned(), "b".to_owned()],
+            all_features: false,
+            no_default_features: true,
+            target: Some("x86_64-unknown-linux-gnu".to_owned()),
+            profile: Some("release".to_owned()),
+            jobs: Some(3),
+        },
+        ..CompileOptions::default()
+    };
+    assert_eq!(
+        compile_arguments(&options),
+        [
+            "test",
+            "--package",
+            "one",
+            "--all-targets",
+            "--no-run",
+            "--message-format=json",
+            "--locked",
+            "--offline",
+            "--target-dir",
+            "/tmp/out",
+            "--no-default-features",
+            "--features",
+            "a,b",
+            "--target",
+            "x86_64-unknown-linux-gnu",
+            "--profile",
+            "release",
+            "--jobs",
+            "3",
+        ]
+    );
+}
+
+#[test]
+fn a_build_configured_with_nothing_adds_nothing_to_the_command() {
+    let bare = compile_arguments(&CompileOptions::default());
+    assert_eq!(
+        bare,
+        [
+            "check",
+            "--workspace",
+            "--all-targets",
+            "--message-format=json"
+        ]
+    );
+}
+
+#[test]
+fn all_features_and_a_named_feature_are_both_spelled_because_cargo_accepts_both() {
+    let options = CompileOptions {
+        build: BuildConfig {
+            features: vec!["a".to_owned()],
+            all_features: true,
+            ..BuildConfig::default()
+        },
+        ..CompileOptions::default()
+    };
+    let args = compile_arguments(&options);
+    assert!(args.contains(&"--all-features".to_owned()));
+    assert_eq!(
+        args.iter().filter(|arg| *arg == "--features").count(),
+        1,
+        "every feature the run asked for is one argument, not one argument each"
+    );
 }

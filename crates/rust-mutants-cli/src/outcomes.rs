@@ -34,7 +34,7 @@ pub const RULE_ABI: u32 = 1;
 pub const INSTRUMENTATION_ABI: u32 = 1;
 
 /// Bumped when a record changes what it holds.
-pub const CACHE_ABI: u32 = 1;
+pub const CACHE_ABI: u32 = 2;
 
 /// What one earlier run established about one mutant.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -50,6 +50,9 @@ pub struct Record {
     pub target: String,
     /// How many tests ran, when the harness said.
     pub tests_run: Option<u32>,
+    /// Every test that failed with the mutant active, so a reused outcome still says who noticed it.
+    #[serde(default)]
+    pub failed_tests: Vec<String>,
     /// The run that established it.
     pub run_id: String,
 }
@@ -65,6 +68,8 @@ pub struct Keyed {
     pub args: Vec<String>,
     /// How long one execution may take, in milliseconds.
     pub timeout_ms: u64,
+    /// The cargo arguments the tree was compiled with, because the same tree compiled two ways is two programs.
+    pub build: Vec<String>,
 }
 
 impl Keyed {
@@ -85,18 +90,16 @@ impl Keyed {
             hasher.update(u32::try_from(field.len()).unwrap_or(u32::MAX).to_be_bytes());
             hasher.update(field.as_bytes());
         }
-        hasher.update(
-            u32::try_from(self.args.len())
-                .unwrap_or(u32::MAX)
-                .to_be_bytes(),
-        );
-        for argument in &self.args {
-            hasher.update(
-                u32::try_from(argument.len())
-                    .unwrap_or(u32::MAX)
-                    .to_be_bytes(),
-            );
-            hasher.update(argument.as_bytes());
+        for list in [&self.args, &self.build] {
+            hasher.update(u32::try_from(list.len()).unwrap_or(u32::MAX).to_be_bytes());
+            for argument in list {
+                hasher.update(
+                    u32::try_from(argument.len())
+                        .unwrap_or(u32::MAX)
+                        .to_be_bytes(),
+                );
+                hasher.update(argument.as_bytes());
+            }
         }
         hex::encode(hasher.finalize())
     }

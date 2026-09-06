@@ -547,6 +547,8 @@ fn one_of_each_measurement(recorder: &Recorder) {
         exit_code: 101,
         duration_ms: 40,
         tests_run: Some(3),
+        signal: Some(6),
+        failed_tests: vec!["demo::tests::le_bound".to_owned()],
     });
     recorder.route(RouteRecord {
         mutant: "b".repeat(20),

@@ -74,3 +74,36 @@ a run never establishes: it type-checks the tree rather than running it. It
 now names the target that failed with nothing active and says that
 `--no-verify` is the way past it.
 
+
+## Upgrading to E6
+
+**A run compiles what you tell it to.** The `[build]` section and its flags —
+`--features`, `--all-features`, `--no-default-features`, `--build-target`,
+`--profile`, `--build-jobs` — are passed to every command a run compiles with.
+`--build-target` rather than `--target`, because `run --target` already names
+a test target. The report's `selection.build` says what was used.
+
+**Stored outcomes go cold once.** The cache key now covers the build
+configuration, because the same tree compiled two ways is two programs and a
+record kept for one of them answers nothing about the other. The first run
+after this release re-executes everything; the ones after it reuse as before.
+
+**A report says which test noticed a mutation.** A mutant row gained
+`killed_by` and `signal`, and a `mutant-exec` recording gained the same two.
+Both are optional and the schema version stayed 1.
+
+**`build.rustflags` no longer stops the coverage measurement.** The flags a
+cargo configuration file sets are read and put back into the instrumented
+build, so a tree that sets one is measured rather than routed everywhere.
+Flags set for a *target* (`[target.<triple>]`, `[target.cfg(…)]`) still refuse
+the measurement: which of those tables apply is cargo's decision about the
+target being built. The order the files are joined in was wrong and is now
+cargo's own — the home directory first, the nearest file last.
+
+**Exit code 98 from a test process is an error, not a kill.** It is the code a
+probe process ends with when it cannot record what it saw, and reading it as a
+failing test credited a test that never ran.
+
+**A snapshot directory that is already gone is removed.** Cleanup released the
+lock, then retried five times with a backoff against a directory a sweeper had
+already taken, and reported `RM1011` for it.

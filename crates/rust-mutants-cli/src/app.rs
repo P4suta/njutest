@@ -427,6 +427,7 @@ fn whole(
         catalog: session.catalog().digest().to_owned(),
         args: args.to_vec(),
         timeout_ms: u64::try_from(settings.config.mutation.timeout.as_millis()).unwrap_or(u64::MAX),
+        build: settings.config.build.config().arguments(),
     };
     let mut result = run::run(
         session,

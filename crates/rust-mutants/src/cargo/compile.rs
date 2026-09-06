@@ -61,6 +61,63 @@ fn arguments(kind: CompileKind, packages: &[String]) -> Vec<String> {
     args
 }
 
+/// What a build is asked to compile, beyond the tree itself.
+///
+/// Cargo compiles a different program for a different feature set, target
+/// triple, or profile, and a run that measures one of them while the project
+/// ships another measures a program nobody runs. These are the words a person
+/// would have typed, passed on unchanged.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BuildConfig {
+    /// The features to turn on, which cargo takes as one comma-separated argument.
+    pub features: Vec<String>,
+    /// Pass `--all-features`.
+    pub all_features: bool,
+    /// Pass `--no-default-features`.
+    pub no_default_features: bool,
+    /// The target triple to compile for. `None` is the host.
+    pub target: Option<String>,
+    /// The cargo profile to compile with. `None` is the command's own default.
+    pub profile: Option<String>,
+    /// How many compilation jobs cargo may run at once. `None` lets cargo choose.
+    pub jobs: Option<u32>,
+}
+
+impl BuildConfig {
+    /// Whether this asks for nothing cargo would not have done anyway.
+    #[must_use]
+    pub fn is_default(&self) -> bool {
+        self == &Self::default()
+    }
+
+    /// The arguments that spell this configuration, in cargo's own order.
+    #[must_use]
+    pub fn arguments(&self) -> Vec<String> {
+        let mut args = Vec::new();
+        if self.no_default_features {
+            args.push("--no-default-features".to_owned());
+        }
+        if self.all_features {
+            args.push("--all-features".to_owned());
+        }
+        if !self.features.is_empty() {
+            args.push("--features".to_owned());
+            args.push(self.features.join(","));
+        }
+        for (flag, value) in [("--target", &self.target), ("--profile", &self.profile)] {
+            if let Some(value) = value {
+                args.push(flag.to_owned());
+                args.push(value.clone());
+            }
+        }
+        if let Some(jobs) = self.jobs {
+            args.push("--jobs".to_owned());
+            args.push(jobs.to_string());
+        }
+        args
+    }
+}
+
 /// Configures [`compile`].
 #[derive(Debug, Clone, Default)]
 pub struct CompileOptions {
@@ -78,6 +135,27 @@ pub struct CompileOptions {
     pub env: Vec<(OsString, OsString)>,
     /// The member packages this compilation is about. Empty is the whole workspace, and a check is always about the whole workspace whatever this says.
     pub packages: Vec<String>,
+    /// What the project is compiled as: its features, target, profile, and how many jobs cargo may use.
+    pub build: BuildConfig,
+}
+
+/// The whole command line one compilation runs, which is what a person would have typed.
+#[must_use]
+pub fn compile_arguments(options: &CompileOptions) -> Vec<String> {
+    let mut args = arguments(options.kind, &options.packages);
+    args.push("--message-format=json".to_owned());
+    if options.locked {
+        args.push("--locked".to_owned());
+    }
+    if options.offline {
+        args.push("--offline".to_owned());
+    }
+    if let Some(target_dir) = &options.target_dir {
+        args.push("--target-dir".to_owned());
+        args.push(target_dir.to_string_lossy().into_owned());
+    }
+    args.extend(options.build.arguments());
+    args
 }
 
 /// What a compilation produced.
@@ -98,19 +176,9 @@ pub struct Compiled {
 /// timed out, [`CargoErrorKind::MessageUnparsable`] for a stream that is
 /// not messages, and the dep-info errors of [`units_of`].
 pub fn compile(driver: &Driver<'_>, options: &CompileOptions) -> Result<Compiled, CargoError> {
-    let mut args = arguments(options.kind, &options.packages);
-    args.push("--message-format=json".to_owned());
-    if options.locked {
-        args.push("--locked".to_owned());
-    }
-    if options.offline {
-        args.push("--offline".to_owned());
-    }
-    if let Some(target_dir) = &options.target_dir {
-        args.push("--target-dir".to_owned());
-        args.push(target_dir.to_string_lossy().into_owned());
-    }
-    let mut spec = driver.toolchain.command(driver.dir, args);
+    let mut spec = driver
+        .toolchain
+        .command(driver.dir, compile_arguments(options));
     if !options.env.is_empty() {
         let mut env = spec.env.clone().unwrap_or_default();
         env.retain(|(name, _)| !options.env.iter().any(|(other, _)| other == name));

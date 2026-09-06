@@ -137,3 +137,8 @@ fn resume_entry_point() -> Result<NtResumeProcess, RunnerError> {
 pub(super) fn exit_code(status: ExitStatus) -> i32 {
     status.code().unwrap_or(EXIT_CODE_UNAVAILABLE)
 }
+
+/// Windows has no signals, so a process there never died from one.
+pub(super) const fn signal(_status: ExitStatus) -> Option<i32> {
+    None
+}

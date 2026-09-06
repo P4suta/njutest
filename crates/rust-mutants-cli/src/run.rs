@@ -41,6 +41,10 @@ pub struct Judged {
     pub duration: Duration,
     /// How many tests ran, when the harness said.
     pub tests_run: Option<u32>,
+    /// Every test that failed with the mutant active, which is what noticed it.
+    pub failed_tests: Vec<String>,
+    /// The signal the last execution died from, on the platforms that have them.
+    pub signal: Option<i32>,
     /// Whether a first timeout was retried serially before the outcome was believed.
     pub retried: bool,
     /// The run that established this, when it was not this one.
@@ -574,6 +578,8 @@ fn execute(
         exit_code: result.exit_code,
         duration,
         tests_run: result.tests_run,
+        failed_tests: result.failed_tests,
+        signal: result.signal,
         retried,
         expected: false,
         unreached: session.reaches(mutant) == Some(false),
@@ -596,6 +602,8 @@ fn reuse(mutant: &Mutant, options: &Options<'_>) -> Option<Judged> {
         exit_code: 0,
         duration: Duration::ZERO,
         tests_run: record.tests_run,
+        failed_tests: record.failed_tests,
+        signal: None,
         retried: false,
         expected: false,
         unreached: false,
@@ -622,6 +630,7 @@ fn keep(mutant: &Mutant, options: &Options<'_>, judged: &Judged) {
             outcome: judged.outcome.name().to_owned(),
             target: judged.target.clone(),
             tests_run: judged.tests_run,
+            failed_tests: judged.failed_tests.clone(),
             run_id: reusing.run_id.to_owned(),
         },
     );
@@ -637,6 +646,8 @@ fn unexecuted(mutant: &Mutant) -> Judged {
         exit_code: rust_mutants::runner::EXIT_CODE_UNAVAILABLE,
         duration: Duration::ZERO,
         tests_run: None,
+        failed_tests: Vec::new(),
+        signal: None,
         retried: false,
         expected: false,
         unreached: false,

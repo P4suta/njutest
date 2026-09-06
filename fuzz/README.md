@@ -25,6 +25,7 @@ so each has to fail closed rather than plausibly.
 | `discover_file` | never panics; every candidate validates, is spanned from the source, sits inside its site; deterministic |
 | `config` | never panics; an accepted configuration has one canonical rendering and one 64-character digest |
 | `coverage_export` | never panics; every accepted region ends where it began or after, and what a test reached is part of what the build instrumented |
+| `libtest_lines` | never panics; every test name it reports is text that was there, and no line becomes two |
 | `libtest_summary` | never panics; a target reaches `Passed` only through a line that counted a passing test, and a timeout is a failure whatever the line said |
 | `report_document` | never panics; an accepted report round-trips, its record stream carries exactly one `VERDICT`, and one that fails the audit is refused by the write path |
 | `engine_config` | never panics; an accepted `.rust-mutants.toml` is one every later stage can honour, checked against the rules the reader states |

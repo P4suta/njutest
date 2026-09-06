@@ -271,3 +271,47 @@ fn every_failure_carries_the_code_its_reader_can_search_for() {
     assert_eq!(error.kind(), ConfigErrorKind::Unreadable);
     assert!(error.to_string().contains("RM0002"), "{error}");
 }
+
+#[test]
+fn build_keys_default_to_nothing() {
+    let config = Config::default();
+    assert!(config.build.features.is_empty());
+    assert!(!config.build.all_features);
+    assert!(!config.build.no_default_features);
+    assert!(config.build.target.is_empty());
+    assert!(config.build.profile.is_empty());
+    assert_eq!(config.build.jobs, 0);
+    assert!(
+        config.build.config().is_default(),
+        "a build nobody configured is the build cargo would have done"
+    );
+}
+
+#[test]
+fn a_build_section_becomes_the_engine_s_build_configuration() {
+    let config = parse(
+        "\
+version = 1
+
+[build]
+features = [\"one\", \"two\"]
+no_default_features = true
+target = \"wasm32-unknown-unknown\"
+profile = \"release\"
+jobs = 2
+",
+    )
+    .expect("the section is read");
+    assert_eq!(
+        config.build.config(),
+        rust_mutants::cargo::BuildConfig {
+            features: vec!["one".to_owned(), "two".to_owned()],
+            all_features: false,
+            no_default_features: true,
+            target: Some("wasm32-unknown-unknown".to_owned()),
+            profile: Some("release".to_owned()),
+            jobs: Some(2),
+        },
+        "an empty name and a zero are what nobody said, not what somebody asked for"
+    );
+}

@@ -499,6 +499,12 @@ pub struct MutantExecRecord {
     /// How many tests ran, when the harness said.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tests_run: Option<u32>,
+    /// The signal the process died from, on the platforms that have them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signal: Option<i32>,
+    /// Every test that failed, by name, which is what says who noticed the mutation.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub failed_tests: Vec<String>,
 }
 
 /// A free-form note.

@@ -33,6 +33,8 @@ fn mutant(index: u32, outcome: &str, rule: &str) -> RunMutantDocument {
         exit_code: 0,
         duration_ms: 41,
         tests_run: Some(1),
+        killed_by: Vec::new(),
+        signal: None,
         retried: false,
         expected: false,
         unreached: false,
@@ -66,6 +68,7 @@ fn document() -> RunDocument {
             },
         },
         selection: SelectionDocument {
+            build: Vec::new(),
             tier: "balanced".to_owned(),
             operators: Vec::new(),
             include: Vec::new(),

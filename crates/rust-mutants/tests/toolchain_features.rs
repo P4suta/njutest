@@ -1,0 +1,92 @@
+// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! What a run compiles decides what it can measure.
+
+#![expect(
+    clippy::expect_used,
+    reason = "a test reports a setup failure by panicking and asserts with panics"
+)]
+
+use mjutest_devkit::fixture::Fixture;
+use rust_mutants::cargo::BuildConfig;
+use rust_mutants::outcome::Outcome;
+use rust_mutants::rule::Tier;
+use rust_mutants::runner::Cancel;
+use rust_mutants::session::{PrepareOptions, Request, Session};
+use rust_mutants::workspace::{OpenOptions, Workspace};
+
+fn prepared(fixture: &Fixture, build: BuildConfig) -> Session {
+    let workspace = Workspace::open(
+        fixture.root(),
+        OpenOptions {
+            cargo: Some(mjutest_devkit::paths::cargo_binary()),
+            temp_directory: fixture.temp().to_path_buf(),
+            env: std::env::vars_os().collect(),
+            locked: true,
+            offline: true,
+            ..OpenOptions::default()
+        },
+        &Cancel::new(),
+    )
+    .expect("open");
+    workspace
+        .prepare(
+            &PrepareOptions {
+                tier: Tier::All,
+                build,
+                ..PrepareOptions::default()
+            },
+            &Cancel::new(),
+        )
+        .expect("prepare")
+}
+
+/// The mutation of `feet`, which only a run that turned `imperial` on ever tests.
+fn imperial(session: &Session) -> String {
+    session
+        .catalog()
+        .mutants()
+        .iter()
+        .find(|one| {
+            one.candidate.rule.name == "div-to-mul"
+                && session.position(one).is_some_and(|at| at.line == 13)
+        })
+        .expect("a div-to-mul mutant in feet")
+        .display_id
+        .clone()
+}
+
+#[test]
+fn a_test_behind_a_feature_is_measured_only_when_the_feature_is_on() {
+    let cancel = Cancel::new();
+
+    let defaults = Fixture::copy("fixture-features");
+    let session = prepared(&defaults, BuildConfig::default());
+    let request = Request::new(imperial(&session));
+    let outcome = session.exec(&request, &cancel).expect("exec").outcome;
+    session.close().expect("close");
+    assert_eq!(
+        outcome,
+        Outcome::Survived,
+        "the feature is off, so the only test that calls the function is not compiled and \
+         nothing can notice the mutation, which is a survivor and not a kill nobody earned"
+    );
+
+    let asked = Fixture::copy("fixture-features");
+    let session = prepared(
+        &asked,
+        BuildConfig {
+            features: vec!["imperial".to_owned()],
+            ..BuildConfig::default()
+        },
+    );
+    let request = Request::new(imperial(&session));
+    let outcome = session.exec(&request, &cancel).expect("exec").outcome;
+    session.close().expect("close");
+    assert_eq!(
+        outcome,
+        Outcome::Killed,
+        "with the feature on the same edit is compiled and the same suite runs it"
+    );
+}

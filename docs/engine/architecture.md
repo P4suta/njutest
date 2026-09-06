@@ -115,6 +115,20 @@ everything. A tree git cannot be asked about, or a revision it does not know,
 ends the command with `RM0010`: a run that could not see what changed must
 never look like a run that saw nothing change.
 
+`--features`, `--all-features`, `--no-default-features`, `--build-target`,
+`--profile`, and `--build-jobs` are what the `[build]` section spells, and
+they reach every command a run compiles with: the pristine check, each
+validation round, the test build, and the coverage, probe, and witness builds.
+Cargo compiles a different program for a different feature set, triple, or
+profile, so the report's `selection.build` says which one was measured and a
+stored outcome is only reused for a run compiled the same way. The build
+target is `--build-target` and not `--target`, which `run` already uses to
+name one test target.
+
+A killed mutant's row says which tests failed with it active (`killed_by`) and
+the signal the process died from, when it died from one. Both come from the
+harness's own per-test lines, which is also what `mutant-exec` records.
+
 `--coverage` builds the tree once more with `-C instrument-coverage`, runs
 every test target once with nothing active, and reads back which target
 executed which regions. A mutant is then only run against the targets that

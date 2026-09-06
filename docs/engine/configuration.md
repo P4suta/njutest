@@ -24,6 +24,14 @@ include = []                   # workspace-relative globs a file must match
 exclude = []                   # workspace-relative globs that remove a file
 allow_outside = []             # directories outside the root the build may read
 
+[build]
+features = []                  # cargo features to turn on
+all_features = false           # every feature of every selected package
+no_default_features = false    # leave the default features off
+target = ""                    # target triple; empty = the host
+profile = ""                   # cargo profile; empty = each command's default
+jobs = 0                       # cargo compilation jobs; 0 = cargo decides
+
 [mutation]
 tier = "balanced"              # balanced | strong | all
 operators = []                 # exactly these rules; empty = the tier
@@ -50,6 +58,15 @@ Every value above also has a flag. A flag given on the command line overrides
 the file; a list given on the command line *replaces* the file's list rather
 than adding to it, so `--package a` means exactly `a`. `--no-config` reads no
 file at all and `--config FILE` reads one elsewhere.
+
+Every `[build]` key is what a person would have typed at cargo, passed on
+unchanged to every command a run compiles with: the pristine check, each
+validation round, the test build, and the coverage, probe, and witness builds.
+Cargo compiles a different program for a different feature set, target triple,
+or profile, so a run that measures one of them while the project ships another
+measures a program nobody runs. The report's `selection.build` says which one
+was measured, and a stored outcome is only reused for a run compiled the same
+way.
 
 `offline`, `locked`, and `verify` are the exception a reader should know
 about: `--offline`, `--locked`, and `--no-verify` can only turn a switch on

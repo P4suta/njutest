@@ -74,6 +74,7 @@ impl Compile for CargoScripted {
                 offline: true,
                 timeout: None,
                 env: Vec::new(),
+                build: rust_mutants::cargo::BuildConfig::default(),
             },
         )
         .map_err(ValidateError::from)?;
@@ -137,6 +138,7 @@ fn prepare_fixture(name: &str) -> CargoScripted {
             offline: true,
             timeout: None,
             env: Vec::new(),
+            build: rust_mutants::cargo::BuildConfig::default(),
         },
     )
     .expect("check");

@@ -23,6 +23,8 @@ fn judged(index: u32, outcome: Outcome) -> Judged {
         exit_code: 0,
         duration: Duration::from_millis(1),
         tests_run: Some(1),
+        failed_tests: Vec::new(),
+        signal: None,
         retried: false,
         expected: false,
         unreached: false,

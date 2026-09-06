@@ -69,3 +69,8 @@ pub(super) fn exit_code(status: ExitStatus) -> i32 {
         .or_else(|| status.signal().map(|signal| 128i32.saturating_add(signal)))
         .unwrap_or(EXIT_CODE_UNAVAILABLE)
 }
+
+/// The signal the child died from, which is what a report says when a mutation turned a failure into an abort.
+pub(super) fn signal(status: ExitStatus) -> Option<i32> {
+    status.signal()
+}

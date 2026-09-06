@@ -178,6 +178,7 @@ fn accept(
                 offline: workspace.offline,
                 timeout: Workspace::timeout(running.options.build_timeout),
                 env: Vec::new(),
+                build: running.options.build.clone(),
             },
         )
         .map_err(|error| error.to_string())?;
@@ -407,6 +408,7 @@ fn build_and_run(
             offline: workspace.offline,
             timeout: Workspace::timeout(options.build_timeout),
             env: Vec::new(),
+            build: options.build.clone(),
         },
     )
     .map_err(|error| error.to_string())?;

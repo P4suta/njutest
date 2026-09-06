@@ -259,6 +259,60 @@ impl Summary {
     }
 }
 
+/// What each test of one run said, by name.
+///
+/// The summary line says how many, and a person reading a survivor needs to
+/// know which: the test that killed a mutant is the sentence a report can
+/// hand somebody, and the tests that passed are the ones that could have.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Lines {
+    /// Every test that passed, in the order the harness printed them.
+    pub passed: Vec<String>,
+    /// Every test that failed.
+    pub failed: Vec<String>,
+    /// Every test that was ignored.
+    pub ignored: Vec<String>,
+}
+
+impl Lines {
+    /// Whether the harness printed no verdict at all.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.passed.is_empty() && self.failed.is_empty() && self.ignored.is_empty()
+    }
+}
+
+/// Reads every `test <name> ... <verdict>` line of a captured output.
+///
+/// The failures block at the end names each failed test a second time, and a
+/// name is one test however often the harness prints it, so only the verdict
+/// lines are read.
+#[must_use]
+pub fn parse_lines(output: &[u8]) -> Lines {
+    let text = String::from_utf8_lossy(output);
+    let mut lines = Lines::default();
+    for line in text.lines() {
+        let Some((name, verdict)) = verdict_of(line) else {
+            continue;
+        };
+        match verdict {
+            "ok" => lines.passed.push(name.to_owned()),
+            "FAILED" => lines.failed.push(name.to_owned()),
+            _ if verdict.starts_with("ignored") => lines.ignored.push(name.to_owned()),
+            _ => {}
+        }
+    }
+    lines
+}
+
+/// The name and verdict of one `test <name> ... <verdict>` line.
+fn verdict_of(line: &str) -> Option<(&str, &str)> {
+    let rest = line.trim_end().strip_prefix("test ")?;
+    let (name, verdict) = rest.rsplit_once(" ... ")?;
+    let name = name.trim();
+    (!name.is_empty()).then_some((name, verdict.trim()))
+}
+
 /// Reads the last `test result:` line of a captured output.
 #[must_use]
 pub fn parse_summary(output: &[u8]) -> Option<Summary> {
@@ -345,6 +399,9 @@ pub const fn outcome_of(observed: Observation, summary: Option<Summary>, harness
         return Outcome::NotRun;
     }
     if observed.exit_code == STALE_CATALOG_EXIT || observed.stale_catalog {
+        return Outcome::Errored;
+    }
+    if observed.exit_code == crate::probe::runtime::UNAVAILABLE_EXIT {
         return Outcome::Errored;
     }
     if observed.exit_code != 0 {
@@ -625,6 +682,14 @@ pub struct MutantResult {
     pub summary: Option<Summary>,
     /// How many tests ran, when the summary said.
     pub tests_run: Option<u32>,
+    /// The signal the process died from, on the platforms that have them.
+    pub signal: Option<i32>,
+    /// Every test that failed, by name, which is what a report hands a person reading a kill.
+    pub failed_tests: Vec<String>,
+    /// Every test that passed, by name, which is every test that could have noticed the mutation and did not.
+    pub passed_tests: Vec<String>,
+    /// Every test the harness was told to skip.
+    pub ignored_tests: Vec<String>,
 }
 
 /// Whether the target said anything about the mutation, which is what decides whether the next target is asked.
@@ -656,6 +721,7 @@ pub fn exec(
     let result = run(&spec, cancel);
     trace.exec(ExecRecord::of(&spec, &result));
     let summary = parse_summary(&result.output);
+    let lines = parse_lines(&result.output);
     MutantResult {
         outcome: outcome_of(Observation::of(&result), summary, target.harness),
         target: target.id.clone(),
@@ -664,6 +730,10 @@ pub fn exec(
         output: result.output,
         summary,
         tests_run: summary.map(|summary| summary.tests_run()),
+        signal: result.signal,
+        failed_tests: lines.failed,
+        passed_tests: lines.passed,
+        ignored_tests: lines.ignored,
     }
 }
 
@@ -678,6 +748,8 @@ pub struct BuildOptions {
     pub offline: bool,
     /// The member packages whose test binaries are wanted. Empty is the whole workspace.
     pub packages: Vec<String>,
+    /// What the project is compiled as: its features, target, profile, and how many jobs cargo may use.
+    pub build: crate::cargo::BuildConfig,
 }
 
 /// Builds the test binaries of a tree and reports them.
@@ -700,6 +772,7 @@ pub fn build(
             offline: options.offline,
             timeout: None,
             env: Vec::new(),
+            build: options.build.clone(),
         },
     )?;
     if !compiled.success {

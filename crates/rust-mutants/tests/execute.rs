@@ -7,8 +7,8 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use rust_mutants::execute::{
-    Context, ExecRequest, Observation, Summary, TargetKind, TestTarget, environment, outcome_of,
-    parse_summary, target_id,
+    Context, ExecRequest, Lines, Observation, Summary, TargetKind, TestTarget, environment,
+    outcome_of, parse_lines, parse_summary, target_id,
 };
 use rust_mutants::outcome::Outcome;
 use rust_mutants::runner::EXIT_CODE_UNAVAILABLE;
@@ -668,5 +668,80 @@ fn silence_is_decided_by_the_harness() {
         (Outcome::NotRun, true, "a target nothing reached"),
     ] {
         assert_eq!(rust_mutants::execute::answered(outcome), answers, "{why}");
+    }
+}
+
+#[test]
+fn parse_lines_names_every_test_and_its_verdict() {
+    let output = b"\nrunning 4 tests\ntest tests::adds ... ok\ntest tests::subtracts ... FAILED\ntest tests::skipped ... ignored\ntest tests::explained ... ignored, needs a network\n\nfailures:\n\n---- tests::subtracts stdout ----\nassertion failed\n\nfailures:\n    tests::subtracts\n\ntest result: FAILED. 1 passed; 1 failed; 2 ignored; 0 measured; 0 filtered out\n";
+    let lines = parse_lines(output);
+    assert_eq!(lines.passed, ["tests::adds"]);
+    assert_eq!(
+        lines.failed,
+        ["tests::subtracts"],
+        "the failures block names the same test again, and a name is one test however often \
+         the harness prints it"
+    );
+    assert_eq!(lines.ignored, ["tests::skipped", "tests::explained"]);
+}
+
+#[test]
+fn a_documented_example_is_named_the_way_rustdoc_names_it() {
+    let lines = parse_lines(b"test src/lib.rs - max (line 9) ... ok\n");
+    assert_eq!(lines.passed, ["src/lib.rs - max (line 9)"]);
+}
+
+#[test]
+fn a_line_that_is_not_a_verdict_is_not_a_test() {
+    let lines = parse_lines(
+        b"test result: ok. 1 passed; 0 failed\nrunning 1 test\ntesting the water ... ok\n",
+    );
+    assert_eq!(lines, Lines::default());
+}
+
+#[test]
+fn a_probe_process_that_could_not_record_is_errored() {
+    let observed = Observation {
+        unstarted: false,
+        timed_out: false,
+        exit_code: rust_mutants::probe::runtime::UNAVAILABLE_EXIT,
+        stale_catalog: false,
+    };
+    assert_eq!(
+        outcome_of(observed, None, true),
+        Outcome::Errored,
+        "a process that says it could not record what it saw has said nothing about the \
+         mutation, and reading its exit as a kill would credit a test that never ran"
+    );
+}
+
+proptest::proptest! {
+    /// Nothing a harness can print makes the reader panic or invent a test.
+    ///
+    /// The output a run keeps is the tail of what the process wrote, so the
+    /// reader meets half lines, interleaved lines, and whatever a test printed
+    /// on purpose. Every name it reports has to come from a line that is
+    /// there, because a name in a report is a sentence somebody will act on.
+    #[test]
+    fn parse_lines_never_panics_and_never_reports_more_than_the_lines(
+        text in "(test [a-z:_ ]{0,12} \\.\\.\\. (ok|FAILED|ignored)\n|[a-zA-Z:. \n]{0,40}){0,8}"
+    ) {
+        let lines = parse_lines(text.as_bytes());
+        let counted = lines
+            .passed
+            .len()
+            .saturating_add(lines.failed.len())
+            .saturating_add(lines.ignored.len());
+        proptest::prop_assert!(
+            counted <= text.lines().count(),
+            "{counted} verdicts from {} lines of {text:?}",
+            text.lines().count()
+        );
+        for name in lines.passed.iter().chain(&lines.failed).chain(&lines.ignored) {
+            proptest::prop_assert!(
+                text.contains(name.as_str()),
+                "{name:?} is in no line of {text:?}"
+            );
+        }
     }
 }

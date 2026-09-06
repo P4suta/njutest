@@ -87,6 +87,7 @@ fn measure(fixture: &str, test: &str) -> Measured {
             offline: true,
             timeout: None,
             env: Vec::new(),
+            build: rust_mutants::cargo::BuildConfig::default(),
         },
     )
     .expect("build");

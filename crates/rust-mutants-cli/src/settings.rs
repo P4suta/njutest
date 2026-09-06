@@ -51,6 +51,18 @@ impl Settings {
             config.mutation.timeout =
                 rust_mutants::duration::parse(text).map_err(EngineError::from)?;
         }
+        replace(&mut config.build.features, &scope.features);
+        config.build.all_features |= scope.switches.all_features;
+        config.build.no_default_features |= scope.switches.no_default_features;
+        if let Some(target) = &scope.build_target {
+            config.build.target.clone_from(target);
+        }
+        if let Some(profile) = &scope.profile {
+            config.build.profile.clone_from(profile);
+        }
+        if let Some(jobs) = scope.build_jobs {
+            config.build.jobs = jobs;
+        }
         config.execution.offline |= scope.switches.offline;
         config.execution.locked |= scope.switches.locked;
         config.mutation.verify &= !scope.switches.no_verify;
@@ -115,6 +127,7 @@ impl Settings {
             build_timeout: self.config.mutation.build_timeout,
             mutant_timeout: Some(self.config.mutation.timeout),
             doctests: self.config.execution.doctests,
+            build: self.config.build.config(),
             skip_targets: self.config.execution.skip_targets.clone(),
             ..PrepareOptions::default()
         })

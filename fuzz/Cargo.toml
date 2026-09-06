@@ -83,6 +83,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "libtest_lines"
+path = "fuzz_targets/libtest_lines.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "libtest_summary"
 path = "fuzz_targets/libtest_summary.rs"
 test = false
