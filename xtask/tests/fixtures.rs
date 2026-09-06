@@ -32,6 +32,11 @@ fn good_fixture(dir: &Path) {
     );
     write(dir, "Cargo.lock", "# generated\nversion = 4\n");
     write(dir, "src/lib.rs", &format!("{RS_HEADER}pub fn f() {{}}\n"));
+    write(
+        dir,
+        "README.md",
+        "# fixture-simple\n\nWhat it is for.\n\n```fates\nsrc/lib.rs:2:1 gt-to-ge killed\n```\n",
+    );
 }
 
 #[test]
@@ -109,6 +114,7 @@ fn every_broken_convention_is_named() {
             "Cargo.toml needs an empty [workspace] table to stay independent of the root workspace",
             "Cargo.toml: dependency \"serde\" is not a path inside the fixture; fixtures build offline against no registry",
             "Cargo.toml: missing the SPDX header",
+            "README.md is missing (it is where a fixture says what it is for)",
             "src/lib.rs: missing the SPDX header",
         ]
     );
@@ -123,7 +129,23 @@ fn a_missing_manifest_is_reported_and_the_build_directory_is_ignored() {
         problems,
         [
             "Cargo.lock is missing (commit it: fixtures build with --locked --offline)",
-            "Cargo.toml is missing"
+            "Cargo.toml is missing",
+            "README.md is missing (it is where a fixture says what it is for)",
         ]
+    );
+}
+
+#[test]
+fn a_readme_that_states_no_fates_is_a_fixture_a_change_can_quietly_re_decide() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    good_fixture(dir.path());
+    write(dir.path(), "README.md", "# x\n\nWhat it is for.\n");
+    let problems = check_fixture(dir.path());
+    assert_eq!(problems.len(), 1, "{problems:?}");
+    assert!(
+        problems
+            .first()
+            .is_some_and(|problem| problem.contains("```fates")),
+        "{problems:?}"
     );
 }
