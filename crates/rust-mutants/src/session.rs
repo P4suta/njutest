@@ -499,8 +499,13 @@ fn built(
     if targets.is_empty() {
         return Err(EngineError::from(SessionError::NoTargets));
     }
+    let members: Vec<&crate::cargo::Package> = workspace
+        .metadata
+        .members()
+        .filter(|package| options.packages.is_empty() || options.packages.contains(&package.name))
+        .collect();
     targets.extend(execute::documentation_targets(
-        &workspace.metadata.packages,
+        &members,
         workspace.toolchain.cargo(),
         &documentation_arguments(workspace),
     ));
