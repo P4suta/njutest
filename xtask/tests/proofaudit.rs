@@ -151,9 +151,58 @@ fn run_directory(document: &serde_json::Value) -> tempfile::TempDir {
     directory
 }
 
+/// A route and an execution for each mutant of [`base`], with no proof removing anything.
+fn routes() -> Vec<serde_json::Value> {
+    let mut lines = Vec::new();
+    for (seq, (mutant, outcome)) in [(KILLED, "killed"), (SURVIVED, "survived")]
+        .into_iter()
+        .enumerate()
+    {
+        lines.push(serde_json::json!({
+            "seq": seq.saturating_mul(2).saturating_add(1), "timestamp": "2026-09-06T00:00:00Z", "elapsed_ms": 0,
+            "type": "route",
+            "route": {
+                "mutant": mutant, "granularity": "block", "fallback": null,
+                "reaching": ["t1"], "discharged": [], "file_candidates": 1, "reused": null
+            }
+        }));
+        lines.push(serde_json::json!({
+            "seq": seq.saturating_mul(2).saturating_add(2), "timestamp": "2026-09-06T00:00:01Z", "elapsed_ms": 1,
+            "type": "mutant-exec",
+            "mutant": {
+                "mutant": mutant, "target": "t1", "args": [], "outcome": outcome,
+                "duration_ms": 5
+            }
+        }));
+    }
+    lines
+}
+
 fn audited(document: &serde_json::Value) -> Audit {
     let directory = run_directory(document);
-    gates::proofaudit(directory.path()).expect("a recording this audit can read")
+    gates::proofaudit(directory.path(), None).expect("a recording this audit can read")
+}
+
+/// One recording of what a run routed and what it ran, as the trace holds it.
+fn recorded(lines: &[serde_json::Value]) -> tempfile::TempDir {
+    let directory = tempfile::tempdir().expect("a temporary directory");
+    let mut stream = String::new();
+    for line in lines {
+        stream.push_str(&line.to_string());
+        stream.push('\n');
+    }
+    std::fs::write(directory.path().join("trace.jsonl"), stream).expect("the recording");
+    directory
+}
+
+fn audited_with_routes(document: &serde_json::Value) -> Audit {
+    audited_with(document, &routes())
+}
+
+fn audited_with(document: &serde_json::Value, lines: &[serde_json::Value]) -> Audit {
+    let run = run_directory(document);
+    let trace = recorded(lines);
+    gates::proofaudit(run.path(), Some(trace.path())).expect("a recording this audit can read")
 }
 
 fn subjects(document: &serde_json::Value, standing: Standing) -> Vec<String> {
@@ -186,7 +235,7 @@ fn exit_code(directory: &Path) -> i32 {
 
 #[test]
 fn a_recording_that_agrees_with_itself_has_nothing_to_report() {
-    let audit = audited(&base());
+    let audit = audited_with_routes(&base());
     assert_eq!(audit.remarks, [], "{audit}");
     assert_eq!(audit.violations(), 0);
     assert_eq!(audit.exit_code(), 0);
@@ -194,7 +243,7 @@ fn a_recording_that_agrees_with_itself_has_nothing_to_report() {
 
 #[test]
 fn an_assurance_the_run_is_wide_enough_to_reach_has_nothing_to_report() {
-    let audit = audited(&assured());
+    let audit = audited_with_routes(&assured());
     assert_eq!(audit.remarks, [], "{audit}");
 }
 
@@ -227,6 +276,57 @@ fn columns_that_do_not_add_up_to_the_catalog_are_a_violation() {
         ))
         .contains(&"accounting.mutants".to_owned()),
         "every cataloged mutant was refused by the compiler, reached by nothing, or executed"
+    );
+}
+
+#[test]
+fn a_kill_by_a_target_a_proof_discharged_is_a_violation() {
+    let audit = audited_with(
+        &base(),
+        &[
+            serde_json::json!({
+                "seq": 1, "timestamp": "2026-09-06T00:00:00Z", "elapsed_ms": 0, "type": "route",
+                "route": {
+                    "mutant": KILLED, "granularity": "block", "fallback": null,
+                    "reaching": ["t1"],
+                    "discharged": [{ "target": "t2", "proof": "never-infected" }],
+                    "file_candidates": 2, "reused": null
+                }
+            }),
+            serde_json::json!({
+                "seq": 2, "timestamp": "2026-09-06T00:00:01Z", "elapsed_ms": 1, "type": "mutant-exec",
+                "mutant": {
+                    "mutant": KILLED, "target": "t2", "args": [], "outcome": "killed",
+                    "duration_ms": 5
+                }
+            }),
+        ],
+    );
+
+    let named: Vec<String> = audit
+        .remarks
+        .iter()
+        .filter(|remark| remark.layer == Layer::Proofs && remark.standing == Standing::Violated)
+        .map(|remark| remark.subject.clone())
+        .collect();
+    assert_eq!(
+        named,
+        [KILLED],
+        "a layer that would drop a target which then killed the mutant is unsound, and the \
+         recording is where that is caught: {audit}"
+    );
+}
+
+#[test]
+fn a_recording_of_no_routes_leaves_the_proofs_unaudited() {
+    let audit = audited(&base());
+
+    assert!(
+        audit
+            .remarks
+            .iter()
+            .any(|remark| remark.layer == Layer::Proofs && remark.standing == Standing::Unaudited),
+        "fail-closed is never turning what cannot be checked into what is fine: {audit}"
     );
 }
 
@@ -451,7 +551,7 @@ fn what_a_reused_disposition_rests_on_is_unaudited() {
 #[test]
 fn a_run_directory_with_no_report_in_it_cannot_be_audited() {
     let directory = tempfile::tempdir().expect("a temporary directory");
-    let error = gates::proofaudit(directory.path()).expect_err("nothing to re-decide");
+    let error = gates::proofaudit(directory.path(), None).expect_err("nothing to re-decide");
     assert!(matches!(error, AuditError::Unreadable { .. }), "{error}");
     assert!(error.to_string().contains(REPORT), "{error}");
 }
@@ -460,7 +560,7 @@ fn a_run_directory_with_no_report_in_it_cannot_be_audited() {
 fn a_report_that_is_not_json_cannot_be_audited() {
     let directory = tempfile::tempdir().expect("a temporary directory");
     std::fs::write(directory.path().join(REPORT), "not json").expect("the recording");
-    let error = gates::proofaudit(directory.path()).expect_err("nothing to re-decide");
+    let error = gates::proofaudit(directory.path(), None).expect_err("nothing to re-decide");
     assert!(matches!(error, AuditError::Unparsable { .. }), "{error}");
 }
 
@@ -468,13 +568,13 @@ fn a_report_that_is_not_json_cannot_be_audited() {
 fn a_document_of_another_schema_cannot_be_audited() {
     let document = with(serde_json::json!({ "schema": "mjutest-trace-v1" }));
     let directory = run_directory(&document);
-    let error = gates::proofaudit(directory.path()).expect_err("nothing to re-decide");
+    let error = gates::proofaudit(directory.path(), None).expect_err("nothing to re-decide");
     assert!(matches!(error, AuditError::Unrecognised { .. }), "{error}");
 }
 
 #[test]
 fn the_summary_line_says_what_was_re_decided_and_what_it_found() {
-    let rendered = audited(&base()).to_string();
+    let rendered = audited_with_routes(&base()).to_string();
     assert_eq!(
         rendered,
         format!("proofaudit: {RUN}: 2 mutants and 1 target re-decided; 0 violations, 0 unaudited")
@@ -483,7 +583,7 @@ fn the_summary_line_says_what_was_re_decided_and_what_it_found() {
 
 #[test]
 fn every_violation_is_a_line_of_its_own_before_the_summary() {
-    let rendered = audited(&with(serde_json::json!({ "findings": [] }))).to_string();
+    let rendered = audited_with_routes(&with(serde_json::json!({ "findings": [] }))).to_string();
     let mut lines = rendered.lines();
     let first = lines.next().unwrap_or_default();
     assert!(first.starts_with("violation: findings: "), "{rendered}");

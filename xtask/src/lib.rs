@@ -44,6 +44,9 @@ enum Gate {
     Proofaudit {
         /// The directory the run left its report in.
         run: std::path::PathBuf,
+        /// The directory the run left its recording in, which is what the proof layers are re-derived from.
+        #[arg(long)]
+        trace: Option<std::path::PathBuf>,
     },
     /// What changed between two stored assurance reports.
     ReportDiff {
@@ -86,7 +89,9 @@ where
         Gate::Deps => gates::deps(&root),
         Gate::Fixtures => gates::fixtures(&root),
         Gate::ReleaseCheck => gates::release_check(&root),
-        Gate::Proofaudit { run } => return audit_run(&run, stdout, stderr),
+        Gate::Proofaudit { run, trace } => {
+            return audit_run(&run, trace.as_deref(), stdout, stderr);
+        }
         Gate::ReportDiff { before, after } => gates::report_diff(&before, &after),
         Gate::Sbom { output } => gates::sbom(&root, output.as_deref()),
         Gate::All => gates::all(&root),
@@ -104,8 +109,13 @@ where
 }
 
 /// A recording that could not be read at all is neither a clean audit nor a failed one, so it leaves by an exit code of its own.
-fn audit_run(run: &std::path::Path, stdout: &mut dyn Write, stderr: &mut dyn Write) -> ExitCode {
-    match gates::proofaudit(run) {
+fn audit_run(
+    run: &std::path::Path,
+    trace: Option<&std::path::Path>,
+    stdout: &mut dyn Write,
+    stderr: &mut dyn Write,
+) -> ExitCode {
+    match gates::proofaudit(run, trace) {
         Ok(audit) => {
             let _written = writeln!(stdout, "{audit}");
             ExitCode::from(audit.exit_code())

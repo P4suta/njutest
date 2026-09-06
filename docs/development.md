@@ -50,8 +50,8 @@ write or an acceptance to record with a reason, never something to leave.
 The gates are also tests (`xtask/tests/gates.rs`), so `cargo test` refuses
 the same things.
 
-`cargo xtask proofaudit <run-directory>` stands apart from `all`, because it
-is about one completed run rather than about the tree. It reads that run's
+`cargo xtask proofaudit <run-directory> [--trace <recording>]` stands apart from
+`all`, because it is about one completed run rather than about the tree. It reads that run's
 `mjutest-assurance-report-v1.json` and decides again, with code that never
 calls the runner's, whether each verdict is the one the recorded evidence
 supports: whether the columns say what the records they summarise say and add
@@ -59,10 +59,14 @@ up the way the [assurance contract](assurance-contract.md) states, whether
 every kill names a target this run itself saw pass on the original tree,
 whether the mutations nothing noticed and the `surviving-mutant` findings are
 the same set, and whether every disposition read back from an earlier run
-names one a reader could go and read. This is
-[ADR 0004](adr/0004-proof-layers-not-budgets.md) decision 5, which ships a
-proof layer only against a re-implementation that is not asked whether it
-agrees with itself.
+names one a reader could go and read. Given the run's recording as well, it re-derives the one thing the proof layers
+can be held to from what a run wrote down: no target a proof removed from what
+could notice a mutation may then be the target that killed it. It reads the
+recording as lines of JSON rather than through the code that wrote them, and a
+run recorded without `--trace` leaves the layers `unaudited` rather than
+passed. This is [ADR 0004](adr/0004-proof-layers-not-budgets.md) decision 5,
+which ships a proof layer only against a re-implementation that is not asked
+whether it agrees with itself.
 
 Where the recording does not carry enough to decide something again — which
 survivors a reviewer accepted, what a reused disposition was routed under —

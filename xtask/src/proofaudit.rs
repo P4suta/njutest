@@ -3,6 +3,7 @@
 
 //! An independent re-decision of what a completed run recorded. [ADR 0004](../../../docs/adr/0004-proof-layers-not-budgets.md) ships a proof layer only against a re-implementation that never calls the runner's, so nothing here consults the code that wrote the report: every verdict is re-derived from the recording alone, and wherever the recording does not carry enough to re-derive one, that is said plainly rather than read as agreement.
 
+use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::fmt;
 
@@ -88,6 +89,8 @@ pub enum Layer {
     Findings,
     /// The earlier run a disposition was read back from.
     Reuse,
+    /// The layers that removed an execution, held to the kills the run recorded.
+    Proofs,
 }
 
 impl Layer {
@@ -99,6 +102,7 @@ impl Layer {
             Self::Killers => "killers",
             Self::Findings => "findings",
             Self::Reuse => "reuse",
+            Self::Proofs => "proofs",
         }
     }
 }
@@ -292,7 +296,7 @@ struct Equation<'a> {
 ///
 /// # Errors
 /// [`AuditError::Unparsable`] for a document that is not JSON, and [`AuditError::Unrecognised`] for one that is not the assurance report.
-pub fn audit(path: &str, text: &str) -> Result<Audit, AuditError> {
+pub fn audit(path: &str, text: &str, recorded: Option<&str>) -> Result<Audit, AuditError> {
     let document: serde_json::Value =
         serde_json::from_str(text).map_err(|source| AuditError::Unparsable {
             path: path.to_owned(),
@@ -322,6 +326,7 @@ pub fn audit(path: &str, text: &str) -> Result<Audit, AuditError> {
     killers(&recording, &mut audit);
     findings(&recording, &mut audit);
     reuse(&recording, &mut audit);
+    proofs(recorded, &mut audit);
     audit.remarks.sort();
     audit.remarks.dedup();
     Ok(audit)
@@ -369,6 +374,88 @@ impl MutantRow {
 struct FindingRow {
     kind: String,
     subject: String,
+}
+
+/// Whether any layer removed a target that then killed the mutation it removed.
+///
+/// [ADR 0004](../../../docs/adr/0004-proof-layers-not-budgets.md) decision 5
+/// ships a layer only against a re-implementation that is not asked whether it
+/// agrees with itself, and holds it to every kill the run proved: a layer that
+/// would drop one recorded killer is unsound. The recording of the routes and
+/// the executions is the only place that can be checked, and it is read here as
+/// lines of JSON rather than through the code that wrote it.
+///
+/// A run recorded without `--trace` leaves nothing to re-derive from, which is
+/// said rather than passed over: fail-closed is never turning "I cannot check
+/// this" into "this is fine".
+fn proofs(recorded: Option<&str>, audit: &mut Audit) {
+    let mut notes = Notes::on(audit, Layer::Proofs);
+    let Some(recorded) = recorded else {
+        notes.unaudited(
+            "route",
+            "the run kept no recording of how it routed, so which target each proof removed \
+             cannot be re-derived"
+                .to_owned(),
+        );
+        return;
+    };
+    let mut removed: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
+    let mut ran: Vec<(String, String, String)> = Vec::new();
+    for line in recorded.lines().filter(|line| !line.trim().is_empty()) {
+        let Ok(event) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        match field(&event, "type").unwrap_or_default().as_str() {
+            "route" => {
+                let Some(route) = event.get("route") else {
+                    continue;
+                };
+                let mutant = field(route, "mutant").unwrap_or_default();
+                let discharged = removed.entry(mutant).or_default();
+                for one in rows(route, "discharged") {
+                    discharged.insert(
+                        field(one, "target").unwrap_or_default(),
+                        field(one, "proof").unwrap_or_default(),
+                    );
+                }
+            }
+            "mutant-exec" => {
+                let Some(execution) = event.get("mutant") else {
+                    continue;
+                };
+                ran.push((
+                    field(execution, "mutant").unwrap_or_default(),
+                    field(execution, "target").unwrap_or_default(),
+                    field(execution, "outcome").unwrap_or_default(),
+                ));
+            }
+            _ => {}
+        }
+    }
+    if removed.is_empty() && ran.is_empty() {
+        notes.unaudited(
+            "route",
+            "the recording holds no routing decision and no mutation execution, so there is \
+             nothing to hold a layer to"
+                .to_owned(),
+        );
+        return;
+    }
+    for (mutant, target, outcome) in &ran {
+        if outcome != "killed" && outcome != "timed_out" {
+            continue;
+        }
+        let Some(proof) = removed.get(mutant).and_then(|one| one.get(target)) else {
+            continue;
+        };
+        notes.violated(
+            mutant,
+            format!(
+                "{proof} removed {target} from what could notice this mutation, and {target} \
+                 then {outcome} it; a layer that drops a target which finds a defect is unsound"
+            ),
+        );
+    }
 }
 
 #[derive(Debug)]

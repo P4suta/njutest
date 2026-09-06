@@ -291,7 +291,10 @@ pub fn all(root: &Path) -> Result<String, GateFailure> {
 ///
 /// # Errors
 /// A run directory whose report could not be read, is not JSON, or is not the assurance report.
-pub fn proofaudit(run: &Path) -> Result<proofaudit::Audit, proofaudit::AuditError> {
+pub fn proofaudit(
+    run: &Path,
+    trace: Option<&Path>,
+) -> Result<proofaudit::Audit, proofaudit::AuditError> {
     let path = run.join(proofaudit::REPORT_FILE);
     let label = path.display().to_string();
     let text =
@@ -299,7 +302,10 @@ pub fn proofaudit(run: &Path) -> Result<proofaudit::Audit, proofaudit::AuditErro
             path: label.clone(),
             source,
         })?;
-    proofaudit::audit(&label, &text)
+    let recorded = trace
+        .map(|directory| directory.join("trace.jsonl"))
+        .and_then(|path| std::fs::read_to_string(path).ok());
+    proofaudit::audit(&label, &text, recorded.as_deref())
 }
 
 /// What a release is made of, as a `CycloneDX` document.
