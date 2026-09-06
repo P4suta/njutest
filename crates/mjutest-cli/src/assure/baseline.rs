@@ -51,6 +51,14 @@ pub struct BaselineOptions {
     pub timeout: Option<Duration>,
     /// Arguments for the test binaries, after `--`.
     pub test_args: Vec<String>,
+    /// How many targets to measure at once. Zero takes the processors the machine offers, capped.
+    ///
+    /// A mutation's budget is derived from what the baseline measured, so the
+    /// two are measured the same way: a duration taken alone is not the one a
+    /// mutation running beside three others will take.
+    pub jobs: u32,
+    /// Whether a resource only one test may hold at a time forces the run to measure one target at a time.
+    pub exclusive: bool,
 }
 
 /// One target, and what became of it.
@@ -183,32 +191,81 @@ pub fn run_resuming(
         selected.extend(enumerate(unit, watch)?);
     }
     let total = u64::try_from(selected.len()).unwrap_or(u64::MAX);
-    for (index, target) in selected.into_iter().enumerate() {
+    let answers = crate::assure::schedule::measure(
+        &selected,
+        crate::assure::schedule::workers(
+            options.jobs,
+            crate::assure::schedule::available(),
+            options.exclusive,
+        ),
+        |_at, target| {
+            establish(
+                Measuring {
+                    tools: &tools,
+                    options,
+                    state: resume.state,
+                    watch,
+                },
+                target,
+            )
+        },
+    );
+
+    for (index, answer) in answers.into_iter().enumerate() {
+        let (measured, seen) = answer?;
         let done = u64::try_from(index).unwrap_or(u64::MAX).saturating_add(1);
         watch.trace.progress(ProgressRecord {
-            message: target.name(),
+            message: measured.target.name(),
             done: Some(done),
             total: Some(total),
         });
-        notes.progress(&target.name(), done, total);
-        if let Some(saved) = resume.state.and_then(|state| state.target(&target.id)) {
-            baseline.targets.push(Measured {
-                target,
-                status: saved.status,
-                duration_ms: saved.duration_ms,
-                message: saved.message.clone(),
-                covered: saved.coverage(),
-                restored: true,
-            });
-            continue;
-        }
-        let (measured, seen) = measure(&tools, &target, options, watch)?;
+        notes.progress(&measured.target.name(), done, total);
         baseline.instrumented.extend(seen);
         (resume.record)(&measured);
         baseline.targets.push(measured);
     }
     phase.end();
     Ok(baseline)
+}
+
+/// What one target is measured with, as one argument.
+#[derive(Clone, Copy)]
+struct Measuring<'a> {
+    tools: &'a Tools,
+    options: &'a BaselineOptions,
+    state: Option<&'a crate::checkpoint::State>,
+    watch: Watch<'a>,
+}
+
+/// What one target comes to, without committing anything the baseline will carry.
+///
+/// Workers call this at the same time as one another, so it reads what the run
+/// already holds and writes only into the files its own target names. The
+/// caller commits the answers in the order the targets were enumerated.
+fn establish(
+    measuring: Measuring<'_>,
+    target: &Target,
+) -> Result<(Measured, BTreeSet<Block>), RunnerError> {
+    let Measuring {
+        tools,
+        options,
+        state,
+        watch,
+    } = measuring;
+    if let Some(saved) = state.and_then(|state| state.target(&target.id)) {
+        return Ok((
+            Measured {
+                target: target.clone(),
+                status: saved.status,
+                duration_ms: saved.duration_ms,
+                message: saved.message.clone(),
+                covered: saved.coverage(),
+                restored: true,
+            },
+            BTreeSet::new(),
+        ));
+    }
+    measure(tools, target, options, watch)
 }
 
 /// Runs one target and reads what it reached, together with every region the export said the build instrumented — which is a fact about the binary rather than about this target, and the caller unions.
