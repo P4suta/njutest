@@ -29,7 +29,7 @@ pub use runtime::{
 };
 
 /// The text inserted before the innermost function holding a guard, so that a guard's own lint noise never trips a crate's deny policy anywhere else. It holds no line break.
-pub const ALLOW_ATTRIBUTE: &str = "#[allow(warnings, unused, unfulfilled_lint_expectations, clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery, clippy::cargo)] ";
+pub const ALLOW_ATTRIBUTE: &str = "#[allow(warnings, unused, unused_qualifications, unfulfilled_lint_expectations, clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery, clippy::cargo)] ";
 
 /// One mutant placed at its rewrite site.
 #[derive(Debug, Clone, PartialEq, Eq)]

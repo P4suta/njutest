@@ -18,3 +18,8 @@ module (`src/testutil.rs`) that only the test unit compiles.
 `FIXTURE_SIMPLE_PAUSE_MS` makes the unit test sleep that many milliseconds, so
 a test about interrupting a run can be sure the run is still running. Unset,
 it does nothing.
+
+The package denies `unused_qualifications`, which the generated runtime module
+and the guards must not trip. `#[allow(warnings)]` does not cover a lint a
+project has denied — `warnings` is the lints that are set to warn — so every
+such lint has to be named, and this fixture is what says so when one is not.
