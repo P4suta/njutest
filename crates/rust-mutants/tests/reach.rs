@@ -119,3 +119,46 @@ fn a_target_a_measurement_says_nothing_about_reaches_by_being_named() {
         route.reaching()
     );
 }
+
+#[test]
+fn what_an_execution_narrows_to_is_what_the_route_says_and_nothing_else() {
+    let mut reached = measured(&[("demo/lib/demo", 3)], &[("demo/lib/demo", &[3])]);
+    reached
+        .limitations
+        .push(format!("{UNMEASURED}:demo/test/parity"));
+    let route = Route::decide(&reached, Path::new("src/lib.rs"), at(3), &TARGETS, &[]);
+    assert_eq!(
+        route.narrowing(),
+        Some(vec![
+            "demo/lib/demo".to_owned(),
+            "demo/test/parity".to_owned()
+        ]),
+        "a target whose profile could not be read is one the measurement says nothing about,          and dropping it from what runs is a survivor nobody measured"
+    );
+
+    let nothing = Route::decide(
+        &Reached::default(),
+        Path::new("src/lib.rs"),
+        at(3),
+        &TARGETS,
+        &[],
+    );
+    assert_eq!(
+        nothing.narrowing(),
+        None,
+        "a route that is everything narrows nothing, which is what lets a run that measured          no coverage run every target it selected"
+    );
+
+    let unreached = Route::decide(
+        &measured(&[("demo/lib/demo", 3)], &[("demo/lib/demo", &[10])]),
+        Path::new("src/lib.rs"),
+        at(3),
+        &TARGETS,
+        &[],
+    );
+    assert_eq!(
+        unreached.narrowing(),
+        Some(Vec::new()),
+        "a mutation no measured target executes is one nothing runs"
+    );
+}

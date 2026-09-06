@@ -222,3 +222,60 @@ fn cancellation_leaves_every_unjudged_mutant_not_run_and_the_run_interrupted() {
         "the run delivered what it had measured before it was stopped"
     );
 }
+
+#[test]
+fn every_judged_mutant_leaves_one_route_record_from_the_engine() {
+    let fixture = Fixture::copy("fixture-simple");
+    let recorder = rust_mutants::testkit::trace::memory_recorder();
+    let workspace = Workspace::open(
+        fixture.root(),
+        OpenOptions {
+            cargo: Some(mjutest_devkit::paths::cargo_binary()),
+            temp_directory: fixture.temp().to_path_buf(),
+            env: std::env::vars_os().collect(),
+            locked: true,
+            offline: true,
+            trace: recorder.clone(),
+            ..OpenOptions::default()
+        },
+        &Cancel::new(),
+    )
+    .expect("open");
+    let session = workspace
+        .prepare(
+            &PrepareOptions {
+                tier: Tier::All,
+                ..PrepareOptions::default()
+            },
+            &Cancel::new(),
+        )
+        .expect("prepare");
+    let mut delivered = Delivered::default();
+    let finished = measured(&session, 4, &mut delivered);
+    session.close().expect("close");
+
+    let routes: Vec<rust_mutants::trace::Event> = recorder
+        .events()
+        .into_iter()
+        .filter(|event| event.payload.type_name() == "route")
+        .collect();
+    assert_eq!(
+        routes.len(),
+        finished.judged.len(),
+        "one record per judged mutant, whatever became of it"
+    );
+    let mut named: Vec<String> = routes
+        .iter()
+        .filter_map(|event| match &event.payload {
+            rust_mutants::trace::Payload::Route { route } => Some(route.mutant.clone()),
+            _ => None,
+        })
+        .collect();
+    named.sort();
+    named.dedup();
+    assert_eq!(
+        named.len(),
+        finished.judged.len(),
+        "and never two for one mutant, however many times it was executed"
+    );
+}

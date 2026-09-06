@@ -367,7 +367,7 @@ fn mutant(one: &crate::run::Judged, catalog: Option<MutantDocument>) -> RunMutan
         not_run_reason: one.not_run_reason.map(|reason| reason.name().to_owned()),
         route: one.route.clone(),
         expected: one.expected,
-        unreached: one.unreached,
+        unreached: one.not_run_reason == Some(crate::run::NotRunReason::Unreached),
         source_run_id: one.source_run_id.clone(),
     }
 }

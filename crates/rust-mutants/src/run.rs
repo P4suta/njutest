@@ -124,12 +124,12 @@ pub struct Judged {
     pub source_run_id: Option<String>,
     /// Whether a reviewer declared this outcome in advance and the run confirmed the claim.
     pub expected: bool,
-    /// Whether the coverage measurement proved no target reaches it, which is why it never ran.
-    pub unreached: bool,
     /// Why it was never executed, when it was not.
     pub not_run_reason: Option<NotRunReason>,
     /// Which targets could have noticed it, and which of them ran.
     pub route: Option<crate::report::run::RouteDocument>,
+    /// Whether this run measured it, rather than reusing what an earlier one established or never reaching it. A measurement records its own route.
+    pub measured: bool,
 }
 
 /// Whether a reviewer's claim about one mutant held.
@@ -314,7 +314,7 @@ impl Run {
                 _ => &mut tally.errored,
             };
             *slot = slot.saturating_add(1);
-            if one.unreached {
+            if one.not_run_reason == Some(NotRunReason::Unreached) {
                 tally.unreached = tally.unreached.saturating_add(1);
             }
             if one.expected {
@@ -347,7 +347,9 @@ impl Run {
                 Outcome::Survived if one.expected => continue,
                 Outcome::Survived => FindingKind::SurvivingMutant,
                 Outcome::Inconclusive => FindingKind::InconclusiveMutant,
-                Outcome::NotRun if one.unreached => FindingKind::UnreachedMutant,
+                Outcome::NotRun if one.not_run_reason == Some(NotRunReason::Unreached) => {
+                    FindingKind::UnreachedMutant
+                }
                 Outcome::NotRun if self.interrupted => continue,
                 Outcome::NotRun => FindingKind::NotRunMutant,
                 Outcome::Killed | Outcome::TimedOut => continue,
@@ -768,16 +770,19 @@ mod pool {
 /// mutant was never started.
 fn route(session: &Session, mutant: &Mutant, judged: &mut Judged) {
     let decided = session.route(mutant);
-    let ran = if judged.source_run_id.is_some() || judged.outcome == Outcome::NotRun {
+    let executed = if judged.source_run_id.is_some() || judged.outcome == Outcome::NotRun {
         Vec::new()
     } else {
         decided.executed(&judged.target, judged.outcome.detected())
     };
-    judged.route = Some(crate::report::run::route_document(&decided, ran.clone()));
-    if !session.trace().is_enabled() {
+    judged.route = Some(crate::report::run::route_document(
+        &decided,
+        executed.clone(),
+    ));
+    if !session.trace().is_enabled() || judged.measured {
         return;
     }
-    let mut record = decided.record(mutant, ran);
+    let mut record = decided.record(mutant, executed);
     record.reused.clone_from(&judged.source_run_id);
     session.trace().route(record);
 }
@@ -851,9 +856,9 @@ fn execute(
         signal: result.signal,
         retried: judgement.retried,
         expected: false,
-        unreached,
         not_run_reason: not_run_because(result.outcome, unreached),
         route: None,
+        measured: true,
         source_run_id: None,
     })
 }
@@ -892,9 +897,9 @@ fn reuse(mutant: &Mutant, options: &Options<'_>) -> Option<Judged> {
         signal: None,
         retried: false,
         expected: false,
-        unreached: false,
         not_run_reason: None,
         route: None,
+        measured: false,
         source_run_id: Some(record.run_id),
     })
 }
@@ -938,9 +943,9 @@ fn unexecuted(mutant: &Mutant, reason: NotRunReason) -> Judged {
         signal: None,
         retried: false,
         expected: false,
-        unreached: false,
         not_run_reason: Some(reason),
         route: None,
+        measured: false,
         source_run_id: None,
     }
 }

@@ -29,7 +29,7 @@ fn judged(index: u32, outcome: Outcome) -> Judged {
         route: None,
         retried: false,
         expected: false,
-        unreached: false,
+        measured: true,
         source_run_id: None,
     }
 }

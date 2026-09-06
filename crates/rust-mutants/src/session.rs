@@ -315,6 +315,20 @@ impl Route {
         }
     }
 
+    /// The targets an execution of this route runs, or nothing when the route removes none.
+    ///
+    /// This is the one place a narrowing is decided. An execution that
+    /// narrowed by anything else would run fewer targets than the route says,
+    /// and a survivor it reported would be one nobody measured.
+    #[must_use]
+    pub fn narrowing(&self) -> Option<Vec<String>> {
+        match self {
+            Self::All { .. } => None,
+            Self::Block { reaching, .. } => Some(reaching.clone()),
+            Self::Discharged { .. } | Self::Unreached => Some(Vec::new()),
+        }
+    }
+
     /// The targets a proof removed, each with the proof's name.
     #[must_use]
     pub fn discharged(&self) -> &[Discharge] {
@@ -518,23 +532,14 @@ impl Session {
         self.covering(mutant).map(|targets| !targets.is_empty())
     }
 
-    /// The targets whose measured run covered this mutant, in identity order, or nothing when the measurement never instrumented the place.
-    fn covering(&self, mutant: &Mutant) -> Option<Vec<&str>> {
-        if !self.reached.measured() {
-            return None;
-        }
-        let position = self.position(mutant)?;
-        let mut covering = self.reached.covering(
-            std::path::Path::new(&mutant.candidate.path),
-            crate::coverage::Point {
-                line: position.line,
-                column: position.byte_column,
-            },
-        )?;
-        covering.extend(self.documenting(mutant));
-        covering.sort_unstable();
-        covering.dedup();
-        Some(covering)
+    /// The targets an execution of this mutant runs, or nothing when nothing narrows it.
+    ///
+    /// It is [`Route::narrowing`] of [`Session::route`] and nothing else: a
+    /// narrowing decided anywhere else would run fewer targets than the route
+    /// a report and a recording show, and a survivor it reported would be one
+    /// nobody measured.
+    fn covering(&self, mutant: &Mutant) -> Option<Vec<String>> {
+        self.route(mutant).narrowing()
     }
 
     /// The documentation targets a mutation is routed to, which is by the file it is in.
@@ -696,28 +701,42 @@ impl Session {
         quiet: &crate::run::Quiet,
         cancel: &Cancel,
     ) -> Result<Judgement, EngineError> {
+        let mutant = self.resolve(&request.mutant)?;
+        let route = self.route(mutant);
         let first = quiet.shared(|| self.execute(request, false, cancel))?;
         let (timeout, timeout_source) = self.timeout_for(request, &first.target);
-        if first.outcome != crate::outcome::Outcome::TimedOut || cancel.is_cancelled() {
-            return Ok(Judgement {
-                result: first.clone(),
-                attempts: vec![first],
-                retried: false,
-                timeout,
-                timeout_source,
-            });
-        }
-        let mut again = quiet.alone(|| self.execute(request, true, cancel))?;
-        if again.outcome != crate::outcome::Outcome::TimedOut && !again.outcome.detected() {
-            again.outcome = crate::outcome::Outcome::Inconclusive;
-        }
-        Ok(Judgement {
-            result: again.clone(),
-            attempts: vec![first, again],
-            retried: true,
-            timeout,
-            timeout_source,
-        })
+        let judgement =
+            if first.outcome != crate::outcome::Outcome::TimedOut || cancel.is_cancelled() {
+                Judgement {
+                    result: first.clone(),
+                    attempts: vec![first],
+                    retried: false,
+                    timeout,
+                    timeout_source,
+                    route,
+                }
+            } else {
+                let mut again = quiet.alone(|| self.execute(request, true, cancel))?;
+                if again.outcome != crate::outcome::Outcome::TimedOut && !again.outcome.detected() {
+                    again.outcome = crate::outcome::Outcome::Inconclusive;
+                }
+                Judgement {
+                    result: again.clone(),
+                    attempts: vec![first, again],
+                    retried: true,
+                    timeout,
+                    timeout_source,
+                    route,
+                }
+            };
+        self.workspace.trace.route(judgement.route.record(
+            mutant,
+            judgement.route.executed(
+                &judgement.result.target,
+                judgement.result.outcome.detected(),
+            ),
+        ));
+        Ok(judgement)
     }
 
     fn execute(
@@ -737,7 +756,7 @@ impl Session {
             Some(covering) => {
                 let routed: Vec<&TestTarget> = targets
                     .into_iter()
-                    .filter(|target| covering.contains(&target.id.as_str()))
+                    .filter(|target| covering.iter().any(|one| one == &target.id))
                     .collect();
                 if routed.is_empty() {
                     return Ok(unreached());
@@ -981,6 +1000,8 @@ pub struct Judgement {
     pub timeout: Duration,
     /// Where that budget came from.
     pub timeout_source: TimeoutSource,
+    /// Which targets could have noticed the mutation, and what removed the ones that could not.
+    pub route: Route,
 }
 
 impl Judgement {

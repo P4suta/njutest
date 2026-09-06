@@ -127,6 +127,12 @@ by increasing granularity finds the mutants that interact rather than
 condemning everything that was live. Those rows have `isolated: false` and say
 which other mutants they were refused with.
 
+**A target the coverage measurement could not read is run.** The route always
+said so; the execution narrowed by the measurement alone and dropped it, so a
+mutation only that target could have noticed was reported as surviving without
+anything having measured it. Both now come from `Route::narrowing`. Runs on
+trees where every profile was readable are unaffected.
+
 **A run measures four mutants at once.** `[execution] jobs` and `--jobs`/`-j`
 say how many; zero, the default, is as many as the machine has capped at four.
 Results are delivered as they finish rather than in catalog order, so the

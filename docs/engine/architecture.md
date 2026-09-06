@@ -351,8 +351,16 @@ would all wait on it. The report is put back into catalog order when it is
 written, because that is the order a reader compares two runs in. A run that
 is cancelled leaves every mutant it never claimed as not run, `interrupted`.
 
+`Route::narrowing` is the one place a narrowing is decided, and both the route
+a report shows and the targets an execution runs come from it. An execution
+that narrowed by anything else would run fewer targets than the route says,
+and a survivor it reported would be one nobody measured — which is what
+happened to a target whose profile the measurement could not read: the route
+kept it and the execution dropped it.
+
 A mutant that was never executed says why: `unreached`, `discharged`, or
-`interrupted`. Its row also carries the route — which targets could have
+`interrupted`. A process the runner never got a status from is `interrupted`,
+not a mutation no test can notice. Its row also carries the route — which targets could have
 noticed it, which a proof removed, and which of them ran — so a reader can see
 a proof layer remove work without a recording.
 
