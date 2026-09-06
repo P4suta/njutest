@@ -102,11 +102,13 @@ pub enum SkipReason {
     ProcMacroCrate,
     /// A file of a `#![no_std]` crate.
     NoStdCrate,
+    /// A file another file pastes in at expression position, which is a fragment rather than a program.
+    IncludedExpression,
 }
 
 impl SkipReason {
     /// Every reason, in rank order.
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::ConstContext,
         Self::MacroInvocation,
         Self::CfgAttribute,
@@ -116,6 +118,7 @@ impl SkipReason {
         Self::TestOnlyFile,
         Self::ProcMacroCrate,
         Self::NoStdCrate,
+        Self::IncludedExpression,
     ];
 
     /// The kebab-case name used in reports and on the command line.
@@ -131,6 +134,7 @@ impl SkipReason {
             Self::TestOnlyFile => "test-only-file",
             Self::ProcMacroCrate => "proc-macro-crate",
             Self::NoStdCrate => "no-std-crate",
+            Self::IncludedExpression => "included-expression",
         }
     }
 
@@ -162,6 +166,9 @@ impl SkipReason {
             }
             Self::NoStdCrate => {
                 "the crate is #![no_std], and the v1 runtime needs std for the environment and the process exit"
+            }
+            Self::IncludedExpression => {
+                "another file pastes this one in where an expression goes, so it is a fragment rather than a program: it cannot carry a runtime module and there is nothing to parse it as"
             }
         }
     }
@@ -214,6 +221,22 @@ pub struct FileDiscovery {
     pub decisions: Vec<Decision>,
     /// Whether the file carries `#![no_std]`.
     pub no_std: bool,
+    /// Every file this one pastes in with `include!`, in source order.
+    pub includes: Vec<Include>,
+}
+
+/// One file another file pastes in with `include!`.
+///
+/// The path is resolved against the directory of the file that includes it,
+/// which is what `include!` itself does, and only when the argument is a single
+/// string literal: an argument built out of `concat!` and `env!` names a file
+/// this run cannot know, and a file it cannot name it says nothing about.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Include {
+    /// The workspace-relative path of the included file, with forward slashes.
+    pub path: String,
+    /// Whether the paste happens where items go rather than where an expression goes.
+    pub at_item: bool,
 }
 
 impl FileDiscovery {
@@ -363,7 +386,7 @@ pub fn discover_file(
     };
     let mut walker = walk::Walker::new(input, selection, &index);
     let no_std = walker.walk_file(&file);
-    let (mut candidates, skips, mut decisions) = walker.finish();
+    let (mut candidates, skips, mut decisions, includes) = walker.finish();
 
     let position = |name: &str| selection.registry().position(name).unwrap_or(usize::MAX);
     candidates.sort_by_key(|found| {
@@ -376,6 +399,7 @@ pub fn discover_file(
     let skips = tally(path, skips);
     Ok(FileDiscovery {
         path: path.to_owned(),
+        includes,
         source_digest,
         candidates,
         skips,
@@ -407,4 +431,24 @@ fn strip_prefix(text: &str) -> (u32, &str) {
     }
     let base = text.len().saturating_sub(rest.len());
     (u32::try_from(base).unwrap_or(u32::MAX), rest)
+}
+
+/// The workspace-relative path of `literal` read from beside `including`, with forward slashes, when it stays inside the tree.
+pub(super) fn beside(including: &str, literal: &str) -> Option<String> {
+    let directory = std::path::Path::new(including).parent()?;
+    let mut segments: Vec<&str> = directory
+        .to_str()?
+        .split('/')
+        .filter(|part| !part.is_empty())
+        .collect();
+    for part in literal.split(['/', '\\']) {
+        match part {
+            "" | "." => {}
+            ".." => {
+                segments.pop()?;
+            }
+            other => segments.push(other),
+        }
+    }
+    Some(segments.join("/"))
 }

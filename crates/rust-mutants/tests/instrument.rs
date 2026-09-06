@@ -16,7 +16,7 @@ use std::path::PathBuf;
 use rust_mutants::catalog::{Builder, Catalog};
 use rust_mutants::instrument::{
     ACTIVE_ENV, CATALOG_ENV, InstrumentErrorKind, MODULE_STEM, RUNTIME_MARKER, STALE_CATALOG_EXIT,
-    instrument_file, plan_file,
+    instrument_file, module_name, plan_file,
 };
 use rust_mutants::rule::{Registry, Tier};
 use rust_mutants::splice::count_lines;
@@ -24,10 +24,15 @@ use rust_mutants::syntax::{Selection, discover_file};
 
 static REGISTRY: Registry = Registry::canonical();
 
-/// Discovers, catalogs, and instruments one source, returning the text.
+/// Discovers, catalogs, and instruments one source, returning the text with the file's own runtime module named `__rm`.
+///
+/// Every file's module carries the digest of its path so that two files
+/// pasted into one scope by `include!` do not define the same item twice.
+/// What each case here is about is the shape of the guards rather than which
+/// eight hex characters this path came to, so the name is put back to its stem.
 fn instrument(source: &str) -> String {
     let (text, _) = instrument_with_catalog(source);
-    text
+    text.replace(&module_name("src/lib.rs", source), MODULE_STEM)
 }
 
 fn instrument_with_catalog(source: &str) -> (String, Catalog) {
@@ -227,14 +232,37 @@ fn the_innermost_function_carries_the_allow_and_carries_it_once() {
 
 #[test]
 fn a_file_that_already_spells_the_module_name_gets_the_next_one() {
-    let text = instrument(
-        "mod __rm {\n    pub fn helper() -> i32 { 1 }\n}\n\npub fn f() -> i32 {\n    __rm::helper() + 1\n}\n",
+    let taken = module_name("src/lib.rs", "");
+    let source = format!(
+        "mod {taken} {{\n    pub fn helper() -> i32 {{ 1 }}\n}}\n\npub fn f() -> i32 {{\n    {taken}::helper() + 1\n}}\n"
     );
-    assert!(text.contains("__rm1::active("), "{text}");
-    assert!(text.contains("mod __rm1 {"), "{text}");
+
+    let (text, _) = instrument_with_catalog(&source);
+
+    assert!(text.contains(&format!("{taken}1::active(")), "{text}");
+    assert!(text.contains(&format!("mod {taken}1 {{")), "{text}");
     assert!(
-        text.contains("__rm::helper()"),
+        text.contains(&format!("{taken}::helper()")),
         "the file's own name is untouched: {text}"
+    );
+}
+
+#[test]
+fn each_file_names_its_runtime_module_after_its_own_path() {
+    let one = module_name("src/lib.rs", "");
+    let other = module_name("src/items.rs", "");
+
+    assert!(one.starts_with(&format!("{MODULE_STEM}_")), "{one}");
+    assert_ne!(
+        one, other,
+        "`include!` at item position pastes one file's items into another's module, and two \
+         modules of the same name in one scope are the same item defined twice: every mutant \
+         of both files would then come back refused by an error that names neither"
+    );
+    assert_eq!(
+        one,
+        module_name("src/lib.rs", ""),
+        "and it is a function of the path"
     );
 }
 

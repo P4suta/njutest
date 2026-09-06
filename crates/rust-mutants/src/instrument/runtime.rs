@@ -52,16 +52,28 @@ pub const RUNTIME_MARKER: &str = "rust-mutants-runtime-v1";
 /// read yet", so a catalog index must stay below both.
 pub(super) const LOWEST_SENTINEL: u32 = u32::MAX - 1;
 
-/// The name the generated module can take in `text`: [`MODULE_STEM`], or
-/// that stem with the lowest free number appended.
+/// The name the generated module can take in `text`: [`MODULE_STEM`] with
+/// `path`'s digest appended, or that with the lowest free number after it.
 ///
-/// The file's own identifiers are what it dodges. A name the file spells
-/// anywhere — a module of its own, a variable, a macro — would be shadowed
-/// by or would shadow the generated one, and the guards would then call
-/// something else entirely.
+/// Two things are being dodged. The file's own identifiers, because a name the
+/// file spells anywhere — a module of its own, a variable, a macro — would be
+/// shadowed by or would shadow the generated one, and the guards would then
+/// call something else entirely. And the other files' modules: `include!` at
+/// item position pastes one file's items into another's module, so two files
+/// that both called their module `__rm` would define it twice in one scope,
+/// and every mutant of both files would come back refused by a compiler error
+/// that names none of them. The path is what tells them apart, so the name
+/// carries its digest.
 #[must_use]
-pub fn module_name(text: &str) -> String {
-    module_named(text, MODULE_STEM)
+pub fn module_name(path: &str, text: &str) -> String {
+    module_named(text, &format!("{MODULE_STEM}_{}", short_digest(path)))
+}
+
+/// The first eight hex characters of the path's SHA-256, which is what makes one file's runtime module a different item from another's.
+fn short_digest(path: &str) -> String {
+    use sha2::Digest;
+    let full = hex::encode(sha2::Sha256::digest(path.as_bytes()));
+    full.get(..8).unwrap_or(&full).to_owned()
 }
 
 /// [`module_name`] for a module of another stem, so the witness tree can have one of its own without either shadowing the other.

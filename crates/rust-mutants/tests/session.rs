@@ -486,7 +486,11 @@ fn the_trace_says_what_every_phase_did() {
                 "{} moved a line",
                 instrument.path
             );
-            assert_eq!(instrument.module, "__rm");
+            assert!(
+                instrument.module.starts_with("__rm_"),
+                "every file's runtime module is named after its own path: {}",
+                instrument.module
+            );
         }
     }
 

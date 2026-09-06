@@ -1,0 +1,24 @@
+<!--
+SPDX-FileCopyrightText: 2026 mjutest contributors
+SPDX-License-Identifier: MIT OR Apache-2.0
+-->
+
+# fixture-include
+
+A library assembled out of three files, two of which no `mod` declares:
+`include!` pastes one where items go and one where an expression goes.
+
+| File | How it is pasted | Fate |
+| --- | --- | --- |
+| `src/lib.rs` | it is the library | `return-default` on `total` is killed; the `const` initializer is a `const-context` skip and the `include!` in it a `macro-invocation` skip |
+| `src/items.rs` | at item position | `return-true` on `over` is killed; `gt-to-ge` survives, because `n >= 10` and `n > 10` differ only at ten and no test passes ten |
+| `src/table.rs` | at expression position | `included-expression`: it is a fragment rather than a program, so nothing parses it and nothing appends a runtime module to it |
+
+This fixture exists because both halves used to be wrong, and both were
+wrong quietly. A file pasted in at expression position does not parse as a
+set of items, and discovery stopped the whole run with a syntax error over a
+project the compiler is perfectly happy with. A file pasted in at item
+position brought its runtime module into the includer's scope, where the
+includer's module of the same name already was, and every mutant of both
+files came back `compile-rejected` — the tool's own breakage, reported as
+the compiler's judgement about the user's code.

@@ -3,7 +3,7 @@
 
 //! Discovery over a whole workspace: which files are mutable, which are passed over as a whole and why, and the catalog that results.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use crate::cargo::{Metadata, Package, Target, Unit};
@@ -183,8 +183,23 @@ pub fn discover(
     let mut candidates = Vec::new();
     let mut skips = Vec::new();
     let mut builder = Builder::new();
-    for (path, assignment) in &assignments {
-        let discovery = walk(root, path, &options.selection)?;
+    let read: Vec<(&String, Result<FileDiscovery, DiscoverError>)> = assignments
+        .keys()
+        .map(|path| (path, walk(root, path, &options.selection)))
+        .collect();
+    let fragments = pasted_in(&read);
+    for ((path, discovery), assignment) in read.into_iter().zip(assignments.values()) {
+        let discovery = match discovery {
+            Ok(discovery) => discovery,
+            Err(error) if fragments.contains(path.as_str()) => {
+                let report = fragment(path, &assignment.package);
+                skips.extend(report.skips.iter().cloned());
+                files.push(report);
+                drop(error);
+                continue;
+            }
+            Err(error) => return Err(error),
+        };
         let role = match assignment.role {
             Role::Mutable if !selected_by_patterns(path, options) => Some(SkipReason::Excluded),
             Role::Mutable => None,
@@ -214,6 +229,36 @@ pub fn discover(
         skips,
         catalog,
     })
+}
+
+/// Every file another file pastes in where an expression goes.
+///
+/// Such a file is a fragment of one program rather than a program, so nothing
+/// parses it on its own and nothing can append a runtime module to it. Reading
+/// its unparsability as a defect in the tree would refuse to measure a project
+/// the compiler is perfectly happy with.
+fn pasted_in(read: &[(&String, Result<FileDiscovery, DiscoverError>)]) -> BTreeSet<String> {
+    read.iter()
+        .filter_map(|(_, discovery)| discovery.as_ref().ok())
+        .flat_map(|discovery| discovery.includes.iter())
+        .filter(|include| !include.at_item)
+        .map(|include| include.path.clone())
+        .collect()
+}
+
+/// The report of a file that is a fragment: no candidate, one skip, and the reason said out loud.
+fn fragment(path: &str, package: &str) -> FileReport {
+    FileReport {
+        path: path.to_owned(),
+        package: package.to_owned(),
+        candidates: 0,
+        skips: vec![Skip {
+            path: path.to_owned(),
+            reason: SkipReason::IncludedExpression,
+            count: 1,
+        }],
+        whole_file: Some(SkipReason::IncludedExpression),
+    }
 }
 
 /// The members to discover in: every member, or the named ones.

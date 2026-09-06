@@ -160,7 +160,7 @@ fn a_witnessed_tree_is_put_back_before_anything_is_instrumented() {
         "the witness tree is taken out before anything is instrumented"
     );
     assert!(
-        instrumented.contains("__rm::active("),
+        instrumented.contains("::active("),
         "and what is left is the instrumented tree"
     );
     session.close().expect("the session closes");

@@ -3,6 +3,7 @@
 /.mjutest/
 /reports/
 /fuzz/target/
+fixtures/*/target/
 /fuzz/corpus/
 /fuzz/artifacts/
 /mutants.out*/

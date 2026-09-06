@@ -416,3 +416,30 @@ fn the_check_records_an_exec_event_and_keeps_the_messages() {
         "{execs:?}"
     );
 }
+
+#[test]
+fn a_file_pasted_in_where_an_expression_goes_is_a_skip_and_not_the_end_of_the_run() {
+    let prepared = prepare("fixture-include");
+    let discovery = run(&prepared, &options(), &Recorder::disabled());
+
+    assert_eq!(
+        table(&discovery),
+        [
+            row("src/items.rs", "fixture-include", 2, ""),
+            row(
+                "src/lib.rs",
+                "fixture-include",
+                3,
+                "const-context:1 macro-invocation:1"
+            ),
+            row(
+                "src/table.rs",
+                "fixture-include",
+                0,
+                "included-expression:1"
+            ),
+        ],
+        "a fragment is a place that was not mutated, and a project the compiler is happy \
+         with is not one this engine refuses to look at"
+    );
+}

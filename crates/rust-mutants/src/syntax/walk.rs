@@ -19,7 +19,7 @@ use super::rules::{
     is_compound_assignment, is_connective, is_default_spelling, is_not, is_ok_default,
     is_some_default, is_true_literal, method_swap, unary_removal,
 };
-use super::{Decision, Form, Found, Selection, SiteHint, SkipReason};
+use super::{Decision, Form, Found, Include, Selection, SiteHint, SkipReason, beside};
 use crate::catalog::Candidate;
 use crate::probe::form::Question;
 use crate::span::Span;
@@ -159,6 +159,7 @@ pub(super) struct Walker<'a> {
     mod_depth: u32,
     /// What a proof would rest on for each `if` or `while` condition being walked, innermost last.
     gates: Vec<Option<branch::Prepared>>,
+    includes: Vec<Include>,
 }
 
 impl<'a> Walker<'a> {
@@ -181,12 +182,34 @@ impl<'a> Walker<'a> {
             frames: Vec::new(),
             mod_depth: 0,
             gates: Vec::new(),
+            includes: Vec::new(),
         }
     }
 
     /// The results, unsorted.
-    pub(super) fn finish(self) -> (Vec<Found>, BTreeMap<SkipReason, u32>, Vec<Decision>) {
-        (self.found, self.skips, self.decisions)
+    pub(super) fn finish(
+        self,
+    ) -> (
+        Vec<Found>,
+        BTreeMap<SkipReason, u32>,
+        Vec<Decision>,
+        Vec<Include>,
+    ) {
+        (self.found, self.skips, self.decisions, self.includes)
+    }
+
+    /// Records an `include!`, when its argument names a file this run can name.
+    fn record_include(&mut self, mac: &Macro, at_item: bool) -> bool {
+        if !mac.path.is_ident("include") {
+            return false;
+        }
+        let Ok(literal) = syn::parse2::<syn::LitStr>(mac.tokens.clone()) else {
+            return true;
+        };
+        if let Some(path) = beside(self.path, &literal.value()) {
+            self.includes.push(Include { path, at_item });
+        }
+        true
     }
 
     /// Walks a file and reports whether it carries `#![no_std]`.
@@ -304,6 +327,7 @@ impl<'a> Walker<'a> {
 
     /// A macro invocation in expression or statement position: the arguments of an assertion, or one skip.
     fn macro_expr(&mut self, mac: &Macro) {
+        let _included = self.record_include(mac, false);
         if !self.walk_assertion(mac) {
             self.macro_site(mac);
         }
@@ -342,6 +366,12 @@ impl<'a> Walker<'a> {
             self.walk_expr(expr, Ctx::new(kind, None));
         }
         true
+    }
+
+    /// An item-position macro invocation, which is where `include!` pastes items.
+    fn macro_item(&mut self, mac: &Macro) {
+        let _included = self.record_include(mac, true);
+        self.macro_site(mac);
     }
 
     /// A macro invocation: one skip, under the outer reason if there is one.
@@ -424,7 +454,7 @@ impl<'a> Walker<'a> {
                     }
                 }
             }
-            Item::Macro(m) if !m.mac.path.is_ident("macro_rules") => self.macro_site(&m.mac),
+            Item::Macro(m) if !m.mac.path.is_ident("macro_rules") => self.macro_item(&m.mac),
             _ => {}
         }
     }
