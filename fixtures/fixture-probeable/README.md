@@ -29,3 +29,24 @@ answers about less than a test can see makes the probe say nothing happened
 while a test watches the difference. The probe is stated only for the types
 whose equality is the whole of what a program can tell apart, and this fixture
 is where a type outside that set is held to being refused.
+
+## Fates
+
+What one run of this fixture establishes for every mutation of it, and
+for every candidate the compiler refused. The run is `rust-mutants run
+--tier all --offline --locked`;
+`cargo test -p rust-mutants-cli --test toolchain_fates` does it again and
+refuses a difference, and `UPDATE_FATES=1` rewrites the block below.
+
+```fates
+src/lib.rs:8:5 return-default killed
+src/lib.rs:13:5 return-default killed
+src/lib.rs:13:7 mul-to-div killed
+src/lib.rs:18:5 return-default survived
+src/lib.rs:23:5 return-default killed
+src/lib.rs:37:9 return-default survived
+src/lib.rs:46:9 return-true survived
+src/lib.rs:46:21 eq-to-neq survived
+src/lib.rs:52:5 return-default killed
+src/lib.rs:63:5 return-default survived
+```

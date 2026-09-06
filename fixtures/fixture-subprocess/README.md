@@ -18,3 +18,17 @@ processes wrote, and a profile is only readable against the binary that wrote
 it. A run that reads a target's profiles against that target's own executable
 alone loses everything its children did, and then reports code the tests do
 execute as code nothing reaches.
+
+## Fates
+
+What one run of this fixture establishes for every mutation of it, and
+for every candidate the compiler refused. The run is `rust-mutants run
+--tier all --offline --locked`;
+`cargo test -p rust-mutants-cli --test toolchain_fates` does it again and
+refuses a difference, and `UPDATE_FATES=1` rewrites the block below.
+
+```fates
+src/lib.rs:8:5 return-default killed
+src/lib.rs:8:8 negate-condition killed
+src/lib.rs:8:10 gt-to-ge survived
+```

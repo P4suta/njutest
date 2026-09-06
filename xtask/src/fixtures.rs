@@ -10,8 +10,12 @@ use walkdir::WalkDir;
 /// The rule, for the failure message.
 pub const RULE: &str = "A fixture is an independent cargo project: its Cargo.toml carries a \
     [workspace] table so cargo does not look upwards, its Cargo.lock is committed, its only \
-    dependencies are paths inside itself (fixtures build offline against no registry), and every \
-    .rs and Cargo.toml starts with the SPDX header. See fixtures/README.md.";
+    dependencies are paths inside itself (fixtures build offline against no registry), every \
+    .rs and Cargo.toml starts with the SPDX header, and its README.md states what a run of it \
+    establishes in a ```fates block. See fixtures/README.md.";
+
+/// The fence that opens the block of a README stating what a run of the fixture establishes.
+pub const FATES_FENCE: &str = "```fates";
 
 const SPDX_HEADER: [&str; 2] = [
     "SPDX-FileCopyrightText: 2026 mjutest contributors",
@@ -32,6 +36,7 @@ pub fn check_fixture(dir: &Path) -> Vec<String> {
             "Cargo.lock is missing (commit it: fixtures build with --locked --offline)".to_owned(),
         );
     }
+    problems.extend(check_readme(dir));
     for entry in WalkDir::new(dir)
         .sort_by_file_name()
         .into_iter()
@@ -60,6 +65,20 @@ pub fn check_fixture(dir: &Path) -> Vec<String> {
     }
     problems.sort();
     problems
+}
+
+/// The README, and the ledger of fates a fixture with mutable code has to keep.
+fn check_readme(dir: &Path) -> Vec<String> {
+    let Ok(readme) = std::fs::read_to_string(dir.join("README.md")) else {
+        return vec!["README.md is missing (it is where a fixture says what it is for)".to_owned()];
+    };
+    if readme.contains(FATES_FENCE) {
+        return Vec::new();
+    }
+    vec![format!(
+        "README.md has no {FATES_FENCE} block; a fixture whose fates nothing states is one a \
+         change can quietly re-decide"
+    )]
 }
 
 fn has_spdx_header(text: &str) -> bool {

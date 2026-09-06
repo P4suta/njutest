@@ -14,6 +14,13 @@ enforced by `cargo xtask fixtures`:
   repository.
 - Fast: baselines are measured, and derived timeouts scale with the slowest
   run.
-- A fixture's `README.md` states what it is for and, where the fixture exists
-  to have a known fate under mutation, a table of every mutant and its
-  expected outcome. That table is documentation and test data at once.
+- A fixture's `README.md` states what it is for, in prose, and ends with a
+  ```` ```fates ```` block: one line per mutation and per refused candidate,
+  as `path:line:column rule outcome`. The rest of the fence line is the
+  arguments the run takes beyond `--tier all --offline --locked`, so a fixture
+  that exists for a proof layer says which layer. The block is documentation
+  and test data at once: `cargo test -p rust-mutants-cli --test
+  toolchain_fates` runs every fixture and refuses a difference, and
+  `UPDATE_FATES=1` rewrites the blocks so the diff is the review.
+- Every fixture is named by at least one test. A fixture nothing drives is one
+  nothing keeps honest, and the same suite refuses it.

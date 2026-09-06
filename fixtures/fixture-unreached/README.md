@@ -18,3 +18,18 @@ it is a gap in the tests exactly as nothing noticed it is.
 This fixture exists because nothing else in the suite has an unreached
 mutation, so the `unreached` column, the finding it raises, and the acceptance
 that answers for it were carried by tests that returned early.
+
+## Fates
+
+What one run of this fixture establishes for every mutation of it, and
+for every candidate the compiler refused. The run is `rust-mutants run
+--tier all --offline --locked --coverage`;
+`cargo test -p rust-mutants-cli --test toolchain_fates` does it again and
+refuses a difference, and `UPDATE_FATES=1` rewrites the block below.
+
+```fates --coverage
+src/lib.rs:8:5 return-default killed
+src/lib.rs:8:7 mul-to-div killed
+src/lib.rs:13:5 return-default unreached
+src/lib.rs:13:7 div-to-mul unreached
+```

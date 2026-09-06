@@ -14,3 +14,26 @@ of this fixture is that the licence is granted exactly where it is earned.
 | `value <= limit` | yes | yes | both operands are primitives, and the compiler vouches for it |
 | `a <= b` on `Version` | yes | no | the comparison is a call, and the witness is refused |
 | `items.len() <= 2` | no | no | the condition runs the program's code, so the syntax claims nothing |
+
+## Fates
+
+What one run of this fixture establishes for every mutation of it, and
+for every candidate the compiler refused. The run is `rust-mutants run
+--tier all --offline --locked --coverage`;
+`cargo test -p rust-mutants-cli --test toolchain_fates` does it again and
+refuses a difference, and `UPDATE_FATES=1` rewrites the block below.
+
+```fates --coverage
+src/lib.rs:8:8 negate-condition killed
+src/lib.rs:8:14 le-to-lt survived
+src/lib.rs:9:16 return-default killed
+src/lib.rs:11:5 return-default killed
+src/lib.rs:16:8 negate-condition killed
+src/lib.rs:16:10 le-to-lt survived
+src/lib.rs:17:16 true-to-false killed
+src/lib.rs:19:5 false-to-true killed
+src/lib.rs:28:8 negate-condition killed
+src/lib.rs:28:20 le-to-lt killed
+src/lib.rs:29:16 true-to-false killed
+src/lib.rs:31:5 false-to-true killed
+```

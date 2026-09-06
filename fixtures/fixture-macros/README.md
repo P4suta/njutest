@@ -22,3 +22,23 @@ mutants are reported as surviving and `proc-macro-expansion-not-measured` says
 why. The binary is built with `prefer-dynamic`, which is why the engine puts
 the toolchain's library directories on the search path before starting a test
 binary itself.
+
+## Fates
+
+What one run of this fixture establishes for every mutation of it, and
+for every candidate the compiler refused. The run is `rust-mutants run
+--tier all --offline --locked`;
+`cargo test -p rust-mutants-cli --test toolchain_fates` does it again and
+refuses a difference, and `UPDATE_FATES=1` rewrites the block below.
+
+```fates
+crates/derive/src/lib.rs:11:5 return-default survived
+crates/derive/src/lib.rs:11:8 negate-condition killed
+crates/derive/src/lib.rs:11:19 gt-to-ge survived
+crates/derive/src/lib.rs:20:5 return-default killed
+crates/derive/src/lib.rs:20:8 negate-condition killed
+crates/derive/src/lib.rs:20:10 gt-to-ge survived
+src/lib.rs:21:5 return-default survived
+src/lib.rs:27:5 return-default survived
+src/lib.rs:27:13 add-to-sub survived
+```

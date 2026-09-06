@@ -15,3 +15,14 @@ yielded 2 candidates (`add-to-sub`, `return-default`).
 
 This fixture exists so that lifting the skip from `fixture-no-std` cannot
 quietly lift it from here as well.
+
+## Fates
+
+What one run of this fixture establishes for every mutation of it, and
+for every candidate the compiler refused. The run is `rust-mutants run
+--tier all --offline --locked`;
+`cargo test -p rust-mutants-cli --test toolchain_fates` does it again and
+refuses a difference, and `UPDATE_FATES=1` rewrites the block below.
+
+```fates
+```

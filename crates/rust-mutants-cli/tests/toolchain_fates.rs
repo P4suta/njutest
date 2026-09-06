@@ -1,0 +1,211 @@
+// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! Every fixture's README against a run of that fixture: what it says a mutation's fate is, and what one is.
+
+#![expect(
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    reason = "the helpers that start the engine and read a fixture are not themselves tests, and \
+              a document this test wrote itself is one it may index"
+)]
+
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+use mjutest_devkit::fixture::{Fate, Fixture};
+
+/// The variable that rewrites the blocks rather than refusing them, as `UPDATE_GOLDEN` does for a golden.
+const UPDATE: &str = "UPDATE_FATES";
+
+fn fixtures() -> Vec<String> {
+    let mut names: Vec<String> =
+        std::fs::read_dir(mjutest_devkit::paths::workspace_root().join("fixtures"))
+            .expect("the fixtures")
+            .flatten()
+            .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.starts_with("fixture-"))
+            .collect();
+    names.sort();
+    names
+}
+
+/// What a run of one fixture establishes, in the order a block states it.
+fn recorded(fixture: &Fixture, args: &[String]) -> Vec<Fate> {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_rust-mutants"));
+    command.env("NO_COLOR", "1");
+    command.env("TMPDIR", fixture.temp());
+    command.env("XDG_CACHE_HOME", fixture.cache());
+    command.arg("run");
+    command.args(["--root", &fixture.root().to_string_lossy()]);
+    command.args(["--tier", "all", "--offline", "--locked"]);
+    command.args(args);
+    let output = command.output().expect("rust-mutants runs");
+    assert!(
+        output.status.code().is_some_and(|code| code < 2),
+        "the run itself failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    rows(&newest(&fixture.root().join("reports/mutation")))
+}
+
+fn newest(directory: &Path) -> PathBuf {
+    let mut runs: Vec<PathBuf> = std::fs::read_dir(directory)
+        .unwrap_or_else(|error| panic!("{}: {error}", directory.display()))
+        .flatten()
+        .map(|entry| entry.path().join("run-report-v1.json"))
+        .filter(|path| path.is_file())
+        .collect();
+    runs.sort();
+    runs.pop().expect("one stored run")
+}
+
+fn rows(report: &Path) -> Vec<Fate> {
+    let document: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(report).expect("the report"))
+            .expect("the report is a document");
+    let text =
+        |value: &serde_json::Value, key: &str| value[key].as_str().unwrap_or_default().to_owned();
+    let number = |value: &serde_json::Value, key: &str| {
+        u32::try_from(value[key].as_u64().unwrap_or_default()).unwrap_or_default()
+    };
+    let mut found: Vec<Fate> = document["mutants"]
+        .as_array()
+        .expect("the rows")
+        .iter()
+        .map(|row| Fate {
+            path: text(row, "path"),
+            line: number(row, "line"),
+            column: number(row, "column"),
+            rule: text(row, "rule"),
+            outcome: if row["unreached"].as_bool().unwrap_or(false) {
+                "unreached".to_owned()
+            } else {
+                text(row, "outcome")
+            },
+        })
+        .chain(
+            document["rejections"]
+                .as_array()
+                .expect("the refusals")
+                .iter()
+                .map(|row| Fate {
+                    path: text(row, "path"),
+                    line: 0,
+                    column: 0,
+                    rule: text(row, "rule"),
+                    outcome: "refused".to_owned(),
+                }),
+        )
+        .collect();
+    found.sort();
+    found
+}
+
+/// Rewrites the block of one README, keeping everything around it.
+fn rewrite(name: &str, found: &[Fate]) {
+    let path = mjutest_devkit::paths::workspace_root()
+        .join("fixtures")
+        .join(name)
+        .join("README.md");
+    let text = std::fs::read_to_string(&path).expect("the README");
+    let (before, rest) = text
+        .split_once(mjutest_devkit::fixture::FATES_FENCE)
+        .expect("the block");
+    let (fence, rest) = rest.split_once('\n').expect("the fence line");
+    let (_old, after) = rest.split_once("```").expect("the end of the block");
+    let mut block = String::new();
+    for one in found {
+        block.push_str(&one.to_string());
+        block.push('\n');
+    }
+    std::fs::write(
+        &path,
+        format!(
+            "{before}{}{fence}\n{block}```{after}",
+            mjutest_devkit::fixture::FATES_FENCE
+        ),
+    )
+    .expect("rewriting the README");
+}
+
+#[test]
+fn every_fixture_readme_fate_is_the_recorded_one() {
+    let updating = std::env::var_os(UPDATE).is_some();
+    let mut wrong = Vec::new();
+    for name in fixtures() {
+        let stated = mjutest_devkit::fixture::stated_fates(&name);
+        assert!(
+            stated.stated,
+            "{name}: the README states no fates, which `cargo xtask fixtures` refuses"
+        );
+        let fixture = Fixture::copy(&name);
+        let found = recorded(&fixture, &stated.args);
+        if updating {
+            rewrite(&name, &found);
+            continue;
+        }
+        if found != stated.rows {
+            let said: Vec<String> = stated.rows.iter().map(ToString::to_string).collect();
+            let is: Vec<String> = found.iter().map(ToString::to_string).collect();
+            wrong.push(format!(
+                "{name}\n  the README says:\n    {}\n  the run establishes:\n    {}",
+                said.join("\n    "),
+                is.join("\n    ")
+            ));
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "a fixture's README and a run of it disagree; read the difference, then rewrite the \
+         blocks with {UPDATE}=1 if the run is right:\n{}",
+        wrong.join("\n")
+    );
+}
+
+#[test]
+fn every_fixture_is_driven_by_a_test_that_names_it() {
+    let root = mjutest_devkit::paths::workspace_root();
+    let mut sources = String::new();
+    for crate_name in [
+        "rust-mutants",
+        "rust-mutants-cli",
+        "mjutest-cli",
+        "mjutest",
+        "mjutest-devkit",
+    ] {
+        for directory in ["tests", "src", "benches"] {
+            let base = root.join("crates").join(crate_name).join(directory);
+            for entry in walk(&base) {
+                sources.push_str(&std::fs::read_to_string(&entry).unwrap_or_default());
+            }
+        }
+    }
+    let orphans: Vec<String> = fixtures()
+        .into_iter()
+        .filter(|name| !sources.contains(name.as_str()))
+        .collect();
+    assert!(
+        orphans.is_empty(),
+        "these fixtures are committed and no test names them: {orphans:?}"
+    );
+}
+
+/// Every Rust file under `base`, however deep.
+fn walk(base: &Path) -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    let Ok(entries) = std::fs::read_dir(base) else {
+        return found;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            found.extend(walk(&path));
+        } else if path.extension().is_some_and(|extension| extension == "rs") {
+            found.push(path);
+        }
+    }
+    found
+}

@@ -30,3 +30,20 @@ name runs every example in that file — a filter that matches nothing filters
 everything out, and a filter that matches one example runs all of them. So a
 kill the documentation finds names the documentation, and `--test-runtool`
 is what would name the example.
+
+## Fates
+
+What one run of this fixture establishes for every mutation of it, and
+for every candidate the compiler refused. The run is `rust-mutants run
+--tier all --offline --locked`;
+`cargo test -p rust-mutants-cli --test toolchain_fates` does it again and
+refuses a difference, and `UPDATE_FATES=1` rewrites the block below.
+
+```fates
+src/lib.rs:12:5 return-default killed
+src/lib.rs:12:7 mul-to-div killed
+src/lib.rs:21:5 return-default killed
+src/lib.rs:21:7 div-to-mul killed
+src/lib.rs:26:5 return-default survived
+src/lib.rs:26:7 div-to-mul survived
+```

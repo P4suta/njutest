@@ -19,3 +19,20 @@ The last row is the whole reason this layer needs a premise the engine cannot
 check. Identical artifacts mean "no test can tell these apart", which is
 reassuring when the tests run the code and is the finding itself when they do
 not.
+
+## Fates
+
+What one run of this fixture establishes for every mutation of it, and
+for every candidate the compiler refused. The run is `rust-mutants run
+--tier all --offline --locked`;
+`cargo test -p rust-mutants-cli --test toolchain_fates` does it again and
+refuses a difference, and `UPDATE_FATES=1` rewrites the block below.
+
+```fates
+src/lib.rs:8:5 return-default killed
+src/lib.rs:8:7 add-to-sub survived
+src/lib.rs:13:5 return-default killed
+src/lib.rs:13:7 mul-to-div killed
+src/lib.rs:18:5 return-default survived
+src/lib.rs:18:7 div-to-mul survived
+```

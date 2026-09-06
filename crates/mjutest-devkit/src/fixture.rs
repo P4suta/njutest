@@ -5,6 +5,7 @@
 
 #![expect(
     clippy::expect_used,
+    clippy::panic,
     reason = "support for tests reports a setup failure by panicking: a test that cannot \
               copy the tree it is about has nothing left to assert"
 )]
@@ -176,4 +177,99 @@ fn sorted(dir: &Path) -> Vec<std::fs::DirEntry> {
 
 fn canonical(path: &Path) -> PathBuf {
     path.canonicalize().unwrap_or_else(|_error| path.to_owned())
+}
+
+/// The fence that opens the block of a fixture's README stating what a run of it establishes.
+pub const FATES_FENCE: &str = "```fates";
+
+/// One mutation of a fixture, and what a run of it establishes.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Fate {
+    /// The file the mutation is in, relative to the fixture root.
+    pub path: String,
+    /// The 1-based line of the edit, or zero for a candidate the compiler refused.
+    pub line: u32,
+    /// The 1-based byte column of the edit, or zero for a refusal.
+    pub column: u32,
+    /// The rule that proposed it.
+    pub rule: String,
+    /// What a run establishes: an outcome, or `refused`.
+    pub outcome: String,
+}
+
+impl std::fmt::Display for Fate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}:{}:{} {} {}",
+            self.path, self.line, self.column, self.rule, self.outcome
+        )
+    }
+}
+
+/// What one fixture's README says a run of it establishes.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Fates {
+    /// Whether the README states a ledger at all.
+    pub stated: bool,
+    /// The arguments the run takes beyond `--tier all --offline --locked`, from the rest of the fence line.
+    pub args: Vec<String>,
+    /// Every mutation and its fate, in the order the block states them.
+    pub rows: Vec<Fate>,
+}
+
+/// Every fate the `fates` block of `readme` states, in the order it states them.
+///
+/// The rest of the fence line is the arguments the run takes, so a fixture
+/// that exists for a proof layer says which layer rather than leaving a
+/// reader to guess why its fates read the way they do. A README without the
+/// block states nothing, which is what lets a fixture with no ledger have
+/// none.
+#[must_use]
+pub fn fates(readme: &str) -> Fates {
+    let Some(after) = readme.split_once(FATES_FENCE).map(|(_, rest)| rest) else {
+        return Fates::default();
+    };
+    let (fence, rest) = after.split_once('\n').unwrap_or((after, ""));
+    let block = rest.split_once("```").map_or(rest, |(block, _)| block);
+    Fates {
+        stated: true,
+        args: fence.split_whitespace().map(str::to_owned).collect(),
+        rows: block.lines().filter_map(fate).collect(),
+    }
+}
+
+/// One line of a fates block: `path:line:column rule outcome`.
+fn fate(line: &str) -> Option<Fate> {
+    let mut parts = line.split_whitespace();
+    let (place, rule, outcome) = (parts.next()?, parts.next()?, parts.next()?);
+    if parts.next().is_some() {
+        return None;
+    }
+    let mut at = place.rsplitn(3, ':');
+    let column = at.next()?.parse().ok()?;
+    let line = at.next()?.parse().ok()?;
+    let path = at.next()?.to_owned();
+    Some(Fate {
+        path,
+        line,
+        column,
+        rule: rule.to_owned(),
+        outcome: outcome.to_owned(),
+    })
+}
+
+/// Every fate the committed README of the fixture named states.
+///
+/// # Panics
+/// When the fixture has no README, which `cargo xtask fixtures` refuses.
+#[must_use]
+pub fn stated_fates(name: &str) -> Fates {
+    let path = crate::paths::workspace_root()
+        .join("fixtures")
+        .join(name)
+        .join("README.md");
+    let readme = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+    fates(&readme)
 }

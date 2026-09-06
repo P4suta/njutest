@@ -28,3 +28,19 @@ The library's own documentation is this file, pulled in with
 on, so this markdown is in there beside the Rust — and reading it as Rust,
 which is what discovery used to do with everything a dep-info named, failed
 the whole run.
+
+## Fates
+
+What one run of this fixture establishes for every mutation of it, and
+for every candidate the compiler refused. The run is `rust-mutants run
+--tier all --offline --locked`;
+`cargo test -p rust-mutants-cli --test toolchain_fates` does it again and
+refuses a difference, and `UPDATE_FATES=1` rewrites the block below.
+
+```fates
+src/items.rs:9:5 return-true killed
+src/items.rs:9:7 gt-to-ge survived
+src/lib.rs:15:5 return-default killed
+src/lib.rs:15:8 negate-condition killed
+src/lib.rs:15:22 mul-to-div killed
+```

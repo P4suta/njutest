@@ -34,3 +34,21 @@ Seven mutants, five killed and two survived — and the two are the point.
 
 The two survivors are the gap `#[ignore]` left, and no amount of green in
 the suite would have shown it. That is what the phase is for.
+
+## Fates
+
+What one run of this fixture establishes for every mutation of it, and
+for every candidate the compiler refused. The run is `rust-mutants run
+--tier all --offline --locked`;
+`cargo test -p rust-mutants-cli --test toolchain_fates` does it again and
+refuses a difference, and `UPDATE_FATES=1` rewrites the block below.
+
+```fates
+src/lib.rs:8:5 return-default killed
+src/lib.rs:8:8 negate-condition killed
+src/lib.rs:8:10 gt-to-ge survived
+src/lib.rs:10:15 negate-condition killed
+src/lib.rs:10:17 lt-to-le survived
+src/lib.rs:19:5 return-default killed
+src/lib.rs:19:7 mul-to-div killed
+```
