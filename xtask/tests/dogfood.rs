@@ -31,7 +31,7 @@ fn task(name: &str) -> String {
 
 #[test]
 fn dogfood_runs_the_built_binary_and_never_cargo_run() {
-    for name in ["dogfood", "\"dogfood:engine\""] {
+    for name in ["dogfood", "\"dogfood:engine\"", "\"dogfood:audit\""] {
         let body = task(name);
         assert!(
             !body.contains("cargo run"),
