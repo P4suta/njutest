@@ -38,6 +38,15 @@ pub enum Command {
         #[command(flatten)]
         scope: Scope,
     },
+    /// Ask the compiler, for every mutant, whether it renders it identically to the code it mutates.
+    Equivalence {
+        /// Which workspace to read.
+        #[command(flatten)]
+        scope: Scope,
+        /// Ask about at most this many mutants, in catalog order. Zero asks about every one of them.
+        #[arg(long, value_name = "N", default_value_t = 0)]
+        limit: usize,
+    },
     /// Catalog the mutants the compiler accepts, and the candidates it refused with its own words.
     Catalog {
         /// Which workspace to read.
@@ -258,6 +267,7 @@ impl Command {
     pub const fn scope(&self) -> Option<&Scope> {
         match self {
             Self::List { scope }
+            | Self::Equivalence { scope, .. }
             | Self::Catalog { scope, .. }
             | Self::Run { scope, .. }
             | Self::Explain { scope, .. }

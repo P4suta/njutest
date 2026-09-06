@@ -8,6 +8,8 @@ Usage: rust-mutants <COMMAND>
 
 Commands:
   list         List the candidates the rules propose, before the compiler has ruled
+  equivalence  Ask the compiler, for every mutant, whether it renders it identically to the code it
+               mutates
   catalog      Catalog the mutants the compiler accepts, and the candidates it refused with its own
                words
   run          Run the mutants and report what the tests noticed. Every accepted mutant unless one
