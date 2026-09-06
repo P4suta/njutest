@@ -432,6 +432,7 @@ fn whole(
         session,
         &run::Options {
             quiet: &run::Quiet::default(),
+            jobs: settings.config.execution.jobs,
             expectations: &settings.config.mutation.expect,
             args,
             shard,

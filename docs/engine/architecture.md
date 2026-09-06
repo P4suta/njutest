@@ -343,6 +343,14 @@ A caller hears about a run through an `Observer`, whose every method is called
 on the calling thread and has a default that does nothing, so an observer
 implements only what it draws. `Silent` draws nothing.
 
+A run measures `jobs` mutants at once — as many as the machine has, capped at
+four — and delivers each as it finishes rather than in catalog order: one
+mutant that runs for its whole budget would otherwise hold back every result
+behind it, and a progress line, a stream, and a stop-at-the-first-finding
+would all wait on it. The report is put back into catalog order when it is
+written, because that is the order a reader compares two runs in. A run that
+is cancelled leaves every mutant it never claimed as not run, `interrupted`.
+
 A mutant that was never executed says why: `unreached`, `discharged`, or
 `interrupted`. Its row also carries the route — which targets could have
 noticed it, which a proof removed, and which of them ran — so a reader can see

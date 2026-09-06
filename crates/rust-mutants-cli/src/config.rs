@@ -186,6 +186,8 @@ pub struct Execution {
     /// under instrumentation for a reason that is not the mutation. Naming it
     /// here is a decision somebody made, and the report says so.
     pub skip_targets: Vec<String>,
+    /// How many mutants to measure at once. Zero is as many as the machine has, capped at four.
+    pub jobs: usize,
 }
 
 impl Default for Execution {
@@ -196,6 +198,7 @@ impl Default for Execution {
             doctests: true,
             test_binary_args: Vec::new(),
             skip_targets: Vec::new(),
+            jobs: 0,
         }
     }
 }
@@ -564,6 +567,7 @@ version = 1
 # locked = false
 # doctests = true                # run a library's documented examples as a target
 # skip_targets = []              # target ids never to start, as pkg/kind/name
+# jobs = 0                        # mutants measured at once; 0 = the machine, capped at 4
 # test_binary_args = []          # allowed: {allowed}
 
 [reports]

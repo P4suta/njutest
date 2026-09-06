@@ -127,6 +127,11 @@ by increasing granularity finds the mutants that interact rather than
 condemning everything that was live. Those rows have `isolated: false` and say
 which other mutants they were refused with.
 
+**A run measures four mutants at once.** `[execution] jobs` and `--jobs`/`-j`
+say how many; zero, the default, is as many as the machine has capped at four.
+Results are delivered as they finish rather than in catalog order, so the
+progress lines of a run are no longer in index order; the report still is.
+
 **The driver is the engine's.** `run`, the outcome store, the run and catalog
 documents, and everything a run's policy decides now live in
 `rust_mutants::{run, outcomes, report}`; `rust-mutants-cli` re-exports them at

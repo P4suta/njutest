@@ -63,6 +63,9 @@ impl Settings {
         if let Some(jobs) = scope.build_jobs {
             config.build.jobs = jobs;
         }
+        if let Some(jobs) = scope.jobs {
+            config.execution.jobs = jobs;
+        }
         config.execution.offline |= scope.switches.offline;
         config.execution.locked |= scope.switches.locked;
         config.mutation.verify &= !scope.switches.no_verify;

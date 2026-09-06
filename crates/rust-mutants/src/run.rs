@@ -458,6 +458,8 @@ pub struct Options<'a> {
     pub expectations: &'a [Expectation],
     /// The machine, which a confirming retry takes to itself.
     pub quiet: &'a Quiet,
+    /// How many mutants to measure at once. Zero is [`jobs`]'s own answer.
+    pub jobs: usize,
     /// Further arguments for the harness.
     pub args: &'a [String],
     /// Which part of the catalog this run is about. `None` is all of it.
@@ -565,31 +567,18 @@ pub fn run<O: Observer>(
         .copied()
         .filter(|index| options.shard.is_none_or(|shard| shard.holds(*index)))
         .collect();
-    let total = count(accepted.len());
-    let mut judged = Vec::with_capacity(accepted.len());
-    let mut interrupted = false;
-    for (position, index) in accepted.iter().enumerate() {
-        let Some(mutant) = session.catalog().by_index(*index) else {
-            continue;
-        };
-        if cancel.is_cancelled() {
-            interrupted = true;
-            judged.push(unexecuted(mutant, NotRunReason::Interrupted));
-            continue;
-        }
-        observer.started(mutant);
-        let one = if let Some(one) = reuse(mutant, options) {
-            one
-        } else {
-            let established = execute(session, mutant, options, cancel)?;
-            keep(mutant, options, &established);
-            established
-        };
-        let mut one = one;
-        route(session, mutant, &mut one);
-        observer.judged(&one, count(position).saturating_add(1), total);
-        judged.push(one);
-    }
+    let places: Vec<&Mutant> = accepted
+        .iter()
+        .filter_map(|index| session.catalog().by_index(*index))
+        .collect();
+    let judged = if jobs(options.jobs) == 1 {
+        serially(session, &places, options, (cancel, observer))?
+    } else {
+        pool::judge(session, &places, options, (cancel, observer))?
+    };
+    let interrupted = judged
+        .iter()
+        .any(|one| one.not_run_reason == Some(NotRunReason::Interrupted));
     Ok(Run {
         judged,
         expectations: Vec::new(),
@@ -602,6 +591,172 @@ pub fn run<O: Observer>(
         shard: options.shard,
         duration: started.elapsed(),
     })
+}
+
+/// How many mutants a run measures at once. Zero is the default: as many as the machine has, capped at four.
+///
+/// Each test binary already runs its own tests on as many threads as the
+/// machine has, so a run that started one process per core would have every
+/// process contending with every other and would measure the contention. Four
+/// is the number that keeps a machine busy without making a duration a fact
+/// about the load.
+#[must_use]
+pub fn jobs(configured: usize) -> usize {
+    if configured > 0 {
+        return configured;
+    }
+    std::thread::available_parallelism().map_or(1, |cores| cores.get().min(DEFAULT_JOBS))
+}
+
+/// The most mutants a run measures at once when nobody says.
+pub const DEFAULT_JOBS: usize = 4;
+
+/// Judges every mutant on the calling thread, in catalog order.
+fn serially<O: Observer>(
+    session: &Session,
+    places: &[&Mutant],
+    options: &Options<'_>,
+    watching: (&Cancel, &mut O),
+) -> Result<Vec<Judged>, EngineError> {
+    let (cancel, observer) = watching;
+    let total = count(places.len());
+    let mut judged = Vec::with_capacity(places.len());
+    for (position, mutant) in places.iter().enumerate() {
+        if cancel.is_cancelled() {
+            judged.push(unexecuted(mutant, NotRunReason::Interrupted));
+            continue;
+        }
+        observer.started(mutant);
+        let mut one = one_mutant(session, mutant, options, cancel)?;
+        route(session, mutant, &mut one);
+        observer.judged(&one, count(position).saturating_add(1), total);
+        judged.push(one);
+    }
+    Ok(judged)
+}
+
+/// What one mutant is: what an earlier run of this exact tree established, or what this run measures.
+fn one_mutant(
+    session: &Session,
+    mutant: &Mutant,
+    options: &Options<'_>,
+    cancel: &Cancel,
+) -> Result<Judged, EngineError> {
+    if let Some(one) = reuse(mutant, options) {
+        return Ok(one);
+    }
+    let established = execute(session, mutant, options, cancel)?;
+    keep(mutant, options, &established);
+    Ok(established)
+}
+
+/// Measuring several mutants at once, and delivering each as it finishes.
+///
+/// Delivery is in completion order and never in catalog order: one mutant
+/// that hangs for its whole budget would otherwise hold back every result
+/// behind it, and a progress line, a stream, and a stop-at-the-first-finding
+/// would all wait on it. The report is put back into catalog order when it is
+/// written, because that is the order a reader compares two runs in.
+mod pool {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::mpsc;
+
+    use super::{
+        EngineError, Judged, Mutant, NotRunReason, Observer, Options, Session, count, one_mutant,
+        route, unexecuted,
+    };
+    use crate::runner::Cancel;
+
+    /// What a worker hands the coordinator.
+    enum Delivery {
+        /// A worker claimed the mutant at this position and started it.
+        Started(usize),
+        /// A worker finished the mutant at this position.
+        Judged(usize, Box<Judged>),
+        /// A worker could not go on, and neither can the run.
+        Failed(Box<EngineError>),
+    }
+
+    /// Judges every mutant with `jobs` of them in flight, delivering each as it finishes.
+    pub(super) fn judge<O: Observer>(
+        session: &Session,
+        places: &[&Mutant],
+        options: &Options<'_>,
+        watching: (&Cancel, &mut O),
+    ) -> Result<Vec<Judged>, EngineError> {
+        let (cancel, observer) = watching;
+        let total = count(places.len());
+        let mut done: Vec<Option<Judged>> = (0..places.len()).map(|_| None).collect();
+        let mut failure: Option<EngineError> = None;
+        let mut completed: u32 = 0;
+        let next = AtomicUsize::new(0);
+        let (sender, receiver) = mpsc::channel::<Delivery>();
+
+        std::thread::scope(|scope| {
+            for _worker in 0..super::jobs(options.jobs) {
+                let sender = sender.clone();
+                let next = &next;
+                let _handle = scope.spawn(move || {
+                    loop {
+                        let at = next.fetch_add(1, Ordering::SeqCst);
+                        let Some(mutant) = places.get(at) else {
+                            return;
+                        };
+                        if cancel.is_cancelled() {
+                            return;
+                        }
+                        if sender.send(Delivery::Started(at)).is_err() {
+                            return;
+                        }
+                        let sent = match one_mutant(session, mutant, options, cancel) {
+                            Ok(mut one) => {
+                                route(session, mutant, &mut one);
+                                sender.send(Delivery::Judged(at, Box::new(one)))
+                            }
+                            Err(error) => sender.send(Delivery::Failed(Box::new(error))),
+                        };
+                        if sent.is_err() {
+                            return;
+                        }
+                    }
+                });
+            }
+            drop(sender);
+            for delivery in receiver {
+                match delivery {
+                    Delivery::Started(at) => {
+                        if let Some(mutant) = places.get(at) {
+                            observer.started(mutant);
+                        }
+                    }
+                    Delivery::Judged(at, one) => {
+                        completed = completed.saturating_add(1);
+                        observer.judged(&one, completed, total);
+                        if let Some(place) = done.get_mut(at) {
+                            *place = Some(*one);
+                        }
+                    }
+                    Delivery::Failed(error) => {
+                        cancel.cancel();
+                        if failure.is_none() {
+                            failure = Some(*error);
+                        }
+                    }
+                }
+            }
+        });
+
+        if let Some(error) = failure {
+            return Err(error);
+        }
+        Ok(places
+            .iter()
+            .zip(done)
+            .map(|(mutant, one)| {
+                one.unwrap_or_else(|| unexecuted(mutant, NotRunReason::Interrupted))
+            })
+            .collect())
+    }
 }
 
 /// Records which targets could have noticed this mutation and which of them ran.
@@ -682,6 +837,7 @@ fn execute(
     let judgement = session.judge(&request, options.quiet, cancel)?;
     let duration = judgement.duration();
     let result = judgement.result;
+    let unreached = session.reaches(mutant) == Some(false);
     Ok(Judged {
         index: mutant.index,
         id: mutant.id.clone(),
@@ -695,11 +851,26 @@ fn execute(
         signal: result.signal,
         retried: judgement.retried,
         expected: false,
-        unreached: session.reaches(mutant) == Some(false),
-        not_run_reason: None,
+        unreached,
+        not_run_reason: not_run_because(result.outcome, unreached),
         route: None,
         source_run_id: None,
     })
+}
+
+/// Why a mutant that was never executed was not, when it was not.
+///
+/// A mutation no measured target reaches is one nothing needs to run to find
+/// out again. Anything else that ends without a result ended because the run
+/// did: a process the runner never got a status from is a run somebody
+/// stopped, and reading it as a mutation no test can notice would report a
+/// finding nobody measured.
+const fn not_run_because(outcome: Outcome, unreached: bool) -> Option<NotRunReason> {
+    match outcome {
+        Outcome::NotRun if unreached => Some(NotRunReason::Unreached),
+        Outcome::NotRun => Some(NotRunReason::Interrupted),
+        _ => None,
+    }
 }
 
 /// What an earlier run of this exact tree established about this mutant, when a record answers for it.

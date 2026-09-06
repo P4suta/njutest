@@ -45,6 +45,7 @@ offline = false
 locked = false
 doctests = true                # run a library's documented examples as a target
 skip_targets = []              # target ids never to start, as pkg/kind/name
+jobs = 0                       # mutants measured at once; 0 = the machine, capped at 4
 test_binary_args = []          # --test-threads, --include-ignored, --nocapture, --show-output
 
 [reports]
@@ -65,6 +66,14 @@ seconds — a budget shorter than a machine's own noise makes a timeout a
 finding about the machine. A target nothing verified has no baseline to be a
 multiple of, and the budget falls back to five minutes. A duration pins it,
 and the report and the recording say which of the two a run used.
+
+`[execution] jobs` is how many mutants a run measures at once, and `--jobs`
+or `-j` says the same on the command line. Zero is as many as the machine has,
+capped at four: each test binary already runs its own tests on as many threads
+as the machine has, so a run that started one process per core would have
+every process contending with every other and would measure the contention. A
+suite that sets `test_binary_args = ["--test-threads=1"]` has already given
+that up, and can afford more.
 
 An expired budget buys one more measurement, taken with nothing else the run
 started running beside it: a duration measured while three other test

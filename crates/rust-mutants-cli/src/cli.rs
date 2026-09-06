@@ -227,6 +227,9 @@ pub struct Scope {
     /// How many compilation jobs cargo may run at once.
     #[arg(long = "build-jobs", value_name = "N")]
     pub build_jobs: Option<u32>,
+    /// How many mutants to measure at once. Zero is as many as the machine has, capped at four.
+    #[arg(long, short = 'j', value_name = "N")]
+    pub jobs: Option<usize>,
     /// Never start this target, by the id a report names it with. Repeatable.
     #[arg(long = "skip-target", value_name = "PKG/KIND/NAME")]
     pub skip_targets: Vec<String>,

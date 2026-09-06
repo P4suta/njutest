@@ -272,3 +272,17 @@ fn an_inconclusive_mutant_says_which_of_the_two_things_left_it_undecided() {
         detail(1)
     );
 }
+
+#[test]
+fn jobs_defaults_to_the_machine_capped_at_four_and_a_number_wins() {
+    let cores = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
+    assert_eq!(rust_mutants::run::jobs(0), cores.min(4));
+    assert_eq!(rust_mutants::run::jobs(1), 1);
+    assert_eq!(
+        rust_mutants::run::jobs(64),
+        64,
+        "each test binary already runs its own tests on as many threads as the machine has, \
+         so the cap is what keeps a duration a fact about the mutation rather than the load; \
+         a person who says otherwise has said so"
+    );
+}
