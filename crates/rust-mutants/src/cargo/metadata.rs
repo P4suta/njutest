@@ -112,6 +112,30 @@ pub struct Package {
     /// Its targets.
     #[serde(default)]
     pub targets: Vec<Target>,
+    /// Who the manifest names as authors.
+    #[serde(default)]
+    pub authors: Vec<String>,
+    /// What the manifest says the package is.
+    #[serde(default)]
+    pub description: Option<String>,
+    /// The homepage the manifest names.
+    #[serde(default)]
+    pub homepage: Option<String>,
+    /// The repository the manifest names.
+    #[serde(default)]
+    pub repository: Option<String>,
+    /// The licence expression the manifest names.
+    #[serde(default)]
+    pub license: Option<String>,
+    /// The licence file the manifest names.
+    #[serde(default)]
+    pub license_file: Option<PathBuf>,
+    /// The rust version the manifest requires.
+    #[serde(default)]
+    pub rust_version: Option<String>,
+    /// The readme the manifest names.
+    #[serde(default)]
+    pub readme: Option<PathBuf>,
     /// What its manifest says it depends on, before anything is resolved.
     ///
     /// This is what says a dependency is a path outside the tree, which is a

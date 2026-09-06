@@ -331,6 +331,33 @@ pub const fn outcome_of(observed: Observation, summary: Option<Summary>) -> Outc
     }
 }
 
+/// Where the build put each binary, by package and by target name.
+///
+/// An integration test finds a binary of its own package through
+/// `CARGO_BIN_EXE_<name>`, and cargo points it at the file it actually built:
+/// under the profile the build used, with whatever extension this platform
+/// puts on an executable. Composing the path from a profile name and a target
+/// name guesses at both, and on Windows guesses wrong.
+fn binaries_built(messages: &[Message]) -> BTreeMap<String, BTreeMap<String, PathBuf>> {
+    let mut found: BTreeMap<String, BTreeMap<String, PathBuf>> = BTreeMap::new();
+    for message in messages {
+        let Message::CompilerArtifact(artifact) = message else {
+            continue;
+        };
+        let Some(executable) = &artifact.executable else {
+            continue;
+        };
+        if artifact.profile.test || !artifact.target.is_bin() {
+            continue;
+        }
+        let _replaced = found
+            .entry(artifact.package_id.clone())
+            .or_default()
+            .insert(artifact.target.name.clone(), executable.clone());
+    }
+    found
+}
+
 /// What a package's own build script left for every unit of that package: where it wrote, and what it put in the environment.
 ///
 /// Cargo tells a unit that reads a build script where the script wrote, and
@@ -654,6 +681,7 @@ pub fn targets_of(
     packages: &[Package],
     target_dir: Option<&Path>,
 ) -> Vec<TestTarget> {
+    let binaries = binaries_built(messages);
     let mut targets = Vec::new();
     for message in messages {
         let Message::CompilerArtifact(artifact) = message else {
@@ -674,7 +702,14 @@ pub fn targets_of(
         else {
             continue;
         };
-        let mut env = cargo_environment(package, kind, target_dir);
+        let mut env = cargo_environment(
+            package,
+            kind,
+            target_dir,
+            binaries
+                .get(&artifact.package_id)
+                .unwrap_or(&BTreeMap::new()),
+        );
         env.extend(built_by_a_script(messages, &artifact.package_id));
         targets.push(
             TestTarget::new(
@@ -742,8 +777,46 @@ fn cargo_environment(
     package: &Package,
     kind: TargetKind,
     target_dir: Option<&Path>,
+    binaries: &BTreeMap<String, PathBuf>,
 ) -> Vec<(OsString, OsString)> {
-    let mut env: Vec<(OsString, OsString)> = vec![
+    let mut env = package_environment(package);
+    if matches!(kind, TargetKind::Test | TargetKind::Example) {
+        if let Some(target_dir) = target_dir {
+            env.push((
+                OsString::from("CARGO_TARGET_TMPDIR"),
+                target_dir.join("tmp").into_os_string(),
+            ));
+        }
+        for target in &package.targets {
+            if !target.is_bin() {
+                continue;
+            }
+            if let Some(built) = binaries.get(&target.name) {
+                env.push((
+                    OsString::from(format!("CARGO_BIN_EXE_{}", target.name)),
+                    built.as_os_str().to_owned(),
+                ));
+            }
+        }
+    }
+    env
+}
+
+/// What cargo tells every unit of a package about the package.
+///
+/// Cargo sets each of these for every compilation and every test process, and
+/// sets the empty string where the manifest says nothing rather than leaving
+/// the variable out. A run that starts the test process itself has to do the
+/// same, because `env!("CARGO_PKG_DESCRIPTION")` compiles either way and a
+/// test that reads one back would otherwise see something the project never
+/// wrote.
+#[must_use]
+pub fn package_environment(package: &Package) -> Vec<(OsString, OsString)> {
+    let (major, minor, patch, pre) = version_parts(&package.version);
+    let said = |value: Option<&str>| OsString::from(value.unwrap_or_default());
+    let named =
+        |value: Option<&Path>| value.map_or_else(OsString::new, |one| one.as_os_str().to_owned());
+    vec![
         (
             OsString::from("CARGO_MANIFEST_DIR"),
             package.manifest_dir().as_os_str().to_owned(),
@@ -760,24 +833,63 @@ fn cargo_environment(
             OsString::from("CARGO_PKG_VERSION"),
             OsString::from(&package.version),
         ),
-    ];
-    if matches!(kind, TargetKind::Test | TargetKind::Example) {
-        if let Some(target_dir) = target_dir {
-            env.push((
-                OsString::from("CARGO_TARGET_TMPDIR"),
-                target_dir.join("tmp").into_os_string(),
-            ));
-        }
-        for target in &package.targets {
-            if target.is_bin()
-                && let Some(target_dir) = target_dir
-            {
-                env.push((
-                    OsString::from(format!("CARGO_BIN_EXE_{}", target.name)),
-                    target_dir.join("debug").join(&target.name).into_os_string(),
-                ));
-            }
-        }
-    }
-    env
+        (
+            OsString::from("CARGO_PKG_VERSION_MAJOR"),
+            OsString::from(major),
+        ),
+        (
+            OsString::from("CARGO_PKG_VERSION_MINOR"),
+            OsString::from(minor),
+        ),
+        (
+            OsString::from("CARGO_PKG_VERSION_PATCH"),
+            OsString::from(patch),
+        ),
+        (OsString::from("CARGO_PKG_VERSION_PRE"), OsString::from(pre)),
+        (
+            OsString::from("CARGO_PKG_AUTHORS"),
+            OsString::from(package.authors.join(":")),
+        ),
+        (
+            OsString::from("CARGO_PKG_DESCRIPTION"),
+            said(package.description.as_deref()),
+        ),
+        (
+            OsString::from("CARGO_PKG_HOMEPAGE"),
+            said(package.homepage.as_deref()),
+        ),
+        (
+            OsString::from("CARGO_PKG_REPOSITORY"),
+            said(package.repository.as_deref()),
+        ),
+        (
+            OsString::from("CARGO_PKG_LICENSE"),
+            said(package.license.as_deref()),
+        ),
+        (
+            OsString::from("CARGO_PKG_LICENSE_FILE"),
+            named(package.license_file.as_deref()),
+        ),
+        (
+            OsString::from("CARGO_PKG_RUST_VERSION"),
+            said(package.rust_version.as_deref()),
+        ),
+        (
+            OsString::from("CARGO_PKG_README"),
+            named(package.readme.as_deref()),
+        ),
+    ]
+}
+
+/// A semantic version cut the way cargo cuts it: three numbers and whatever follows the first hyphen.
+fn version_parts(version: &str) -> (&str, &str, &str, &str) {
+    let (numbers, pre) = version.split_once('-').unwrap_or((version, ""));
+    let (numbers, _build) = numbers.split_once('+').unwrap_or((numbers, ""));
+    let mut parts = numbers.split('.');
+    (
+        parts.next().unwrap_or_default(),
+        parts.next().unwrap_or_default(),
+        parts.next().unwrap_or_default(),
+        pre,
+    )
 }

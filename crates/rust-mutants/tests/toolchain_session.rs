@@ -582,3 +582,38 @@ fn the_trace_of_a_probed_and_covered_run_names_every_layer() {
     );
     session.close().expect("close");
 }
+
+#[test]
+fn the_app_integration_test_finds_its_binary_where_cargo_put_it() {
+    let fixture = Fixture::copy("fixture-workspace");
+    let session = prepare(&fixture);
+    let target = session
+        .targets()
+        .iter()
+        .find(|target| target.id.contains("/test/"))
+        .expect("the workspace has an integration test")
+        .clone();
+    let binaries: Vec<(String, std::path::PathBuf)> = target
+        .cargo_env
+        .iter()
+        .filter_map(|(name, value)| {
+            name.to_string_lossy()
+                .strip_prefix("CARGO_BIN_EXE_")
+                .map(|name| (name.to_owned(), std::path::PathBuf::from(value)))
+        })
+        .collect();
+    assert!(
+        !binaries.is_empty(),
+        "an integration test of a package with a binary is told where the binary is: {:?}",
+        target.cargo_env
+    );
+    for (name, path) in &binaries {
+        assert!(
+            path.is_file(),
+            "{name} is at {}, which is where the build put it rather than where a profile name \
+             and a target name would guess",
+            path.display()
+        );
+    }
+    session.close().expect("close");
+}

@@ -507,3 +507,97 @@ fn a_test_target_built_step_by_step_equals_the_literal_it_replaces() {
         "what a builder was not told stays empty rather than being guessed"
     );
 }
+
+#[test]
+fn the_environment_reproduces_cargos_documented_set() {
+    let package = rust_mutants::cargo::Package {
+        id: "demo 0.1.0".to_owned(),
+        name: "demo".to_owned(),
+        version: "1.2.3-rc.4".to_owned(),
+        manifest_path: PathBuf::from("/w/demo/Cargo.toml"),
+        edition: "2024".to_owned(),
+        targets: Vec::new(),
+        dependencies: Vec::new(),
+        authors: vec!["A Person <a@example.invalid>".to_owned(), "B".to_owned()],
+        description: Some("what it is".to_owned()),
+        homepage: Some("https://example.invalid".to_owned()),
+        repository: Some("https://example.invalid/repo".to_owned()),
+        license: Some("MIT OR Apache-2.0".to_owned()),
+        license_file: Some(PathBuf::from("LICENSE")),
+        rust_version: Some("1.98".to_owned()),
+        readme: Some(PathBuf::from("README.md")),
+    };
+    let env = rust_mutants::execute::package_environment(&package);
+    let lookup = |key: &str| -> Option<String> {
+        env.iter()
+            .find(|(name, _)| name == key)
+            .map(|(_, value)| value.to_string_lossy().into_owned())
+    };
+    for (name, value) in [
+        ("CARGO_PKG_NAME", "demo"),
+        ("CARGO_PKG_VERSION", "1.2.3-rc.4"),
+        ("CARGO_PKG_VERSION_MAJOR", "1"),
+        ("CARGO_PKG_VERSION_MINOR", "2"),
+        ("CARGO_PKG_VERSION_PATCH", "3"),
+        ("CARGO_PKG_VERSION_PRE", "rc.4"),
+        ("CARGO_PKG_AUTHORS", "A Person <a@example.invalid>:B"),
+        ("CARGO_PKG_DESCRIPTION", "what it is"),
+        ("CARGO_PKG_HOMEPAGE", "https://example.invalid"),
+        ("CARGO_PKG_REPOSITORY", "https://example.invalid/repo"),
+        ("CARGO_PKG_LICENSE", "MIT OR Apache-2.0"),
+        ("CARGO_PKG_LICENSE_FILE", "LICENSE"),
+        ("CARGO_PKG_RUST_VERSION", "1.98"),
+        ("CARGO_PKG_README", "README.md"),
+    ] {
+        assert_eq!(
+            lookup(name).as_deref(),
+            Some(value),
+            "cargo sets {name}, and a test that reads it back gets the empty string when the \
+             run did not"
+        );
+    }
+}
+
+#[test]
+fn a_package_that_says_nothing_about_itself_still_sets_what_cargo_sets() {
+    let package = rust_mutants::cargo::Package {
+        id: "demo 0.1.0".to_owned(),
+        name: "demo".to_owned(),
+        version: "0.1.0".to_owned(),
+        manifest_path: PathBuf::from("/w/demo/Cargo.toml"),
+        edition: "2024".to_owned(),
+        targets: Vec::new(),
+        dependencies: Vec::new(),
+        authors: Vec::new(),
+        description: None,
+        homepage: None,
+        repository: None,
+        license: None,
+        license_file: None,
+        rust_version: None,
+        readme: None,
+    };
+    let env = rust_mutants::execute::package_environment(&package);
+    let names: Vec<String> = env
+        .iter()
+        .map(|(name, _)| name.to_string_lossy().into_owned())
+        .collect();
+    for name in [
+        "CARGO_PKG_DESCRIPTION",
+        "CARGO_PKG_LICENSE",
+        "CARGO_PKG_README",
+    ] {
+        assert!(
+            names.contains(&name.to_owned()),
+            "cargo sets it to the empty string rather than leaving it out, and a test that \
+             reads it back must see what cargo would show it: {names:?}"
+        );
+    }
+    let lookup = |key: &str| -> Option<String> {
+        env.iter()
+            .find(|(name, _)| name == key)
+            .map(|(_, value)| value.to_string_lossy().into_owned())
+    };
+    assert_eq!(lookup("CARGO_PKG_VERSION_PRE").as_deref(), Some(""));
+    assert_eq!(lookup("CARGO_PKG_AUTHORS").as_deref(), Some(""));
+}

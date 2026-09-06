@@ -230,6 +230,19 @@ start failure → `errored`; timed out → `timed_out`; killed by us → `not_ru
 `survived`. A libtest run that matched no test is green and says so:
 `tests_run` carries the count the summary line reported.
 
+### What cargo tells a test process
+
+A test process the engine starts is told what cargo would have told it:
+
+| Variables | From |
+| --- | --- |
+| `CARGO_MANIFEST_DIR`, `CARGO_MANIFEST_PATH` | the package's manifest |
+| `CARGO_PKG_NAME`, `CARGO_PKG_VERSION`, and `VERSION_MAJOR`, `VERSION_MINOR`, `VERSION_PATCH`, `VERSION_PRE` | the version, cut the way cargo cuts it |
+| `CARGO_PKG_AUTHORS`, `DESCRIPTION`, `HOMEPAGE`, `REPOSITORY`, `LICENSE`, `LICENSE_FILE`, `RUST_VERSION`, `README` | the manifest, as the empty string where it says nothing, which is what cargo does |
+| `CARGO_BIN_EXE_<name>` | the file the build produced, for an integration test or a tested example. Composing it from a profile name and a target name guesses at both and on Windows guesses wrong |
+| `CARGO_TARGET_TMPDIR` | the build directory, for an integration test or a tested example |
+| `OUT_DIR` and every `cargo::rustc-env` value | the package's own build script, from the `build-script-executed` message |
+
 ### The environment a test process gets
 
 A test process inherits the environment the run was started with, plus what
