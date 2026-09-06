@@ -469,6 +469,48 @@ fn the_families_input_exercises_every_rule_and_matches_the_golden() {
 }
 
 #[test]
+fn the_families_input_in_crlf_finds_the_same_candidates_at_the_same_places() {
+    let root =
+        mjutest_devkit::paths::workspace_root().join("crates/rust-mutants/tests/testdata/syntax");
+    let src = std::fs::read_to_string(root.join("families.input")).expect("input");
+    let with_crlf = rust_mutants::testkit::source::crlf(&src);
+    let lf = discover(&src);
+    let crlf = discover(&with_crlf);
+    assert_coherent(&with_crlf, &crlf);
+    let differences: Vec<String> = render(&lf)
+        .into_iter()
+        .zip(
+            render(&crlf)
+                .into_iter()
+                .map(|line| line.replace("\\r\\n", "\\n")),
+        )
+        .filter(|(one, other)| one != other)
+        .map(|(one, other)| format!("{one}\n  became {other}"))
+        .collect();
+    assert!(
+        differences.is_empty(),
+        "a file whose lines end the other way is the same program, and the walk finds the same \
+         candidates at the same lines and columns:\n{}",
+        differences.join("\n")
+    );
+    assert_eq!(
+        render(&lf).len(),
+        render(&crlf).len(),
+        "and finds neither more nor fewer of them"
+    );
+    let skips = |found: &FileDiscovery| {
+        let mut lines: Vec<String> = found
+            .skips
+            .iter()
+            .map(|skip| format!("{} {}", skip.reason.name(), skip.count))
+            .collect();
+        lines.sort();
+        lines
+    };
+    assert_eq!(skips(&lf), skips(&crlf), "and passes the same places over");
+}
+
+#[test]
 fn forms_display_as_their_letters() {
     assert_eq!(Form::C.to_string(), "C");
     assert_eq!(Form::E.to_string(), "E");

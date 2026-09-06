@@ -350,6 +350,49 @@ fn the_recorded_cases_are_rewritten_exactly_as_recorded() {
 }
 
 #[test]
+fn the_crlf_variant_of_every_recorded_case_keeps_its_lines_and_reparses() {
+    for name in ["forms", "nested", "statements", "modules"] {
+        let input = std::fs::read(golden_path(&format!("{name}.input"))).expect("input");
+        let source = rust_mutants::testkit::source::crlf(&String::from_utf8(input).expect("utf-8"));
+        let text = instrument(&source);
+        syn::parse_file(&text).expect("the instrumented file parses");
+        let (body, _runtime) = split_runtime(&text);
+        assert_eq!(
+            count_lines(body.as_bytes()),
+            count_lines(source.as_bytes()),
+            "{name}: a file whose lines end the other way keeps its line count too"
+        );
+        assert!(
+            body.contains("\r\n"),
+            "{name}: the rewrite kept the endings the file had"
+        );
+    }
+}
+
+#[test]
+fn a_crlf_file_is_rewritten_the_same_way_and_mints_its_own_identities() {
+    for name in ["forms", "nested", "statements", "modules"] {
+        let input = std::fs::read(golden_path(&format!("{name}.input"))).expect("input");
+        let source = String::from_utf8(input).expect("utf-8");
+        let with_crlf = rust_mutants::testkit::source::crlf(&source);
+        let one = instrument(&source);
+        let other = instrument(&with_crlf);
+        let (body, runtime) = split_runtime(&one);
+        let (crlf_body, crlf_runtime) = split_runtime(&other);
+        assert_eq!(
+            rust_mutants::testkit::source::lf(body),
+            rust_mutants::testkit::source::lf(crlf_body),
+            "{name}: the same program with the other line endings is rewritten the same way"
+        );
+        assert_ne!(
+            runtime, crlf_runtime,
+            "{name}: an identity hashes the exact bytes of the file, so a file whose lines end \
+             the other way is a different file and mints different identities"
+        );
+    }
+}
+
+#[test]
 fn every_alternative_reports_where_its_own_text_landed() {
     let source = "pub fn f(a: i32, b: i32) -> bool {\n    if a + 1 > b {\n        return true;\n    }\n    false\n}\n";
     let selection = Selection::tier(&REGISTRY, Tier::All);

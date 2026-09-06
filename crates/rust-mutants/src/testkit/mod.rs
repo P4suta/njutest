@@ -8,4 +8,5 @@
 //! depends on.
 
 pub mod compile;
+pub mod source;
 pub mod trace;

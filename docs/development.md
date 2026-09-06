@@ -163,6 +163,20 @@ the tree's own digest every time a run wrote to it; and `copy_with_siblings`
 puts a second fixture next to the first, which is what a path dependency that
 climbs out of the tree needs.
 
+### Line endings
+
+`.gitattributes` says `* -text`, so a checkout is byte-exact everywhere: an
+identity hashes the exact bytes of the file it was cut from, and a CRLF
+checkout would change every source digest and therefore every mutant ID. The
+CRLF variants the tests use are **derived** from the LF inputs by
+`rust_mutants::testkit::source::crlf` rather than committed. A committed copy
+is a second spelling of the same program that a checkout, an editor, or a
+careless rewrite can quietly change, and then the test proves the two copies
+agree rather than that the engine handles both endings. What the tests hold
+the engine to: the same candidates at the same lines and columns, the same
+line count after instrumenting, the same rewrite, the same fates, and
+identities of its own.
+
 ### Golden files
 
 `golden(path, got)` compares recorded bytes against a file, byte for byte,
