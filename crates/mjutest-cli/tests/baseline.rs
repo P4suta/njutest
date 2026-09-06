@@ -76,6 +76,7 @@ fn measure(fixture: &str) -> (Baseline, tempfile::TempDir) {
         },
         &BaselineOptions {
             root,
+            host: toolchain.host().to_owned(),
             selection: Selection::default(),
             cargo: Cargo {
                 offline: true,

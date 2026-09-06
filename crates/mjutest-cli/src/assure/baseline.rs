@@ -16,7 +16,7 @@ use crate::build::{self, BuildOptions, Cargo, Flavour, Selection};
 use crate::coverage::{Block, Tools, covered, instrumented, profile_pattern, written_profiles};
 use crate::error::RunnerError;
 use crate::report::TargetStatus;
-use crate::targets::{Target, enumerate};
+use crate::targets::{Target, UnitKind, WHOLE_BINARY, enumerate, target_id};
 use crate::trace::{ExecRecord, ProgressRecord};
 use crate::ui::Notes;
 use crate::watch::Watch;
@@ -35,6 +35,8 @@ pub struct Workspace<'a> {
 pub struct BaselineOptions {
     /// The workspace root.
     pub root: PathBuf,
+    /// The target triple the instrumented build produced its artifacts under, which anything reusing them has to ask for.
+    pub host: String,
     /// What to compile.
     pub selection: Selection,
     /// How cargo is bounded.
@@ -183,13 +185,14 @@ pub fn run_resuming(
 
     let tools = Tools::locate(workspace.toolchain, &options.root, &watch)?;
     let mut baseline = Baseline {
-        limitations: built.limitations,
+        limitations: built.limitations.clone(),
         ..Baseline::default()
     };
-    let mut selected = Vec::new();
-    for unit in &built.units {
-        selected.extend(enumerate(unit, watch)?);
-    }
+    let Selected {
+        targets: selected,
+        limitations,
+    } = select(&built, workspace.toolchain, &options.root, watch)?;
+    baseline.limitations.extend(limitations);
     let total = u64::try_from(selected.len()).unwrap_or(u64::MAX);
     let answers = crate::assure::schedule::measure(
         &selected,
@@ -221,11 +224,116 @@ pub fn run_resuming(
         });
         notes.progress(&measured.target.name(), done, total);
         baseline.instrumented.extend(seen);
+        if undocumented(&measured) {
+            continue;
+        }
+        if measured.target.unit == UnitKind::Doc {
+            baseline.limitations.push(DOCTESTS_LIMITATION.to_owned());
+        }
         (resume.record)(&measured);
         baseline.targets.push(measured);
     }
     phase.end();
     Ok(baseline)
+}
+
+/// What the build offers to measure.
+#[derive(Debug, Clone, Default)]
+struct Selected {
+    targets: Vec<Target>,
+    limitations: Vec<String>,
+}
+
+/// Every target the build produced, and every limitation naming what could not be measured of them one test at a time.
+fn select(
+    built: &build::Built,
+    toolchain: &Toolchain,
+    root: &std::path::Path,
+    watch: Watch<'_>,
+) -> Result<Selected, RunnerError> {
+    let mut selected = Selected::default();
+    for unit in &built.units {
+        selected.targets.extend(enumerate(unit, watch)?);
+    }
+    if selected.targets.iter().any(Target::is_whole_binary) {
+        selected
+            .limitations
+            .push(WHOLE_BINARY_LIMITATION.to_owned());
+    }
+    selected
+        .targets
+        .extend(documentation(built, toolchain, root));
+    Ok(selected)
+}
+
+/// Whether this is a library that documents no example, which the run finds out by asking cargo and which is not a target the report carries.
+///
+/// One target per library is what the contract promises, and a library with
+/// nothing to run is not a target that ran nothing: reporting it as missing
+/// would raise a finding about documentation nobody wrote. A run that could
+/// not get an answer out of cargo at all said something else, and that stays a
+/// missing target.
+fn undocumented(measured: &Measured) -> bool {
+    measured.target.unit == UnitKind::Doc
+        && measured.status == TargetStatus::Missing
+        && measured.message.as_deref() == Some(RAN_NOTHING)
+}
+
+/// The name a run states when a library's documentation was run: it carries no coverage, so nothing is routed to it and it answers for no mutation.
+pub const DOCTESTS_LIMITATION: &str = "doctests-not-routed";
+
+/// The name a run states when a test binary brings its own harness, which makes the whole binary one target rather than one target per test.
+pub const WHOLE_BINARY_LIMITATION: &str = "custom-harness-whole-binary";
+
+/// One target for each library the build produced: cargo compiles and runs everything that library documents, in one process.
+///
+/// The documentation of a library is a test of it, and a broken example is a
+/// failing test rather than something nobody looked at. It carries no coverage
+/// — the examples are compiled by rustdoc into binaries this run never sees —
+/// so [`DOCTESTS_LIMITATION`] says that no mutation is routed to it.
+fn documentation(
+    built: &build::Built,
+    toolchain: &Toolchain,
+    root: &std::path::Path,
+) -> Vec<Target> {
+    built
+        .units
+        .iter()
+        .filter(|unit| unit.kind == UnitKind::Lib)
+        .map(|unit| Target {
+            id: target_id(&unit.package, UnitKind::Doc, WHOLE_BINARY),
+            package: unit.package.clone(),
+            unit: UnitKind::Doc,
+            unit_name: unit.name.clone(),
+            path: WHOLE_BINARY.to_owned(),
+            ignored: false,
+            executable: toolchain.cargo().to_path_buf(),
+            cwd: root.to_path_buf(),
+            env: built.env.clone(),
+        })
+        .collect()
+}
+
+/// What cargo is asked for when the target is a library's documentation, up to the `--` the caller's harness arguments follow.
+fn documentation_arguments(target: &Target, options: &BaselineOptions) -> Vec<OsString> {
+    let mut argv: Vec<OsString> = vec![
+        OsString::from("test"),
+        OsString::from("--doc"),
+        OsString::from("--target-dir"),
+        options.target_dir.clone().into_os_string(),
+        OsString::from("--target"),
+        OsString::from(&options.host),
+    ];
+    if options.cargo.locked {
+        argv.push(OsString::from("--locked"));
+    }
+    if options.cargo.offline {
+        argv.push(OsString::from("--offline"));
+    }
+    argv.push(OsString::from("--package"));
+    argv.push(OsString::from(&target.package));
+    argv.push(OsString::from("--"));
+    argv
 }
 
 /// What one target is measured with, as one argument.
@@ -283,7 +391,7 @@ fn measure(
 
     let mut reached = BTreeSet::new();
     let mut seen = BTreeSet::new();
-    if status != TargetStatus::Missing {
+    if status != TargetStatus::Missing && target.unit != UnitKind::Doc {
         let profiles = written_profiles(&options.profiles_dir, &target.id)?;
         if !profiles.is_empty() {
             let merged = options.profiles_dir.join(format!("{}.profdata", target.id));
@@ -309,10 +417,12 @@ fn measure(
     ))
 }
 
-/// The command one target runs as: exactly that test, in terse form, with whatever the caller asked the binaries for.
+/// The command one target runs as: exactly that test, in terse form, with whatever the caller asked the binaries for. A library's documentation is not a binary this run built, so cargo runs it.
 fn command(target: &Target, options: &BaselineOptions) -> Spec {
     let mut argv: Vec<OsString> = vec![target.executable.as_os_str().to_owned()];
-    if !target.is_whole_binary() {
+    if target.unit == UnitKind::Doc {
+        argv.extend(documentation_arguments(target, options));
+    } else if !target.is_whole_binary() {
         argv.push(OsString::from(&target.path));
         argv.push(OsString::from("--exact"));
     }
@@ -378,8 +488,8 @@ pub fn status_of(summary: Option<Summary>, timed_out: bool) -> (TargetStatus, Op
     if summary.ignored > 0 {
         return (TargetStatus::Skipped, Some("libtest ignored it".to_owned()));
     }
-    (
-        TargetStatus::Missing,
-        Some("the target ran nothing, so nothing was observed".to_owned()),
-    )
+    (TargetStatus::Missing, Some(RAN_NOTHING.to_owned()))
 }
+
+/// What a target that answered and named no test of its own is recorded as having said.
+pub const RAN_NOTHING: &str = "the target ran nothing, so nothing was observed";

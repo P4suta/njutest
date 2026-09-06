@@ -255,7 +255,7 @@ fn finding_of(judged: &Judged) -> Option<Finding> {
             FindingKind::SurvivingMutant,
             format!(
                 "no measured test reaches {} at {}: the position is instrumented, every \
-                 measured test carries coverage, and none of them executes it",
+                 test this run routed with carries coverage, and none of them executes it",
                 judged.rule, judged.path
             ),
         ),

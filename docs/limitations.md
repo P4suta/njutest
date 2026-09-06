@@ -11,12 +11,13 @@ below is stated fail-closed.
 - A tree whose identity could not be computed reuses nothing
   (`workspace-digest-not-computed`) and is reused by nothing: a run that
   cannot say what it looked at cannot answer for another run's inputs.
-- A mutant every measured test carries coverage about and none of them reaches
-  is reported as surviving, with a detail that says nothing executes it. Where
-  that evidence is not there — the position is outside every instrumented
-  region, the catalog could not place it, or a measured target carries no
-  coverage — the package suite runs and settles it instead.
-  They are one finding because they are one gap in the suite.
+- A mutant every test routing reads carries coverage about and none of them
+  reaches is reported as surviving, with a detail that says nothing executes
+  it. Where that evidence is not there — the position is outside every
+  instrumented region, the catalog could not place it, or a target that was
+  measured for its coverage carries none — the package suite runs and settles
+  it instead. Both readings are one finding, because they are one gap in the
+  suite.
 - A test that writes into the tree while it is being measured makes every
   later mutation a measurement of what it wrote
   (`tree-written-during-measurement`). One instrumented snapshot cannot
@@ -27,7 +28,8 @@ below is stated fail-closed.
 
 - Doctests are run as one target per library, without coverage, and route no
   mutant (`doctests-not-routed`). A mutant only a doctest could kill is
-  reported as surviving.
+  reported as surviving, and the `unreached` reading of that says which tests
+  it is about.
 - A `harness = false` test target is one target per binary
   (`custom-harness-whole-binary`).
 - Fuzz targets are found always and driven only when `[fuzz] run` says so;

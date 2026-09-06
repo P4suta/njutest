@@ -54,7 +54,11 @@ one, and may add sanitizers.
 
 Benchmarks are not part of either correctness contract. Doctests are run and
 classified as one target per library but carry no coverage and route no
-mutant; the limitation `doctests-not-routed` says so. A future performance
+mutant; the limitation `doctests-not-routed` says so. A library that documents
+no example has nothing to run and is not a target: a target that ran nothing
+would raise a finding about documentation nobody wrote. A test binary that
+brings its own harness cannot be asked for one of its tests and is measured
+whole, which `custom-harness-whole-binary` says. A future performance
 contract must be explicit rather than treating ordinary benchmarks as tests.
 
 ## Mutation routing
@@ -74,9 +78,11 @@ keeps reaching its whole file.
 Saying that a position reaches nothing is a claim about the code rather than a
 gap in the measurement, and it rests on two premises: that instrumentation
 described the position, so a target's silence about it is a fact, and that
-every measured target carries coverage, so every target's silence is readable.
-A position both premises hold for, and no measured target executed, is
-`unreached`: nothing runs, and the finding says no test executes this code.
+every target routing reads carries coverage, so its silence is readable. A
+position both premises hold for, and no such target executed, is `unreached`:
+nothing runs, and the finding says no test executes this code. A library's
+documentation is not among the targets routing reads — it carries no coverage
+by construction rather than by accident, and `doctests-not-routed` says so.
 
 Where a premise fails there is no proof, and the fallback is toward running
 more. The package suite — every target the run prepared, in one execution —
