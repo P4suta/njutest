@@ -34,4 +34,4 @@ depends only on its macros, and the devkit is a dev-dependency of everybody.
 - The engine's crates are publishable on their own; nothing in them names
   the runner.
 - One CI, one set of gates, one dogfood: `mise run dogfood` runs the runner on
-  the workspace, and `mise run dogfood-engine` runs the engine on it.
+  the workspace, and `mise run dogfood:engine` runs the engine on it.

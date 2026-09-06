@@ -34,8 +34,8 @@ CLI/config
    └─ report v1 + exact cache/checkpoint
 ```
 
-The `assure` module coordinates a round. The `cargo` module discovers native
-targets and coverage, `mutation_bridge` freezes the rust-mutants contract, and
+The `assure` module coordinates a round. `build` and `targets` discover the
+native test binaries, `coverage` reads what each of them reached, and
 `evidence` creates content identities and the impact graph. Providers run as
 subprocesses behind strict JSON protocols; core contains no network client.
 
@@ -131,7 +131,7 @@ app                report persistence, doctor, fix, cache maintenance, trace rea
    ↓  assure::Dependencies (a table of the run's collaborators, passed, never global)
 assure             one round: the phases in order, each a function over its inputs
    ↓
-cargo, mutation_bridge, evidence, build_cache, cache, checkpoint, trace, ui,
+build, targets, coverage, rustflags, evidence, build_cache, cache, checkpoint, trace, ui,
 repair, resource, provider, temp_owner, kept_ledger, retention, process_tree,
 advisory_lock, environment, test_args, report, config
 ```
