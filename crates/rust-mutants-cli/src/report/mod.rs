@@ -143,7 +143,6 @@ fn one_line(mutant: &Mutant) -> String {
 
 /// The catalog as one JSON document.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct CatalogDocument {
     /// Names the shape, so a reader can tell versions apart.
     pub document_type: String,
@@ -165,7 +164,6 @@ pub struct CatalogDocument {
 
 /// The tree a catalog was read from.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct WorkspaceDocument {
     /// The name of the directory the source root sits in.
     pub root_name: String,
@@ -181,7 +179,6 @@ pub struct WorkspaceDocument {
 
 /// The machine a run happened on.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct PlatformDocument {
     /// The operating system.
     pub os: String,
@@ -193,7 +190,6 @@ pub struct PlatformDocument {
 
 /// What a run asked for.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct SelectionDocument {
     /// The tier, when the run did not name operators.
     pub tier: String,
@@ -209,7 +205,6 @@ pub struct SelectionDocument {
 
 /// One accepted mutant.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct MutantDocument {
     /// The dense catalog index the guards name.
     pub index: u32,
@@ -235,6 +230,9 @@ pub struct MutantDocument {
     pub start_byte: u32,
     /// One past the last byte of the edit.
     pub end_byte: u32,
+    /// The SHA-256 of the file the edit was cut from, which is what re-minting the identity needs.
+    #[serde(default)]
+    pub source_digest: String,
     /// The bytes the edit replaces.
     pub original: String,
     /// What they become.
@@ -243,8 +241,10 @@ pub struct MutantDocument {
 
 /// One refused candidate.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct RejectionDocument {
+    /// The dense catalog index, which the accepted mutants share with the refused ones.
+    #[serde(default)]
+    pub index: u32,
     /// The full identity.
     pub id: String,
     /// The short identity.
@@ -261,7 +261,6 @@ pub struct RejectionDocument {
 
 /// One reason places were passed over, and how many.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct SkipDocument {
     /// The reason's name.
     pub reason: String,
@@ -330,6 +329,7 @@ pub fn rejection_documents(session: &Session) -> Vec<RejectionDocument> {
         .rejections()
         .iter()
         .map(|rejection| RejectionDocument {
+            index: rejection.index,
             id: rejection.id.clone(),
             display_id: rejection.display_id.clone(),
             path: rejection.path.clone(),
@@ -379,6 +379,7 @@ pub fn mutant_document(session: &Session, mutant: &Mutant) -> MutantDocument {
         column: position.byte_column,
         start_byte: mutant.candidate.span.start,
         end_byte: mutant.candidate.span.end,
+        source_digest: mutant.candidate.source_digest.clone(),
         original: String::from_utf8_lossy(&mutant.candidate.original).into_owned(),
         replacement: String::from_utf8_lossy(&mutant.candidate.replacement).into_owned(),
     }

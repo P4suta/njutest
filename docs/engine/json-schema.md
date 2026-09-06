@@ -13,6 +13,23 @@ Both carry `document_type` and `schema_version`, close every object with
 schemas under `schema/`, so a field added without a version bump fails a
 test rather than a consumer.
 
+## Writers are strict, readers are lenient
+
+A writer emits exactly what the schema describes, and a test proves it. A
+reader ignores a field it does not know, so a document one release wrote is
+read by the one before it.
+
+That makes the version rule a short one. **Adding an optional field, and the
+schema entry for it in the same change, keeps the version.** Making a field
+required, renaming one, or changing what an existing one means is a new
+version and a new schema file. A consumer that must know whether a field was
+present reads it as absent rather than as a default; a consumer that reads a
+document as a whole never fails on a field it has no use for.
+
+The engine's own configuration file and its outcome store are the exception:
+both refuse a key they do not know, because there a typo is a silent change
+of what was asked rather than a field from the future.
+
 ## `rust-mutants/catalog` v1
 
 ```jsonc
@@ -28,16 +45,24 @@ test rather than a consumer.
     "path": "crates/a/src/lib.rs", "package": "a",
     "family": "comparison", "rule": "le-to-lt", "rule_version": 1,
     "line": 12, "column": 9, "start_byte": 100, "end_byte": 102,
-    "original": "<=", "replacement": "<",
+    "source_digest": "<64 hex>", "original": "<=", "replacement": "<",
     "branch": { "direction": "decreasing", "body_start": {"line": 12, "column": 14}, "body_end": {"line": 14, "column": 2} }
   }],
-  "rejections": [{ "id": "…", "path": "…", "line": 3, "column": 5, "rule": "add-to-sub", "diagnostic": "…" }],
+  "rejections": [{ "index": 7, "id": "…", "path": "…", "rule": "add-to-sub", "code": "E0369", "diagnostic": "…" }],
   "skips": [{ "path": "…", "reason": "macro-invocation", "count": 4 }]
 }
 ```
 
 `branch` is absent, not null, when no proof was claimed. `direction` is
 diagnostic: a consumer must not branch on it.
+
+`index` is dense over the accepted mutants and the refused candidates
+together: every index from zero to their combined count appears exactly once
+in one list or the other, which is what lets a reader check that a catalog
+lost nothing. `path`, `rule`, `rule_version`, `start_byte`, `end_byte`,
+`source_digest`, `original`, and `replacement` are exactly what minting the
+identity takes, so a reader can re-mint `id` from the row and find out
+whether it is the mutant it says it is.
 
 ## `rust-mutants/run-report` v1
 
@@ -81,6 +106,19 @@ a hole rather than a detection.
 
 `exit_code` is the one the process returned: `0` every mutant was noticed,
 `1` something was not, `2` the run itself failed, `130` it was interrupted.
+
+A `finding` is one of `surviving-mutant`, `inconclusive-mutant`,
+`errored-mutant`, `not-run-mutant`, `unreached-mutant`, `stale-expectation`,
+or `unmatched-expectation`. A mutant no measured target reaches is an
+`unreached-mutant` finding rather than a `not-run-mutant` one: it says the
+tests have a gap where the mutant is, not that the run failed to get to it.
+
+## Recordings
+
+`rust-mutants trace` writes JSON Lines rather than a document; its shape is
+`schema/rust-mutants-trace-v1.json` and its rules are in
+[trace](trace.md). A recording is never evidence, so nothing here reads one
+to decide anything.
 
 ## Infection log
 

@@ -29,7 +29,6 @@ pub const LATEST_FILE_NAME: &str = "latest.json";
 
 /// One completed run.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct RunDocument {
     /// Names the shape.
     pub document_type: String,
@@ -61,7 +60,6 @@ pub struct RunDocument {
 
 /// When a run ran and how it ended.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct RunMeta {
     /// The run's identity, which is also its directory name.
     pub id: String,
@@ -81,7 +79,6 @@ pub struct RunMeta {
 
 /// What a run counted. Every mutant is in exactly one of the outcome columns.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct Accounting {
     /// How many mutants the compiler accepted.
     pub cataloged: u32,
@@ -112,7 +109,6 @@ pub struct Accounting {
 
 /// The share of decided mutants the tests noticed.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct ScoreDocument {
     /// Killed plus confirmed timeouts.
     pub detected: u32,
@@ -124,7 +120,6 @@ pub struct ScoreDocument {
 
 /// One cataloged mutant and what the run established about it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct RunMutantDocument {
     /// The dense catalog index the guards name.
     pub index: u32,
@@ -146,6 +141,15 @@ pub struct RunMutantDocument {
     pub line: u32,
     /// The 1-based byte column of the edit.
     pub column: u32,
+    /// The first byte of the edit.
+    #[serde(default)]
+    pub start_byte: u32,
+    /// One past the last byte of the edit.
+    #[serde(default)]
+    pub end_byte: u32,
+    /// The SHA-256 of the file the edit was cut from, which is what re-minting the identity needs.
+    #[serde(default)]
+    pub source_digest: String,
     /// The bytes the edit replaces.
     pub original: String,
     /// What they become.
@@ -173,7 +177,6 @@ pub struct RunMutantDocument {
 
 /// One declared expectation, as the run left it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct ExpectationDocument {
     /// The identity or prefix the file wrote.
     pub id: String,
@@ -193,7 +196,6 @@ pub struct ExpectationDocument {
 
 /// One thing that stops a run from being clean.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct FindingDocument {
     /// What kind of hole it is.
     pub kind: String,
@@ -323,6 +325,7 @@ fn mutant(one: &crate::run::Judged, catalog: Option<MutantDocument>) -> RunMutan
         column: 0,
         start_byte: 0,
         end_byte: 0,
+        source_digest: String::new(),
         original: String::new(),
         replacement: String::new(),
     });
@@ -337,6 +340,9 @@ fn mutant(one: &crate::run::Judged, catalog: Option<MutantDocument>) -> RunMutan
         rule_version: catalog.rule_version,
         line: catalog.line,
         column: catalog.column,
+        start_byte: catalog.start_byte,
+        end_byte: catalog.end_byte,
+        source_digest: catalog.source_digest,
         original: catalog.original,
         replacement: catalog.replacement,
         outcome: one.outcome.name().to_owned(),

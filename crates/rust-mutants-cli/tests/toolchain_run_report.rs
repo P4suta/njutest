@@ -546,3 +546,174 @@ fn a_tree_that_changed_is_a_different_question_and_is_answered_again() {
         "a record is about the tree it was established on, and this is another tree"
     );
 }
+
+#[test]
+fn every_mutant_row_carries_what_re_minting_its_id_needs() {
+    let fixture = Fixture::copy("fixture-simple");
+    let output = against(&fixture, &["run", "--offline", "--locked", "--tier", "all"]);
+    assert!(
+        output.status.code().is_some_and(|code| code < 2),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let document = stored(&fixture);
+    let rows = document["mutants"].as_array().expect("the rows");
+    assert!(!rows.is_empty(), "{document}");
+    for row in rows {
+        let text = |key: &str| {
+            row[key]
+                .as_str()
+                .unwrap_or_else(|| panic!("{key} of {row}"))
+                .to_owned()
+        };
+        let number = |key: &str| {
+            u32::try_from(
+                row[key]
+                    .as_u64()
+                    .unwrap_or_else(|| panic!("{key} of {row}")),
+            )
+            .unwrap_or_else(|_error| panic!("{key} of {row}"))
+        };
+        let identity = rust_mutants::id::Identity {
+            path: text("path"),
+            rule_name: text("rule"),
+            rule_version: number("rule_version"),
+            span: rust_mutants::span::Span {
+                start: number("start_byte"),
+                end: number("end_byte"),
+            },
+            source_digest: text("source_digest"),
+            original_digest: rust_mutants::id::digest(text("original").as_bytes()),
+            replacement_digest: rust_mutants::id::digest(text("replacement").as_bytes()),
+        };
+        let minted = identity.id().expect("the row is a complete identity");
+        assert_eq!(
+            minted,
+            text("id"),
+            "a row a reader cannot re-mint leaves the identity unaudited: {row}"
+        );
+        assert!(
+            minted.starts_with(&text("display_id")),
+            "the short identity is the head of the full one: {row}"
+        );
+    }
+}
+
+#[test]
+fn a_rejection_row_carries_its_catalog_index() {
+    let fixture = Fixture::copy("fixture-rejectable");
+    let output = against(
+        &fixture,
+        &[
+            "run",
+            "--offline",
+            "--locked",
+            "--tier",
+            "all",
+            "--no-verify",
+        ],
+    );
+    assert!(
+        output.status.code().is_some_and(|code| code < 2),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let document = stored(&fixture);
+    let rejections = document["rejections"].as_array().expect("the refusals");
+    assert!(!rejections.is_empty(), "the fixture exists to be refused");
+    let mut indices: Vec<u64> = rejections
+        .iter()
+        .map(|row| row["index"].as_u64().unwrap_or_else(|| panic!("{row}")))
+        .chain(
+            document["mutants"]
+                .as_array()
+                .expect("the rows")
+                .iter()
+                .map(|row| row["index"].as_u64().unwrap_or_else(|| panic!("{row}"))),
+        )
+        .collect();
+    indices.sort_unstable();
+    let dense: Vec<u64> = (0..count(indices.len())).collect();
+    assert_eq!(
+        indices, dense,
+        "the accepted and the refused together are the whole catalog"
+    );
+}
+
+#[test]
+fn an_unreached_finding_is_a_finding_the_schema_knows() {
+    let fixture = Fixture::copy("fixture-unreached");
+    let output = against(
+        &fixture,
+        &[
+            "run",
+            "--offline",
+            "--locked",
+            "--coverage",
+            "--tier",
+            "balanced",
+        ],
+    );
+    assert!(
+        output.status.code().is_some_and(|code| code < 2),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let document = stored(&fixture);
+    let kinds: Vec<&str> = document["findings"]
+        .as_array()
+        .expect("the findings")
+        .iter()
+        .filter_map(|finding| finding["kind"].as_str())
+        .collect();
+    assert!(
+        kinds.contains(&"unreached-mutant"),
+        "the fixture exists for its unreached mutation: {kinds:?}"
+    );
+    let schema: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(
+            mjutest_devkit::paths::workspace_root().join("schema/rust-mutants-run-report-v1.json"),
+        )
+        .expect("the schema"),
+    )
+    .expect("the schema is a document");
+    let validator = jsonschema::validator_for(&schema).expect("the schema compiles");
+    let errors: Vec<String> = validator
+        .iter_errors(&document)
+        .map(|error| format!("{}: {error}", error.instance_path()))
+        .collect();
+    assert!(errors.is_empty(), "{errors:#?}");
+}
+
+#[test]
+fn an_older_reader_accepts_a_newer_report() {
+    let fixture = Fixture::copy("fixture-simple");
+    let output = against(&fixture, &["run", "--offline", "--locked"]);
+    assert!(
+        output.status.code().is_some_and(|code| code < 2),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let directory = fixture.root().join("reports/mutation");
+    let pointer: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(directory.join("latest.json")).expect("a pointer"),
+    )
+    .expect("the pointer is a document");
+    let path = directory.join(pointer["document"].as_str().expect("a document path"));
+    let mut document: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).expect("the report"))
+            .expect("the report is a document");
+    document["a_field_from_a_later_release"] = serde_json::json!("whatever it means");
+    document["mutants"][0]["another_one"] = serde_json::json!(7);
+    document["rejections"] = serde_json::json!([]);
+    std::fs::write(&path, document.to_string()).expect("writing the newer report");
+
+    let read = against(&fixture, &["report"]);
+    assert_eq!(
+        read.status.code(),
+        Some(1),
+        "a reader that refuses a field it does not know cannot read the next release: {}",
+        String::from_utf8_lossy(&read.stderr)
+    );
+    assert!(stdout(&read).contains("MUTANTS   "), "{}", stdout(&read));
+}

@@ -74,6 +74,7 @@
         "column",
         "start_byte",
         "end_byte",
+        "source_digest",
         "original",
         "replacement"
       ],
@@ -90,6 +91,7 @@
         "column": { "type": "integer", "minimum": 0 },
         "start_byte": { "type": "integer", "minimum": 0 },
         "end_byte": { "type": "integer", "minimum": 0 },
+        "source_digest": { "type": "string" },
         "original": { "type": "string" },
         "replacement": { "type": "string" }
       }
@@ -97,8 +99,9 @@
     "rejection": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "display_id", "path", "rule", "code", "diagnostic"],
+      "required": ["index", "id", "display_id", "path", "rule", "code", "diagnostic"],
       "properties": {
+        "index": { "type": "integer", "minimum": 0 },
         "id": { "$ref": "#/$defs/digest" },
         "display_id": { "type": "string", "pattern": "^[0-9a-f]{20}$" },
         "path": { "type": "string", "minLength": 1 },

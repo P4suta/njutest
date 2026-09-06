@@ -166,6 +166,9 @@
           "rule_version",
           "line",
           "column",
+          "start_byte",
+          "end_byte",
+          "source_digest",
           "original",
           "replacement",
           "outcome",
@@ -188,6 +191,9 @@
           "rule_version": { "type": "integer", "minimum": 0 },
           "line": { "type": "integer", "minimum": 0 },
           "column": { "type": "integer", "minimum": 0 },
+          "start_byte": { "type": "integer", "minimum": 0 },
+          "end_byte": { "type": "integer", "minimum": 0 },
+          "source_digest": { "type": "string" },
           "original": { "type": "string" },
           "replacement": { "type": "string" },
           "outcome": {
@@ -227,8 +233,9 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["id", "display_id", "path", "rule", "code", "diagnostic"],
+        "required": ["index", "id", "display_id", "path", "rule", "code", "diagnostic"],
         "properties": {
+          "index": { "type": "integer", "minimum": 0 },
           "id": { "type": "string" },
           "display_id": { "type": "string" },
           "path": { "type": "string" },
@@ -282,6 +289,7 @@
               "inconclusive-mutant",
               "errored-mutant",
               "not-run-mutant",
+              "unreached-mutant",
               "stale-expectation",
               "unmatched-expectation"
             ]

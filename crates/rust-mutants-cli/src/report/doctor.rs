@@ -15,7 +15,6 @@ pub const SCHEMA_VERSION: u32 = 1;
 
 /// What a run would find in this environment.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct DoctorDocument {
     /// [`DOCUMENT_TYPE`].
     pub document_type: String,
@@ -31,7 +30,6 @@ pub struct DoctorDocument {
 
 /// One thing a run needs, and whether it is here.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct Check {
     /// What was checked.
     pub name: String,
