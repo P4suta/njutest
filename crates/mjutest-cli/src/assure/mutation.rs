@@ -254,8 +254,8 @@ fn finding_of(judged: &Judged) -> Option<Finding> {
         Disposition::Unreached => (
             FindingKind::SurvivingMutant,
             format!(
-                "no measured test reaches {} at {}: the mutation lives in code the tests \
-                 never execute",
+                "no measured test reaches {} at {}: the position is instrumented, every \
+                 measured test carries coverage, and none of them executes it",
                 judged.rule, judged.path
             ),
         ),
@@ -566,7 +566,7 @@ fn record_route(watch: Watch<'_>, mutant: &Mutant, route: &Route, reused: Option
     watch.trace.route(crate::trace::RouteRecord {
         mutant: mutant.display_id.clone(),
         granularity: route.granularity().to_owned(),
-        fallback: route.fallback().map(|why| why.name().to_owned()),
+        fallback: route.widened().map(ToOwned::to_owned),
         reaching: route.reaching().to_vec(),
         discharged: route
             .discharged()
@@ -585,7 +585,7 @@ fn record_route(watch: Watch<'_>, mutant: &Mutant, route: &Route, reused: Option
 fn reuse(options: &MutationOptions, route: &Route, mutant: &str) -> Option<(Disposition, String)> {
     let evidence = options.evidence.as_ref()?;
     let record = store::read(&evidence.root, mutant).ok()??;
-    let reaching: BTreeSet<String> = route.reaching().iter().cloned().collect();
+    let reaching: BTreeSet<String> = answered(route, evidence).into_iter().collect();
     record.believable(&reaching, &evidence.standing).ok()?;
     let disposition = match &record.outcome {
         store::Outcome::Killed { target, .. } => Disposition::Killed {
@@ -622,11 +622,14 @@ fn keep(options: &MutationOptions, mutant: &str, route: &Route, disposition: &Di
         }
         Disposition::Survived { .. } => {
             let mut targets = BTreeMap::new();
-            for target in route.reaching() {
-                let Some(key) = evidence.standing.passing.get(target) else {
+            for target in answered(route, evidence) {
+                let Some(key) = evidence.standing.passing.get(&target) else {
                     return;
                 };
-                targets.insert(target.clone(), key.clone());
+                targets.insert(target, key.clone());
+            }
+            if targets.is_empty() {
+                return;
             }
             store::Outcome::Survived { targets }
         }
@@ -636,6 +639,21 @@ fn keep(options: &MutationOptions, mutant: &str, route: &Route, disposition: &Di
         &evidence.root,
         &store::record(mutant, &evidence.run_id, outcome),
     ));
+}
+
+/// The targets a route's answer is about: the ones it named, or every target this run saw pass when the package suite is what answered.
+///
+/// A survival is the universal claim, and reusing one asks that this run route
+/// nothing the recorded run did not run. A suite route runs every prepared
+/// target, so naming each of them with its own behaviour key says exactly that,
+/// and a target that enters or leaves the suite is then visible where one key
+/// over the package would have hidden it.
+fn answered(route: &Route, evidence: &Evidence) -> Vec<String> {
+    if matches!(route, Route::Suite { .. }) {
+        evidence.standing.passing.keys().cloned().collect()
+    } else {
+        route.reaching().to_vec()
+    }
 }
 
 /// The disposition a checkpoint's record stands for, or nothing when this release does not inherit it.
@@ -662,10 +680,13 @@ fn judge(
     mutant: &Mutant,
     route: Route,
 ) -> Result<Disposition, crate::error::RunnerError> {
-    let (session, baseline) = (judging.subject.session, judging.subject.baseline);
-    let (options, watch) = (judging.options, judging.watch);
+    let baseline = judging.subject.baseline;
     if let Route::Discharged { .. } = route {
         return Ok(Disposition::Survived { route });
+    }
+    if let Route::Suite { .. } = route {
+        let answered = against(judging, mutant, None)?;
+        return Ok(answered.unwrap_or(Disposition::Survived { route }));
     }
     if route.reaching().is_empty() {
         return Ok(Disposition::Unreached);
@@ -677,40 +698,57 @@ fn judge(
         else {
             continue;
         };
-        let request = request_for(mutant, measured, &options.test_args);
-        let result = session.exec(&request, watch.cancel)?;
-        watch.trace.mutant_exec(crate::trace::MutantExecRecord {
-            mutant: mutant.display_id.clone(),
-            target: measured.target.id.clone(),
-            args: request.args.clone(),
-            outcome: result.outcome.name().to_owned(),
-            duration_ms: u64::try_from(result.duration.as_millis()).unwrap_or(u64::MAX),
-        });
-        match result.outcome {
-            Outcome::Survived => {}
-            Outcome::Killed | Outcome::TimedOut => {
-                let name = measured.target.name();
-                return Ok(match confirm(session, &request, judging.controls, watch)? {
-                    Ok(()) if result.outcome == Outcome::TimedOut => {
-                        Disposition::TimedOut { on: name }
-                    }
-                    Ok(()) => Disposition::Killed { by: name },
-                    Err(why) => Disposition::Unconfirmed { on: name, why },
-                });
-            }
-            _ => {
-                return Ok(Disposition::Errored {
-                    on: measured.target.name(),
-                    detail: format!(
-                        "the harness answered {}: {}",
-                        result.outcome.name(),
-                        tail(&result.output)
-                    ),
-                });
-            }
+        if let Some(disposition) = against(judging, mutant, Some(measured))? {
+            return Ok(disposition);
         }
     }
     Ok(Disposition::Survived { route })
+}
+
+/// What one mutation comes to against one test, or against every test in the package when no proof says which could notice it. Nothing at all means it ran and nobody noticed, which the caller folds into the route's own answer.
+fn against(
+    judging: &Judging<'_>,
+    mutant: &Mutant,
+    measured: Option<&Measured>,
+) -> Result<Option<Disposition>, crate::error::RunnerError> {
+    let (session, options, watch) = (judging.subject.session, judging.options, judging.watch);
+    let request = request_for(&mutant.id, measured, &options.test_args);
+    let result = session.exec(&request, watch.cancel)?;
+    let name = measured.map_or_else(
+        || {
+            if result.target.is_empty() {
+                SUITE.to_owned()
+            } else {
+                result.target.clone()
+            }
+        },
+        |one| one.target.name(),
+    );
+    watch.trace.mutant_exec(crate::trace::MutantExecRecord {
+        mutant: mutant.display_id.clone(),
+        target: measured.map_or_else(|| SUITE.to_owned(), |one| one.target.id.clone()),
+        args: request.args.clone(),
+        outcome: result.outcome.name().to_owned(),
+        duration_ms: u64::try_from(result.duration.as_millis()).unwrap_or(u64::MAX),
+    });
+    match result.outcome {
+        Outcome::Survived => Ok(None),
+        Outcome::Killed | Outcome::TimedOut => Ok(Some(
+            match confirm(session, &request, judging.controls, watch)? {
+                Ok(()) if result.outcome == Outcome::TimedOut => Disposition::TimedOut { on: name },
+                Ok(()) => Disposition::Killed { by: name },
+                Err(why) => Disposition::Unconfirmed { on: name, why },
+            },
+        )),
+        _ => Ok(Some(Disposition::Errored {
+            on: name,
+            detail: format!(
+                "the harness answered {}: {}",
+                result.outcome.name(),
+                tail(&result.output)
+            ),
+        })),
+    }
 }
 
 /// The pair: the original must pass right now, and the kill must reproduce.
@@ -775,12 +813,18 @@ impl Controls {
     }
 }
 
-/// The request that runs one mutant against one test.
-fn request_for(mutant: &Mutant, measured: &Measured, args: &[String]) -> Request {
+/// The name a route that ran the whole package suite answers to, in a recording and in a report.
+pub const SUITE: &str = "package-suite";
+
+/// The request that runs one mutant against one test, or against every test the session prepared when no proof says which could notice it.
+#[must_use]
+pub fn request_for(mutant: &str, measured: Option<&Measured>, args: &[String]) -> Request {
     Request {
-        mutant: mutant.id.clone(),
-        target: Some(binary_of(measured)),
-        test: (!measured.target.is_whole_binary()).then(|| measured.target.path.clone()),
+        mutant: mutant.to_owned(),
+        target: measured.map(binary_of),
+        test: measured
+            .filter(|one| !one.target.is_whole_binary())
+            .map(|one| one.target.path.clone()),
         args: args.to_vec(),
         timeout: None,
     }

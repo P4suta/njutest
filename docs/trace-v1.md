@@ -44,7 +44,7 @@ which carries `events_emitted` and `events_dropped`.
 | `note` | what has no shape of its own yet |
 | `mutant-exec` | one mutant execution: the mutant a person types, the target, the arguments verbatim, the outcome, and how long it took |
 | `probe-exec` | what the probe pass measured for one target: `measured` with the count of mutants it infected, or `not-measured` with no count at all, because a target the pass never read carries no facts and none is not zero |
-| `route` | one mutant's routing decision: granularity (`block`, `discharged`, `file`, `unreached`), the fallback that widened it, the reaching targets in run order, every target a proof removed beside the proof that removed it (`branch-never-taken`, `never-infected`), how many targets touched the file at all, and the run a disposition was read back from |
+| `route` | one mutant's routing decision: granularity (`block`, `discharged`, `file`, `unreached`, `suite`), what widened it — the fallback that took the whole file (`position-unknown`, `outside-blocks`) or the premise that sent the mutation to the package suite (`position-unknown`, `outside-blocks`, `coverage-incomplete`) — the reaching targets in run order, every target a proof removed beside the proof that removed it (`branch-never-taken`, `never-infected`), how many targets touched the file at all, and the run a disposition was read back from |
 | `run-end` | verdict, accounting, `events_emitted`, `events_dropped` |
 
 An `exec` event carries variable names and never values, and digests the

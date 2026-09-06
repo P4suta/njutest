@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 
 use mjutest_cli::evidence::key::{
-    Common, Linked, Reading, behaviour, linked_by, reads_directories_under, suite,
+    Common, Linked, Reading, behaviour, linked_by, reads_directories_under,
 };
 use mjutest_cli::evidence::tree::scan;
 use mjutest_devkit::repo::Repo;
@@ -41,11 +41,6 @@ fn every_key_is_sixty_four_hex_and_a_function_of_its_inputs() {
     let value = behaviour(&linked(), &common());
     assert_eq!(value.len(), 64);
     assert_eq!(value, behaviour(&linked(), &common()));
-    assert_ne!(
-        value,
-        suite(&linked(), &common()),
-        "what one target does is not what a package suite does"
-    );
 }
 
 /// One thing that changes, what it links, and what the run shares.

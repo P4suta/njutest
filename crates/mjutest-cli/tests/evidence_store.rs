@@ -86,8 +86,9 @@ fn a_survival_is_believed_only_when_every_target_that_could_notice_is_one_that_d
     );
     assert_eq!(
         one.believable(&reaching(&[]), &standing(&[])),
-        Ok(()),
-        "nothing reaches it, so every target that reaches it passed"
+        Err(Refusal::NothingRouted),
+        "a universal claim over an empty set is vacuously true, and believing one would \
+         answer a question this run never asked"
     );
 
     assert_eq!(

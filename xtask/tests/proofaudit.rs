@@ -609,3 +609,82 @@ fn a_run_directory_that_could_not_be_read_exits_apart_from_both() {
         "\"I could not look\" is neither \"I looked and found nothing\" nor \"I looked and found something\""
     );
 }
+
+#[test]
+fn a_mutation_the_route_calls_unreached_and_the_recording_runs_is_a_violation() {
+    let audit = audited_with(
+        &base(),
+        &[
+            serde_json::json!({
+                "seq": 1, "timestamp": "2026-09-06T00:00:00Z", "elapsed_ms": 0, "type": "route",
+                "route": {
+                    "mutant": KILLED, "granularity": "unreached", "fallback": null,
+                    "reaching": [], "discharged": [], "file_candidates": 0, "reused": null
+                }
+            }),
+            serde_json::json!({
+                "seq": 2, "timestamp": "2026-09-06T00:00:01Z", "elapsed_ms": 1, "type": "mutant-exec",
+                "mutant": {
+                    "mutant": KILLED, "target": "t1", "args": [], "outcome": "killed",
+                    "duration_ms": 5
+                }
+            }),
+        ],
+    );
+
+    assert!(
+        proven(&audit).contains(&KILLED.to_owned()),
+        "no measured test reaches this is a claim about the code, and the run that made it \
+         then ran a test against it: {audit}"
+    );
+}
+
+#[test]
+fn a_mutation_the_route_sends_to_the_suite_and_the_recording_never_runs_is_a_violation() {
+    let audit = audited_with(
+        &base(),
+        &[serde_json::json!({
+            "seq": 1, "timestamp": "2026-09-06T00:00:00Z", "elapsed_ms": 0, "type": "route",
+            "route": {
+                "mutant": SURVIVED, "granularity": "suite", "fallback": "coverage-incomplete",
+                "reaching": [], "discharged": [], "file_candidates": 0, "reused": null
+            }
+        })],
+    );
+
+    assert!(
+        proven(&audit).contains(&SURVIVED.to_owned()),
+        "a premise that fails has to end in more work rather than in less, and this one \
+         ended in none: {audit}"
+    );
+}
+
+#[test]
+fn a_route_the_run_read_back_from_an_earlier_one_is_not_held_to_running_anything() {
+    let audit = audited_with(
+        &base(),
+        &[serde_json::json!({
+            "seq": 1, "timestamp": "2026-09-06T00:00:00Z", "elapsed_ms": 0, "type": "route",
+            "route": {
+                "mutant": SURVIVED, "granularity": "suite", "fallback": "outside-blocks",
+                "reaching": [], "discharged": [], "file_candidates": 0, "reused": "earlier"
+            }
+        })],
+    );
+
+    assert!(
+        proven(&audit).is_empty(),
+        "an answer read back from an earlier run is an answer this run did not have to \
+         establish again: {audit}"
+    );
+}
+
+/// Every mutant the proof layers say a recording does not support.
+fn proven(audit: &Audit) -> Vec<String> {
+    audit
+        .remarks
+        .iter()
+        .filter(|remark| remark.layer == Layer::Proofs && remark.standing == Standing::Violated)
+        .map(|remark| remark.subject.clone())
+        .collect()
+}

@@ -8,7 +8,8 @@ use std::path::PathBuf;
 
 use mjutest_cli::assure::baseline::Measured;
 use mjutest_cli::assure::route::{
-    BRANCH_NEVER_TAKEN, Body, Fallback, NEVER_INFECTED, Proven, Route, discharge, route, uninfected,
+    BRANCH_NEVER_TAKEN, Body, Fallback, NEVER_INFECTED, Proven, Route, Unsettled, discharge, route,
+    uninfected,
 };
 use mjutest_cli::coverage::{Block, Point};
 use mjutest_cli::report::TargetStatus;
@@ -524,4 +525,72 @@ fn a_mutant_no_test_infected_is_resolved_without_one_execution() {
     assert_eq!(narrowed.granularity(), "discharged");
     assert!(narrowed.reaching().is_empty());
     assert_eq!(removed(&narrowed), ["never"]);
+}
+
+#[test]
+fn a_position_no_instrumentation_describes_is_not_a_position_nothing_reaches() {
+    let elsewhere = block("src/other.rs", (1, 1), (9, 1));
+    let target = measured(
+        "one",
+        10,
+        TargetStatus::Passed,
+        std::slice::from_ref(&elsewhere),
+    );
+
+    let routed = route(
+        "src/lib.rs",
+        Some(at(12, 5)),
+        &[target],
+        &instrumented(std::slice::from_ref(&elsewhere)),
+    );
+
+    assert_eq!(
+        routed.granularity(),
+        "suite",
+        "no region describes the position, so nothing was measured about it and the \
+         silence proves nothing: the package suite settles it"
+    );
+    assert_eq!(routed.unsettled(), Some(Unsettled::OutsideBlocks));
+    assert!(
+        routed.reaching().is_empty(),
+        "the suite is not one of the targets the baseline named"
+    );
+}
+
+#[test]
+fn a_target_that_carries_no_coverage_keeps_a_mutation_out_of_the_unreached_column() {
+    let reached = block("src/lib.rs", (10, 1), (20, 1));
+    let targets = [
+        measured(
+            "covered",
+            10,
+            TargetStatus::Passed,
+            std::slice::from_ref(&reached),
+        ),
+        measured("silent", 4, TargetStatus::Passed, &[]),
+    ];
+    let all = instrumented(&[reached, block("src/lib.rs", (30, 1), (40, 1))]);
+
+    let routed = route("src/lib.rs", Some(at(32, 1)), &targets, &all);
+
+    assert_eq!(
+        routed.granularity(),
+        "suite",
+        "a target whose coverage says nothing says nothing about this position either, \
+         so no test executing it is not something this run measured"
+    );
+    assert_eq!(routed.unsettled(), Some(Unsettled::CoverageIncomplete));
+}
+
+#[test]
+fn a_mutation_nothing_touched_and_nothing_describes_is_settled_by_the_suite() {
+    let routed = route("src/lib.rs", None, &[], &BTreeSet::new());
+
+    assert_eq!(
+        routed.granularity(),
+        "suite",
+        "not knowing where the mutation is and having nothing to route with are two \
+         absences of evidence, and two absences do not make a proof"
+    );
+    assert_eq!(routed.unsettled(), Some(Unsettled::PositionUnknown));
 }

@@ -38,8 +38,13 @@ earlier run watched survive.
 2. **A subset is sound; a superset is not.** Reuse is refused by growth,
    never by shrinkage.
 3. **Fuzz targets and resumed targets never qualify, in either direction.**
-4. **A mutant no target reaches is a claim about the package suite**, keyed
-   by the conjunction of every target's key and what the suite itself reads.
+4. **A mutant the evidence cannot say nothing reaches is a claim about the
+   package suite**, and the suite runs every prepared target, so the claim is
+   recorded as the conjunction of every target's own behaviour key. Naming
+   each target is stricter than one key over the package: a target that
+   enters or leaves the suite refuses reuse where a package-wide key would
+   have hidden it. A mutant both premises of `unreached` hold for is a claim
+   about the code and is not reused at all.
 5. **A timeout is reused fail-closed, under an existential condition**: it
    keeps its finding and can never remove one. The record names the target
    time ran out under as the last of its executed targets, stored in

@@ -23,6 +23,7 @@ const REJECTED: &str = "compile-rejected";
 const TIMED_OUT: &str = "timed_out";
 const PASSED: &str = "passed";
 const SURVIVING_MUTANT: &str = "surviving-mutant";
+const SUITE: &str = "suite";
 
 /// Why a recording could not be re-decided at all.
 #[derive(Debug, thiserror::Error)]
@@ -400,6 +401,9 @@ fn proofs(recorded: Option<&str>, audit: &mut Audit) {
         return;
     };
     let mut removed: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
+    let mut granularity: BTreeMap<String, String> = BTreeMap::new();
+    let mut reused: BTreeSet<String> = BTreeSet::new();
+    let mut executed: BTreeSet<String> = BTreeSet::new();
     let mut ran: Vec<(String, String, String)> = Vec::new();
     for line in recorded.lines().filter(|line| !line.trim().is_empty()) {
         let Ok(event) = serde_json::from_str::<serde_json::Value>(line) else {
@@ -411,6 +415,13 @@ fn proofs(recorded: Option<&str>, audit: &mut Audit) {
                     continue;
                 };
                 let mutant = field(route, "mutant").unwrap_or_default();
+                granularity.insert(
+                    mutant.clone(),
+                    field(route, "granularity").unwrap_or_default(),
+                );
+                if field(route, "reused").is_some() {
+                    reused.insert(mutant.clone());
+                }
                 let discharged = removed.entry(mutant).or_default();
                 for one in rows(route, "discharged") {
                     discharged.insert(
@@ -423,8 +434,10 @@ fn proofs(recorded: Option<&str>, audit: &mut Audit) {
                 let Some(execution) = event.get("mutant") else {
                     continue;
                 };
+                let mutant = field(execution, "mutant").unwrap_or_default();
+                executed.insert(mutant.clone());
                 ran.push((
-                    field(execution, "mutant").unwrap_or_default(),
+                    mutant,
                     field(execution, "target").unwrap_or_default(),
                     field(execution, "outcome").unwrap_or_default(),
                 ));
@@ -455,6 +468,38 @@ fn proofs(recorded: Option<&str>, audit: &mut Audit) {
                  then {outcome} it; a layer that drops a target which finds a defect is unsound"
             ),
         );
+    }
+    reach(&granularity, &reused, &executed, &mut notes);
+}
+
+/// The reach layer against the recording: a route that claims nothing reaches a mutation may not then run one, and a route that says the evidence does not carry that claim has to run something.
+fn reach(
+    granularity: &BTreeMap<String, String>,
+    reused: &BTreeSet<String>,
+    executed: &BTreeSet<String>,
+    notes: &mut Notes<'_>,
+) {
+    for (mutant, decided) in granularity {
+        if reused.contains(mutant) {
+            continue;
+        }
+        match (decided.as_str(), executed.contains(mutant)) {
+            (UNREACHED, true) => notes.violated(
+                mutant,
+                "the route says no measured test reaches this mutation and the recording \
+                 then runs one against it; a claim about the code that its own run \
+                 contradicts is not a claim"
+                    .to_owned(),
+            ),
+            (SUITE, false) => notes.violated(
+                mutant,
+                "the route says the evidence does not carry that nothing reaches this \
+                 mutation, and the recording runs nothing against it; a premise that \
+                 fails has to end in more work rather than in less"
+                    .to_owned(),
+            ),
+            _ => {}
+        }
     }
 }
 
