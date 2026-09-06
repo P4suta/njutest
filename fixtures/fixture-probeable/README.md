@@ -15,8 +15,17 @@ is checked against real executions rather than argued about.
 | `double` | yes | `n * 2` is not probed, but the returned expression of the mutation is; `doubling_zero_is_zero` returns the default and infects nothing, `doubling_four_is_eight` does not and infects |
 | `measured` | no | `items.len()` is a call, and a call may do anything the second time |
 | `ratio` | no | `-0.0` equals `0.0` and is not what the default writes, so the compiler refuses the probe |
+| `retries` | yes | the returned name already holds what the replacement would write, so every test that reaches it is discharged `never-infected` and the mutation is resolved without one execution |
+| `tagged` | no | its equality answers about `number` while a test reads `tag`, so `Observable` is not stated for it and the compiler refuses the probe |
 
 The invariant every run of this fixture must satisfy: for every mutant and
 every test, if the test killed the mutant then the probe recorded that test
 infecting it. A kill without an infection would mean a discharge could remove
 a test that finds a defect.
+
+`tagged` is here because that invariant once failed. Equality is what a probe
+reads as "could this test have seen the replacement", so a `PartialEq` that
+answers about less than a test can see makes the probe say nothing happened
+while a test watches the difference. The probe is stated only for the types
+whose equality is the whole of what a program can tell apart, and this fixture
+is where a type outside that set is held to being refused.

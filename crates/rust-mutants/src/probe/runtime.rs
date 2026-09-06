@@ -1,16 +1,21 @@
 // SPDX-FileCopyrightText: 2026 mjutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! The module a probed file calls into: the two traits that decide what can be probed, and the append that records what was.
+//! The module a probed file calls into: the traits that decide what can be probed, and the append that records what was.
 //!
-//! The traits are the whole of the type reasoning. `Probe` answers the
-//! question for anything that is `Default + PartialEq`; `FloatRefuse` is
-//! implemented for `f32` and `f64` alone and returns a type no `if` accepts,
-//! so a probe of a float is a compile error and the site is left unprobed.
-//! `-0.0 == 0.0` holds and `-0.0` is not what `Default::default()` writes, so
-//! a probe there would say a mutation changed nothing when it changed the sign
-//! of a zero; letting the compiler refuse it is how that is kept out without
-//! this module knowing any types.
+//! The traits are the whole of the type reasoning. A probe reads `==` as the
+//! answer to "could this test have seen the replacement", so it is stated only
+//! where equality is the whole of what a program can tell apart. `Observable`
+//! names those types — the integers, `bool`, `char`, and the unit — and
+//! nothing else, so a type whose `PartialEq` answers about one field while a
+//! test reads another is a compile error here rather than a discharge that
+//! removes the test which finds the defect. `FloatRefuse` keeps `f32` and
+//! `f64` out with a type no `if` accepts: `-0.0 == 0.0` holds and `-0.0` is
+//! not what `Default::default()` writes, so a probe there would say a mutation
+//! changed nothing when it changed the sign of a zero.
+//!
+//! Every refusal is the compiler's, and every refusal leaves the site
+//! unprobed, which costs an execution and never a kill.
 //!
 //! The log is appended to with one `write_all` per record and never read back.
 //! A process that cannot open or write it exits rather than running tests whose
@@ -52,10 +57,27 @@ const TEMPLATE: &str = r#"#[doc(hidden)]
     impl FloatRefuse for f32 {}
     impl FloatRefuse for f64 {}
 
+    pub(crate) trait Observable {}
+    impl Observable for bool {}
+    impl Observable for char {}
+    impl Observable for () {}
+    impl Observable for i8 {}
+    impl Observable for i16 {}
+    impl Observable for i32 {}
+    impl Observable for i64 {}
+    impl Observable for i128 {}
+    impl Observable for isize {}
+    impl Observable for u8 {}
+    impl Observable for u16 {}
+    impl Observable for u32 {}
+    impl Observable for u64 {}
+    impl Observable for u128 {}
+    impl Observable for usize {}
+
     pub(crate) trait Probe {
         fn probed(&self) -> bool;
     }
-    impl<T: ::std::default::Default + ::std::cmp::PartialEq> Probe for &T {
+    impl<T: Observable + ::std::default::Default + ::std::cmp::PartialEq> Probe for &T {
         fn probed(&self) -> bool {
             **self == <T as ::std::default::Default>::default()
         }

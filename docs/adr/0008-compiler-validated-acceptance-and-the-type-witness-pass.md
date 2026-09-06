@@ -37,9 +37,13 @@ rather than as a survivor.
    everything: the failure is not mutant-induced.
 2. **Return-value probes need no type spelling.** Rust's inference unifies
    `let __rm_r0 = E;` with the function's return type, and a trait bound with
-   autoref specialisation lets the compiler refuse a probe on a float or on a
-   type without `Default + PartialEq`: the probe tree's own validation drops
-   the site, and the mutant is simply unprobed.
+   autoref specialisation lets the compiler refuse every probe the premise does
+   not carry. A probe reads `==` as the answer to whether a test could have
+   seen the replacement, so the sealed `Observable` names the types whose
+   equality is the whole of what a program can tell apart — the integers,
+   `bool`, `char`, the unit — and a float, or a type whose `PartialEq` answers
+   about less than a test can read, is refused: the probe tree's own validation
+   drops the site, and the mutant is simply unprobed.
 3. **A proof that needs a fact about a type asks the compiler for it.** The
    branch proof needs the operands of a comparison to be primitive. A third
    tree — pristine plus one witness statement per candidate, checked and never

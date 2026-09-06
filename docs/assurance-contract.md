@@ -120,19 +120,30 @@ reaching(m, t) = covered-region(m, t)
 The probe tree is the program the user wrote, with no mutant ever active. For
 each mutation the engine has a probe form of, that tree records — without
 effects of its own — whether the value the original computed at the mutated
-site ever differed from the constant the mutant would put there. So a target
-the pass measured and that never saw that site differ ran the original program
-and the mutated one through identical states. It cannot have observed the
-mutation. Such a target is *discharged* with reason `never-infected`.
+site ever differed from the constant the mutant would put there. The engine
+runs a test binary whole and records what that binary infected, so what the
+pass measures is a binary rather than one of its tests; a binary that never saw
+the site differ is one whose every test never saw it differ, and each of that
+binary's targets ran the original program and the mutated one through identical
+states. None of them can have observed the mutation. Such a target is
+*discharged* with reason `never-infected`. The coarseness costs discharges and
+never soundness: one test of a binary seeing the site differ keeps every test of
+that binary.
 
 That the recording is a proof is the engine's obligation. A mutant does not
 evaluate the operand it replaced, so rust-mutants attaches a probe form only
 where leaving that operand unevaluated changes nothing observable — every
 operand of the statement is effect-free — where the recorded comparison is
 always reached — the replaced operand cannot panic — and where equal values
-mean equal behaviour, which rules out a floating-point result; the compiler
-itself refuses the probe on a float or on a type without `Default` and
-`PartialEq`. mjutest states nothing about a site the engine did not claim,
+mean equal behaviour. That last one is the narrowest. A probe reads `==` as the
+answer to whether a test could have seen the replacement, so it is stated only
+for the types whose equality is the whole of what a program can tell apart: the
+integers, `bool`, `char`, and the unit. The compiler itself refuses every other
+probe. A float is refused because `-0.0 == 0.0` holds and `-0.0` is not what
+the default writes; an equality that answers about one field while a test reads
+another is refused because the probe would otherwise say a test saw nothing
+while it watched the difference, and the discharge would remove the test that
+finds the defect. mjutest states nothing about a site the engine did not claim,
 and holds what the engine does claim to the recorded kills of every dogfood
 run through the offline `proofaudit` infection layer.
 
