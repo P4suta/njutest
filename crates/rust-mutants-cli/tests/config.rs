@@ -13,6 +13,8 @@
 use std::path::Path;
 use std::time::Duration;
 
+use rust_mutants::session::Timeout;
+
 use rust_mutants_cli::config::{
     Config, ConfigErrorKind, DEFAULT_REPORTS_DIRECTORY, DEFAULT_REPORTS_KEEP, DEFAULT_TIMEOUT,
     FILE_NAME, skeleton,
@@ -48,6 +50,11 @@ fn the_defaults_are_the_numbers_the_contract_states() {
     assert_eq!(config.version, 1);
     assert_eq!(config.mutation.tier, rust_mutants::rule::Tier::Balanced);
     assert_eq!(config.mutation.timeout, DEFAULT_TIMEOUT);
+    assert_eq!(
+        config.mutation.timeout,
+        Timeout::Auto,
+        "a budget nobody chose is a multiple of what the target's own baseline took"
+    );
     assert_eq!(config.mutation.build_timeout, None);
     assert!(config.mutation.verify, "a run verifies unless told not to");
     assert!(config.mutation.expect.is_empty());
@@ -111,7 +118,10 @@ keep = 3
     assert_eq!(config.project.exclude, ["src/generated/**"]);
     assert_eq!(config.mutation.tier, rust_mutants::rule::Tier::Strong);
     assert_eq!(config.mutation.operators, ["add-to-sub"]);
-    assert_eq!(config.mutation.timeout, Duration::from_secs(90));
+    assert_eq!(
+        config.mutation.timeout,
+        Timeout::Fixed(Duration::from_secs(90))
+    );
     assert_eq!(
         config.mutation.build_timeout,
         Some(Duration::from_secs(600))

@@ -511,6 +511,15 @@ pub struct MutantExecRecord {
     /// Every test that failed, by name, which is what says who noticed the mutation.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub failed_tests: Vec<String>,
+    /// How long this execution was given.
+    #[serde(default)]
+    pub timeout_ms: u64,
+    /// Where that budget came from: `configured` or `derived`.
+    #[serde(default)]
+    pub timeout_source: String,
+    /// Whether it ran with nothing else this run started running beside it, which is what a confirming retry does.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub alone: bool,
 }
 
 /// A free-form note.

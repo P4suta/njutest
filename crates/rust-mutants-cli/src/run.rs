@@ -377,9 +377,10 @@ pub fn count(value: usize) -> u32 {
 #[derive(Debug, Clone, Copy)]
 pub struct Options<'a> {
     /// How long one execution may take before it is retried serially.
-    pub timeout: Duration,
     /// The claims to verify.
     pub expectations: &'a [Expectation],
+    /// The machine, which a confirming retry takes to itself.
+    pub quiet: &'a rust_mutants::run::Quiet,
     /// Further arguments for the harness.
     pub args: &'a [String],
     /// Which part of the catalog this run is about. `None` is all of it.
@@ -553,22 +554,10 @@ fn execute(
     options: &Options<'_>,
     cancel: &Cancel,
 ) -> Result<Judged, EngineError> {
-    let request = Request::new(mutant.id.clone())
-        .with_args(options.args.to_vec())
-        .with_timeout(Some(options.timeout));
-    let first = session.exec(&request, cancel)?;
-    let mut duration = first.duration;
-    let mut retried = false;
-    let mut result = first;
-    if result.outcome == Outcome::TimedOut && !cancel.is_cancelled() {
-        retried = true;
-        let again = session.exec(&request, cancel)?;
-        duration = duration.saturating_add(again.duration);
-        result = again;
-        if result.outcome != Outcome::TimedOut && !result.outcome.detected() {
-            result.outcome = Outcome::Inconclusive;
-        }
-    }
+    let request = Request::new(mutant.id.clone()).with_args(options.args.to_vec());
+    let judgement = session.judge(&request, options.quiet, cancel)?;
+    let duration = judgement.duration();
+    let result = judgement.result;
     Ok(Judged {
         index: mutant.index,
         id: mutant.id.clone(),
@@ -580,7 +569,7 @@ fn execute(
         tests_run: result.tests_run,
         failed_tests: result.failed_tests,
         signal: result.signal,
-        retried,
+        retried: judgement.retried,
         expected: false,
         unreached: session.reaches(mutant) == Some(false),
         source_run_id: None,

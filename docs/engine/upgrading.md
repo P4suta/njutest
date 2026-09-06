@@ -127,6 +127,14 @@ by increasing granularity finds the mutants that interact rather than
 condemning everything that was live. Those rows have `isolated: false` and say
 which other mutants they were refused with.
 
+**The default timeout is derived, not five minutes.** `[mutation] timeout`
+now defaults to `auto`: five times what that target's own baseline took, never
+below thirty seconds, falling back to five minutes for a target nothing
+verified. A duration still pins it, `--timeout auto` asks for the derived one,
+and a `mutant-exec` recording says which of the two a run used. Stored
+outcomes are keyed on the word rather than on a number of milliseconds, so a
+tree configured with `auto` reuses across machines whose baselines differ.
+
 **A tree that does not link is refused before any round.** The gate is a
 check of the whole workspace and then a test build of the packages the run is
 about. A tree that type-checks and fails at link time used to be accepted,

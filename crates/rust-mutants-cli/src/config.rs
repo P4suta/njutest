@@ -11,13 +11,14 @@ use rust_mutants::error::{self, ErrorCode};
 use rust_mutants::glob::Pattern;
 use rust_mutants::outcome::Outcome;
 use rust_mutants::rule::{Registry, Tier};
+use rust_mutants::session::Timeout;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// The file a run reads, in the workspace root.
 pub const FILE_NAME: &str = ".rust-mutants.toml";
 
 /// How long one mutant execution may take when the file does not say.
-pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(300);
+pub const DEFAULT_TIMEOUT: Timeout = Timeout::Auto;
 
 /// Where run reports are written when the file does not say.
 pub const DEFAULT_REPORTS_DIRECTORY: &str = "reports/mutation";
@@ -132,9 +133,9 @@ pub struct Mutation {
     pub tier: Tier,
     /// Exactly these rules, by name. Empty means the tier.
     pub operators: Vec<String>,
-    /// How long one mutant execution may take before it is retried serially.
-    #[serde(deserialize_with = "duration", serialize_with = "duration_text")]
-    pub timeout: Duration,
+    /// How long one mutant execution may take before it is confirmed with the machine to itself. `auto` is a multiple of what the target's own baseline took.
+    #[serde(deserialize_with = "timeout", serialize_with = "timeout_text")]
+    pub timeout: Timeout,
     /// How long a build may take. `None` is no bound.
     #[serde(
         deserialize_with = "optional_duration",
@@ -154,7 +155,7 @@ impl Default for Mutation {
         Self {
             tier: Tier::Balanced,
             operators: Vec::new(),
-            timeout: DEFAULT_TIMEOUT,
+            timeout: Timeout::Auto,
             build_timeout: None,
             verify: true,
             coverage: false,
@@ -461,11 +462,6 @@ fn one_line(error: &toml::de::Error) -> String {
         .join("; ")
 }
 
-fn duration<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Duration, D::Error> {
-    let text = String::deserialize(deserializer)?;
-    rust_mutants::duration::parse(&text).map_err(serde::de::Error::custom)
-}
-
 fn optional_duration<'de, D: Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Option<Duration>, D::Error> {
@@ -478,8 +474,37 @@ fn optional_duration<'de, D: Deserializer<'de>>(
         .map_err(serde::de::Error::custom)
 }
 
-fn duration_text<S: Serializer>(value: &Duration, serializer: S) -> Result<S::Ok, S::Error> {
-    serializer.serialize_str(&rust_mutants::duration::render(*value))
+/// The word `auto`, or a duration.
+fn timeout<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Timeout, D::Error> {
+    let text = String::deserialize(deserializer)?;
+    parse_timeout(&text).map_err(serde::de::Error::custom)
+}
+
+/// The word a person writes for a budget: `auto`, or a duration.
+///
+/// # Errors
+/// Returns what is wrong with a duration that is not one.
+pub fn parse_timeout(text: &str) -> Result<Timeout, rust_mutants::duration::DurationError> {
+    if text.trim() == AUTO {
+        return Ok(Timeout::Auto);
+    }
+    rust_mutants::duration::parse(text).map(Timeout::Fixed)
+}
+
+/// How a budget is written back.
+#[must_use]
+pub fn render_timeout(value: Timeout) -> String {
+    match value {
+        Timeout::Auto => AUTO.to_owned(),
+        Timeout::Fixed(chosen) => rust_mutants::duration::render(chosen),
+    }
+}
+
+/// The word that says a budget is derived from what a target's own baseline took.
+pub const AUTO: &str = "auto";
+
+fn timeout_text<S: Serializer>(value: &Timeout, serializer: S) -> Result<S::Ok, S::Error> {
+    serializer.serialize_str(&render_timeout(*value))
 }
 
 #[expect(
@@ -560,7 +585,7 @@ version = 1
 [mutation]
 # tier = \"{tier}\"            # {tiers}
 # operators = []                 # exactly these rules; empty = the tier
-# timeout = \"{timeout}\"              # one mutant execution, before a serial retry
+# timeout = \"{timeout}\"                # auto = 5x the target's own baseline, never below 30s
 # build_timeout = \"\"             # empty = no bound
 # verify = true                  # run the instrumented baseline before believing a mutant
 # coverage = false               # measure reach once, then run a mutant only where it was reached
@@ -585,7 +610,7 @@ version = 1
 ",
         tier = Tier::Balanced.name(),
         tiers = Tier::ALL.map(Tier::name).join(" | "),
-        timeout = rust_mutants::duration::render(DEFAULT_TIMEOUT),
+        timeout = AUTO,
         allowed = ALLOWED_TEST_ARGS.join(", "),
         directory = DEFAULT_REPORTS_DIRECTORY,
         keep = DEFAULT_REPORTS_KEEP,

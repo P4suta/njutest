@@ -25,6 +25,7 @@ pub mod probe;
 pub mod prove;
 pub mod reach;
 pub mod rule;
+pub mod run;
 pub mod runner;
 pub mod session;
 pub mod snapshot;

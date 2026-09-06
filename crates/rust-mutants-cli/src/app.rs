@@ -348,8 +348,7 @@ fn prepared(
                 &{
                     let mut request = Request::new(prefix.clone())
                         .test(test.clone())
-                        .with_args(args.clone())
-                        .with_timeout(Some(settings.config.mutation.timeout));
+                        .with_args(args.clone());
                     if let Some(target) = target {
                         request = request.with_target(target.clone());
                     }
@@ -426,13 +425,13 @@ fn whole(
         workspace: session.workspace_digest().to_owned(),
         catalog: session.catalog().digest().to_owned(),
         args: args.to_vec(),
-        timeout_ms: u64::try_from(settings.config.mutation.timeout.as_millis()).unwrap_or(u64::MAX),
+        timeout: crate::config::render_timeout(settings.config.mutation.timeout),
         build: settings.config.build.config().arguments(),
     };
     let mut result = run::run(
         session,
         &run::Options {
-            timeout: settings.config.mutation.timeout,
+            quiet: &rust_mutants::run::Quiet::default(),
             expectations: &settings.config.mutation.expect,
             args,
             shard,

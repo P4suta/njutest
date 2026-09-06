@@ -1121,7 +1121,7 @@ fn prepare(
             verify: true,
             probe: request.config.mutation.probe,
             build_timeout: Some(request.config.execution.timeout),
-            mutant_timeout: Some(request.config.execution.timeout),
+            mutant_timeout: rust_mutants::session::Timeout::Fixed(request.config.execution.timeout),
             ..rust_mutants::session::PrepareOptions::default()
         },
         watch.cancel,

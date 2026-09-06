@@ -17,7 +17,7 @@
 use std::path::Path;
 use std::time::Duration;
 
-use rust_mutants::session::{PrepareOptions, Request as ExecRequest};
+use rust_mutants::session::{PrepareOptions, Request as ExecRequest, Timeout};
 use rust_mutants::workspace::{OpenOptions, Workspace};
 
 use crate::build::Cargo;
@@ -109,7 +109,7 @@ pub fn replay(
     let session = workspace.prepare(
         &PrepareOptions {
             verify: false,
-            mutant_timeout: replaying.timeout,
+            mutant_timeout: replaying.timeout.map_or(Timeout::Auto, Timeout::Fixed),
             ..PrepareOptions::default()
         },
         watch.cancel,

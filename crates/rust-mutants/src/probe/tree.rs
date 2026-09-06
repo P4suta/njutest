@@ -433,7 +433,8 @@ fn build_and_run(
             probe: Some(&log_path),
             profile: None,
         };
-        let request = ExecRequest::new(target).with_timeout(options.mutant_timeout);
+        let (budget, _source) = options.mutant_timeout.of(None);
+        let request = ExecRequest::new(target).with_timeout(Some(budget));
         let result = execute::exec(&request, &context, cancel, trace);
         let duration_ms = u64::try_from(result.duration.as_millis()).unwrap_or(u64::MAX);
         let record = |outcome: &str, infected: Option<u32>| {

@@ -35,7 +35,7 @@ jobs = 0                       # cargo compilation jobs; 0 = cargo decides
 [mutation]
 tier = "balanced"              # balanced | strong | all
 operators = []                 # exactly these rules; empty = the tier
-timeout = "5m"                 # one mutant execution, before a serial retry
+timeout = "auto"               # auto = 5x the target's own baseline, never below 30s
 build_timeout = ""             # empty = no bound
 verify = true                  # run the instrumented baseline first
 coverage = false               # measure reach once, then run a mutant only where it was reached
@@ -58,6 +58,19 @@ Every value above also has a flag. A flag given on the command line overrides
 the file; a list given on the command line *replaces* the file's list rather
 than adding to it, so `--package a` means exactly `a`. `--no-config` reads no
 file at all and `--config FILE` reads one elsewhere.
+
+`[mutation] timeout` is `auto` or a duration. `auto` is five times what that
+target's own baseline took when the run verified it, and never below thirty
+seconds — a budget shorter than a machine's own noise makes a timeout a
+finding about the machine. A target nothing verified has no baseline to be a
+multiple of, and the budget falls back to five minutes. A duration pins it,
+and the report and the recording say which of the two a run used.
+
+An expired budget buys one more measurement, taken with nothing else the run
+started running beside it: a duration measured while three other test
+processes were running is a fact about the load rather than about the
+mutation. What that measurement observes is what stands — a second timeout is
+a timeout, and anything else leaves the run undecided.
 
 Every `[build]` key is what a person would have typed at cargo, passed on
 unchanged to every command a run compiles with: the pristine check, each

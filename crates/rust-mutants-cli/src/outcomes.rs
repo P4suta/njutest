@@ -66,8 +66,8 @@ pub struct Keyed {
     pub catalog: String,
     /// The arguments the command line gave the test binaries.
     pub args: Vec<String>,
-    /// How long one execution may take, in milliseconds.
-    pub timeout_ms: u64,
+    /// The budget one execution may take, as the configuration spells it: `auto`, or a duration.
+    pub timeout: String,
     /// The cargo arguments the tree was compiled with, because the same tree compiled two ways is two programs.
     pub build: Vec<String>,
 }
@@ -85,7 +85,7 @@ impl Keyed {
             &self.workspace,
             &self.catalog,
             mutant,
-            &self.timeout_ms.to_string(),
+            &self.timeout,
         ] {
             hasher.update(u32::try_from(field.len()).unwrap_or(u32::MAX).to_be_bytes());
             hasher.update(field.as_bytes());

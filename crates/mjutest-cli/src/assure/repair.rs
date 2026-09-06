@@ -11,7 +11,7 @@
 use std::path::Path;
 use std::time::Duration;
 
-use rust_mutants::session::{PrepareOptions, Request as ExecRequest};
+use rust_mutants::session::{PrepareOptions, Request as ExecRequest, Timeout};
 use rust_mutants::workspace::{OpenOptions, Workspace};
 
 use crate::build::Cargo;
@@ -106,7 +106,7 @@ pub fn check(
         &PrepareOptions {
             verify: false,
             build_timeout: Some(checking.timeout),
-            mutant_timeout: Some(checking.timeout),
+            mutant_timeout: Timeout::Fixed(checking.timeout),
             ..PrepareOptions::default()
         },
         watch.cancel,

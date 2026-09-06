@@ -53,7 +53,7 @@ pub struct PrepareOptions {
     /// How long a build may take.
     pub build_timeout: Option<Duration>,
     /// How long one mutant execution may take, when the caller does not say.
-    pub mutant_timeout: Option<Duration>,
+    pub mutant_timeout: Timeout,
     /// Run a library's documented examples as a target of their own.
     ///
     /// A documented example is a test the project wrote, and a mutation only
@@ -87,7 +87,7 @@ impl Default for PrepareOptions {
             coverage: false,
             max_rounds: crate::validate::DEFAULT_MAX_ROUNDS,
             build_timeout: None,
-            mutant_timeout: None,
+            mutant_timeout: Timeout::default(),
             doctests: true,
             build: crate::cargo::BuildConfig::default(),
             skip_targets: Vec::new(),
@@ -381,7 +381,7 @@ pub struct Session {
     scratch: PathBuf,
     /// How many executions this session has started, which is what names each one's own temporary directory.
     executions: std::sync::atomic::AtomicU64,
-    mutant_timeout: Option<Duration>,
+    mutant_timeout: Timeout,
     /// The files as they were before instrumentation, so a position can be counted in the file a person would open rather than in the rewrite.
     sources: BTreeMap<String, Vec<u8>>,
     /// Which package each mutant belongs to.
@@ -528,6 +528,19 @@ impl Session {
             .collect()
     }
 
+    /// The budget one execution of `target` is given, and where it came from.
+    ///
+    /// A request that names a timeout is a caller who chose one. Otherwise
+    /// the session's own policy decides, which by default is a multiple of
+    /// what that target's baseline took.
+    #[must_use]
+    pub fn timeout_for(&self, request: &Request, target: &str) -> (Duration, TimeoutSource) {
+        request.timeout.map_or_else(
+            || self.mutant_timeout.of(self.baseline(target)),
+            |chosen| (chosen, TimeoutSource::Configured),
+        )
+    }
+
     /// How long one target's own baseline took, when it was verified.
     ///
     /// A timeout a run derives is a multiple of this rather than a number a
@@ -629,6 +642,57 @@ impl Session {
     /// [`SessionError::UnknownMutant`], [`SessionError::UnknownTarget`], and
     /// [`SessionError::NoTargets`].
     pub fn exec(&self, request: &Request, cancel: &Cancel) -> Result<MutantResult, EngineError> {
+        self.execute(request, false, cancel)
+    }
+
+    /// What one mutant is, decided: executed, and when a budget expired, confirmed with the machine to itself.
+    ///
+    /// A budget is a multiple of what a target's baseline took, and a
+    /// duration measured while three other test processes were running is a
+    /// fact about the load rather than about the mutation. One expired budget
+    /// buys one quiet measurement, and what that measurement observes is what
+    /// stands: a second timeout is a timeout, and anything else is a run that
+    /// could not decide.
+    ///
+    /// # Errors
+    /// [`SessionError::UnknownMutant`], [`SessionError::UnknownTarget`], and
+    /// [`SessionError::NoTargets`].
+    pub fn judge(
+        &self,
+        request: &Request,
+        quiet: &crate::run::Quiet,
+        cancel: &Cancel,
+    ) -> Result<Judgement, EngineError> {
+        let first = quiet.shared(|| self.execute(request, false, cancel))?;
+        let (timeout, timeout_source) = self.timeout_for(request, &first.target);
+        if first.outcome != crate::outcome::Outcome::TimedOut || cancel.is_cancelled() {
+            return Ok(Judgement {
+                result: first.clone(),
+                attempts: vec![first],
+                retried: false,
+                timeout,
+                timeout_source,
+            });
+        }
+        let mut again = quiet.alone(|| self.execute(request, true, cancel))?;
+        if again.outcome != crate::outcome::Outcome::TimedOut && !again.outcome.detected() {
+            again.outcome = crate::outcome::Outcome::Inconclusive;
+        }
+        Ok(Judgement {
+            result: again.clone(),
+            attempts: vec![first, again],
+            retried: true,
+            timeout,
+            timeout_source,
+        })
+    }
+
+    fn execute(
+        &self,
+        request: &Request,
+        alone: bool,
+        cancel: &Cancel,
+    ) -> Result<MutantResult, EngineError> {
         let mutant = self.resolve(&request.mutant)?;
         let targets = self.selected(request.target.as_deref())?;
         let targets = match request
@@ -657,13 +721,13 @@ impl Session {
             probe: None,
             profile: None,
         };
-        let timeout = request.timeout.or(self.mutant_timeout);
         let mut last = None;
         let mut silent = None;
         for target in targets {
+            let (timeout, source) = self.timeout_for(request, &target.id);
             let mut exec = ExecRequest::new(target)
                 .with_args(request.args.clone())
-                .with_timeout(timeout)
+                .with_timeout(Some(timeout))
                 .with_scratch(self.exec_scratch());
             if let Some(test) = &request.test {
                 exec = exec.with_test(test.clone());
@@ -679,6 +743,9 @@ impl Session {
                 tests_run: result.tests_run,
                 signal: result.signal,
                 failed_tests: result.failed_tests.clone(),
+                timeout_ms: u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX),
+                timeout_source: source.name().to_owned(),
+                alone,
             });
             if result.outcome.detected() || cancel.is_cancelled() {
                 return Ok(result);
@@ -707,13 +774,13 @@ impl Session {
             probe: None,
             profile: None,
         };
-        let timeout = request.timeout.or(self.mutant_timeout);
         let mut last = None;
         let mut silent = None;
         for target in targets {
+            let (timeout, source) = self.timeout_for(request, &target.id);
             let mut exec = ExecRequest::new(target)
                 .with_args(request.args.clone())
-                .with_timeout(timeout)
+                .with_timeout(Some(timeout))
                 .with_scratch(self.exec_scratch());
             if let Some(test) = &request.test {
                 exec = exec.with_test(test.clone());
@@ -729,6 +796,9 @@ impl Session {
                 tests_run: result.tests_run,
                 signal: result.signal,
                 failed_tests: result.failed_tests.clone(),
+                timeout_ms: u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX),
+                timeout_source: source.name().to_owned(),
+                alone: false,
             });
             if cancel.is_cancelled()
                 || (result.outcome != crate::outcome::Outcome::Survived && spoke(&result))
@@ -824,6 +894,99 @@ pub fn preview(
     )?;
     phase.end();
     Ok(discovery)
+}
+
+/// What one mutant's judgement is made of: what stands, every attempt it took, and the budget each was given.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct Judgement {
+    /// What the run establishes about the mutant.
+    pub result: MutantResult,
+    /// Every execution, in order. One unless a budget expired.
+    pub attempts: Vec<MutantResult>,
+    /// Whether an expired budget was confirmed with the machine to itself.
+    pub retried: bool,
+    /// The budget the target that answered was given.
+    pub timeout: Duration,
+    /// Where that budget came from.
+    pub timeout_source: TimeoutSource,
+}
+
+impl Judgement {
+    /// How long every execution of this mutant took together.
+    #[must_use]
+    pub fn duration(&self) -> Duration {
+        self.attempts.iter().fold(Duration::ZERO, |total, one| {
+            total.saturating_add(one.duration)
+        })
+    }
+}
+
+/// What a run waits for one mutant execution.
+///
+/// A budget nobody chose has to come from somewhere, and the only thing a run
+/// measured about a target is how long that target's own tests take with
+/// nothing active. Five times that is long enough for a mutation that made
+/// something slower and short enough that a mutation that made something
+/// never return is a finding rather than a wait.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Timeout {
+    /// A multiple of what the target's own baseline took, never below [`MINIMUM_DERIVED_TIMEOUT`].
+    #[default]
+    Auto,
+    /// Exactly this long, whatever the baseline said.
+    Fixed(Duration),
+}
+
+/// Where the budget one execution was given came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TimeoutSource {
+    /// Somebody chose it.
+    Configured,
+    /// The run derived it from what the target's own baseline took.
+    Derived,
+}
+
+impl TimeoutSource {
+    /// The word a report and a recording use.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Configured => "configured",
+            Self::Derived => "derived",
+        }
+    }
+}
+
+/// What a derived budget is a multiple of what the baseline took.
+pub const TIMEOUT_MULTIPLE: u32 = 5;
+
+/// The shortest budget a run derives, below which a machine's own noise decides the answer.
+pub const MINIMUM_DERIVED_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// What a run waits when nothing was verified, so there is no baseline to be a multiple of.
+pub const DEFAULT_MUTANT_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// The budget derived from one target's own baseline.
+#[must_use]
+pub fn derived(baseline: Duration) -> Duration {
+    baseline
+        .saturating_mul(TIMEOUT_MULTIPLE)
+        .max(MINIMUM_DERIVED_TIMEOUT)
+}
+
+impl Timeout {
+    /// The budget and where it came from, for a target whose baseline took `baseline`.
+    #[must_use]
+    pub fn of(self, baseline: Option<Duration>) -> (Duration, TimeoutSource) {
+        match self {
+            Self::Fixed(chosen) => (chosen, TimeoutSource::Configured),
+            Self::Auto => (
+                baseline.map_or(DEFAULT_MUTANT_TIMEOUT, derived),
+                TimeoutSource::Derived,
+            ),
+        }
+    }
 }
 
 /// The rules a set of options selects.

@@ -12,7 +12,7 @@ fn keyed(build: &Config) -> Keyed {
         workspace: "w".to_owned(),
         catalog: "c".to_owned(),
         args: Vec::new(),
-        timeout_ms: 1000,
+        timeout: "auto".to_owned(),
         build: build.build.config().arguments(),
     }
 }

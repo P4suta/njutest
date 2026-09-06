@@ -1072,6 +1072,17 @@
               "items": {
                 "type": "string"
               }
+            },
+            "timeout_ms": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "timeout_source": {
+              "enum": ["configured", "derived"]
+            },
+            "alone": {
+              "type": "boolean",
+              "description": "Whether it ran with nothing else the run started running beside it, which is what a confirming retry does."
             }
           }
         }

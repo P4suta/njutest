@@ -49,7 +49,7 @@ impl Settings {
             .extend(scope.skip_targets.iter().cloned());
         if let Some(text) = &scope.timeout {
             config.mutation.timeout =
-                rust_mutants::duration::parse(text).map_err(EngineError::from)?;
+                crate::config::parse_timeout(text).map_err(EngineError::from)?;
         }
         replace(&mut config.build.features, &scope.features);
         config.build.all_features |= scope.switches.all_features;
@@ -125,7 +125,7 @@ impl Settings {
             verify: self.config.mutation.verify,
             coverage: self.config.mutation.coverage,
             build_timeout: self.config.mutation.build_timeout,
-            mutant_timeout: Some(self.config.mutation.timeout),
+            mutant_timeout: self.config.mutation.timeout,
             doctests: self.config.execution.doctests,
             build: self.config.build.config(),
             skip_targets: self.config.execution.skip_targets.clone(),
