@@ -57,6 +57,39 @@ pub fn options(s: &str) -> Option<usize> {
     Some(first.len_utf8())
 }
 
+pub fn compounds(mut n: i32, mut bits: u32) -> (i32, u32) {
+    n *= 3;
+    n /= 2;
+    n %= 7;
+    bits &= 0xf0;
+    bits |= 0x0f;
+    bits ^= 0xff;
+    bits <<= 2;
+    bits >>= 1;
+    (n, bits)
+}
+
+pub fn negation(x: i32) -> i32 {
+    -x
+}
+
+pub fn swaps(o: Option<i32>, r: Result<i32, ()>, a: i32, b: i32) -> i32 {
+    let mut n = a.max(b) + a.min(b);
+    if o.is_some() {
+        n += 1;
+    }
+    if o.is_none() {
+        n += 2;
+    }
+    if r.is_ok() {
+        n += 4;
+    }
+    if r.is_err() {
+        n += 8;
+    }
+    n
+}
+
 pub fn deletions(v: &mut Vec<i32>) {
     let mut x = 1;
     v.push(x);

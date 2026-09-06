@@ -72,8 +72,10 @@ pub enum Family {
     ErrorPropagation,
     /// `&`, `|`, `^`, `<<`, `>>`.
     Bitwise,
-    /// `+=`, `-=`.
+    /// `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=`.
     CompoundAssignment,
+    /// A method whose name says the opposite of another the same receiver has: `is_some`, `is_ok`, `max`.
+    MethodSwap,
     /// Deleting a statement.
     StatementDeletion,
 }
@@ -91,6 +93,7 @@ impl Family {
         Self::ErrorPropagation,
         Self::Bitwise,
         Self::CompoundAssignment,
+        Self::MethodSwap,
         Self::StatementDeletion,
     ];
 
@@ -108,6 +111,7 @@ impl Family {
             Self::ErrorPropagation => "error-propagation",
             Self::Bitwise => "bitwise",
             Self::CompoundAssignment => "compound-assignment",
+            Self::MethodSwap => "method-swap",
             Self::StatementDeletion => "statement-deletion",
         }
     }
@@ -146,9 +150,9 @@ impl fmt::Display for Rule {
 }
 
 /// The counts of the canonical v1 table, asserted by the registry tests.
-pub const CANONICAL_FAMILY_COUNT: usize = 11;
+pub const CANONICAL_FAMILY_COUNT: usize = 12;
 /// The number of rules in the canonical v1 table.
-pub const CANONICAL_RULE_COUNT: usize = 36;
+pub const CANONICAL_RULE_COUNT: usize = 51;
 
 const fn v1(family: Family, name: &'static str, tier: Tier) -> Rule {
     Rule {
@@ -189,6 +193,7 @@ pub const CANONICAL_TABLE: [Rule; CANONICAL_RULE_COUNT] = [
     v1(Family::Arithmetic, "mul-to-div", Tier::Balanced),
     v1(Family::Arithmetic, "div-to-mul", Tier::Balanced),
     v1(Family::Arithmetic, "rem-to-mul", Tier::Balanced),
+    v1(Family::Arithmetic, "remove-unary-minus", Tier::Balanced),
     v1(Family::ReturnReplacement, "return-default", Tier::Balanced),
     v1(
         Family::ReturnReplacement,
@@ -226,6 +231,52 @@ pub const CANONICAL_TABLE: [Rule; CANONICAL_RULE_COUNT] = [
         "sub-assign-to-add-assign",
         Tier::Strong,
     ),
+    v1(
+        Family::CompoundAssignment,
+        "mul-assign-to-div-assign",
+        Tier::Strong,
+    ),
+    v1(
+        Family::CompoundAssignment,
+        "div-assign-to-mul-assign",
+        Tier::Strong,
+    ),
+    v1(
+        Family::CompoundAssignment,
+        "rem-assign-to-mul-assign",
+        Tier::Strong,
+    ),
+    v1(
+        Family::CompoundAssignment,
+        "band-assign-to-bor-assign",
+        Tier::Strong,
+    ),
+    v1(
+        Family::CompoundAssignment,
+        "bor-assign-to-band-assign",
+        Tier::Strong,
+    ),
+    v1(
+        Family::CompoundAssignment,
+        "xor-assign-to-band-assign",
+        Tier::Strong,
+    ),
+    v1(
+        Family::CompoundAssignment,
+        "shl-assign-to-shr-assign",
+        Tier::Strong,
+    ),
+    v1(
+        Family::CompoundAssignment,
+        "shr-assign-to-shl-assign",
+        Tier::Strong,
+    ),
+    v1(Family::MethodSwap, "is-some-to-is-none", Tier::Strong),
+    v1(Family::MethodSwap, "is-none-to-is-some", Tier::Strong),
+    v1(Family::MethodSwap, "is-ok-to-is-err", Tier::Strong),
+    v1(Family::MethodSwap, "is-err-to-is-ok", Tier::Strong),
+    v1(Family::MethodSwap, "max-to-min", Tier::Strong),
+    v1(Family::MethodSwap, "min-to-max", Tier::Strong),
     v1(
         Family::StatementDeletion,
         "delete-call-statement",

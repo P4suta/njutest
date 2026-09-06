@@ -6,10 +6,16 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 # Operators
 
 **Status: implemented** (`rust_mutants::syntax`, `rust_mutants::instrument`,
-`rust_mutants::validate`). The v1 table, fixed before the code: eleven
-families, thirty-six rules, named `family` / `rule@version`. The version
-enters the mutant identity, so changing a rule's output is a new version and
-every old identity lapses with it. The golden
+`rust_mutants::validate`). The v1 table: twelve families, fifty-one rules,
+named `family` / `rule@version`. The version enters the mutant identity, so
+changing a rule's output is a new version and every old identity lapses with
+it. Adding a rule does not: what enters an identity is the rule's own name and
+version rather than the table around it, so an acceptance and a reused verdict
+both survive the table growing. What would rename a mutant is reordering the
+table, because two rules that can write the same replacement at the same span
+are separated by which comes first — so a new family goes at the end of its
+tier's run and a new rule at the end of its family's block, and
+`adding_a_rule_never_reorders_the_ones_that_were_there` is the guard. The golden
 `crates/rust-mutants/tests/testdata/syntax/families.golden` shows every
 rule's candidate on one input, with its guard form and site.
 
@@ -37,16 +43,25 @@ type-check. Replacements derive from the token, never from a string.
 | `boolean-connective` | `and-to-or`, `or-to-and` | balanced |
 | `comparison` | `eq-to-neq`, `neq-to-eq`, `lt-to-le`, `le-to-lt`, `gt-to-ge`, `ge-to-gt` | balanced |
 | `range` | `range-to-inclusive`, `inclusive-to-range` | balanced |
-| `arithmetic` | `add-to-sub`, `sub-to-add`, `mul-to-div`, `div-to-mul`, `rem-to-mul` | balanced |
+| `arithmetic` | `add-to-sub`, `sub-to-add`, `mul-to-div`, `div-to-mul`, `rem-to-mul`, `remove-unary-minus` | balanced |
 | `return-replacement` | `return-default`, `return-ok-default`, `return-some-default`, `return-true` | balanced |
 | `error-propagation` | `question-to-unwrap`, `ignore-question-statement` | balanced |
 | `bitwise` | `band-to-bor`, `bor-to-band`, `xor-to-band`, `shl-to-shr`, `shr-to-shl` | strong |
-| `compound-assignment` | `add-assign-to-sub-assign`, `sub-assign-to-add-assign` | strong |
+| `compound-assignment` | `add-assign-to-sub-assign`, `sub-assign-to-add-assign`, `mul-assign-to-div-assign`, `div-assign-to-mul-assign`, `rem-assign-to-mul-assign`, `band-assign-to-bor-assign`, `bor-assign-to-band-assign`, `xor-assign-to-band-assign`, `shl-assign-to-shr-assign`, `shr-assign-to-shl-assign` | strong |
+| `method-swap` | `is-some-to-is-none`, `is-none-to-is-some`, `is-ok-to-is-err`, `is-err-to-is-ok`, `max-to-min`, `min-to-max` | strong |
 | `statement-deletion` | `delete-call-statement`, `delete-assignment`, `delete-compound-assignment` | all |
 
-`balanced ⊂ strong ⊂ all`. Deferred to a later version: `method-swap`
-(`is_some-to-is_none`, `max-to-min`, …), `remove-unary-minus`, the remaining
-compound assignments, and mutation inside `assert!`-family macros.
+`balanced ⊂ strong ⊂ all`, which the table's order carries: it is
+non-decreasing in tier, so each profile's rules are a prefix of the next
+one's.
+
+A method swap edits the method's identifier and nothing else. It reads no
+type, so `is_none` on a receiver that has no such method is a mutation the
+compiler refuses, which is where acceptance is settled
+([ADR 0008](../adr/0008-compiler-validated-acceptance-and-the-type-witness-pass.md)):
+proposing it costs a `cargo check` diagnostic and never a wrong answer.
+
+Deferred to a later version: mutation inside `assert!`-family macros.
 
 ## Proofs the engine states
 
