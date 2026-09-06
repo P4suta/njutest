@@ -72,10 +72,18 @@ below is stated fail-closed.
   never meet, and cargo does not rebuild for an environment variable. A
   mutation only the expansion would change is reported as surviving.
 - Coverage routing says nothing about a place its export never instrumented,
-  and such a mutant is run everywhere. A tree that configures its own
-  `rustflags` is not routed by coverage at all
-  (`coverage-refused-configured-rustflags`), because a coverage build would
-  have to replace them. Three other things leave the measurement empty and
+  and such a mutant is run everywhere. A tree that configures `rustflags` for
+  a target — `[target.<triple>]` or `[target.cfg(…)]` in a cargo configuration
+  file — is not routed by coverage at all
+  (`coverage-refused-configured-rustflags`), because which of those tables
+  apply is cargo's decision about the target being built and a guess would
+  compile something other than the project's own binaries. A `[build]
+  rustflags` is read instead and put back into the coverage build, so a tree
+  that configures one is measured. A configuration file that cannot be parsed
+  leaves what the tree compiles with unknown
+  (`cargo-configuration-unreadable`), and is not routed by coverage either;
+  cargo itself normally refuses such a tree first, with `RM1014` naming the
+  file. Three other things leave the measurement empty and
   route every mutant to every target, exactly as if the layer were not there:
   a tree that will not build with instrumentation
   (`coverage-build-failed`), a toolchain whose LLVM tools are not installed

@@ -125,6 +125,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "cargo_config"
+path = "fuzz_targets/cargo_config.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "cargo_messages"
 path = "fuzz_targets/cargo_messages.rs"
 test = false

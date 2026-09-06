@@ -1170,6 +1170,7 @@ impl Snapshot {
             }
             match remove(&self.dir) {
                 Ok(()) => return Ok(()),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
                 Err(error) => last = Some(error),
             }
         }

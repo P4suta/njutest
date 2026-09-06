@@ -123,8 +123,11 @@ reached it, and one no measured target reaches is reported as
 again. Every export names every binary the build produced, so a test that
 spawns one of the workspace's own binaries has that binary's coverage
 attributed to it; a place no export instrumented is a place the measurement
-says nothing about, and its mutant is run everywhere. A tree that configures
-its own `rustflags`, a build that will not instrument, and tools that are not
+says nothing about, and its mutant is run everywhere. What the tree's cargo
+configuration puts in `build.rustflags` is read and put back into that build,
+because the variable it passes flags in replaces them rather than adding to
+them. A tree that configures `rustflags` for a target, a configuration file
+nobody can parse, a build that will not instrument, and tools that are not
 installed each leave the measurement empty, which routes every mutant to every
 target exactly as if the layer were not there.
 

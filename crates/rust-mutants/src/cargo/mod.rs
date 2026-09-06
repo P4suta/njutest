@@ -4,6 +4,7 @@
 //! The cargo boundary: locating the toolchain, reading `cargo metadata`, parsing `--message-format=json`, and reading dep-info to learn which files a unit really compiled.
 
 mod compile;
+pub mod config;
 mod depinfo;
 mod locate;
 pub mod manifest;

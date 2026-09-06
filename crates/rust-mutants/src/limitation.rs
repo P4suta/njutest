@@ -18,8 +18,11 @@ pub const COVERAGE_TOOLS_MISSING: &str = "coverage-tools-missing";
 /// The tools ran and said nothing a run could route by.
 pub const COVERAGE_NOT_MEASURED: &str = "coverage-not-measured";
 
-/// The project configures its own compiler flags, which a coverage build would have to replace.
+/// The project configures compiler flags for a target, which a coverage build cannot put back without deciding which of them apply.
 pub const COVERAGE_REFUSED_CONFIGURED_RUSTFLAGS: &str = "coverage-refused-configured-rustflags";
+
+/// A cargo configuration file could not be parsed, so what a build compiles with is unknown.
+pub const CARGO_CONFIGURATION_UNREADABLE: &str = "cargo-configuration-unreadable";
 
 /// The probe tree could not be built, so nothing was asked which mutations a target infects.
 pub const PROBE_TREE_NOT_BUILT: &str = "probe-tree-not-built";
@@ -40,7 +43,7 @@ pub const DOCTESTS_ROUTED_BY_FILE: &str = "doctests-routed-by-file";
 pub const DOCTESTS_NONE: &str = "doctests-none";
 
 /// Every limitation, in the order a reader meets them.
-pub const ALL: [&str; 10] = [
+pub const ALL: [&str; 11] = [
     CUSTOM_HARNESS,
     TARGET_SKIPPED_BY_CONFIGURATION,
     DOCTESTS_ROUTED_BY_FILE,
@@ -49,6 +52,7 @@ pub const ALL: [&str; 10] = [
     COVERAGE_TOOLS_MISSING,
     COVERAGE_NOT_MEASURED,
     COVERAGE_REFUSED_CONFIGURED_RUSTFLAGS,
+    CARGO_CONFIGURATION_UNREADABLE,
     PROBE_TREE_NOT_BUILT,
     PROBE_LOG_UNREADABLE,
 ];

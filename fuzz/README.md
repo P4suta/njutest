@@ -30,6 +30,7 @@ so each has to fail closed rather than plausibly.
 | `engine_config` | never panics; an accepted `.rust-mutants.toml` is one every later stage can honour, checked against the rules the reader states |
 | `engine_coverage_export` | never panics; the engine's own reader accepts only regions `contains` can answer about, and what a run reached is part of what the build instrumented |
 | `depinfo` | never panics; every unit source it accepts is a named Rust file, listed once |
+| `cargo_config` | never panics; what it reads encodes back argument for argument, and a flag it accepts never holds the separator |
 | `cargo_messages` | never panics; a diagnostic it accepts either names a whole primary span or names none |
 | `cargo_metadata` | never panics; every package and target it accepts is named and rooted |
 | `infection_log` | never panics; every index it accepts is one the catalog holds |

@@ -236,7 +236,7 @@ fn environment(options: &BuildOptions, limitations: &mut Vec<String>) -> Vec<(Os
     if options.flavour == Flavour::Native {
         return env;
     }
-    let configured = rustflags::configured(&options.root);
+    let configured = rustflags::configured(&options.root, &options.env);
     if configured.target_specific {
         limitations.push(rustflags::TARGET_RUSTFLAGS_LIMITATION.to_owned());
     }

@@ -123,7 +123,7 @@ fn an_environment_that_is_already_set_leaves_the_configuration_where_cargo_left_
 }
 
 #[test]
-fn build_rustflags_are_read_from_the_workspace_and_its_ancestors_closest_first() {
+fn build_rustflags_are_joined_with_the_ancestors_first_and_the_closest_file_last() {
     let root = tempfile::tempdir().expect("a temporary root");
     write(
         root.path(),
@@ -137,8 +137,12 @@ fn build_rustflags_are_read_from_the_workspace_and_its_ancestors_closest_first()
         "[build]\nrustflags = [\"--cfg\", \"inner\"]\n",
     );
 
-    let found = configured(&inner);
-    assert_eq!(found.build, ["--cfg", "inner", "--cfg", "outer"]);
+    let found = configured(&inner, &env(&[]));
+    assert_eq!(
+        found.build,
+        ["--cfg", "outer", "--cfg", "inner"],
+        "cargo joins arrays across files and places the higher precedence ones later"
+    );
     assert!(!found.target_specific);
 }
 
@@ -151,7 +155,7 @@ fn a_rustflags_written_as_one_string_is_split_like_the_variable() {
         "[build]\nrustflags = \"-Dwarnings --cfg fuzzing\"\n",
     );
     assert_eq!(
-        configured(root.path()).build,
+        configured(root.path(), &env(&[])).build,
         ["-Dwarnings", "--cfg", "fuzzing"]
     );
 }
@@ -164,7 +168,7 @@ fn target_specific_flags_are_noticed_and_not_merged_because_which_ones_apply_is_
         ".cargo/config.toml",
         "[target.'cfg(unix)']\nrustflags = [\"--cfg\", \"unixish\"]\n",
     );
-    let found = configured(root.path());
+    let found = configured(root.path(), &env(&[]));
     assert!(found.build.is_empty());
     assert!(
         found.target_specific,
@@ -176,7 +180,7 @@ fn target_specific_flags_are_noticed_and_not_merged_because_which_ones_apply_is_
 fn a_configuration_that_is_not_toml_is_not_a_reason_to_stop() {
     let root = tempfile::tempdir().expect("a temporary root");
     write(root.path(), ".cargo/config.toml", "this is not toml [[[");
-    let found = configured(root.path());
+    let found = configured(root.path(), &env(&[]));
     assert!(found.build.is_empty());
     assert!(
         found.unreadable,
@@ -192,5 +196,5 @@ fn the_old_extensionless_name_is_read_too() {
         ".cargo/config",
         "[build]\nrustflags = [\"--cfg\", \"old\"]\n",
     );
-    assert_eq!(configured(root.path()).build, ["--cfg", "old"]);
+    assert_eq!(configured(root.path(), &env(&[])).build, ["--cfg", "old"]);
 }

@@ -18,6 +18,7 @@
 use std::fmt::Write as _;
 
 use criterion::Criterion;
+use rust_mutants::cargo::config::configured;
 use rust_mutants::catalog::Builder;
 use rust_mutants::coverage::parse_export;
 use rust_mutants::instrument::{instrument_file, plan_file};
@@ -120,6 +121,29 @@ fn benchmarks(criterion: &mut Criterion) {
     criterion.bench_function("coverage/parse export of 500 functions", |bencher| {
         bencher.iter(|| parse_export(std::hint::black_box(document.as_bytes())));
     });
+
+    let nest = nested(10);
+    let deepest = nest.path().join("d0/d1/d2/d3/d4/d5/d6/d7/d8/d9");
+    criterion.bench_function("cargo_config/configured over 10 nested dirs", |bencher| {
+        bencher.iter(|| configured(std::hint::black_box(&deepest), None));
+    });
+}
+
+/// A tree `depth` directories deep, every level configuring its own flags.
+fn nested(depth: usize) -> tempfile::TempDir {
+    let root = tempfile::tempdir().expect("a temporary root");
+    let mut at = root.path().to_path_buf();
+    for level in 0..depth {
+        at = at.join(format!("d{level}"));
+        let directory = at.join(".cargo");
+        std::fs::create_dir_all(&directory).expect("the directory");
+        std::fs::write(
+            directory.join("config.toml"),
+            format!("[build]\nrustflags = [\"--cfg\", \"level{level}\"]\n"),
+        )
+        .expect("the file");
+    }
+    root
 }
 
 /// `harness = false`, so this is the whole program.

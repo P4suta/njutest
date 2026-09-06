@@ -289,8 +289,8 @@ The developer-facing infrastructure, and the milestone it arrives in:
 `mise run bench` measures what the byte foundation, the pipeline, and the
 report cost: `splice`, `flatten`, and a mutant identity in the engine's
 `foundation` bench; discovery, instrumentation, cataloging, and reading a
-coverage export in its `pipeline` bench; the audit and the two projections in
-the runner.
+coverage export, and reading the cargo configuration of a ten-deep tree in its
+`pipeline` bench; the audit and the two projections in the runner.
 
 They are observations, never gates. Nothing fails when a number moves and no
 verdict depends on one — they exist so a person can answer "did that change

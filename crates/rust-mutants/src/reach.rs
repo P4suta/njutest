@@ -19,7 +19,8 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use crate::EngineError;
-use crate::cargo::{CompileKind, CompileOptions, compile};
+use crate::cargo::config::Configured;
+use crate::cargo::{CompileKind, CompileOptions, compile, config};
 use crate::coverage::{
     Block, Point, Tools, covered, instrumented, profile_pattern, written_profiles,
 };
@@ -29,11 +30,13 @@ use crate::session::PrepareOptions;
 use crate::trace::Recorder;
 use crate::workspace::{SessionError, Workspace};
 
+/// The limitation a session states when a cargo configuration file could not be parsed.
+pub use crate::limitation::CARGO_CONFIGURATION_UNREADABLE as UNREADABLE_CONFIGURATION;
 /// The limitation a session states when the tree could not be built with instrumentation.
 pub use crate::limitation::COVERAGE_BUILD_FAILED as UNBUILDABLE;
 /// The limitation a session states when the tools ran and said nothing usable.
 pub use crate::limitation::COVERAGE_NOT_MEASURED as UNMEASURED;
-/// The limitation a session states when the project configures its own compiler flags, which a coverage build would have to replace.
+/// The limitation a session states when the project configures compiler flags for a target, which a coverage build cannot put back.
 pub use crate::limitation::COVERAGE_REFUSED_CONFIGURED_RUSTFLAGS as CONFIGURED_FLAGS;
 /// The limitation a session states when the LLVM tools are not installed.
 pub use crate::limitation::COVERAGE_TOOLS_MISSING as TOOLS_MISSING;
@@ -43,9 +46,6 @@ const ENCODED_RUSTFLAGS: &str = "CARGO_ENCODED_RUSTFLAGS";
 
 /// The plain form, which cargo ignores when the encoded one is set.
 const RUSTFLAGS: &str = "RUSTFLAGS";
-
-/// What separates arguments inside the encoded form.
-const SEPARATOR: char = '\u{1f}';
 
 /// What each target reached, and what the measurement could not establish.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -121,7 +121,11 @@ fn measure(
     trace: &Recorder,
 ) -> Result<Reached, EngineError> {
     let root = workspace.snapshot_root();
-    if configures_flags(root) {
+    let flags = config::configured(root, config::home(&workspace.base_env).as_deref());
+    if flags.unreadable {
+        return Ok(refused(UNREADABLE_CONFIGURATION, trace));
+    }
+    if flags.target_specific {
         return Ok(refused(CONFIGURED_FLAGS, trace));
     }
     let target_dir = workspace.target_dir.join("coverage");
@@ -134,7 +138,7 @@ fn measure(
             locked: workspace.locked,
             offline: workspace.offline,
             timeout: Workspace::timeout(options.build_timeout),
-            env: instrumenting(&workspace.base_env),
+            env: instrumenting(&workspace.base_env, &flags),
         },
     );
     let Ok(built) = built else {
@@ -311,42 +315,11 @@ fn refused(limitation: &str, trace: &Recorder) -> Reached {
     }
 }
 
-/// Whether the tree configures its own compiler flags, which the coverage build would have to replace and cannot merge without deciding which of cargo's tables apply.
-fn configures_flags(root: &Path) -> bool {
-    for name in ["config.toml", "config"] {
-        let path = root.join(".cargo").join(name);
-        if std::fs::read_to_string(&path).is_ok_and(|text| text.contains("rustflags")) {
-            return true;
-        }
-    }
-    false
-}
-
-/// The environment a coverage build adds: the caller's own flags, then the instrumentation.
-fn instrumenting(base: &[(OsString, OsString)]) -> Vec<(OsString, OsString)> {
-    let mut flags: Vec<String> = Vec::new();
-    if let Some((_, encoded)) = base.iter().find(|(name, _)| name == ENCODED_RUSTFLAGS) {
-        flags.extend(
-            encoded
-                .to_string_lossy()
-                .split(SEPARATOR)
-                .filter(|flag| !flag.is_empty())
-                .map(str::to_owned),
-        );
-    } else if let Some((_, plain)) = base.iter().find(|(name, _)| name == RUSTFLAGS) {
-        flags.extend(
-            plain
-                .to_string_lossy()
-                .split_whitespace()
-                .map(str::to_owned),
-        );
-    }
-    flags.push(INSTRUMENT.to_owned());
+/// The environment a coverage build adds: whatever the tree already compiles with, then the instrumentation.
+fn instrumenting(base: &[(OsString, OsString)], flags: &Configured) -> Vec<(OsString, OsString)> {
+    let encoded = config::encoded(base, flags, &[INSTRUMENT]).unwrap_or_default();
     vec![
-        (
-            OsString::from(ENCODED_RUSTFLAGS),
-            OsString::from(flags.join(&SEPARATOR.to_string())),
-        ),
+        (OsString::from(ENCODED_RUSTFLAGS), encoded),
         (OsString::from(RUSTFLAGS), OsString::new()),
     ]
 }

@@ -145,3 +145,57 @@ fn a_mutant_no_measured_target_reached_is_not_run_at_all() {
     assert!(result.target.is_empty(), "{result:?}");
     session.close().expect("close");
 }
+
+#[test]
+fn coverage_is_refused_only_for_target_specific_rustflags() {
+    let fixture = Fixture::copy("fixture-simple");
+    fixture.write(
+        ".cargo/config.toml",
+        b"[build]\nrustflags = [\"--cfg\", \"measured_here\"]\n",
+    );
+    let session = prepared(&fixture, true);
+    assert!(
+        session.reached().measured(),
+        "flags a run can read are flags a coverage build can put back: {:?}",
+        session.reached().limitations
+    );
+    session.close().expect("close");
+
+    let refused = Fixture::copy("fixture-simple");
+    refused.write(
+        ".cargo/config.toml",
+        b"[target.x86_64-unknown-linux-gnu]\nrustflags = [\"--cfg\", \"per_target\"]\n",
+    );
+    let session = prepared(&refused, true);
+    assert_eq!(
+        session.reached().limitations,
+        vec![rust_mutants::reach::CONFIGURED_FLAGS.to_owned()],
+        "which of cargo's target tables apply is cargo's decision, and a guess compiles \
+         something other than the project's own binaries"
+    );
+    session.close().expect("close");
+}
+
+#[test]
+fn a_configuration_nobody_can_parse_is_cargos_own_refusal_and_names_the_file() {
+    let fixture = Fixture::copy("fixture-simple");
+    fixture.write(".cargo/config.toml", b"[build\nrustflags = ]\n");
+    let opened = Workspace::open(
+        fixture.root(),
+        OpenOptions {
+            cargo: Some(mjutest_devkit::paths::cargo_binary()),
+            temp_directory: fixture.temp().to_path_buf(),
+            env: std::env::vars_os().collect(),
+            locked: true,
+            offline: true,
+            ..OpenOptions::default()
+        },
+        &Cancel::new(),
+    );
+    let error = opened.expect_err("a refusal");
+    assert_eq!(error.code().code, "RM1014");
+    assert!(
+        error.to_string().contains("config.toml"),
+        "the tree cargo refuses is named by the file it refused over: {error}"
+    );
+}

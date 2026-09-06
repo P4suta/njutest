@@ -52,6 +52,7 @@ jobs:
           - run_report
           - engine_coverage_export
           - depinfo
+          - cargo_config
           - cargo_messages
           - cargo_metadata
           - infection_log

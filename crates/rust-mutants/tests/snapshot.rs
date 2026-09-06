@@ -631,6 +631,27 @@ fn cleanup_retries_with_a_doubling_backoff_and_reports_a_directory_that_survives
 }
 
 #[test]
+fn a_directory_that_is_already_gone_is_a_directory_that_was_removed() {
+    let fx = fixture();
+    let snap = create(&fx.source, &options(&fx), now()).expect("create");
+    let dir = snap.dir().to_path_buf();
+    let attempts = RefCell::new(0usize);
+    let remove = |_: &Path| -> io::Result<()> {
+        *attempts.borrow_mut() += 1;
+        Err(io::Error::from(io::ErrorKind::NotFound))
+    };
+    snap.cleanup_with(&remove, &|_| panic!("nothing to wait for"))
+        .expect("a directory nobody can find is a directory nobody has to remove");
+    assert_eq!(
+        *attempts.borrow(),
+        1,
+        "the lock is released before the removal, so a sweeper is free to have got there first \
+         and retrying waits on nothing"
+    );
+    fs::remove_dir_all(&dir).expect("tidy");
+}
+
+#[test]
 fn cleanup_succeeds_on_a_later_attempt_without_reporting_the_earlier_ones() {
     let fx = fixture();
     let snap = create(&fx.source, &options(&fx), now()).expect("create");
