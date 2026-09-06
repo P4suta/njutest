@@ -53,6 +53,8 @@ first digit names an area:
 | `RM1014` | A cargo command could not start, timed out, or exited unsuccessfully; cargo's own words follow. |
 | `RM1015` | `cargo metadata` printed something that is not its document. |
 | `RM1016` | A `--message-format=json` line is not a message. |
+| `RM1017` | The workspace reads code from a path outside itself, which the copy a run measures does not hold. Allow the directory with `--allow-outside`, or vendor it inside the tree. |
+| `RM1018` | `--root` names a member of a workspace rather than the workspace. A run measures a copy of what it was given, and a member on its own is not a buildable tree. |
 | `RM2001` | A dep-info file has no rule to read. |
 | `RM2002` | An artifact's dep-info file could not be read, so the files its unit compiled are unknown. |
 | `RM2003` | A source file a unit compiled could not be read. |

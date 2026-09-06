@@ -22,6 +22,7 @@ version = 1
 packages = []                  # cargo package names; empty = every member
 include = []                   # workspace-relative globs a file must match
 exclude = []                   # workspace-relative globs that remove a file
+allow_outside = []             # directories outside the root the build may read
 
 [mutation]
 tier = "balanced"              # balanced | strong | all

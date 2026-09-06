@@ -150,8 +150,19 @@ fn is_local_path_dependency(value: &toml::Value) -> bool {
     let Some(toml::Value::String(path)) = spec.get("path") else {
         return false;
     };
-    !path.starts_with('/')
-        && !path.starts_with('\\')
-        && !path.contains(':')
-        && path.split(['/', '\\']).all(|component| component != "..")
+    if path.starts_with('/') || path.starts_with('\\') || path.contains(':') {
+        return false;
+    }
+    let parts: Vec<&str> = path.split(['/', '\\']).collect();
+    parts.iter().all(|component| *component != "..") || is_sibling_fixture(&parts)
+}
+
+/// Whether the path is `../fixture-…` and nothing more: the one shape allowed to climb.
+///
+/// A fixture that exists to have a dependency outside itself needs one, and
+/// the thing outside has to be a fixture too, so that the suite still builds
+/// from what this repository holds and still builds offline.
+fn is_sibling_fixture(parts: &[&str]) -> bool {
+    matches!(parts, [first, second]
+        if *first == ".." && second.starts_with("fixture-"))
 }

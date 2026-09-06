@@ -32,6 +32,31 @@ fn fixtures() -> Vec<String> {
     names
 }
 
+/// Every other fixture a block's arguments name, so a path that climbs out of the tree lands in something.
+fn siblings(args: &[String]) -> Vec<&str> {
+    args.iter()
+        .filter_map(|arg| arg.strip_prefix("../"))
+        .filter(|name| name.starts_with("fixture-"))
+        .collect()
+}
+
+/// The block's arguments with each `../fixture-…` spelled as the copy's own path.
+fn resolved(fixture: &Fixture, args: &[String]) -> Vec<String> {
+    let beside = fixture
+        .root()
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_default();
+    args.iter()
+        .map(|arg| match arg.strip_prefix("../") {
+            Some(name) if name.starts_with("fixture-") => {
+                beside.join(name).to_string_lossy().into_owned()
+            }
+            _ => arg.clone(),
+        })
+        .collect()
+}
+
 /// What a run of one fixture establishes, in the order a block states it.
 fn recorded(fixture: &Fixture, args: &[String]) -> Vec<Fate> {
     let mut command = Command::new(env!("CARGO_BIN_EXE_rust-mutants"));
@@ -141,8 +166,8 @@ fn every_fixture_readme_fate_is_the_recorded_one() {
             stated.stated,
             "{name}: the README states no fates, which `cargo xtask fixtures` refuses"
         );
-        let fixture = Fixture::copy(&name);
-        let found = recorded(&fixture, &stated.args);
+        let fixture = Fixture::copy_with_siblings(&name, &siblings(&stated.args));
+        let found = recorded(&fixture, &resolved(&fixture, &stated.args));
         if updating {
             rewrite(&name, &found);
             continue;

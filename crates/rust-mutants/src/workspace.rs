@@ -43,6 +43,13 @@ pub struct OpenOptions {
     pub offline: bool,
     /// Pass `--locked` to every cargo command.
     pub locked: bool,
+    /// Directories outside the root the workspace may read code from, each copied beside the tree.
+    ///
+    /// A run measures a copy, so a path dependency outside the root is not in
+    /// it. Naming one here says the run may copy it too, which makes the
+    /// measurement about a tree that is not the one on disk: it is a decision
+    /// for a person to make rather than one a run takes silently.
+    pub allow_outside: Vec<PathBuf>,
     /// Where the run records what it did. [`Recorder::disabled`] by default.
     pub trace: Recorder,
 }
@@ -79,6 +86,40 @@ pub enum SessionError {
     PristineBroken {
         /// The first error the compiler reported, rendered.
         first: String,
+    },
+    /// The workspace reads code from outside itself, which the copy does not hold.
+    #[error(
+        "{}: {name} is read from {}, which is outside {} and so is not in the copy a run \
+         measures. {} declares it. Allow it with --allow-outside, or vendor it inside the tree",
+        error::WORKSPACE_REACHES_OUTSIDE.code,
+        path.display(),
+        root.display(),
+        manifest.display()
+    )]
+    ReachesOutside {
+        /// The dependency or patched crate.
+        name: String,
+        /// The manifest that declares it.
+        manifest: PathBuf,
+        /// Where it reads it from.
+        path: PathBuf,
+        /// The tree the run was given.
+        root: PathBuf,
+    },
+    /// The root names a member of a workspace rather than the workspace.
+    #[error(
+        "{}: {} is a member of the workspace at {}, and a member on its own is not a tree a \
+         run can build. Pass --root {}",
+        error::ROOT_IS_NOT_THE_WORKSPACE.code,
+        root.display(),
+        workspace_root.display(),
+        workspace_root.display()
+    )]
+    RootIsNotTheWorkspace {
+        /// The tree the run was given.
+        root: PathBuf,
+        /// The workspace it belongs to.
+        workspace_root: PathBuf,
     },
     /// The instrumented baseline does not pass its own tests.
     #[error(
@@ -130,11 +171,69 @@ impl SessionError {
             Self::UnknownTarget { .. } => error::SESSION_UNKNOWN_TARGET,
             Self::NoTargets => error::SESSION_NO_TARGETS,
             Self::WriteFailed { .. } => error::SESSION_WRITE_FAILED,
+            Self::ReachesOutside { .. } => error::WORKSPACE_REACHES_OUTSIDE,
+            Self::RootIsNotTheWorkspace { .. } => error::ROOT_IS_NOT_THE_WORKSPACE,
         }
     }
 }
 
 impl Workspace {
+    /// Refuses a tree a copy of which would not build: one that is a member of a workspace, and one that reads code from outside itself.
+    ///
+    /// Both are asked of the tree on disk, before it is copied. Asked of the
+    /// copy they would be asked of a tree that already cannot resolve, and
+    /// cargo's answer would be about a manifest that is missing rather than
+    /// about what a run could have done instead.
+    fn reachable(
+        root: &Path,
+        toolchain: &Toolchain,
+        options: &OpenOptions,
+        cancel: &Cancel,
+    ) -> Result<(), crate::EngineError> {
+        let metadata = Metadata::load_no_deps(
+            &Driver {
+                toolchain,
+                dir: root,
+                cancel,
+                trace: &options.trace,
+            },
+            MetadataOptions {
+                locked: options.locked,
+                offline: options.offline,
+            },
+        )?;
+        let workspace_root = metadata
+            .workspace_root
+            .canonicalize()
+            .unwrap_or_else(|_error| metadata.workspace_root.clone());
+        if workspace_root != root {
+            return Err(SessionError::RootIsNotTheWorkspace {
+                root: root.to_path_buf(),
+                workspace_root,
+            }
+            .into());
+        }
+        let allowed: Vec<PathBuf> = options
+            .allow_outside
+            .iter()
+            .map(|path| path.canonicalize().unwrap_or_else(|_error| path.clone()))
+            .collect();
+        let patches = crate::cargo::manifest::patches(root);
+        for outside in crate::cargo::reaching_outside(&metadata, root, &patches) {
+            if allowed.iter().any(|allow| outside.path.starts_with(allow)) {
+                continue;
+            }
+            return Err(SessionError::ReachesOutside {
+                name: outside.name,
+                manifest: outside.manifest,
+                path: outside.path,
+                root: root.to_path_buf(),
+            }
+            .into());
+        }
+        Ok(())
+    }
+
     /// Sweeps the temporary area, copies `root` into a snapshot, and locates the toolchain inside the copy.
     ///
     /// # Errors
@@ -154,6 +253,17 @@ impl Workspace {
         let swept =
             tempowner::sweep(&parent, &[DIR_PREFIX, TARGET_DIR_PREFIX], now).unwrap_or_default();
 
+        let toolchain = Toolchain::locate(
+            &LocateOptions {
+                cargo: options.cargo.clone(),
+                search_path: options.search_path.clone(),
+                env: Some(options.env.clone()),
+            },
+            &root,
+            cancel,
+        )?;
+        Self::reachable(&root, &toolchain, &options, cancel)?;
+
         let snapshot = Self::copy(&root, &parent, &options, now)?;
         options.trace.open(OpenRecord {
             root: root.display().to_string(),
@@ -168,15 +278,6 @@ impl Workspace {
                 failures: u64::try_from(swept.failures.len()).unwrap_or(u64::MAX),
             }),
         });
-        let toolchain = Toolchain::locate(
-            &LocateOptions {
-                cargo: options.cargo.clone(),
-                search_path: options.search_path.clone(),
-                env: Some(options.env.clone()),
-            },
-            snapshot.root(),
-            cancel,
-        )?;
         let base_env = options.env.clone();
         let metadata = Metadata::load(
             &Driver {
@@ -225,6 +326,7 @@ impl Workspace {
             root,
             &SnapshotOptions {
                 exclude: options.exclude.clone(),
+                beside: options.allow_outside.clone(),
                 report_dir: options.report_directory.clone(),
                 dest_parent: parent.to_path_buf(),
             },

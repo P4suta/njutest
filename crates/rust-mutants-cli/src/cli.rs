@@ -212,6 +212,9 @@ pub struct Scope {
     /// Only mutate these packages. Repeatable.
     #[arg(long = "package", short = 'p', value_name = "NAME")]
     pub packages: Vec<String>,
+    /// Let the build read this directory from outside the root, copying it beside the tree. Repeatable.
+    #[arg(long = "allow-outside", value_name = "DIR")]
+    pub allow_outside: Vec<PathBuf>,
     /// How long one mutant execution may take before it is retried serially, as in `90s` or `5m`.
     #[arg(long, value_name = "DURATION")]
     pub timeout: Option<String>,

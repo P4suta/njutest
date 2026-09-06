@@ -6,8 +6,10 @@
 mod compile;
 mod depinfo;
 mod locate;
+pub mod manifest;
 mod messages;
 mod metadata;
+mod outside;
 mod version;
 
 use std::fmt;
@@ -24,7 +26,10 @@ pub use locate::{LocateOptions, Toolchain, command_failed, resolve_executable};
 pub use messages::{
     Artifact, CompilerMessage, Diagnostic, DiagnosticSpan, Message, Profile, parse_messages,
 };
-pub use metadata::{DepKind, Metadata, MetadataOptions, Node, NodeDep, Package, Resolve, Target};
+pub use metadata::{
+    DepKind, Dependency, Metadata, MetadataOptions, Node, NodeDep, Package, Resolve, Target,
+};
+pub use outside::{Outside, reaching_outside};
 pub use version::{VersionInfo, parse_version};
 
 /// Everything a cargo command needs besides its arguments: the toolchain, the directory to run in, the cancellation flag, and the trace.

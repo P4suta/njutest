@@ -71,6 +71,13 @@ pub struct Project {
     pub include: Vec<String>,
     /// Workspace-relative globs that remove a file again.
     pub exclude: Vec<String>,
+    /// Directories outside the root the workspace may read code from.
+    ///
+    /// A run measures a copy of the tree, so a path dependency outside it is
+    /// not in the copy. Naming a directory here says the run may copy it
+    /// beside the tree, which makes the measurement about a tree that is not
+    /// the one on disk: a decision for a person rather than one a run takes.
+    pub allow_outside: Vec<String>,
 }
 
 /// How mutants are proposed and executed.
@@ -474,6 +481,7 @@ version = 1
 # packages = []                  # cargo package names; empty = every member
 # include = []                   # workspace-relative globs a file must match
 # exclude = []                   # workspace-relative globs that remove a file
+# allow_outside = []             # directories outside the root the build may read
 
 [mutation]
 # tier = \"{tier}\"            # {tiers}

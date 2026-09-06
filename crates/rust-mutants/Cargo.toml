@@ -30,6 +30,9 @@ sha2 = { workspace = true }
 # the engine never turns a syntax tree back into text.
 syn = { workspace = true, features = ["printing"] }
 thiserror = { workspace = true }
+# The `[patch]` table, which `cargo metadata` does not report: a patch that
+# points outside the tree points at nothing once the tree is copied.
+toml = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 rustix = { workspace = true }

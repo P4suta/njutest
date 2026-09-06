@@ -112,6 +112,36 @@ pub struct Package {
     /// Its targets.
     #[serde(default)]
     pub targets: Vec<Target>,
+    /// What its manifest says it depends on, before anything is resolved.
+    ///
+    /// This is what says a dependency is a path outside the tree, which is a
+    /// question about the manifest rather than about the graph: `cargo
+    /// metadata --no-deps` answers it without resolving anything, and a
+    /// resolve is exactly what a tree reaching outside cannot do inside a
+    /// snapshot.
+    #[serde(default)]
+    pub dependencies: Vec<Dependency>,
+}
+
+/// One dependency, as the manifest declares it.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Dependency {
+    /// The dependency's name.
+    pub name: String,
+    /// `null` for a normal dependency, `dev` or `build` otherwise.
+    #[serde(default)]
+    pub kind: Option<String>,
+    /// The directory it is read from, for a path dependency.
+    #[serde(default)]
+    pub path: Option<PathBuf>,
+}
+
+impl Dependency {
+    /// What kind of edge it is, in the word cargo uses.
+    #[must_use]
+    pub fn kind(&self) -> &str {
+        self.kind.as_deref().unwrap_or(DepKind::NORMAL)
+    }
 }
 
 impl Package {
@@ -220,13 +250,37 @@ impl Metadata {
         })
     }
 
+    /// Runs `cargo metadata --format-version 1 --no-deps` in the driver's directory and parses it.
+    ///
+    /// Nothing is resolved, which is the point: a tree with a path dependency
+    /// outside itself cannot be resolved once it is copied, and this is what
+    /// finds out before it is copied.
+    ///
+    /// # Errors
+    /// The failure of the command, and a document that is not one.
+    pub fn load_no_deps(driver: &Driver<'_>, options: MetadataOptions) -> Result<Self, CargoError> {
+        Self::run(driver, options, true)
+    }
+
     /// Runs `cargo metadata --format-version 1` in the driver's directory and parses it.
     ///
     /// # Errors
     /// [`CargoErrorKind::CommandFailed`] with cargo's own words when the
     /// command fails, and [`CargoErrorKind::MetadataUnparsable`] otherwise.
     pub fn load(driver: &Driver<'_>, options: MetadataOptions) -> Result<Self, CargoError> {
+        Self::run(driver, options, false)
+    }
+
+    /// One `cargo metadata`, resolved or not.
+    fn run(
+        driver: &Driver<'_>,
+        options: MetadataOptions,
+        no_deps: bool,
+    ) -> Result<Self, CargoError> {
         let mut args = vec!["metadata", "--format-version", "1"];
+        if no_deps {
+            args.push("--no-deps");
+        }
         if options.locked {
             args.push("--locked");
         }

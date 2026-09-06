@@ -80,6 +80,7 @@ pub fn check(
     let workspace = Workspace::open(
         checking.root,
         OpenOptions {
+            allow_outside: Vec::new(),
             cargo: None,
             search_path: checking
                 .environment

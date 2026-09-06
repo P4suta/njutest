@@ -100,8 +100,17 @@ below is stated fail-closed.
   measuring its own coverage around a run would have its profiles written into
   the tree the run is measuring, and the drift report would say the project's
   tests write into their own tree.
-- One workspace per run. Path dependencies outside the workspace root are
-  refused unless explicitly allowed as read-only.
+- One workspace per run: `--root` names the workspace, and a member of one is
+  refused with `RM1018` naming the workspace it belongs to. A run measures a
+  copy of what it was given, and a member on its own is not a tree cargo can
+  build.
+- A path dependency or a `[patch]` entry that reads from outside the root is
+  refused with `RM1017` before anything is copied, naming the dependency, the
+  manifest that declares it, and `--allow-outside`. That flag copies the named
+  directory beside the tree under its own name, so the same relative path
+  resolves in the copy. What is copied beside the tree is read and never
+  mutated, and is not part of the workspace digest: a run says what it
+  measured, and it measured the tree.
 - Symbolic links in the evidence tree are rejected.
 - The coverage build sets `CARGO_ENCODED_RUSTFLAGS`, which replaces
   `build.rustflags` rather than adding to it, so mjutest reads the project's

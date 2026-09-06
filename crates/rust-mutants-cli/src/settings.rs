@@ -79,6 +79,14 @@ impl Settings {
             temp_directory: environment.temp_directory.clone(),
             report_directory: Some(self.config.reports.directory.to_string_lossy().into_owned()),
             exclude: compile(&self.config.project.exclude)?,
+            allow_outside: self
+                .config
+                .project
+                .allow_outside
+                .iter()
+                .map(|path| self.root.join(path))
+                .chain(scope.allow_outside.iter().cloned())
+                .collect(),
             keep_temp: scope.switches.keep_temp,
             offline: self.config.execution.offline,
             locked: self.config.execution.locked,

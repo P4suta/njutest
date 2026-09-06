@@ -1064,6 +1064,7 @@ fn prove_equivalence(
         &equivalence::Proving {
             root: &request.root,
             open: rust_mutants::workspace::OpenOptions {
+                allow_outside: Vec::new(),
                 cargo: None,
                 search_path: mutating
                     .environment
@@ -1099,6 +1100,7 @@ fn prepare(
     let workspace = rust_mutants::workspace::Workspace::open(
         &request.root,
         rust_mutants::workspace::OpenOptions {
+            allow_outside: Vec::new(),
             cargo: None,
             search_path: environment.var("PATH").map(std::ffi::OsStr::to_owned),
             env: environment.vars.clone(),

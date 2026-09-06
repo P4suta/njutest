@@ -149,3 +149,52 @@ fn a_readme_that_states_no_fates_is_a_fixture_a_change_can_quietly_re_decide() {
         "{problems:?}"
     );
 }
+
+#[test]
+fn a_sibling_fixture_library_is_the_one_path_allowed_to_climb() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    good_fixture(dir.path());
+    write(
+        dir.path(),
+        "Cargo.toml",
+        &format!(
+            "{HEADER}[workspace]\n\n[package]\nname = \"fixture-outside-dep\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[dependencies]\nfixture-outside-dep-lib = {{ path = \"../fixture-outside-dep-lib\" }}\n"
+        ),
+    );
+    assert_eq!(
+        check_fixture(dir.path()),
+        Vec::<String>::new(),
+        "a fixture that exists to read from outside itself reads from another fixture, so the \
+         suite still builds from what this repository holds and still builds offline"
+    );
+
+    for (spelling, why) in [
+        (
+            "out = { path = \"../elsewhere\" }",
+            "a sibling that is not a fixture",
+        ),
+        (
+            "out = { path = \"../../fixture-far\" }",
+            "a path that climbs further than beside",
+        ),
+        (
+            "out = { path = \"../fixture-a/../../fixture-b\" }",
+            "a path that climbs on its way",
+        ),
+    ] {
+        write(
+            dir.path(),
+            "Cargo.toml",
+            &format!(
+                "{HEADER}[workspace]\n\n[package]\nname = \"x\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[dependencies]\n{spelling}\n"
+            ),
+        );
+        let problems = check_fixture(dir.path());
+        assert!(
+            problems
+                .iter()
+                .any(|problem| problem.contains("not a path inside the fixture")),
+            "{why}: {problems:?}"
+        );
+    }
+}

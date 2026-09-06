@@ -151,8 +151,107 @@ fn opening_copies_the_tree_and_asks_the_toolchain_in_the_copy() {
     );
     assert_eq!(
         installed.answered(),
-        vec![0, 1, 2, 3],
-        "one banner each, the sysroot, and the metadata, in that order"
+        vec![0, 1, 2, 3, 3],
+        "one banner each, the sysroot, then the metadata of the tree on disk — which is what \
+         says whether a copy of it could build at all — and the metadata of the copy"
+    );
+}
+
+#[test]
+fn opening_a_member_directory_names_the_workspace_root_and_the_flag() {
+    let fixture = Fixture::copy("fixture-simple");
+    let elsewhere = fixture.temp().join("the-workspace");
+    let document = metadata_document(fixture.root()).replace(
+        &format!("\"workspace_root\":\"{}\"", fixture.root().display()),
+        &format!("\"workspace_root\":\"{}\"", elsewhere.display()),
+    );
+    let script =
+        toolchain_answers().answering(Invocation::new("cargo", &["metadata"]).printing(&document));
+    let (opened, _installed) = opened(&fixture, &script);
+    let error = opened.expect_err("a member is not a workspace");
+    let said = error.to_string();
+    assert!(said.contains("RM1018"), "{said}");
+    assert!(
+        said.contains(&elsewhere.display().to_string()),
+        "the refusal names the workspace the member belongs to: {said}"
+    );
+    assert!(
+        said.contains("--root"),
+        "and the flag that answers it: {said}"
+    );
+}
+
+#[test]
+fn a_path_dependency_outside_the_root_is_named_before_any_copy() {
+    let fixture = Fixture::copy("fixture-simple");
+    let document = metadata_document(fixture.root()).replace(
+        "\"targets\":[",
+        "\"dependencies\":[{\"name\":\"outside\",\"kind\":null,\"path\":\"../../../elsewhere\"}],\"targets\":[",
+    );
+    let script =
+        toolchain_answers().answering(Invocation::new("cargo", &["metadata"]).printing(&document));
+    let (opened, _installed) = opened(&fixture, &script);
+    let error = opened.expect_err("a tree that reads from outside itself");
+    let said = error.to_string();
+    assert!(said.contains("RM1017"), "{said}");
+    assert!(said.contains("outside"), "{said}");
+    assert!(
+        said.contains("--allow-outside"),
+        "the refusal says what allows it: {said}"
+    );
+}
+
+#[test]
+fn an_allowed_directory_outside_the_root_is_read_rather_than_refused() {
+    let fixture = Fixture::copy("fixture-simple");
+    let allowed = fixture.temp().join("elsewhere");
+    std::fs::create_dir_all(allowed.join("src")).expect("the directory beside the tree");
+    std::fs::write(
+        allowed.join("Cargo.toml"),
+        "[package]\nname = \"outside\"\n",
+    )
+    .expect("its manifest");
+    std::fs::write(allowed.join("src/lib.rs"), "pub fn f() {}\n").expect("its source");
+    let document = metadata_document(fixture.root()).replace(
+        "\"targets\":[",
+        &format!(
+            "\"dependencies\":[{{\"name\":\"outside\",\"kind\":null,\"path\":\"{}\"}}],\"targets\":[",
+            allowed.display()
+        ),
+    );
+    let script =
+        toolchain_answers().answering(Invocation::new("cargo", &["metadata"]).printing(&document));
+    let installed = install(&script);
+    let mut env: Vec<(std::ffi::OsString, std::ffi::OsString)> = installed.env();
+    env.push((
+        std::ffi::OsString::from("PATH"),
+        std::ffi::OsString::from(installed.bin()),
+    ));
+    let opened = Workspace::open(
+        fixture.root(),
+        OpenOptions {
+            cargo: Some(installed.cargo()),
+            search_path: Some(std::ffi::OsString::from(installed.bin())),
+            temp_directory: fixture.temp().to_path_buf(),
+            env,
+            locked: true,
+            offline: true,
+            allow_outside: vec![allowed],
+            ..OpenOptions::default()
+        },
+        &Cancel::new(),
+    );
+    let workspace = opened.expect("a directory somebody named is one the run may read");
+    let beside = workspace
+        .snapshot_root()
+        .parent()
+        .expect("the snapshot directory")
+        .join("elsewhere");
+    assert!(
+        beside.is_dir(),
+        "and one the run copies beside the tree, so the same relative path resolves in the \
+         copy: {}",
+        beside.display()
     );
 }
 

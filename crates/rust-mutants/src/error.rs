@@ -203,6 +203,16 @@ snapshot_code!(
     "a --message-format=json line is not a message"
 );
 snapshot_code!(
+    WORKSPACE_REACHES_OUTSIDE,
+    "RM1017",
+    "the workspace reads code from outside itself, which a copy of it does not hold"
+);
+snapshot_code!(
+    ROOT_IS_NOT_THE_WORKSPACE,
+    "RM1018",
+    "the root is a member of a workspace rather than the workspace"
+);
+snapshot_code!(
     DEP_INFO_UNREADABLE,
     "RM2001",
     "a dep-info file has no rule to read"
@@ -403,6 +413,8 @@ pub const fn error_codes() -> &'static [ErrorCode] {
         CARGO_COMMAND_FAILED,
         CARGO_METADATA_UNPARSABLE,
         CARGO_MESSAGE_UNPARSABLE,
+        WORKSPACE_REACHES_OUTSIDE,
+        ROOT_IS_NOT_THE_WORKSPACE,
         DEP_INFO_UNREADABLE,
         DEP_INFO_MISSING,
         DISCOVER_FILE_UNREADABLE,

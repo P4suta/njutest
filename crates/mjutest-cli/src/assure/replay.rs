@@ -89,6 +89,7 @@ pub fn replay(
     let workspace = Workspace::open(
         replaying.root,
         OpenOptions {
+            allow_outside: Vec::new(),
             cargo: None,
             search_path: replaying
                 .environment
