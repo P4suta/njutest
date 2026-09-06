@@ -46,5 +46,5 @@ and pushes the tag.
 ## Publishing to crates.io
 
 Not yet. The workspace publishes as five crates and the API is not
-export-stable; `docs/roadmap.md` says when that changes. Until then the
-release is the tag and its artifacts.
+export-stable, and nothing here is fixed until it is. Until then the release
+is the tag and its artifacts.
