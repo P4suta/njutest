@@ -119,6 +119,8 @@ struct Ctx {
     direct_stmt: bool,
     /// Whether another rule already offers to negate this expression whole.
     negated: bool,
+    /// Where a swap that changes the expression's type has to be guarded: the end of the method chain this call is a receiver in.
+    wrap: Option<Span>,
 }
 
 impl Ctx {
@@ -128,6 +130,7 @@ impl Ctx {
             stmt,
             direct_stmt: false,
             negated: false,
+            wrap: None,
         }
     }
 
@@ -137,6 +140,7 @@ impl Ctx {
             stmt: self.stmt,
             direct_stmt: false,
             negated: false,
+            wrap: None,
         }
     }
 
@@ -146,6 +150,14 @@ impl Ctx {
             stmt: self.stmt,
             direct_stmt: false,
             negated: true,
+            wrap: None,
+        }
+    }
+
+    const fn wrapping(self, span: Span) -> Self {
+        Self {
+            wrap: Some(span),
+            ..self
         }
     }
 
@@ -797,7 +809,8 @@ impl<'a> Walker<'a> {
             }
             Expr::MethodCall(m) => {
                 self.walk_method_name(m, ctx);
-                self.walk_expr(&m.receiver, value);
+                let chain = ctx.wrap.unwrap_or_else(|| self.span(m));
+                self.walk_expr(&m.receiver, value.wrapping(chain));
                 for arg in &m.args {
                     self.walk_expr(arg, value);
                 }
@@ -895,6 +908,12 @@ impl<'a> Walker<'a> {
 
     /// What a method call offers: the one identifier a swap edits, and the negation of a call that answers a question.
     ///
+    /// A swap is guarded at the end of the chain the call is a receiver in,
+    /// not at the call: `skip` and `take` do not produce the same type, and
+    /// the two branches of a guard have to meet somewhere. A negation is
+    /// guarded at the call, because `!` of a question is a question and the
+    /// types already meet there.
+    ///
     /// A call whose question another rule already asks is left to that rule:
     /// the whole of an `if` or `while` condition is `negate-condition`'s and
     /// `negate-loop-condition`'s, what sits under a `!` is `remove-not`'s, and
@@ -909,7 +928,7 @@ impl<'a> Walker<'a> {
                 Edit {
                     span: self.span(&m.method),
                     replacement: replacement.as_bytes().to_vec(),
-                    site: Self::site_for(ctx, own),
+                    site: Self::site_for(ctx, ctx.wrap.unwrap_or(own)),
                     probe: None,
                 },
             );
@@ -1039,8 +1058,10 @@ impl<'a> Walker<'a> {
 
     fn walk_match(&mut self, m: &syn::ExprMatch, ctx: Ctx) {
         self.walk_expr(&m.expr, ctx.value());
-        for arm in &m.arms {
+        for (position, arm) in m.arms.iter().enumerate() {
+            let deletable = deletable_arm(&m.arms, position);
             self.maybe_suppressed(&arm.attrs, |walker| {
+                walker.walk_arm_head(&arm.pat, deletable);
                 walker.walk_pat_guards(&arm.pat, ctx);
                 let span = walker.span(&arm.body);
                 let site = Site {
@@ -1053,6 +1074,61 @@ impl<'a> Walker<'a> {
     }
 
     /// The guard of an arm is a boolean position; patterns hold no other runtime expression.
+    /// What an arm's head offers: a guard that can be made false, so the arm is gone, and one that can be made true, so it stops narrowing.
+    ///
+    /// An arm that has a guard already is a boolean position like any other,
+    /// and both edits are written where the guard is. An arm without one has
+    /// no bytes to replace, so the edit is the empty place between its pattern
+    /// and its `=>` and the guard is written there.
+    fn walk_arm_head(&mut self, pat: &Pat, deletable: bool) {
+        let Some(guard) = guard_of(pat) else {
+            let pattern = self.span(pat);
+            if deletable {
+                self.emit(
+                    "delete-match-arm",
+                    Edit {
+                        span: Span {
+                            start: pattern.end,
+                            end: pattern.end,
+                        },
+                        replacement: b"false".to_vec(),
+                        site: Some(Site {
+                            form: Form::M,
+                            span: pattern,
+                        }),
+                        probe: None,
+                    },
+                );
+            }
+            return;
+        };
+        let span = self.span(guard);
+        let site = Some(Site {
+            form: Form::C,
+            span,
+        });
+        if deletable {
+            self.emit(
+                "delete-match-arm",
+                Edit {
+                    span,
+                    replacement: b"false".to_vec(),
+                    site,
+                    probe: None,
+                },
+            );
+        }
+        self.emit(
+            "remove-match-guard",
+            Edit {
+                span,
+                replacement: b"true".to_vec(),
+                site,
+                probe: None,
+            },
+        );
+    }
+
     fn walk_pat_guards(&mut self, pat: &Pat, ctx: Ctx) {
         match pat {
             Pat::Guard(g) => {
@@ -1417,6 +1493,43 @@ const DEFAULTS: [&str; 26] = [
     "char", "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize",
     "f32", "f64", "str", "PathBuf",
 ];
+
+/// The guard an arm's pattern carries, when it carries one. In `syn` the guard is part of the pattern rather than of the arm.
+fn guard_of(pat: &Pat) -> Option<&Expr> {
+    match pat {
+        Pat::Guard(one) => Some(&one.guard),
+        Pat::Paren(one) => guard_of(&one.pat),
+        _ => None,
+    }
+}
+
+/// Whether the pattern matches everything and asks nothing, so that the arms after it are unreachable and the match is exhaustive with it.
+fn is_bare_wildcard(pat: &Pat) -> bool {
+    match pat {
+        Pat::Wild(_) => true,
+        Pat::Paren(one) => is_bare_wildcard(&one.pat),
+        _ => false,
+    }
+}
+
+/// Whether an arm can be taken out of the match without the match ceasing to be exhaustive.
+///
+/// The syntax can say so for one shape only: an arm that is not itself a bare
+/// `_`, with a bare `_` somewhere below it. Every other arm may be the one
+/// carrying exhaustiveness, and a mutation the compiler refuses says nothing
+/// about the tests.
+fn deletable_arm(arms: &[syn::Arm], position: usize) -> bool {
+    let Some(arm) = arms.get(position) else {
+        return false;
+    };
+    if is_bare_wildcard(&arm.pat) {
+        return false;
+    }
+    arms.get(position.saturating_add(1)..)
+        .unwrap_or_default()
+        .iter()
+        .any(|later| is_bare_wildcard(&later.pat))
+}
 
 /// The value a block ends with, when it ends with one rather than with a statement.
 fn block_tail(block: &Block) -> Option<&Expr> {

@@ -70,6 +70,8 @@ pub enum Family {
     ReturnReplacement,
     /// `?` propagation.
     ErrorPropagation,
+    /// Deleting a match arm, and removing the guard that narrows one.
+    MatchArm,
     /// `&`, `|`, `^`, `<<`, `>>`.
     Bitwise,
     /// `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=`.
@@ -91,6 +93,7 @@ impl Family {
         Self::Arithmetic,
         Self::ReturnReplacement,
         Self::ErrorPropagation,
+        Self::MatchArm,
         Self::Bitwise,
         Self::CompoundAssignment,
         Self::MethodSwap,
@@ -109,6 +112,7 @@ impl Family {
             Self::Arithmetic => "arithmetic",
             Self::ReturnReplacement => "return-replacement",
             Self::ErrorPropagation => "error-propagation",
+            Self::MatchArm => "match-arm",
             Self::Bitwise => "bitwise",
             Self::CompoundAssignment => "compound-assignment",
             Self::MethodSwap => "method-swap",
@@ -150,9 +154,9 @@ impl fmt::Display for Rule {
 }
 
 /// The counts of the canonical v1 table, asserted by the registry tests.
-pub const CANONICAL_FAMILY_COUNT: usize = 12;
+pub const CANONICAL_FAMILY_COUNT: usize = 13;
 /// The number of rules in the canonical v1 table.
-pub const CANONICAL_RULE_COUNT: usize = 61;
+pub const CANONICAL_RULE_COUNT: usize = 63;
 
 const fn v1(family: Family, name: &'static str, tier: Tier) -> Rule {
     Rule {
@@ -226,6 +230,8 @@ pub const CANONICAL_TABLE: [Rule; CANONICAL_RULE_COUNT] = [
         "ignore-question-statement",
         Tier::Balanced,
     ),
+    v1(Family::MatchArm, "delete-match-arm", Tier::Balanced),
+    v1(Family::MatchArm, "remove-match-guard", Tier::Balanced),
     v1(Family::Bitwise, "band-to-bor", Tier::Strong),
     v1(Family::Bitwise, "bor-to-band", Tier::Strong),
     v1(Family::Bitwise, "xor-to-band", Tier::Strong),

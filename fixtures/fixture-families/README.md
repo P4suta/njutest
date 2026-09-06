@@ -8,7 +8,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 One library whose source is `crates/rust-mutants/tests/testdata/syntax/families.input`
 verbatim: at least one site for every v1 rule. The golden beside that
 input lists every candidate; discovery over this fixture must find exactly
-those 150 candidates in `src/lib.rs` and count one `test-code` skip for the
+those 153 candidates in `src/lib.rs` and count one `test-code` skip for the
 `assert!` in its test module.
 
 ## Fates
@@ -20,8 +20,6 @@ for every candidate the compiler refused. The run is `rust-mutants run
 refuses a difference, and `UPDATE_FATES=1` rewrites the block below.
 
 ```fates
-src/lib.rs:0:0 skip-to-take refused
-src/lib.rs:0:0 take-to-skip refused
 src/lib.rs:7:13 true-to-false survived
 src/lib.rs:8:13 false-to-true survived
 src/lib.rs:9:5 return-true survived
@@ -143,7 +141,10 @@ src/lib.rs:120:20 add-assign-to-sub-assign unreached
 src/lib.rs:121:13 return-true unreached
 src/lib.rs:121:20 gt-to-ge unreached
 src/lib.rs:125:13 return-default survived
+src/lib.rs:126:18 delete-match-arm survived
 src/lib.rs:126:22 return-default unreached
+src/lib.rs:127:22 delete-match-arm unreached
+src/lib.rs:127:22 remove-match-guard unreached
 src/lib.rs:127:24 lt-to-le survived
 src/lib.rs:127:31 return-default unreached
 src/lib.rs:128:22 return-default unreached
@@ -152,6 +153,8 @@ src/lib.rs:134:29 mul-to-div survived
 src/lib.rs:134:48 gt-to-ge survived
 src/lib.rs:139:18 first-to-last unreached
 src/lib.rs:140:18 last-to-first unreached
+src/lib.rs:141:25 skip-to-take unreached
+src/lib.rs:141:33 take-to-skip unreached
 src/lib.rs:141:41 sum-to-product unreached
 src/lib.rs:142:25 product-to-sum unreached
 src/lib.rs:143:8 negate-condition unreached

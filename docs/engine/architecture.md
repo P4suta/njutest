@@ -193,17 +193,21 @@ costs one line on standard error and never the command.
 
 ## Guards
 
-Three forms. **Form C** for a position that is syntactically boolean (an
+Four forms. **Form C** for a position that is syntactically boolean (an
 `if` or `while` condition, an operand of `&&`/`||`, a match guard):
 `__rm::active(3) && (a >= b) || !(__rm::active(3)) && (a > b)`. **Form E**
 for any expression in value position, in parentheses:
 `(if __rm::active(5) { a - b } else { a + b })` — both branches unify to one
 type, so `Default::default()` is inferred from the original. **Form S** for
 a statement: `if __rm::active(7) { x -= step; } else { x += step; }`, the
-original bytes in the `else` so lines are kept. A position where wrapping
-would move a value out of place — an assignment target, a borrow operand, a
-method receiver, a scrutinee — escalates to its parent expression, then to
-the statement.
+original bytes in the `else` so lines are kept. **Form M** for a match arm
+that has no guard, which is the one shape that adds syntax rather than
+replacing it: the site is the pattern, kept verbatim, and the guard is
+written after it — `0 if (__rm::active(9) && (false) || !(__rm::active(9))
+&& (true)) =>`, where the branch that keeps the arm is the guard it did
+without. A position where wrapping would move a value out of place — an
+assignment target, a borrow operand, a method receiver, a scrutinee —
+escalates to its parent expression, then to the statement.
 
 The runtime is a private `mod __rm` appended after the last line of each
 instrumented file ([ADR 0011](../adr/0011-the-runtime-lives-at-the-end-of-each-instrumented-file.md)).

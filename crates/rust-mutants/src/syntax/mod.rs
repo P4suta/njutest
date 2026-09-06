@@ -21,7 +21,7 @@ use crate::trace::{DiscoverFileRecord, SiteRecord, SkipCount};
 
 pub use position::{LineIndex, Position};
 
-/// One of the three guard shapes the instrumenter composes a dormant mutant from; see the module documentation.
+/// One of the four guard shapes the instrumenter composes a dormant mutant from; see the module documentation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Form {
     /// The boolean selector, for a syntactically boolean position.
@@ -30,6 +30,8 @@ pub enum Form {
     E,
     /// The statement guard.
     S,
+    /// The guard written onto a match arm that had none, which is the one shape that adds syntax rather than replacing it.
+    M,
 }
 
 impl Form {
@@ -40,6 +42,7 @@ impl Form {
             Self::C => "C",
             Self::E => "E",
             Self::S => "S",
+            Self::M => "M",
         }
     }
 }

@@ -220,11 +220,11 @@ fn every_rule_fires_in_the_families_fixture_exactly_as_the_golden_says() {
         [row(
             "src/lib.rs",
             "fixture-families",
-            150,
+            153,
             "test-code:1 open-range:2 unstated-return-type:2"
         )]
     );
-    assert_eq!(discovery.catalog.len(), 150);
+    assert_eq!(discovery.catalog.len(), 153);
     assert_eq!(discovery.catalog.duplicates().len(), 0);
 }
 

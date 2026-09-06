@@ -211,6 +211,8 @@ fn bitwise_operators_and_match_guards() {
         [
             "return-default@2:5 \"match a & b {\\n        x if x > 1 => x | b,\\n        _ => (a ^ b) << 1 >> 1,\\n    }\"=>\"Default::default()\" E[\"match a & b {\\n        x if x > 1 => x | b,\\n        _ => (a ^ b) << 1 >> 1,\\n    }\"]",
             "band-to-bor@2:13 \"&\"=>\"|\" E[\"a & b\"]",
+            "delete-match-arm@3:14 \"x > 1\"=>\"false\" C[\"x > 1\"]",
+            "remove-match-guard@3:14 \"x > 1\"=>\"true\" C[\"x > 1\"]",
             "gt-to-ge@3:16 \">\"=>\">=\" C[\"x > 1\"]",
             "return-default@3:23 \"x | b\"=>\"Default::default()\" E[\"x | b\"]",
             "bor-to-band@3:25 \"|\"=>\"&\" E[\"x | b\"]",
@@ -530,6 +532,7 @@ fn forms_display_as_their_letters() {
     assert_eq!(Form::C.to_string(), "C");
     assert_eq!(Form::E.to_string(), "E");
     assert_eq!(Form::S.to_string(), "S");
+    assert_eq!(Form::M.to_string(), "M");
 }
 
 fn by_rule(discovery: &FileDiscovery, names: &[&str]) -> Vec<String> {
@@ -619,4 +622,57 @@ fn iterator_and_slice_method_swaps_edit_only_the_identifier() {
         ],
         "the identifier is the whole of the edit"
     );
+
+    let sites: Vec<&str> = d
+        .candidates
+        .iter()
+        .filter(|one| one.candidate.rule.name.ends_with("-to-take"))
+        .map(|one| one.hint.site_text.as_str())
+        .collect();
+    assert_eq!(
+        sites,
+        ["v.iter().skip(1).take(2).sum::<i32>()"],
+        "`skip` and `take` do not produce the same type, so the guard stands at the end of \
+         the chain, where the two branches meet again"
+    );
+}
+
+#[test]
+fn an_arm_is_deletable_only_when_a_bare_wildcard_follows_it() {
+    let src = "fn f(n: i32) -> i32 {\n    match n {\n        0 => 1,\n        n if n < 5 => 2,\n        _ => 3,\n    }\n}\nfn g(n: i32) -> i32 {\n    match n {\n        0 => 1,\n        n if n < 5 => 2,\n        n => n,\n    }\n}\n";
+    let d = discover(src);
+    assert_coherent(src, &d);
+    assert_eq!(
+        by_rule(&d, &["delete-match-arm", "remove-match-guard"]),
+        [
+            "delete-match-arm@3 \"\"=>\"false\" M",
+            "delete-match-arm@4 \"n < 5\"=>\"false\" C",
+            "remove-match-guard@4 \"n < 5\"=>\"true\" C",
+            "remove-match-guard@11 \"n < 5\"=>\"true\" C",
+        ],
+        "an arm the match still covers without it is one a suite should notice the loss of, \
+         and an arm the match needs for exhaustiveness is a mutation that does not compile"
+    );
+}
+
+#[test]
+fn a_guard_written_onto_an_arm_is_the_one_splice_that_adds_syntax() {
+    let src = "fn f(n: i32) -> i32 {\n    match n {\n        0 => 1,\n        _ => 3,\n    }\n}\n";
+    let d = discover(src);
+    let found = d
+        .candidates
+        .iter()
+        .find(|one| one.candidate.rule.name == "delete-match-arm")
+        .expect("the deletable arm");
+    assert!(
+        found.candidate.span.is_empty(),
+        "there is no guard to replace, so the edit is the empty place a guard would go: {:?}",
+        found.candidate.span
+    );
+    assert_eq!(
+        found.hint.site_text, "0",
+        "the site is the pattern the guard goes after, which the guard keeps verbatim"
+    );
+    assert_eq!(found.hint.site.end, found.candidate.span.start);
+    assert_eq!(found.hint.form, Form::M);
 }

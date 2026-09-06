@@ -606,6 +606,9 @@ impl File<'_> {
                 ),
             )
         })?;
+        if placement.hint.form == Form::M {
+            return Ok(replacement.to_owned());
+        }
         let text = format!("{head}{replacement}{tail}");
         debug_assert!(!site_text.is_empty() || text.is_empty());
         if text.trim().is_empty() {

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mjutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Composing the three guard forms from a site's alternatives.
+//! Composing the four guard forms from a site's alternatives.
 
 use std::fmt::Write as _;
 
@@ -50,7 +50,29 @@ pub(super) fn compose(
             composed
         }
         Form::S => chain(path, alternatives, original),
+        Form::M => arm(path, alternatives, original),
     }
+}
+
+/// Form M: the guard an arm did not have, written after the pattern that did not need one.
+///
+/// Every other form replaces bytes with bytes that say something else. This
+/// one keeps the site — the arm's pattern — exactly as it is and writes a
+/// guard after it, because there is nothing at an unguarded arm to replace.
+/// The branch that keeps the arm as it was is the guard it did without:
+/// `true`.
+fn arm(path: &str, alternatives: &[(u32, String)], original: &str) -> Composed {
+    const KEPT: &str = "true";
+    let mut composed = selector(path, alternatives, KEPT);
+    let prefix = original.len().saturating_add(" if ".len());
+    composed.text.insert_str(0, " if ");
+    composed.text.insert_str(0, original);
+    for (_, range) in &mut composed.alternatives {
+        range.start = range.start.saturating_add(prefix);
+        range.end = range.end.saturating_add(prefix);
+    }
+    composed.original_at = 0;
+    composed
 }
 
 /// Form C: a boolean selector with no block, so the site introduces no temporary scope of its own. The outer parentheses are load bearing: a nested Form C site sits inside its parent's `&&` chain, where `&&` binds tighter than the `||` this composes.

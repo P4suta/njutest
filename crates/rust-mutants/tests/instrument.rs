@@ -344,14 +344,14 @@ fn a_source_that_is_not_the_one_the_candidates_came_from_is_refused() {
 
 #[test]
 fn the_recorded_cases_are_rewritten_exactly_as_recorded() {
-    for name in ["forms", "nested", "statements", "modules"] {
+    for name in ["forms", "nested", "statements", "modules", "arms"] {
         golden_case(name);
     }
 }
 
 #[test]
 fn the_crlf_variant_of_every_recorded_case_keeps_its_lines_and_reparses() {
-    for name in ["forms", "nested", "statements", "modules"] {
+    for name in ["forms", "nested", "statements", "modules", "arms"] {
         let input = std::fs::read(golden_path(&format!("{name}.input"))).expect("input");
         let source = rust_mutants::testkit::source::crlf(&String::from_utf8(input).expect("utf-8"));
         let text = instrument(&source);
@@ -371,7 +371,7 @@ fn the_crlf_variant_of_every_recorded_case_keeps_its_lines_and_reparses() {
 
 #[test]
 fn a_crlf_file_is_rewritten_the_same_way_and_mints_its_own_identities() {
-    for name in ["forms", "nested", "statements", "modules"] {
+    for name in ["forms", "nested", "statements", "modules", "arms"] {
         let input = std::fs::read(golden_path(&format!("{name}.input"))).expect("input");
         let source = String::from_utf8(input).expect("utf-8");
         let with_crlf = rust_mutants::testkit::source::crlf(&source);
@@ -499,7 +499,55 @@ fn generated(functions: usize) -> String {
     text
 }
 
+/// A match of `arms` arms, some guarded, ending in a bare wildcard.
+fn generated_match(arms: usize, guarded: bool) -> String {
+    use std::fmt::Write as _;
+    let mut text =
+        String::from("//! A generated match.\n\npub fn pick(n: i32) -> i32 {\n    match n {\n");
+    for index in 0..arms {
+        let _written = if guarded && index % 2 == 1 {
+            writeln!(
+                text,
+                "        {index}\n        | {} if n > {index} => {index},",
+                index.saturating_add(1000)
+            )
+        } else {
+            writeln!(text, "        {index} => {index},")
+        };
+    }
+    text.push_str("        _ => -1,\n    }\n}\n");
+    text
+}
+
 proptest::proptest! {
+    /// However many arms a match holds and whichever way its lines end, writing a guard onto one keeps the line count and leaves a file that parses.
+    ///
+    /// Form M writes a guard where the source had none, which is the one
+    /// splice that adds syntax rather than replacing it. A pattern that spans
+    /// several lines, an `|` alternation, and an arm that already has a guard
+    /// are the shapes it has to get right.
+    #[test]
+    fn arm_guards_keep_line_counts_and_reparse_for_every_generated_shape(
+        arms in 1usize..8,
+        guarded in proptest::bool::ANY,
+        windows in proptest::bool::ANY
+    ) {
+        let generated = generated_match(arms, guarded);
+        let source = if windows {
+            rust_mutants::testkit::source::crlf(&generated)
+        } else {
+            generated
+        };
+        let text = instrument(&source);
+        syn::parse_file(&text).expect("the instrumented file parses");
+        let (body, _runtime) = split_runtime(&text);
+        proptest::prop_assert_eq!(
+            count_lines(body.as_bytes()),
+            count_lines(source.as_bytes()),
+            "writing a guard onto an arm moved a line"
+        );
+    }
+
     /// However many functions a file holds and whichever way its lines end, instrumenting keeps the line count and leaves a file that parses.
     ///
     /// A rewrite that moved a line makes every position in the report a

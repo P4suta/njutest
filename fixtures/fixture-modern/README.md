@@ -54,6 +54,8 @@ src/lib.rs:49:9 delete-compound-assignment killed
 src/lib.rs:49:13 add-assign-to-sub-assign killed
 src/lib.rs:51:5 return-default killed
 src/lib.rs:58:9 delete-assignment killed
+src/lib.rs:59:30 delete-match-arm killed
+src/lib.rs:59:30 remove-match-guard killed
 src/lib.rs:63:5 return-default killed
 src/lib.rs:82:9 return-true killed
 src/lib.rs:82:17 lt-to-le killed

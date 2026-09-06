@@ -138,9 +138,11 @@ fn the_operators_page_names_every_rule_and_counts_them_as_the_table_does() {
 fn spelled(count: usize) -> &'static str {
     match count {
         12 => "twelve",
+        13 => "thirteen",
         15 => "fifteen",
         51 => "fifty-one",
         61 => "sixty-one",
+        63 => "sixty-three",
         69 => "sixty-nine",
         other => panic!("nobody has spelled {other} on the operators page yet"),
     }

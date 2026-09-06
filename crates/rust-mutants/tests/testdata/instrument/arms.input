@@ -1,0 +1,23 @@
+// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! Match arms: one a guard can be written onto, one that already has a guard,
+//! and one nobody may delete because the match would stop being exhaustive.
+
+pub fn classify(n: i32) -> &'static str {
+    match n {
+        0 => "zero",
+        n if n < 5 => "few",
+        n if n > 100 => "many",
+        _ => "some",
+    }
+}
+
+pub fn pair(n: i32, m: i32) -> i32 {
+    match (n, m) {
+        (0, other)
+        | (other, 0) => other,
+        (a, b) if a == b => a,
+        (a, b) => a + b,
+    }
+}

@@ -6,7 +6,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 # Operators
 
 **Status: implemented** (`rust_mutants::syntax`, `rust_mutants::instrument`,
-`rust_mutants::validate`). The v1 table: twelve families, sixty-one rules,
+`rust_mutants::validate`). The v1 table: thirteen families, sixty-three rules,
 named `family` / `rule@version`. The version enters the mutant identity, so
 changing a rule's output is a new version and every old identity lapses with
 it. Adding a rule does not: what enters an identity is the rule's own name and
@@ -61,6 +61,7 @@ type-check. Replacements derive from the token, never from a string.
 | `arithmetic` | `add-to-sub`, `sub-to-add`, `mul-to-div`, `div-to-mul`, `rem-to-mul`, `remove-unary-minus` | balanced |
 | `return-replacement` | `return-default`, `return-ok-default`, `return-some-default`, `return-true`, `return-err-default` | balanced |
 | `error-propagation` | `question-to-unwrap`, `ignore-question-statement` | balanced |
+| `match-arm` | `delete-match-arm`, `remove-match-guard` | balanced |
 | `bitwise` | `band-to-bor`, `bor-to-band`, `xor-to-band`, `shl-to-shr`, `shr-to-shl` | strong |
 | `compound-assignment` | `add-assign-to-sub-assign`, `sub-assign-to-add-assign`, `mul-assign-to-div-assign`, `div-assign-to-mul-assign`, `rem-assign-to-mul-assign`, `band-assign-to-bor-assign`, `bor-assign-to-band-assign`, `xor-assign-to-band-assign`, `shl-assign-to-shr-assign`, `shr-assign-to-shl-assign` | strong |
 | `method-swap` | `is-some-to-is-none`, `is-none-to-is-some`, `is-ok-to-is-err`, `is-err-to-is-ok`, `max-to-min`, `min-to-max`, `all-to-any`, `any-to-all`, `first-to-last`, `last-to-first`, `skip-to-take`, `take-to-skip`, `sum-to-product`, `product-to-sum` | strong |
@@ -69,6 +70,15 @@ type-check. Replacements derive from the token, never from a string.
 `balanced ⊂ strong ⊂ all`, which the table's order carries: it is
 non-decreasing in tier, so each profile's rules are a prefix of the next
 one's, and `tiers_never_decrease_down_the_table` is what holds it there.
+
+`delete-match-arm` asks whether a suite notices an arm going away, by making
+the arm's guard `false`; `remove-match-guard` asks whether it notices the arm
+widening, by making the guard `true`. An arm with no guard is where the guard
+is written, which is what Form M is for. Deletion is offered only where the
+syntax can say the match stays exhaustive without the arm: the arm is not
+itself a bare `_`, and a bare `_` sits below it. Every other arm may be the
+one carrying exhaustiveness, and a mutation the compiler refuses says nothing
+about the tests.
 
 `negate-bool-method` asks the opposite of a call that answers a question —
 `is_*`, `has_*`, `contains`, `contains_key`, `starts_with`, `ends_with` — by
