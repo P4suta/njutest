@@ -93,10 +93,48 @@ all.
 ## Test harness
 
 `crates/mjutest-devkit` is test-only support shared by every crate: the
-golden-file comparison, the workspace and fixture paths, and the `cargo` that
-built the test binary. Each crate's `testkit` module (behind `cfg(test)` or
-the `testkit` feature) holds its own fakes; production code may import
-neither, and `devgates` checks.
+golden-file comparison, the workspace and fixture paths, the `cargo` that
+built the test binary, a throwaway copy of a fixture project, and the scripted
+toolchain. Each crate's `testkit` module (behind `cfg(test)` or the `testkit`
+feature) holds its own fakes; production code may import neither, and
+`devgates` checks.
+
+### Two halves of the suite
+
+A suite that starts a real `cargo` is named `toolchain_*.rs`, and every other
+one is not. `mise run test:fast` is the inner loop and runs the second half in
+seconds; `mise run test:slow` runs the first; `mise run test` runs both and the
+doctests, which is what the pipeline runs. `cargo xtask test`'s own suite
+(`xtask/tests/tasks.rs`) holds the naming to the rule, so a test that quietly
+starts a toolchain cannot land in the inner loop.
+
+### The scripted toolchain
+
+`mjutest_devkit::fake_cargo` writes a script of invocations —
+program, argument prefix, environment, and what to print, write, wait, and
+exit with — and `crates/rust-mutants/examples/fake_cargo.rs` is the program
+that answers it as `cargo`, as `rustc`, as a coverage tool, or as a test
+binary. It is an example rather than a binary of the devkit because
+`--all-targets`, `cargo nextest`, and `cargo llvm-cov` build the examples of a
+crate under test on every platform and build no binary of a dev-dependency on
+any of them. A command no entry matches exits 99 with its own command line on
+stderr: a suite that forgot to script something says what it forgot.
+
+That is what lets `crates/rust-mutants/tests/workspace.rs` hold the engine to
+every refusal it can report about a toolchain — a cargo that is not a file, a
+banner with no release line, metadata that is not metadata, a stream whose
+second line is not a message, a build that outruns its timeout — in a fifth of
+a second and with no toolchain at all.
+
+### A copy of a fixture
+
+`mjutest_devkit::fixture::Fixture::copy` is the tree a suite hands to the
+thing it is testing. The copy is canonical, because a path a run reports has
+to compare equal to the one the test holds; its temporary and cache
+directories sit beside the tree, because a cache under the root would change
+the tree's own digest every time a run wrote to it; and `copy_with_siblings`
+puts a second fixture next to the first, which is what a path dependency that
+climbs out of the tree needs.
 
 ### Golden files
 

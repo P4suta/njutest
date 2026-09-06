@@ -52,6 +52,7 @@ run = "cargo doc --locked --workspace --no-deps --document-private-items"
 description = "Run the repository gates: seam ratchet, dependency direction, fixture conventions, release consistency"
 run = [
   "cargo xtask devgates",
+  "cargo xtask lints",
   "cargo xtask deps",
   "cargo xtask fixtures",
   "cargo xtask release-check",
@@ -63,9 +64,14 @@ depends = ["clippy", "doc", "gates"]
 run = ["typos", "actionlint"]
 
 [tasks."test:fast"]
-description = "Run the unit tests of every crate (no doctests, no toolchain-driven end-to-end tests)"
-run = "cargo nextest run --locked --workspace --all-targets --status-level fail"
-run_windows = "cargo nextest run --locked --workspace --all-targets --status-level fail"
+description = "Run every test that starts no toolchain: the inner loop, seconds rather than a minute"
+run = "cargo nextest run --locked --workspace --all-targets --status-level fail -E 'not binary(/^toolchain_/)'"
+run_windows = "cargo nextest run --locked --workspace --all-targets --status-level fail -E 'not binary(/^toolchain_/)'"
+
+[tasks."test:slow"]
+description = "Run the suites that drive a real cargo against the fixture projects"
+run = "cargo nextest run --locked --workspace --all-targets --status-level fail -E 'binary(/^toolchain_/)'"
+run_windows = "cargo nextest run --locked --workspace --all-targets --status-level fail -E 'binary(/^toolchain_/)'"
 
 [tasks."test:doc"]
 description = "Run the doctests, which nextest does not"
@@ -73,7 +79,7 @@ run = "cargo test --locked --workspace --doc"
 
 [tasks.test]
 description = "Run the complete suite: every target through nextest, then the doctests"
-depends = ["test:fast", "test:doc"]
+depends = ["test:fast", "test:slow", "test:doc"]
 
 [tasks.coverage]
 description = "Measure region coverage with the ratchet CI enforces (never lower the floor)"

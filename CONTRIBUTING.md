@@ -36,11 +36,12 @@ tools, fetches the locked dependency graph, and installs the git hooks.
 | --- | --- |
 | `mise run check` | every local gate in the order CI runs them: formatting, build, tests, clippy, rustdoc, repository gates, spelling, TOML, workflows, cargo-deny |
 | `mise run test` | every target through `cargo nextest`, then the doctests |
-| `mise run test:fast` | the unit and contract tests only |
-| `mise run gates` | `cargo xtask all`: the seam ratchet, dependency direction, fixture conventions, release consistency |
+| `mise run test:fast` | the inner loop: every suite that starts no toolchain, in seconds |
+| `mise run test:slow` | the suites that drive a real cargo against `fixtures/` |
+| `mise run gates` | `cargo xtask all`: the seam ratchet, the lint gate, dependency direction, fixture conventions, release consistency |
 | `mise run coverage` | region coverage with the ratchet CI enforces |
 | `mise run mutants` | cargo-mutants against this workspace |
-| `bacon` | the watch loop (`bacon clippy`, `bacon test`, `bacon nextest`, `bacon doc`) |
+| `bacon` | the watch loop (`bacon clippy`, `bacon test` = the inner loop, `bacon test-all`, `bacon gates`, `bacon doc`) |
 
 Golden files are rewritten with `UPDATE_GOLDEN=1 cargo test …`; the diff is
 the review. Compile-error goldens of the attribute macros are rewritten with

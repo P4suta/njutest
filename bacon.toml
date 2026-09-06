@@ -26,12 +26,43 @@ command = [
 ]
 need_stdout = false
 
+# The inner loop: everything that starts no toolchain.
 [jobs.test]
-command = ["cargo", "test", "--workspace", "--all-targets", "--color", "always"]
+command = [
+  "cargo",
+  "nextest",
+  "run",
+  "--workspace",
+  "--all-targets",
+  "--color",
+  "always",
+  "-E",
+  "not binary(/^toolchain_/)",
+]
 need_stdout = true
 
 [jobs.nextest]
+command = [
+  "cargo",
+  "nextest",
+  "run",
+  "--workspace",
+  "--all-targets",
+  "--color",
+  "always",
+  "-E",
+  "not binary(/^toolchain_/)",
+]
+need_stdout = true
+
+# Every test, the fixture-driven ones included.
+[jobs.test-all]
 command = ["cargo", "nextest", "run", "--workspace", "--all-targets", "--color", "always"]
+need_stdout = true
+
+# The repository's own gates.
+[jobs.gates]
+command = ["cargo", "xtask", "all"]
 need_stdout = true
 
 [jobs.doc]

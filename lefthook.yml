@@ -52,7 +52,7 @@ pre-push:
       env:
         RUSTDOCFLAGS: "-D warnings"
     gates:
-      run: cargo xtask devgates
+      run: cargo xtask all
     typos:
       run: typos
     deny:
