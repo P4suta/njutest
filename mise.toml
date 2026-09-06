@@ -101,6 +101,7 @@ run = "cargo +nightly fuzz build"
 [tasks."fuzz:smoke"]
 description = "Run every cargo-fuzz target briefly, the way CI does on a pull request"
 dir = "fuzz"
+shell = "bash -c"
 run = """
 set -euo pipefail
 for target in $(cargo +nightly fuzz list); do
@@ -119,6 +120,7 @@ run = ["mise run fmt:check", "mise run build", "mise run test", "mise run lint",
 
 [tasks.bench]
 description = "Observe what the byte foundation and the report cost. Numbers, never gates"
+shell = "bash -c"
 run = """
 set -euo pipefail
 cargo bench -p rust-mutants --bench foundation -- "$@"
@@ -127,6 +129,7 @@ cargo bench -p mjutest-cli --bench report -- "$@"
 
 [tasks.dogfood]
 description = "Point mjutest at this workspace and read the verdict it reaches"
+shell = "bash -c"
 run = """
 set -euo pipefail
 cargo build --release --bin mjutest
@@ -135,6 +138,7 @@ cargo build --release --bin mjutest
 
 [tasks."dogfood:audit"]
 description = "Run mjutest on this workspace and re-decide the recording it leaves"
+shell = "bash -c"
 run = """
 set -euo pipefail
 cargo build --release --bin mjutest
@@ -148,6 +152,7 @@ cargo build --release -p xtask
 
 [tasks."dogfood:engine"]
 description = "Point rust-mutants at this workspace and read the score it reaches"
+shell = "bash -c"
 run = """
 set -euo pipefail
 cargo build --release --bin rust-mutants
@@ -156,6 +161,7 @@ cargo build --release --bin rust-mutants
 
 [tasks."dogfood:engine:audit"]
 description = "Run rust-mutants on its own engine and re-decide the report it wrote"
+shell = "bash -c"
 run = """
 set -euo pipefail
 cargo build --release --bin rust-mutants
@@ -173,6 +179,7 @@ run = "cargo run -q -p xtask -- engine-audit \"$@\""
 
 [tasks."trace:check"]
 description = "Say whether a recording is complete: it begins, it ends, and it lost nothing"
+shell = "bash -c"
 run = """
 set -euo pipefail
 cargo build --bin rust-mutants

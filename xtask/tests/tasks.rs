@@ -100,3 +100,22 @@ fn every_suite_that_starts_a_toolchain_says_so_in_its_name() {
         "these suites start a toolchain and are in the inner loop: {wrong:?}"
     );
 }
+
+#[test]
+fn every_task_that_asks_for_pipefail_says_which_shell_it_is_asking() {
+    let text = repository("mise.toml");
+    let mut without = Vec::new();
+    for block in text.split("\n[tasks.") {
+        let Some((name, body)) = block.split_once(']') else {
+            continue;
+        };
+        if body.contains("set -euo pipefail") && !body.contains("shell = \"bash -c\"") {
+            without.push(name.to_owned());
+        }
+    }
+    assert!(
+        without.is_empty(),
+        "`sh` is not bash on every machine, and a task that asks for pipefail without saying \
+         which shell fails there for a reason that is not the task: {without:?}"
+    );
+}
