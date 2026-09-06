@@ -51,9 +51,22 @@ not anything had timed out, and the recording of a route named a mutant one
 way where the recording of its execution named it another. The ledger tests
 found four pages that had stopped saying what the code does.
 
+Running the things that were supposed to work found the rest. `RM5002` said
+the pristine tree passes, which a run type-checks rather than runs. A coverage
+export whose region ended before it began was read rather than refused. A test
+process inherited `LLVM_PROFILE_FILE`, so a project measuring its own coverage
+had a profile written into the tree the run was measuring and the drift report
+blamed its tests for it. And nothing built the scripted cargo eight of these
+tests drive, because `cargo test --all-targets` builds an example as a libtest
+harness rather than as the program it is: a clean checkout failed seven tests,
+the coverage job failed them all, and the engine could not verify its own
+suite at all.
+
 The suite was also paying for a toolchain it did not need: the inner loop is
 now the half that starts no cargo, and the `toolchain_` half runs everything
-it did before.
+it did before. With all of it in place the engine runs on its own `duration`
+module and re-decides the result with no violations, and the one mutation that
+survived was a `?` nothing exercised.
 
 ## What M9 closed
 
