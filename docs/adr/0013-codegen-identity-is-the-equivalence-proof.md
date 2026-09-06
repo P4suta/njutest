@@ -98,3 +98,20 @@ recording why it was faster.
 - The engine's tree for this layer is the program the user wrote: no guards,
   no runtime module, no instrumentation. Proving something about an
   instrumented tree would be proving it about a different program.
+
+## What it answered when it was pointed at real code
+
+`rust-mutants equivalence` was run over the whole catalog of a real
+thousand-line binary, at that project's own test profile: **27 of its 154
+mutants came out identical**. Every one of them is in `src/main.rs`, and none
+of them would be reported `equivalent` by a run, because a binary's `main` and
+everything only `main` calls are dead code in that binary's own test harness —
+the linker drops them, and the artifacts then come out identical for the
+reason this decision exists to catch. The same project's library code, which
+its tests do link, answered `differs` for all thirty mutants asked about.
+
+So the measured yield of the *lemma* on real code is dominated by absence, and
+the measured yield of the *layer* — the lemma with the premise — is what a
+reader should expect to be small. The fixture demonstrates the case that is
+genuinely equivalence rather than absence, and it is at `opt-level = 2`,
+because at cargo's default of zero there is nothing to demonstrate.

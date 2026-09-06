@@ -10,3 +10,6 @@ publish = false
 [workspace]
 
 [dependencies]
+
+[lints.rust]
+unused_qualifications = "deny"

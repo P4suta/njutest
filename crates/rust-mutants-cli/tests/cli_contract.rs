@@ -273,7 +273,7 @@ fn instrument_prints_one_file_as_the_engine_rewrites_it() {
         text.contains(&format!("{module}::active(")) && text.contains(&format!("mod {module} {{")),
         "{text}"
     );
-    assert!(text.contains("#[allow(warnings, unused, unfulfilled_lint_expectations, clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery, clippy::cargo)] pub fn max"), "{text}");
+    assert!(text.contains("#[allow(warnings, unused, unused_qualifications, unfulfilled_lint_expectations, clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery, clippy::cargo)] pub fn max"), "{text}");
 
     let source = std::fs::read_to_string(fixture.root.join("src/lib.rs")).expect("read");
     assert!(
