@@ -58,9 +58,9 @@ fn the_canonical_table_has_the_documented_shape() {
         .validate()
         .expect("the canonical table satisfies every registry invariant");
     assert_eq!(registry.len(), CANONICAL_RULE_COUNT);
-    assert_eq!(CANONICAL_RULE_COUNT, 36);
+    assert_eq!(CANONICAL_RULE_COUNT, 51);
     assert_eq!(registry.families().len(), CANONICAL_FAMILY_COUNT);
-    assert_eq!(CANONICAL_FAMILY_COUNT, 11);
+    assert_eq!(CANONICAL_FAMILY_COUNT, 12);
     let expected: Vec<(Family, Tier, Vec<&str>)> = vec![
         (
             Family::BooleanLiteral,
@@ -103,6 +103,7 @@ fn the_canonical_table_has_the_documented_shape() {
                 "mul-to-div",
                 "div-to-mul",
                 "rem-to-mul",
+                "remove-unary-minus",
             ],
         ),
         (
@@ -134,7 +135,30 @@ fn the_canonical_table_has_the_documented_shape() {
         (
             Family::CompoundAssignment,
             Tier::Strong,
-            vec!["add-assign-to-sub-assign", "sub-assign-to-add-assign"],
+            vec![
+                "add-assign-to-sub-assign",
+                "sub-assign-to-add-assign",
+                "mul-assign-to-div-assign",
+                "div-assign-to-mul-assign",
+                "rem-assign-to-mul-assign",
+                "band-assign-to-bor-assign",
+                "bor-assign-to-band-assign",
+                "xor-assign-to-band-assign",
+                "shl-assign-to-shr-assign",
+                "shr-assign-to-shl-assign",
+            ],
+        ),
+        (
+            Family::MethodSwap,
+            Tier::Strong,
+            vec![
+                "is-some-to-is-none",
+                "is-none-to-is-some",
+                "is-ok-to-is-err",
+                "is-err-to-is-ok",
+                "max-to-min",
+                "min-to-max",
+            ],
         ),
         (
             Family::StatementDeletion,
@@ -198,9 +222,9 @@ fn select_tier_returns_every_rule_at_or_below_the_tier_in_table_order() {
     let balanced = registry.select_tier(Tier::Balanced);
     let strong = registry.select_tier(Tier::Strong);
     let all = registry.select_tier(Tier::All);
-    assert_eq!(balanced.len(), 26);
-    assert_eq!(strong.len(), 33);
-    assert_eq!(all.len(), 36);
+    assert_eq!(balanced.len(), 27);
+    assert_eq!(strong.len(), 48);
+    assert_eq!(all.len(), 51);
     assert!(balanced.iter().all(|r| r.tier == Tier::Balanced));
     assert_eq!(
         &strong[..balanced.len()],
@@ -310,4 +334,78 @@ fn a_registry_refuses_a_table_that_breaks_an_invariant() {
     let registry = Registry::new(&FINE).expect("consistent");
     assert_eq!(registry.families(), [Family::Comparison, Family::Bitwise]);
     assert_eq!(registry.select_tier(Tier::Balanced), [FINE[0]]);
+}
+
+/// The relative order of the rules that were in the v1 table when it had 36 of them.
+///
+/// A mutant's identity is the rule that produced it, and two rules that can
+/// produce the same replacement at the same span are separated by which comes
+/// first in this table. Reordering them therefore renames mutants, which
+/// silently invalidates every stored acceptance and every reused verdict about
+/// them. Adding a rule does not: a new family goes at the end of the table and
+/// a new rule at the end of its family's block, which leaves every existing
+/// pair in the order it was in. The end of the table is the end of the tier's
+/// run rather than the end of the file: the table is non-decreasing in tier so
+/// that each profile's rules are a prefix of the next one's.
+const THIRTY_SIX: [&str; 36] = [
+    "true-to-false",
+    "false-to-true",
+    "negate-condition",
+    "negate-loop-condition",
+    "remove-not",
+    "and-to-or",
+    "or-to-and",
+    "eq-to-neq",
+    "neq-to-eq",
+    "lt-to-le",
+    "le-to-lt",
+    "gt-to-ge",
+    "ge-to-gt",
+    "range-to-inclusive",
+    "inclusive-to-range",
+    "add-to-sub",
+    "sub-to-add",
+    "mul-to-div",
+    "div-to-mul",
+    "rem-to-mul",
+    "return-default",
+    "return-ok-default",
+    "return-some-default",
+    "return-true",
+    "question-to-unwrap",
+    "ignore-question-statement",
+    "band-to-bor",
+    "bor-to-band",
+    "xor-to-band",
+    "shl-to-shr",
+    "shr-to-shl",
+    "add-assign-to-sub-assign",
+    "sub-assign-to-add-assign",
+    "delete-call-statement",
+    "delete-assignment",
+    "delete-compound-assignment",
+];
+
+#[test]
+fn adding_a_rule_never_reorders_the_ones_that_were_there() {
+    let registry = Registry::canonical();
+    let mut positions: Vec<(usize, &str)> = THIRTY_SIX
+        .iter()
+        .map(|name| {
+            (
+                registry
+                    .position(name)
+                    .unwrap_or_else(|| panic!("{name} is still in the table")),
+                *name,
+            )
+        })
+        .collect();
+    positions.sort_unstable();
+
+    assert_eq!(
+        positions.iter().map(|(_, name)| *name).collect::<Vec<_>>(),
+        THIRTY_SIX,
+        "a rule that changed places renames every mutant it wins the tie for, and with \
+         it every acceptance and every reused verdict about that mutant"
+    );
 }

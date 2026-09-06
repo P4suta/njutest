@@ -28,6 +28,14 @@ pub(super) const fn binary_swap(op: &BinOp) -> Option<(&'static str, &'static st
         BinOp::Shr(_) => ("shr-to-shl", ">>", "<<"),
         BinOp::AddAssign(_) => ("add-assign-to-sub-assign", "+=", "-="),
         BinOp::SubAssign(_) => ("sub-assign-to-add-assign", "-=", "+="),
+        BinOp::MulAssign(_) => ("mul-assign-to-div-assign", "*=", "/="),
+        BinOp::DivAssign(_) => ("div-assign-to-mul-assign", "/=", "*="),
+        BinOp::RemAssign(_) => ("rem-assign-to-mul-assign", "%=", "*="),
+        BinOp::BitAndAssign(_) => ("band-assign-to-bor-assign", "&=", "|="),
+        BinOp::BitOrAssign(_) => ("bor-assign-to-band-assign", "|=", "&="),
+        BinOp::BitXorAssign(_) => ("xor-assign-to-band-assign", "^=", "&="),
+        BinOp::ShlAssign(_) => ("shl-assign-to-shr-assign", "<<=", ">>="),
+        BinOp::ShrAssign(_) => ("shr-assign-to-shl-assign", ">>=", "<<="),
         _ => return None,
     })
 }
@@ -57,6 +65,36 @@ pub(super) const fn is_connective(op: &BinOp) -> bool {
 /// Whether the expression is `!x`.
 pub(super) const fn is_not(op: &UnOp) -> bool {
     matches!(op, UnOp::Not(_))
+}
+
+/// The rule that removes `op`, with the name it answers to.
+///
+/// Both of these replace the whole expression with its operand, which is why
+/// the walker reads them as one shape: `!x` becomes `x` and `-x` becomes `x`.
+pub(super) const fn unary_removal(op: &UnOp) -> Option<&'static str> {
+    match op {
+        UnOp::Not(_) => Some("remove-not"),
+        UnOp::Neg(_) => Some("remove-unary-minus"),
+        _ => None,
+    }
+}
+
+/// The rule that swaps a method whose name says the opposite of another the same receiver has, with the name it writes in its place.
+///
+/// The identifier is the whole of the edit: nothing here looks at a type, so a
+/// receiver that has no such method is a mutation the compiler refuses, which
+/// is where the engine settles acceptance
+/// ([ADR 0008](../../../../docs/adr/0008-compiler-validated-acceptance-and-the-type-witness-pass.md)).
+pub(super) fn method_swap(name: &str) -> Option<(&'static str, &'static str)> {
+    Some(match name {
+        "is_some" => ("is-some-to-is-none", "is_none"),
+        "is_none" => ("is-none-to-is-some", "is_some"),
+        "is_ok" => ("is-ok-to-is-err", "is_err"),
+        "is_err" => ("is-err-to-is-ok", "is_ok"),
+        "max" => ("max-to-min", "min"),
+        "min" => ("min-to-max", "max"),
+        _ => return None,
+    })
 }
 
 /// The last path segment of `expr` when it is a bare path.

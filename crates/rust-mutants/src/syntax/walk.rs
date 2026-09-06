@@ -16,7 +16,7 @@ use super::branch;
 use super::position::LineIndex;
 use super::rules::{
     binary_swap, has_let, is_compound_assignment, is_connective, is_default_spelling, is_not,
-    is_ok_default, is_some_default, is_true_literal,
+    is_ok_default, is_some_default, is_true_literal, method_swap, unary_removal,
 };
 use super::{Decision, Form, Found, Selection, SiteHint, SkipReason};
 use crate::catalog::Candidate;
@@ -658,6 +658,7 @@ impl<'a> Walker<'a> {
                 }
             }
             Expr::MethodCall(m) => {
+                self.walk_method_name(m, ctx);
                 self.walk_expr(&m.receiver, value);
                 for arg in &m.args {
                     self.walk_expr(arg, value);
@@ -747,12 +748,29 @@ impl<'a> Walker<'a> {
         }
     }
 
+    /// The one identifier a method-swap edits, when the receiver calls a method whose name says the opposite of another.
+    fn walk_method_name(&mut self, m: &syn::ExprMethodCall, ctx: Ctx) {
+        let Some((rule, replacement)) = method_swap(&m.method.to_string()) else {
+            return;
+        };
+        let own = self.span(m);
+        self.emit(
+            rule,
+            Edit {
+                span: self.span(&m.method),
+                replacement: replacement.as_bytes().to_vec(),
+                site: Self::site_for(ctx, own),
+                probe: None,
+            },
+        );
+    }
+
     fn walk_unary(&mut self, u: &syn::ExprUnary, ctx: Ctx) {
         let own = self.span(u);
-        if is_not(&u.op) {
+        if let Some(rule) = unary_removal(&u.op) {
             let operand = self.text(self.span(&u.expr)).as_bytes().to_vec();
             self.emit(
-                "remove-not",
+                rule,
                 Edit {
                     span: own,
                     replacement: operand,
@@ -760,7 +778,7 @@ impl<'a> Walker<'a> {
                     probe: None,
                 },
             );
-            let inner = if ctx.kind == Kind::Bool {
+            let inner = if ctx.kind == Kind::Bool && is_not(&u.op) {
                 ctx.boolean()
             } else {
                 ctx.value()
