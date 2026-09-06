@@ -18,7 +18,7 @@ use std::collections::BTreeSet;
 
 fn page(relative: &str) -> String {
     let path = mjutest_devkit::paths::workspace_root().join(relative);
-    std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("{relative}: {error}"))
+    std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display()))
 }
 
 /// Every name in backticks on the lines of `text` a table row occupies.

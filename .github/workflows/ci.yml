@@ -43,6 +43,11 @@ jobs:
         env:
           CARGO_NET_OFFLINE: "false"
         run: cargo fetch --locked
+      # `cargo test --all-targets` builds an example as a test harness, not as
+      # the program it is, and part of this suite drives a scripted `cargo`
+      # that is one. Building it plainly is what makes those tests able to run.
+      - name: Build the scripted toolchain the suite drives
+        run: cargo build --locked --examples -p rust-mutants
       - name: Test every target
         run: cargo nextest run --locked --workspace --all-targets --all-features --status-level fail
       - name: Doctests

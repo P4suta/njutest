@@ -28,7 +28,7 @@ const fn site(question: Question, super_depth: u32) -> Site {
 fn build(source: &str, name: &str) -> std::process::Output {
     let dir = mjutest_devkit::paths::workspace_root()
         .join("target/probe-instrument")
-        .join(name);
+        .join(format!("{}-{name}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("a place to build");
     let path = dir.join(format!("{name}.rs"));
     std::fs::write(&path, source).expect("write");

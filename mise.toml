@@ -63,13 +63,21 @@ description = "Run clippy, rustdoc, the repository gates, spelling, TOML, and wo
 depends = ["clippy", "doc", "gates"]
 run = ["typos", "actionlint"]
 
+[tasks."build:examples"]
+description = "Build the scripted cargo the suite drives, which no test build produces"
+# `cargo test --all-targets` builds an example as a test harness rather than as
+# the program it is, so a suite that drives one has to ask for it plainly.
+run = "cargo build --locked --examples -p rust-mutants"
+
 [tasks."test:fast"]
 description = "Run every test that starts no toolchain: the inner loop, seconds rather than a minute"
+depends = ["build:examples"]
 run = "cargo nextest run --locked --workspace --all-targets --status-level fail -E 'not binary(/^toolchain_/)'"
 run_windows = "cargo nextest run --locked --workspace --all-targets --status-level fail -E 'not binary(/^toolchain_/)'"
 
 [tasks."test:slow"]
 description = "Run the suites that drive a real cargo against the fixture projects"
+depends = ["build:examples"]
 run = "cargo nextest run --locked --workspace --all-targets --status-level fail -E 'binary(/^toolchain_/)'"
 run_windows = "cargo nextest run --locked --workspace --all-targets --status-level fail -E 'binary(/^toolchain_/)'"
 
@@ -83,6 +91,7 @@ depends = ["test:fast", "test:slow", "test:doc"]
 
 [tasks.coverage]
 description = "Measure region coverage with the ratchet CI enforces (never lower the floor)"
+depends = ["build:examples"]
 run = "cargo llvm-cov --locked --workspace --all-targets --all-features --summary-only --fail-under-regions 80"
 
 [tasks.deny]
@@ -167,7 +176,11 @@ set -euo pipefail
 cargo build --release --bin rust-mutants
 cargo build --release -p xtask
 ./target/release/rust-mutants run --locked --offline --trace "$@" || true
-run="$(ls -dt reports/mutation/*/ | head -1)"
+run="$(ls -dt reports/mutation/*/ 2>/dev/null | head -1)"
+if [ -z "${run}" ] || [ ! -f "${run}run-report-v1.json" ]; then
+  echo "the run left no report to re-decide; read what it said above" >&2
+  exit 2
+fi
 echo "re-deciding ${run} from its own recording"
 ./target/release/rust-mutants trace check --dir "${run}trace"
 ./target/release/xtask engine-audit "${run%/}" --trace "${run}trace" --ledger .rust-mutants.toml

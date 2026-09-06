@@ -52,7 +52,15 @@ fn anything_that_is_not_a_duration_is_named_rather_than_guessed_at() {
         parse("99999999999999999999s"),
         Err(DurationError::TooLarge {
             text: "99999999999999999999s".to_owned()
-        })
+        }),
+        "a number no integer holds"
+    );
+    assert_eq!(
+        parse("5000000000s"),
+        Err(DurationError::TooLarge {
+            text: "5000000000s".to_owned()
+        }),
+        "and one that fits the number it was read as and not the width a duration is built from"
     );
     for error in [
         DurationError::Empty,

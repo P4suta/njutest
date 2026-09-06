@@ -133,3 +133,20 @@ fn a_scripted_command_writes_the_files_a_build_would_have_left_behind() {
         "demo: src/lib.rs\n"
     );
 }
+
+#[test]
+fn the_fake_is_found_or_built_rather_than_leaving_a_suite_with_nothing_to_drive() {
+    let fake = mjutest_devkit::fake_cargo::locate();
+    assert!(fake.is_file(), "{}", fake.display());
+    assert!(
+        fake.parent()
+            .is_some_and(|directory| directory.ends_with("examples")),
+        "the fake is the example, beside the test binaries that drive it: {}",
+        fake.display()
+    );
+    assert_eq!(
+        mjutest_devkit::fake_cargo::locate(),
+        fake,
+        "asking twice answers the same, whether or not the first ask had to build it"
+    );
+}

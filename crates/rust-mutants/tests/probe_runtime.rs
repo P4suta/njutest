@@ -15,7 +15,7 @@ use rust_mutants::probe::runtime::{MARKER, MODULE_STEM, PROBE_ENV, UNAVAILABLE_E
 fn compile(source: &str, name: &str) -> std::process::Output {
     let dir = mjutest_devkit::paths::workspace_root()
         .join("target/probe-runtime")
-        .join(name);
+        .join(format!("{}-{name}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("a place to build");
     let path = dir.join(format!("{name}.rs"));
     std::fs::write(&path, source).expect("write");

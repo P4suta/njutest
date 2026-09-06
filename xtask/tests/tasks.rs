@@ -119,3 +119,33 @@ fn every_task_that_asks_for_pipefail_says_which_shell_it_is_asking() {
          which shell fails there for a reason that is not the task: {without:?}"
     );
 }
+
+#[test]
+fn every_task_that_runs_the_suite_builds_the_scripted_toolchain_first() {
+    for name in ["\"test:fast\"", "\"test:slow\"", "coverage"] {
+        let body = task(name);
+        assert!(
+            body.contains("depends = [\"build:examples\"]"),
+            "`cargo test --all-targets` builds an example as a test harness rather than as the \
+             program it is, so a suite that drives one fails on a clean checkout without this: \
+             {body}"
+        );
+    }
+    let builder = task("\"build:examples\"");
+    assert!(builder.contains("--examples"), "{builder}");
+}
+
+#[test]
+fn the_pipeline_builds_the_scripted_toolchain_before_it_runs_the_suite() {
+    let workflow = repository(".github/workflows/ci.yml");
+    let built = workflow
+        .find("cargo build --locked --examples")
+        .unwrap_or_else(|| panic!("no step builds the examples: {workflow}"));
+    let tested = workflow
+        .find("cargo nextest run --locked --workspace")
+        .unwrap_or_else(|| panic!("no step runs the suite: {workflow}"));
+    assert!(
+        built < tested,
+        "the suite runs before the scripted cargo it drives is built"
+    );
+}

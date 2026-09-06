@@ -13,7 +13,7 @@ use std::collections::BTreeSet;
 
 fn page(relative: &str) -> String {
     let path = mjutest_devkit::paths::workspace_root().join(relative);
-    std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("{relative}: {error}"))
+    std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display()))
 }
 
 #[test]

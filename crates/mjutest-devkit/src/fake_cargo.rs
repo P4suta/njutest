@@ -228,24 +228,56 @@ impl Installed {
 
 /// The fake, as `cargo build --examples` leaves it beside the test binaries.
 ///
+/// No test build produces it. `cargo test --all-targets` builds an example as
+/// a libtest harness — a binary that prints "running 0 tests" and exits —
+/// rather than as the program it is, and cargo guarantees a plainly named
+/// binary to an integration test only for a `[[bin]]` of the same package.
+/// Every task and job that runs this suite therefore builds it first, and
+/// where one did not, this builds it once rather than failing a suite for the
+/// want of a link step. A tree the engine copied and built is such a place:
+/// its build produced the test binaries and no example.
+///
 /// # Panics
-/// When the example has not been built, with the command that builds it: a
-/// test binary that runs alone (`cargo test --test workspace`) does not build
-/// the examples of its own crate, while `--all-targets`, `cargo nextest`, and
-/// every gate this repository runs do.
+/// When the example is not there and cannot be built, with the command that
+/// builds it.
 #[must_use]
 pub fn locate() -> PathBuf {
     let current = std::env::current_exe().expect("the test binary's own path");
     let deps = current.parent().expect("the deps directory");
     let profile = deps.parent().expect("the profile directory");
     let fake = profile.join("examples").join(exe("fake_cargo"));
+    if !fake.is_file() {
+        static BUILT: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+        BUILT.get_or_init(|| build_the_example(profile));
+    }
     assert!(
         fake.is_file(),
         "the fake cargo is not built at {}: run `cargo build --examples -p rust-mutants` first, \
-         or drive this suite with `--all-targets`",
+         or drive this suite with a task that does",
         fake.display()
     );
     fake
+}
+
+/// Builds the example into the target directory the test binary itself lives in.
+fn build_the_example(profile: &Path) {
+    let target = profile.parent().unwrap_or(profile);
+    let manifest = crate::paths::workspace_root().join("Cargo.toml");
+    let said = std::process::Command::new(crate::paths::cargo_binary())
+        .args(["build", "--offline", "--examples", "-p", "rust-mutants"])
+        .arg("--manifest-path")
+        .arg(&manifest)
+        .arg("--target-dir")
+        .arg(target)
+        .output();
+    if let Ok(output) = said
+        && !output.status.success()
+    {
+        eprintln!(
+            "mjutest-devkit: building the fake cargo failed:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 }
 
 /// Writes `script` and puts the fake at every program name it answers to, under a directory of this test's own.

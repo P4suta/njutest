@@ -754,12 +754,16 @@ fn ratio(detected: u64, decided: u64) -> f64 {
 /// The findings against the rows: every kind is a set equality in both directions.
 fn findings(report: &Report, audit: &mut Audit) {
     let mut notes = Notes::on(audit, Layer::Findings);
+    let interrupted = report.interrupted == Some(true);
     let raises = |kind: &str, row: &Row| match kind {
-        SURVIVING_MUTANT => row.outcome == SURVIVED && !row.expected && !row.unreached,
-        UNREACHED_MUTANT => row.unreached && !row.expected,
-        INCONCLUSIVE_MUTANT => row.outcome == INCONCLUSIVE && !row.expected,
-        ERRORED_MUTANT => row.outcome == "errored" && !row.expected,
-        NOT_RUN_MUTANT => row.outcome == NOT_RUN && !row.unreached && !row.expected,
+        SURVIVING_MUTANT => row.outcome == SURVIVED && !row.expected,
+        UNREACHED_MUTANT => row.outcome == NOT_RUN && row.unreached,
+        INCONCLUSIVE_MUTANT => row.outcome == INCONCLUSIVE,
+        ERRORED_MUTANT => !matches!(
+            row.outcome.as_str(),
+            SURVIVED | INCONCLUSIVE | NOT_RUN | KILLED | TIMED_OUT
+        ),
+        NOT_RUN_MUTANT => row.outcome == NOT_RUN && !row.unreached && !interrupted,
         _ => false,
     };
     for kind in [
