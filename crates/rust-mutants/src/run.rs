@@ -661,7 +661,7 @@ fn one_mutant(
     options: &Options<'_>,
     cancel: &Cancel,
 ) -> Result<Judged, EngineError> {
-    if let Some(one) = reuse(mutant, options) {
+    if let Some(one) = reuse(session, mutant, options) {
         return Ok(one);
     }
     let established = execute(session, mutant, options, cancel)?;
@@ -786,6 +786,14 @@ mod pool {
 /// reader can see a proof layer remove work, so it is written even when the
 /// mutant was never started.
 fn route(session: &Session, mutant: &Mutant, judged: &mut Judged) {
+    if let Some(reason) = judged.not_run_reason
+        && session.trace().is_enabled()
+    {
+        session.trace().select(crate::trace::SelectRecord {
+            mutant: mutant.display_id.clone(),
+            reason: reason.name().to_owned(),
+        });
+    }
     let decided = session.route(mutant);
     let executed = if judged.source_run_id.is_some() || judged.outcome == Outcome::NotRun {
         Vec::new()
@@ -898,11 +906,19 @@ fn not_run_because(outcome: Outcome, route: &crate::session::Route) -> Option<No
 }
 
 /// What an earlier run of this exact tree established about this mutant, when a record answers for it.
-fn reuse(mutant: &Mutant, options: &Options<'_>) -> Option<Judged> {
+fn reuse(session: &Session, mutant: &Mutant, options: &Options<'_>) -> Option<Judged> {
     let reusing = options.outcomes?;
-    let (outcome, record) = reusing
-        .store
-        .get(&reusing.keyed.key(&mutant.id), &mutant.id)?;
+    let key = reusing.keyed.key(&mutant.id);
+    let found = reusing.store.get(&key, &mutant.id);
+    if session.trace().is_enabled() {
+        session.trace().cache(crate::trace::CacheRecord {
+            mutant: mutant.display_id.clone(),
+            key,
+            hit: found.is_some(),
+            source_run_id: found.as_ref().map(|(_, record)| record.run_id.clone()),
+        });
+    }
+    let (outcome, record) = found?;
     Some(Judged {
         index: mutant.index,
         id: mutant.id.clone(),

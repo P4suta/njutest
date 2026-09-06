@@ -120,6 +120,8 @@ pub enum Layer {
     Exit,
     /// The parts of one catalog against the whole they say they are.
     Merge,
+    /// The discharges the run claimed, against the evidence it kept for them.
+    Proofs,
     /// The recording, against the report it is supposed to be the exhaust of.
     Trace,
     /// The ledger of accepted survivors, against the run that was asked to hold to it.
@@ -128,7 +130,7 @@ pub enum Layer {
 
 impl Layer {
     /// Every layer, in the order they are re-decided.
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::Identity,
         Self::Accounting,
         Self::Score,
@@ -136,6 +138,7 @@ impl Layer {
         Self::Expectations,
         Self::Exit,
         Self::Merge,
+        Self::Proofs,
         Self::Trace,
         Self::Ledger,
     ];
@@ -151,6 +154,7 @@ impl Layer {
             Self::Expectations => "expectations",
             Self::Exit => "exit",
             Self::Merge => "merge",
+            Self::Proofs => "proofs",
             Self::Trace => "trace",
             Self::Ledger => "ledger",
         }
@@ -266,6 +270,12 @@ pub struct Evidence<'a> {
     pub shards: Vec<(String, &'a str)>,
     /// The ledger of accepted survivors, as the configuration file holds it.
     pub ledger: Option<&'a str>,
+    /// What the coverage layer measured, as the run kept it.
+    pub reached: Option<&'a str>,
+    /// The catalog the run kept, which holds the body each branch proof names.
+    pub catalog: Option<&'a str>,
+    /// The names of the probe logs the run kept.
+    pub probe_logs: Vec<String>,
 }
 
 /// Where one layer's re-decisions are written down.
@@ -329,6 +339,7 @@ pub fn audit(path: &str, text: &str, evidence: &Evidence<'_>) -> Result<Audit, A
     expectations(&report, &mut audit);
     exit(&report, &mut audit);
     merge(&report, evidence, &mut audit);
+    proofs(&report, evidence, &mut audit);
     trace(&report, evidence.recorded, &mut audit);
     ledger(&report, evidence.ledger, &mut audit);
     audit.remarks.sort();
@@ -356,6 +367,8 @@ struct Row {
     retried: bool,
     expected: bool,
     unreached: bool,
+    not_run_reason: Option<String>,
+    discharged: Vec<(String, String)>,
     source_run_id: Option<String>,
 }
 
@@ -1558,8 +1571,25 @@ fn row(value: &Value) -> Row {
         retried: flag(value, "retried"),
         expected: flag(value, "expected"),
         unreached: flag(value, "unreached"),
+        not_run_reason: string(value, "not_run_reason"),
+        discharged: discharged_in(value),
         source_run_id: string(value, "source_run_id"),
     }
+}
+
+/// Every target one row says a proof removed, with the proof that removed it.
+fn discharged_in(value: &Value) -> Vec<(String, String)> {
+    value
+        .get("route")
+        .and_then(|route| route.get("discharged"))
+        .and_then(Value::as_array)
+        .map(|entries| {
+            entries
+                .iter()
+                .filter_map(|one| Some((string(one, "target")?, string(one, "proof")?)))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// One refused candidate, read as data.
@@ -1667,5 +1697,247 @@ fn plural(count: usize, thing: &str) -> String {
         format!("{count} {thing}")
     } else {
         format!("{count} {thing}s")
+    }
+}
+
+/// Re-derives every discharge the run claimed from the evidence it kept.
+///
+/// A discharge removes an execution, so a report that names one without the
+/// premises is a claim rather than a proof. This reads the measurement and
+/// the catalog the run kept, re-implements the rule — a target whose covered
+/// regions begin nowhere inside the body a branch proof names cannot have
+/// noticed the mutation — and says whether the run's own answer follows.
+fn proofs(report: &Report, evidence: &Evidence<'_>, audit: &mut Audit) {
+    let mut notes = Notes::on(audit, Layer::Proofs);
+    let discharged = report
+        .mutants
+        .iter()
+        .filter(|row| row.not_run_reason.as_deref() == Some("discharged"))
+        .count();
+    let counted = report
+        .columns
+        .get("discharged")
+        .copied()
+        .unwrap_or_default();
+    if u64::try_from(discharged).unwrap_or(u64::MAX) != counted {
+        notes.violated(
+            "discharged",
+            format!(
+                "the accounting says {counted} mutants were discharged and {discharged} rows \
+                 say so"
+            ),
+        );
+    }
+    if let Some(recorded) = evidence.recorded {
+        selected(report, recorded, &mut notes);
+    }
+    let claims = claimed(report);
+    if claims.is_empty() {
+        notes.unaudited(
+            "discharge",
+            "the run discharged nothing, so there is no proof to re-derive".to_owned(),
+        );
+        return;
+    }
+    branch_discharges(&claims, evidence, &mut notes);
+    infection_discharges(&claims, evidence, &mut notes);
+    if let Some(recorded) = evidence.recorded {
+        never_ran(&claims, recorded, &mut notes);
+    }
+}
+
+/// Every mutant that never ran says why, in the recording as well as in the report.
+fn selected(report: &Report, recorded: &str, notes: &mut Notes<'_>) {
+    let said: BTreeMap<String, String> = events(recorded)
+        .iter()
+        .filter(|event| string(event, "type").as_deref() == Some("select"))
+        .filter_map(|event| {
+            let select = event.get("select")?;
+            Some((string(select, "mutant")?, string(select, "reason")?))
+        })
+        .collect();
+    for row in report
+        .mutants
+        .iter()
+        .filter(|row| row.outcome == NOT_RUN && row.source_run_id.is_none())
+    {
+        let Some(reason) = said.get(&row.display_id) else {
+            notes.violated(
+                "select",
+                format!(
+                    "{} never ran and the recording does not say why",
+                    row.label()
+                ),
+            );
+            continue;
+        };
+        if row.not_run_reason.as_deref() != Some(reason.as_str()) {
+            notes.violated(
+                "select",
+                format!(
+                    "{} is {} in the report and {reason} in the recording",
+                    row.label(),
+                    row.not_run_reason.as_deref().unwrap_or("unexplained")
+                ),
+            );
+        }
+    }
+}
+
+/// One discharge a report claims: which mutant, which target, and which proof.
+struct Discharged {
+    mutant: String,
+    target: String,
+    proof: String,
+}
+
+/// Every discharge the report's own routes name.
+fn claimed(report: &Report) -> Vec<Discharged> {
+    report
+        .mutants
+        .iter()
+        .flat_map(|row| {
+            row.discharged.iter().map(|(target, proof)| Discharged {
+                mutant: row.display_id.clone(),
+                target: target.clone(),
+                proof: proof.clone(),
+            })
+        })
+        .collect()
+}
+
+/// Re-derives every `branch-never-taken` discharge from the measurement and the body the catalog names.
+fn branch_discharges(claims: &[Discharged], evidence: &Evidence<'_>, notes: &mut Notes<'_>) {
+    let branch: Vec<&Discharged> = claims
+        .iter()
+        .filter(|claim| claim.proof == "branch-never-taken")
+        .collect();
+    if branch.is_empty() {
+        return;
+    }
+    let (Some(reached), Some(catalog)) = (evidence.reached, evidence.catalog) else {
+        notes.unaudited(
+            "branch-never-taken",
+            format!(
+                "{} discharges rest on a measurement and a catalog the run did not keep",
+                branch.len()
+            ),
+        );
+        return;
+    };
+    let Ok(reached) = serde_json::from_str::<Value>(reached) else {
+        notes.unaudited(
+            "branch-never-taken",
+            "the measurement the run kept is not a document".to_owned(),
+        );
+        return;
+    };
+    let Ok(catalog) = serde_json::from_str::<Value>(catalog) else {
+        notes.unaudited(
+            "branch-never-taken",
+            "the catalog the run kept is not a document".to_owned(),
+        );
+        return;
+    };
+    for claim in branch {
+        let Some(row) = mutant_row(&catalog, &claim.mutant) else {
+            notes.unaudited(
+                "branch-never-taken",
+                format!("the catalog holds no row for {}", claim.mutant),
+            );
+            continue;
+        };
+        let Some(body) = row.get("branch") else {
+            notes.violated(
+                "branch-never-taken",
+                format!(
+                    "{} was discharged from {} by a branch proof the catalog does not hold",
+                    claim.mutant, claim.target
+                ),
+            );
+            continue;
+        };
+        let path = string(row, "path").unwrap_or_default();
+        if ran_the_body(&reached, &claim.target, &path, body) {
+            notes.violated(
+                "branch-never-taken",
+                format!(
+                    "{} covered a region inside the body {} sits in, so it may have noticed it",
+                    claim.target, claim.mutant
+                ),
+            );
+        }
+    }
+}
+
+/// The catalog row of one mutant, by the identity a report names it with.
+fn mutant_row<'a>(catalog: &'a Value, display_id: &str) -> Option<&'a Value> {
+    catalog
+        .get("mutants")?
+        .as_array()?
+        .iter()
+        .find(|row| string(row, "display_id").as_deref() == Some(display_id))
+}
+
+/// Whether the target's measured run covered a region beginning inside the body.
+fn ran_the_body(reached: &Value, target: &str, path: &str, body: &Value) -> bool {
+    let number = |value: &Value, key: &str| value.get(key).and_then(Value::as_u64).unwrap_or(0);
+    let start = (number(body, "start_line"), number(body, "start_column"));
+    let end = (number(body, "end_line"), number(body, "end_column"));
+    let Some(blocks) = reached
+        .get("targets")
+        .and_then(|targets| targets.get(target))
+        .and_then(Value::as_array)
+    else {
+        return false;
+    };
+    blocks.iter().any(|block| {
+        if string(block, "file").as_deref() != Some(path) {
+            return false;
+        }
+        let Some(at) = block.get("start") else {
+            return false;
+        };
+        let position = (number(at, "line"), number(at, "column"));
+        position >= start && position < end
+    })
+}
+
+/// Every `never-infected` discharge rests on a log the run kept.
+fn infection_discharges(claims: &[Discharged], evidence: &Evidence<'_>, notes: &mut Notes<'_>) {
+    for claim in claims
+        .iter()
+        .filter(|claim| claim.proof == "never-infected")
+    {
+        let wanted = format!("{}.log", claim.target.replace('/', "-"));
+        if !evidence.probe_logs.iter().any(|name| name == &wanted) {
+            notes.unaudited(
+                "never-infected",
+                format!(
+                    "{} was discharged from {} by a probe whose log the run did not keep",
+                    claim.mutant, claim.target
+                ),
+            );
+        }
+    }
+}
+
+/// A discharged pair that then ran is a proof the run contradicted.
+fn never_ran(claims: &[Discharged], recorded: &str, notes: &mut Notes<'_>) {
+    let routing = crate::route::read(recorded);
+    for claim in claims {
+        if routing
+            .execs
+            .iter()
+            .any(|exec| exec.mutant == claim.mutant && exec.target == claim.target)
+        {
+            notes.violated(
+                "discharge",
+                format!(
+                    "{} was discharged from {} and then executed against it",
+                    claim.mutant, claim.target
+                ),
+            );
+        }
     }
 }

@@ -555,6 +555,16 @@ fn one_of_each_measurement(recorder: &Recorder) {
         timeout_source: "derived".to_owned(),
         alone: true,
     });
+    recorder.cache(rust_mutants::trace::CacheRecord {
+        mutant: "b".repeat(20),
+        key: "d".repeat(64),
+        hit: true,
+        source_run_id: Some("20260907T000000000Z".to_owned()),
+    });
+    recorder.select(rust_mutants::trace::SelectRecord {
+        mutant: "b".repeat(20),
+        reason: "unreached".to_owned(),
+    });
     recorder.evidence(rust_mutants::trace::EvidenceRecord {
         file: "reached-v1.json".to_owned(),
         bytes: 4096,

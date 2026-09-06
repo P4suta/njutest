@@ -355,6 +355,14 @@ pub fn engine_audit(asked: &EngineRun<'_>) -> Result<engineaudit::Audit, enginea
     let ledger = asked
         .ledger
         .and_then(|path| std::fs::read_to_string(path).ok());
+    let reached = std::fs::read_to_string(asked.run.join("reached-v1.json")).ok();
+    let catalog = std::fs::read_to_string(asked.run.join("catalog-v1.json")).ok();
+    let probe_logs = std::fs::read_dir(asked.run.join("probe"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|entry| entry.file_name().to_str().map(ToOwned::to_owned))
+        .collect();
     engineaudit::audit(
         &label,
         &text,
@@ -365,6 +373,9 @@ pub fn engine_audit(asked: &EngineRun<'_>) -> Result<engineaudit::Audit, enginea
                 .map(|(name, text)| (name.clone(), text.as_str()))
                 .collect(),
             ledger: ledger.as_deref(),
+            reached: reached.as_deref(),
+            catalog: catalog.as_deref(),
+            probe_logs,
         },
     )
 }

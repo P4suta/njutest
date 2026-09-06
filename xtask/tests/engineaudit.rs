@@ -827,3 +827,119 @@ fn a_run_the_interruption_stopped_is_not_a_run_that_lost_its_routes() {
         "and the audit says so rather than passing over it: {audit}"
     );
 }
+
+/// One run whose measurement discharged a target from one mutant.
+fn discharging() -> (serde_json::Value, serde_json::Value, serde_json::Value) {
+    let report = with(serde_json::json!({
+        "accounting": { "killed": 1, "survived": 0, "not_run": 1, "executed": 1, "discharged": 1 },
+        "score": { "detected": 1, "decided": 1, "value": 1.0 },
+        "mutants": [
+            {},
+            {
+                "outcome": "not_run",
+                "target": "",
+                "not_run_reason": "discharged",
+                "expected": false,
+                "route": {
+                    "granularity": "discharged",
+                    "reaching": [],
+                    "discharged": [{ "target": TARGET, "proof": "branch-never-taken" }],
+                    "executed": []
+                }
+            }
+        ],
+        "findings": [{ "kind": "discharged-mutant", "mutant": SURVIVED, "detail": "d" }],
+        "expectations": []
+    }));
+    let reached = serde_json::json!({
+        "targets": { TARGET: [{ "file": "src/lib.rs", "start": { "line": 3, "column": 1 },
+                                "end": { "line": 3, "column": 9 } }] },
+        "instrumented": [],
+        "limitations": []
+    });
+    let catalog = serde_json::json!({
+        "mutants": [{
+            "display_id": short(SURVIVED),
+            "path": "src/lib.rs",
+            "branch": { "start_line": 10, "start_column": 5, "end_line": 12, "end_column": 5 }
+        }]
+    });
+    (report, reached, catalog)
+}
+
+/// Audits a run whose directory also holds the evidence its proofs rest on.
+fn audited_with_evidence(
+    report: &serde_json::Value,
+    reached: &serde_json::Value,
+    catalog: &serde_json::Value,
+) -> Audit {
+    let directory = run_directory(report);
+    std::fs::write(
+        directory.path().join("reached-v1.json"),
+        reached.to_string(),
+    )
+    .expect("the measurement");
+    std::fs::write(
+        directory.path().join("catalog-v1.json"),
+        catalog.to_string(),
+    )
+    .expect("the catalog");
+    gates::engine_audit(&asked(directory.path(), None, None)).expect("a report this audit can read")
+}
+
+#[test]
+fn a_discharge_the_run_re_derives_is_silent() {
+    let (report, reached, catalog) = discharging();
+    let audit = audited_with_evidence(&report, &reached, &catalog);
+    assert_eq!(
+        violations(&audit, Layer::Proofs),
+        Vec::<String>::new(),
+        "{audit}"
+    );
+}
+
+#[test]
+fn a_target_discharged_by_a_branch_that_ran_the_body_is_a_violation() {
+    let (report, _reached, catalog) = discharging();
+    let ran = serde_json::json!({
+        "targets": { TARGET: [{ "file": "src/lib.rs", "start": { "line": 11, "column": 9 },
+                                "end": { "line": 11, "column": 20 } }] },
+        "instrumented": [],
+        "limitations": []
+    });
+    let audit = audited_with_evidence(&report, &ran, &catalog);
+    assert!(
+        violations(&audit, Layer::Proofs)
+            .iter()
+            .any(|said| said.contains("may have noticed")),
+        "{audit}"
+    );
+}
+
+#[test]
+fn a_branch_discharge_without_the_evidence_it_rests_on_is_unaudited() {
+    let (report, _reached, _catalog) = discharging();
+    let audit = audited(&report);
+    assert_eq!(violations(&audit, Layer::Proofs), Vec::<String>::new());
+    assert!(
+        audit
+            .of(Layer::Proofs)
+            .iter()
+            .any(|remark| remark.standing == Standing::Unaudited),
+        "a discharge whose premises the run did not keep is one nobody can check: {audit}"
+    );
+}
+
+#[test]
+fn the_discharged_column_equals_the_records() {
+    let (report, reached, catalog) = discharging();
+    let mut miscounted = report;
+    miscounted["accounting"]["discharged"] = serde_json::json!(3);
+    let audit = audited_with_evidence(&miscounted, &reached, &catalog);
+    assert!(
+        violations(&audit, Layer::Proofs)
+            .iter()
+            .any(|said| said.contains("3 mutants were discharged")),
+        "{audit}"
+    );
+}

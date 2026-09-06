@@ -14,7 +14,7 @@ pub const SCHEMA: &str = "rust-mutants-trace-v1";
 /// understands whole, and the schema under `schema/` is held to this list by a
 /// test: a type added to one and not the other is a recording no consumer can
 /// validate.
-pub const EVERY_TYPE: [&str; 19] = [
+pub const EVERY_TYPE: [&str; 21] = [
     "run-start",
     "phase-start",
     "phase-end",
@@ -30,6 +30,8 @@ pub const EVERY_TYPE: [&str; 19] = [
     "probe-exec",
     "witness",
     "route",
+    "cache",
+    "select",
     "evidence",
     "mutant-exec",
     "note",
@@ -132,6 +134,16 @@ pub enum Payload {
         /// The record.
         route: RouteRecord,
     },
+    /// What an earlier run of this exact tree said about one mutant, and whether this run used it.
+    Cache {
+        /// The record.
+        cache: CacheRecord,
+    },
+    /// Why one mutant was never executed.
+    Select {
+        /// The record.
+        select: SelectRecord,
+    },
     /// A run kept one file an audit re-derives its proofs from.
     Evidence {
         /// The record.
@@ -174,6 +186,8 @@ impl Payload {
             Self::ProbeExec { .. } => "probe-exec",
             Self::Witness { .. } => "witness",
             Self::Route { .. } => "route",
+            Self::Cache { .. } => "cache",
+            Self::Select { .. } => "select",
             Self::Evidence { .. } => "evidence",
             Self::MutantExec { .. } => "mutant-exec",
             Self::Note { .. } => "note",
@@ -527,6 +541,29 @@ pub struct MutantExecRecord {
     /// Whether it ran with nothing else this run started running beside it, which is what a confirming retry does.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub alone: bool,
+}
+
+/// What the outcome store was asked about one mutant.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CacheRecord {
+    /// The mutant's display identity.
+    pub mutant: String,
+    /// The key the record was looked up under, which is what says two runs asked the same question.
+    pub key: String,
+    /// Whether a record answered.
+    pub hit: bool,
+    /// The run that established it, when one did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_run_id: Option<String>,
+}
+
+/// Why one mutant was never executed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SelectRecord {
+    /// The mutant's display identity.
+    pub mutant: String,
+    /// `unreached`, `discharged`, or `interrupted`.
+    pub reason: String,
 }
 
 /// One file a run kept beside its report, so an audit can re-derive what the run decided.

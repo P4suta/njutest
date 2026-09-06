@@ -89,6 +89,7 @@ layers, none of which calls the engine's code:
 | `expectations` | `met`, `stale`, and `unmatched` against the rows they name, and each accepted row against the one claim that accounted for it |
 | `exit` | the code the run returned, from what it found |
 | `merge` | the parts of one catalog: same digests, disjoint indices, and the whole they come to |
+| `proofs` | every discharge against the measurement and the catalog the run kept: a target that covered the body it was discharged from, a discharge whose premises are missing, a discharged pair that then ran, the `discharged` column, and a mutant that never ran and whose reason the recording does not give |
 | `trace` | every row against the recording of what actually ran: the target it names ran, its outcome is that execution's, a believed timeout repeated, instrumenting moved no line, every refusal was condemned by a round, a discharged target did not then run, an unreached route ran nothing, and every target the build produced was verified |
 | `ledger` | every survivor as one the ledger accepts with a reason, and every acceptance as one the run still holds |
 

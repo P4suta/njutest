@@ -1091,6 +1091,48 @@
     {
       "type": "object",
       "additionalProperties": false,
+      "required": ["seq", "timestamp", "elapsed_ms", "type", "cache"],
+      "properties": {
+        "seq": { "type": "integer", "minimum": 1 },
+        "timestamp": { "type": "string", "minLength": 1 },
+        "elapsed_ms": { "type": "integer", "minimum": 0 },
+        "type": { "const": "cache" },
+        "cache": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mutant", "key", "hit"],
+          "properties": {
+            "mutant": { "type": "string", "minLength": 1 },
+            "key": { "type": "string", "minLength": 1 },
+            "hit": { "type": "boolean" },
+            "source_run_id": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["seq", "timestamp", "elapsed_ms", "type", "select"],
+      "properties": {
+        "seq": { "type": "integer", "minimum": 1 },
+        "timestamp": { "type": "string", "minLength": 1 },
+        "elapsed_ms": { "type": "integer", "minimum": 0 },
+        "type": { "const": "select" },
+        "select": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mutant", "reason"],
+          "properties": {
+            "mutant": { "type": "string", "minLength": 1 },
+            "reason": { "enum": ["unreached", "discharged", "interrupted"] }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
       "required": [
         "seq",
         "timestamp",
