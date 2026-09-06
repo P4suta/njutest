@@ -91,3 +91,33 @@ fn rendering_a_duration_produces_text_that_parses_back_to_it() {
         assert_eq!(parse(&render(value)), Ok(value), "{value:?}");
     }
 }
+
+proptest::proptest! {
+    /// Every bound a person can write is one the parser reads back as itself.
+    ///
+    /// A duration that renders as something the parser reads differently is a
+    /// bound the run applies and the report describes wrongly, which is worse
+    /// than a bound nobody could write.
+    #[test]
+    fn what_the_parser_renders_it_reads_back_as_the_same_duration(
+        millis in 0u64..=(1000 * 60 * 60 * 24 * 400)
+    ) {
+        let value = Duration::from_millis(millis);
+        let rendered = render(value);
+        let again = parse(&rendered).expect("what render writes, parse reads");
+        proptest::prop_assert_eq!(again, value, "{} rendered as {}", millis, rendered);
+    }
+
+    /// Nothing a person can type makes the parser panic, and what it accepts renders and reads back.
+    #[test]
+    fn no_spelling_makes_the_parser_panic_and_an_accepted_one_round_trips(
+        text in "[0-9a-zA-Z ._+-]{0,24}"
+    ) {
+        let Ok(value) = parse(&text) else {
+            return Ok(());
+        };
+        let rendered = render(value);
+        let again = parse(&rendered).expect("what render writes, parse reads");
+        proptest::prop_assert_eq!(again, value, "{:?} rendered as {}", text, rendered);
+    }
+}

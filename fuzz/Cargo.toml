@@ -109,3 +109,45 @@ path = "fuzz_targets/run_report.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "engine_coverage_export"
+path = "fuzz_targets/engine_coverage_export.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "depinfo"
+path = "fuzz_targets/depinfo.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "cargo_messages"
+path = "fuzz_targets/cargo_messages.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "cargo_metadata"
+path = "fuzz_targets/cargo_metadata.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "infection_log"
+path = "fuzz_targets/infection_log.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "duration"
+path = "fuzz_targets/duration.rs"
+test = false
+doc = false
+bench = false

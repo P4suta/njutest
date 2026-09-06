@@ -49,5 +49,9 @@ tempfile = { workspace = true }
 name = "foundation"
 harness = false
 
+[[bench]]
+name = "pipeline"
+harness = false
+
 [lints]
 workspace = true

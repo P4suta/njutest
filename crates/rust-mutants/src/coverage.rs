@@ -208,17 +208,29 @@ fn read_region(function: &Function, region: &[u64]) -> Result<(PathBuf, Region),
         .get(file_id)
         .ok_or_else(|| format!("a region names file {file_id}, which the function does not have"))?
         .clone();
+    let start = Point {
+        line: small(0)?,
+        column: small(1)?,
+    };
+    let end = Point {
+        line: small(2)?,
+        column: small(3)?,
+    };
+    if (end.line, end.column) < (start.line, start.column) {
+        return Err(format!(
+            "a region of {} starts at {}:{} and ends at {}:{}, which is before it starts",
+            path.display(),
+            start.line,
+            start.column,
+            end.line,
+            end.column
+        ));
+    }
     Ok((
         path,
         Region {
-            start: Point {
-                line: small(0)?,
-                column: small(1)?,
-            },
-            end: Point {
-                line: small(2)?,
-                column: small(3)?,
-            },
+            start,
+            end,
             count: field(4)?,
             kind: small(7)?,
         },

@@ -337,3 +337,44 @@ fn the_supervisor_of_this_platform_is_the_one_a_diagnostic_names() {
         "what owns the process tree is what a diagnostic has to name"
     );
 }
+
+proptest::proptest! {
+    /// Whatever a child writes and however it is cut into writes, the buffer keeps the end of it and stays inside its budget.
+    ///
+    /// The tail is what a person reads when a test fails, and the budget is
+    /// what stops a runaway child from filling memory. A buffer that kept the
+    /// beginning, or that grew past its limit, would fail exactly the run
+    /// somebody needed the output of.
+    #[test]
+    fn the_tail_buffer_keeps_the_end_within_its_budget_however_the_writes_are_cut(
+        chunks in proptest::collection::vec(proptest::collection::vec(0u8..=255, 0..64), 0..40),
+        limit in 0usize..2048
+    ) {
+        let buffer = TailBuffer::new(limit);
+        let mut whole = Vec::new();
+        for chunk in &chunks {
+            buffer.write(chunk);
+            whole.extend_from_slice(chunk);
+        }
+        let captured = buffer.capture();
+        proptest::prop_assert!(
+            captured.len() <= buffer.limit(),
+            "{} bytes captured against a budget of {}",
+            captured.len(),
+            buffer.limit()
+        );
+        if whole.len() <= buffer.limit() {
+            proptest::prop_assert_eq!(
+                captured,
+                whole,
+                "output that fits is kept exactly, whatever the writes were"
+            );
+        } else {
+            let tail = whole.get(whole.len().saturating_sub(16)..).unwrap_or_default();
+            proptest::prop_assert!(
+                captured.len() < tail.len() || captured.ends_with(tail),
+                "what is kept is the end of what was written"
+            );
+        }
+    }
+}

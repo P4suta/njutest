@@ -379,3 +379,102 @@ fn resolve_prefix_refuses_to_guess() {
         other => panic!("expected an ambiguous prefix, got {other:?}"),
     }
 }
+
+/// Every rule of the canonical table, as a name a generator can pick from.
+fn rule_names() -> Vec<&'static str> {
+    Registry::canonical()
+        .rules()
+        .iter()
+        .map(|rule| rule.name)
+        .collect()
+}
+
+/// One rule of the table, by a number a generator produced.
+fn rule_at(names: &[&'static str], which: usize) -> &'static str {
+    names
+        .get(which.checked_rem(names.len()).unwrap_or_default())
+        .copied()
+        .unwrap_or("lt-to-le")
+}
+
+proptest::proptest! {
+    /// A catalog is what it holds, not the order somebody added it in.
+    ///
+    /// Two runs of the same tree must produce the same catalog digest, and a
+    /// digest that moved with the insertion order would make every reused
+    /// outcome a lie about a different catalog.
+    #[test]
+    fn a_catalog_is_the_same_whatever_order_its_candidates_arrived_in(
+        picks in proptest::collection::vec((0usize..40, 0usize..24), 1..24),
+        rotation in 0usize..24
+    ) {
+        let names = rule_names();
+        let mut candidates = Vec::new();
+        let mut seen = std::collections::BTreeSet::new();
+        for (at, which) in picks {
+            let start = u32::try_from(at.saturating_mul(2)).unwrap_or_default();
+            if !seen.insert((start, which)) {
+                continue;
+            }
+            let name = rule_at(&names, which);
+            candidates.push(candidate((
+                "crates/a/src/a.rs",
+                name,
+                (start, start.saturating_add(1)),
+                b"<",
+                b"<=",
+            )));
+        }
+        let build = |order: &[Candidate]| {
+            let mut builder = Builder::new();
+            for one in order {
+                let _added = builder.add(one.clone());
+            }
+            builder.build()
+        };
+        let mut rotated = candidates.clone();
+        rotated.rotate_left(rotation.checked_rem(candidates.len()).unwrap_or_default());
+        let (Ok(one), Ok(other)) = (build(&candidates), build(&rotated)) else {
+            return Ok(());
+        };
+        proptest::prop_assert_eq!(one.digest(), other.digest(), "the digest moved with the order");
+        proptest::prop_assert_eq!(one.mutants().len(), other.mutants().len());
+    }
+
+    /// Every catalog hands out dense indices and identities nothing repeats.
+    #[test]
+    fn a_catalog_indexes_densely_and_names_each_mutant_once(
+        picks in proptest::collection::vec(0usize..64, 1..40)
+    ) {
+        let names = rule_names();
+        let mut builder = Builder::new();
+        for (which, at) in picks.into_iter().enumerate() {
+            let start = u32::try_from(at.saturating_mul(3)).unwrap_or_default();
+            let name = rule_at(&names, which);
+            let _added = builder.add(candidate((
+                "crates/a/src/a.rs",
+                name,
+                (start, start.saturating_add(1)),
+                b"<",
+                b"<=",
+            )));
+        }
+        let Ok(catalog) = builder.build() else {
+            return Ok(());
+        };
+        let mutants = catalog.mutants();
+        let indices: Vec<u32> = mutants.iter().map(|one| one.index).collect();
+        let dense: Vec<u32> = (0..u32::try_from(mutants.len()).unwrap_or_default()).collect();
+        proptest::prop_assert_eq!(indices, dense, "the indices the guards name are dense from zero");
+        let ids: std::collections::BTreeSet<&str> =
+            mutants.iter().map(|one| one.id.as_str()).collect();
+        proptest::prop_assert_eq!(ids.len(), mutants.len(), "an identity names one mutant");
+        let short: std::collections::BTreeSet<&str> =
+            mutants.iter().map(|one| one.display_id.as_str()).collect();
+        proptest::prop_assert_eq!(
+            short.len(),
+            mutants.len(),
+            "the short form a person types names one mutant of this catalog"
+        );
+    }
+}

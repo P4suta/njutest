@@ -28,6 +28,12 @@ so each has to fail closed rather than plausibly.
 | `libtest_summary` | never panics; a target reaches `Passed` only through a line that counted a passing test, and a timeout is a failure whatever the line said |
 | `report_document` | never panics; an accepted report round-trips, its record stream carries exactly one `VERDICT`, and one that fails the audit is refused by the write path |
 | `engine_config` | never panics; an accepted `.rust-mutants.toml` is one every later stage can honour, checked against the rules the reader states |
+| `engine_coverage_export` | never panics; the engine's own reader accepts only regions `contains` can answer about, and what a run reached is part of what the build instrumented |
+| `depinfo` | never panics; every unit source it accepts is a named Rust file, listed once |
+| `cargo_messages` | never panics; a diagnostic it accepts either names a whole primary span or names none |
+| `cargo_metadata` | never panics; every package and target it accepts is named and rooted |
+| `infection_log` | never panics; every index it accepts is one the catalog holds |
+| `duration` | never panics; what it renders it reads back as the same duration |
 | `run_report` | never panics; an accepted run report renders, and one the reader refuses says why rather than panicking |
 
 ```sh

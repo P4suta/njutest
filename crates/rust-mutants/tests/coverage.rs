@@ -186,3 +186,48 @@ fn the_flags_the_tools_are_driven_with_are_frozen() {
     assert_eq!(INSTRUMENT_FLAG, "-C instrument-coverage");
     assert_eq!(PROFILE_ENV, "LLVM_PROFILE_FILE");
 }
+
+#[test]
+fn a_region_that_ends_before_it_starts_is_refused() {
+    let export = |start: (u32, u32), end: (u32, u32)| {
+        format!(
+            r#"{{"type":"llvm.coverage.json.export","version":"2.0.1","data":[{{"functions":[
+                {{"filenames":["src/lib.rs"],"regions":[[{},{},{},{},1,0,0,0]]}}]}}]}}"#,
+            start.0, start.1, end.0, end.1
+        )
+    };
+    let forward = parse_export(export((3, 1), (5, 2)).as_bytes());
+    assert!(forward.is_ok(), "{forward:?}");
+
+    for (start, end, why) in [
+        (
+            (5, 1),
+            (3, 2),
+            "a region that ends on an earlier line than it starts on",
+        ),
+        (
+            (5, 9),
+            (5, 2),
+            "a region that ends before it starts on the same line",
+        ),
+    ] {
+        let error = parse_export(export(start, end).as_bytes()).expect_err(why);
+        assert_eq!(
+            error.kind(),
+            CoverageErrorKind::Unreadable,
+            "{why}: a measurement nobody can read is one a run must not route by: {error}"
+        );
+        assert!(
+            error.to_string().contains("ends"),
+            "{why}: the refusal says what is wrong with it: {error}"
+        );
+    }
+}
+
+#[test]
+fn a_region_that_starts_and_ends_at_the_same_place_is_read() {
+    let export = br#"{"type":"llvm.coverage.json.export","version":"2.0.1","data":[{"functions":[
+        {"filenames":["src/lib.rs"],"regions":[[4,7,4,7,1,0,0,0]]}]}]}"#;
+    let read = parse_export(export).expect("an empty region is a region");
+    assert_eq!(read.len(), 1, "{read:?}");
+}

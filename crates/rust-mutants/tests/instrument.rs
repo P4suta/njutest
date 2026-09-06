@@ -482,3 +482,51 @@ fn the_allow_names_every_lint_a_guard_can_trip_rather_than_the_warning_group() {
         );
     }
 }
+
+/// A file of `functions` generated functions, each with a comparison, a branch, and a tail.
+fn generated(functions: usize) -> String {
+    use std::fmt::Write as _;
+    let mut text = String::from("//! A generated module.\n\n");
+    for index in 0..functions {
+        let _written = writeln!(
+            text,
+            "pub fn f{index}(a: i32, b: i32) -> i32 {{\n    \
+             let mut total = 0;\n    \
+             if a > b {{\n        total += a - b;\n    }} else {{\n        total += b - a;\n    }}\n    \
+             total + a * b\n}}\n"
+        );
+    }
+    text
+}
+
+proptest::proptest! {
+    /// However many functions a file holds and whichever way its lines end, instrumenting keeps the line count and leaves a file that parses.
+    ///
+    /// A rewrite that moved a line makes every position in the report a
+    /// position in a file nobody has, and one that does not parse fails the
+    /// build for a reason that is not the mutation.
+    #[test]
+    fn instrumenting_a_generated_file_keeps_its_lines_and_reparses(
+        functions in 1usize..12,
+        windows in proptest::bool::ANY
+    ) {
+        let source = if windows {
+            rust_mutants::testkit::source::crlf(&generated(functions))
+        } else {
+            generated(functions)
+        };
+        let text = instrument(&source);
+        syn::parse_file(&text).expect("the instrumented file parses");
+        let (body, _runtime) = split_runtime(&text);
+        proptest::prop_assert_eq!(
+            count_lines(body.as_bytes()),
+            count_lines(source.as_bytes()),
+            "instrumenting moved a line"
+        );
+        proptest::prop_assert_eq!(
+            body.contains("\r\n"),
+            windows,
+            "the rewrite kept the endings the file had"
+        );
+    }
+}

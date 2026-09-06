@@ -268,9 +268,11 @@ The developer-facing infrastructure, and the milestone it arrives in:
 
 ## Benchmarks
 
-`mise run bench` measures what the byte foundation and the report cost:
-`splice`, `flatten`, and a mutant identity in the engine; the audit and the
-two projections in the runner.
+`mise run bench` measures what the byte foundation, the pipeline, and the
+report cost: `splice`, `flatten`, and a mutant identity in the engine's
+`foundation` bench; discovery, instrumentation, cataloging, and reading a
+coverage export in its `pipeline` bench; the audit and the two projections in
+the runner.
 
 They are observations, never gates. Nothing fails when a number moves and no
 verdict depends on one — they exist so a person can answer "did that change
@@ -279,7 +281,10 @@ thing [ADR 0004](adr/0004-proof-layers-not-budgets.md) asks of a proof
 layer. Measured on one machine, for scale rather than for comparison:
 a 200-edit splice about 7 µs, flattening one function about 13 µs, one
 identity about 1.7 µs, auditing a 2000-target report about 3 µs, and writing
-that report about 450 µs as JSON and 650 µs as records.
+that report about 450 µs as JSON and 650 µs as records. Of the pipeline:
+discovering a 2000-function file about 260 ms, instrumenting a 200-function
+one about 18 ms, cataloging its candidates about 32 ms, and reading a coverage
+export of 500 functions about 2.4 ms.
 
 The harness is criterion with `harness = false` and a hand-written `main`:
 `criterion_group!` generates an undocumented public function, and this
