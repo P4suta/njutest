@@ -59,12 +59,16 @@ up the way the [assurance contract](assurance-contract.md) states, whether
 every kill names a target this run itself saw pass on the original tree,
 whether the mutations nothing noticed and the `surviving-mutant` findings are
 the same set, and whether every disposition read back from an earlier run
-names one a reader could go and read. Given the run's recording as well, it re-derives the one thing the proof layers
-can be held to from what a run wrote down: no target a proof removed from what
-could notice a mutation may then be the target that killed it. It reads the
-recording as lines of JSON rather than through the code that wrote them, and a
-run recorded without `--trace` leaves the layers `unaudited` rather than
-passed. This is [ADR 0004](adr/0004-proof-layers-not-budgets.md) decision 5,
+names one a reader could go and read. Given the run's recording as well, it
+holds the proof layers to what the run wrote down: no target a proof removed
+from what could notice a mutation may then be the target that killed it, a
+route that says no measured test reaches a mutation may not then run one
+against it, and a route that says the evidence does not carry that has to run
+something. Which regions each target executed is in the coverage profiles, and
+a completed run does not keep them, so the region a route was decided from is
+`unaudited` on every recording. It reads the recording as lines of JSON rather
+than through the code that wrote them, and a run recorded without `--trace`
+leaves the layers `unaudited` rather than passed. This is [ADR 0004](adr/0004-proof-layers-not-budgets.md) decision 5,
 which ships a proof layer only against a re-implementation that is not asked
 whether it agrees with itself.
 
@@ -73,11 +77,12 @@ through the release build, keeps the recording, and re-decides it.
 
 ```console
 $ mise run dogfood:audit
-proofaudit: 20260906T041815Z-000004: 39 mutants and 16 targets re-decided; 0 violations, 0 unaudited
+proofaudit: 20260906T052111Z-047fc6: 39 mutants and 16 targets re-decided; 0 violations, 1 unaudited
 ```
 
 Where the recording does not carry enough to decide something again — which
-survivors a reviewer accepted, what a reused disposition was routed under —
+survivors a reviewer accepted, what a reused disposition was routed under,
+which regions a route was decided from —
 the gate says `unaudited` and counts it apart from the violations, because
 fail-closed is never turning "I cannot check this" into "this is fine", and
 equally never into "this is broken". One line per remark names its layer and

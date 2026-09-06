@@ -177,6 +177,13 @@ from one says nothing. A target the pass did not measure carries no facts at
 all. Both proofs may answer for targets of the same route; they are applied in
 order — branch first, then infection.
 
+The probe narrows and never widens. The pass runs each test binary whole, so
+what it records is that some test in a binary infected the mutation and not
+which one: putting a target back on the strength of that would put every test
+of the binary back, whatever the coverage of each said. The case it would be
+for — coverage silent about work the tests do — is the one the package suite
+already answers, and the suite runs more than the widening would.
+
 All three narrowings are proof layers in the sense of
 [ADR 0004](adr/0004-proof-layers-not-budgets.md): an execution is removed only
 where evidence the run already holds proves it could not observe the mutant,
