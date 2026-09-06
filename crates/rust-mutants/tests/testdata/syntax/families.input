@@ -58,6 +58,17 @@ pub fn options(s: &str) -> Option<usize> {
     Some(first.len_utf8())
 }
 
+pub fn assertions(a: i32, b: i32, o: Option<i32>) {
+    assert!(a < b);
+    assert_eq!(a + 1, b);
+    assert_ne!(a, b - 1);
+    debug_assert!(a != 0);
+    debug_assert_eq!(a * 2, b);
+    debug_assert_ne!(a, b);
+    assert!(matches!(o, Some(_)), "o was {o:?}");
+    assert!(a > 0, "a was {a}");
+}
+
 pub fn compounds(mut n: i32, mut bits: u32) -> (i32, u32) {
     n *= 3;
     n /= 2;

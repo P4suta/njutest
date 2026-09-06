@@ -15,8 +15,9 @@ use syn::{
 use super::branch;
 use super::position::LineIndex;
 use super::rules::{
-    binary_swap, has_let, is_compound_assignment, is_connective, is_default_spelling, is_not,
-    is_ok_default, is_some_default, is_true_literal, method_swap, unary_removal,
+    arguments, assertion_arity, assertion_is_condition, binary_swap, has_let,
+    is_compound_assignment, is_connective, is_default_spelling, is_not, is_ok_default,
+    is_some_default, is_true_literal, method_swap, unary_removal,
 };
 use super::{Decision, Form, Found, Selection, SiteHint, SkipReason};
 use crate::catalog::Candidate;
@@ -301,6 +302,48 @@ impl<'a> Walker<'a> {
         });
     }
 
+    /// A macro invocation in expression or statement position: the arguments of an assertion, or one skip.
+    fn macro_expr(&mut self, mac: &Macro) {
+        if !self.walk_assertion(mac) {
+            self.macro_site(mac);
+        }
+    }
+
+    /// The leading arguments of an assertion macro, walked as the expressions they are. Answers whether they were.
+    ///
+    /// `proc_macro2` is compiled with span locations, so every token here still
+    /// knows where in the file it came from: parsing an argument back into an
+    /// expression re-reads the same bytes rather than a pretty-printed copy of
+    /// them, and an edit inside one is an edit at the position the reader sees.
+    /// An argument that does not parse as an expression is not one this engine
+    /// understands, and the whole invocation goes back to being a skip.
+    fn walk_assertion(&mut self, mac: &Macro) -> bool {
+        let Some(arity) = assertion_arity(&mac.path) else {
+            return false;
+        };
+        let split = arguments(&mac.tokens);
+        let Some(leading) = split.get(..arity) else {
+            return false;
+        };
+        let parsed: Vec<Expr> = leading
+            .iter()
+            .map(|one| syn::parse2::<Expr>(one.clone()))
+            .collect::<Result<_, _>>()
+            .unwrap_or_default();
+        if parsed.len() != arity {
+            return false;
+        }
+        let kind = if assertion_is_condition(&mac.path) {
+            Kind::Bool
+        } else {
+            Kind::Value
+        };
+        for expr in &parsed {
+            self.walk_expr(expr, Ctx::new(kind, None));
+        }
+        true
+    }
+
     /// A macro invocation: one skip, under the outer reason if there is one.
     fn macro_site(&mut self, mac: &Macro) {
         let span = self.span(mac);
@@ -501,7 +544,9 @@ impl<'a> Walker<'a> {
                     }
                 });
             }
-            Stmt::Macro(m) => self.maybe_suppressed(&m.attrs, |walker| walker.macro_site(&m.mac)),
+            Stmt::Macro(m) => {
+                self.maybe_suppressed(&m.attrs, |walker| walker.macro_expr(&m.mac));
+            }
         }
     }
 
@@ -609,7 +654,7 @@ impl<'a> Walker<'a> {
             Expr::Try(t) => self.walk_try(t, ctx),
             Expr::Range(r) => self.walk_range(r, ctx),
             Expr::Closure(c) => self.walk_closure(c),
-            Expr::Macro(m) => self.macro_site(&m.mac),
+            Expr::Macro(m) => self.macro_expr(&m.mac),
             Expr::Paren(p) => self.walk_expr(&p.expr, ctx.child(ctx.kind)),
             Expr::Group(g) => self.walk_expr(&g.expr, ctx.child(ctx.kind)),
             Expr::Let(l) => self.walk_expr(&l.expr, ctx.value()),
