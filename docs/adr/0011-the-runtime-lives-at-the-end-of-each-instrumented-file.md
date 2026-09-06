@@ -22,8 +22,14 @@ instrumentation preserves them byte for byte.
 
 ## Decision
 
-Each instrumented file gets a private `mod __rm { … }` appended after its last
-line. The module holds the file's own mutant IDs and their dense indices, the
+Each instrumented file gets a private `mod __rm_<digest> { … }` appended after
+its last line, where the digest is the first eight hex characters of the file
+path's SHA-256. The path is in the name because `include!` at item position
+pastes one file's items into another file's module: two files that both called
+their module `__rm` would define one item twice in one scope, the compiler
+would say so in an error that names no mutant, and every mutant of both files
+would come back `compile-rejected` — the engine's own breakage reported as the
+compiler's judgement about the user's code. The module holds the file's own mutant IDs and their dense indices, the
 catalog digest, and `active(index) -> bool` backed by a racy-initialised
 `AtomicU32` that reads `RUST_MUTANTS_ACTIVE` once. Guards inside nested inline
 modules reach it with `super::`. The identifier is bumped (`__rm1`, …) if the
@@ -43,7 +49,13 @@ module in the probe tree, appending to the infection log named by
   `#[path]` or compiled into both a library and a binary is correct without
   special handling.
 - A file included at expression position by `include!` cannot carry the
-  module; validation rejects that file's mutants rather than letting the
-  breakage hide.
+  module, and does not parse as a set of items either: it is a fragment of one
+  program rather than a program. Discovery reads the includes of the files that
+  do parse, and skips such a file with the reason `included-expression` rather
+  than stopping the run over a project the compiler is happy with.
+- A skip reason may be added to `rust-mutants-catalog-v1` without a new schema
+  version. A reader that does not know a reason knows it is a place that was
+  not mutated, which is what the field is for; a reader that must understand
+  every reason is reading the explanation beside it, which is prose.
 - `#![no_std]` crates are skipped as a whole with the reason `no-std-crate`:
   the runtime needs `std::env` and `std::process`.

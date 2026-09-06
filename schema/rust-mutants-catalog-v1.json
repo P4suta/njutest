@@ -122,7 +122,8 @@
             "excluded",
             "test-only-file",
             "proc-macro-crate",
-            "no-std-crate"
+            "no-std-crate",
+            "included-expression"
           ]
         },
         "path": { "type": "string", "minLength": 1 },

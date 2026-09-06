@@ -268,8 +268,9 @@ fn instrument_prints_one_file_as_the_engine_rewrites_it() {
         String::from_utf8_lossy(&output.stderr)
     );
     let text = stdout(&output);
+    let module = rust_mutants::instrument::module_name("src/lib.rs", "");
     assert!(
-        text.contains("__rm::active(") && text.contains("mod __rm {"),
+        text.contains(&format!("{module}::active(")) && text.contains(&format!("mod {module} {{")),
         "{text}"
     );
     assert!(text.contains("#[allow(warnings, unused, unfulfilled_lint_expectations, clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery, clippy::cargo)] pub fn max"), "{text}");

@@ -100,3 +100,26 @@ so there would be nothing to map an expansion's positions onto.
 
 A mutant without a proof is still cataloged, instrumented, and executed; what
 it lacks is only the licence to skip a test.
+
+## What `include!` does to a file
+
+A file another file pastes in with `include!` is discovered like any other file
+in the package, because it is one: cargo compiles it as part of whatever
+includes it. What differs is where its bytes end up.
+
+At item position the included file's items — and the runtime module appended
+to it — land in the includer's module. The module names carry the digest of
+their file's path so the two never collide
+([ADR 0011](../adr/0011-the-runtime-lives-at-the-end-of-each-instrumented-file.md)),
+and the guards travel with the module, so a file included inside a nested `mod`
+resolves exactly as it does at the root.
+
+At expression position the included file is a fragment: `[1, 2, 3]` is not a
+set of items and nothing parses it as one. Discovery reads the includes of the
+files that do parse, and a file only pasted in that way is skipped with the
+reason `included-expression`. Refusing the whole run over it would refuse to
+measure a project the compiler is perfectly happy with.
+
+An `include!` whose argument is not a single string literal — `concat!` and
+`env!` around an `OUT_DIR` path, say — names a file this run cannot name, and a
+file it cannot name it says nothing about.

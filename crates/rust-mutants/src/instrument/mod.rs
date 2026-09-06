@@ -282,7 +282,7 @@ pub fn instrument_file(
     let file = File {
         path,
         text,
-        module: module_name(text),
+        module: module_name(path, text),
     };
     file.check_placements(placements)?;
     let forest = file.forest(placements)?;
