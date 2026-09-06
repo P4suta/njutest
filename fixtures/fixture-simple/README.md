@@ -40,5 +40,8 @@ src/lib.rs:11:16 return-default killed
 src/lib.rs:11:27 return-default killed
 src/lib.rs:16:5 return-true killed
 src/lib.rs:16:7 rem-to-mul killed
+src/lib.rs:16:9 int-decrement killed
+src/lib.rs:16:9 int-increment killed
 src/lib.rs:16:11 eq-to-neq killed
+src/lib.rs:16:14 int-increment killed
 ```

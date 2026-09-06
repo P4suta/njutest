@@ -30,6 +30,10 @@ refuses a difference, and `UPDATE_FATES=1` rewrites the block below.
 ```fates
 src/lib.rs:8:5 return-default killed
 src/lib.rs:8:17 div-to-mul killed
+src/lib.rs:8:19 int-decrement survived
+src/lib.rs:8:19 int-increment survived
 src/lib.rs:13:5 return-default unreached
 src/lib.rs:13:12 div-to-mul unreached
+src/lib.rs:13:14 int-decrement unreached
+src/lib.rs:13:14 int-increment unreached
 ```

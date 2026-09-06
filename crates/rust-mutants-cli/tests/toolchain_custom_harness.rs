@@ -56,7 +56,7 @@ fn a_harness_free_target_answers_by_exit_code_alone() {
         "a target with no libtest prints no summary, and reading its silence as 'nothing ran' \
          left every mutation of this library undecided: {document}"
     );
-    assert_eq!(document["accounting"]["killed"].as_u64(), Some(2));
+    assert_eq!(document["accounting"]["killed"].as_u64(), Some(4));
     for row in document["mutants"].as_array().expect("the rows") {
         assert_eq!(
             row["target"].as_str(),

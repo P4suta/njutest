@@ -6,7 +6,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 # Operators
 
 **Status: implemented** (`rust_mutants::syntax`, `rust_mutants::instrument`,
-`rust_mutants::validate`). The v1 table: thirteen families, sixty-three rules,
+`rust_mutants::validate`). The v1 table: fifteen families, sixty-nine rules,
 named `family` / `rule@version`. The version enters the mutant identity, so
 changing a rule's output is a new version and every old identity lapses with
 it. Adding a rule does not: what enters an identity is the rule's own name and
@@ -62,10 +62,12 @@ type-check. Replacements derive from the token, never from a string.
 | `return-replacement` | `return-default`, `return-ok-default`, `return-some-default`, `return-true`, `return-err-default` | balanced |
 | `error-propagation` | `question-to-unwrap`, `ignore-question-statement` | balanced |
 | `match-arm` | `delete-match-arm`, `remove-match-guard` | balanced |
+| `control-flow` | `break-to-continue`, `continue-to-break` | balanced |
 | `bitwise` | `band-to-bor`, `bor-to-band`, `xor-to-band`, `shl-to-shr`, `shr-to-shl` | strong |
 | `compound-assignment` | `add-assign-to-sub-assign`, `sub-assign-to-add-assign`, `mul-assign-to-div-assign`, `div-assign-to-mul-assign`, `rem-assign-to-mul-assign`, `band-assign-to-bor-assign`, `bor-assign-to-band-assign`, `xor-assign-to-band-assign`, `shl-assign-to-shr-assign`, `shr-assign-to-shl-assign` | strong |
 | `method-swap` | `is-some-to-is-none`, `is-none-to-is-some`, `is-ok-to-is-err`, `is-err-to-is-ok`, `max-to-min`, `min-to-max`, `all-to-any`, `any-to-all`, `first-to-last`, `last-to-first`, `skip-to-take`, `take-to-skip`, `sum-to-product`, `product-to-sum` | strong |
-| `statement-deletion` | `delete-call-statement`, `delete-assignment`, `delete-compound-assignment` | all |
+| `statement-deletion` | `delete-call-statement`, `delete-assignment`, `delete-compound-assignment`, `delete-else-branch` | all |
+| `literal` | `int-increment`, `int-decrement`, `string-to-empty` | all |
 
 `balanced ⊂ strong ⊂ all`, which the table's order carries: it is
 non-decreasing in tier, so each profile's rules are a prefix of the next
@@ -79,6 +81,23 @@ syntax can say the match stays exhaustive without the arm: the arm is not
 itself a bare `_`, and a bare `_` sits below it. Every other arm may be the
 one carrying exhaustiveness, and a mutation the compiler refuses says nothing
 about the tests.
+
+`break-to-continue` and `continue-to-break` keep the label, because the label
+says which loop the jump is about. A `break` that carries a value is left
+alone: `continue` carries none, and the loop whose value it was would have
+nothing to be. A swap that turns the only way out of a loop into a way round
+it is a mutation the tests notice as a timeout, which is a kill.
+
+`delete-else-branch` takes the `else` an `if` chain ends with, and only where
+the chain stands as a statement: an `if` that is a value has to have an `else`
+and every branch has to produce the same type.
+
+`int-increment` and `int-decrement` respell a literal one step away in the
+radix it was written in, keeping its suffix. Rust spells no negative literal
+— `-1` is a unary minus on `1` — so zero has no predecessor to offer, and a
+suffix that names a type bounds what the literal may become.
+`string-to-empty` empties a string that says something: a message nobody
+checks is a message nobody would miss.
 
 `negate-bool-method` asks the opposite of a call that answers a question —
 `is_*`, `has_*`, `contains`, `contains_key`, `starts_with`, `ends_with` — by

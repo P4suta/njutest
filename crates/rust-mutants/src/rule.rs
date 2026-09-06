@@ -72,14 +72,18 @@ pub enum Family {
     ErrorPropagation,
     /// Deleting a match arm, and removing the guard that narrows one.
     MatchArm,
+    /// `break` ↔ `continue`.
+    ControlFlow,
     /// `&`, `|`, `^`, `<<`, `>>`.
     Bitwise,
     /// `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=`.
     CompoundAssignment,
     /// A method whose name says the opposite of another the same receiver has: `is_some`, `is_ok`, `max`.
     MethodSwap,
-    /// Deleting a statement.
+    /// Deleting a statement, and the `else` a statement ends with.
     StatementDeletion,
+    /// Moving an integer literal by one, and emptying a string.
+    Literal,
 }
 
 impl Family {
@@ -94,10 +98,12 @@ impl Family {
         Self::ReturnReplacement,
         Self::ErrorPropagation,
         Self::MatchArm,
+        Self::ControlFlow,
         Self::Bitwise,
         Self::CompoundAssignment,
         Self::MethodSwap,
         Self::StatementDeletion,
+        Self::Literal,
     ];
 
     /// The family's canonical name.
@@ -113,10 +119,12 @@ impl Family {
             Self::ReturnReplacement => "return-replacement",
             Self::ErrorPropagation => "error-propagation",
             Self::MatchArm => "match-arm",
+            Self::ControlFlow => "control-flow",
             Self::Bitwise => "bitwise",
             Self::CompoundAssignment => "compound-assignment",
             Self::MethodSwap => "method-swap",
             Self::StatementDeletion => "statement-deletion",
+            Self::Literal => "literal",
         }
     }
 
@@ -154,9 +162,9 @@ impl fmt::Display for Rule {
 }
 
 /// The counts of the canonical v1 table, asserted by the registry tests.
-pub const CANONICAL_FAMILY_COUNT: usize = 13;
+pub const CANONICAL_FAMILY_COUNT: usize = 15;
 /// The number of rules in the canonical v1 table.
-pub const CANONICAL_RULE_COUNT: usize = 63;
+pub const CANONICAL_RULE_COUNT: usize = 69;
 
 const fn v1(family: Family, name: &'static str, tier: Tier) -> Rule {
     Rule {
@@ -232,6 +240,8 @@ pub const CANONICAL_TABLE: [Rule; CANONICAL_RULE_COUNT] = [
     ),
     v1(Family::MatchArm, "delete-match-arm", Tier::Balanced),
     v1(Family::MatchArm, "remove-match-guard", Tier::Balanced),
+    v1(Family::ControlFlow, "break-to-continue", Tier::Balanced),
+    v1(Family::ControlFlow, "continue-to-break", Tier::Balanced),
     v1(Family::Bitwise, "band-to-bor", Tier::Strong),
     v1(Family::Bitwise, "bor-to-band", Tier::Strong),
     v1(Family::Bitwise, "xor-to-band", Tier::Strong),
@@ -312,6 +322,10 @@ pub const CANONICAL_TABLE: [Rule; CANONICAL_RULE_COUNT] = [
         "delete-compound-assignment",
         Tier::All,
     ),
+    v1(Family::StatementDeletion, "delete-else-branch", Tier::All),
+    v1(Family::Literal, "int-increment", Tier::All),
+    v1(Family::Literal, "int-decrement", Tier::All),
+    v1(Family::Literal, "string-to-empty", Tier::All),
 ];
 
 /// Whether a rule name is well formed: non-empty, and free of whitespace and of the `@` that separates the version in the rendered form.

@@ -40,10 +40,14 @@ refuses a difference, and `UPDATE_FATES=1` rewrites the block below.
 ```fates
 src/items.rs:9:5 return-true killed
 src/items.rs:9:7 gt-to-ge survived
+src/items.rs:9:9 int-decrement survived
+src/items.rs:9:9 int-increment killed
 src/lib.rs:14:33 sum-to-product killed
 src/lib.rs:15:5 return-default killed
 src/lib.rs:15:8 negate-condition killed
 src/lib.rs:15:18 return-default killed
 src/lib.rs:15:22 mul-to-div killed
+src/lib.rs:15:24 int-decrement killed
+src/lib.rs:15:24 int-increment killed
 src/lib.rs:15:35 return-default killed
 ```

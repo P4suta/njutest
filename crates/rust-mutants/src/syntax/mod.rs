@@ -20,6 +20,7 @@ use crate::span::Span;
 use crate::trace::{DiscoverFileRecord, SiteRecord, SkipCount};
 
 pub use position::{LineIndex, Position};
+pub use rules::respell_int;
 
 /// One of the four guard shapes the instrumenter composes a dormant mutant from; see the module documentation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -118,11 +119,13 @@ pub enum SkipReason {
     OpenRange,
     /// A return type the syntax cannot say has a default: an `impl Trait`, a reference, a pointer, a function, a type a macro writes, or a generic parameter nothing bound to `Default`.
     UnstatedReturnType,
+    /// A jump whose loop decides its value by what it breaks with, so the other jump has no value to carry.
+    LoopValue,
 }
 
 impl SkipReason {
     /// Every reason, in rank order.
-    pub const ALL: [Self; 15] = [
+    pub const ALL: [Self; 16] = [
         Self::ConstContext,
         Self::MacroInvocation,
         Self::CfgAttribute,
@@ -138,6 +141,7 @@ impl SkipReason {
         Self::LetCondition,
         Self::OpenRange,
         Self::UnstatedReturnType,
+        Self::LoopValue,
     ];
 
     /// The kebab-case name used in reports and on the command line.
@@ -159,6 +163,7 @@ impl SkipReason {
             Self::LetCondition => "let-condition",
             Self::OpenRange => "open-range",
             Self::UnstatedReturnType => "unstated-return-type",
+            Self::LoopValue => "loop-value",
         }
     }
 
@@ -206,6 +211,9 @@ impl SkipReason {
             Self::OpenRange => "the range has no end, so there is no other form of it to write",
             Self::UnstatedReturnType => {
                 "the return type is one the syntax cannot say has a default: an impl Trait, a reference, a pointer, a function, a type a macro writes, or a generic parameter nothing bound to Default"
+            }
+            Self::LoopValue => {
+                "a loop decides its value by what its breaks carry, and the other jump carries none: a break the syntax writes into one has no value to give it, and a continue carries nothing away"
             }
         }
     }

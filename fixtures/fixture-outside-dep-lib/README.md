@@ -20,4 +20,6 @@ than calling silence a survivor. What it is for is measured through
 ```fates
 src/lib.rs:9:5 return-default unreached
 src/lib.rs:9:7 mul-to-div unreached
+src/lib.rs:9:9 int-decrement unreached
+src/lib.rs:9:9 int-increment unreached
 ```

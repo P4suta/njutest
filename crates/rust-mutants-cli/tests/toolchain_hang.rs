@@ -142,7 +142,7 @@ fn a_mutation_that_never_returns_is_stopped_rather_than_left_running() {
     );
     let text = String::from_utf8_lossy(&output.stdout);
     assert!(
-        text.contains("timed_out=1"),
+        text.contains("timed_out=2"),
         "the run ends rather than waiting on the process it started: {text}"
     );
 }

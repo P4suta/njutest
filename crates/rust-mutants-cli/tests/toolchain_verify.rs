@@ -70,7 +70,7 @@ fn without_verification_the_same_test_kills_every_mutant_it_touches() {
     );
     let text = String::from_utf8_lossy(&output.stdout);
     assert!(
-        text.contains("killed=2 survived=0"),
+        text.contains("killed=4 survived=0"),
         "a target that was already failing reports every mutation as killed, which is what \
          verification exists to stop: {text}"
     );

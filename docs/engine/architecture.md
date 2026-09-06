@@ -281,8 +281,8 @@ condemned on the strength of what a half-finished command printed.
 `const-context`, `macro-invocation`, `cfg-attribute`, `test-code`,
 `unsupported-site`, `excluded`, `test-only-file`, `no-std-crate`,
 `included-expression`, `generated-outside-workspace`, `forbidden-lints`,
-`const-fn-body`, `let-condition`, `open-range`, `unstated-return-type`. Each
-is counted and named; `rust-mutants why-skipped` lists them. A skip is a
+`const-fn-body`, `let-condition`, `open-range`, `unstated-return-type`,
+`loop-value`. Each is counted and named; `rust-mutants why-skipped` lists them. A skip is a
 decision the tool made and says; a rejection (a mutant the compiler refused)
 is a fact about the program and is reported with the diagnostic.
 

@@ -146,12 +146,12 @@ fn a_file_only_the_test_unit_compiles_is_a_test_only_file_skip() {
     assert_eq!(
         table(&discovery),
         [
-            row("src/lib.rs", "fixture-simple", 8, "test-code:2"),
-            row("src/testutil.rs", "fixture-simple", 0, "test-only-file:2"),
+            row("src/lib.rs", "fixture-simple", 11, "test-code:17"),
+            row("src/testutil.rs", "fixture-simple", 0, "test-only-file:6"),
         ]
     );
-    assert_eq!(discovery.candidates.len(), 8);
-    assert_eq!(discovery.catalog.len(), 8);
+    assert_eq!(discovery.candidates.len(), 11);
+    assert_eq!(discovery.catalog.len(), 11);
     let rules: Vec<&str> = discovery
         .candidates
         .iter()
@@ -167,7 +167,10 @@ fn a_file_only_the_test_unit_compiles_is_a_test_only_file_skip() {
             "return-default",
             "return-true",
             "rem-to-mul",
+            "int-increment",
+            "int-decrement",
             "eq-to-neq",
+            "int-increment",
         ]
     );
     assert!(
@@ -187,7 +190,7 @@ fn a_file_only_the_test_unit_compiles_is_a_test_only_file_skip() {
         .iter()
         .map(|s| (s.reason.name(), s.count))
         .collect();
-    assert_eq!(total, [("test-code", 2), ("test-only-file", 2)]);
+    assert_eq!(total, [("test-code", 17), ("test-only-file", 6)]);
 }
 
 #[test]
@@ -200,14 +203,14 @@ fn a_nested_member_reports_workspace_relative_paths_and_a_binary_is_mutable() {
             row(
                 "crates/app/src/main.rs",
                 "fixture-app",
-                4,
+                13,
                 "macro-invocation:1"
             ),
-            row("crates/core/src/lib.rs", "fixture-core", 9, "test-code:1"),
-            row("crates/core/src/util.rs", "fixture-core", 3, ""),
+            row("crates/core/src/lib.rs", "fixture-core", 9, "test-code:14"),
+            row("crates/core/src/util.rs", "fixture-core", 4, ""),
         ]
     );
-    assert_eq!(discovery.catalog.len(), 16);
+    assert_eq!(discovery.catalog.len(), 26);
     assert!(discovery.files.iter().all(|f| !f.path.contains("tests/")));
 }
 
@@ -220,11 +223,11 @@ fn every_rule_fires_in_the_families_fixture_exactly_as_the_golden_says() {
         [row(
             "src/lib.rs",
             "fixture-families",
-            153,
+            265,
             "test-code:1 open-range:2 unstated-return-type:2"
-        )]
+        ),]
     );
-    assert_eq!(discovery.catalog.len(), 153);
+    assert_eq!(discovery.catalog.len(), 265);
     assert_eq!(discovery.catalog.duplicates().len(), 0);
 }
 
@@ -235,13 +238,18 @@ fn macro_invocations_count_once_and_a_proc_macro_crate_is_mutated_like_any_other
     assert_eq!(
         table(&discovery),
         [
-            row("crates/derive/src/lib.rs", "fixture-macros-derive", 9, ""),
-            row("src/lib.rs", "fixture-macros", 3, "macro-invocation:2"),
+            row(
+                "crates/derive/src/lib.rs",
+                "fixture-macros-derive",
+                17,
+                "test-code:8"
+            ),
+            row("src/lib.rs", "fixture-macros", 5, "macro-invocation:2"),
         ],
         "a proc-macro crate's `--test` build is an ordinary executable, and what its own \
          tests reach is measurable exactly like anything else"
     );
-    assert_eq!(discovery.catalog.len(), 12);
+    assert_eq!(discovery.catalog.len(), 22);
 }
 
 #[test]
@@ -251,7 +259,7 @@ fn a_no_std_crate_the_host_can_lend_std_to_is_measured_like_any_other() {
 
     assert_eq!(
         table(&discovery),
-        [row("src/lib.rs", "fixture-no-std", 4, "test-code:1")],
+        [row("src/lib.rs", "fixture-no-std", 4, "test-code:15"),],
         "`#![no_std]` withholds the implicit link to std and its prelude, and forbids \
          neither an explicit link nor an explicit path"
     );
@@ -285,9 +293,9 @@ fn include_and_exclude_patterns_remove_files_and_count_what_they_hid() {
     assert_eq!(
         table(&discovery),
         [
-            row("crates/app/src/main.rs", "fixture-app", 0, "excluded:4"),
-            row("crates/core/src/lib.rs", "fixture-core", 9, "test-code:1"),
-            row("crates/core/src/util.rs", "fixture-core", 3, ""),
+            row("crates/app/src/main.rs", "fixture-app", 0, "excluded:13"),
+            row("crates/core/src/lib.rs", "fixture-core", 9, "test-code:14"),
+            row("crates/core/src/util.rs", "fixture-core", 4, ""),
         ]
     );
     let mut opts = options();
@@ -296,12 +304,12 @@ fn include_and_exclude_patterns_remove_files_and_count_what_they_hid() {
     assert_eq!(
         table(&discovery),
         [
-            row("crates/app/src/main.rs", "fixture-app", 0, "excluded:4"),
+            row("crates/app/src/main.rs", "fixture-app", 0, "excluded:13"),
             row("crates/core/src/lib.rs", "fixture-core", 0, "excluded:9"),
-            row("crates/core/src/util.rs", "fixture-core", 3, ""),
+            row("crates/core/src/util.rs", "fixture-core", 4, ""),
         ]
     );
-    assert_eq!(discovery.catalog.len(), 3);
+    assert_eq!(discovery.catalog.len(), 4);
 }
 
 #[test]
@@ -313,8 +321,8 @@ fn selecting_packages_leaves_the_others_out_entirely() {
     assert_eq!(
         table(&discovery),
         [
-            row("crates/core/src/lib.rs", "fixture-core", 9, "test-code:1"),
-            row("crates/core/src/util.rs", "fixture-core", 3, ""),
+            row("crates/core/src/lib.rs", "fixture-core", 9, "test-code:14"),
+            row("crates/core/src/util.rs", "fixture-core", 4, ""),
         ]
     );
     let mut opts = options();
@@ -364,9 +372,9 @@ fn discovery_is_deterministic_and_traced_per_file() {
     assert_eq!(
         files,
         [
-            ("crates/app/src/main.rs".to_owned(), 4),
+            ("crates/app/src/main.rs".to_owned(), 13),
             ("crates/core/src/lib.rs".to_owned(), 9),
-            ("crates/core/src/util.rs".to_owned(), 3),
+            ("crates/core/src/util.rs".to_owned(), 4),
         ]
     );
 }
@@ -464,12 +472,12 @@ fn a_file_pasted_in_where_an_expression_goes_is_a_skip_and_not_the_end_of_the_ru
     assert_eq!(
         table(&discovery),
         [
-            row("src/items.rs", "fixture-include", 2, ""),
+            row("src/items.rs", "fixture-include", 4, ""),
             row(
                 "src/lib.rs",
                 "fixture-include",
-                6,
-                "const-context:1 macro-invocation:1"
+                8,
+                "const-context:1 macro-invocation:1 test-code:7"
             ),
             row(
                 "src/table.rs",
@@ -532,7 +540,7 @@ fn a_crate_that_forbids_what_the_guards_allow_is_skipped_whole_and_a_crate_that_
     assert_eq!(
         table(&discovery),
         [
-            row("denies/src/lib.rs", "denies", 5, ""),
+            row("denies/src/lib.rs", "denies", 5, "test-code:6"),
             row("forbids/src/lib.rs", "forbids", 0, "forbidden-lints:5"),
         ],
         "forbid is the one level an allow cannot override, and every guard carries an allow"

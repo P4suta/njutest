@@ -128,15 +128,15 @@ fn preparing_catalogs_instruments_validates_and_builds() {
     let before = fingerprint(fixture.root());
     let session = prepare(&fixture);
 
-    assert_eq!(session.catalog().len(), 8);
-    assert_eq!(session.accepted().len(), 8, "{:?}", session.rejections());
+    assert_eq!(session.catalog().len(), 11);
+    assert_eq!(session.accepted().len(), 11, "{:?}", session.rejections());
     assert!(session.rejections().is_empty());
     let skips: Vec<(&str, u32)> = session
         .skips()
         .iter()
         .map(|skip| (skip.reason.name(), skip.count))
         .collect();
-    assert_eq!(skips, [("test-code", 2), ("test-only-file", 2)]);
+    assert_eq!(skips, [("test-code", 17), ("test-only-file", 6)]);
 
     let targets: Vec<&str> = session
         .targets()

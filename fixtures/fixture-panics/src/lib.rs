@@ -50,7 +50,13 @@ mod tests {
     }
 
     #[test]
+    fn a_value_below_the_bound_is_itself() {
+        assert_eq!(in_range(9), 9);
+    }
+
+    #[test]
     fn a_capacity_is_itself() {
+        assert_eq!(capacity(1), 1);
         assert_eq!(capacity(4), 4);
     }
 }

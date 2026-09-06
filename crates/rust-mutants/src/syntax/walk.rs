@@ -17,7 +17,8 @@ use super::position::LineIndex;
 use super::rules::{
     arguments, assertion_arity, assertion_is_condition, binary_swap, bool_method, has_let,
     is_compound_assignment, is_connective, is_default_spelling, is_err_default, is_not,
-    is_ok_default, is_some_default, is_true_literal, method_swap, unary_removal,
+    is_ok_default, is_some_default, is_true_literal, method_swap, respell_int, terminal_else,
+    unary_removal,
 };
 use super::{Decision, Form, Found, Include, Selection, SiteHint, SkipReason, beside};
 use crate::catalog::Candidate;
@@ -214,6 +215,8 @@ pub(super) struct Walker<'a> {
     mod_depth: u32,
     /// What a proof would rest on for each `if` or `while` condition being walked, innermost last.
     gates: Vec<Option<branch::Prepared>>,
+    /// The loops being walked, innermost last: the label each carries, and whether its breaks decide its value.
+    loops: Vec<(Option<String>, bool)>,
     includes: Vec<Include>,
 }
 
@@ -237,6 +240,7 @@ impl<'a> Walker<'a> {
             frames: Vec::new(),
             mod_depth: 0,
             gates: Vec::new(),
+            loops: Vec::new(),
             includes: Vec::new(),
         }
     }
@@ -478,8 +482,41 @@ impl<'a> Walker<'a> {
 
     fn with_frame(&mut self, frame: Frame, walk: impl FnOnce(&mut Self)) {
         self.frames.push(frame);
+        let loops = std::mem::take(&mut self.loops);
         walk(self);
+        self.loops = loops;
         self.frames.pop();
+    }
+
+    fn within_loop(
+        &mut self,
+        label: Option<&syn::Label>,
+        valued: bool,
+        walk: impl FnOnce(&mut Self),
+    ) {
+        self.loops
+            .push((label.map(|label| label.name.ident.to_string()), valued));
+        walk(self);
+        let _left = self.loops.pop();
+    }
+
+    /// Whether the loop a jump names is one whose breaks decide its value.
+    ///
+    /// A jump that names no loop the walk is inside is one the compiler will
+    /// refuse anyway; reading it as valued is what keeps the engine from
+    /// proposing a mutation on top of a program that does not build.
+    fn breaks_decide_the_value(&self, label: Option<&syn::Lifetime>) -> bool {
+        label.map_or_else(
+            || self.loops.last().is_none_or(|(_, valued)| *valued),
+            |named| {
+                let wanted = named.ident.to_string();
+                self.loops
+                    .iter()
+                    .rev()
+                    .find(|(label, _)| label.as_deref() == Some(wanted.as_str()))
+                    .is_none_or(|(_, valued)| *valued)
+            },
+        )
     }
 
     fn inherited_allow(&self) -> Option<u32> {
@@ -623,6 +660,7 @@ impl<'a> Walker<'a> {
                 };
                 self.maybe_suppressed(expr_attrs(expr), |walker| {
                     walker.statement_candidates(expr, stmt_span);
+                    walker.deletable_else(expr, stmt_span);
                     let site = Site {
                         form: Form::S,
                         span: stmt_span,
@@ -643,6 +681,9 @@ impl<'a> Walker<'a> {
                     span,
                 };
                 self.maybe_suppressed(expr_attrs(expr), |walker| {
+                    if role == TailRole::NotLast {
+                        walker.deletable_else(expr, span);
+                    }
                     walker.walk_expr(expr, Ctx::new(Kind::Value, Some(site)));
                     if role == TailRole::ReturnValue {
                         walker.return_site(expr);
@@ -765,10 +806,16 @@ impl<'a> Walker<'a> {
             Expr::Let(l) => self.walk_expr(&l.expr, ctx.value()),
             Expr::Block(b) => self.walk_block(&b.block, false),
             Expr::Unsafe(u) => self.walk_block(&u.block, false),
-            Expr::Loop(l) => self.walk_block(&l.body, false),
+            Expr::Loop(l) => {
+                self.within_loop(l.label.as_ref(), true, |walker| {
+                    walker.walk_block(&l.body, false);
+                });
+            }
             Expr::ForLoop(f) => {
                 self.walk_expr(&f.expr, ctx.value());
-                self.walk_block(&f.body, false);
+                self.within_loop(f.label.as_ref(), false, |walker| {
+                    walker.walk_block(&f.body, false);
+                });
             }
             Expr::Async(a) => {
                 let frame = Frame {
@@ -789,6 +836,7 @@ impl<'a> Walker<'a> {
                     walker.walk_block(&c.block, false);
                 });
             }
+            Expr::Break(_) | Expr::Continue(_) => self.walk_jump(expr, ctx),
             Expr::Repeat(r) => {
                 self.walk_expr(&r.expr, ctx.value());
                 self.walk_const_expr(&r.len);
@@ -978,23 +1026,115 @@ impl<'a> Walker<'a> {
     }
 
     fn walk_literal(&mut self, lit: &syn::ExprLit, ctx: Ctx) {
-        if let syn::Lit::Bool(b) = &lit.lit {
-            let own = self.span(lit);
-            let (rule, replacement) = if b.value {
-                ("true-to-false", "false")
-            } else {
-                ("false-to-true", "true")
-            };
-            self.emit(
+        let own = self.span(lit);
+        let offer = |walker: &mut Self, rule: &str, replacement: String| {
+            walker.emit(
                 rule,
                 Edit {
                     span: own,
-                    replacement: replacement.as_bytes().to_vec(),
+                    replacement: replacement.into_bytes(),
                     site: Self::site_for(ctx, own),
                     probe: None,
                 },
             );
+        };
+        match &lit.lit {
+            syn::Lit::Bool(b) => {
+                let (rule, replacement) = if b.value {
+                    ("true-to-false", "false")
+                } else {
+                    ("false-to-true", "true")
+                };
+                offer(self, rule, replacement.to_owned());
+            }
+            syn::Lit::Int(int) => {
+                for (rule, delta) in [("int-increment", 1), ("int-decrement", -1)] {
+                    if let Some(respelled) = respell_int(int, delta) {
+                        offer(self, rule, respelled);
+                    }
+                }
+            }
+            syn::Lit::Str(text) if !text.value().is_empty() => {
+                offer(self, "string-to-empty", String::from("\"\""));
+            }
+            _ => {}
         }
+    }
+
+    /// The `else` a statement's `if` chain ends with, which a statement can do without.
+    ///
+    /// An `if` that is a value has to have an `else` and every branch has to
+    /// produce the same type, so only an `if` standing as a statement can lose
+    /// one and still be the program it was.
+    fn deletable_else(&mut self, expr: &Expr, stmt_span: Span) {
+        let Some((then_branch, otherwise)) = terminal_else(expr) else {
+            return;
+        };
+        let span = Span {
+            start: self.span(then_branch).end,
+            end: self.span(otherwise).end,
+        };
+        self.emit(
+            "delete-else-branch",
+            Edit {
+                span,
+                replacement: Vec::new(),
+                site: Some(Site {
+                    form: Form::S,
+                    span: stmt_span,
+                }),
+                probe: None,
+            },
+        );
+    }
+
+    /// A `break` and a `continue` say opposite things about the loop they are in, and either is the other with its label kept.
+    ///
+    /// A `break` that carries a value is left alone: `continue` carries none,
+    /// and a loop whose value it was would have nothing to be.
+    fn walk_jump(&mut self, expr: &Expr, ctx: Ctx) {
+        let (rule, replacement) = match expr {
+            Expr::Break(one) => {
+                if let Some(value) = &one.expr {
+                    self.declined(
+                        At::new(self.span(expr).start, "break-to-continue"),
+                        SkipReason::LoopValue,
+                    );
+                    self.walk_expr(value, ctx.value());
+                    return;
+                }
+                let label = one
+                    .label
+                    .as_ref()
+                    .map_or_else(String::new, |label| format!(" {label}"));
+                ("break-to-continue", format!("continue{label}"))
+            }
+            Expr::Continue(one) => {
+                if self.breaks_decide_the_value(one.label.as_ref()) {
+                    self.declined(
+                        At::new(self.span(expr).start, "continue-to-break"),
+                        SkipReason::LoopValue,
+                    );
+                    return;
+                }
+                let label = one
+                    .label
+                    .as_ref()
+                    .map_or_else(String::new, |label| format!(" {label}"));
+                ("continue-to-break", format!("break{label}"))
+            }
+            _ => return,
+        };
+        let own = self.span(expr);
+        self.emit(
+            rule,
+            Edit {
+                span: own,
+                replacement: replacement.into_bytes(),
+                site: Self::site_for(ctx, own),
+                probe: None,
+            },
+        );
     }
 
     fn negate(&mut self, rule: &str, cond: &Expr) {
@@ -1036,7 +1176,9 @@ impl<'a> Walker<'a> {
         self.gates.push(gate);
         self.walk_expr(&w.cond, ctx.negated(Kind::Bool));
         self.gates.pop();
-        self.walk_block(&w.body, false);
+        self.within_loop(w.label.as_ref(), false, |walker| {
+            walker.walk_block(&w.body, false);
+        });
     }
 
     /// What a proof about this condition would rest on, or nothing when the syntax supports none.

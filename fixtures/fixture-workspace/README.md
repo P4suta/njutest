@@ -22,9 +22,18 @@ refuses a difference, and `UPDATE_FATES=1` rewrites the block below.
 
 ```fates
 crates/app/src/main.rs:7:46 skip-to-take killed
+crates/app/src/main.rs:7:51 int-decrement survived
+crates/app/src/main.rs:7:51 int-increment killed
+crates/app/src/main.rs:10:46 int-increment survived
+crates/app/src/main.rs:10:49 int-decrement survived
+crates/app/src/main.rs:10:49 int-increment survived
 crates/app/src/main.rs:12:8 negate-condition killed
 crates/app/src/main.rs:12:16 ge-to-gt not_run
+crates/app/src/main.rs:12:19 int-decrement survived
+crates/app/src/main.rs:12:19 int-increment survived
 crates/app/src/main.rs:13:9 delete-call-statement unreached
+crates/app/src/main.rs:13:28 int-decrement survived
+crates/app/src/main.rs:13:28 int-increment survived
 crates/core/src/lib.rs:10:5 return-default killed
 crates/core/src/lib.rs:10:8 negate-condition killed
 crates/core/src/lib.rs:10:10 lt-to-le survived
@@ -34,6 +43,7 @@ crates/core/src/lib.rs:12:17 gt-to-ge survived
 crates/core/src/lib.rs:13:9 return-default killed
 crates/core/src/lib.rs:15:9 return-default killed
 crates/core/src/lib.rs:21:5 return-default killed
+crates/core/src/util.rs:7:19 int-increment killed
 crates/core/src/util.rs:9:9 delete-compound-assignment killed
 crates/core/src/util.rs:9:13 add-assign-to-sub-assign killed
 crates/core/src/util.rs:11:5 return-default killed

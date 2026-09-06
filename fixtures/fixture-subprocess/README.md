@@ -31,6 +31,11 @@ refuses a difference, and `UPDATE_FATES=1` rewrites the block below.
 src/lib.rs:8:5 return-default killed
 src/lib.rs:8:8 negate-condition killed
 src/lib.rs:8:10 gt-to-ge survived
+src/lib.rs:8:12 int-increment killed
 src/lib.rs:8:16 return-default killed
+src/lib.rs:8:16 string-to-empty killed
 src/lib.rs:8:36 return-default killed
+src/lib.rs:8:36 string-to-empty killed
+src/main.rs:7:37 int-decrement killed
+src/main.rs:7:37 int-increment killed
 ```

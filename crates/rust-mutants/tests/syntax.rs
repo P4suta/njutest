@@ -108,6 +108,8 @@ fn comparisons_in_conditions_take_form_c_and_nested_arithmetic_form_e() {
         [
             "negate-condition@2:8 \"a + 1 < b\"=>\"!(a + 1 < b)\" C[\"a + 1 < b\"]",
             "add-to-sub@2:10 \"+\"=>\"-\" E[\"a + 1\"]",
+            "int-increment@2:12 \"1\"=>\"2\" E[\"1\"]",
+            "int-decrement@2:12 \"1\"=>\"0\" E[\"1\"]",
             "lt-to-le@2:14 \"<\"=>\"<=\" C[\"a + 1 < b\"]",
             "true-to-false@3:16 \"true\"=>\"false\" E[\"true\"]",
             "return-true@5:5 \"a > b\"=>\"true\" E[\"a > b\"]",
@@ -131,7 +133,10 @@ fn loops_connectives_and_negations_are_bool_positions_and_let_chains_are_left_al
             "negate-condition@3:12 \"x && !x\"=>\"!(x && !x)\" C[\"x && !x\"]",
             "and-to-or@3:14 \"&&\"=>\"||\" C[\"x && !x\"]",
             "remove-not@3:17 \"!x\"=>\"x\" C[\"!x\"]",
+            "break-to-continue@4:13 \"break\"=>\"continue\" E[\"break\"]",
             "gt-to-ge@6:33 \">\"=>\">=\" C[\"n > 0\"]",
+            "int-increment@6:35 \"0\"=>\"1\" E[\"0\"]",
+            "break-to-continue@7:13 \"break\"=>\"continue\" E[\"break\"]",
         ]
     );
 }
@@ -144,9 +149,11 @@ fn ranges_change_the_type_so_their_site_is_the_statement_or_the_initializer() {
     assert_eq!(
         render(&d),
         [
+            "int-increment@2:14 \"0\"=>\"1\" E[\"0\"]",
             "range-to-inclusive@2:15 \"..\"=>\"..=\" S[\"for i in 0..n {\\n        let s = &v[i..=n];\\n        drop(s);\\n    }\"]",
             "inclusive-to-range@3:21 \"..=\"=>\"..\" E[\"&v[i..=n]\"]",
             "delete-call-statement@4:9 \"drop(s);\"=>\"\" S[\"drop(s);\"]",
+            "int-increment@6:15 \"0\"=>\"1\" E[\"0\"]",
             "range-to-inclusive@6:16 \"..\"=>\"..=\" E[\"v[0..n].to_vec()\"]",
             "return-default@7:5 \"v[..n].to_vec()\"=>\"Default::default()\" E[\"v[..n].to_vec()\"]",
             "range-to-inclusive@7:7 \"..\"=>\"..=\" E[\"v[..n].to_vec()\"]",
@@ -164,6 +171,7 @@ fn return_replacements_follow_the_signature_and_never_spell_the_default_again() 
         [
             "negate-condition@2:8 \"x < 0\"=>\"!(x < 0)\" C[\"x < 0\"]",
             "lt-to-le@2:10 \"<\"=>\"<=\" C[\"x < 0\"]",
+            "int-increment@2:12 \"0\"=>\"1\" E[\"0\"]",
             "return-ok-default@3:16 \"Err(String::new())\"=>\"Ok(Default::default())\" E[\"Err(String::new())\"]",
             "return-ok-default@5:5 \"Ok(x)\"=>\"Ok(Default::default())\" E[\"Ok(x)\"]",
             "return-err-default@5:5 \"Ok(x)\"=>\"Err(Default::default())\" E[\"Ok(x)\"]",
@@ -171,6 +179,8 @@ fn return_replacements_follow_the_signature_and_never_spell_the_default_again() 
             "return-some-default@8:5 \"Some(x)\"=>\"Some(Default::default())\" E[\"Some(x)\"]",
             "return-some-default@11:5 \"None\"=>\"Some(Default::default())\" E[\"None\"]",
             "add-to-sub@14:24 \"+\"=>\"-\" E[\"y + 1\"]",
+            "int-increment@14:26 \"1\"=>\"2\" E[\"1\"]",
+            "int-decrement@14:26 \"1\"=>\"0\" E[\"1\"]",
             "return-default@15:5 \"f(x)\"=>\"Default::default()\" E[\"f(x)\"]",
             "return-err-default@18:5 \"Ok(())\"=>\"Err(Default::default())\" E[\"Ok(())\"]",
         ]
@@ -191,12 +201,21 @@ fn error_propagation_and_statement_deletion_take_the_statement_site() {
             "ignore-question-statement@3:12 \"?\"=>\"\" S[\"parse()?;\"]",
             "delete-call-statement@4:5 \"v.push(n);\"=>\"\" S[\"v.push(n);\"]",
             "delete-compound-assignment@5:5 \"v[0] += 2;\"=>\"\" S[\"v[0] += 2;\"]",
+            "int-increment@5:7 \"0\"=>\"1\" E[\"0\"]",
             "add-assign-to-sub-assign@5:10 \"+=\"=>\"-=\" S[\"v[0] += 2;\"]",
+            "int-increment@5:13 \"2\"=>\"3\" E[\"2\"]",
+            "int-decrement@5:13 \"2\"=>\"1\" E[\"2\"]",
             "delete-assignment@6:5 \"v[0] = v[0] * 2;\"=>\"\" S[\"v[0] = v[0] * 2;\"]",
+            "int-increment@6:7 \"0\"=>\"1\" E[\"0\"]",
+            "int-increment@6:14 \"0\"=>\"1\" E[\"0\"]",
             "mul-to-div@6:17 \"*\"=>\"/\" E[\"v[0] * 2\"]",
+            "int-increment@6:19 \"2\"=>\"3\" E[\"2\"]",
+            "int-decrement@6:19 \"2\"=>\"1\" E[\"2\"]",
             "return-err-default@7:5 \"Ok(())\"=>\"Err(Default::default())\" E[\"Ok(())\"]",
             "return-ok-default@9:37 \"Ok(1)\"=>\"Ok(Default::default())\" E[\"Ok(1)\"]",
             "return-err-default@9:37 \"Ok(1)\"=>\"Err(Default::default())\" E[\"Ok(1)\"]",
+            "int-increment@9:40 \"1\"=>\"2\" E[\"1\"]",
+            "int-decrement@9:40 \"1\"=>\"0\" E[\"1\"]",
         ]
     );
 }
@@ -214,12 +233,18 @@ fn bitwise_operators_and_match_guards() {
             "delete-match-arm@3:14 \"x > 1\"=>\"false\" C[\"x > 1\"]",
             "remove-match-guard@3:14 \"x > 1\"=>\"true\" C[\"x > 1\"]",
             "gt-to-ge@3:16 \">\"=>\">=\" C[\"x > 1\"]",
+            "int-increment@3:18 \"1\"=>\"2\" E[\"1\"]",
+            "int-decrement@3:18 \"1\"=>\"0\" E[\"1\"]",
             "return-default@3:23 \"x | b\"=>\"Default::default()\" E[\"x | b\"]",
             "bor-to-band@3:25 \"|\"=>\"&\" E[\"x | b\"]",
             "return-default@4:14 \"(a ^ b) << 1 >> 1\"=>\"Default::default()\" E[\"(a ^ b) << 1 >> 1\"]",
             "xor-to-band@4:17 \"^\"=>\"&\" E[\"a ^ b\"]",
             "shl-to-shr@4:22 \"<<\"=>\">>\" E[\"(a ^ b) << 1\"]",
+            "int-increment@4:25 \"1\"=>\"2\" E[\"1\"]",
+            "int-decrement@4:25 \"1\"=>\"0\" E[\"1\"]",
             "shr-to-shl@4:27 \">>\"=>\"<<\" E[\"(a ^ b) << 1 >> 1\"]",
+            "int-increment@4:30 \"1\"=>\"2\" E[\"1\"]",
+            "int-decrement@4:30 \"1\"=>\"0\" E[\"1\"]",
         ]
     );
 }
@@ -233,6 +258,7 @@ fn every_place_passed_over_is_counted_under_the_outermost_reason() {
     assert_eq!(
         render(&d),
         [
+            "int-increment@15:14 \"0u8\"=>\"1u8\" E[\"0u8\"]",
             "return-default@16:5 \"a.len() as i32 * x\"=>\"Default::default()\" E[\"a.len() as i32 * x\"]",
             "mul-to-div@16:20 \"*\"=>\"/\" E[\"a.len() as i32 * x\"]",
         ]
@@ -240,11 +266,11 @@ fn every_place_passed_over_is_counted_under_the_outermost_reason() {
     assert_eq!(
         skips(&d),
         [
-            ("const-context", 4),
+            ("const-context", 16),
             ("macro-invocation", 1),
-            ("cfg-attribute", 2),
-            ("test-code", 3),
-            ("const-fn-body", 2),
+            ("cfg-attribute", 4),
+            ("test-code", 8),
+            ("const-fn-body", 4),
         ],
         "the body of a const fn is its own reason: what the compiler may evaluate at a call is \
          not what it evaluates in an initializer"
@@ -276,6 +302,7 @@ fn skip_reasons_are_named_explained_and_ranked() {
             "let-condition",
             "open-range",
             "unstated-return-type",
+            "loop-value",
         ]
     );
     for reason in SkipReason::ALL {
@@ -431,7 +458,7 @@ fn the_trace_record_lists_every_decision_in_source_order() {
     let d = discover(src);
     let record = d.trace_record();
     assert_eq!(record.path, "src/lib.rs");
-    assert_eq!(record.candidates, 2);
+    assert_eq!(record.candidates, 4);
     let sites: Vec<(u32, u32, &str, Option<&str>, Option<&str>)> = record
         .sites
         .iter()
@@ -451,13 +478,15 @@ fn the_trace_record_lists_every_decision_in_source_order() {
             (2, 5, "macro-invocation", None, Some("macro-invocation")),
             (3, 5, "return-default", Some("E"), None),
             (3, 7, "add-to-sub", Some("E"), None),
+            (3, 9, "int-increment", Some("E"), None),
+            (3, 9, "int-decrement", Some("E"), None),
         ]
     );
     assert_eq!(record.skips.len(), 1);
     assert_eq!(record.skips[0].reason, "macro-invocation");
     assert_eq!(record.skips[0].count, 1);
     let json = serde_json::to_string(&record).expect("json");
-    assert!(json.contains("\"candidates\":2"), "{json}");
+    assert!(json.contains("\"candidates\":4"), "{json}");
 }
 
 #[test]
@@ -675,4 +704,68 @@ fn a_guard_written_onto_an_arm_is_the_one_splice_that_adds_syntax() {
     );
     assert_eq!(found.hint.site.end, found.candidate.span.start);
     assert_eq!(found.hint.form, Form::M);
+}
+
+#[test]
+fn break_and_continue_swap_with_their_label_and_never_carry_a_value() {
+    let src = "fn f(v: &[i32]) -> i32 {\n    let mut n = 0;\n    'outer: for x in v {\n        for y in v {\n            if *y == 0 {\n                continue 'outer;\n            }\n            if *x == 0 {\n                break;\n            }\n            n += 1;\n        }\n    }\n    let m = loop {\n        break 7;\n    };\n    n + m\n}\n";
+    let d = discover(src);
+    assert_coherent(src, &d);
+    assert_eq!(
+        by_rule(&d, &["break-to-continue", "continue-to-break"]),
+        [
+            "continue-to-break@6 \"continue 'outer\"=>\"break 'outer\" E",
+            "break-to-continue@9 \"break\"=>\"continue\" E",
+        ],
+        "the label says which loop, so a swap keeps it; a `break` that carries a value has no \
+         `continue` to become"
+    );
+}
+
+#[test]
+fn a_terminal_else_is_deleted_only_where_the_if_stands_as_a_statement() {
+    let src = "fn f(a: i32, b: i32) -> i32 {\n    let mut n = 0;\n    if a > b {\n        n += 1;\n    } else if a == b {\n        n += 2;\n    } else {\n        n += 3;\n    }\n    let m = if a > b { 1 } else { 2 };\n    if a > 0 {\n        n += 4;\n    }\n    n + m\n}\n";
+    let d = discover(src);
+    assert_coherent(src, &d);
+    assert_eq!(
+        by_rule(&d, &["delete-else-branch"]),
+        ["delete-else-branch@7 \" else {\\n        n += 3;\\n    }\"=>\"\" S"],
+        "an `if` that stands as a statement can lose its last `else` and still be a statement; \
+         an `if` that is a value cannot, and an `if` without an `else` has none to lose"
+    );
+}
+
+#[test]
+fn integer_literals_move_by_one_in_their_own_radix_and_keep_their_suffix() {
+    let src = "fn f() -> (i32, u8, u32, usize, i64) {\n    let a = 10;\n    let b = 0xffu8;\n    let c = 0b1010;\n    let d = 0;\n    let e = 1_000i64;\n    (a, b, c, d, e)\n}\n";
+    let d = discover(src);
+    assert_coherent(src, &d);
+    assert_eq!(
+        by_rule(&d, &["int-increment", "int-decrement"]),
+        [
+            "int-increment@2 \"10\"=>\"11\" E",
+            "int-decrement@2 \"10\"=>\"9\" E",
+            "int-decrement@3 \"0xffu8\"=>\"0xfeu8\" E",
+            "int-increment@4 \"0b1010\"=>\"0b1011\" E",
+            "int-decrement@4 \"0b1010\"=>\"0b1001\" E",
+            "int-increment@5 \"0\"=>\"1\" E",
+            "int-increment@6 \"1_000i64\"=>\"1001i64\" E",
+            "int-decrement@6 \"1_000i64\"=>\"999i64\" E",
+        ],
+        "a literal is respelled in the radix it was written in and keeps its suffix; `0` has \
+         no predecessor the syntax spells, and a value the suffix cannot hold has no successor"
+    );
+}
+
+#[test]
+fn a_non_empty_string_becomes_empty() {
+    let src = "fn f() -> (&'static str, &'static str) {\n    (\"hello\", \"\")\n}\n";
+    let d = discover(src);
+    assert_coherent(src, &d);
+    assert_eq!(
+        by_rule(&d, &["string-to-empty"]),
+        ["string-to-empty@2 \"\\\"hello\\\"\"=>\"\\\"\\\"\" E"],
+        "a message nobody checks is a message nobody would miss, and a string already empty \
+         has nowhere to go"
+    );
 }

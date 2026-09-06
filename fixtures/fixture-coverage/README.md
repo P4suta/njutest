@@ -40,6 +40,8 @@ src/lib.rs:17:16 true-to-false killed
 src/lib.rs:19:5 false-to-true killed
 src/lib.rs:28:8 negate-condition killed
 src/lib.rs:28:20 le-to-lt killed
+src/lib.rs:28:23 int-decrement killed
+src/lib.rs:28:23 int-increment killed
 src/lib.rs:29:16 true-to-false killed
 src/lib.rs:31:5 false-to-true killed
 ```

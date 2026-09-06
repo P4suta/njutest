@@ -33,4 +33,6 @@ refuses a difference, and `UPDATE_FATES=1` rewrites the block below.
 ```fates --allow-outside ../fixture-outside-dep-lib
 src/lib.rs:9:5 return-default killed
 src/lib.rs:9:41 add-to-sub killed
+src/lib.rs:9:43 int-decrement killed
+src/lib.rs:9:43 int-increment killed
 ```

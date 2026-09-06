@@ -33,4 +33,6 @@ src/lib.rs:7:74 return-default unreached
 src/lib.rs:7:86 return-default killed
 src/lib.rs:11:5 return-default unreached
 src/lib.rs:11:8 mul-to-div unreached
+src/lib.rs:11:10 int-decrement unreached
+src/lib.rs:11:10 int-increment unreached
 ```

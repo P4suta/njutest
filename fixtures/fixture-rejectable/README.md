@@ -38,8 +38,12 @@ src/lib.rs:0:0 mul-to-div refused
 src/lib.rs:0:0 range-to-inclusive refused
 src/lib.rs:0:0 return-default refused
 src/lib.rs:12:5 return-default unreached
+src/lib.rs:12:12 string-to-empty unreached
+src/lib.rs:17:5 int-increment unreached
 src/lib.rs:17:5 return-default unreached
 src/lib.rs:22:5 return-default unreached
+src/lib.rs:22:13 int-increment unreached
+src/lib.rs:27:11 string-to-empty unreached
 src/lib.rs:32:5 return-default inconclusive
 src/lib.rs:32:8 negate-condition unreached
 src/lib.rs:32:10 gt-to-ge unreached

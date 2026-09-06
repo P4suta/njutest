@@ -24,6 +24,7 @@ for every candidate the compiler refused. The run is `rust-mutants run
 refuses a difference, and `UPDATE_FATES=1` rewrites the block below.
 
 ```fates
+src/lib.rs:12:19 int-increment killed
 src/lib.rs:14:9 delete-compound-assignment killed
 src/lib.rs:14:13 add-assign-to-sub-assign killed
 src/lib.rs:16:5 return-default killed

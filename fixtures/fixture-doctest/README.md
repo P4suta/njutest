@@ -42,8 +42,14 @@ refuses a difference, and `UPDATE_FATES=1` rewrites the block below.
 ```fates
 src/lib.rs:12:5 return-default killed
 src/lib.rs:12:7 mul-to-div killed
+src/lib.rs:12:9 int-decrement killed
+src/lib.rs:12:9 int-increment killed
 src/lib.rs:21:5 return-default killed
 src/lib.rs:21:7 div-to-mul killed
+src/lib.rs:21:9 int-decrement killed
+src/lib.rs:21:9 int-increment killed
 src/lib.rs:26:5 return-default survived
 src/lib.rs:26:7 div-to-mul survived
+src/lib.rs:26:9 int-decrement survived
+src/lib.rs:26:9 int-increment survived
 ```

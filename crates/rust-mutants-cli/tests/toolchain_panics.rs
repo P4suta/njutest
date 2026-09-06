@@ -97,5 +97,5 @@ fn every_mutation_of_the_fixture_is_noticed() {
     let document = rows(&fixture);
     let accounting = &document["accounting"];
     assert_eq!(accounting["survived"].as_u64(), Some(0), "{accounting}");
-    assert_eq!(accounting["killed"].as_u64(), Some(6), "{accounting}");
+    assert_eq!(accounting["killed"].as_u64(), Some(9), "{accounting}");
 }

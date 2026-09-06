@@ -64,7 +64,7 @@ fn a_file_a_build_script_wrote_is_skipped_by_name_and_the_rest_is_measured() {
     );
     assert_eq!(
         document["accounting"]["cataloged"].as_u64(),
-        Some(2),
+        Some(4),
         "and the library itself is measured: {document}"
     );
 }
@@ -81,7 +81,7 @@ fn a_test_process_sees_out_dir_and_the_build_scripts_environment() {
     let document = report(&fixture);
     assert_eq!(
         document["accounting"]["killed"].as_u64(),
-        Some(2),
+        Some(4),
         "the fixture's own test reads OUT_DIR, and a run that did not say where the build \
          directory is would fail it for a reason that is not the mutation: {document}"
     );

@@ -40,7 +40,7 @@ fn list_names_every_candidate_without_building_anything() {
     );
     let text = stdout(&output);
     let lines: Vec<&str> = text.lines().collect();
-    assert_eq!(lines.len(), 8, "{text}");
+    assert_eq!(lines.len(), 11, "{text}");
     assert!(
         lines
             .iter()

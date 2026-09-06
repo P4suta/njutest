@@ -153,6 +153,27 @@ pub fn parsed(s: &str) -> Result<i32, String> {
     s.parse::<i32>().map_err(|e| e.to_string())
 }
 
+pub fn jumps(v: &[i32]) -> i32 {
+    let mut n = 0;
+    'outer: for x in v {
+        for y in v {
+            if *y == 0 {
+                continue 'outer;
+            }
+            if *x < 0 {
+                break;
+            }
+            n += *x;
+        }
+    }
+    if n > 100 {
+        n = 100;
+    } else {
+        n += 1;
+    }
+    n
+}
+
 #[cfg(test)]
 mod tests {
     #[test]

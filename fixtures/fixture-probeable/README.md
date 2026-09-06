@@ -39,14 +39,21 @@ for every candidate the compiler refused. The run is `rust-mutants run
 refuses a difference, and `UPDATE_FATES=1` rewrites the block below.
 
 ```fates
+src/lib.rs:8:5 int-decrement killed
+src/lib.rs:8:5 int-increment killed
 src/lib.rs:8:5 return-default killed
 src/lib.rs:13:5 return-default killed
 src/lib.rs:13:7 mul-to-div killed
+src/lib.rs:13:9 int-decrement killed
+src/lib.rs:13:9 int-increment killed
 src/lib.rs:18:5 return-default survived
 src/lib.rs:23:5 return-default killed
 src/lib.rs:37:9 return-default unreached
+src/lib.rs:38:21 int-increment unreached
 src/lib.rs:46:9 return-true unreached
 src/lib.rs:46:21 eq-to-neq unreached
 src/lib.rs:52:5 return-default killed
+src/lib.rs:53:17 int-increment survived
+src/lib.rs:54:14 string-to-empty killed
 src/lib.rs:63:5 return-default survived
 ```

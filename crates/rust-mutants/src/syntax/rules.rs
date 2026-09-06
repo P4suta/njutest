@@ -122,6 +122,71 @@ pub(super) fn bool_method(name: &str) -> bool {
         )
 }
 
+/// The literal one more or one less than `lit`, written in the radix and with the suffix it was written with.
+///
+/// Rust spells no negative literal — `-1` is a unary minus on `1` — so zero
+/// has no predecessor to write, and a suffix that names a type bounds what
+/// the literal may become. What the syntax cannot spell is not offered, which
+/// is a mutation the compiler would have refused.
+#[must_use]
+pub fn respell_int(lit: &syn::LitInt, delta: i32) -> Option<String> {
+    let raw = lit.token().to_string();
+    let suffix = lit.suffix();
+    let digits = raw.strip_suffix(suffix).unwrap_or(&raw).replace('_', "");
+    let (prefix, radix) = match digits.get(..2) {
+        Some("0x" | "0X") => ("0x", 16),
+        Some("0o" | "0O") => ("0o", 8),
+        Some("0b" | "0B") => ("0b", 2),
+        _ => ("", 10),
+    };
+    let body = digits.get(prefix.len()..)?;
+    let value = u128::from_str_radix(body, radix).ok()?;
+    let moved = if delta < 0 {
+        value.checked_sub(1)?
+    } else {
+        value.checked_add(1)?
+    };
+    if moved > ceiling(suffix) {
+        return None;
+    }
+    let written = match radix {
+        16 => format!("{moved:x}"),
+        8 => format!("{moved:o}"),
+        2 => format!("{moved:b}"),
+        _ => format!("{moved}"),
+    };
+    Some(format!("{prefix}{written}{suffix}"))
+}
+
+/// The largest value a suffix says the literal may hold. An unsuffixed literal is bounded by nothing the syntax knows, and `usize` and `isize` are read as the sixty-four bit ones the compiler will settle.
+fn ceiling(suffix: &str) -> u128 {
+    match suffix {
+        "u8" => u128::from(u8::MAX),
+        "u16" => u128::from(u16::MAX),
+        "u32" => u128::from(u32::MAX),
+        "u64" | "usize" => u128::from(u64::MAX),
+        "i8" => i8::MAX.unsigned_abs().into(),
+        "i16" => i16::MAX.unsigned_abs().into(),
+        "i32" => i32::MAX.unsigned_abs().into(),
+        "i64" | "isize" => i64::MAX.unsigned_abs().into(),
+        "i128" => i128::MAX.unsigned_abs(),
+        _ => u128::MAX,
+    }
+}
+
+/// The `else` an `if` chain ends with, when the chain ends with a block rather than another `if`.
+pub(super) fn terminal_else(expr: &Expr) -> Option<(&syn::Block, &syn::Block)> {
+    let Expr::If(one) = expr else {
+        return None;
+    };
+    let (_, otherwise) = one.else_branch.as_ref()?;
+    match otherwise.as_ref() {
+        Expr::Block(block) => Some((&one.then_branch, &block.block)),
+        nested @ Expr::If(_) => terminal_else(nested),
+        _ => None,
+    }
+}
+
 /// The last path segment of `expr` when it is a bare path.
 fn last_segment(expr: &Expr) -> Option<String> {
     match expr {

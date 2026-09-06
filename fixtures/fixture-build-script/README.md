@@ -42,4 +42,6 @@ refuses a difference, and `UPDATE_FATES=1` rewrites the block below.
 ```fates
 src/lib.rs:11:5 return-default killed
 src/lib.rs:11:21 add-to-sub killed
+src/lib.rs:11:23 int-decrement killed
+src/lib.rs:11:23 int-increment killed
 ```

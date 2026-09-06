@@ -98,7 +98,7 @@ fn the_constants_are_frozen() {
 #[test]
 fn a_boolean_position_takes_the_selector_form_and_a_value_position_the_expression_form() {
     let text = instrument(
-        "pub fn f(a: i32, b: i32) -> bool {\n    if a > b {\n        return true;\n    }\n    a + 1 > b\n}\n",
+        "pub fn f(a: i32, b: i32, c: i32) -> bool {\n    if a > b {\n        return true;\n    }\n    a + c > b\n}\n",
     );
     assert!(
         text.contains("if (__rm::active(0) && (!(a > b)) || __rm::active(1) && (a >= b) || !(__rm::active(0)) && !(__rm::active(1)) && (a > b)) {"),
@@ -109,7 +109,7 @@ fn a_boolean_position_takes_the_selector_form_and_a_value_position_the_expressio
         "{text}"
     );
     assert!(
-        text.contains("(if __rm::active(3) { true } else if __rm::active(5) { a + 1 >= b } else {"),
+        text.contains("(if __rm::active(3) { true } else if __rm::active(5) { a + c >= b } else {"),
         "{text}"
     );
 }
@@ -117,7 +117,7 @@ fn a_boolean_position_takes_the_selector_form_and_a_value_position_the_expressio
 #[test]
 fn a_statement_takes_the_statement_form_and_a_deletion_renders_an_empty_branch() {
     let text = instrument(
-        "pub fn f(v: &mut Vec<i32>, n: i32) {\n    v.push(n);\n    let mut t = 0;\n    t += n;\n    drop(t);\n}\n",
+        "pub fn f(v: &mut Vec<i32>, n: i32) {\n    v.push(n);\n    let mut t = n;\n    t += n;\n    drop(t);\n}\n",
     );
     assert!(
         text.contains("if __rm::active(0) { } else { v.push(n); }"),
@@ -133,13 +133,13 @@ fn a_statement_takes_the_statement_form_and_a_deletion_renders_an_empty_branch()
 
 #[test]
 fn nested_sites_become_nested_guards_and_only_the_original_branch_carries_them() {
-    let text = instrument("pub fn f(a: i32, b: i32) -> bool {\n    a + 1 < b\n}\n");
+    let text = instrument("pub fn f(a: i32, b: i32, c: i32) -> bool {\n    a + c < b\n}\n");
     let line = text
         .lines()
         .find(|line| line.contains("__rm::active"))
         .expect("a guard");
     assert!(
-        line.contains("{ a + 1 <= b }"),
+        line.contains("{ a + c <= b }"),
         "an alternative is the pristine site with one edit and no nested guard: {line}"
     );
     assert!(
