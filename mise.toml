@@ -127,6 +127,19 @@ cargo build --release --bin mjutest
 ./target/release/mjutest verify --locked --offline --ui=plain "$@"
 """
 
+[tasks."dogfood:audit"]
+description = "Run mjutest on this workspace and re-decide the recording it leaves"
+run = """
+set -euo pipefail
+cargo build --release --bin mjutest
+./target/release/mjutest verify --locked --offline --ui=plain --trace "$@" || true
+run="$(ls -dt reports/runs/*/ | head -1)"
+trace="$(ls -dt .mjutest/trace/*/ | head -1)"
+echo "re-deciding ${run} from ${trace}"
+cargo build --release -p xtask
+./target/release/xtask proofaudit "${run}" --trace "${trace}"
+"""
+
 [tasks."dogfood:engine"]
 description = "Point rust-mutants at this workspace and read the score it reaches"
 run = """

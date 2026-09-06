@@ -68,6 +68,14 @@ passed. This is [ADR 0004](adr/0004-proof-layers-not-budgets.md) decision 5,
 which ships a proof layer only against a re-implementation that is not asked
 whether it agrees with itself.
 
+`mise run dogfood:audit` is that rule as one command: it runs this workspace
+through the release build, keeps the recording, and re-decides it.
+
+```console
+$ mise run dogfood:audit
+proofaudit: 20260906T041815Z-000004: 39 mutants and 16 targets re-decided; 0 violations, 0 unaudited
+```
+
 Where the recording does not carry enough to decide something again — which
 survivors a reviewer accepted, what a reused disposition was routed under —
 the gate says `unaudited` and counts it apart from the violations, because
