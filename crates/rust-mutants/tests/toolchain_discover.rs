@@ -364,13 +364,13 @@ fn discovery_is_deterministic_and_traced_per_file() {
 }
 
 #[test]
-fn a_source_outside_the_root_is_refused() {
+fn a_unit_source_outside_the_root_is_a_whole_file_skip_not_an_error() {
     let prepared = prepare("fixture-simple");
     let mut units = prepared.checked.units.clone();
     units[0]
         .sources
-        .push(Path::new("/etc/hostname").to_path_buf());
-    let error = discover(
+        .push(Path::new("/somewhere/else/table.rs").to_path_buf());
+    let discovery = discover(
         &Input {
             root: &prepared.dir,
             metadata: &prepared.metadata,
@@ -379,10 +379,20 @@ fn a_source_outside_the_root_is_refused() {
         &options(),
         &Recorder::disabled(),
     )
-    .unwrap_err();
+    .expect("a file the build wrote is not a reason to end the run");
+    let generated: Vec<&rust_mutants::syntax::Skip> = discovery
+        .skips
+        .iter()
+        .filter(|skip| skip.reason == rust_mutants::syntax::SkipReason::GeneratedOutsideWorkspace)
+        .collect();
+    assert_eq!(generated.len(), 1, "{:?}", discovery.skips);
+    assert_eq!(
+        generated[0].path, "<generated>/table.rs",
+        "the report names the file rather than the build directory this run happened to use"
+    );
     assert!(
-        matches!(error, DiscoverError::OutsideRoot { .. }),
-        "{error}"
+        !discovery.catalog.mutants().is_empty(),
+        "and the rest of the tree is measured"
     );
 }
 

@@ -171,6 +171,7 @@ pub fn discover(
         root,
         units: input.units,
         assignments: BTreeMap::new(),
+        generated: BTreeMap::new(),
     };
     for package in &members {
         for target in &package.targets {
@@ -182,6 +183,11 @@ pub fn discover(
     let mut candidates = Vec::new();
     let mut skips = Vec::new();
     let mut builder = Builder::new();
+    for (path, package) in &assigner.generated {
+        let report = whole_file(path, package, SkipReason::GeneratedOutsideWorkspace);
+        skips.extend(report.skips.iter().cloned());
+        files.push(report);
+    }
     let read: Vec<(&String, Result<FileDiscovery, DiscoverError>)> = assignments
         .keys()
         .map(|path| (path, walk(root, path, &options.selection)))
@@ -246,17 +252,37 @@ fn pasted_in(read: &[(&String, Result<FileDiscovery, DiscoverError>)]) -> BTreeS
 
 /// The report of a file that is a fragment: no candidate, one skip, and the reason said out loud.
 fn fragment(path: &str, package: &str) -> FileReport {
+    whole_file(path, package, SkipReason::IncludedExpression)
+}
+
+/// One file passed over whole, for a reason the walk never had a chance to reach.
+fn whole_file(path: &str, package: &str, reason: SkipReason) -> FileReport {
     FileReport {
         path: path.to_owned(),
         package: package.to_owned(),
         candidates: 0,
         skips: vec![Skip {
             path: path.to_owned(),
-            reason: SkipReason::IncludedExpression,
+            reason,
             count: 1,
         }],
-        whole_file: Some(SkipReason::IncludedExpression),
+        whole_file: Some(reason),
     }
+}
+
+/// The name a report calls a file a build script wrote outside the tree.
+///
+/// The path it was written to is a build directory that is different on every
+/// machine and every run, and a report that named it would say where this run
+/// put its temporary files rather than which file was passed over. The file's
+/// own name is what a reader recognises, under a directory nobody can mistake
+/// for one in the tree.
+fn generated_name(source: &Path) -> String {
+    let name = source.file_name().map_or_else(
+        || "unnamed".to_owned(),
+        |name| name.to_string_lossy().into_owned(),
+    );
+    format!("{GENERATED_DIR}/{name}")
 }
 
 /// The members to discover in: every member, or the named ones.
@@ -285,6 +311,8 @@ struct Assigner<'a> {
     root: &'a Path,
     units: &'a [Unit],
     assignments: BTreeMap<String, Assignment>,
+    /// Files a unit compiled from outside the tree, by the name a report calls them.
+    generated: BTreeMap<String, String>,
 }
 
 impl Assigner<'_> {
@@ -313,7 +341,11 @@ impl Assigner<'_> {
             && crate_root_is_freestanding(self.root, &crate_root, &target.edition);
         for unit in &compiled {
             for source in &unit.sources {
-                let path = relative(self.root, source)?;
+                let Ok(path) = relative(self.root, source) else {
+                    self.generated
+                        .insert(generated_name(source), package.name.clone());
+                    continue;
+                };
                 let role = if no_std {
                     Role::NoStd
                 } else if unit.test && !non_test.contains(&source.as_path()) {
@@ -396,6 +428,9 @@ fn item_supplies_what_std_does(item: &syn::Item) -> bool {
         attr.path().is_ident("panic_handler") || attr.path().is_ident("global_allocator")
     })
 }
+
+/// The directory a report puts a file a build script wrote outside the tree under.
+pub const GENERATED_DIR: &str = "<generated>";
 
 /// The workspace-relative, `/`-separated spelling of `path`.
 fn relative(root: &Path, path: &Path) -> Result<String, DiscoverError> {

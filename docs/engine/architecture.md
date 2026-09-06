@@ -203,8 +203,8 @@ than at compile time.
 
 `const-context`, `macro-invocation`, `cfg-attribute`, `test-code`,
 `unsupported-site`, `excluded`, `test-only-file`, `no-std-crate`,
-`included-expression`. Each is counted and named; `rust-mutants why-skipped` lists
-them. A skip is a decision the tool made and says; a rejection (a mutant the
+`included-expression`, `generated-outside-workspace`. Each is counted and
+named; `rust-mutants why-skipped` lists them. A skip is a decision the tool made and says; a rejection (a mutant the
 compiler refused) is a fact about the program and is reported with the
 diagnostic.
 
@@ -213,8 +213,11 @@ will not mutate and counts every candidate it would have produced under the
 outermost reason, so the tallies say how much code each reason hides. A
 macro invocation counts once, since its body is tokens the walker does not
 parse. Whole-file reasons (`excluded`, `test-only-file`,
-`no-std-crate`) are decided by the workspace layer from cargo metadata and
-dep-info, not by the walk.
+`no-std-crate`, `generated-outside-workspace`) are decided by the workspace
+layer from cargo metadata and dep-info, not by the walk. A file a build script
+wrote is named `<generated>/<its own name>`: the directory it was written to
+is different on every machine and every run, and naming it would say where
+this run put its temporary files rather than which file was passed over.
 
 ## Execution
 

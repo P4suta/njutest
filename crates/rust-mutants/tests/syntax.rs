@@ -259,6 +259,7 @@ fn skip_reasons_are_named_explained_and_ranked() {
             "test-only-file",
             "no-std-crate",
             "included-expression",
+            "generated-outside-workspace",
         ]
     );
     for reason in SkipReason::ALL {

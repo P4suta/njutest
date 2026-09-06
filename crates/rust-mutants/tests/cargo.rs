@@ -188,7 +188,7 @@ fn message_lines_are_typed_and_a_line_that_is_not_one_is_refused() {
 #[test]
 fn other_message_kinds_are_typed_and_a_line_that_is_not_one_is_refused() {
     let messages = parse_messages(sample_stream().as_bytes()).expect("parse");
-    assert!(matches!(&messages[2], Message::BuildScriptExecuted));
+    assert!(matches!(&messages[2], Message::BuildScriptExecuted(_)));
     assert!(matches!(&messages[3], Message::Other { reason } if reason == "something-new"));
     assert!(matches!(
         &messages[4],
@@ -262,4 +262,41 @@ fn every_cargo_error_kind_has_a_code_in_the_workspace_area() {
     }
     let error: CargoError = parse_dep_info("").unwrap_err();
     assert_eq!(error.kind().code().code, "RM2001");
+}
+
+#[test]
+fn a_build_script_executed_message_carries_its_out_dir_and_environment() {
+    let stream = r#"{"reason":"build-script-executed","package_id":"demo 0.1.0","linked_libs":[],"linked_paths":[],"cfgs":[],"env":[["FIXTURE_TAG","written"],["OTHER","2"]],"out_dir":"/t/debug/build/demo-abc/out"}
+{"reason":"build-finished","success":true}
+"#;
+    let messages = parse_messages(stream.as_bytes()).expect("parse");
+    let Message::BuildScriptExecuted(script) = &messages[0] else {
+        panic!("{messages:?}");
+    };
+    assert_eq!(script.package_id, "demo 0.1.0");
+    assert_eq!(
+        script.out_dir.as_deref(),
+        Some(Path::new("/t/debug/build/demo-abc/out")),
+        "a unit that reads a build script reads its OUT_DIR back at run time, so a run that \
+         starts the test process itself has to say where it is"
+    );
+    assert_eq!(
+        script.env,
+        vec![
+            ("FIXTURE_TAG".to_owned(), "written".to_owned()),
+            ("OTHER".to_owned(), "2".to_owned()),
+        ],
+        "and what the script put in the environment, in the order it said them"
+    );
+}
+
+#[test]
+fn a_build_script_that_wrote_nowhere_says_so_rather_than_guessing() {
+    let stream = "{\"reason\":\"build-script-executed\",\"package_id\":\"demo 0.1.0\"}\n";
+    let messages = parse_messages(stream.as_bytes()).expect("parse");
+    let Message::BuildScriptExecuted(script) = &messages[0] else {
+        panic!("{messages:?}");
+    };
+    assert_eq!(script.out_dir, None);
+    assert!(script.env.is_empty());
 }

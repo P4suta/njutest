@@ -103,11 +103,13 @@ pub enum SkipReason {
     NoStdCrate,
     /// A file another file pastes in at expression position, which is a fragment rather than a program.
     IncludedExpression,
+    /// A file a build script wrote outside the tree, which the tree does not hold and a run cannot rewrite.
+    GeneratedOutsideWorkspace,
 }
 
 impl SkipReason {
     /// Every reason, in rank order.
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::ConstContext,
         Self::MacroInvocation,
         Self::CfgAttribute,
@@ -117,6 +119,7 @@ impl SkipReason {
         Self::TestOnlyFile,
         Self::NoStdCrate,
         Self::IncludedExpression,
+        Self::GeneratedOutsideWorkspace,
     ];
 
     /// The kebab-case name used in reports and on the command line.
@@ -132,6 +135,7 @@ impl SkipReason {
             Self::TestOnlyFile => "test-only-file",
             Self::NoStdCrate => "no-std-crate",
             Self::IncludedExpression => "included-expression",
+            Self::GeneratedOutsideWorkspace => "generated-outside-workspace",
         }
     }
 
@@ -163,6 +167,9 @@ impl SkipReason {
             }
             Self::IncludedExpression => {
                 "another file pastes this one in where an expression goes, so it is a fragment rather than a program: it cannot carry a runtime module and there is nothing to parse it as"
+            }
+            Self::GeneratedOutsideWorkspace => {
+                "a build script wrote this file into the build directory rather than into the tree, so it is not a file a reviewer edits and the next build would write over any change to it"
             }
         }
     }

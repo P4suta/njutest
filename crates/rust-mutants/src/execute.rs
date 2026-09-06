@@ -331,6 +331,32 @@ pub const fn outcome_of(observed: Observation, summary: Option<Summary>) -> Outc
     }
 }
 
+/// What a package's own build script left for every unit of that package: where it wrote, and what it put in the environment.
+///
+/// Cargo tells a unit that reads a build script where the script wrote, and
+/// the unit reads it back at run time through `OUT_DIR`. A test process the
+/// engine starts itself is told nothing unless the engine says it, and a test
+/// that reads a file its build script generated then fails for a reason that
+/// is not the mutation.
+fn built_by_a_script(messages: &[Message], package_id: &str) -> Vec<(OsString, OsString)> {
+    let mut found = Vec::new();
+    for message in messages {
+        let Message::BuildScriptExecuted(script) = message else {
+            continue;
+        };
+        if script.package_id != package_id {
+            continue;
+        }
+        if let Some(out_dir) = &script.out_dir {
+            found.push((OsString::from("OUT_DIR"), out_dir.as_os_str().to_owned()));
+        }
+        for (name, value) in &script.env {
+            found.push((OsString::from(name), OsString::from(value)));
+        }
+    }
+    found
+}
+
 /// The environment one test process runs with: the base the workspace was opened with, the variables cargo sets for the target, the activation, and a temporary directory of the worker's own.
 #[must_use]
 pub fn environment(
@@ -648,16 +674,19 @@ pub fn targets_of(
         else {
             continue;
         };
-        targets.push(TestTarget {
-            id: target_id(&package.name, kind, &artifact.target.name),
-            package: package.name.clone(),
-            kind,
-            name: artifact.target.name.clone(),
-            executable: executable.clone(),
-            cwd: package.manifest_dir().to_path_buf(),
-            cargo_env: cargo_environment(package, kind, target_dir),
-            through: Vec::new(),
-        });
+        let mut env = cargo_environment(package, kind, target_dir);
+        env.extend(built_by_a_script(messages, &artifact.package_id));
+        targets.push(
+            TestTarget::new(
+                target_id(&package.name, kind, &artifact.target.name),
+                package.name.clone(),
+                kind,
+                artifact.target.name.clone(),
+                executable.clone(),
+                package.manifest_dir().to_path_buf(),
+            )
+            .with_cargo_env(env),
+        );
     }
     targets.sort_by(|a, b| a.id.cmp(&b.id));
     targets.dedup_by(|a, b| a.id == b.id);

@@ -18,8 +18,8 @@ pub enum Message {
     CompilerArtifact(Artifact),
     /// rustc said something about a unit.
     CompilerMessage(CompilerMessage),
-    /// A build script ran.
-    BuildScriptExecuted,
+    /// A build script ran, and said where it wrote and what it put in the environment.
+    BuildScriptExecuted(BuildScript),
     /// The build ended.
     BuildFinished {
         /// Whether every unit succeeded.
@@ -30,6 +30,19 @@ pub enum Message {
         /// The reason.
         reason: String,
     },
+}
+
+/// A `build-script-executed` message: what a build script left behind for the units that read it.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
+pub struct BuildScript {
+    /// The package whose build script it was.
+    pub package_id: String,
+    /// The directory it was told to write into, which every unit of the package is told about too.
+    #[serde(default)]
+    pub out_dir: Option<PathBuf>,
+    /// What it put in the environment with `cargo::rustc-env`, in the order it said them.
+    #[serde(default)]
+    pub env: Vec<(String, String)>,
 }
 
 /// A `compiler-artifact` message.
@@ -177,7 +190,7 @@ fn parse_message(line: &str) -> Result<Message, serde_json::Error> {
     Ok(match reason.as_str() {
         "compiler-artifact" => Message::CompilerArtifact(Artifact::deserialize(value)?),
         "compiler-message" => Message::CompilerMessage(CompilerMessage::deserialize(value)?),
-        "build-script-executed" => Message::BuildScriptExecuted,
+        "build-script-executed" => Message::BuildScriptExecuted(BuildScript::deserialize(value)?),
         "build-finished" => Message::BuildFinished {
             success: value
                 .get("success")
