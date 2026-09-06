@@ -10,64 +10,21 @@
     reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
 )]
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
+use mjutest_devkit::fixture::Fixture;
 use rust_mutants::outcome::Outcome;
 use rust_mutants::rule::Tier;
 use rust_mutants::runner::Cancel;
 use rust_mutants::session::{PrepareOptions, Request, Session};
 use rust_mutants::workspace::{OpenOptions, Workspace};
 
-/// A copy of a fixture, so the source tree the engine opens is a throwaway.
-struct Fixture {
-    root: PathBuf,
-    _dir: tempfile::TempDir,
-    _temp: tempfile::TempDir,
-    temp_root: PathBuf,
-}
-
-fn fixture(name: &str) -> Fixture {
-    let dir = tempfile::Builder::new()
-        .prefix("rust-mutants-session-")
-        .tempdir()
-        .expect("tempdir");
-    let root = dir.path().join(name);
-    copy_dir(&mjutest_devkit::paths::fixtures_dir().join(name), &root);
-    let temp = tempfile::Builder::new()
-        .prefix("rust-mutants-session-temp-")
-        .tempdir()
-        .expect("tempdir");
-    let temp_root = temp.path().to_path_buf();
-    Fixture {
-        root,
-        _dir: dir,
-        _temp: temp,
-        temp_root,
-    }
-}
-
-fn copy_dir(from: &Path, to: &Path) {
-    std::fs::create_dir_all(to).expect("mkdir");
-    for entry in std::fs::read_dir(from).expect("read_dir") {
-        let entry = entry.expect("entry");
-        if entry.file_name() == "target" {
-            continue;
-        }
-        let destination = to.join(entry.file_name());
-        if entry.file_type().expect("type").is_dir() {
-            copy_dir(&entry.path(), &destination);
-        } else {
-            std::fs::copy(entry.path(), &destination).expect("copy");
-        }
-    }
-}
-
 fn open(fixture: &Fixture) -> Workspace {
     Workspace::open(
-        &fixture.root,
+        fixture.root(),
         OpenOptions {
             cargo: Some(mjutest_devkit::paths::cargo_binary()),
-            temp_directory: fixture.temp_root.clone(),
+            temp_directory: fixture.temp().to_path_buf(),
             env: std::env::vars_os().collect(),
             locked: true,
             offline: true,
@@ -120,13 +77,16 @@ fn fingerprint(root: &Path) -> Vec<(String, String)> {
 
 #[test]
 fn opening_copies_the_tree_and_never_writes_to_it() {
-    let fixture = fixture("fixture-simple");
-    let before = fingerprint(&fixture.root);
+    let fixture = Fixture::copy("fixture-simple");
+    let before = fingerprint(fixture.root());
     let workspace = open(&fixture);
 
-    assert_eq!(workspace.root(), fixture.root.canonicalize().expect("real"));
+    assert_eq!(
+        workspace.root(),
+        fixture.root().canonicalize().expect("real")
+    );
     assert!(workspace.snapshot_root().join("src/lib.rs").is_file());
-    assert_ne!(workspace.snapshot_root(), fixture.root);
+    assert_ne!(workspace.snapshot_root(), fixture.root());
     assert_eq!(workspace.workspace_digest().len(), 64);
     assert!(workspace.toolchain().host().contains('-'));
     let members: Vec<&str> = workspace
@@ -149,7 +109,7 @@ fn opening_copies_the_tree_and_never_writes_to_it() {
     assert!(workspace.close().expect("close").is_empty());
     assert!(!dir.exists(), "the snapshot goes when the workspace does");
     assert_eq!(
-        fingerprint(&fixture.root),
+        fingerprint(fixture.root()),
         before,
         "the source tree is read-only"
     );
@@ -157,8 +117,8 @@ fn opening_copies_the_tree_and_never_writes_to_it() {
 
 #[test]
 fn preparing_catalogs_instruments_validates_and_builds() {
-    let fixture = fixture("fixture-simple");
-    let before = fingerprint(&fixture.root);
+    let fixture = Fixture::copy("fixture-simple");
+    let before = fingerprint(fixture.root());
     let session = prepare(&fixture);
 
     assert_eq!(session.catalog().len(), 6);
@@ -193,7 +153,7 @@ fn preparing_catalogs_instruments_validates_and_builds() {
         assert_eq!(target.cwd, session.snapshot_root());
     }
     assert_eq!(
-        fingerprint(&fixture.root),
+        fingerprint(fixture.root()),
         before,
         "the source tree is read-only"
     );
@@ -202,7 +162,7 @@ fn preparing_catalogs_instruments_validates_and_builds() {
 
 #[test]
 fn a_mutant_runs_against_every_target_until_one_kills_it() {
-    let fixture = fixture("fixture-simple");
+    let fixture = Fixture::copy("fixture-simple");
     let session = prepare(&fixture);
     let cancel = Cancel::new();
 
@@ -286,7 +246,7 @@ fn a_mutant_runs_against_every_target_until_one_kills_it() {
 
 #[test]
 fn a_request_that_names_nothing_is_refused_by_name() {
-    let fixture = fixture("fixture-simple");
+    let fixture = Fixture::copy("fixture-simple");
     let session = prepare(&fixture);
     let cancel = Cancel::new();
 
@@ -328,7 +288,7 @@ fn a_request_that_names_nothing_is_refused_by_name() {
 
 #[test]
 fn a_refused_candidate_keeps_the_compilers_own_words_and_costs_no_sibling() {
-    let fixture = fixture("fixture-rejectable");
+    let fixture = Fixture::copy("fixture-rejectable");
     let session = prepare(&fixture);
     let mut refused: Vec<&str> = session
         .rejections()
@@ -363,12 +323,12 @@ fn a_refused_candidate_keeps_the_compilers_own_words_and_costs_no_sibling() {
 
 #[test]
 fn keeping_the_temporary_directories_preserves_them_and_says_which() {
-    let fixture = fixture("fixture-simple");
+    let fixture = Fixture::copy("fixture-simple");
     let workspace = Workspace::open(
-        &fixture.root,
+        fixture.root(),
         OpenOptions {
             cargo: Some(mjutest_devkit::paths::cargo_binary()),
-            temp_directory: fixture.temp_root.clone(),
+            temp_directory: fixture.temp().to_path_buf(),
             env: std::env::vars_os().collect(),
             locked: true,
             offline: true,
@@ -389,13 +349,13 @@ fn keeping_the_temporary_directories_preserves_them_and_says_which() {
 fn the_trace_says_what_every_phase_did() {
     use rust_mutants::trace::{MemorySink, Payload, Recorder, Sink};
 
-    let fixture = fixture("fixture-rejectable");
+    let fixture = Fixture::copy("fixture-rejectable");
     let recorder = Recorder::wall(Sink::Memory(MemorySink::unbounded()));
     let workspace = Workspace::open(
-        &fixture.root,
+        fixture.root(),
         OpenOptions {
             cargo: Some(mjutest_devkit::paths::cargo_binary()),
-            temp_directory: fixture.temp_root.clone(),
+            temp_directory: fixture.temp().to_path_buf(),
             env: std::env::vars_os().collect(),
             locked: true,
             offline: true,
@@ -517,7 +477,7 @@ fn the_trace_says_what_every_phase_did() {
 
 #[test]
 fn a_target_with_no_tests_in_it_answers_neither_question() {
-    let fixture = fixture("fixture-subprocess");
+    let fixture = Fixture::copy("fixture-subprocess");
     let session = prepare(&fixture);
     let cancel = Cancel::new();
     let mutant = session
@@ -553,7 +513,7 @@ fn a_target_with_no_tests_in_it_answers_neither_question() {
 
 #[test]
 fn a_dependency_s_documentation_is_not_this_run_s_to_measure() {
-    let fixture = fixture("fixture-simple");
+    let fixture = Fixture::copy("fixture-simple");
     let session = prepare(&fixture);
 
     let documentation: Vec<&str> = session

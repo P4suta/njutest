@@ -9,63 +9,21 @@
     reason = "a test reports a setup failure by panicking and asserts with panics"
 )]
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
+use mjutest_devkit::fixture::Fixture;
 use rust_mutants::outcome::Outcome;
 use rust_mutants::rule::Tier;
 use rust_mutants::runner::Cancel;
 use rust_mutants::session::{PrepareOptions, Request, Session};
 use rust_mutants::workspace::{OpenOptions, Workspace};
 
-struct Fixture {
-    root: PathBuf,
-    _dir: tempfile::TempDir,
-    _temp: tempfile::TempDir,
-    temp_root: PathBuf,
-}
-
-fn fixture(name: &str) -> Fixture {
-    let dir = tempfile::Builder::new()
-        .prefix("rust-mutants-reach-")
-        .tempdir()
-        .expect("tempdir");
-    let root = dir.path().join(name);
-    copy_dir(&mjutest_devkit::paths::fixtures_dir().join(name), &root);
-    let temp = tempfile::Builder::new()
-        .prefix("rust-mutants-reach-temp-")
-        .tempdir()
-        .expect("tempdir");
-    let temp_root = temp.path().to_path_buf();
-    Fixture {
-        root,
-        _dir: dir,
-        _temp: temp,
-        temp_root,
-    }
-}
-
-fn copy_dir(from: &Path, to: &Path) {
-    std::fs::create_dir_all(to).expect("mkdir");
-    for entry in std::fs::read_dir(from).expect("read_dir") {
-        let entry = entry.expect("entry");
-        if entry.file_name() == "target" {
-            continue;
-        }
-        let destination = to.join(entry.file_name());
-        if entry.file_type().expect("type").is_dir() {
-            copy_dir(&entry.path(), &destination);
-        } else {
-            std::fs::copy(entry.path(), &destination).expect("copy");
-        }
-    }
-}
-
 fn prepared(fixture: &Fixture, coverage: bool) -> Session {
     let workspace = Workspace::open(
-        &fixture.root,
+        fixture.root(),
         OpenOptions {
             cargo: Some(mjutest_devkit::paths::cargo_binary()),
-            temp_directory: fixture.temp_root.clone(),
+            temp_directory: fixture.temp().to_path_buf(),
             env: std::env::vars_os().collect(),
             locked: true,
             offline: true,
@@ -113,7 +71,7 @@ fn only<'a>(session: &'a Session, rule: &str) -> &'a rust_mutants::catalog::Muta
 
 #[test]
 fn a_session_that_was_not_asked_to_measure_coverage_proves_nothing_about_reach() {
-    let fixture = fixture("fixture-simple");
+    let fixture = Fixture::copy("fixture-simple");
     let session = prepared(&fixture, false);
     assert!(!session.reached().measured());
     let one = mutant(&session, "gt-to-ge", 11);
@@ -123,7 +81,7 @@ fn a_session_that_was_not_asked_to_measure_coverage_proves_nothing_about_reach()
 
 #[test]
 fn each_target_reaches_the_code_its_own_tests_run_and_no_more() {
-    let fixture = fixture("fixture-simple");
+    let fixture = Fixture::copy("fixture-simple");
     let session = prepared(&fixture, true);
     let reached = session.reached();
     assert!(
@@ -166,10 +124,10 @@ fn each_target_reaches_the_code_its_own_tests_run_and_no_more() {
 
 #[test]
 fn a_mutant_no_measured_target_reached_is_not_run_at_all() {
-    let fixture = fixture("fixture-simple");
-    let mut source = std::fs::read_to_string(fixture.root.join("src/lib.rs")).expect("read");
+    let fixture = Fixture::copy("fixture-simple");
+    let mut source = std::fs::read_to_string(fixture.root().join("src/lib.rs")).expect("read");
     source.push_str("\n/// Nothing calls this.\npub fn unreached(a: i32) -> i32 {\n    a + 1\n}\n");
-    std::fs::write(fixture.root.join("src/lib.rs"), source).expect("write");
+    std::fs::write(fixture.root().join("src/lib.rs"), source).expect("write");
 
     let session = prepared(&fixture, true);
     assert!(session.reached().measured());

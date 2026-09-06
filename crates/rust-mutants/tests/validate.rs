@@ -13,6 +13,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
+use mjutest_devkit::fixture::copy_tree;
 use rust_mutants::cargo::{
     CompileKind, CompileOptions, Driver, LocateOptions, Message, Metadata, MetadataOptions,
     Toolchain, compile,
@@ -267,7 +268,7 @@ fn prepare_fixture(name: &str) -> CargoScripted {
         .tempdir()
         .expect("tempdir");
     let root = dir.path().join(name);
-    copy_dir(&mjutest_devkit::paths::fixtures_dir().join(name), &root);
+    copy_tree(&mjutest_devkit::paths::fixtures_dir().join(name), &root);
     let target = tempfile::Builder::new()
         .prefix("rust-mutants-validate-target-")
         .tempdir()
@@ -354,22 +355,6 @@ fn prepare_fixture(name: &str) -> CargoScripted {
         target: target.path().to_path_buf(),
         _dir: dir,
         _target: target,
-    }
-}
-
-fn copy_dir(from: &std::path::Path, to: &std::path::Path) {
-    std::fs::create_dir_all(to).expect("mkdir");
-    for entry in std::fs::read_dir(from).expect("read_dir") {
-        let entry = entry.expect("entry");
-        if entry.file_name() == "target" {
-            continue;
-        }
-        let destination = to.join(entry.file_name());
-        if entry.file_type().expect("type").is_dir() {
-            copy_dir(&entry.path(), &destination);
-        } else {
-            std::fs::copy(entry.path(), &destination).expect("copy");
-        }
     }
 }
 

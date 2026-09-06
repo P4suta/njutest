@@ -59,55 +59,15 @@ fn an_unknown_subcommand_is_a_usage_error() {
     );
 }
 
-use std::path::PathBuf;
-
-/// A throwaway copy of a fixture, so the tree the command line opens is one nothing else is reading.
-struct Fixture {
-    root: PathBuf,
-    /// Every snapshot and build cache the run makes goes in here, so the tree a test leaves behind is the tree it took with it.
-    temp: PathBuf,
-    _dir: tempfile::TempDir,
-}
-
-fn fixture(name: &str) -> Fixture {
-    let dir = tempfile::Builder::new()
-        .prefix("rust-mutants-cli-")
-        .tempdir()
-        .expect("tempdir");
-    let root = dir.path().join(name);
-    copy_dir(&mjutest_devkit::paths::fixtures_dir().join(name), &root);
-    let temp = dir.path().join("temp");
-    std::fs::create_dir_all(&temp).expect("mkdir");
-    Fixture {
-        root,
-        temp,
-        _dir: dir,
-    }
-}
-
-fn copy_dir(from: &Path, to: &Path) {
-    std::fs::create_dir_all(to).expect("mkdir");
-    for entry in std::fs::read_dir(from).expect("read_dir") {
-        let entry = entry.expect("entry");
-        if entry.file_name() == "target" {
-            continue;
-        }
-        let destination = to.join(entry.file_name());
-        if entry.file_type().expect("type").is_dir() {
-            copy_dir(&entry.path(), &destination);
-        } else {
-            std::fs::copy(entry.path(), &destination).expect("copy");
-        }
-    }
-}
+use mjutest_devkit::fixture::Fixture;
 
 /// Runs the binary against a fixture, with the environment a real run has.
 fn against(fixture: &Fixture, args: &[&str]) -> Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_rust-mutants"));
     command.env("NO_COLOR", "1");
-    command.env("TMPDIR", &fixture.temp);
+    command.env("TMPDIR", fixture.temp());
     command.arg(args[0]);
-    command.args(["--root", &fixture.root.to_string_lossy()]);
+    command.args(["--root", &fixture.root().to_string_lossy()]);
     command.args(["--tier", "all"]);
     command.args(["--offline", "--locked"]);
     command.args(&args[1..]);
@@ -120,7 +80,7 @@ fn stdout(output: &Output) -> String {
 
 #[test]
 fn list_names_every_candidate_without_building_anything() {
-    let fixture = fixture("fixture-simple");
+    let fixture = Fixture::copy("fixture-simple");
     let output = against(&fixture, &["list"]);
     assert_eq!(
         output.status.code(),
@@ -143,7 +103,7 @@ fn list_names_every_candidate_without_building_anything() {
 
 #[test]
 fn why_skipped_tallies_the_reasons_with_a_sentence_each() {
-    let fixture = fixture("fixture-simple");
+    let fixture = Fixture::copy("fixture-simple");
     let output = against(&fixture, &["why-skipped"]);
     assert_eq!(output.status.code(), Some(0));
     let text = stdout(&output);
@@ -157,7 +117,7 @@ fn why_skipped_tallies_the_reasons_with_a_sentence_each() {
 
 #[test]
 fn catalog_says_what_compiles_and_what_the_compiler_refused() {
-    let fixture = fixture("fixture-rejectable");
+    let fixture = Fixture::copy("fixture-rejectable");
     let output = against(&fixture, &["catalog", "--no-verify"]);
     assert_eq!(
         output.status.code(),
@@ -173,7 +133,7 @@ fn catalog_says_what_compiles_and_what_the_compiler_refused() {
 
 #[test]
 fn catalog_as_json_is_one_document_a_program_can_read() {
-    let fixture = fixture("fixture-simple");
+    let fixture = Fixture::copy("fixture-simple");
     let output = against(&fixture, &["catalog", "--json"]);
     assert_eq!(
         output.status.code(),
@@ -197,7 +157,7 @@ fn catalog_as_json_is_one_document_a_program_can_read() {
 
 #[test]
 fn explain_says_everything_known_about_one_mutant() {
-    let fixture = fixture("fixture-simple");
+    let fixture = Fixture::copy("fixture-simple");
     let listed = stdout(&against(&fixture, &["list"]));
     let short = listed
         .lines()
@@ -225,7 +185,7 @@ fn explain_says_everything_known_about_one_mutant() {
 
 #[test]
 fn run_exits_by_what_the_tests_said() {
-    let fixture = fixture("fixture-simple");
+    let fixture = Fixture::copy("fixture-simple");
     let listed = stdout(&against(&fixture, &["list"]));
     let short_of = |rule: &str| -> String {
         listed
@@ -259,7 +219,7 @@ fn run_exits_by_what_the_tests_said() {
 
 #[test]
 fn instrument_prints_one_file_as_the_engine_rewrites_it() {
-    let fixture = fixture("fixture-simple");
+    let fixture = Fixture::copy("fixture-simple");
     let output = against(&fixture, &["instrument", "--file", "src/lib.rs"]);
     assert_eq!(
         output.status.code(),
@@ -275,7 +235,7 @@ fn instrument_prints_one_file_as_the_engine_rewrites_it() {
     );
     assert!(text.contains("#[allow(warnings, unused, unused_qualifications, unfulfilled_lint_expectations, clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery, clippy::cargo)] pub fn max"), "{text}");
 
-    let source = std::fs::read_to_string(fixture.root.join("src/lib.rs")).expect("read");
+    let source = std::fs::read_to_string(fixture.root().join("src/lib.rs")).expect("read");
     assert!(
         !source.contains("__rm"),
         "the source workspace is read-only"
@@ -300,7 +260,7 @@ fn the_catalog_document_validates_against_its_schema() {
     let validator = jsonschema::validator_for(&schema).expect("the schema compiles");
 
     for fixture_name in ["fixture-simple", "fixture-rejectable"] {
-        let fixture = fixture(fixture_name);
+        let fixture = Fixture::copy(fixture_name);
         let output = against(&fixture, &["catalog", "--json", "--no-verify"]);
         assert_eq!(
             output.status.code(),

@@ -14,6 +14,7 @@ use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
+use mjutest_devkit::fixture::copy_tree;
 use rust_mutants::cargo::{
     CompileKind, CompileOptions, Driver, LocateOptions, Message, Metadata, MetadataOptions,
     Toolchain, compile,
@@ -39,22 +40,6 @@ struct Tree {
     _target: tempfile::TempDir,
 }
 
-fn copy_dir(from: &Path, to: &Path) {
-    std::fs::create_dir_all(to).expect("mkdir");
-    for entry in std::fs::read_dir(from).expect("read_dir") {
-        let entry = entry.expect("entry");
-        if entry.file_name() == "target" {
-            continue;
-        }
-        let destination = to.join(entry.file_name());
-        if entry.file_type().expect("type").is_dir() {
-            copy_dir(&entry.path(), &destination);
-        } else {
-            std::fs::copy(entry.path(), &destination).expect("copy");
-        }
-    }
-}
-
 fn toolchain(dir: &Path, cancel: &Cancel) -> Toolchain {
     Toolchain::locate(
         &LocateOptions {
@@ -74,7 +59,7 @@ fn prepare(fixture: &str) -> Tree {
         .tempdir()
         .expect("tempdir");
     let root = dir.path().join(fixture);
-    copy_dir(&mjutest_devkit::paths::fixtures_dir().join(fixture), &root);
+    copy_tree(&mjutest_devkit::paths::fixtures_dir().join(fixture), &root);
     let target = tempfile::Builder::new()
         .prefix("rust-mutants-tree-target-")
         .tempdir()

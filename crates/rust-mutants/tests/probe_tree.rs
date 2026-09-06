@@ -8,58 +8,19 @@
     reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
 )]
 
-use std::path::{Path, PathBuf};
-
+use mjutest_devkit::fixture::Fixture;
 use rust_mutants::outcome::Outcome;
 use rust_mutants::rule::Tier;
 use rust_mutants::runner::Cancel;
 use rust_mutants::session::{PrepareOptions, Request, Session};
 use rust_mutants::workspace::{OpenOptions, Workspace};
 
-struct Fixture {
-    root: PathBuf,
-    temp: PathBuf,
-    _dir: tempfile::TempDir,
-}
-
-fn fixture(name: &str) -> Fixture {
-    let dir = tempfile::Builder::new()
-        .prefix("rust-mutants-probe-")
-        .tempdir()
-        .expect("tempdir");
-    let root = dir.path().join(name);
-    copy(&mjutest_devkit::paths::fixtures_dir().join(name), &root);
-    let temp = dir.path().join("temp");
-    std::fs::create_dir_all(&temp).expect("mkdir");
-    Fixture {
-        root,
-        temp,
-        _dir: dir,
-    }
-}
-
-fn copy(from: &Path, to: &Path) {
-    std::fs::create_dir_all(to).expect("mkdir");
-    for entry in std::fs::read_dir(from).expect("read_dir") {
-        let entry = entry.expect("entry");
-        if entry.file_name() == "target" {
-            continue;
-        }
-        let destination = to.join(entry.file_name());
-        if entry.file_type().expect("type").is_dir() {
-            copy(&entry.path(), &destination);
-        } else {
-            std::fs::copy(entry.path(), &destination).expect("copy");
-        }
-    }
-}
-
 fn prepared(fixture: &Fixture, cancel: &Cancel) -> Session {
     Workspace::open(
-        &fixture.root,
+        fixture.root(),
         OpenOptions {
             cargo: Some(mjutest_devkit::paths::cargo_binary()),
-            temp_directory: fixture.temp.clone(),
+            temp_directory: fixture.temp().to_path_buf(),
             env: std::env::vars_os().collect(),
             offline: true,
             locked: true,
@@ -82,16 +43,16 @@ fn prepared(fixture: &Fixture, cancel: &Cancel) -> Session {
 
 #[test]
 fn a_run_about_one_package_builds_that_package_and_type_checks_them_all() {
-    let fixture = fixture("fixture-workspace");
+    let fixture = Fixture::copy("fixture-workspace");
     let cancel = Cancel::new();
     let trace = rust_mutants::trace::Recorder::wall(rust_mutants::trace::Sink::Memory(
         rust_mutants::trace::MemorySink::unbounded(),
     ));
     let session = Workspace::open(
-        &fixture.root,
+        fixture.root(),
         OpenOptions {
             cargo: Some(mjutest_devkit::paths::cargo_binary()),
-            temp_directory: fixture.temp.clone(),
+            temp_directory: fixture.temp().to_path_buf(),
             env: std::env::vars_os().collect(),
             offline: true,
             locked: true,
@@ -157,7 +118,7 @@ fn a_run_about_one_package_builds_that_package_and_type_checks_them_all() {
 
 #[test]
 fn the_probe_asks_about_what_it_can_and_leaves_the_rest_alone() {
-    let fixture = fixture("fixture-probeable");
+    let fixture = Fixture::copy("fixture-probeable");
     let cancel = Cancel::new();
     let session = prepared(&fixture, &cancel);
     let probed = session.probed();
@@ -196,7 +157,7 @@ fn the_probe_asks_about_what_it_can_and_leaves_the_rest_alone() {
 
 #[test]
 fn a_test_that_killed_a_mutant_is_one_the_probe_recorded_infecting_it() {
-    let fixture = fixture("fixture-probeable");
+    let fixture = Fixture::copy("fixture-probeable");
     let cancel = Cancel::new();
     let session = prepared(&fixture, &cancel);
     let probed = session.probed().clone();

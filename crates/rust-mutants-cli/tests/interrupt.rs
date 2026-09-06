@@ -10,26 +10,11 @@
     reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
 )]
 
+use mjutest_devkit::fixture::copy_tree;
 use std::io::{BufRead as _, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
-
-fn copy_dir(from: &Path, to: &Path) {
-    std::fs::create_dir_all(to).expect("mkdir");
-    for entry in std::fs::read_dir(from).expect("read_dir") {
-        let entry = entry.expect("entry");
-        if entry.file_name() == "target" {
-            continue;
-        }
-        let destination = to.join(entry.file_name());
-        if entry.file_type().expect("type").is_dir() {
-            copy_dir(&entry.path(), &destination);
-        } else {
-            std::fs::copy(entry.path(), &destination).expect("copy");
-        }
-    }
-}
 
 /// Every process on this machine whose process group is `group`, which is the tree the engine puts a test process in.
 fn in_group(group: u32) -> Vec<u32> {
@@ -96,7 +81,7 @@ fn a_run_that_is_interrupted_exits_130_and_leaves_no_process_and_no_snapshot_beh
         .tempdir()
         .expect("tempdir");
     let root = dir.path().join("fixture-simple");
-    copy_dir(
+    copy_tree(
         &mjutest_devkit::paths::fixtures_dir().join("fixture-simple"),
         &root,
     );

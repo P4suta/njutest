@@ -9,58 +9,16 @@
     reason = "a test reports a setup failure by panicking and reads a document as a table"
 )]
 
-use std::path::{Path, PathBuf};
+use mjutest_devkit::fixture::Fixture;
 use std::process::{Command, Output};
-
-struct Fixture {
-    root: PathBuf,
-    temp: PathBuf,
-    cache: PathBuf,
-    _dir: tempfile::TempDir,
-}
-
-fn fixture(name: &str) -> Fixture {
-    let dir = tempfile::Builder::new()
-        .prefix("rust-mutants-projection-")
-        .tempdir()
-        .expect("tempdir");
-    let root = dir.path().join(name);
-    copy_dir(&mjutest_devkit::paths::fixtures_dir().join(name), &root);
-    let temp = dir.path().join("temp");
-    let cache = dir.path().join("cache");
-    std::fs::create_dir_all(&temp).expect("mkdir");
-    std::fs::create_dir_all(&cache).expect("mkdir");
-    Fixture {
-        root,
-        temp,
-        cache,
-        _dir: dir,
-    }
-}
-
-fn copy_dir(from: &Path, to: &Path) {
-    std::fs::create_dir_all(to).expect("mkdir");
-    for entry in std::fs::read_dir(from).expect("read_dir") {
-        let entry = entry.expect("entry");
-        if entry.file_name() == "target" {
-            continue;
-        }
-        let destination = to.join(entry.file_name());
-        if entry.file_type().expect("type").is_dir() {
-            copy_dir(&entry.path(), &destination);
-        } else {
-            std::fs::copy(entry.path(), &destination).expect("copy");
-        }
-    }
-}
 
 fn against(fixture: &Fixture, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_rust-mutants"))
         .env("NO_COLOR", "1")
-        .env("TMPDIR", &fixture.temp)
-        .env("XDG_CACHE_HOME", &fixture.cache)
+        .env("TMPDIR", fixture.temp())
+        .env("XDG_CACHE_HOME", fixture.cache())
         .args(args)
-        .args(["--root", &fixture.root.to_string_lossy()])
+        .args(["--root", &fixture.root().to_string_lossy()])
         .output()
         .expect("rust-mutants runs")
 }
@@ -70,7 +28,7 @@ fn stdout(output: &Output) -> String {
 }
 
 fn measured() -> Fixture {
-    let fixture = fixture("fixture-unicode");
+    let fixture = Fixture::copy("fixture-unicode");
     let ran = against(&fixture, &["run", "--offline", "--locked"]);
     assert!(
         ran.status.code().is_some_and(|code| code <= 1),
@@ -156,7 +114,7 @@ fn a_page_needs_nothing_from_the_network_to_be_read() {
 #[test]
 fn a_page_written_to_a_file_says_where_it_put_it() {
     let fixture = measured();
-    let path = fixture.root.join("report.html");
+    let path = fixture.root().join("report.html");
     let written = against(
         &fixture,
         &[
@@ -174,7 +132,7 @@ fn a_page_written_to_a_file_says_where_it_put_it() {
 
 #[test]
 fn the_doctor_answers_as_a_document_when_it_is_asked_to() {
-    let fixture = fixture("fixture-simple");
+    let fixture = Fixture::copy("fixture-simple");
     let asked = against(&fixture, &["doctor", "--json"]);
     let document: serde_json::Value =
         serde_json::from_str(&stdout(&asked)).expect("the answer is JSON");
@@ -199,7 +157,7 @@ fn the_doctor_answers_as_a_document_when_it_is_asked_to() {
 
 #[test]
 fn the_doctor_says_the_same_thing_in_lines_and_in_a_document() {
-    let fixture = fixture("fixture-simple");
+    let fixture = Fixture::copy("fixture-simple");
     let lines = against(&fixture, &["doctor"]);
     let document = against(&fixture, &["doctor", "--json"]);
     assert_eq!(lines.status.code(), document.status.code());

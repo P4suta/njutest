@@ -9,59 +9,17 @@
     reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
 )]
 
-use std::path::{Path, PathBuf};
+use mjutest_devkit::fixture::{Fixture, copy_tree};
+use std::path::PathBuf;
 use std::process::{Command, Output};
-
-struct Fixture {
-    root: PathBuf,
-    cache: PathBuf,
-    /// Every snapshot and build cache the run makes goes in here, so the tree a test leaves behind is the tree it took with it.
-    temp: PathBuf,
-    _dir: tempfile::TempDir,
-}
-
-fn fixture(name: &str) -> Fixture {
-    let dir = tempfile::Builder::new()
-        .prefix("rust-mutants-run-")
-        .tempdir()
-        .expect("tempdir");
-    let root = dir.path().join(name);
-    copy_dir(&mjutest_devkit::paths::fixtures_dir().join(name), &root);
-    let temp = dir.path().join("temp");
-    std::fs::create_dir_all(&temp).expect("mkdir");
-    let cache = dir.path().join("cache");
-    std::fs::create_dir_all(&cache).expect("mkdir");
-    Fixture {
-        root,
-        cache,
-        temp,
-        _dir: dir,
-    }
-}
-
-fn copy_dir(from: &Path, to: &Path) {
-    std::fs::create_dir_all(to).expect("mkdir");
-    for entry in std::fs::read_dir(from).expect("read_dir") {
-        let entry = entry.expect("entry");
-        if entry.file_name() == "target" {
-            continue;
-        }
-        let destination = to.join(entry.file_name());
-        if entry.file_type().expect("type").is_dir() {
-            copy_dir(&entry.path(), &destination);
-        } else {
-            std::fs::copy(entry.path(), &destination).expect("copy");
-        }
-    }
-}
 
 fn against(fixture: &Fixture, args: &[&str]) -> Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_rust-mutants"));
     command.env("NO_COLOR", "1");
-    command.env("TMPDIR", &fixture.temp);
-    command.env("XDG_CACHE_HOME", &fixture.cache);
+    command.env("TMPDIR", fixture.temp());
+    command.env("XDG_CACHE_HOME", fixture.cache());
     command.args(args);
-    command.args(["--root", &fixture.root.to_string_lossy()]);
+    command.args(["--root", &fixture.root().to_string_lossy()]);
     command.output().expect("rust-mutants runs")
 }
 
@@ -70,8 +28,8 @@ fn rootless(fixture: &Fixture, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_rust-mutants"))
         .args(args)
         .env("NO_COLOR", "1")
-        .env("TMPDIR", &fixture.temp)
-        .env("XDG_CACHE_HOME", &fixture.cache)
+        .env("TMPDIR", fixture.temp())
+        .env("XDG_CACHE_HOME", fixture.cache())
         .output()
         .expect("rust-mutants runs")
 }
@@ -85,7 +43,7 @@ fn count(value: usize) -> u64 {
 }
 
 fn stored(fixture: &Fixture) -> serde_json::Value {
-    let directory = fixture.root.join("reports/mutation");
+    let directory = fixture.root().join("reports/mutation");
     let pointer: serde_json::Value = serde_json::from_str(
         &std::fs::read_to_string(directory.join("latest.json"))
             .expect("a pointer to the newest run"),
@@ -98,7 +56,7 @@ fn stored(fixture: &Fixture) -> serde_json::Value {
 
 #[test]
 fn a_whole_run_judges_every_mutant_scores_the_workspace_and_writes_the_report() {
-    let fixture = fixture("fixture-simple");
+    let fixture = Fixture::copy("fixture-simple");
     let output = against(&fixture, &["run", "--offline", "--locked", "--tier", "all"]);
     let text = stdout(&output);
     assert_eq!(
@@ -140,7 +98,7 @@ fn a_whole_run_judges_every_mutant_scores_the_workspace_and_writes_the_report() 
 
 #[test]
 fn the_report_names_every_mutant_scores_what_it_decided_and_reports_every_survivor() {
-    let fixture = fixture("fixture-simple");
+    let fixture = Fixture::copy("fixture-simple");
     let output = against(&fixture, &["run", "--offline", "--locked", "--tier", "all"]);
     assert_eq!(output.status.code(), Some(1), "{}", stdout(&output));
     let document = stored(&fixture);
@@ -166,7 +124,7 @@ fn the_report_names_every_mutant_scores_what_it_decided_and_reports_every_surviv
 
 #[test]
 fn the_report_validates_against_the_schema_that_is_published_with_it() {
-    let fixture = fixture("fixture-simple");
+    let fixture = Fixture::copy("fixture-simple");
     let output = against(&fixture, &["run", "--offline", "--locked"]);
     assert!(
         output.status.code() == Some(0) || output.status.code() == Some(1),
@@ -191,7 +149,7 @@ fn the_report_validates_against_the_schema_that_is_published_with_it() {
 
 #[test]
 fn the_stored_report_is_read_back_by_the_report_command() {
-    let fixture = fixture("fixture-simple");
+    let fixture = Fixture::copy("fixture-simple");
     let run = against(&fixture, &["run", "--offline", "--locked"]);
     assert_eq!(run.status.code(), Some(1));
 
@@ -221,7 +179,7 @@ fn the_stored_report_is_read_back_by_the_report_command() {
 
 #[test]
 fn an_expectation_the_run_confirms_stops_being_a_finding_and_a_stale_one_starts() {
-    let fixture = fixture("fixture-simple");
+    let fixture = Fixture::copy("fixture-simple");
     let first = against(&fixture, &["run", "--offline", "--locked", "--no-report"]);
     assert_eq!(first.status.code(), Some(1));
     let survivor = stdout(&first)
@@ -233,7 +191,7 @@ fn an_expectation_the_run_confirms_stops_being_a_finding_and_a_stale_one_starts(
         .to_owned();
 
     std::fs::write(
-        fixture.root.join(".rust-mutants.toml"),
+        fixture.root().join(".rust-mutants.toml"),
         format!(
             "version = 1\n\n[[mutation.expect]]\nid = \"{survivor}\"\nreason = \"the fixture \
              documents this one as unreachable by its single test\"\n"
@@ -255,7 +213,7 @@ fn an_expectation_the_run_confirms_stops_being_a_finding_and_a_stale_one_starts(
     );
 
     std::fs::write(
-        fixture.root.join(".rust-mutants.toml"),
+        fixture.root().join(".rust-mutants.toml"),
         "version = 1\n\n[[mutation.expect]]\nid = \"0000deadbeef\"\nreason = \"a mutant that is \
          not in this catalog\"\n",
     )
@@ -276,11 +234,11 @@ fn an_expectation_the_run_confirms_stops_being_a_finding_and_a_stale_one_starts(
 
 #[test]
 fn a_process_that_already_selects_a_mutant_is_refused_before_anything_runs() {
-    let fixture = fixture("fixture-simple");
+    let fixture = Fixture::copy("fixture-simple");
     let output = Command::new(env!("CARGO_BIN_EXE_rust-mutants"))
-        .args(["list", "--root", &fixture.root.to_string_lossy()])
+        .args(["list", "--root", &fixture.root().to_string_lossy()])
         .env("NO_COLOR", "1")
-        .env("TMPDIR", &fixture.temp)
+        .env("TMPDIR", fixture.temp())
         .env("RUST_MUTANTS_ACTIVE", "0".repeat(64))
         .output()
         .expect("rust-mutants runs");
@@ -292,10 +250,10 @@ fn a_process_that_already_selects_a_mutant_is_refused_before_anything_runs() {
 
 #[test]
 fn init_writes_a_configuration_that_changes_nothing_and_refuses_to_overwrite() {
-    let fixture = fixture("fixture-simple");
+    let fixture = Fixture::copy("fixture-simple");
     let first = against(&fixture, &["init"]);
     assert_eq!(first.status.code(), Some(0), "{}", stdout(&first));
-    let path = fixture.root.join(".rust-mutants.toml");
+    let path = fixture.root().join(".rust-mutants.toml");
     assert!(path.is_file());
 
     let again = against(&fixture, &["init"]);
@@ -311,7 +269,7 @@ fn init_writes_a_configuration_that_changes_nothing_and_refuses_to_overwrite() {
 
 #[test]
 fn doctor_names_the_toolchain_the_workspace_and_where_temporary_trees_go() {
-    let fixture = fixture("fixture-simple");
+    let fixture = Fixture::copy("fixture-simple");
     let output = against(&fixture, &["doctor"]);
     assert_eq!(
         output.status.code(),
@@ -333,7 +291,7 @@ fn cache_says_what_a_run_left_in_the_temporary_directory_and_gc_reclaims_it() {
         .tempdir()
         .expect("tempdir");
     let root = dir.path().join("fixture-simple");
-    copy_dir(
+    copy_tree(
         &mjutest_devkit::paths::fixtures_dir().join("fixture-simple"),
         &root,
     );
@@ -385,7 +343,7 @@ fn cache_says_what_a_run_left_in_the_temporary_directory_and_gc_reclaims_it() {
 
 #[test]
 fn a_shard_is_not_a_shard_unless_it_names_a_part_of_something() {
-    let fixture = fixture("fixture-simple");
+    let fixture = Fixture::copy("fixture-simple");
     for bad in ["0/2", "3/2", "1/0", "one/two", "2", ""] {
         let output = against(&fixture, &["run", "--offline", "--locked", "--shard", bad]);
         assert_eq!(
@@ -399,7 +357,7 @@ fn a_shard_is_not_a_shard_unless_it_names_a_part_of_something() {
 
 #[test]
 fn the_parts_of_a_catalog_put_back_together_are_the_whole_of_it() {
-    let whole_fixture = fixture("fixture-simple");
+    let whole_fixture = Fixture::copy("fixture-simple");
     let output = against(
         &whole_fixture,
         &["run", "--offline", "--locked", "--tier", "all"],
@@ -407,7 +365,7 @@ fn the_parts_of_a_catalog_put_back_together_are_the_whole_of_it() {
     assert_eq!(output.status.code(), Some(1), "{}", stdout(&output));
     let whole = stored(&whole_fixture);
 
-    let parts_fixture = fixture("fixture-simple");
+    let parts_fixture = Fixture::copy("fixture-simple");
     let mut written = Vec::new();
     for part in ["1/3", "2/3", "3/3"] {
         let output = against(
@@ -430,7 +388,7 @@ fn the_parts_of_a_catalog_put_back_together_are_the_whole_of_it() {
         let document = stored(&parts_fixture);
         assert_eq!(document["run"]["shard"], part);
         let path = parts_fixture
-            .root
+            .root()
             .join(format!("part-{}.json", part.replace('/', "-")));
         std::fs::write(&path, serde_json::to_string(&document).expect("renders")).expect("write");
         written.push(path);
@@ -481,13 +439,13 @@ fn the_parts_of_a_catalog_put_back_together_are_the_whole_of_it() {
 
 #[test]
 fn reports_that_are_not_the_parts_of_one_whole_are_refused() {
-    let fixture = fixture("fixture-simple");
+    let fixture = Fixture::copy("fixture-simple");
     let first = against(
         &fixture,
         &["run", "--offline", "--locked", "--shard", "1/2"],
     );
     assert!(first.status.code().is_some(), "{}", stdout(&first));
-    let one = fixture.root.join("one.json");
+    let one = fixture.root().join("one.json");
     std::fs::write(
         &one,
         serde_json::to_string(&stored(&fixture)).expect("renders"),
@@ -508,7 +466,7 @@ fn reports_that_are_not_the_parts_of_one_whole_are_refused() {
 
 #[test]
 fn a_warm_cache_reaches_the_same_answer_without_executing_a_mutant() {
-    let fixture = fixture("fixture-simple");
+    let fixture = Fixture::copy("fixture-simple");
     let cold = against(&fixture, &["run", "--offline", "--locked", "--tier", "all"]);
     assert_eq!(cold.status.code(), Some(1), "{}", stdout(&cold));
     let first = stored(&fixture);
@@ -562,14 +520,14 @@ fn a_warm_cache_reaches_the_same_answer_without_executing_a_mutant() {
 
 #[test]
 fn a_tree_that_changed_is_a_different_question_and_is_answered_again() {
-    let fixture = fixture("fixture-simple");
+    let fixture = Fixture::copy("fixture-simple");
     assert_eq!(
         against(&fixture, &["run", "--offline", "--locked"])
             .status
             .code(),
         Some(1)
     );
-    let path = fixture.root.join("src/lib.rs");
+    let path = fixture.root().join("src/lib.rs");
     let source = std::fs::read_to_string(&path).expect("the source");
     std::fs::write(&path, format!("{source}\n// one more line\n")).expect("write");
 

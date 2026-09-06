@@ -8,8 +8,7 @@
     reason = "a test reports a setup failure by panicking"
 )]
 
-use std::path::{Path, PathBuf};
-
+use mjutest_devkit::fixture::Fixture;
 use rust_mutants::equivalence::artifacts::{
     Artifacts, DIFFERENT_TARGETS, Identity, NOTHING_TO_COMPARE, compare,
 };
@@ -68,43 +67,14 @@ fn the_same_bytes_are_the_same_program_and_different_bytes_are_not() {
     );
 }
 
-struct Fixture {
-    root: PathBuf,
-    _dir: tempfile::TempDir,
-}
-
-fn fixture(name: &str) -> Fixture {
-    let source = mjutest_devkit::paths::fixtures_dir().join(name);
-    let dir = tempfile::Builder::new()
-        .prefix("rust-mutants-equivalence-")
-        .tempdir()
-        .expect("a temporary directory");
-    let root = dir.path().join(name);
-    copy(&source, &root);
-    Fixture { root, _dir: dir }
-}
-
-fn copy(from: &Path, to: &Path) {
-    std::fs::create_dir_all(to).expect("the directory");
-    for entry in std::fs::read_dir(from).expect("the fixture") {
-        let entry = entry.expect("an entry");
-        let target = to.join(entry.file_name());
-        if entry.file_type().expect("a file type").is_dir() {
-            copy(&entry.path(), &target);
-        } else {
-            std::fs::copy(entry.path(), target).expect("a copy");
-        }
-    }
-}
-
 fn prover(fixture: &Fixture, cancel: &Cancel) -> Prover {
     Prover::open(
-        &fixture.root,
+        fixture.root(),
         &ProveOptions {
             open: OpenOptions {
                 cargo: Some(mjutest_devkit::paths::cargo_binary()),
                 env: std::env::vars_os().collect(),
-                temp_directory: fixture.root.parent().unwrap_or(&fixture.root).to_path_buf(),
+                temp_directory: fixture.temp().to_path_buf(),
                 locked: true,
                 offline: true,
                 ..OpenOptions::default()
@@ -119,11 +89,11 @@ fn prover(fixture: &Fixture, cancel: &Cancel) -> Prover {
 
 #[test]
 fn a_mutation_the_compiler_renders_identically_is_identical_and_one_it_renders_is_not() {
-    let fixture = fixture("fixture-equivalent");
+    let fixture = Fixture::copy("fixture-equivalent");
     let cancel = Cancel::new();
     let mut prover = prover(&fixture, &cancel);
     let selection = rust_mutants::syntax::Selection::tier(&REGISTRY, rust_mutants::rule::Tier::All);
-    let source = std::fs::read(fixture.root.join("src/lib.rs")).expect("the library");
+    let source = std::fs::read(fixture.root().join("src/lib.rs")).expect("the library");
     let discovery =
         rust_mutants::syntax::discover_file("src/lib.rs", &source, &selection).expect("discover");
     let by_rule = |rule: &str| {

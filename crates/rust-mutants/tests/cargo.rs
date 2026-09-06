@@ -14,6 +14,7 @@ use std::collections::BTreeSet;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
+use mjutest_devkit::fixture::copy_tree;
 use rust_mutants::cargo::{
     CargoError, CargoErrorKind, Diagnostic, Driver, LocateOptions, Message, Metadata,
     MetadataOptions, Toolchain, dep_info_path, parse_dep_info, parse_messages, parse_version,
@@ -509,7 +510,7 @@ fn a_check_that_fails_to_compile_still_yields_its_messages() {
     let target = scratch_target("broken");
     let snapshot = tempfile::tempdir().expect("tempdir");
     let copy = snapshot.path().join("fixture-simple");
-    copy_dir(&dir, &copy);
+    copy_tree(&dir, &copy);
     std::fs::write(
         copy.join("src/lib.rs"),
         "pub fn f() -> i32 { let s = String::new(); s - \"x\" }\n",
@@ -555,22 +556,6 @@ fn diagnostic_of(message: &Message) -> &Diagnostic {
     match message {
         Message::CompilerMessage(message) => &message.message,
         other => panic!("not a compiler message: {other:?}"),
-    }
-}
-
-fn copy_dir(from: &Path, to: &Path) {
-    std::fs::create_dir_all(to).expect("mkdir");
-    for entry in std::fs::read_dir(from).expect("read_dir") {
-        let entry = entry.expect("entry");
-        let dest = to.join(entry.file_name());
-        if entry.file_name() == "target" {
-            continue;
-        }
-        if entry.file_type().expect("type").is_dir() {
-            copy_dir(&entry.path(), &dest);
-        } else {
-            std::fs::copy(entry.path(), &dest).expect("copy");
-        }
     }
 }
 
