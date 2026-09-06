@@ -34,11 +34,19 @@ pub enum TargetKind {
     Test,
     /// An example built with `test = true`.
     Example,
+    /// A procedural macro crate's own unit tests, which are an ordinary test binary.
+    ProcMacro,
 }
 
 impl TargetKind {
     /// Every kind, in the order a report lists them.
-    pub const ALL: [Self; 4] = [Self::Lib, Self::Bin, Self::Test, Self::Example];
+    pub const ALL: [Self; 5] = [
+        Self::Lib,
+        Self::Bin,
+        Self::Test,
+        Self::Example,
+        Self::ProcMacro,
+    ];
 
     /// The name used in a target id and in reports.
     #[must_use]
@@ -48,6 +56,7 @@ impl TargetKind {
             Self::Bin => "bin",
             Self::Test => "test",
             Self::Example => "example",
+            Self::ProcMacro => "proc-macro",
         }
     }
 
@@ -57,11 +66,18 @@ impl TargetKind {
         Self::ALL.into_iter().find(|kind| kind.name() == name)
     }
 
-    /// The kind of a cargo target, or `None` for one that carries no tests the engine runs (a build script, a bench, a proc macro).
+    /// The kind of a cargo target, or `None` for one that carries no tests the engine runs (a build script, a bench).
+    ///
+    /// A proc-macro crate's `--test` build is an ordinary executable that links
+    /// the crate as a library and runs its unit tests in a process of its own,
+    /// so what those tests reach is measurable exactly like anything else. What
+    /// is not is the expansion, which runs inside the compiler during the build.
     #[must_use]
     pub fn of(target: &Target) -> Option<Self> {
-        if target.is_proc_macro() || target.is_custom_build() || target.is_bench() {
+        if target.is_custom_build() || target.is_bench() {
             None
+        } else if target.is_proc_macro() {
+            Some(Self::ProcMacro)
         } else if target.is_lib() {
             Some(Self::Lib)
         } else if target.is_bin() {
@@ -240,6 +256,10 @@ pub fn environment(
     if let Some(cargo) = cargo {
         env.insert(OsString::from("CARGO"), cargo.as_os_str().to_owned());
     }
+    if let Some(sysroot) = context.sysroot {
+        let (name, value) = library_path(sysroot, base);
+        env.insert(name, value);
+    }
     if let Some((id, catalog)) = active {
         env.insert(OsString::from(ACTIVE_ENV), OsString::from(id));
         env.insert(OsString::from(CATALOG_ENV), OsString::from(catalog));
@@ -259,6 +279,53 @@ pub fn environment(
         }
     }
     env.into_iter().collect()
+}
+
+/// The variable a dynamically linked test binary is found through, and what it should hold.
+///
+/// A test binary is started directly rather than through `cargo test`, and one
+/// cargo built with `prefer-dynamic` — every proc-macro crate's own tests, and
+/// anything else a project asks it for — then cannot find `libstd`. Cargo sets
+/// this for the test binaries it runs; so does the engine, from the toolchain
+/// rustc named as its own, keeping whatever the environment already had after
+/// it.
+fn library_path(sysroot: &Path, base: &[(OsString, OsString)]) -> (OsString, OsString) {
+    let name = if cfg!(target_os = "macos") {
+        "DYLD_FALLBACK_LIBRARY_PATH"
+    } else if cfg!(windows) {
+        "PATH"
+    } else {
+        "LD_LIBRARY_PATH"
+    };
+    let separator = OsString::from(if cfg!(windows) { ";" } else { ":" });
+    let mut value = sysroot.join("lib").into_os_string();
+    for triple in rustlib_targets(sysroot) {
+        value.push(&separator);
+        value.push(triple.into_os_string());
+    }
+    if let Some((_, existing)) = base
+        .iter()
+        .find(|(key, _)| key == OsStr::new(name))
+        .filter(|(_, existing)| !existing.is_empty())
+    {
+        value.push(&separator);
+        value.push(existing);
+    }
+    (OsString::from(name), value)
+}
+
+/// Every `lib/rustlib/<triple>/lib` the toolchain holds, which is where the target's own `libstd` is.
+fn rustlib_targets(sysroot: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(sysroot.join("lib").join("rustlib")) else {
+        return Vec::new();
+    };
+    let mut found: Vec<PathBuf> = entries
+        .flatten()
+        .map(|entry| entry.path().join("lib"))
+        .filter(|path| path.is_dir())
+        .collect();
+    found.sort();
+    found
 }
 
 /// One execution to make.
@@ -338,6 +405,8 @@ pub struct Context<'a> {
     pub base_env: &'a [(OsString, OsString)],
     /// The cargo that built the tree, which cargo itself puts in `CARGO` for every process it runs.
     pub cargo: Option<&'a Path>,
+    /// The toolchain directory a dynamically linked test binary finds `libstd` under. `None` starts it with whatever the environment already said.
+    pub sysroot: Option<&'a Path>,
     /// The mutant to activate: `(identity, catalog digest)`.
     pub active: Option<(&'a str, &'a str)>,
     /// Where a probe process appends what it infected. `None` runs a process that records nothing.

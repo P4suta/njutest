@@ -425,6 +425,7 @@ fn build_and_run(
         let context = Context {
             base_env: &workspace.base_env,
             cargo: Some(workspace.toolchain().cargo()),
+            sysroot: workspace.toolchain().sysroot(),
             active: None,
             probe: Some(&log_path),
             profile: None,

@@ -221,22 +221,19 @@ fn every_rule_fires_in_the_families_fixture_exactly_as_the_golden_says() {
 }
 
 #[test]
-fn macro_invocations_count_once_and_a_proc_macro_crate_is_skipped_whole() {
+fn macro_invocations_count_once_and_a_proc_macro_crate_is_mutated_like_any_other() {
     let prepared = prepare("fixture-macros");
     let discovery = run(&prepared, &options(), &Recorder::disabled());
     assert_eq!(
         table(&discovery),
         [
-            row(
-                "crates/derive/src/lib.rs",
-                "fixture-macros-derive",
-                0,
-                "proc-macro-crate:4"
-            ),
+            row("crates/derive/src/lib.rs", "fixture-macros-derive", 6, ""),
             row("src/lib.rs", "fixture-macros", 3, "macro-invocation:2"),
-        ]
+        ],
+        "a proc-macro crate's `--test` build is an ordinary executable, and what its own \
+         tests reach is measurable exactly like anything else"
     );
-    assert_eq!(discovery.catalog.len(), 3);
+    assert_eq!(discovery.catalog.len(), 9);
 }
 
 #[test]

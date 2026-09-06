@@ -37,13 +37,22 @@ pub enum UnitKind {
     Test,
     /// An example built with `test = true`.
     Example,
+    /// A procedural macro crate's own unit tests.
+    ProcMacro,
     /// The documentation of a library, run as one target.
     Doc,
 }
 
 impl UnitKind {
     /// Every kind, in the order a report lists them.
-    pub const ALL: [Self; 5] = [Self::Lib, Self::Bin, Self::Test, Self::Example, Self::Doc];
+    pub const ALL: [Self; 6] = [
+        Self::Lib,
+        Self::Bin,
+        Self::Test,
+        Self::Example,
+        Self::ProcMacro,
+        Self::Doc,
+    ];
 
     /// The name used in an identity and in reports.
     #[must_use]
@@ -53,6 +62,7 @@ impl UnitKind {
             Self::Bin => "bin",
             Self::Test => "test",
             Self::Example => "example",
+            Self::ProcMacro => "proc-macro",
             Self::Doc => "doc",
         }
     }
@@ -72,6 +82,7 @@ impl UnitKind {
             TargetKind::Bin => Self::Bin,
             TargetKind::Test => Self::Test,
             TargetKind::Example => Self::Example,
+            TargetKind::ProcMacro => Self::ProcMacro,
         }
     }
 }

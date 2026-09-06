@@ -30,6 +30,7 @@ pub struct LocateOptions {
 pub struct Toolchain {
     cargo: PathBuf,
     rustc: PathBuf,
+    sysroot: Option<PathBuf>,
     cargo_version: VersionInfo,
     rustc_version: VersionInfo,
     env: Option<Vec<(OsString, OsString)>>,
@@ -69,9 +70,11 @@ impl Toolchain {
         };
         let cargo_version = banner(&cargo)?;
         let rustc_version = banner(&rustc)?;
+        let sysroot = sysroot_of(&rustc, dir, options.env.as_deref(), cancel);
         Ok(Self {
             cargo,
             rustc,
+            sysroot,
             cargo_version,
             rustc_version,
             env: options.env.clone(),
@@ -88,6 +91,16 @@ impl Toolchain {
     #[must_use]
     pub fn rustc(&self) -> &Path {
         &self.rustc
+    }
+
+    /// The toolchain directory rustc names as its own, when it would say.
+    ///
+    /// A test binary cargo built with `prefer-dynamic` — every proc-macro
+    /// crate's own tests — finds `libstd` under it, and the engine starts test
+    /// binaries directly rather than through `cargo test`.
+    #[must_use]
+    pub fn sysroot(&self) -> Option<&Path> {
+        self.sysroot.as_deref()
     }
 
     /// What `cargo -vV` said.
@@ -220,4 +233,28 @@ fn executable_variants(dir: &Path, name: &Path) -> Vec<PathBuf> {
     } else {
         vec![plain]
     }
+}
+
+/// What `rustc --print sysroot` says, when it will say anything: a path this run may use and never one it needs.
+fn sysroot_of(
+    rustc: &Path,
+    dir: &Path,
+    env: Option<&[(OsString, OsString)]>,
+    cancel: &Cancel,
+) -> Option<PathBuf> {
+    let mut spec = Spec::new([
+        rustc.as_os_str(),
+        OsStr::new("--print"),
+        OsStr::new("sysroot"),
+    ]);
+    spec.dir = Some(dir.to_path_buf());
+    spec.env = env.map(<[(OsString, OsString)]>::to_vec);
+    spec.structured_stdout = Some(VERSION_OUTPUT_LIMIT);
+    let result = run(&spec, cancel);
+    if !result.ok() {
+        return None;
+    }
+    let said = String::from_utf8_lossy(&result.stdout);
+    let line = said.lines().next()?.trim();
+    (!line.is_empty()).then(|| PathBuf::from(line))
 }

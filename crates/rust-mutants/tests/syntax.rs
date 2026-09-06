@@ -257,7 +257,6 @@ fn skip_reasons_are_named_explained_and_ranked() {
             "unsupported-site",
             "excluded",
             "test-only-file",
-            "proc-macro-crate",
             "no-std-crate",
             "included-expression",
         ]

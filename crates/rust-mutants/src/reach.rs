@@ -208,6 +208,7 @@ fn run_targets(
         let context = Context {
             base_env: &workspace.base_env,
             cargo: Some(workspace.toolchain.cargo()),
+            sysroot: workspace.toolchain.sysroot(),
             active: None,
             probe: None,
             profile: Some(&pattern),
