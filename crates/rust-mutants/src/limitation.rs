@@ -33,10 +33,18 @@ pub const CUSTOM_HARNESS: &str = "custom-harness";
 /// The configuration named this target as one never to start, so no mutation was measured against it.
 pub const TARGET_SKIPPED_BY_CONFIGURATION: &str = "target-skipped-by-configuration";
 
+/// A library's documented examples are one target, so a mutation is routed to them by the file it is in rather than by the region a measurement instrumented.
+pub const DOCTESTS_ROUTED_BY_FILE: &str = "doctests-routed-by-file";
+
+/// The library has no documented examples, so its documentation target answers nothing and no mutation is routed to it.
+pub const DOCTESTS_NONE: &str = "doctests-none";
+
 /// Every limitation, in the order a reader meets them.
-pub const ALL: [&str; 8] = [
+pub const ALL: [&str; 10] = [
     CUSTOM_HARNESS,
     TARGET_SKIPPED_BY_CONFIGURATION,
+    DOCTESTS_ROUTED_BY_FILE,
+    DOCTESTS_NONE,
     COVERAGE_BUILD_FAILED,
     COVERAGE_TOOLS_MISSING,
     COVERAGE_NOT_MEASURED,

@@ -55,6 +55,7 @@ impl Settings {
         config.execution.locked |= scope.switches.locked;
         config.mutation.verify &= !scope.switches.no_verify;
         config.mutation.coverage |= scope.switches.coverage;
+        config.execution.doctests &= !scope.switches.no_doctests;
         Ok(Self {
             root,
             source,
@@ -113,6 +114,7 @@ impl Settings {
             coverage: self.config.mutation.coverage,
             build_timeout: self.config.mutation.build_timeout,
             mutant_timeout: Some(self.config.mutation.timeout),
+            doctests: self.config.execution.doctests,
             skip_targets: self.config.execution.skip_targets.clone(),
             ..PrepareOptions::default()
         })

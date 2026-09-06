@@ -251,6 +251,9 @@ pub struct Switches {
     /// Measure once which target reached what, and run a mutant only against the targets that reached it.
     #[arg(long)]
     pub coverage: bool,
+    /// Leave a library's documented examples out of the targets.
+    #[arg(long)]
+    pub no_doctests: bool,
 }
 
 /// The tiers, as the command line spells them.

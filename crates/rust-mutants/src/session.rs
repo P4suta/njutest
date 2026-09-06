@@ -26,6 +26,11 @@ use crate::workspace::{SessionError, Workspace};
 
 /// Configures [`Workspace::prepare`].
 #[derive(Debug, Clone)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each is one switch a person sets on the command line or in the configuration file, \
+              and a switch is a bool wherever it is stored"
+)]
 pub struct PrepareOptions {
     /// Which tier of rules to apply when `operators` is empty.
     pub tier: Tier,
@@ -49,6 +54,13 @@ pub struct PrepareOptions {
     pub build_timeout: Option<Duration>,
     /// How long one mutant execution may take, when the caller does not say.
     pub mutant_timeout: Option<Duration>,
+    /// Run a library's documented examples as a target of their own.
+    ///
+    /// A documented example is a test the project wrote, and a mutation only
+    /// one of them can notice is a mutation nothing else in the suite covers.
+    /// It costs a `cargo test --doc` for every mutation no other target
+    /// noticed, which is why it is a switch.
+    pub doctests: bool,
     /// Targets never to start, by the id a report names them with.
     ///
     /// A target whose tests are about the text of what the compiler said —
@@ -74,6 +86,7 @@ impl Default for PrepareOptions {
             max_rounds: crate::validate::DEFAULT_MAX_ROUNDS,
             build_timeout: None,
             mutant_timeout: None,
+            doctests: true,
             skip_targets: Vec::new(),
         }
     }
@@ -214,11 +227,18 @@ impl Route {
     /// A target that ran and whose profile could not be read is kept: what the
     /// measurement says nothing about is run rather than assumed.
     #[must_use]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the five are the measurement, the place, the targets, and the targets no \
+                  measurement could have said anything about; grouping them would name a thing \
+                  that is only ever one call's arguments"
+    )]
     pub fn decide(
         reached: &crate::reach::Reached,
         path: &std::path::Path,
         position: crate::coverage::Point,
         targets: &[&str],
+        also_reaching: &[&str],
     ) -> Self {
         let everything = |fallback: Fallback| Self::All {
             reaching: targets.iter().map(|target| (*target).to_owned()).collect(),
@@ -242,7 +262,11 @@ impl Route {
         let mut reaching: Vec<String> = targets
             .iter()
             .copied()
-            .filter(|target| covering.contains(target) || unmeasured.contains(target))
+            .filter(|target| {
+                covering.contains(target)
+                    || unmeasured.contains(target)
+                    || also_reaching.contains(target)
+            })
             .map(str::to_owned)
             .collect();
         reaching.dedup();
@@ -464,13 +488,41 @@ impl Session {
             return None;
         }
         let position = self.position(mutant)?;
-        self.reached.covering(
+        let mut covering = self.reached.covering(
             std::path::Path::new(&mutant.candidate.path),
             crate::coverage::Point {
                 line: position.line,
                 column: position.byte_column,
             },
-        )
+        )?;
+        covering.extend(self.documenting(mutant));
+        covering.sort_unstable();
+        covering.dedup();
+        Some(covering)
+    }
+
+    /// The documentation targets a mutation is routed to, which is by the file it is in.
+    ///
+    /// A library's documented examples are compiled by rustdoc while cargo
+    /// runs them, so a coverage build never instruments them and a measurement
+    /// says nothing about what they reached. Routing them by file is wider
+    /// than a region would be, which is the direction a fallback must go. A
+    /// library with no examples answers nothing, so nothing is routed to it.
+    fn documenting(&self, mutant: &Mutant) -> Vec<&str> {
+        let Some(package) = self.package_of(mutant.index) else {
+            return Vec::new();
+        };
+        self.targets
+            .iter()
+            .filter(|target| target.kind == TargetKind::Doc && target.package == package)
+            .filter(|target| {
+                !target
+                    .limitations
+                    .iter()
+                    .any(|one| one == crate::limitation::DOCTESTS_NONE)
+            })
+            .map(|target| target.id.as_str())
+            .collect()
     }
 
     /// How long one target's own baseline took, when it was verified.
@@ -510,6 +562,7 @@ impl Session {
                 column: position.byte_column,
             },
             &targets,
+            &self.documenting(mutant),
         )
     }
 
@@ -707,7 +760,20 @@ impl Session {
             return Err(EngineError::from(SessionError::NoTargets));
         }
         let Some(name) = name else {
-            return Ok(self.targets.iter().collect());
+            let answering: Vec<&TestTarget> = self
+                .targets
+                .iter()
+                .filter(|target| {
+                    !target
+                        .limitations
+                        .iter()
+                        .any(|one| one == crate::limitation::DOCTESTS_NONE)
+                })
+                .collect();
+            if answering.is_empty() {
+                return Err(EngineError::from(SessionError::NoTargets));
+            }
+            return Ok(answering);
         };
         let matching: Vec<&TestTarget> = self
             .targets
@@ -813,11 +879,13 @@ fn built(
         .members()
         .filter(|package| options.packages.is_empty() || options.packages.contains(&package.name))
         .collect();
-    targets.extend(execute::documentation_targets(
-        &members,
-        workspace.toolchain.cargo(),
-        &documentation_arguments(workspace),
-    ));
+    if options.doctests {
+        targets.extend(execute::documentation_targets(
+            &members,
+            workspace.toolchain.cargo(),
+            &documentation_arguments(workspace),
+        ));
+    }
     let built: Vec<crate::trace::TargetRecord> = targets
         .iter()
         .map(|target| crate::trace::TargetRecord {
@@ -854,7 +922,7 @@ fn built(
         source,
     })?;
     let baseline = if options.verify {
-        verify(workspace, &targets, &scratch, cancel)?
+        verify(workspace, &mut targets, &scratch, cancel)?
     } else {
         BTreeMap::new()
     };
@@ -1114,7 +1182,7 @@ fn body_lines(file: &FileOutput) -> u64 {
 /// Runs every target once with nothing active. A tree whose instrumented baseline fails is one whose every later result would be about the instrumentation rather than about a mutant.
 fn verify(
     workspace: &Workspace,
-    targets: &[TestTarget],
+    targets: &mut [TestTarget],
     scratch: &std::path::Path,
     cancel: &Cancel,
 ) -> Result<BTreeMap<String, Duration>, EngineError> {
@@ -1128,7 +1196,7 @@ fn verify(
         profile: None,
     };
     let mut baseline = BTreeMap::new();
-    for target in targets {
+    for target in targets.iter_mut() {
         let request = ExecRequest::new(target).with_scratch(scratch);
         let result = execute::exec(&request, &context, cancel, &workspace.trace);
         workspace.trace.verify(crate::trace::VerifyRecord {
@@ -1138,6 +1206,11 @@ fn verify(
             duration_ms: u64::try_from(result.duration.as_millis()).unwrap_or(u64::MAX),
         });
         let _kept = baseline.insert(target.id.clone(), result.duration);
+        if target.kind == TargetKind::Doc && result.tests_run == Some(0) {
+            target
+                .limitations
+                .push(crate::limitation::DOCTESTS_NONE.to_owned());
+        }
         if !matches!(
             result.outcome,
             crate::outcome::Outcome::Survived | crate::outcome::Outcome::Inconclusive

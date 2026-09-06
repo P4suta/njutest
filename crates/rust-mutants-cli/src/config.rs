@@ -142,7 +142,7 @@ const fn expected_by_default() -> Outcome {
 }
 
 /// How the workspace is built and the tests are run.
-#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Execution {
     /// Never touch the network.
@@ -151,12 +151,29 @@ pub struct Execution {
     pub locked: bool,
     /// Harness flags to pass through; see [`ALLOWED_TEST_ARGS`].
     pub test_binary_args: Vec<String>,
+    /// Run a library's documented examples as a target of their own.
+    ///
+    /// A documented example is a test the project wrote, and a mutation only
+    /// one of them can notice is one nothing else in the suite covers.
+    pub doctests: bool,
     /// Targets never to start, by the id a report names them with.
     ///
     /// A suite whose tests are about the text of what the compiler said fails
     /// under instrumentation for a reason that is not the mutation. Naming it
     /// here is a decision somebody made, and the report says so.
     pub skip_targets: Vec<String>,
+}
+
+impl Default for Execution {
+    fn default() -> Self {
+        Self {
+            offline: false,
+            locked: false,
+            doctests: true,
+            test_binary_args: Vec::new(),
+            skip_targets: Vec::new(),
+        }
+    }
 }
 
 /// What is written under the report directory.
@@ -507,6 +524,7 @@ version = 1
 [execution]
 # offline = false
 # locked = false
+# doctests = true                # run a library's documented examples as a target
 # skip_targets = []              # target ids never to start, as pkg/kind/name
 # test_binary_args = []          # allowed: {allowed}
 

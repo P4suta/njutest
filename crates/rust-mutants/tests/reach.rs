@@ -44,6 +44,7 @@ fn a_route_without_a_measurement_is_every_target_and_says_why() {
         Path::new("src/lib.rs"),
         at(3),
         &TARGETS,
+        &[],
     );
     assert_eq!(route.granularity(), "all");
     assert_eq!(route.fallback(), Some("not-measured"));
@@ -53,7 +54,7 @@ fn a_route_without_a_measurement_is_every_target_and_says_why() {
 #[test]
 fn a_position_no_measurement_instrumented_is_one_nothing_is_known_about() {
     let reached = measured(&[("demo/lib/demo", 10)], &[("demo/lib/demo", &[10])]);
-    let route = Route::decide(&reached, Path::new("src/lib.rs"), at(3), &TARGETS);
+    let route = Route::decide(&reached, Path::new("src/lib.rs"), at(3), &TARGETS, &[]);
     assert_eq!(
         route.granularity(),
         "all",
@@ -68,7 +69,7 @@ fn a_measured_position_is_routed_to_the_targets_that_ran_it() {
         &[("demo/lib/demo", 3)],
         &[("demo/lib/demo", &[3]), ("demo/test/parity", &[])],
     );
-    let route = Route::decide(&reached, Path::new("src/lib.rs"), at(3), &TARGETS);
+    let route = Route::decide(&reached, Path::new("src/lib.rs"), at(3), &TARGETS, &[]);
     assert_eq!(route.granularity(), "block");
     assert_eq!(route.fallback(), None);
     assert_eq!(route.reaching(), vec!["demo/lib/demo"]);
@@ -77,7 +78,7 @@ fn a_measured_position_is_routed_to_the_targets_that_ran_it() {
 #[test]
 fn a_measured_position_no_target_ran_is_unreached() {
     let reached = measured(&[("demo/lib/demo", 3)], &[("demo/lib/demo", &[10])]);
-    let route = Route::decide(&reached, Path::new("src/lib.rs"), at(3), &TARGETS);
+    let route = Route::decide(&reached, Path::new("src/lib.rs"), at(3), &TARGETS, &[]);
     assert_eq!(route.granularity(), "unreached");
     assert!(route.reaching().is_empty());
 }
@@ -88,7 +89,7 @@ fn a_target_the_measurement_could_not_read_is_kept_in_every_route() {
     reached
         .limitations
         .push(format!("{UNMEASURED}:demo/test/parity"));
-    let route = Route::decide(&reached, Path::new("src/lib.rs"), at(3), &TARGETS);
+    let route = Route::decide(&reached, Path::new("src/lib.rs"), at(3), &TARGETS, &[]);
     assert_eq!(
         route.reaching(),
         vec!["demo/test/parity"],
@@ -97,4 +98,24 @@ fn a_target_the_measurement_could_not_read_is_kept_in_every_route() {
     );
     assert_eq!(route.granularity(), "block");
     assert_eq!(route.fallback(), Some("coverage-incomplete"));
+}
+
+#[test]
+fn a_target_a_measurement_says_nothing_about_reaches_by_being_named() {
+    let reached = measured(&[("demo/lib/demo", 3)], &[("demo/lib/demo", &[10])]);
+    let route = Route::decide(
+        &reached,
+        Path::new("src/lib.rs"),
+        at(3),
+        &TARGETS,
+        &[TARGETS[2]],
+    );
+    assert_eq!(route.granularity(), "block");
+    assert!(
+        route.reaching().contains(&TARGETS[2]),
+        "a library's documented examples are compiled by rustdoc while cargo runs them, so no \
+         coverage build instruments them and routing them by file is the widest a fallback \
+         goes: {:?}",
+        route.reaching()
+    );
 }

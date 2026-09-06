@@ -818,7 +818,8 @@ pub fn documentation_targets(
                     cargo.to_path_buf(),
                     package.manifest_dir().to_path_buf(),
                 )
-                .with_through(through),
+                .with_through(through)
+                .with_limitations(vec![crate::limitation::DOCTESTS_ROUTED_BY_FILE.to_owned()]),
             );
         }
     }

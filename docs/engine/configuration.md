@@ -35,6 +35,7 @@ coverage = false               # measure reach once, then run a mutant only wher
 [execution]
 offline = false
 locked = false
+doctests = true                # run a library's documented examples as a target
 skip_targets = []              # target ids never to start, as pkg/kind/name
 test_binary_args = []          # --test-threads, --include-ignored, --nocapture, --show-output
 

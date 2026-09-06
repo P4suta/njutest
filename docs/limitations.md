@@ -26,8 +26,9 @@ below is stated fail-closed.
 
 ## Decided in advance
 
-- Doctests are run as one target per library and mutations are routed to them
-  at file granularity (`doctests-routed-by-file`): a documented example
+- Doctests are run as one target per library, switched off with
+  `[execution] doctests = false` or `--no-doctests`, and mutations are routed
+  to them at file granularity (`doctests-routed-by-file`): a documented example
   reaches every mutation in the files its library is made of and narrows none
   of them. A kill one finds names the library's documentation and not the
   example, because rustdoc merges a file's examples into one compilation whose
@@ -94,6 +95,10 @@ below is stated fail-closed.
   every place inside it, which removes an execution on evidence that says
   nothing. Refusing the whole measurement routes every mutation everywhere
   instead.
+- A library with no documented examples has a documentation target that
+  answers nothing. It carries `doctests-none`, and no mutation is routed to
+  it: paying a `cargo test --doc` for every mutation nothing else noticed, to
+  be told each time that no test ran, is work nobody reads.
 - A target with `harness = false` says what it found by exiting, and neither
   `cargo metadata` nor the build's messages report the flag, so the engine
   reads it from the manifest. How many of its tests ran is something only a

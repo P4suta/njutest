@@ -19,7 +19,11 @@ helpers it expands with are measured like anything else: `repeats` is killed by
 runs inside the compiler during the build, no test process ever activates a
 mutant of it, and cargo does not rebuild for an environment variable — so its
 mutants are reported as surviving and `proc-macro-expansion-not-measured` says
-why. The binary is built with `prefer-dynamic`, which is why the engine puts
+why. One of them used to be reported as killed, by the documentation target of
+the library that reads the macro: it has no documented examples, so nothing
+ran, and what failed was the build of the library under a macro that now
+expands to something else. A target that answers nothing is left out of the
+route, which puts the fates back where this paragraph says they are. The binary is built with `prefer-dynamic`, which is why the engine puts
 the toolchain's library directories on the search path before starting a test
 binary itself.
 
@@ -33,7 +37,7 @@ refuses a difference, and `UPDATE_FATES=1` rewrites the block below.
 
 ```fates
 crates/derive/src/lib.rs:11:5 return-default survived
-crates/derive/src/lib.rs:11:8 negate-condition killed
+crates/derive/src/lib.rs:11:8 negate-condition survived
 crates/derive/src/lib.rs:11:19 gt-to-ge survived
 crates/derive/src/lib.rs:20:5 return-default killed
 crates/derive/src/lib.rs:20:8 negate-condition killed
