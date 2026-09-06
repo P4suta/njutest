@@ -132,6 +132,11 @@
           "type": "integer",
           "minimum": 0
         },
+        "discharged": {
+          "description": "Of the mutants that never ran, how many a proof removed every target from.",
+          "type": "integer",
+          "minimum": 0
+        },
         "expected": { "type": "integer", "minimum": 0 }
       }
     },
@@ -321,6 +326,7 @@
               "errored-mutant",
               "not-run-mutant",
               "unreached-mutant",
+              "discharged-mutant",
               "stale-expectation",
               "unmatched-expectation"
             ]

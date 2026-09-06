@@ -266,6 +266,9 @@ pub struct Switches {
     /// Measure once which target reached what, and run a mutant only against the targets that reached it.
     #[arg(long)]
     pub coverage: bool,
+    /// Run every mutant against every target, measuring no coverage and proving nothing about reach.
+    #[arg(long, conflicts_with = "coverage")]
+    pub no_coverage: bool,
     /// Leave a library's documented examples out of the targets.
     #[arg(long)]
     pub no_doctests: bool,

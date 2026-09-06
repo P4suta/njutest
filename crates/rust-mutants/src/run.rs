@@ -179,6 +179,8 @@ pub enum FindingKind {
     NotRunMutant,
     /// No measured target reaches the mutant, so no test could have noticed it.
     UnreachedMutant,
+    /// A proof removed every target that could have noticed the mutant, so no test could have.
+    DischargedMutant,
     /// A reviewer's claim the run contradicted.
     StaleExpectation,
     /// A reviewer's claim that names no mutant of this catalog.
@@ -187,12 +189,13 @@ pub enum FindingKind {
 
 impl FindingKind {
     /// Every kind, in the order findings are reported.
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::SurvivingMutant,
         Self::InconclusiveMutant,
         Self::ErroredMutant,
         Self::NotRunMutant,
         Self::UnreachedMutant,
+        Self::DischargedMutant,
         Self::StaleExpectation,
         Self::UnmatchedExpectation,
     ];
@@ -206,6 +209,7 @@ impl FindingKind {
             Self::ErroredMutant => "errored-mutant",
             Self::NotRunMutant => "not-run-mutant",
             Self::UnreachedMutant => "unreached-mutant",
+            Self::DischargedMutant => "discharged-mutant",
             Self::StaleExpectation => "stale-expectation",
             Self::UnmatchedExpectation => "unmatched-expectation",
         }
@@ -260,6 +264,8 @@ pub struct Tally {
     pub not_run: u32,
     /// How many of those never ran because no measured target reaches them.
     pub unreached: u32,
+    /// How many of those never ran because a proof removed every target that could have noticed them.
+    pub discharged: u32,
     /// How many survivors a reviewer had declared, and the run confirmed.
     pub expected: u32,
 }
@@ -317,6 +323,9 @@ impl Run {
             if one.not_run_reason == Some(NotRunReason::Unreached) {
                 tally.unreached = tally.unreached.saturating_add(1);
             }
+            if one.not_run_reason == Some(NotRunReason::Discharged) {
+                tally.discharged = tally.discharged.saturating_add(1);
+            }
             if one.expected {
                 tally.expected = tally.expected.saturating_add(1);
             }
@@ -349,6 +358,9 @@ impl Run {
                 Outcome::Inconclusive => FindingKind::InconclusiveMutant,
                 Outcome::NotRun if one.not_run_reason == Some(NotRunReason::Unreached) => {
                     FindingKind::UnreachedMutant
+                }
+                Outcome::NotRun if one.not_run_reason == Some(NotRunReason::Discharged) => {
+                    FindingKind::DischargedMutant
                 }
                 Outcome::NotRun if self.interrupted => continue,
                 Outcome::NotRun => FindingKind::NotRunMutant,
@@ -435,6 +447,11 @@ fn detail(kind: FindingKind, one: &Judged) -> String {
         ),
         FindingKind::UnreachedMutant => format!(
             "no measured test reaches {}: the mutation lives in code the tests never execute",
+            one.display_id
+        ),
+        FindingKind::DischargedMutant => format!(
+            "every target that could have noticed {} was removed by a proof, so no test could \
+             have: the mutation is in code the tests run and never observe",
             one.display_id
         ),
         FindingKind::NotRunMutant
@@ -842,7 +859,6 @@ fn execute(
     let judgement = session.judge(&request, options.quiet, cancel)?;
     let duration = judgement.duration();
     let result = judgement.result;
-    let unreached = session.reaches(mutant) == Some(false);
     Ok(Judged {
         index: mutant.index,
         id: mutant.id.clone(),
@@ -856,7 +872,7 @@ fn execute(
         signal: result.signal,
         retried: judgement.retried,
         expected: false,
-        not_run_reason: not_run_because(result.outcome, unreached),
+        not_run_reason: not_run_because(result.outcome, &judgement.route),
         route: None,
         measured: true,
         source_run_id: None,
@@ -870,11 +886,14 @@ fn execute(
 /// did: a process the runner never got a status from is a run somebody
 /// stopped, and reading it as a mutation no test can notice would report a
 /// finding nobody measured.
-const fn not_run_because(outcome: Outcome, unreached: bool) -> Option<NotRunReason> {
-    match outcome {
-        Outcome::NotRun if unreached => Some(NotRunReason::Unreached),
-        Outcome::NotRun => Some(NotRunReason::Interrupted),
-        _ => None,
+fn not_run_because(outcome: Outcome, route: &crate::session::Route) -> Option<NotRunReason> {
+    if outcome != Outcome::NotRun {
+        return None;
+    }
+    match route {
+        crate::session::Route::Unreached => Some(NotRunReason::Unreached),
+        crate::session::Route::Discharged { .. } => Some(NotRunReason::Discharged),
+        _ => Some(NotRunReason::Interrupted),
     }
 }
 

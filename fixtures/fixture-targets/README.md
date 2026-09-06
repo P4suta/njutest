@@ -34,6 +34,6 @@ refuses a difference, and `UPDATE_FATES=1` rewrites the block below.
 ```fates
 src/lib.rs:12:5 return-default killed
 src/lib.rs:12:7 div-to-mul killed
-src/ünits/mod.rs:12:5 return-true survived
-src/ünits/mod.rs:12:7 ge-to-gt survived
+src/ünits/mod.rs:12:5 return-true unreached
+src/ünits/mod.rs:12:7 ge-to-gt unreached
 ```

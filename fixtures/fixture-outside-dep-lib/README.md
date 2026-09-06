@@ -18,6 +18,6 @@ than calling silence a survivor. What it is for is measured through
 `fixture-outside-dep`, which reads it.
 
 ```fates
-src/lib.rs:9:5 return-default inconclusive
-src/lib.rs:9:7 mul-to-div inconclusive
+src/lib.rs:9:5 return-default unreached
+src/lib.rs:9:7 mul-to-div unreached
 ```

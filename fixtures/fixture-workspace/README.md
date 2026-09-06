@@ -22,8 +22,8 @@ refuses a difference, and `UPDATE_FATES=1` rewrites the block below.
 
 ```fates
 crates/app/src/main.rs:12:8 negate-condition killed
-crates/app/src/main.rs:12:16 ge-to-gt survived
-crates/app/src/main.rs:13:9 delete-call-statement survived
+crates/app/src/main.rs:12:16 ge-to-gt not_run
+crates/app/src/main.rs:13:9 delete-call-statement unreached
 crates/core/src/lib.rs:10:5 return-default killed
 crates/core/src/lib.rs:10:8 negate-condition killed
 crates/core/src/lib.rs:10:10 lt-to-le survived

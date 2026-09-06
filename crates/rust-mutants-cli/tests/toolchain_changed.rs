@@ -102,7 +102,13 @@ fn routing_by_coverage_loses_no_kill_and_names_the_code_no_test_runs() {
 
     let whole = stdout(&against(
         &fixture,
-        &["run", "--offline", "--locked", "--no-cache"],
+        &[
+            "run",
+            "--no-coverage",
+            "--offline",
+            "--locked",
+            "--no-cache",
+        ],
     ));
     let routed = against(
         &fixture,

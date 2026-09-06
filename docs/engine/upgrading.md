@@ -127,6 +127,26 @@ by increasing granularity finds the mutants that interact rather than
 condemning everything that was live. Those rows have `isolated: false` and say
 which other mutants they were refused with.
 
+**Coverage is measured by default.** `[mutation] coverage` is on and
+`--no-coverage` turns it off. A small crate's first run is slower by one
+instrumented build; every run after it is shorter, because a mutation no test
+reaches is reported as `unreached` rather than executed against every target
+to find that out again. Reports that used to say `survived` for such a
+mutation now say `not_run` with `unreached`, which is the stronger answer: the
+tests have a gap where the mutant is.
+
+**A mutation the tests run and cannot observe is discharged.** With coverage
+on, the engine asks the compiler which mutations change nothing outside the
+branch they sit in, and a target whose measured run never entered that branch
+is removed from what could have noticed it. A mutant every target is
+discharged from is a `discharged-mutant` finding and an accounting column of
+its own. `Session::exec` is unchanged: it runs what the measurement placed,
+discharges included, because a discharge is a proof a caller may not share.
+
+**A test that writes into the tree during the coverage pass is drift.** The
+reseal that absorbs the instrumentation used to absorb that too, so the drift
+report said nothing about it.
+
 **A target the coverage measurement could not read is run.** The route always
 said so; the execution narrowed by the measurement alone and dropped it, so a
 mutation only that target could have noticed was reported as surviving without

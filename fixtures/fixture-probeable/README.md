@@ -44,9 +44,9 @@ src/lib.rs:13:5 return-default killed
 src/lib.rs:13:7 mul-to-div killed
 src/lib.rs:18:5 return-default survived
 src/lib.rs:23:5 return-default killed
-src/lib.rs:37:9 return-default survived
-src/lib.rs:46:9 return-true survived
-src/lib.rs:46:21 eq-to-neq survived
+src/lib.rs:37:9 return-default unreached
+src/lib.rs:46:9 return-true unreached
+src/lib.rs:46:21 eq-to-neq unreached
 src/lib.rs:52:5 return-default killed
 src/lib.rs:63:5 return-default survived
 ```

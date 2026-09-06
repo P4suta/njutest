@@ -10,7 +10,10 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 Accepted, 2026-09-05, inherited from goatest ADR 0004 (accepted 2026-09-02).
 Implemented by the coverage-region routing of `assure`, the branch-proof and
 never-infected discharges, the `route` events of the trace, and the
-`proofaudit` gate, as the milestones deliver them. This is the thesis of the
+`proofaudit` gate, as the milestones deliver them. `rust-mutants` is a runner
+of the same kind and is held to the same rule: it measures its own coverage,
+discharges with `prove::discharges` on it, records a `route` for every mutant
+it judges, and is re-decided by `cargo xtask engine-audit`. This is the thesis of the
 project; it governs every speed-related decision.
 
 ## Context

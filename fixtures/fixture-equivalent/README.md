@@ -33,6 +33,6 @@ src/lib.rs:8:5 return-default killed
 src/lib.rs:8:7 add-to-sub survived
 src/lib.rs:13:5 return-default killed
 src/lib.rs:13:7 mul-to-div killed
-src/lib.rs:18:5 return-default survived
-src/lib.rs:18:7 div-to-mul survived
+src/lib.rs:18:5 return-default unreached
+src/lib.rs:18:7 div-to-mul unreached
 ```

@@ -266,7 +266,10 @@ fn trace_check_exits_1_on_a_recording_without_run_end() {
 #[test]
 fn trace_diff_between_two_runs_reports_the_moved_columns() {
     let fixture = Fixture::copy("fixture-simple");
-    let first = against(&fixture, &["run", "--trace", "--tier", "balanced"]);
+    let first = against(
+        &fixture,
+        &["run", "--trace", "--no-coverage", "--tier", "balanced"],
+    );
     assert!(
         first.status.code().is_some_and(|code| code < 2),
         "{}",

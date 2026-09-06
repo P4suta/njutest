@@ -36,10 +36,17 @@ fn open(fixture: &Fixture) -> Workspace {
 }
 
 fn prepare(fixture: &Fixture) -> Session {
+    prepared(fixture, true)
+}
+
+/// A session that measures coverage, or one that does not and so routes every mutant everywhere.
+fn prepared(fixture: &Fixture, coverage: bool) -> Session {
     open(fixture)
         .prepare(
             &PrepareOptions {
                 tier: Tier::All,
+                coverage,
+                branch_proofs: coverage,
                 ..PrepareOptions::default()
             },
             &Cancel::new(),
@@ -163,7 +170,7 @@ fn preparing_catalogs_instruments_validates_and_builds() {
 #[test]
 fn a_mutant_runs_against_every_target_until_one_kills_it() {
     let fixture = Fixture::copy("fixture-simple");
-    let session = prepare(&fixture);
+    let session = prepared(&fixture, false);
     let cancel = Cancel::new();
 
     let by_rule = |rule: &str| -> String {
@@ -337,6 +344,8 @@ fn the_trace_says_what_every_phase_did() {
             &PrepareOptions {
                 tier: Tier::All,
                 verify: false,
+                coverage: false,
+                branch_proofs: false,
                 ..PrepareOptions::default()
             },
             &Cancel::new(),

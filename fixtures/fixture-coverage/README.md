@@ -15,6 +15,12 @@ of this fixture is that the licence is granted exactly where it is earned.
 | `a <= b` on `Version` | yes | no | the comparison is a call, and the witness is refused |
 | `items.len() <= 2` | no | no | the condition runs the program's code, so the syntax claims nothing |
 
+`tests/upper.rs` runs the condition of `clamp` and never the branch it gates,
+so the branch proof the compiler vouches for and the coverage the run measures
+together say that target cannot have noticed a mutation of the condition: it
+is discharged rather than executed. The library's own tests run both branches
+and are not.
+
 ## Fates
 
 What one run of this fixture establishes for every mutation of it, and

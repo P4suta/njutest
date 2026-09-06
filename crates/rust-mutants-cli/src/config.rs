@@ -159,7 +159,7 @@ impl Default for Mutation {
             timeout: Timeout::Auto,
             build_timeout: None,
             verify: true,
-            coverage: false,
+            coverage: true,
             expect: Vec::new(),
         }
     }
@@ -553,7 +553,7 @@ version = 1
 # timeout = \"{timeout}\"                # auto = 5x the target's own baseline, never below 30s
 # build_timeout = \"\"             # empty = no bound
 # verify = true                  # run the instrumented baseline before believing a mutant
-# coverage = false               # measure reach once, then run a mutant only where it was reached
+# coverage = true                # measure reach once, then run a mutant only where it was reached
 
 # A mutant a reviewer declared equivalent. The run confirms the claim and
 # reports a stale expectation rather than hiding the mutant.

@@ -110,10 +110,13 @@ a hole rather than a detection.
 `1` something was not, `2` the run itself failed, `130` it was interrupted.
 
 A `finding` is one of `surviving-mutant`, `inconclusive-mutant`,
-`errored-mutant`, `not-run-mutant`, `unreached-mutant`, `stale-expectation`,
-or `unmatched-expectation`. A mutant no measured target reaches is an
-`unreached-mutant` finding rather than a `not-run-mutant` one: it says the
-tests have a gap where the mutant is, not that the run failed to get to it.
+`errored-mutant`, `not-run-mutant`, `unreached-mutant`, `discharged-mutant`,
+`stale-expectation`, or `unmatched-expectation`. A mutant no measured target
+reaches is an `unreached-mutant` finding rather than a `not-run-mutant` one:
+it says the tests have a gap where the mutant is, not that the run failed to
+get to it. A `discharged-mutant` says the same thing about a mutation the
+tests do run and cannot observe: every target that could have noticed it was
+removed by a proof.
 
 ## Recordings
 

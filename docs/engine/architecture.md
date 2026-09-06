@@ -141,7 +141,7 @@ A killed mutant's row says which tests failed with it active (`killed_by`) and
 the signal the process died from, when it died from one. Both come from the
 harness's own per-test lines, which is also what `mutant-exec` records.
 
-`--coverage` builds the tree once more with `-C instrument-coverage`, runs
+Coverage is measured unless `--no-coverage` says otherwise. It builds the tree once more with `-C instrument-coverage`, runs
 every test target once with nothing active, and reads back which target
 executed which regions. A mutant is then only run against the targets that
 reached it, and one no measured target reaches is reported as
@@ -156,6 +156,22 @@ them. A tree that configures `rustflags` for a target, a configuration file
 nobody can parse, a build that will not instrument, and tools that are not
 installed each leave the measurement empty, which routes every mutant to every
 target exactly as if the layer were not there.
+
+With a measurement in hand, a second proof layer removes more. The compiler is
+asked which mutations change nothing outside the branch they sit in; a target
+the measurement placed at such a mutation and whose run never entered that
+branch is *discharged*, because it cannot have noticed it. The lemma is the
+compiler's and the premise is the measurement's, and `prove::discharges` is
+the pure function of the two, so a caller with its own coverage discharges
+with its own evidence and an audit re-derives the decision without the engine.
+Coverage regions nest: what says a body ran is a region that *begins* inside
+it, not one that contains it, and the region at the body's closing brace is
+the one the compiler emits for what follows the branch.
+
+`Session::judge` runs what the route reaches and `Session::exec` runs what the
+measurement placed, discharges included: a discharge is a proof a caller may
+not share, and `exec` is the question "what do the tests say", asked by a
+caller with its own evidence.
 
 `report --format` writes a stored run for somebody else: `json` is the
 document verbatim, `html` one page that fetches nothing, and `stryker` the

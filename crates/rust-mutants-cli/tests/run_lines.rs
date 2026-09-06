@@ -88,6 +88,7 @@ fn document() -> RunDocument {
             inconclusive: 0,
             errored: 0,
             unreached: 0,
+            discharged: 0,
             not_run: 0,
             expected: 1,
         },

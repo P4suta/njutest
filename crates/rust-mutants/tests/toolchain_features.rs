@@ -63,14 +63,29 @@ fn a_test_behind_a_feature_is_measured_only_when_the_feature_is_on() {
 
     let defaults = Fixture::copy("fixture-features");
     let session = prepared(&defaults, BuildConfig::default());
-    let request = Request::new(imperial(&session));
-    let outcome = session.exec(&request, &cancel).expect("exec").outcome;
+    let mutant = session
+        .catalog()
+        .mutants()
+        .iter()
+        .find(|one| one.display_id == imperial(&session))
+        .expect("the mutant")
+        .clone();
+    let reaches = session.reaches(&mutant);
+    let outcome = session
+        .exec(&Request::new(mutant.display_id), &cancel)
+        .expect("exec")
+        .outcome;
     session.close().expect("close");
     assert_eq!(
+        reaches,
+        Some(false),
+        "the feature is off, so the only test that calls the function is not compiled, and the \
+         measurement says as much"
+    );
+    assert_eq!(
         outcome,
-        Outcome::Survived,
-        "the feature is off, so the only test that calls the function is not compiled and \
-         nothing can notice the mutation, which is a survivor and not a kill nobody earned"
+        Outcome::NotRun,
+        "and a mutation no measured test reaches is one nothing runs to find out again"
     );
 
     let asked = Fixture::copy("fixture-features");

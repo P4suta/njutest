@@ -37,12 +37,12 @@ src/lib.rs:0:0 add-to-sub refused
 src/lib.rs:0:0 mul-to-div refused
 src/lib.rs:0:0 range-to-inclusive refused
 src/lib.rs:0:0 return-default refused
-src/lib.rs:12:5 return-default inconclusive
-src/lib.rs:17:5 return-default inconclusive
-src/lib.rs:22:5 return-default inconclusive
+src/lib.rs:12:5 return-default unreached
+src/lib.rs:17:5 return-default unreached
+src/lib.rs:22:5 return-default unreached
 src/lib.rs:32:5 return-default inconclusive
-src/lib.rs:32:8 negate-condition inconclusive
-src/lib.rs:32:10 gt-to-ge inconclusive
-src/lib.rs:32:18 sub-to-add inconclusive
-src/lib.rs:32:33 sub-to-add inconclusive
+src/lib.rs:32:8 negate-condition unreached
+src/lib.rs:32:10 gt-to-ge unreached
+src/lib.rs:32:18 sub-to-add unreached
+src/lib.rs:32:33 sub-to-add unreached
 ```

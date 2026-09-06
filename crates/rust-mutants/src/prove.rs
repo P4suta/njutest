@@ -43,6 +43,41 @@ pub struct Asking<'a> {
     pub options: &'a PrepareOptions,
 }
 
+/// Whether a target that covered `covered` could not have noticed a mutation whose branch proof is `proof`.
+///
+/// The proof is the compiler's: this mutation changes nothing outside the
+/// body the condition gates. The premise is the measurement's: during this
+/// target's run, no block of that body was executed. Together they say the
+/// target cannot have observed the mutation, so running it proves nothing and
+/// costs a process.
+///
+/// It is a pure function of the two, so a caller with its own coverage can
+/// discharge with its own evidence and an audit can re-derive the decision
+/// without the engine.
+#[must_use]
+pub fn discharges(proof: &Proof, path: &Path, covered: &[crate::coverage::Block]) -> bool {
+    !covered.iter().any(|block| in_body(proof, path, block))
+}
+
+/// Whether one covered block begins inside the body a proof names.
+///
+/// Coverage regions nest, and what says the body ran is a region that
+/// *begins* inside it. The region of the function that holds the branch
+/// contains the body and says the function ran; the region that begins at the
+/// body's closing brace is the one the compiler emits for what follows the
+/// branch, and a run that went past the branch without taking it has it. So
+/// the body is `[opening brace, closing brace)`: a region at the closing
+/// brace is not the body's.
+fn in_body(proof: &Proof, path: &Path, block: &crate::coverage::Block) -> bool {
+    if Path::new(&block.file) != path {
+        return false;
+    }
+    let start = (block.start.line, block.start.column);
+    let body_start = (proof.body_start.line, proof.body_start.byte_column);
+    let body_end = (proof.body_end.line, proof.body_end.byte_column);
+    start >= body_start && start < body_end
+}
+
 /// Every mutant whose branch proof the compiler accepted, with the proof.
 ///
 /// # Errors

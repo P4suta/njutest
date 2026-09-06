@@ -258,7 +258,7 @@ pub fn lines(document: &run::RunDocument) -> String {
         "run       {}\nworkspace {}\ncatalog   {}\n\n\
          MUTANTS   cataloged={} refused={} skipped={} executed={}\n\
          OUTCOMES  killed={} survived={} timed_out={} inconclusive={} errored={} not_run={} \
-         unreached={} expected={}\n",
+         unreached={} discharged={} expected={}\n",
         document.run.id,
         document.workspace.workspace_digest,
         document.workspace.catalog_digest,
@@ -273,6 +273,7 @@ pub fn lines(document: &run::RunDocument) -> String {
         a.errored,
         a.not_run,
         a.unreached,
+        a.discharged,
         a.expected,
     );
     debug_assert!(written.is_ok(), "writing to a String cannot fail");

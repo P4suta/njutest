@@ -48,6 +48,12 @@ pub struct PrepareOptions {
     pub probe: bool,
     /// Build and run the tree once with coverage instrumentation, so a mutant is only ever run against the targets that reached it.
     pub coverage: bool,
+    /// Ask the compiler which mutations change nothing outside the branch they sit in, so a target that never ran that branch is not run against them.
+    ///
+    /// A proof without a measurement removes nothing: the lemma is the
+    /// compiler's and the premise is the coverage layer's, and a caller with
+    /// its own coverage discharges with [`crate::prove::discharges`].
+    pub branch_proofs: bool,
     /// How many validation rounds before falling back to bisection.
     pub max_rounds: u32,
     /// How long a build may take.
@@ -84,7 +90,8 @@ impl Default for PrepareOptions {
             packages: Vec::new(),
             verify: true,
             probe: false,
-            coverage: false,
+            coverage: true,
+            branch_proofs: true,
             max_rounds: crate::validate::DEFAULT_MAX_ROUNDS,
             build_timeout: None,
             mutant_timeout: Timeout::default(),
@@ -187,6 +194,12 @@ pub enum Route {
     /// A mutation no measured target executes, which nothing needs to run to find out again.
     Unreached,
 }
+
+/// The proof that a target which never ran the body of the branch a mutation sits in cannot have noticed it.
+pub const BRANCH_NEVER_TAKEN: &str = "branch-never-taken";
+
+/// The proof that a target which ran the mutation without its value ever differing cannot have noticed it.
+pub const NEVER_INFECTED: &str = "never-infected";
 
 /// Why a route is wider than a measurement alone would make it. Every one of these runs more, never less.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -315,17 +328,34 @@ impl Route {
         }
     }
 
-    /// The targets an execution of this route runs, or nothing when the route removes none.
+    /// The targets the coverage measurement alone places at the mutation, or nothing when it places none.
     ///
-    /// This is the one place a narrowing is decided. An execution that
+    /// This is what [`Session::exec`] runs, and it is deliberately wider than
+    /// [`Route::reaching`]: a discharge is a proof a caller may not share, and
+    /// `exec` is the question "what do the tests say", asked by a caller with
+    /// its own evidence. [`Session::judge`] is the one that removes work.
+    ///
+    /// It is the one place a coverage narrowing is decided: an execution that
     /// narrowed by anything else would run fewer targets than the route says,
     /// and a survivor it reported would be one nobody measured.
     #[must_use]
     pub fn narrowing(&self) -> Option<Vec<String>> {
+        let with_discharged = |reaching: &[String], discharged: &[Discharge]| {
+            let mut every: Vec<String> = reaching.to_vec();
+            every.extend(discharged.iter().map(|one| one.target.clone()));
+            every.sort();
+            every.dedup();
+            every
+        };
         match self {
             Self::All { .. } => None,
-            Self::Block { reaching, .. } => Some(reaching.clone()),
-            Self::Discharged { .. } | Self::Unreached => Some(Vec::new()),
+            Self::Block {
+                reaching,
+                discharged,
+                ..
+            } => Some(with_discharged(reaching, discharged)),
+            Self::Discharged { discharged } => Some(with_discharged(&[], discharged)),
+            Self::Unreached => Some(Vec::new()),
         }
     }
 
@@ -407,6 +437,8 @@ pub struct Session {
     probed: crate::probe::tree::Probed,
     /// How long each target's own baseline took, which is what a derived timeout is a multiple of. Empty when nothing was verified.
     baseline: BTreeMap<String, Duration>,
+    /// What the tree gained or lost while the proof layers ran, which is what a test wrote before anything was instrumented.
+    written_by_a_test: Vec<Drift>,
 }
 
 impl Session {
@@ -608,7 +640,7 @@ impl Session {
                 fallback: Fallback::PositionUnknown,
             };
         };
-        Route::decide(
+        let decided = Route::decide(
             &self.reached,
             std::path::Path::new(&mutant.candidate.path),
             crate::coverage::Point {
@@ -617,7 +649,55 @@ impl Session {
             },
             &targets,
             &self.documenting(mutant),
-        )
+        );
+        self.discharging(mutant, decided)
+    }
+
+    /// The same route with every target a proof removes moved out of what could notice the mutation.
+    ///
+    /// Only a target the measurement actually read can be discharged: one
+    /// whose profile could not be read is in the route because nothing is
+    /// known about it, and a proof that rested on its silence would rest on
+    /// the measurement's failure.
+    fn discharging(&self, mutant: &Mutant, route: Route) -> Route {
+        let Some(proof) = self.branch(mutant.index) else {
+            return route;
+        };
+        let Route::Block {
+            reaching,
+            mut discharged,
+            fallback,
+        } = route
+        else {
+            return route;
+        };
+        let path = std::path::Path::new(&mutant.candidate.path);
+        let mut kept = Vec::new();
+        for target in reaching {
+            match self.reached.targets.get(&target) {
+                Some(covered)
+                    if crate::prove::discharges(
+                        proof,
+                        path,
+                        &covered.iter().cloned().collect::<Vec<_>>(),
+                    ) =>
+                {
+                    discharged.push(Discharge {
+                        target,
+                        proof: BRANCH_NEVER_TAKEN,
+                    });
+                }
+                _ => kept.push(target),
+            }
+        }
+        if kept.is_empty() && !discharged.is_empty() {
+            return Route::Discharged { discharged };
+        }
+        Route::Block {
+            reaching: kept,
+            discharged,
+            fallback,
+        }
     }
 
     /// The recording this session writes to, which is the one the workspace was opened with.
@@ -680,7 +760,7 @@ impl Session {
     /// [`SessionError::UnknownMutant`], [`SessionError::UnknownTarget`], and
     /// [`SessionError::NoTargets`].
     pub fn exec(&self, request: &Request, cancel: &Cancel) -> Result<MutantResult, EngineError> {
-        self.execute(request, false, cancel)
+        self.execute(request, Running::everywhere(), cancel)
     }
 
     /// What one mutant is, decided: executed, and when a budget expired, confirmed with the machine to itself.
@@ -703,32 +783,38 @@ impl Session {
     ) -> Result<Judgement, EngineError> {
         let mutant = self.resolve(&request.mutant)?;
         let route = self.route(mutant);
-        let first = quiet.shared(|| self.execute(request, false, cancel))?;
+        let reaching: Option<Vec<String>> = request
+            .target
+            .is_none()
+            .then(|| route.reaching().into_iter().map(str::to_owned).collect());
+        let only = reaching.as_deref();
+        let first = quiet.shared(|| self.execute(request, Running::shared(only), cancel))?;
         let (timeout, timeout_source) = self.timeout_for(request, &first.target);
-        let judgement =
-            if first.outcome != crate::outcome::Outcome::TimedOut || cancel.is_cancelled() {
-                Judgement {
-                    result: first.clone(),
-                    attempts: vec![first],
-                    retried: false,
-                    timeout,
-                    timeout_source,
-                    route,
-                }
-            } else {
-                let mut again = quiet.alone(|| self.execute(request, true, cancel))?;
-                if again.outcome != crate::outcome::Outcome::TimedOut && !again.outcome.detected() {
-                    again.outcome = crate::outcome::Outcome::Inconclusive;
-                }
-                Judgement {
-                    result: again.clone(),
-                    attempts: vec![first, again],
-                    retried: true,
-                    timeout,
-                    timeout_source,
-                    route,
-                }
-            };
+        let judgement = if first.outcome != crate::outcome::Outcome::TimedOut
+            || cancel.is_cancelled()
+        {
+            Judgement {
+                result: first.clone(),
+                attempts: vec![first],
+                retried: false,
+                timeout,
+                timeout_source,
+                route,
+            }
+        } else {
+            let mut again = quiet.alone(|| self.execute(request, Running::alone(only), cancel))?;
+            if again.outcome != crate::outcome::Outcome::TimedOut && !again.outcome.detected() {
+                again.outcome = crate::outcome::Outcome::Inconclusive;
+            }
+            Judgement {
+                result: again.clone(),
+                attempts: vec![first, again],
+                retried: true,
+                timeout,
+                timeout_source,
+                route,
+            }
+        };
         self.workspace.trace.route(judgement.route.record(
             mutant,
             judgement.route.executed(
@@ -742,17 +828,23 @@ impl Session {
     fn execute(
         &self,
         request: &Request,
-        alone: bool,
+        how: Running<'_>,
         cancel: &Cancel,
     ) -> Result<MutantResult, EngineError> {
+        let Running { alone, only } = how;
         let mutant = self.resolve(&request.mutant)?;
         let targets = self.selected(request.target.as_deref())?;
-        let targets = match request
-            .target
-            .is_none()
-            .then(|| self.covering(mutant))
-            .flatten()
-        {
+        let narrowing = only.map_or_else(
+            || {
+                request
+                    .target
+                    .is_none()
+                    .then(|| self.covering(mutant))
+                    .flatten()
+            },
+            |named| Some(named.to_vec()),
+        );
+        let targets = match narrowing {
             Some(covering) => {
                 let routed: Vec<&TestTarget> = targets
                     .into_iter()
@@ -872,7 +964,11 @@ impl Session {
     /// # Errors
     /// The snapshot's walk failures and refusals.
     pub fn changes(&self) -> Result<Vec<Drift>, EngineError> {
-        Ok(self.workspace.snapshot.redigest()?)
+        let mut found = self.written_by_a_test.clone();
+        found.extend(self.workspace.snapshot.redigest()?);
+        found.sort_by(|a, b| a.rel_path().cmp(b.rel_path()));
+        found.dedup();
+        Ok(found)
     }
 
     /// Removes the snapshot, or preserves it, and reports what was kept.
@@ -984,6 +1080,35 @@ pub struct Description {
     pub catalog_digest: String,
     /// The toolchain, as it names itself.
     pub toolchain: String,
+}
+
+/// How one execution is run: which targets, and whether it had the machine to itself.
+#[derive(Debug, Clone, Copy)]
+struct Running<'a> {
+    /// Whether nothing else this run started was running beside it.
+    alone: bool,
+    /// The targets to run, or nothing to let the coverage narrowing decide.
+    only: Option<&'a [String]>,
+}
+
+impl<'a> Running<'a> {
+    /// Every target the measurement placed, beside whatever else is running.
+    const fn everywhere() -> Self {
+        Self {
+            alone: false,
+            only: None,
+        }
+    }
+
+    /// These targets, beside whatever else is running.
+    const fn shared(only: Option<&'a [String]>) -> Self {
+        Self { alone: false, only }
+    }
+
+    /// These targets, with the machine to itself.
+    const fn alone(only: Option<&'a [String]>) -> Self {
+        Self { alone: true, only }
+    }
 }
 
 /// What one mutant's judgement is made of: what stands, every attempt it took, and the budget each was given.
@@ -1266,7 +1391,11 @@ fn layers(
     } else {
         crate::probe::tree::Probed::default()
     };
-    let proofs = crate::prove::establish(asking, cancel, trace)?;
+    let proofs = if asking.options.branch_proofs {
+        crate::prove::establish(asking, cancel, trace)?
+    } else {
+        BTreeMap::new()
+    };
     let reached = crate::reach::establish(
         &crate::reach::Asking {
             workspace: asking.workspace,
@@ -1306,20 +1435,19 @@ const fn unreached() -> MutantResult {
     }
 }
 
-/// Discovers, instruments, validates, builds, and verifies.
+/// The gate a run stands on, and what discovery found on the tree it passed.
 ///
 /// # Errors
-/// Every failure of the phases it runs.
-pub fn prepare(
-    workspace: Workspace,
+/// The pristine gate and the failures of discovery.
+fn gated(
+    workspace: &Workspace,
     options: &PrepareOptions,
     cancel: &Cancel,
-) -> Result<Session, EngineError> {
-    let trace = workspace.trace.clone();
-    let phase = trace.phase("prepare");
+    trace: &crate::trace::Recorder,
+) -> Result<discover::Discovery, EngineError> {
     let pristine_phase = trace.phase("pristine");
-    let checked = pristine(&workspace, options, cancel)?;
-    links(&workspace, options, cancel)?;
+    let checked = pristine(workspace, options, cancel)?;
+    links(workspace, options, cancel)?;
     pristine_phase.end();
     let discover_phase = trace.phase("discover");
     let discovery = discover::discover(
@@ -1334,10 +1462,24 @@ pub fn prepare(
             exclude: options.exclude.clone(),
             packages: options.packages.clone(),
         },
-        &trace,
+        trace,
     )?;
-
     discover_phase.end();
+    Ok(discovery)
+}
+
+/// Discovers, instruments, validates, builds, and verifies.
+///
+/// # Errors
+/// Every failure of the phases it runs.
+pub fn prepare(
+    workspace: Workspace,
+    options: &PrepareOptions,
+    cancel: &Cancel,
+) -> Result<Session, EngineError> {
+    let trace = workspace.trace.clone();
+    let phase = trace.phase("prepare");
+    let discovery = gated(&workspace, options, cancel, &trace)?;
 
     let plan_phase = trace.phase("plan");
     let (sources, placements) = plan_tree(workspace.snapshot_root(), &discovery)?;
@@ -1368,7 +1510,11 @@ pub fn prepare(
     validate_phase.end();
 
     let mut workspace = workspace;
-    workspace.snapshot.reseal()?;
+    let absorbed = workspace.snapshot.reseal()?;
+    let written_by_a_test: Vec<Drift> = absorbed
+        .into_iter()
+        .filter(|drift| !sources.contains_key(drift.rel_path()))
+        .collect();
     let build_phase = trace.phase("build");
     let (targets, scratch, baseline) = built(&workspace, &last_build, options, (cancel, &trace))?;
     build_phase.end();
@@ -1394,6 +1540,7 @@ pub fn prepare(
         targets,
         scratch,
         baseline,
+        written_by_a_test,
         executions: std::sync::atomic::AtomicU64::new(0),
         mutant_timeout: options.mutant_timeout,
         workspace,

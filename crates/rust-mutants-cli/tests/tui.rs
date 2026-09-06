@@ -89,6 +89,7 @@ fn document() -> RunDocument {
             errored: 0,
             not_run: 0,
             unreached: 0,
+            discharged: 0,
             expected: 0,
         },
         score: Some(ScoreDocument {

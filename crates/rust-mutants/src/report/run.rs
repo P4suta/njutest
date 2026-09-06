@@ -102,6 +102,9 @@ pub struct Accounting {
     /// How many of those never ran because no measured target reaches them.
     #[serde(default)]
     pub unreached: u32,
+    /// How many of those never ran because a proof removed every target that could have noticed them.
+    #[serde(default)]
+    pub discharged: u32,
     /// How many survivors a reviewer had declared, and the run confirmed.
     pub expected: u32,
 }
@@ -264,6 +267,7 @@ pub fn document(
             not_run: tally.not_run,
             expected: tally.expected,
             unreached: tally.unreached,
+            discharged: tally.discharged,
         },
         score: run.score().map(|score| ScoreDocument {
             detected: score.detected,
@@ -535,6 +539,9 @@ fn accounting_of(mutants: &[RunMutantDocument], first: &RunDocument) -> Accounti
         *slot = slot.saturating_add(1);
         if one.unreached {
             counted.unreached = counted.unreached.saturating_add(1);
+        }
+        if one.not_run_reason.as_deref() == Some("discharged") {
+            counted.discharged = counted.discharged.saturating_add(1);
         }
         if one.expected {
             counted.expected = counted.expected.saturating_add(1);

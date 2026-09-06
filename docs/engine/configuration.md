@@ -38,7 +38,7 @@ operators = []                 # exactly these rules; empty = the tier
 timeout = "auto"               # auto = 5x the target's own baseline, never below 30s
 build_timeout = ""             # empty = no bound
 verify = true                  # run the instrumented baseline first
-coverage = false               # measure reach once, then run a mutant only where it was reached
+coverage = true                # measure reach once, then run a mutant only where it was reached
 
 [execution]
 offline = false
@@ -59,6 +59,20 @@ Every value above also has a flag. A flag given on the command line overrides
 the file; a list given on the command line *replaces* the file's list rather
 than adding to it, so `--package a` means exactly `a`. `--no-config` reads no
 file at all and `--config FILE` reads one elsewhere.
+
+`[mutation] coverage` is on. It is the one shipped proof layer, it fails open
+— a measurement that could not be made routes every mutant to every target,
+exactly as if the layer were not there — and it is what lets a run say
+`unreached` about a mutation nothing executes instead of `survived`.
+`--no-coverage` turns it off, which measures nothing and runs everything.
+
+With coverage on, the engine also asks the compiler which mutations change
+nothing outside the branch they sit in. A target the measurement placed at the
+mutation and whose run never entered that branch is *discharged*: it cannot
+have noticed the mutation, so running it proves nothing and costs a process.
+The report says `discharged` where it would have said `survived`, and names
+the proof. A proof without a measurement removes nothing: the lemma is the
+compiler's and the premise is the coverage layer's.
 
 `[mutation] timeout` is `auto` or a duration. `auto` is five times what that
 target's own baseline took when the run verified it, and never below thirty
