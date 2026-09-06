@@ -14,8 +14,8 @@ own under coverage instrumentation, records what each one reached, and
 writes an audited report; Every mutation the compiler
 accepts is then routed to the tests baseline coverage proves can reach it,
 run against them cheapest first, and a kill is confirmed by a pair before it
-is believed. `plan`, `report`, `trace`, `diagnostics`, `init`, and `doctor`
-read and prepare around it.
+is believed. `plan`, `report`, `explain`, `replay`, `trace`, `diagnostics`,
+`init`, and `doctor` read, re-run, and prepare around it.
 
 mjutest is an orchestrator, not a replacement testing framework. Its core
 pipeline is:

@@ -112,6 +112,8 @@ pub enum Command {
     Accept(Accept),
     /// Say what repairs a run was offered, and write the ones that hold up.
     Fix(Fix),
+    /// Put one finding back to the tests and say whether it is still there.
+    Replay(Replay),
     /// Read what a run recorded.
     Trace {
         /// What to read.
@@ -240,6 +242,23 @@ pub struct Explain {
     /// The run to read. The latest by default.
     #[arg(long, value_name = "RUN")]
     pub run: Option<String>,
+}
+
+/// `mjutest replay`.
+#[derive(Debug, Clone, clap::Args)]
+pub struct Replay {
+    /// The finding, by subject or by any prefix that names exactly one.
+    #[arg(value_name = "FINDING")]
+    pub finding: String,
+    /// The run to read the finding from. The latest by default.
+    #[arg(long, value_name = "RUN")]
+    pub run: Option<String>,
+    /// Pass `--offline` to cargo.
+    #[arg(long)]
+    pub offline: bool,
+    /// Pass `--locked` to cargo.
+    #[arg(long)]
+    pub locked: bool,
 }
 
 /// `mjutest accept`.
