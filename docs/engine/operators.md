@@ -58,7 +58,10 @@ compound assignments, and mutation inside `assert!`-family macros.
   body's brace-to-brace span.
 - **Probe form** (`Mutant.probed`): for the `return-replacement` family, when
   every operand of the statement is effect-free and cannot panic and the
-  compiler accepts the probe (no float, `Default + PartialEq` available).
+  compiler accepts the probe. It accepts it only where equality is the whole of
+  what a program can tell apart — the integers, `bool`, `char`, the unit — so a
+  float, and a type whose `PartialEq` answers about less than a test can read,
+  leave the mutant unprobed.
 
 A mutant without a proof is still cataloged, instrumented, and executed; what
 it lacks is only the licence to skip a test.

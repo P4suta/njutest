@@ -323,6 +323,7 @@ impl Compile for CargoScripted {
             },
             &CompileOptions {
                 kind: CompileKind::Tests,
+                packages: Vec::new(),
                 target_dir: Some(self.target.clone()),
                 locked: true,
                 offline: true,
@@ -379,6 +380,7 @@ fn prepare_fixture(name: &str) -> CargoScripted {
         &driver,
         &CompileOptions {
             kind: CompileKind::Check,
+            packages: Vec::new(),
             target_dir: Some(target.path().to_path_buf()),
             locked: true,
             offline: true,

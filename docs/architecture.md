@@ -88,9 +88,12 @@ body that branch gates are discharged from the reaching set instead of
 executed. Between preparing the catalog and executing it, a `probe` phase
 measures infection: rust-mutants builds a second instrumented tree in which
 each site it has a probe form for records whether the mutated value would
-have differed, and each baseline target runs against it once. A measured
-target that left a probed mutant out of its infections is discharged with
-reason `never-infected`. Everything the measurement does not cover is kept.
+have differed, and each test binary runs against it once, whole. A binary that
+left a probed mutant out of its infections is one whose every test left it out,
+so each of that binary's targets is discharged with reason `never-infected`.
+The measurement is therefore as coarse as a binary: a mutant one test of a
+binary infects keeps every test of that binary, and the layer discharges only
+where nothing in the binary saw the site differ. Everything the measurement does not cover is kept.
 See [the assurance contract](assurance-contract.md).
 
 ## Across runs

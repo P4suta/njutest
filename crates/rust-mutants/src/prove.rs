@@ -70,6 +70,7 @@ pub fn establish(
         &workspace.driver(cancel),
         &CompileOptions {
             kind: CompileKind::Check,
+            packages: Vec::new(),
             target_dir: Some(workspace.target_dir.join("witness")),
             locked: workspace.locked,
             offline: workspace.offline,

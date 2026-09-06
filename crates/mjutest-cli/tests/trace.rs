@@ -16,8 +16,9 @@ use std::time::Duration;
 
 use jiff::Timestamp;
 use mjutest_cli::trace::{
-    ArtifactRecord, Clock, DirSink, Event, ExecRecord, FILE_NAME, MemorySink, Payload, Problem,
-    ProgressRecord, RING_CAPACITY, Recorder, SCHEMA, Sink, StartRecord, check, read_events,
+    ArtifactRecord, Clock, DirSink, DischargeRecord, Event, ExecRecord, FILE_NAME, MemorySink,
+    MutantExecRecord, Payload, ProbeExecRecord, Problem, ProgressRecord, RING_CAPACITY, Recorder,
+    RouteRecord, SCHEMA, Sink, StartRecord, check, read_events,
 };
 use sha2::{Digest as _, Sha256};
 
@@ -387,6 +388,110 @@ fn the_reader_reports_a_gap_a_missing_end_and_what_the_run_said_it_dropped() {
     );
 }
 
+fn a_route() -> RouteRecord {
+    RouteRecord {
+        mutant: "9e5cc4f98f8e".to_owned(),
+        granularity: "block".to_owned(),
+        fallback: None,
+        reaching: vec!["core/test/lib fast".to_owned()],
+        discharged: vec![
+            DischargeRecord {
+                target: "core/test/lib outside".to_owned(),
+                proof: "branch-never-taken".to_owned(),
+            },
+            DischargeRecord {
+                target: "core/test/lib inside".to_owned(),
+                proof: "never-infected".to_owned(),
+            },
+        ],
+        file_candidates: 4,
+        reused: None,
+    }
+}
+
+#[test]
+fn a_stage_ends_where_the_next_begins_and_the_last_ends_with_the_run() {
+    let trace = recording();
+
+    trace.stage("open");
+    trace.stage("baseline");
+    trace.run_end("INSUFFICIENT", None, None);
+
+    let events = trace.events();
+    assert_eq!(
+        types(&events),
+        [
+            "run-start",
+            "phase-start",
+            "phase-end",
+            "phase-start",
+            "phase-end",
+            "run-end"
+        ],
+        "a run reaches one stage at a time, and what no module guards is still somewhere"
+    );
+    let named: Vec<(&str, Option<u64>)> = events
+        .iter()
+        .filter_map(|event| match &event.payload {
+            Payload::PhaseStart { phase } | Payload::PhaseEnd { phase } => {
+                Some((phase.name.as_str(), phase.duration_ms))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        named,
+        [
+            ("open", None),
+            ("open", Some(1000)),
+            ("baseline", None),
+            ("baseline", Some(1000))
+        ]
+    );
+}
+
+#[test]
+fn a_route_names_every_target_a_proof_discharged_beside_the_proof() {
+    let trace = recording();
+    trace.route(a_route());
+    trace.mutant_exec(MutantExecRecord {
+        mutant: "9e5cc4f98f8e".to_owned(),
+        target: "core/test/lib fast".to_owned(),
+        args: vec!["--exact".to_owned(), "tests::adds".to_owned()],
+        outcome: "killed".to_owned(),
+        duration_ms: 42,
+    });
+    trace.probe_exec(ProbeExecRecord {
+        target: "core/test/lib fast".to_owned(),
+        outcome: "measured".to_owned(),
+        infected: Some(3),
+    });
+    trace.run_end("INSUFFICIENT", None, None);
+
+    let events = trace.events();
+    assert_eq!(
+        types(&events),
+        ["run-start", "route", "mutant-exec", "probe-exec", "run-end"],
+        "a routing decision has a shape of its own rather than a sentence in a note"
+    );
+    let Some(Payload::Route { route }) = events.get(1).map(|event| &event.payload) else {
+        panic!("the route event")
+    };
+    assert_eq!(
+        route
+            .discharged
+            .iter()
+            .map(|one| (one.target.as_str(), one.proof.as_str()))
+            .collect::<Vec<(&str, &str)>>(),
+        [
+            ("core/test/lib outside", "branch-never-taken"),
+            ("core/test/lib inside", "never-infected")
+        ],
+        "two layers answer for one route, and a reader who cannot tell which removed a test \
+         cannot audit either"
+    );
+}
+
 #[test]
 fn the_wire_shape_is_the_recorded_one() {
     let trace = recording();
@@ -407,6 +512,19 @@ fn the_wire_shape_is_the_recorded_one() {
         total: Some(2),
     });
     phase.end();
+    trace.route(a_route());
+    trace.mutant_exec(MutantExecRecord {
+        mutant: "9e5cc4f98f8e".to_owned(),
+        target: "core/test/lib fast".to_owned(),
+        args: vec!["--exact".to_owned(), "tests::adds".to_owned()],
+        outcome: "killed".to_owned(),
+        duration_ms: 42,
+    });
+    trace.probe_exec(ProbeExecRecord {
+        target: "core/test/lib fast".to_owned(),
+        outcome: "not-measured".to_owned(),
+        infected: None,
+    });
     trace.note("limitation", "mutation-phase-not-implemented");
     trace.run_end("INSUFFICIENT", None, None);
 

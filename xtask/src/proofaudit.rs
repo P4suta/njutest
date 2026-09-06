@@ -548,8 +548,12 @@ fn equations(recording: &Recording<'_>, audit: &mut Audit) {
     notes.holds(Equation {
         subject: "accounting.mutants.accepted",
         relation: Relation::AtMost,
-        sides: (mutants("accepted"), mutants(SURVIVED)),
-        because: "an acceptance is a reviewer's answer to a mutation that survived",
+        sides: (
+            mutants("accepted"),
+            sum(&[mutants(SURVIVED), mutants(UNREACHED)]),
+        ),
+        because: "an acceptance is a reviewer's answer to a mutation nothing noticed, which is \
+                  one nothing reached as much as one every reaching test passed",
     });
     for (name, whole) in [("reused_killed", KILLED), ("reused_survived", SURVIVED)] {
         notes.holds(Equation {

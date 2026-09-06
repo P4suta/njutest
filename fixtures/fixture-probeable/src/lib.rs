@@ -23,6 +23,46 @@ pub fn ratio() -> f64 {
     1.5
 }
 
+/// A value whose equality answers about one field and whose tests read another.
+#[derive(Debug, Clone)]
+pub struct Tagged {
+    /// The field equality answers about.
+    pub number: i32,
+    /// The field equality ignores and a test reads.
+    pub tag: &'static str,
+}
+
+impl Default for Tagged {
+    fn default() -> Self {
+        Self {
+            number: 0,
+            tag: "",
+        }
+    }
+}
+
+impl PartialEq for Tagged {
+    fn eq(&self, other: &Self) -> bool {
+        self.number == other.number
+    }
+}
+
+/// Returns a value equal to the default and not the default, so a probe that trusts `==` says a test saw nothing when it saw the tag.
+pub fn tagged() -> Tagged {
+    Tagged {
+        number: 0,
+        tag: "beta",
+    }
+}
+
+/// What `retries` answers, spelled as a name rather than as the literal the default writes.
+pub const NO_RETRIES: i32 = 0;
+
+/// How many retries there are. The value already is what the replacement would write, so no test can have noticed it and the probe says so.
+pub fn retries() -> i32 {
+    NO_RETRIES
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -48,5 +88,15 @@ mod tests {
     #[test]
     fn a_ratio_is_a_ratio() {
         assert!(super::ratio() > 1.0);
+    }
+
+    #[test]
+    fn there_are_no_retries() {
+        assert_eq!(super::retries(), 0);
+    }
+
+    #[test]
+    fn a_tag_comes_back_from_the_return() {
+        assert_eq!(super::tagged().tag, "beta");
     }
 }

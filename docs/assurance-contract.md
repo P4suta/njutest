@@ -120,19 +120,30 @@ reaching(m, t) = covered-region(m, t)
 The probe tree is the program the user wrote, with no mutant ever active. For
 each mutation the engine has a probe form of, that tree records — without
 effects of its own — whether the value the original computed at the mutated
-site ever differed from the constant the mutant would put there. So a target
-the pass measured and that never saw that site differ ran the original program
-and the mutated one through identical states. It cannot have observed the
-mutation. Such a target is *discharged* with reason `never-infected`.
+site ever differed from the constant the mutant would put there. The engine
+runs a test binary whole and records what that binary infected, so what the
+pass measures is a binary rather than one of its tests; a binary that never saw
+the site differ is one whose every test never saw it differ, and each of that
+binary's targets ran the original program and the mutated one through identical
+states. None of them can have observed the mutation. Such a target is
+*discharged* with reason `never-infected`. The coarseness costs discharges and
+never soundness: one test of a binary seeing the site differ keeps every test of
+that binary.
 
 That the recording is a proof is the engine's obligation. A mutant does not
 evaluate the operand it replaced, so rust-mutants attaches a probe form only
 where leaving that operand unevaluated changes nothing observable — every
 operand of the statement is effect-free — where the recorded comparison is
 always reached — the replaced operand cannot panic — and where equal values
-mean equal behaviour, which rules out a floating-point result; the compiler
-itself refuses the probe on a float or on a type without `Default` and
-`PartialEq`. mjutest states nothing about a site the engine did not claim,
+mean equal behaviour. That last one is the narrowest. A probe reads `==` as the
+answer to whether a test could have seen the replacement, so it is stated only
+for the types whose equality is the whole of what a program can tell apart: the
+integers, `bool`, `char`, and the unit. The compiler itself refuses every other
+probe. A float is refused because `-0.0 == 0.0` holds and `-0.0` is not what
+the default writes; an equality that answers about one field while a test reads
+another is refused because the probe would otherwise say a test saw nothing
+while it watched the difference, and the discharge would remove the test that
+finds the defect. mjutest states nothing about a site the engine did not claim,
 and holds what the engine does claim to the recorded kills of every dogfood
 run through the offline `proofaudit` infection layer.
 
@@ -167,16 +178,27 @@ kill is `flaky-mutation-kill`. Both are inconclusive evidence and prevent an
 assured verdict. A mutation that does not compile is `compile-rejected`, never
 "compile-equivalent".
 
-Every discovered mutant has exactly one report-v1 disposition:
+Every cataloged mutant has exactly one report-v1 disposition, and the columns
+say what the records say:
 
 ```text
-discovered = executed + compile-rejected + accepted + out-of-scope + unknown
-executed   = killed + survived + inconclusive
-selected   = executed + compile-rejected + accepted + unknown
+cataloged      = rejected + executed + unreached
+executed      >= killed + survived + timed_out
+accepted      <= survived + unreached
+reused_killed <= killed        reused_survived <= survived
 ```
 
-The aggregate counts must exactly match the ID-level mutant inventory. Any
-`unknown` disposition requires `ERROR`.
+`executed` is an inequality because a pair that did not agree and a harness
+that could not run are executions that established neither a kill nor a
+survival. The aggregate counts must match the ID-level mutant inventory
+exactly, and `cargo xtask proofaudit` re-derives every one of these from the
+recording rather than asking the runner whether it agrees with itself.
+
+An acceptance answers for a mutation nothing noticed — one every reaching test
+passed and one no measured test reaches alike — and for nothing else. An
+outcome that established nothing either way is not a decision anybody can sign
+off, so a pair that did not agree, a harness that could not run, and a budget
+that expired keep their findings whatever a reviewer wrote.
 
 ### Reusing a verdict an earlier run reached
 
@@ -234,6 +256,16 @@ checksums, the toolchain, the platform, the selected environment, the
 contract, the test arguments, the features, both timeouts, the mjutest and
 rust-mutants versions, and a fuzz target's corpus. Diagnostics — tracing,
 kept temporaries — and parallelism are outside every key.
+
+A run measures up to `[execution] jobs` mutations at once — the processors the
+machine offers, capped at four, when the configuration does not say, and one
+whenever a resource only one test may hold at a time is configured. Measuring
+two mutations at once is not a budget: every mutation still runs, against every
+test its route named, and nothing is sampled or skipped. Workers commit
+nothing; the answers are put back in the order the catalog has them, so what a
+report says is the same however the processors were shared out. Each execution
+is given a temporary directory of its own, so two of them cannot meet in one
+another's files.
 
 A package whose sources use a directory-reading API — `std::fs::read_dir`,
 `walkdir`, `glob`, `globset`, `ignore`, `include_dir!`, or the working

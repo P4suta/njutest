@@ -258,6 +258,7 @@ fn measure(fixture: &str, test: &str) -> Measured {
         &driver,
         &CompileOptions {
             kind: CompileKind::Tests,
+            packages: Vec::new(),
             target_dir: Some(target.path().to_path_buf()),
             locked: true,
             offline: true,

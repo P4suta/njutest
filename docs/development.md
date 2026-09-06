@@ -118,6 +118,25 @@ of a failed run, and the `explain` family of commands. The rule for all of it
 is [ADR 0002](adr/0002-trace-is-not-evidence.md): never a claim, never a
 failure, always honest about what was dropped.
 
+`mjutest trace summary` is where a person asks where a run went. It counts the
+events by type, times every stage the run said it had reached, counts the
+commands by program, says how many executions each proof removed, and names the
+slowest commands. A run records the engine's own trace in a directory beside
+its own, and the summary reads that too: the engine does most of a run — the
+snapshot, the instrumentation, the validation rounds, the builds — so a summary
+that read only the runner's would leave the larger part of every run
+unaccounted for. Both are read with one command:
+
+```console
+mjutest verify --trace
+mjutest trace summary
+```
+
+The numbers are the ones to optimise against, and the rule for acting on them
+is [ADR 0004](adr/0004-proof-layers-not-budgets.md): a run that is too slow is
+a run missing a proof, or doing work nothing reads — never a run that should
+measure less.
+
 ## The catalog
 
 The developer-facing infrastructure, and the milestone it arrives in:

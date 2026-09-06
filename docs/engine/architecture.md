@@ -6,9 +6,9 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 # rust-mutants architecture
 
 **Status: implemented.** Discovery, instrumentation, compiler-validated
-acceptance, execution, the public API, and the command line all work; the
-probe tree and the branch proof arrive in M5, in the order of the
-[roadmap](../roadmap.md).
+acceptance, execution, the probe tree, the branch proof, the public API, and
+the command line all work; [the roadmap](../roadmap.md) says which milestone
+each part came from.
 
 ## Invariants
 
@@ -45,6 +45,22 @@ cargo metadata (in the snapshot) ─→ pristine cargo check + dep-info
         │
    Session: exec(mutant, target, args) / probe(target, args) / changes()
 ```
+
+## What a scoped run compiles
+
+`PrepareOptions.packages` names the members a run is about. It narrows what is
+mutated, and it narrows what is built: the test binaries a run starts are the
+ones of the packages it is about, so `cargo test --no-run` is given those
+packages and nothing else. The instrumented baseline — the tests run with no
+mutant active — is then those binaries too.
+
+The type check is not narrowed. A mutation of one package can stop being a
+program only where another instantiates it, so `cargo check` is always about
+the whole workspace: narrowing it would let a mutant that does not compile
+downstream reach the build instead of the rejection it belongs in.
+
+Scoping a run is the one thing a person can do to make it shorter, and until
+this was so it did not shorten the longest part of one.
 
 ## Snapshot
 

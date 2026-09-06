@@ -13,7 +13,9 @@ use std::process::Command;
 use rust_mutants::probe::runtime::{MARKER, MODULE_STEM, PROBE_ENV, UNAVAILABLE_EXIT, render};
 
 fn compile(source: &str, name: &str) -> std::process::Output {
-    let dir = mjutest_devkit::paths::workspace_root().join("target/probe-runtime");
+    let dir = mjutest_devkit::paths::workspace_root()
+        .join("target/probe-runtime")
+        .join(name);
     std::fs::create_dir_all(&dir).expect("a place to build");
     let path = dir.join(format!("{name}.rs"));
     std::fs::write(&path, source).expect("write");
@@ -59,7 +61,8 @@ fn a_value_that_already_is_the_default_answers_yes_and_one_that_is_not_answers_n
         "{}\n\
          pub fn zero() -> bool {{ let v: i32 = 0; (&v).probed() }}\n\
          pub fn one() -> bool {{ let v: i32 = 1; (&v).probed() }}\n\
-         pub fn empty() -> bool {{ let v = String::new(); (&v).probed() }}\n\
+         pub fn no() -> bool {{ let v: bool = false; (&v).probed() }}\n\
+         pub fn letter() -> bool {{ let v: char = 'x'; (&v).probed() }}\n\
          use {MODULE_STEM}::Probe as _;\n",
         module()
     );
@@ -69,6 +72,29 @@ fn a_value_that_already_is_the_default_answers_yes_and_one_that_is_not_answers_n
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+#[test]
+fn a_probe_of_a_type_whose_equality_says_less_than_a_test_can_see_is_a_compile_error() {
+    let source = format!(
+        "{}\n\
+         #[derive(Default)]\n\
+         pub struct Tagged {{ pub number: i32, pub tag: &'static str }}\n\
+         impl PartialEq for Tagged {{\n\
+             fn eq(&self, other: &Self) -> bool {{ self.number == other.number }}\n\
+         }}\n\
+         pub fn tagged() -> bool {{ let v = Tagged {{ number: 0, tag: \"beta\" }}; (&v).probed() }}\n\
+         use {MODULE_STEM}::Probe as _;\n",
+        module()
+    );
+    let output = compile(&source, "lax");
+    assert!(
+        !output.status.success(),
+        "an equality that answers about one field while a test reads another would have the \
+         probe say a test saw nothing when it saw the tag"
+    );
+    let said = String::from_utf8_lossy(&output.stderr);
+    assert!(said.contains("Observable"), "{said}");
 }
 
 #[test]
