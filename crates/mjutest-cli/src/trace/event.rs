@@ -60,6 +60,21 @@ pub enum Payload {
         /// The record.
         artifact: ArtifactRecord,
     },
+    /// One mutant's routing decision, with the proofs that narrowed it.
+    Route {
+        /// The record.
+        route: RouteRecord,
+    },
+    /// One mutant ran against one target.
+    MutantExec {
+        /// The record.
+        mutant: MutantExecRecord,
+    },
+    /// What the probe pass measured for one target.
+    ProbeExec {
+        /// The record.
+        probe: ProbeExecRecord,
+    },
     /// Something worth writing down that has no shape of its own yet.
     Note {
         /// The record.
@@ -83,6 +98,9 @@ impl Payload {
             Self::Exec { .. } => "exec",
             Self::Progress { .. } => "progress",
             Self::Artifact { .. } => "artifact",
+            Self::Route { .. } => "route",
+            Self::MutantExec { .. } => "mutant-exec",
+            Self::ProbeExec { .. } => "probe-exec",
             Self::Note { .. } => "note",
             Self::RunEnd { .. } => "run-end",
         }
@@ -222,6 +240,66 @@ pub struct ArtifactRecord {
     pub path: String,
     /// How big it is, when that was measured.
     pub bytes: Option<u64>,
+}
+
+/// One target a proof removed from a reaching set, beside the proof that removed it.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct DischargeRecord {
+    /// The target that was not run.
+    pub target: String,
+    /// What removed it.
+    pub proof: String,
+}
+
+/// How one mutant's tests were chosen, and what narrowed the choice.
+///
+/// [ADR 0004](../../../../docs/adr/0004-proof-layers-not-budgets.md) decision 4
+/// asks that every layer be visible: the granularity a route was decided at,
+/// the fallback that widened it, and every target a proof discharged with the
+/// proof's name. A reader who sees a run go faster asks which proof did it, and
+/// the answer is here rather than in a configuration file.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct RouteRecord {
+    /// The mutant a person types.
+    pub mutant: String,
+    /// `block`, `discharged`, `file`, or `unreached`.
+    pub granularity: String,
+    /// What the evidence could not support, on a route the position did not decide.
+    pub fallback: Option<String>,
+    /// The targets to run, cheapest first.
+    pub reaching: Vec<String>,
+    /// The targets a proof removed, each beside the proof that removed it.
+    pub discharged: Vec<DischargeRecord>,
+    /// How many targets touched the file at all.
+    pub file_candidates: u64,
+    /// The run this disposition was read back from, when it was not established here.
+    pub reused: Option<String>,
+}
+
+/// One mutant run against one target.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct MutantExecRecord {
+    /// The mutant a person types.
+    pub mutant: String,
+    /// The target it ran against.
+    pub target: String,
+    /// The arguments the target was given, verbatim.
+    pub args: Vec<String>,
+    /// What the run established.
+    pub outcome: String,
+    /// How long it took.
+    pub duration_ms: u64,
+}
+
+/// What the probe pass measured for one target.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct ProbeExecRecord {
+    /// The target.
+    pub target: String,
+    /// `measured` when the pass read that target's log, `not-measured` when it did not.
+    pub outcome: String,
+    /// How many mutants the target infected. A target the pass did not measure carries no facts, and none is not zero.
+    pub infected: Option<u64>,
 }
 
 /// A free-form note, for what has no shape of its own yet.

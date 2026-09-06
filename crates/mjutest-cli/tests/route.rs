@@ -7,7 +7,9 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use mjutest_cli::assure::baseline::Measured;
-use mjutest_cli::assure::route::{Body, Fallback, Proven, Route, discharge, route, uninfected};
+use mjutest_cli::assure::route::{
+    BRANCH_NEVER_TAKEN, Body, Fallback, NEVER_INFECTED, Proven, Route, discharge, route, uninfected,
+};
 use mjutest_cli::coverage::{Block, Point};
 use mjutest_cli::report::TargetStatus;
 use mjutest_cli::targets::{Target, UnitKind};
@@ -48,6 +50,15 @@ fn measured(id: &str, duration_ms: u64, status: TargetStatus, covered: &[Block])
 
 fn instrumented(blocks: &[Block]) -> BTreeSet<Block> {
     blocks.iter().cloned().collect()
+}
+
+/// The targets a route's proofs removed, without the proof names.
+fn removed(route: &Route) -> Vec<&str> {
+    route
+        .discharged()
+        .iter()
+        .map(|one| one.target.as_str())
+        .collect()
 }
 
 #[test]
@@ -269,8 +280,53 @@ fn a_test_that_never_took_the_branch_is_removed_without_being_run() {
         },
     );
     assert_eq!(narrowed.reaching(), ["took"]);
-    assert_eq!(narrowed.discharged(), ["did-not"]);
+    assert_eq!(removed(&narrowed), ["did-not"]);
     assert_eq!(narrowed.granularity(), "block");
+}
+
+#[test]
+fn a_discharge_names_the_proof_that_removed_the_target() {
+    let touched = block("src/lib.rs", (10, 8), (10, 18));
+    let gated = block("src/lib.rs", (10, 20), (12, 6));
+    let outside = measured(
+        "outside",
+        1,
+        TargetStatus::Passed,
+        std::slice::from_ref(&touched),
+    );
+    let inside = measured(
+        "inside",
+        2,
+        TargetStatus::Passed,
+        &[touched.clone(), gated.clone()],
+    );
+    let baseline = [outside, inside];
+    let seen = instrumented(&[touched, gated]);
+
+    let narrowed = uninfected(
+        discharge(
+            route("src/lib.rs", Some(at(10, 12)), &baseline, &seen),
+            &Proven {
+                path: "src/lib.rs",
+                body: body((10, 20), (12, 6)),
+                baseline: &baseline,
+                instrumented: &seen,
+            },
+        ),
+        7,
+        &infected(&[("inside", &[])]),
+    );
+
+    let named: Vec<(&str, &str)> = narrowed
+        .discharged()
+        .iter()
+        .map(|one| (one.target.as_str(), one.proof))
+        .collect();
+    assert_eq!(
+        named,
+        [("outside", BRANCH_NEVER_TAKEN), ("inside", NEVER_INFECTED)],
+        "a route records every target a proof discharged beside the proof that removed it"
+    );
 }
 
 #[test]
@@ -296,7 +352,7 @@ fn a_mutant_every_test_was_discharged_for_is_resolved_without_one_execution() {
     );
     assert_eq!(narrowed.granularity(), "discharged");
     assert!(narrowed.reaching().is_empty());
-    assert_eq!(narrowed.discharged(), ["never"]);
+    assert_eq!(removed(&narrowed), ["never"]);
 }
 
 #[test]
@@ -415,7 +471,7 @@ fn a_test_that_never_infected_a_mutant_is_removed_without_being_run() {
 
     let narrowed = uninfected(route, 7, &infected(&[("did", &[7]), ("did-not", &[9])]));
     assert_eq!(narrowed.reaching(), ["did"]);
-    assert_eq!(narrowed.discharged(), ["did-not"]);
+    assert_eq!(removed(&narrowed), ["did-not"]);
 }
 
 #[test]
@@ -467,5 +523,5 @@ fn a_mutant_no_test_infected_is_resolved_without_one_execution() {
     );
     assert_eq!(narrowed.granularity(), "discharged");
     assert!(narrowed.reaching().is_empty());
-    assert_eq!(narrowed.discharged(), ["never"]);
+    assert_eq!(removed(&narrowed), ["never"]);
 }

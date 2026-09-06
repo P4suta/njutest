@@ -5,6 +5,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
+use std::sync::Mutex;
 
 use rust_mutants::catalog::Mutant;
 use rust_mutants::outcome::Outcome;
@@ -12,6 +13,7 @@ use rust_mutants::session::{Request, Session};
 
 use crate::assure::baseline::Measured;
 use crate::assure::route::{self, Route};
+use crate::assure::schedule;
 use crate::coverage::Block;
 use crate::evidence::store;
 use crate::report::{Finding, FindingKind, MutantAccounting, TargetStatus};
@@ -72,7 +74,7 @@ pub enum Disposition {
         /// The test that noticed.
         by: String,
     },
-    /// A test ran out of time twice with it active, which is a behaviour change the tests noticed.
+    /// A test ran out of time with it active, which establishes nothing either way.
     TimedOut {
         /// The test that did not finish.
         on: String,
@@ -125,12 +127,6 @@ impl Disposition {
             }
             Self::Rejected { .. } | Self::Survived { .. } | Self::Unreached => None,
         }
-    }
-
-    /// Whether the tests caught this mutation.
-    #[must_use]
-    pub const fn caught(&self) -> bool {
-        matches!(self, Self::Killed { .. } | Self::TimedOut { .. })
     }
 }
 
@@ -215,10 +211,24 @@ impl Mutation {
     pub fn findings(&self, accepted: &BTreeSet<String>) -> Vec<Finding> {
         self.judged
             .iter()
-            .filter(|judged| !accepted.contains(&judged.id))
+            .filter(|judged| !answered_by(judged, accepted))
             .filter_map(finding_of)
             .collect()
     }
+}
+
+/// Whether a reviewer's acceptance answers for this mutation.
+///
+/// It answers for a mutation nothing noticed and for nothing else. An outcome
+/// that established nothing either way — a pair that did not agree, a harness
+/// that could not run, a budget that expired — is not a decision anybody can
+/// sign off, and letting an acceptance remove its finding would turn "I could
+/// not tell" into "I looked and it is fine".
+fn answered_by(judged: &Judged, accepted: &BTreeSet<String>) -> bool {
+    matches!(
+        judged.disposition,
+        Disposition::Survived { .. } | Disposition::Unreached
+    ) && accepted.contains(&judged.id)
 }
 
 /// The finding one disposition raises, if it raises one.
@@ -256,9 +266,15 @@ fn finding_of(judged: &Judged) -> Option<Finding> {
             FindingKind::TargetMissing,
             format!("{on}: the mutation could not be measured: {detail}"),
         ),
-        Disposition::Killed { .. }
-        | Disposition::TimedOut { .. }
-        | Disposition::Rejected { .. } => {
+        Disposition::TimedOut { on } => (
+            FindingKind::Timeout,
+            format!(
+                "{on} ran out of time with {} at {} active: an expired budget establishes \
+                 nothing about the mutation",
+                judged.rule, judged.path
+            ),
+        ),
+        Disposition::Killed { .. } | Disposition::Rejected { .. } => {
             return None;
         }
     };
@@ -288,6 +304,10 @@ pub struct MutationOptions {
     pub test_args: Vec<String>,
     /// What earlier runs established about individual mutants, and what this run knows of the targets they name. `None` for a run that establishes everything itself.
     pub evidence: Option<Evidence>,
+    /// How many mutations to measure at once. Zero takes the processors the machine offers, capped.
+    pub jobs: u32,
+    /// Whether a resource only one test may hold at a time forces the run to measure one mutation at a time.
+    pub exclusive: bool,
 }
 
 /// Where a run reads and writes what is established about individual mutants.
@@ -364,7 +384,7 @@ pub fn run_resuming(
 ) -> Result<Mutation, crate::error::RunnerError> {
     let crate::assure::baseline::Reporting { notes, watch } = reporting;
     let (session, baseline) = (subject.session, subject.baseline);
-    let phase = watch.trace.phase("mutation");
+    let phase = watch.trace.phase("mutation-judge");
     let mut mutation = Mutation::default();
     for skip in session.skips() {
         let count = mutation
@@ -374,6 +394,8 @@ pub fn run_resuming(
         *count = count.saturating_add(1);
     }
 
+    record_probe(watch, session, baseline);
+
     let catalog = session.catalog();
     let rejected: BTreeMap<&str, &str> = session
         .rejections()
@@ -382,60 +404,92 @@ pub fn run_resuming(
         .collect();
     let mutants: Vec<&Mutant> = catalog.mutants().iter().collect();
     let total = u64::try_from(mutants.len()).unwrap_or(u64::MAX);
-    let mut controls = Controls::default();
-    let mut judging = Judging {
+    let controls = Controls::default();
+    let judging = Judging {
         subject,
         options,
-        controls: &mut controls,
+        controls: &controls,
         watch,
+        infected: infections(baseline, &session.probed().infected),
     };
 
-    for (index, mutant) in mutants.iter().enumerate() {
+    let measured = schedule::measure(
+        &mutants,
+        schedule::workers(options.jobs, schedule::available(), options.exclusive),
+        |_at, mutant| establish(mutant, &judging, resume.state, &rejected),
+    );
+
+    for (index, answer) in measured.into_iter().enumerate() {
+        let judged = answer?;
         let done = u64::try_from(index).unwrap_or(u64::MAX).saturating_add(1);
-        notes.progress(&mutant.display_id, done, total);
-
-        let position = session.position(mutant).map(|at| crate::report::Position {
-            line: at.line,
-            column: at.byte_column,
-            character_column: at.char_column,
-        });
-        let mut source: Option<String> = None;
-        let disposition = if let Some(saved) = resume
-            .state
-            .and_then(|state| state.mutant(&mutant.id))
-            .and_then(inherited)
-        {
-            saved
-        } else if let Some(diagnostic) = rejected.get(mutant.id.as_str()) {
-            Disposition::Rejected {
-                diagnostic: (*diagnostic).to_owned(),
-            }
-        } else {
-            let route = routed(mutant, position, baseline, &judging);
-            if let Some((disposition, run_id)) = reuse(options, &route, &mutant.id) {
-                source = Some(run_id);
-                disposition
-            } else {
-                let established = judge(&mut judging, mutant, route.clone())?;
-                keep(options, &mutant.id, &route, &established);
-                established
-            }
-        };
-
-        let judged = Judged {
-            id: mutant.id.clone(),
-            display_id: mutant.display_id.clone(),
-            path: mutant.candidate.path.clone(),
-            rule: mutant.candidate.rule.to_string(),
-            position,
-            disposition,
-            source_run_id: source,
-        };
+        notes.progress(&judged.display_id, done, total);
         (resume.record)(&judged);
         mutation.judged.push(judged);
     }
     phase.end();
     Ok(mutation)
+}
+
+/// What one mutant comes to, without committing anything a report will carry.
+///
+/// Workers call this at the same time as one another, so it reads what the run
+/// already holds and writes nothing but the evidence store and the trace, both
+/// of which take their own locks. The caller commits the answers in catalog
+/// order.
+fn establish(
+    mutant: &Mutant,
+    judging: &Judging<'_>,
+    state: Option<&crate::checkpoint::State>,
+    rejected: &BTreeMap<&str, &str>,
+) -> Result<Judged, crate::error::RunnerError> {
+    let (session, baseline, options, watch) = (
+        judging.subject.session,
+        judging.subject.baseline,
+        judging.options,
+        judging.watch,
+    );
+    let position = session.position(mutant).map(|at| crate::report::Position {
+        line: at.line,
+        column: at.byte_column,
+        character_column: at.char_column,
+    });
+    let mut source: Option<String> = None;
+    let disposition = if let Some(saved) = state
+        .and_then(|state| state.mutant(&mutant.id))
+        .and_then(inherited)
+    {
+        saved
+    } else if let Some(diagnostic) = rejected.get(mutant.id.as_str()) {
+        Disposition::Rejected {
+            diagnostic: (*diagnostic).to_owned(),
+        }
+    } else {
+        let route = routed(mutant, position, baseline, judging);
+        let reused = reuse(options, &route, &mutant.id);
+        record_route(
+            watch,
+            mutant,
+            &route,
+            reused.as_ref().map(|(_, run)| run.as_str()),
+        );
+        if let Some((disposition, run_id)) = reused {
+            source = Some(run_id);
+            disposition
+        } else {
+            let established = judge(judging, mutant, route.clone())?;
+            keep(options, &mutant.id, &route, &established);
+            established
+        }
+    };
+    Ok(Judged {
+        id: mutant.id.clone(),
+        display_id: mutant.display_id.clone(),
+        path: mutant.candidate.path.clone(),
+        rule: mutant.candidate.rule.to_string(),
+        position,
+        disposition,
+        source_run_id: source,
+    })
 }
 
 /// The tests that could notice this mutant, and a note in the trace saying how they were chosen.
@@ -456,7 +510,7 @@ fn routed(
     );
     let probed = judging.subject.session.probed();
     if probed.asked.contains(&mutant.index) {
-        route = route::uninfected(route, mutant.index, &probed.infected);
+        route = route::uninfected(route, mutant.index, &judging.infected);
     }
     if let Some(proof) = judging.subject.session.branch(mutant.index) {
         route = route::discharge(
@@ -478,17 +532,53 @@ fn routed(
             },
         );
     }
-    judging.watch.trace.note(
-        "route",
-        &format!(
-            "{} {} {} targets, {} discharged",
-            mutant.display_id,
-            route.granularity(),
-            route.reaching().len(),
-            route.discharged().len()
-        ),
-    );
     route
+}
+
+/// Records what the probe pass measured for each target the baseline ran.
+///
+/// A target the pass did not measure carries no facts at all, and none is not
+/// zero: a reader who cannot tell "infected nothing" from "was never asked"
+/// cannot tell a discharge that rests on evidence from one that rests on
+/// silence.
+fn record_probe(watch: Watch<'_>, session: &Session, baseline: &[Measured]) {
+    let probed = session.probed();
+    if probed.asked.is_empty() {
+        return;
+    }
+    let infected = infections(baseline, &probed.infected);
+    for measured in baseline {
+        let seen = infected.get(&measured.target.id);
+        watch.trace.probe_exec(crate::trace::ProbeExecRecord {
+            target: measured.target.id.clone(),
+            outcome: if seen.is_some() {
+                "measured".to_owned()
+            } else {
+                "not-measured".to_owned()
+            },
+            infected: seen.map(|one| u64::try_from(one.len()).unwrap_or(u64::MAX)),
+        });
+    }
+}
+
+/// Records how one mutant's tests were chosen, and whether this run established the answer itself.
+fn record_route(watch: Watch<'_>, mutant: &Mutant, route: &Route, reused: Option<&str>) {
+    watch.trace.route(crate::trace::RouteRecord {
+        mutant: mutant.display_id.clone(),
+        granularity: route.granularity().to_owned(),
+        fallback: route.fallback().map(|why| why.name().to_owned()),
+        reaching: route.reaching().to_vec(),
+        discharged: route
+            .discharged()
+            .iter()
+            .map(|one| crate::trace::DischargeRecord {
+                target: one.target.clone(),
+                proof: one.proof.to_owned(),
+            })
+            .collect(),
+        file_candidates: u64::try_from(route.file_candidates()).unwrap_or(u64::MAX),
+        reused: reused.map(ToOwned::to_owned),
+    });
 }
 
 /// What an earlier run established about this mutant, when this run may believe it.
@@ -562,12 +652,13 @@ fn inherited(saved: &crate::checkpoint::SavedMutant) -> Option<Disposition> {
 struct Judging<'a> {
     subject: Subject<'a>,
     options: &'a MutationOptions,
-    controls: &'a mut Controls,
+    controls: &'a Controls,
     watch: Watch<'a>,
+    infected: BTreeMap<String, BTreeSet<u32>>,
 }
 
 fn judge(
-    judging: &mut Judging<'_>,
+    judging: &Judging<'_>,
     mutant: &Mutant,
     route: Route,
 ) -> Result<Disposition, crate::error::RunnerError> {
@@ -588,6 +679,13 @@ fn judge(
         };
         let request = request_for(mutant, measured, &options.test_args);
         let result = session.exec(&request, watch.cancel)?;
+        watch.trace.mutant_exec(crate::trace::MutantExecRecord {
+            mutant: mutant.display_id.clone(),
+            target: measured.target.id.clone(),
+            args: request.args.clone(),
+            outcome: result.outcome.name().to_owned(),
+            duration_ms: u64::try_from(result.duration.as_millis()).unwrap_or(u64::MAX),
+        });
         match result.outcome {
             Outcome::Survived => {}
             Outcome::Killed | Outcome::TimedOut => {
@@ -619,7 +717,7 @@ fn judge(
 fn confirm(
     session: &Session,
     request: &Request,
-    controls: &mut Controls,
+    controls: &Controls,
     watch: Watch<'_>,
 ) -> Result<Result<(), Unconfirmed>, crate::error::RunnerError> {
     if let Some(failure) = controls.ask(session, request, watch)? {
@@ -637,13 +735,18 @@ fn confirm(
 #[derive(Debug, Default)]
 struct Controls {
     /// The failure each test showed on the original, or nothing when it passed. Absent means it has not been asked yet.
-    asked: BTreeMap<String, Option<String>>,
+    ///
+    /// Workers share this, so it answers behind a lock the run never holds
+    /// across a process: two of them asking the same question at once ask it
+    /// twice and write the same answer, which costs a control and never a
+    /// wrong one.
+    asked: Mutex<BTreeMap<String, Option<String>>>,
 }
 
 impl Controls {
     /// Why this test fails on the original, or nothing when it passes.
     fn ask(
-        &mut self,
+        &self,
         session: &Session,
         request: &Request,
         watch: Watch<'_>,
@@ -653,13 +756,21 @@ impl Controls {
             request.target.as_deref().unwrap_or_default(),
             request.test.as_deref().unwrap_or_default()
         );
-        if let Some(known) = self.asked.get(&key) {
+        if let Some(known) = self
+            .asked
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&key)
+        {
             return Ok(known.clone());
         }
         let control = session.control(request, watch.cancel)?;
         let failure = (control.outcome != Outcome::Survived)
             .then(|| format!("{}: {}", control.outcome.name(), tail(&control.output)));
-        self.asked.insert(key, failure.clone());
+        self.asked
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(key, failure.clone());
         Ok(failure)
     }
 }
@@ -668,16 +779,47 @@ impl Controls {
 fn request_for(mutant: &Mutant, measured: &Measured, args: &[String]) -> Request {
     Request {
         mutant: mutant.id.clone(),
-        target: Some(format!(
-            "{}/{}/{}",
-            measured.target.package,
-            measured.target.unit.name(),
-            measured.target.unit_name
-        )),
+        target: Some(binary_of(measured)),
         test: (!measured.target.is_whole_binary()).then(|| measured.target.path.clone()),
         args: args.to_vec(),
         timeout: None,
     }
+}
+
+/// The engine's name for the binary this target is one test of: `package/kind/name`.
+fn binary_of(measured: &Measured) -> String {
+    format!(
+        "{}/{}/{}",
+        measured.target.package,
+        measured.target.unit.name(),
+        measured.target.unit_name
+    )
+}
+
+/// What the probe pass measured, keyed by the target identities this run routes with.
+///
+/// The engine probes a binary: it runs each one once with nothing active and
+/// records the mutants that binary infected. This run names one test of that
+/// binary, so the two carry different names for different things, and a lookup
+/// by the engine's name finds nothing for every target. Nothing reads as "the
+/// probe says nothing about this target", which keeps every execution — a proof
+/// layer switched on and never firing.
+///
+/// A binary that infected nothing is one whose every test infected nothing, so
+/// giving each of its tests the binary's answer discharges only what the
+/// measurement carries.
+fn infections(
+    baseline: &[Measured],
+    infected: &BTreeMap<String, BTreeSet<u32>>,
+) -> BTreeMap<String, BTreeSet<u32>> {
+    baseline
+        .iter()
+        .filter_map(|measured| {
+            infected
+                .get(&binary_of(measured))
+                .map(|seen| (measured.target.id.clone(), seen.clone()))
+        })
+        .collect()
 }
 
 /// The last line worth quoting from a capture.

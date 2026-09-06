@@ -15,8 +15,8 @@ use jiff::Timestamp;
 use sha2::{Digest as _, Sha256};
 
 pub use event::{
-    ArtifactRecord, Event, ExecRecord, NoteRecord, Payload, PhaseRecord, ProgressRecord, RunRecord,
-    SCHEMA, StartRecord,
+    ArtifactRecord, DischargeRecord, Event, ExecRecord, MutantExecRecord, NoteRecord, Payload,
+    PhaseRecord, ProbeExecRecord, ProgressRecord, RouteRecord, RunRecord, SCHEMA, StartRecord,
 };
 pub use reader::{Problem, ReadError, check, read_events};
 pub use sink::{
@@ -106,6 +106,8 @@ struct State {
     attempts: u64,
     failures: u64,
     ended: bool,
+    /// The stage the run said it was in, and when it said so.
+    stage: Option<(String, Timestamp)>,
 }
 
 impl Recorder {
@@ -172,6 +174,51 @@ impl Recorder {
         }
     }
 
+    /// Records that the run has reached a stage, ending the stage before it.
+    ///
+    /// A stage is what the person watching is told the run is doing, and the
+    /// stages are sequential: one ends where the next begins. [`Self::phase`]
+    /// times a scope a module happens to hold, which leaves whatever no module
+    /// guards — the builds, which is most of a run — outside every phase and
+    /// unattributable. A reader asking where a run spent its time reads these.
+    pub fn stage(&self, name: &str) {
+        let Some(inner) = &self.inner else {
+            return;
+        };
+        let moment = inner.clock.now();
+        let mut state = inner
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if state.ended {
+            return;
+        }
+        if let Some((open, started)) = state.stage.take() {
+            let duration = millis_between(started, moment);
+            inner.deliver(
+                &mut state,
+                moment,
+                Payload::PhaseEnd {
+                    phase: PhaseRecord {
+                        name: open,
+                        duration_ms: Some(duration),
+                    },
+                },
+            );
+        }
+        inner.deliver(
+            &mut state,
+            moment,
+            Payload::PhaseStart {
+                phase: PhaseRecord {
+                    name: name.to_owned(),
+                    duration_ms: None,
+                },
+            },
+        );
+        state.stage = Some((name.to_owned(), moment));
+    }
+
     /// Records one executed process.
     pub fn exec(&self, mut record: ExecRecord) {
         record.env_names = environment_names(&record.env_names);
@@ -190,6 +237,21 @@ impl Recorder {
     /// Records something the run kept for a person to look at.
     pub fn artifact(&self, record: ArtifactRecord) {
         self.emit(Payload::Artifact { artifact: record });
+    }
+
+    /// Records how one mutant's tests were chosen, and what narrowed the choice.
+    pub fn route(&self, record: RouteRecord) {
+        self.emit(Payload::Route { route: record });
+    }
+
+    /// Records one mutant run against one target.
+    pub fn mutant_exec(&self, record: MutantExecRecord) {
+        self.emit(Payload::MutantExec { mutant: record });
+    }
+
+    /// Records what the probe pass measured for one target.
+    pub fn probe_exec(&self, record: ProbeExecRecord) {
+        self.emit(Payload::ProbeExec { probe: record });
     }
 
     /// Records a free-form note.
@@ -215,6 +277,19 @@ impl Recorder {
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             if state.ended {
                 return;
+            }
+            if let Some((open, started)) = state.stage.take() {
+                let duration = millis_between(started, moment);
+                inner.deliver(
+                    &mut state,
+                    moment,
+                    Payload::PhaseEnd {
+                        phase: PhaseRecord {
+                            name: open,
+                            duration_ms: Some(duration),
+                        },
+                    },
+                );
             }
             let events_dropped = inner.sink.dropped().unwrap_or(state.failures);
             let events_emitted = state.attempts.saturating_sub(events_dropped);

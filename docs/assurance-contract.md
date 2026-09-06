@@ -178,16 +178,27 @@ kill is `flaky-mutation-kill`. Both are inconclusive evidence and prevent an
 assured verdict. A mutation that does not compile is `compile-rejected`, never
 "compile-equivalent".
 
-Every discovered mutant has exactly one report-v1 disposition:
+Every cataloged mutant has exactly one report-v1 disposition, and the columns
+say what the records say:
 
 ```text
-discovered = executed + compile-rejected + accepted + out-of-scope + unknown
-executed   = killed + survived + inconclusive
-selected   = executed + compile-rejected + accepted + unknown
+cataloged      = rejected + executed + unreached
+executed      >= killed + survived + timed_out
+accepted      <= survived + unreached
+reused_killed <= killed        reused_survived <= survived
 ```
 
-The aggregate counts must exactly match the ID-level mutant inventory. Any
-`unknown` disposition requires `ERROR`.
+`executed` is an inequality because a pair that did not agree and a harness
+that could not run are executions that established neither a kill nor a
+survival. The aggregate counts must match the ID-level mutant inventory
+exactly, and `cargo xtask proofaudit` re-derives every one of these from the
+recording rather than asking the runner whether it agrees with itself.
+
+An acceptance answers for a mutation nothing noticed — one every reaching test
+passed and one no measured test reaches alike — and for nothing else. An
+outcome that established nothing either way is not a decision anybody can sign
+off, so a pair that did not agree, a harness that could not run, and a budget
+that expired keep their findings whatever a reviewer wrote.
 
 ### Reusing a verdict an earlier run reached
 
@@ -245,6 +256,16 @@ checksums, the toolchain, the platform, the selected environment, the
 contract, the test arguments, the features, both timeouts, the mjutest and
 rust-mutants versions, and a fuzz target's corpus. Diagnostics — tracing,
 kept temporaries — and parallelism are outside every key.
+
+A run measures up to `[execution] jobs` mutations at once — the processors the
+machine offers, capped at four, when the configuration does not say, and one
+whenever a resource only one test may hold at a time is configured. Measuring
+two mutations at once is not a budget: every mutation still runs, against every
+test its route named, and nothing is sampled or skipped. Workers commit
+nothing; the answers are put back in the order the catalog has them, so what a
+report says is the same however the processors were shared out. Each execution
+is given a temporary directory of its own, so two of them cannot meet in one
+another's files.
 
 A package whose sources use a directory-reading API — `std::fs::read_dir`,
 `walkdir`, `glob`, `globset`, `ignore`, `include_dir!`, or the working

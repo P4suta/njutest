@@ -231,6 +231,40 @@ fn columns_that_do_not_add_up_to_the_catalog_are_a_violation() {
 }
 
 #[test]
+fn an_acceptance_of_a_mutation_nothing_reached_is_not_a_violation() {
+    let document = with(serde_json::json!({
+        "accounting": {
+            "mutants": { "executed": 1, "survived": 0, "unreached": 1, "accepted": 1 }
+        },
+        "mutants": [{}, { "outcome": "unreached" }],
+        "findings": []
+    }));
+
+    assert!(
+        !violations(&document).contains(&"accounting.mutants.accepted".to_owned()),
+        "a mutation nothing reached raises the same finding as one every reaching test passed, \
+         so it is a mutation a reviewer can answer for: {:?}",
+        violations(&document)
+    );
+}
+
+#[test]
+fn more_acceptances_than_there_are_mutations_to_accept_is_a_violation() {
+    let document = with(serde_json::json!({
+        "accounting": {
+            "mutants": { "executed": 1, "survived": 0, "unreached": 1, "accepted": 2 }
+        },
+        "mutants": [{}, { "outcome": "unreached" }],
+        "findings": []
+    }));
+
+    assert!(
+        violations(&document).contains(&"accounting.mutants.accepted".to_owned()),
+        "an acceptance answers for a mutation this run recorded, and there are not that many"
+    );
+}
+
+#[test]
 fn a_column_the_recording_omits_is_unaudited_rather_than_a_pass_or_a_failure() {
     let mut document = base();
     without(&mut document, "mutants", "killed");

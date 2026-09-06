@@ -69,6 +69,26 @@ impl Fallback {
     }
 }
 
+/// The name a branch proof answers to in a route and in a recording.
+pub const BRANCH_NEVER_TAKEN: &str = "branch-never-taken";
+
+/// The name the probe pass answers to in a route and in a recording.
+pub const NEVER_INFECTED: &str = "never-infected";
+
+/// One target a proof removed from a reaching set, and the proof that removed it.
+///
+/// [ADR 0004](../../../../docs/adr/0004-proof-layers-not-budgets.md) decision 4
+/// asks that every layer be visible, which means naming the proof beside the
+/// target rather than counting removals: two layers answer for one route, and a
+/// reader who cannot tell which of them removed a test cannot audit either.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Discharge {
+    /// The target that was removed without being run.
+    pub target: String,
+    /// What removed it: [`BRANCH_NEVER_TAKEN`] or [`NEVER_INFECTED`].
+    pub proof: &'static str,
+}
+
 /// How one mutant's tests were chosen.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -79,13 +99,13 @@ pub enum Route {
         reaching: Reaching,
         /// How many touched the file at all, which is what this narrowed down from.
         file_candidates: usize,
-        /// The tests a branch proof removed without running them, in the order they would have run.
-        discharged: Vec<String>,
+        /// The tests a proof removed without running them, in the order they would have run, each beside the proof that removed it.
+        discharged: Vec<Discharge>,
     },
     /// Every test that could have noticed was discharged by a branch proof: that no test takes the branch the mutation narrows is the finding.
     Discharged {
-        /// The tests that were removed without being run.
-        discharged: Vec<String>,
+        /// The tests that were removed without being run, each beside the proof that removed it.
+        discharged: Vec<Discharge>,
         /// How many touched the file at all.
         file_candidates: usize,
     },
@@ -148,9 +168,9 @@ impl Route {
         }
     }
 
-    /// The tests a branch proof removed without running them.
+    /// The tests a proof removed without running them, each beside the proof that removed it.
     #[must_use]
-    pub fn discharged(&self) -> &[String] {
+    pub fn discharged(&self) -> &[Discharge] {
         match self {
             Self::Block { discharged, .. } | Self::Discharged { discharged, .. } => discharged,
             Self::File { .. } | Self::Unreached { .. } => &[],
@@ -211,7 +231,10 @@ pub fn uninfected(route: Route, mutant: u32, infected: &BTreeMap<String, BTreeSe
     let mut removed = discharged;
     for id in reaching.as_slice() {
         match infected.get(id) {
-            Some(seen) if !seen.contains(&mutant) => removed.push(id.clone()),
+            Some(seen) if !seen.contains(&mutant) => removed.push(Discharge {
+                target: id.clone(),
+                proof: NEVER_INFECTED,
+            }),
             _ => kept.push(id.clone()),
         }
     }
@@ -281,7 +304,10 @@ pub fn discharge(route: Route, proof: &Proven<'_>) -> Route {
         if measured.restored || ran_the_body {
             kept.push(id.clone());
         } else {
-            removed.push(id.clone());
+            removed.push(Discharge {
+                target: id.clone(),
+                proof: BRANCH_NEVER_TAKEN,
+            });
         }
     }
     match Reaching::new(kept) {

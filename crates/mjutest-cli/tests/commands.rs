@@ -156,6 +156,48 @@ fn trace_summary_counts_the_events_and_finds_nothing_wrong_with_a_complete_recor
 }
 
 #[test]
+fn trace_summary_says_how_many_executions_each_proof_removed() {
+    let fixture = fixture("fixture-probeable");
+    std::fs::write(
+        fixture.root.join(".mjutest.toml"),
+        "version = 1\n\n[mutation]\nprobe = true\n",
+    )
+    .expect("a configuration");
+    let verified = mjutest(&fixture, &["verify", "--offline", "--locked", "--trace"]);
+    assert_eq!(
+        verified.status.code(),
+        Some(2),
+        "{}",
+        String::from_utf8_lossy(&verified.stderr)
+    );
+
+    let output = mjutest(&fixture, &["trace", "summary"]);
+    let text = stdout(&output);
+    assert!(
+        text.contains("PROOF\tnever-infected"),
+        "a reader who sees a run go faster asks which proof did it: {text}"
+    );
+}
+
+#[test]
+fn trace_summary_says_what_took_the_longest_and_reads_the_engine_beside_it() {
+    let fixture = verified("fixture-baseline");
+
+    let output = mjutest(&fixture, &["trace", "summary"]);
+
+    let text = stdout(&output);
+    assert!(
+        text.contains("SLOWEST\t"),
+        "a reader asking where a run went reads what took the longest, rather than writing a \
+         script to find out: {text}"
+    );
+    assert!(
+        text.contains("ENGINE\t"),
+        "most of a run is the engine's, and its recording lies beside this one: {text}"
+    );
+}
+
+#[test]
 fn trace_summary_reports_a_recording_that_lost_its_end() {
     let fixture = verified("fixture-baseline");
     let stream = trace_stream(&fixture);

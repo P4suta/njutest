@@ -106,9 +106,9 @@ fn resolve(root: &std::path::Path, arguments: &Arguments) -> Result<String, Stri
         })
         .collect();
     match matching.as_slice() {
-        [only] if only.outcome == "survived" => Ok(only.id.clone()),
+        [only] if matches!(only.outcome.as_str(), "survived" | "unreached") => Ok(only.id.clone()),
         [only] => Err(format!(
-            "{}: {} is {}, and only a surviving mutant is a decision to accept",
+            "{}: {} is {}, and only a mutation nothing noticed is a decision to accept",
             crate::error::CONFIG_INVALID.code,
             only.display_id,
             only.outcome

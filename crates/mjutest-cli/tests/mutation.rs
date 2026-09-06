@@ -212,20 +212,24 @@ fn every_mutant_is_routed_to_the_tests_that_reach_it_and_no_others() {
     ))
     .expect("the events");
 
-    let routes: Vec<String> = events
+    let routes: Vec<&mjutest_cli::trace::RouteRecord> = events
         .iter()
         .filter_map(|event| match &event.payload {
-            mjutest_cli::trace::Payload::Note { note } if note.kind == "route" => {
-                Some(note.detail.clone())
-            }
+            mjutest_cli::trace::Payload::Route { route } => Some(route),
             _ => None,
         })
         .collect();
     assert_eq!(routes.len(), 4, "one route per mutant: {routes:?}");
     for route in &routes {
+        assert_eq!(route.granularity, "block", "{route:?}");
+        assert_eq!(
+            route.reaching.len(),
+            1,
+            "each mutation is reached by exactly the one test that covers it: {route:?}"
+        );
         assert!(
-            route.contains("block 1 targets"),
-            "each mutation is reached by exactly the one test that covers it: {route}"
+            route.discharged.is_empty(),
+            "nothing here carries a proof that would remove a test: {route:?}"
         );
     }
 }
@@ -346,9 +350,68 @@ fn accept_refuses_a_mutant_that_did_not_survive() {
     assert_eq!(output.status.code(), Some(3));
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("only a surviving mutant is a decision to accept"),
+        stderr.contains("only a mutation nothing noticed is a decision to accept"),
         "{stderr}"
     );
+}
+
+#[test]
+fn what_a_run_concludes_does_not_depend_on_how_many_workers_measured_it() {
+    let alone = fixture("fixture-assured");
+    std::fs::write(
+        alone.root.join(".mjutest.toml"),
+        "version = 1\n\n[execution]\njobs = 1\n",
+    )
+    .expect("a configuration");
+    verify(&alone, &[]);
+
+    let together = fixture("fixture-assured");
+    std::fs::write(
+        together.root.join(".mjutest.toml"),
+        "version = 1\n\n[execution]\njobs = 4\n",
+    )
+    .expect("a configuration");
+    verify(&together, &[]);
+
+    assert_eq!(
+        mjutest_devkit::report::normalize(&document(&alone)),
+        mjutest_devkit::report::normalize(&document(&together)),
+        "measuring two mutations at once changes which processes overlap and nothing a report \
+         says"
+    );
+}
+
+#[test]
+fn accept_records_a_mutation_no_test_reaches() {
+    let fixture = fixture("fixture-unreached");
+    verify(&fixture, &[]);
+    let unreached = document(&fixture)["mutants"]
+        .as_array()
+        .expect("mutants")
+        .iter()
+        .find(|mutant| mutant["outcome"] == "unreached")
+        .and_then(|mutant| mutant["display_id"].as_str().map(ToOwned::to_owned))
+        .expect("a mutation no test reaches");
+
+    let output = mjutest(
+        &fixture,
+        &[
+            "accept",
+            &unreached,
+            "--reason",
+            "nothing reaches it and that is the decision",
+        ],
+    );
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "a mutation nothing reached raises the same finding as one every reaching test passed, \
+         so it is a decision a reviewer can record: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let written = std::fs::read_to_string(fixture.root.join(".mjutest.toml")).expect("the file");
+    assert!(written.contains(&unreached), "{written}");
 }
 
 #[test]
@@ -373,7 +436,7 @@ fn accept_keeps_the_comments_of_the_file_it_edits() {
 
 #[test]
 fn a_mutant_no_test_reaches_that_a_reviewer_accepted_is_counted_as_accepted() {
-    let fixture = fixture("fixture-baseline");
+    let fixture = fixture("fixture-unreached");
     verify(&fixture, &[]);
     let unreached: Vec<String> = document(&fixture)["mutants"]
         .as_array()
@@ -382,9 +445,10 @@ fn a_mutant_no_test_reaches_that_a_reviewer_accepted_is_counted_as_accepted() {
         .filter(|mutant| mutant["outcome"] == "unreached")
         .filter_map(|mutant| mutant["id"].as_str().map(ToOwned::to_owned))
         .collect();
-    if unreached.is_empty() {
-        return;
-    }
+    assert!(
+        !unreached.is_empty(),
+        "the fixture exists to have a mutation no measured test reaches"
+    );
 
     let mut configuration = String::from("version = 1\n");
     for id in &unreached {

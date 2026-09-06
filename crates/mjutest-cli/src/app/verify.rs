@@ -543,7 +543,7 @@ fn engine_recorder(
     } else {
         PathBuf::from(requested)
     };
-    DirSink::create(&directory.join("engine")).map_or_else(
+    DirSink::create(&directory.join(crate::app::trace::ENGINE_DIRECTORY)).map_or_else(
         |_error| EngineRecorder::disabled(),
         |sink| EngineRecorder::wall(EngineSink::Dir(sink)),
     )

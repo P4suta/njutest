@@ -148,7 +148,7 @@ pub fn run_resuming(
     reporting: Reporting<'_, '_>,
 ) -> Result<Baseline, RunnerError> {
     let Reporting { notes, watch } = reporting;
-    let phase = watch.trace.phase("baseline");
+    let phase = watch.trace.phase("baseline-measure");
     let built = build::build(
         workspace.toolchain,
         workspace.packages,

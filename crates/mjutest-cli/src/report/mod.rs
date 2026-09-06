@@ -376,7 +376,7 @@ pub enum FindingKind {
     TargetMissing,
     /// A mutant nothing noticed.
     SurvivingMutant,
-    /// A target that ran out of time.
+    /// A target, or a mutation of one, that ran out of time.
     Timeout,
     /// A test that does not behave the same way twice.
     FlakyTest,

@@ -87,6 +87,7 @@ pub fn run(
 ) -> Result<Outcome, RunnerError> {
     let mut report = identity(request);
     notes.phase("open");
+    watch.trace.stage("open");
     let scratch = Scratch::create(
         &environment.temp_directory,
         &request.run_id,
@@ -98,6 +99,7 @@ pub fn run(
     surveyed(&mut report, request, (&toolchain, &metadata));
 
     notes.phase("soundness");
+    watch.trace.stage("soundness");
     take_inventory(&mut report, request, &metadata);
     deepened(&mut report, request, (&toolchain, environment), watch)?;
     let layer = layer_for(&toolchain, environment, &scratch, notes)?;
@@ -107,6 +109,7 @@ pub fn run(
     let environment = &held;
 
     notes.phase("baseline");
+    watch.trace.stage("baseline");
     let restore = resume_state(request, &mut report);
     let mut journal = Journal::of(request, restore.as_ref());
     let baseline = baseline::run_resuming(
@@ -282,6 +285,7 @@ fn driven(
         return;
     }
     notes.phase("fuzz");
+    watch.trace.stage("fuzz");
     let done = super::fuzz::fuzz(
         &super::fuzz::Fuzzing {
             root: &request.root,
@@ -368,6 +372,7 @@ fn proposed(
         return;
     }
     notes.phase("generation");
+    watch.trace.stage("generation");
     propose(report, request, environment, watch);
 }
 
@@ -535,6 +540,7 @@ fn holding(
     });
     if !request.config.resources.is_empty() {
         notes.phase("resources");
+        watch.trace.stage("resources");
         hold(&mut resources, request, report, watch)?;
     }
     Ok(resources)
@@ -934,6 +940,7 @@ fn run_mutation(
     watch: Watch<'_>,
 ) -> Result<(), RunnerError> {
     notes.phase("mutation");
+    watch.trace.stage("mutation");
     let session = prepare(mutating.request, mutating.environment, watch)?;
     let accepted: BTreeSet<String> = mutating
         .request
@@ -952,6 +959,13 @@ fn run_mutation(
             accepted: accepted.clone(),
             test_args: mutating.request.test_args.clone(),
             evidence: evidence_of(mutating),
+            jobs: mutating.request.config.execution.jobs,
+            exclusive: mutating
+                .request
+                .config
+                .resources
+                .values()
+                .any(|resource| resource.exclusive),
         },
         &mut mutation::Resume {
             state: mutating.restore,
