@@ -327,6 +327,21 @@ Only the first three are refused on the command line. A run under
 `cargo llvm-cov` is an ordinary thing to want; a run under somebody else's
 activation is not.
 
+## Describing a session
+
+A session owns a snapshot and the processes that run in it, so it cannot be
+reopened: what a later command reads is `Session::describe` — the catalog, the
+targets, the two digests, and the toolchain, all of it a document — and the
+stored outcomes. `Session::source` hands back a mutable file as it was before
+instrumentation, because a report names the bytes an edit replaces and showing
+somebody the edit needs the file they would open rather than the rewrite the
+snapshot holds.
+
+A catalog on the wire names each rule and the version that entered every
+identity in it. A name this release does not know, or a version it does not
+agree with, is a catalog it refuses to read: every identity in it was minted
+from the version it names.
+
 ## Identity
 
 ```text

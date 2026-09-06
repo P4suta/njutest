@@ -651,3 +651,45 @@ fn list_and_why_skipped_still_only_type_check() {
     );
     workspace.close().expect("close");
 }
+
+#[test]
+fn a_session_describes_itself_and_hands_out_its_sources() {
+    let fixture = Fixture::copy("fixture-simple");
+    let session = prepare(&fixture);
+    let described = session.describe();
+
+    assert_eq!(described.catalog, session.catalog().clone());
+    assert_eq!(described.catalog_digest, session.catalog().digest());
+    assert_eq!(described.workspace_digest, session.workspace_digest());
+    assert!(!described.toolchain.is_empty());
+    let ids: Vec<&str> = described
+        .targets
+        .iter()
+        .map(|target| target.id.as_str())
+        .collect();
+    assert_eq!(
+        ids,
+        [
+            "fixture-simple/lib/fixture_simple",
+            "fixture-simple/test/parity",
+            "fixture-simple/doc/fixture_simple"
+        ]
+    );
+    assert!(described.targets.iter().all(|target| target.harness));
+
+    let text = serde_json::to_string(&described).expect("a description serialises");
+    let again: rust_mutants::session::Description =
+        serde_json::from_str(&text).expect("and reads back");
+    assert_eq!(again, described);
+
+    let source = session.source("src/lib.rs").expect("the file as it was");
+    assert!(
+        std::str::from_utf8(source)
+            .expect("utf-8")
+            .contains("if a > b { a } else { b }"),
+        "a report names the bytes an edit replaces, and showing somebody the edit needs the \
+         file they would open rather than the rewrite the snapshot holds"
+    );
+    assert_eq!(session.source("src/nothing.rs"), None);
+    session.close().expect("close");
+}

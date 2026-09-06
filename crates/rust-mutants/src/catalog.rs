@@ -6,6 +6,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
+use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
 use crate::id::{
@@ -15,15 +16,60 @@ use crate::id::{
 use crate::rule::{Registry, Rule, RuleError};
 use crate::span::Span;
 
+/// A rule on the wire: the name it answers to and the version that entered every identity.
+///
+/// A rule is metadata this release defines, not data a document carries, so a
+/// stored catalog names one and this reads it back out of the registry. A
+/// name this release does not know, or a version it does not agree with, is a
+/// catalog it cannot read — which is the honest answer, because every
+/// identity in it was minted from the version it names.
+mod named_rule {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    use super::Rule;
+
+    #[derive(Serialize, Deserialize)]
+    struct Named {
+        name: String,
+        version: u32,
+    }
+
+    pub(super) fn serialize<S: Serializer>(rule: &Rule, serializer: S) -> Result<S::Ok, S::Error> {
+        Named {
+            name: rule.name.to_owned(),
+            version: rule.version,
+        }
+        .serialize(serializer)
+    }
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Rule, D::Error> {
+        static REGISTRY: crate::rule::Registry = crate::rule::Registry::canonical();
+        let named = Named::deserialize(deserializer)?;
+        let rule = REGISTRY.lookup(&named.name).ok_or_else(|| {
+            serde::de::Error::custom(format!("no rule answers to {}", named.name))
+        })?;
+        if rule.version == named.version {
+            return Ok(rule);
+        }
+        Err(serde::de::Error::custom(format!(
+            "{} is at version {} here and the document names {}",
+            named.name, rule.version, named.version
+        )))
+    }
+}
+
 /// The domain separator of the catalog digest.
 pub const CATALOG_DOMAIN: &str = "rust-mutants-catalog-v1";
 
 /// One proposed edit: replace the bytes of `span` in `path` with `replacement`. The unit discovery produces and the catalog consumes.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Candidate {
     /// The workspace-relative source path with forward slashes.
     pub path: String,
     /// The operator that proposed the edit.
+    #[serde(with = "named_rule")]
     pub rule: Rule,
     /// The byte range being replaced.
     pub span: Span,
@@ -135,7 +181,7 @@ impl Candidate {
 }
 
 /// A cataloged candidate: identified, deduplicated, and assigned its dense runtime index.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Mutant {
     /// The position in the generated runtime's activation array: the catalog's own order, densely assigned from zero.
     pub index: u32,
@@ -148,7 +194,8 @@ pub struct Mutant {
 }
 
 /// Why a candidate lost deduplication.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 #[non_exhaustive]
 pub enum DuplicateReason {
     /// The same rule proposed the same edit twice; both carry one mutant ID.
@@ -167,7 +214,7 @@ impl fmt::Display for DuplicateReason {
 }
 
 /// A candidate the catalog dropped. Kept rather than discarded so `explain` can answer "why is there no mutant for this rule here?".
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Duplicate {
     /// Why the candidate lost.
     pub reason: DuplicateReason,
@@ -178,6 +225,7 @@ pub struct Duplicate {
     /// The ID of the mutant that was kept.
     pub winner_id: String,
     /// The rule that won.
+    #[serde(with = "named_rule")]
     pub winner_rule: Rule,
 }
 
@@ -521,7 +569,7 @@ fn catalog_digest(mutants: &[Mutant]) -> Result<String, CandidateError> {
 }
 
 /// The immutable, ordered set of mutants for one run.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Catalog {
     mutants: Vec<Mutant>,
     duplicates: Vec<Duplicate>,

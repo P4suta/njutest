@@ -30,7 +30,19 @@ pub enum SpanError {
 }
 
 /// A half-open byte range `[start, end)` into one source file.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+)]
 pub struct Span {
     /// The first byte covered.
     pub start: u32,

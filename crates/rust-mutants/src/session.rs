@@ -452,6 +452,39 @@ impl Session {
         self.packages.get(&index).map(String::as_str)
     }
 
+    /// The source of one of the tree's mutable files, as it was before instrumentation.
+    ///
+    /// A report names a file, a line, and the bytes an edit replaces; showing
+    /// somebody the edit needs the file those bytes were cut from, and the
+    /// snapshot holds the rewrite rather than the original.
+    #[must_use]
+    pub fn source(&self, path: &str) -> Option<&[u8]> {
+        self.sources.get(path).map(Vec::as_slice)
+    }
+
+    /// Everything this session is, as a document: what it catalogued, what it will run, and what it was all read from.
+    #[must_use]
+    pub fn describe(&self) -> Description {
+        Description {
+            catalog: self.catalog.clone(),
+            targets: self
+                .targets
+                .iter()
+                .map(|target| TargetDescription {
+                    id: target.id.clone(),
+                    package: target.package.clone(),
+                    kind: target.kind.name().to_owned(),
+                    name: target.name.clone(),
+                    harness: target.harness,
+                    limitations: target.limitations.clone(),
+                })
+                .collect(),
+            workspace_digest: self.workspace_digest().to_owned(),
+            catalog_digest: self.catalog.digest().to_owned(),
+            toolchain: self.workspace.toolchain().rustc_version().summary.clone(),
+        }
+    }
+
     /// The toolchain that compiled the tree, as it names itself.
     #[must_use]
     pub const fn toolchain(&self) -> &crate::cargo::Toolchain {
@@ -894,6 +927,44 @@ pub fn preview(
     )?;
     phase.end();
     Ok(discovery)
+}
+
+/// One test target, as a document says what it is.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[non_exhaustive]
+pub struct TargetDescription {
+    /// The identity a route and a report name it by.
+    pub id: String,
+    /// The package it belongs to.
+    pub package: String,
+    /// `lib`, `bin`, `test`, `bench`, `example`, or `doc`.
+    pub kind: String,
+    /// The target's own name.
+    pub name: String,
+    /// Whether it is built with the libtest harness, which is what lets silence be read.
+    pub harness: bool,
+    /// What a run cannot establish about it, each named.
+    pub limitations: Vec<String>,
+}
+
+/// Everything a session is, as a document.
+///
+/// A session cannot be reopened — it owns a snapshot and the processes that
+/// run in it — so what a later command reads is this and the stored outcomes,
+/// never the session itself.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[non_exhaustive]
+pub struct Description {
+    /// Every mutant, refusals included.
+    pub catalog: Catalog,
+    /// Every target the run will start.
+    pub targets: Vec<TargetDescription>,
+    /// The frozen identity of the tree it was read from.
+    pub workspace_digest: String,
+    /// The identity of the catalog.
+    pub catalog_digest: String,
+    /// The toolchain, as it names itself.
+    pub toolchain: String,
 }
 
 /// What one mutant's judgement is made of: what stands, every attempt it took, and the budget each was given.

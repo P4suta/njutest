@@ -11,7 +11,7 @@
 )]
 
 use rust_mutants::catalog::{
-    BuildError, Builder, CATALOG_DOMAIN, Candidate, CandidateError, DisplayCollisionError,
+    BuildError, Builder, CATALOG_DOMAIN, Candidate, CandidateError, Catalog, DisplayCollisionError,
     DuplicateReason, PrefixError,
 };
 use rust_mutants::id::{IdentityError, digest};
@@ -477,4 +477,48 @@ proptest::proptest! {
             "the short form a person types names one mutant of this catalog"
         );
     }
+}
+
+#[test]
+fn a_catalog_round_trips_through_json_with_its_indices_and_digest() {
+    let mut builder = Builder::new();
+    builder.add(a()).expect("a");
+    builder.add(b()).expect("b");
+    let catalog = builder.build().expect("built");
+    let text = serde_json::to_string(&catalog).expect("a catalog serialises");
+    let again: Catalog = serde_json::from_str(&text).expect("and reads back");
+    assert_eq!(again, catalog);
+    assert_eq!(again.digest(), catalog.digest());
+    assert_eq!(
+        again
+            .mutants()
+            .iter()
+            .map(|one| one.index)
+            .collect::<Vec<_>>(),
+        catalog
+            .mutants()
+            .iter()
+            .map(|one| one.index)
+            .collect::<Vec<_>>(),
+        "the index is the position in the runtime's activation array, and a catalog that \
+         read back with different ones would activate a different mutant"
+    );
+}
+
+#[test]
+fn a_catalog_naming_a_rule_this_release_does_not_know_is_one_it_cannot_read() {
+    let mut builder = Builder::new();
+    builder.add(a()).expect("a");
+    let catalog = builder.build().expect("built");
+    let text = serde_json::to_string(&catalog).expect("a catalog serialises");
+    let unknown = text.replace("lt-to-le", "lt-to-nothing");
+    let error = serde_json::from_str::<Catalog>(&unknown).expect_err("a rule nobody defines");
+    assert!(error.to_string().contains("lt-to-nothing"), "{error}");
+
+    let moved = text.replace("\"version\":1", "\"version\":9");
+    let error = serde_json::from_str::<Catalog>(&moved).expect_err("a version nobody minted");
+    assert!(
+        error.to_string().contains("version"),
+        "every identity in it was minted from the version it names: {error}"
+    );
 }
