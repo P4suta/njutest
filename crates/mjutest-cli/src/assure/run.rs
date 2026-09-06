@@ -632,6 +632,11 @@ fn count(value: usize) -> u32 {
 }
 
 /// What the baseline is asked to build and run.
+/// Whether a resource only one test may hold at a time forces this run to measure one thing at a time.
+fn alone(config: &Config) -> bool {
+    config.resources.values().any(|resource| resource.exclusive)
+}
+
 fn baseline_options(opening: &Opening<'_>, report: &Report, layer: PathBuf) -> BaselineOptions {
     let Opening {
         request,
@@ -653,6 +658,8 @@ fn baseline_options(opening: &Opening<'_>, report: &Report, layer: PathBuf) -> B
         profiles_dir: scratch.profiles_dir(),
         timeout: Some(request.config.execution.timeout),
         test_args: request.test_args.clone(),
+        jobs: request.config.execution.jobs,
+        exclusive: alone(&request.config),
     }
 }
 
@@ -960,12 +967,7 @@ fn run_mutation(
             test_args: mutating.request.test_args.clone(),
             evidence: evidence_of(mutating),
             jobs: mutating.request.config.execution.jobs,
-            exclusive: mutating
-                .request
-                .config
-                .resources
-                .values()
-                .any(|resource| resource.exclusive),
+            exclusive: alone(&mutating.request.config),
         },
         &mut mutation::Resume {
             state: mutating.restore,

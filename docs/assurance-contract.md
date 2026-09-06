@@ -257,9 +257,13 @@ contract, the test arguments, the features, both timeouts, the mjutest and
 rust-mutants versions, and a fuzz target's corpus. Diagnostics — tracing,
 kept temporaries — and parallelism are outside every key.
 
-A run measures up to `[execution] jobs` mutations at once — the processors the
-machine offers, capped at four, when the configuration does not say, and one
-whenever a resource only one test may hold at a time is configured. Measuring
+A run measures up to `[execution] jobs` targets at once in the baseline and up
+to that many mutations at once after it — the processors the machine offers,
+capped at four, when the configuration does not say, and one whenever a
+resource only one test may hold at a time is configured. The two are measured
+the same way on purpose: a mutation's budget is derived from what the baseline
+measured of the same target, and a duration taken alone is not the one a
+target running beside three others will take. Measuring
 two mutations at once is not a budget: every mutation still runs, against every
 test its route named, and nothing is sampled or skipped. Workers commit
 nothing; the answers are put back in the order the catalog has them, so what a

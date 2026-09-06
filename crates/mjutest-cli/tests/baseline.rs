@@ -87,6 +87,8 @@ fn measure(fixture: &str) -> (Baseline, tempfile::TempDir) {
             profiles_dir: profiles,
             timeout: None,
             test_args: Vec::new(),
+            jobs: 0,
+            exclusive: false,
         },
         &mut mjutest_cli::ui::Notes::Silent,
         Watch::new(&cancel, &trace),

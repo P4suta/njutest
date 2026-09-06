@@ -357,7 +357,7 @@ fn accept_refuses_a_mutant_that_did_not_survive() {
 
 #[test]
 fn what_a_run_concludes_does_not_depend_on_how_many_workers_measured_it() {
-    let alone = fixture("fixture-assured");
+    let alone = fixture("fixture-baseline");
     std::fs::write(
         alone.root.join(".mjutest.toml"),
         "version = 1\n\n[execution]\njobs = 1\n",
@@ -365,7 +365,7 @@ fn what_a_run_concludes_does_not_depend_on_how_many_workers_measured_it() {
     .expect("a configuration");
     verify(&alone, &[]);
 
-    let together = fixture("fixture-assured");
+    let together = fixture("fixture-baseline");
     std::fs::write(
         together.root.join(".mjutest.toml"),
         "version = 1\n\n[execution]\njobs = 4\n",
