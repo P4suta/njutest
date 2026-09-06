@@ -234,3 +234,58 @@ fn the_catalog_document_validates_against_its_schema() {
         );
     }
 }
+
+#[test]
+fn equivalence_says_what_the_compiler_renders_identically_and_never_says_equivalent() {
+    let fixture = Fixture::copy("fixture-equivalent");
+    let output = against(&fixture, &["equivalence"]);
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let text = stdout(&output);
+    let rows: Vec<&str> = text.lines().filter(|line| line.contains('\t')).collect();
+    assert!(!rows.is_empty(), "{text}");
+    for row in &rows {
+        let columns: Vec<&str> = row.split('\t').collect();
+        if columns[0] == "EQUIVALENCE" {
+            continue;
+        }
+        assert_eq!(columns.len(), 4, "{row}");
+        assert!(
+            columns[1] == "identical" || columns[1] == "differs",
+            "an answer is about what the compiler rendered, not about what the tests could \
+             notice: {row}"
+        );
+    }
+    assert!(
+        text.contains("identical is not equivalent"),
+        "the summary says what identical does not mean: {text}"
+    );
+    assert!(
+        !text.contains("\tequivalent\t") && !text.contains(" equivalent "),
+        "a mutation of a function nothing links comes out identical for the opposite of a \
+         reassuring reason, so this command never says equivalent: {text}"
+    );
+}
+
+#[test]
+fn equivalence_asks_about_at_most_the_limit_it_was_given() {
+    let fixture = Fixture::copy("fixture-equivalent");
+    let output = against(&fixture, &["equivalence", "--limit", "2"]);
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let text = stdout(&output);
+    assert!(text.contains("asked=2"), "{text}");
+    let rows = text
+        .lines()
+        .filter(|line| line.contains('\t') && !line.starts_with("EQUIVALENCE"))
+        .count();
+    assert_eq!(rows, 2, "{text}");
+}

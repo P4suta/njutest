@@ -717,3 +717,100 @@ fn an_older_reader_accepts_a_newer_report() {
     );
     assert!(stdout(&read).contains("MUTANTS   "), "{}", stdout(&read));
 }
+
+/// Runs each part of the catalog and writes its report beside the tree, returning the paths.
+fn parts(fixture: &Fixture, shards: &[&str]) -> Vec<PathBuf> {
+    let mut written = Vec::new();
+    for part in shards {
+        let output = against(
+            fixture,
+            &[
+                "run",
+                "--offline",
+                "--locked",
+                "--tier",
+                "all",
+                "--shard",
+                part,
+            ],
+        );
+        assert!(
+            output.status.code().is_some_and(|code| code < 2),
+            "{part}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let document = stored(fixture);
+        let path = fixture
+            .root()
+            .join(format!("part-{}.json", part.replace('/', "-")));
+        std::fs::write(&path, serde_json::to_string(&document).expect("renders")).expect("write");
+        written.push(path);
+    }
+    written
+}
+
+#[test]
+fn the_parts_of_a_catalog_over_two_packages_and_two_targets_are_the_whole_of_it() {
+    let whole_fixture = Fixture::copy("fixture-workspace");
+    let output = against(
+        &whole_fixture,
+        &["run", "--offline", "--locked", "--tier", "all"],
+    );
+    assert!(
+        output.status.code().is_some_and(|code| code < 2),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let whole = stored(&whole_fixture);
+    let answered: std::collections::BTreeSet<&str> = whole["mutants"]
+        .as_array()
+        .expect("the rows")
+        .iter()
+        .filter_map(|row| row["target"].as_str())
+        .filter(|target| !target.is_empty())
+        .collect();
+    let packages: std::collections::BTreeSet<&str> = whole["mutants"]
+        .as_array()
+        .expect("the rows")
+        .iter()
+        .filter_map(|row| row["package"].as_str())
+        .collect();
+    assert!(
+        answered.len() >= 2 && packages.len() >= 2,
+        "a shard test over one package and one target proves nothing about a catalog cut \
+         across them: {answered:?} {packages:?}"
+    );
+
+    let parts_fixture = Fixture::copy("fixture-workspace");
+    let written = parts(&parts_fixture, &["1/4", "2/4", "3/4", "4/4"]);
+    let mut arguments = vec!["merge".to_owned()];
+    arguments.extend(written.iter().map(|path| path.display().to_string()));
+    let borrowed: Vec<&str> = arguments.iter().map(String::as_str).collect();
+    let merged_output = rootless(&parts_fixture, &borrowed);
+    let merged: serde_json::Value =
+        serde_json::from_str(&stdout(&merged_output)).expect("one document");
+    assert_eq!(merged["accounting"], whole["accounting"]);
+    assert_eq!(merged["score"], whole["score"]);
+    let fates = |document: &serde_json::Value| -> Vec<(String, String, String)> {
+        let mut rows: Vec<(String, String, String)> = document["mutants"]
+            .as_array()
+            .expect("the rows")
+            .iter()
+            .map(|row| {
+                (
+                    row["id"].as_str().unwrap_or_default().to_owned(),
+                    row["outcome"].as_str().unwrap_or_default().to_owned(),
+                    row["target"].as_str().unwrap_or_default().to_owned(),
+                )
+            })
+            .collect();
+        rows.sort();
+        rows
+    };
+    assert_eq!(
+        fates(&merged),
+        fates(&whole),
+        "every mutation of every package reaches the same fate against the same target, \
+         whichever part it was cut into"
+    );
+}

@@ -280,3 +280,60 @@ fn the_head_buffer_keeps_the_first_bytes_and_admits_the_cut() {
     exact.write(b"xyz");
     assert_eq!(exact.capture(), (b"xyz".to_vec(), false, 3));
 }
+
+/// A command line the platform's own shell understands.
+#[cfg(windows)]
+fn shell(script: &str) -> Spec {
+    Spec::new(["cmd", "/C", script])
+}
+
+#[cfg(windows)]
+#[test]
+fn a_windows_child_that_fails_is_data_not_an_error() {
+    let result = run(&shell("echo out & exit /b 3"), &Cancel::new());
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert_eq!(result.exit_code, 3);
+    assert!(!result.timed_out);
+    assert!(!result.ok());
+}
+
+#[cfg(windows)]
+#[test]
+fn a_windows_process_tree_is_killed_on_timeout() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let marker = temp.path().join("still-here.txt");
+    let script = format!(
+        "start /b cmd /C \"timeout /t 30 /nobreak > nul & echo alive > {}\" & timeout /t 30 /nobreak > nul",
+        marker.display()
+    );
+    let started = Instant::now();
+    let result = run(
+        &shell(&script).with_timeout(Some(Duration::from_millis(500))),
+        &Cancel::new(),
+    );
+    assert!(result.timed_out, "{result:?}");
+    assert!(
+        started.elapsed() < Duration::from_secs(20),
+        "the run ends at the bound rather than waiting for the tree it started"
+    );
+    std::thread::sleep(Duration::from_secs(2));
+    assert!(
+        !marker.exists(),
+        "the job object owns every descendant, so closing it stops the one that outlived its \
+         parent"
+    );
+}
+
+#[test]
+fn the_supervisor_of_this_platform_is_the_one_a_diagnostic_names() {
+    let expected = if cfg!(windows) {
+        "job-object"
+    } else {
+        "process-group"
+    };
+    assert_eq!(
+        rust_mutants::runner::SUPERVISOR_KIND,
+        expected,
+        "what owns the process tree is what a diagnostic has to name"
+    );
+}
