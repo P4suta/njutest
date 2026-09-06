@@ -550,3 +550,24 @@ fn a_target_with_no_tests_in_it_answers_neither_question() {
          say it did not"
     );
 }
+
+#[test]
+fn a_dependency_s_documentation_is_not_this_run_s_to_measure() {
+    let fixture = fixture("fixture-simple");
+    let session = prepare(&fixture);
+
+    let documentation: Vec<&str> = session
+        .targets()
+        .iter()
+        .filter(|target| target.kind == rust_mutants::execute::TargetKind::Doc)
+        .map(|target| target.package.as_str())
+        .collect();
+
+    assert_eq!(
+        documentation,
+        ["fixture-simple"],
+        "the workspace's own members and never the whole resolved graph: asking cargo to \
+         run a dependency's examples asks it to resolve that dependency's own \
+         dev-dependencies, which a lock file for this workspace never pinned"
+    );
+}

@@ -589,14 +589,19 @@ pub fn targets_of(
 /// there is no binary in the build's messages to find: what there is, is a
 /// command. `doctest = false` on the library is cargo's own way of saying
 /// there is nothing to run, and it is honoured.
+///
+/// `packages` is the workspace's own members and never the whole resolved
+/// graph. A dependency's documentation is not this run's to measure, and
+/// asking cargo to run it asks cargo to resolve that dependency's own
+/// dev-dependencies, which a lock file for this workspace never pinned.
 #[must_use]
 pub fn documentation_targets(
-    packages: &[Package],
+    members: &[&Package],
     cargo: &Path,
     arguments: &[OsString],
 ) -> Vec<TestTarget> {
     let mut targets = Vec::new();
-    for package in packages {
+    for package in members {
         for target in &package.targets {
             if !target.is_lib() || target.is_proc_macro() || !target.doctest {
                 continue;
