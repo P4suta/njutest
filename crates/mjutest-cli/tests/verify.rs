@@ -696,3 +696,120 @@ fn what_changed_outside_a_package_does_not_make_its_own_evidence_stale() {
         "a reused verdict names the run that established it: {second}"
     );
 }
+
+#[test]
+fn the_documentation_of_a_library_is_run_as_one_target_and_routes_nothing() {
+    let fixture = fixture("fixture-doctest");
+    verify(&fixture, &[]);
+    let report = document(&fixture);
+
+    let documentation: Vec<&serde_json::Value> = report["targets"]
+        .as_array()
+        .expect("targets")
+        .iter()
+        .filter(|target| {
+            target["name"]
+                .as_str()
+                .is_some_and(|name| name.contains("/doc/"))
+        })
+        .collect();
+    assert_eq!(
+        documentation.len(),
+        1,
+        "one target per library, whatever the library documents: {:?}",
+        report["targets"]
+    );
+    assert_eq!(
+        documentation[0]["status"], "passed",
+        "a documented example that does not hold is a failing test rather than something \
+         nobody looked at"
+    );
+
+    let stated: Vec<&str> = report["limitations"]
+        .as_array()
+        .expect("limitations")
+        .iter()
+        .filter_map(|one| one["name"].as_str())
+        .collect();
+    assert!(
+        stated.contains(&"doctests-not-routed"),
+        "the target carries no coverage, so nothing is routed to it and the report says so: \
+         {stated:?}"
+    );
+
+    let killers: Vec<&str> = report["mutants"]
+        .as_array()
+        .expect("mutants")
+        .iter()
+        .filter_map(|mutant| mutant["killed_by"].as_str())
+        .collect();
+    assert!(
+        !killers.iter().any(|by| by.contains("/doc/")),
+        "a target no mutation is routed to answers for no mutation: {killers:?}"
+    );
+}
+
+#[test]
+fn a_documented_example_that_does_not_hold_is_a_failing_test() {
+    let fixture = fixture("fixture-doctest");
+    let library = fixture.root.join("src/lib.rs");
+    let source = std::fs::read_to_string(&library).expect("the library");
+    std::fs::write(
+        &library,
+        source.replace(
+            "/// assert_eq!(fixture_doctest::double(2), 4);",
+            "/// assert_eq!(fixture_doctest::double(2), 5);",
+        ),
+    )
+    .expect("an example that does not hold");
+
+    verify(&fixture, &[]);
+    let report = document(&fixture);
+
+    assert_eq!(
+        report["verdict"], "DEFECT",
+        "documentation that lies about the library is a defect in the library or in the \
+         documentation, and either way it is not something to measure mutations against"
+    );
+    let failing: Vec<&str> = report["findings"]
+        .as_array()
+        .expect("findings")
+        .iter()
+        .filter(|finding| finding["kind"] == "failing-test")
+        .filter_map(|finding| finding["subject"].as_str())
+        .collect();
+    assert!(
+        failing.iter().any(|subject| subject.contains("/doc/")),
+        "the finding names the documentation as the test that failed: {failing:?}"
+    );
+}
+
+#[test]
+fn a_library_that_documents_no_example_is_not_a_target_that_ran_nothing() {
+    let fixture = fixture("fixture-baseline");
+    verify(&fixture, &[]);
+    let report = document(&fixture);
+
+    let names: Vec<&str> = report["targets"]
+        .as_array()
+        .expect("targets")
+        .iter()
+        .filter_map(|target| target["name"].as_str())
+        .collect();
+    assert!(
+        !names.iter().any(|name| name.contains("/doc/")),
+        "one target per library is one target per library that documents something; \
+         reporting a missing target would raise a finding about documentation nobody \
+         wrote: {names:?}"
+    );
+    let stated: Vec<&str> = report["limitations"]
+        .as_array()
+        .expect("limitations")
+        .iter()
+        .filter_map(|one| one["name"].as_str())
+        .collect();
+    assert!(
+        !stated.contains(&"doctests-not-routed"),
+        "and nothing was left out of the routing either: {stated:?}"
+    );
+}

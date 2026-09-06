@@ -9,6 +9,7 @@ use std::path::Path;
 use crate::assure::baseline::Measured;
 use crate::coverage::{Block, Point};
 use crate::report::TargetStatus;
+use crate::targets::UnitKind;
 
 /// One or more target identities, cheapest first.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -74,7 +75,7 @@ impl Fallback {
 /// Reporting that nothing reaches a position is a claim about the code, and it
 /// rests on two premises: that instrumentation described the position, so a
 /// target's silence about it is a fact rather than a gap, and that every
-/// measured target carries coverage, so every target's silence is readable.
+/// target routing reads carries coverage, so its silence is readable.
 /// Where a premise fails the run has no proof and runs more, which is the
 /// direction [ADR 0004](../../../../docs/adr/0004-proof-layers-not-budgets.md)
 /// decision 2 requires of a fallback.
@@ -85,7 +86,7 @@ pub enum Unsettled {
     PositionUnknown,
     /// No instrumented region contains the position, so nothing was measured about it.
     OutsideBlocks,
-    /// A measured target carries no coverage at all, so its silence about the position is not evidence.
+    /// A target routing reads carries no coverage at all, so its silence about the position is not evidence.
     CoverageIncomplete,
 }
 
@@ -113,8 +114,8 @@ impl Unsettled {
                  about it and the package suite was run"
             }
             Self::CoverageIncomplete => {
-                "a measured test carries no coverage, so its silence about the position \
-                 is not evidence and the package suite was run"
+                "a test that was measured for its coverage carries none, so its silence \
+                 about the position is not evidence and the package suite was run"
             }
         }
     }
@@ -167,7 +168,7 @@ pub enum Route {
         /// What the evidence could not support.
         fallback: Fallback,
     },
-    /// The position is instrumented, every measured test carries coverage, and none reached it: the mutation lives in code the measured tests never execute.
+    /// The position is instrumented, every test routing reads carries coverage, and none reached it: the mutation lives in code those tests never execute.
     Unreached {
         /// How many tests touched the file without reaching the position.
         file_candidates: usize,
@@ -420,6 +421,7 @@ pub fn route(
     let measured: Vec<&Measured> = baseline
         .iter()
         .filter(|measured| measured.status == TargetStatus::Passed)
+        .filter(|measured| measured.target.unit != UnitKind::Doc)
         .collect();
     let candidates: Vec<&Measured> = measured
         .iter()
@@ -458,6 +460,11 @@ pub fn route(
 }
 
 /// What a run may say about a position no test reached: that nothing reaches it, where every measured test could have said so, and otherwise that the package suite has to answer.
+///
+/// A library's documentation is not among the tests that could have said so and
+/// is not counted here: it carries no coverage by construction rather than by
+/// accident, and the limitation `doctests-not-routed` states that on every
+/// report where one ran.
 fn nothing_reached(measured: &[&Measured], file_candidates: usize) -> Route {
     if measured.iter().any(|one| one.covered.is_empty()) {
         Route::Suite {

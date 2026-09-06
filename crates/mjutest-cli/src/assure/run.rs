@@ -125,6 +125,7 @@ pub fn run(
             },
             &report,
             layer,
+            toolchain.host(),
         ),
         &mut baseline::Resume {
             state: restore.as_ref(),
@@ -637,7 +638,12 @@ fn alone(config: &Config) -> bool {
     config.resources.values().any(|resource| resource.exclusive)
 }
 
-fn baseline_options(opening: &Opening<'_>, report: &Report, layer: PathBuf) -> BaselineOptions {
+fn baseline_options(
+    opening: &Opening<'_>,
+    report: &Report,
+    layer: PathBuf,
+    host: &str,
+) -> BaselineOptions {
     let Opening {
         request,
         environment,
@@ -645,6 +651,7 @@ fn baseline_options(opening: &Opening<'_>, report: &Report, layer: PathBuf) -> B
     } = *opening;
     BaselineOptions {
         root: request.root.clone(),
+        host: host.to_owned(),
         selection: Selection {
             packages: report.scope.resolved_packages.clone(),
             features: request.config.execution.features.clone(),
@@ -1254,6 +1261,14 @@ fn limitation_detail(name: &str) -> String {
         rustflags::UNREADABLE_CONFIG_LIMITATION => {
             "a cargo configuration file could not be read, so the flags it asks for are not \
              in the instrumented build"
+        }
+        baseline::DOCTESTS_LIMITATION => {
+            "a library's documentation is run as one target and carries no coverage, so no \
+             mutation is routed to it and none is answered by it"
+        }
+        baseline::WHOLE_BINARY_LIMITATION => {
+            "a test binary brings its own harness, so it cannot be asked for one of its \
+             tests and is measured whole"
         }
         _ => "stated by a phase of the run",
     }

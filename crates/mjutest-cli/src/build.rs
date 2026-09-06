@@ -86,6 +86,8 @@ pub struct BuildOptions {
 pub struct Built {
     /// The test binaries, with the environment their processes run with.
     pub units: Vec<Unit>,
+    /// The environment the build ran with, which is what anything compiling against its artifacts has to run with to reuse them.
+    pub env: Vec<(OsString, OsString)>,
     /// What the compiler said, when it refused. A workspace that does not compile is a finding, not an error.
     pub failure: Option<String>,
     /// What this build could not honour, by name.
@@ -136,7 +138,8 @@ pub fn build(
 ) -> Result<Built, BuildError> {
     let mut limitations = Vec::new();
     let mut spec = toolchain.command(&options.root, arguments(toolchain, options));
-    spec.env = Some(environment(options, &mut limitations));
+    let built_with = environment(options, &mut limitations);
+    spec.env = Some(built_with.clone());
     spec.timeout = options.timeout;
     spec.structured_stdout = Some(64 << 20);
 
@@ -168,6 +171,7 @@ pub fn build(
         .collect();
     Ok(Built {
         units,
+        env: built_with,
         failure: failure_of(&messages, &built.output),
         limitations,
     })

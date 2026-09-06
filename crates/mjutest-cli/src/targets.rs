@@ -37,11 +37,13 @@ pub enum UnitKind {
     Test,
     /// An example built with `test = true`.
     Example,
+    /// The documentation of a library, run as one target.
+    Doc,
 }
 
 impl UnitKind {
     /// Every kind, in the order a report lists them.
-    pub const ALL: [Self; 4] = [Self::Lib, Self::Bin, Self::Test, Self::Example];
+    pub const ALL: [Self; 5] = [Self::Lib, Self::Bin, Self::Test, Self::Example, Self::Doc];
 
     /// The name used in an identity and in reports.
     #[must_use]
@@ -51,6 +53,7 @@ impl UnitKind {
             Self::Bin => "bin",
             Self::Test => "test",
             Self::Example => "example",
+            Self::Doc => "doc",
         }
     }
 
