@@ -81,6 +81,81 @@ fn prepared(fixture: &Fixture, cancel: &Cancel) -> Session {
 }
 
 #[test]
+fn a_run_about_one_package_builds_that_package_and_type_checks_them_all() {
+    let fixture = fixture("fixture-workspace");
+    let cancel = Cancel::new();
+    let trace = rust_mutants::trace::Recorder::wall(rust_mutants::trace::Sink::Memory(
+        rust_mutants::trace::MemorySink::unbounded(),
+    ));
+    let session = Workspace::open(
+        &fixture.root,
+        OpenOptions {
+            cargo: Some(mjutest_devkit::paths::cargo_binary()),
+            temp_directory: fixture.temp.clone(),
+            env: std::env::vars_os().collect(),
+            offline: true,
+            locked: true,
+            trace: trace.clone(),
+            ..OpenOptions::default()
+        },
+        &cancel,
+    )
+    .expect("the workspace opens")
+    .prepare(
+        &PrepareOptions {
+            tier: Tier::All,
+            verify: false,
+            packages: vec!["fixture-core".to_owned()],
+            ..PrepareOptions::default()
+        },
+        &cancel,
+    )
+    .expect("the session prepares");
+
+    let commands: Vec<Vec<String>> = trace
+        .events()
+        .into_iter()
+        .filter_map(|event| match event.payload {
+            rust_mutants::trace::Payload::Exec { exec } => Some(exec.argv),
+            _ => None,
+        })
+        .filter(|argv| argv.iter().any(|arg| arg == "check" || arg == "test"))
+        .collect();
+    let built: Vec<&Vec<String>> = commands
+        .iter()
+        .filter(|argv| argv.iter().any(|arg| arg == "--no-run"))
+        .collect();
+    let checked: Vec<&Vec<String>> = commands
+        .iter()
+        .filter(|argv| argv.iter().any(|arg| arg == "check"))
+        .collect();
+
+    assert!(
+        !built.is_empty(),
+        "the run builds test binaries: {commands:?}"
+    );
+    for argv in built {
+        assert!(
+            argv.iter().any(|arg| arg == "fixture-core")
+                && !argv.iter().any(|arg| arg == "--workspace"),
+            "a run only starts the binaries of the packages it is about: {argv:?}"
+        );
+    }
+    assert!(
+        !checked.is_empty(),
+        "the run type-checks the tree: {commands:?}"
+    );
+    for argv in checked {
+        assert!(
+            argv.iter().any(|arg| arg == "--workspace"),
+            "a mutation of one package can stop being a program only where another instantiates \
+             it: {argv:?}"
+        );
+    }
+    session.close().expect("the session closes");
+}
+
+#[test]
 fn the_probe_asks_about_what_it_can_and_leaves_the_rest_alone() {
     let fixture = fixture("fixture-probeable");
     let cancel = Cancel::new();

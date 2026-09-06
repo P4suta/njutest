@@ -132,6 +132,7 @@ fn measure(
         &workspace.driver(cancel),
         &CompileOptions {
             kind: CompileKind::Tests,
+            packages: Vec::new(),
             target_dir: Some(target_dir.clone()),
             locked: workspace.locked,
             offline: workspace.offline,

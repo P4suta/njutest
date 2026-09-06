@@ -93,6 +93,8 @@ pub struct Session {
     validated: Validated,
     targets: Vec<TestTarget>,
     scratch: PathBuf,
+    /// How many executions this session has started, which is what names each one's own temporary directory.
+    executions: std::sync::atomic::AtomicU64,
     mutant_timeout: Option<Duration>,
     /// The files as they were before instrumentation, so a position can be counted in the file a person would open rather than in the rewrite.
     sources: BTreeMap<String, Vec<u8>>,
@@ -239,6 +241,25 @@ impl Session {
         })
     }
 
+    /// A temporary directory of this execution's own, so two executions at once
+    /// cannot meet in one another's files.
+    ///
+    /// A consumer may run mutants in parallel across the targets one build
+    /// produced, and two test processes sharing a temporary directory can fail
+    /// one another. Falling back to the session's own directory keeps a run
+    /// that cannot make the directory going, at the isolation it had before.
+    fn exec_scratch(&self) -> PathBuf {
+        let at = self
+            .executions
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let own = self.scratch.join(format!("exec-{at}"));
+        if std::fs::create_dir_all(&own).is_ok() {
+            own
+        } else {
+            self.scratch.clone()
+        }
+    }
+
     /// Runs one mutant and reports what the tests said.
     ///
     /// # Errors
@@ -278,7 +299,7 @@ impl Session {
             let mut exec = ExecRequest::new(target)
                 .with_args(request.args.clone())
                 .with_timeout(timeout)
-                .with_scratch(&self.scratch);
+                .with_scratch(self.exec_scratch());
             if let Some(test) = &request.test {
                 exec = exec.with_test(test.clone());
             }
@@ -319,7 +340,7 @@ impl Session {
             let mut exec = ExecRequest::new(target)
                 .with_args(request.args.clone())
                 .with_timeout(timeout)
-                .with_scratch(&self.scratch);
+                .with_scratch(self.exec_scratch());
             if let Some(test) = &request.test {
                 exec = exec.with_test(test.clone());
             }
@@ -429,6 +450,7 @@ fn pristine(
         &workspace.driver(cancel),
         &CompileOptions {
             kind: CompileKind::Check,
+            packages: Vec::new(),
             target_dir: Some(workspace.target_dir.clone()),
             locked: workspace.locked,
             offline: workspace.offline,
@@ -600,6 +622,7 @@ pub fn prepare(
         validated,
         targets,
         scratch,
+        executions: std::sync::atomic::AtomicU64::new(0),
         mutant_timeout: options.mutant_timeout,
         workspace,
     })
@@ -627,6 +650,7 @@ fn establish(
         cancel,
         timeout: Workspace::timeout(options.build_timeout),
         last_build: Vec::new(),
+        packages: options.packages.clone(),
     };
     let validated = validate(
         &discovery.catalog,
@@ -726,6 +750,8 @@ struct TreeCompiler<'a> {
     timeout: Option<Duration>,
     /// The messages of the last attempt that compiled, which name the test binaries this session will run.
     last_build: Vec<crate::cargo::Message>,
+    /// The member packages the run is about, which are the ones whose test binaries it will start.
+    packages: Vec<String>,
 }
 
 impl Compile for TreeCompiler<'_> {
@@ -765,6 +791,7 @@ impl Compile for TreeCompiler<'_> {
             &self.workspace.driver(self.cancel),
             &CompileOptions {
                 kind: CompileKind::Tests,
+                packages: self.packages.clone(),
                 target_dir: Some(self.workspace.target_dir.clone()),
                 locked: self.workspace.locked,
                 offline: self.workspace.offline,

@@ -28,13 +28,37 @@ pub enum CompileKind {
 }
 
 impl CompileKind {
-    /// The arguments this kind adds after `cargo`.
-    const fn args(self) -> &'static [&'static str] {
+    /// The command this kind runs, and what it asks of every target.
+    const fn command(self) -> (&'static str, &'static [&'static str]) {
         match self {
-            Self::Check => &["check", "--workspace", "--all-targets"],
-            Self::Tests => &["test", "--workspace", "--all-targets", "--no-run"],
+            Self::Check => ("check", &["--all-targets"]),
+            Self::Tests => ("test", &["--all-targets", "--no-run"]),
         }
     }
+}
+
+/// What this compilation is asked to cover, before the flags that are the same either way.
+///
+/// A check answers "is this edit a program", and a mutation of one package can
+/// stop being one only where another instantiates it, so a check is always
+/// about the whole workspace. A test build answers "which binaries will this
+/// run start", and a run only ever starts the binaries of the packages it is
+/// about, so building the rest is work nothing reads. Scoping a run is the one
+/// thing a person can do to make it shorter, and it did not use to shorten the
+/// longest part of it.
+fn arguments(kind: CompileKind, packages: &[String]) -> Vec<String> {
+    let (command, rest) = kind.command();
+    let mut args = vec![command.to_owned()];
+    if packages.is_empty() || kind == CompileKind::Check {
+        args.push("--workspace".to_owned());
+    } else {
+        for package in packages {
+            args.push("--package".to_owned());
+            args.push(package.clone());
+        }
+    }
+    args.extend(rest.iter().map(|arg| (*arg).to_owned()));
+    args
 }
 
 /// Configures [`compile`].
@@ -52,6 +76,8 @@ pub struct CompileOptions {
     pub timeout: Option<Duration>,
     /// What this compilation alone adds to the toolchain's environment, such as the flags a coverage build needs.
     pub env: Vec<(OsString, OsString)>,
+    /// The member packages this compilation is about. Empty is the whole workspace, and a check is always about the whole workspace whatever this says.
+    pub packages: Vec<String>,
 }
 
 /// What a compilation produced.
@@ -72,12 +98,7 @@ pub struct Compiled {
 /// timed out, [`CargoErrorKind::MessageUnparsable`] for a stream that is
 /// not messages, and the dep-info errors of [`units_of`].
 pub fn compile(driver: &Driver<'_>, options: &CompileOptions) -> Result<Compiled, CargoError> {
-    let mut args: Vec<String> = options
-        .kind
-        .args()
-        .iter()
-        .map(|arg| (*arg).to_owned())
-        .collect();
+    let mut args = arguments(options.kind, &options.packages);
     args.push("--message-format=json".to_owned());
     if options.locked {
         args.push("--locked".to_owned());

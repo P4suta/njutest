@@ -101,6 +101,7 @@ fn prepare(fixture: &str) -> Tree {
         &driver,
         &CompileOptions {
             kind: CompileKind::Check,
+            packages: Vec::new(),
             target_dir: Some(target.path().to_path_buf()),
             locked: true,
             offline: true,

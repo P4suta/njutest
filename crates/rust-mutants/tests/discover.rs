@@ -62,6 +62,7 @@ fn prepare(name: &str) -> Prepared {
         &driver,
         &CompileOptions {
             kind: CompileKind::Check,
+            packages: Vec::new(),
             target_dir: Some(target.path().to_path_buf()),
             locked: true,
             offline: true,
@@ -385,6 +386,7 @@ fn the_check_records_an_exec_event_and_keeps_the_messages() {
         },
         &CompileOptions {
             kind: CompileKind::Check,
+            packages: Vec::new(),
             target_dir: Some(target.path().to_path_buf()),
             locked: true,
             offline: true,

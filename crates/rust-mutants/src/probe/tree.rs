@@ -172,6 +172,7 @@ fn accept(
             &workspace.driver(cancel),
             &CompileOptions {
                 kind: CompileKind::Check,
+                packages: Vec::new(),
                 target_dir: Some(workspace.target_dir().join("probe")),
                 locked: workspace.locked,
                 offline: workspace.offline,
@@ -399,6 +400,7 @@ fn build_and_run(
         &workspace.driver(cancel),
         &CompileOptions {
             kind: CompileKind::Tests,
+            packages: options.packages.clone(),
             target_dir: Some(target_dir.clone()),
             locked: workspace.locked,
             offline: workspace.offline,

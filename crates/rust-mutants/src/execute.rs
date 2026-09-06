@@ -402,6 +402,8 @@ pub struct BuildOptions {
     pub locked: bool,
     /// Pass `--offline`.
     pub offline: bool,
+    /// The member packages whose test binaries are wanted. Empty is the whole workspace.
+    pub packages: Vec<String>,
 }
 
 /// Builds the test binaries of a tree and reports them.
@@ -418,6 +420,7 @@ pub fn build(
         driver,
         &CompileOptions {
             kind: CompileKind::Tests,
+            packages: options.packages.clone(),
             target_dir: options.target_dir.clone(),
             locked: options.locked,
             offline: options.offline,
