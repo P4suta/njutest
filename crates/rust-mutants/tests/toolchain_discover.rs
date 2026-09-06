@@ -515,3 +515,19 @@ fn what_the_host_cannot_lend_std_to_is_read_out_of_the_crate_root() {
         "a root that does not parse is answered by the walk, which reports the failure"
     );
 }
+
+#[test]
+fn a_crate_that_forbids_what_the_guards_allow_is_skipped_whole_and_a_crate_that_denies_is_measured()
+{
+    let prepared = prepare("fixture-forbid");
+    let discovery = run(&prepared, &options(), &Recorder::disabled());
+
+    assert_eq!(
+        table(&discovery),
+        [
+            row("denies/src/lib.rs", "denies", 3, ""),
+            row("forbids/src/lib.rs", "forbids", 0, "forbidden-lints:3"),
+        ],
+        "forbid is the one level an allow cannot override, and every guard carries an allow"
+    );
+}

@@ -116,3 +116,66 @@ pub fn read_harnesses(text: &str) -> std::collections::BTreeMap<(String, String)
     }
     found
 }
+
+/// Every lint the manifest at `path` forbids, with the workspace lints it inherits.
+///
+/// Cargo turns a `[lints]` entry into a command line argument, and a `forbid`
+/// there is one no attribute in the source can override — exactly like an
+/// inner attribute at the crate root, and invisible to anything that only
+/// reads the source.
+#[must_use]
+pub fn forbidden(path: &Path, workspace: Option<&Path>) -> Vec<String> {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    let root = workspace.and_then(|path| std::fs::read_to_string(path).ok());
+    read_forbidden(&text, root.as_deref())
+}
+
+/// Every lint `text` forbids, taking the workspace's own table when it asks to inherit it.
+#[must_use]
+pub fn read_forbidden(text: &str, workspace: Option<&str>) -> Vec<String> {
+    let Ok(document) = text.parse::<toml::Table>() else {
+        return Vec::new();
+    };
+    let Some(toml::Value::Table(lints)) = document.get("lints") else {
+        return Vec::new();
+    };
+    let mut found = forbidden_in(lints);
+    if lints.get("workspace").and_then(toml::Value::as_bool) == Some(true)
+        && let Some(root) = workspace
+        && let Ok(root) = root.parse::<toml::Table>()
+        && let Some(toml::Value::Table(inherited)) =
+            root.get("workspace").and_then(|table| table.get("lints"))
+    {
+        found.extend(forbidden_in(inherited));
+    }
+    found.sort();
+    found.dedup();
+    found
+}
+
+/// Every lint a `[lints]` table sets to `forbid`, spelled as the tool spells it.
+fn forbidden_in(lints: &toml::Table) -> Vec<String> {
+    let mut found = Vec::new();
+    for (tool, entries) in lints {
+        let toml::Value::Table(entries) = entries else {
+            continue;
+        };
+        for (name, value) in entries {
+            let level = match value {
+                toml::Value::String(level) => Some(level.as_str()),
+                toml::Value::Table(table) => table.get("level").and_then(toml::Value::as_str),
+                _ => None,
+            };
+            if level == Some("forbid") {
+                found.push(if tool == "rust" {
+                    name.clone()
+                } else {
+                    format!("{tool}::{name}")
+                });
+            }
+        }
+    }
+    found
+}

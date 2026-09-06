@@ -38,6 +38,23 @@ pub use runtime::{
 /// sentence in it.
 pub const STALE_CATALOG_MARKER: &str = "rust-mutants: this binary was built from catalog ";
 
+/// Every lint a guard's own text can trip, which the attribute it carries turns off.
+///
+/// A crate that *forbids* one of these forbids the attribute too — `forbid`
+/// is the level `allow` cannot override — so no mutant of it would compile,
+/// and a run says so by name rather than refusing every candidate.
+pub const GUARD_NOISE_LINTS: [&str; 9] = [
+    "warnings",
+    "unused",
+    "unused_qualifications",
+    "unfulfilled_lint_expectations",
+    "clippy::all",
+    "clippy::pedantic",
+    "clippy::restriction",
+    "clippy::nursery",
+    "clippy::cargo",
+];
+
 /// The text inserted before the innermost function holding a guard, so that a guard's own lint noise never trips a crate's deny policy anywhere else. It holds no line break.
 pub const ALLOW_ATTRIBUTE: &str = "#[allow(warnings, unused, unused_qualifications, unfulfilled_lint_expectations, clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery, clippy::cargo)] ";
 

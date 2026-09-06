@@ -105,11 +105,13 @@ pub enum SkipReason {
     IncludedExpression,
     /// A file a build script wrote outside the tree, which the tree does not hold and a run cannot rewrite.
     GeneratedOutsideWorkspace,
+    /// A file of a crate that forbids a lint the guards' own attribute turns off, which no guard could compile in.
+    ForbiddenLints,
 }
 
 impl SkipReason {
     /// Every reason, in rank order.
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::ConstContext,
         Self::MacroInvocation,
         Self::CfgAttribute,
@@ -120,6 +122,7 @@ impl SkipReason {
         Self::NoStdCrate,
         Self::IncludedExpression,
         Self::GeneratedOutsideWorkspace,
+        Self::ForbiddenLints,
     ];
 
     /// The kebab-case name used in reports and on the command line.
@@ -136,6 +139,7 @@ impl SkipReason {
             Self::NoStdCrate => "no-std-crate",
             Self::IncludedExpression => "included-expression",
             Self::GeneratedOutsideWorkspace => "generated-outside-workspace",
+            Self::ForbiddenLints => "forbidden-lints",
         }
     }
 
@@ -170,6 +174,9 @@ impl SkipReason {
             }
             Self::GeneratedOutsideWorkspace => {
                 "a build script wrote this file into the build directory rather than into the tree, so it is not a file a reviewer edits and the next build would write over any change to it"
+            }
+            Self::ForbiddenLints => {
+                "the crate forbids a lint the guards' own attribute turns off, and forbid is the one level an allow cannot override, so no guard could compile here whatever it edited"
             }
         }
     }

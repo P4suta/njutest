@@ -260,6 +260,7 @@ fn skip_reasons_are_named_explained_and_ranked() {
             "no-std-crate",
             "included-expression",
             "generated-outside-workspace",
+            "forbidden-lints",
         ]
     );
     for reason in SkipReason::ALL {

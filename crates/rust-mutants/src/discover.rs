@@ -133,6 +133,7 @@ impl DiscoverError {
 /// How a file is treated, in priority order when targets disagree.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Role {
+    Forbidden,
     Mutable,
     NoStd,
     TestOnly,
@@ -170,6 +171,10 @@ pub fn discover(
     let mut assigner = Assigner {
         root,
         units: input.units,
+        workspace_manifest: input
+            .metadata
+            .workspace_root
+            .join(crate::cargo::manifest::FILE_NAME),
         assignments: BTreeMap::new(),
         generated: BTreeMap::new(),
     };
@@ -206,6 +211,7 @@ pub fn discover(
             Err(error) => return Err(error),
         };
         let role = match assignment.role {
+            Role::Forbidden => Some(SkipReason::ForbiddenLints),
             Role::Mutable if !selected_by_patterns(path, options) => Some(SkipReason::Excluded),
             Role::Mutable => None,
             Role::NoStd => Some(SkipReason::NoStdCrate),
@@ -310,6 +316,8 @@ fn selected_members<'m>(
 struct Assigner<'a> {
     root: &'a Path,
     units: &'a [Unit],
+    /// The workspace manifest, which a member's `[lints] workspace = true` inherits from.
+    workspace_manifest: PathBuf,
     assignments: BTreeMap<String, Assignment>,
     /// Files a unit compiled from outside the tree, by the name a report calls them.
     generated: BTreeMap<String, String>,
@@ -335,10 +343,16 @@ impl Assigner<'_> {
             .flat_map(|unit| unit.sources.iter().map(PathBuf::as_path))
             .collect();
         let crate_root = relative(self.root, &target.src_path)?;
-        let no_std = non_test
+        let own_root = non_test
             .iter()
-            .any(|path| relative(self.root, path).is_ok_and(|rel| rel == crate_root))
-            && crate_root_is_freestanding(self.root, &crate_root, &target.edition);
+            .any(|path| relative(self.root, path).is_ok_and(|rel| rel == crate_root));
+        let no_std =
+            own_root && crate_root_is_freestanding(self.root, &crate_root, &target.edition);
+        let forbidden = crate::cargo::manifest::forbidden(
+            &package.manifest_path,
+            Some(&self.workspace_manifest),
+        );
+        let forbids = crate_root_forbids_guard_noise(self.root, &crate_root, &forbidden);
         for unit in &compiled {
             for source in &unit.sources {
                 let Ok(path) = relative(self.root, source) else {
@@ -346,7 +360,9 @@ impl Assigner<'_> {
                         .insert(generated_name(source), package.name.clone());
                     continue;
                 };
-                let role = if no_std {
+                let role = if forbids {
+                    Role::Forbidden
+                } else if no_std {
                     Role::NoStd
                 } else if unit.test && !non_test.contains(&source.as_path()) {
                     Role::TestOnly
@@ -377,6 +393,54 @@ impl Assigner<'_> {
             }
         }
     }
+}
+
+/// Whether the crate at `rel`, or the manifest that builds it, forbids a lint the guards fire.
+fn crate_root_forbids_guard_noise(root: &Path, rel: &str, forbidden: &[String]) -> bool {
+    forbids_guard_noise(
+        &std::fs::read_to_string(root.join(rel)).unwrap_or_default(),
+        forbidden,
+    )
+}
+
+/// Whether a crate compiled this way forbids a lint the guards' own attribute turns off.
+///
+/// `forbid` is the one level an `allow` cannot override, so a guard placed in
+/// such a crate is a compile error whatever it edits, and every mutant of the
+/// crate would be refused with nothing in the report saying why. Only the
+/// crate root's own inner attributes count — an attribute inside an item is
+/// about that item — and only the lints the guards can fire: a crate is free
+/// to forbid anything else. `forbidden` is what the manifest says, which
+/// cargo passes on the command line where no attribute overrides it.
+#[must_use]
+pub fn forbids_guard_noise(source: &str, forbidden: &[String]) -> bool {
+    if forbidden
+        .iter()
+        .any(|lint| crate::instrument::GUARD_NOISE_LINTS.contains(&lint.as_str()))
+    {
+        return true;
+    }
+    let Ok(file) = syn::parse_file(source) else {
+        return false;
+    };
+    file.attrs
+        .iter()
+        .filter(|attr| attr.path().is_ident("forbid"))
+        .any(|attr| {
+            let mut names = false;
+            let _parsed = attr.parse_nested_meta(|meta| {
+                let path = meta
+                    .path
+                    .segments
+                    .iter()
+                    .map(|segment| segment.ident.to_string())
+                    .collect::<Vec<_>>()
+                    .join("::");
+                names |= crate::instrument::GUARD_NOISE_LINTS.contains(&path.as_str());
+                Ok(())
+            });
+            names
+        })
 }
 
 /// Whether the crate at `rel` is one this host cannot lend `std` to. A root that does not parse is answered `false` here; the walk reports the parse failure.
