@@ -143,3 +143,24 @@ The test binary is built with `prefer-dynamic`, so starting it directly — whic
 is what the engine does, never through `cargo test` — needs the toolchain's own
 library directories on the dynamic search path. The engine puts them there,
 from the sysroot rustc names as its own.
+
+## What a documented example is to this engine
+
+A library's documentation is a target cargo runs rather than one the engine
+starts: rustdoc compiles each example while cargo runs it, so there is no
+binary in a build's messages to find, and what there is instead is a command.
+Such a target carries the arguments cargo needs before the harness's own,
+which go after a `--`.
+
+Two consequences follow, and both are about what cannot be asked rather than
+about what this engine chose. rustdoc merges a file's examples into one
+compilation, and that harness does not honour a filter naming one example: a
+filter that matches nothing filters everything out, and one that matches an
+example runs every example in its file. And a documented example's binary is
+never seen by this run, so it carries no coverage map to read.
+
+The third is about a guard. A test binary the engine starts itself is
+recognised as having found a stale catalog by its exit code, and cargo turns
+that code into its own 101 — the code a failing test has. So the runtime's own
+sentence in the output is what recognises it there, and a tree rebuilt behind
+a run's back cannot be mistaken for a kill.

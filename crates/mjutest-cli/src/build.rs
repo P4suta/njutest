@@ -3,11 +3,12 @@
 
 //! Building the workspace's tests, in one of two flavours.
 
+use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use rust_mutants::cargo::{Message, Toolchain, parse_messages};
+use rust_mutants::cargo::{Message, Toolchain, parse_messages, units_of};
 use rust_mutants::execute::targets_of;
 use rust_mutants::runner::run;
 
@@ -92,6 +93,8 @@ pub struct Built {
     pub failure: Option<String>,
     /// What this build could not honour, by name.
     pub limitations: Vec<String>,
+    /// The files each package's library is made of, workspace-relative, which is the coverage a documented example carries.
+    pub library_sources: BTreeMap<String, Vec<PathBuf>>,
 }
 
 /// Why a build could not be attempted or read.
@@ -171,6 +174,7 @@ pub fn build(
         .collect();
     Ok(Built {
         units,
+        library_sources: library_sources(&messages, packages, &options.root),
         env: built_with,
         failure: failure_of(&messages, &built.output),
         limitations,
@@ -284,4 +288,38 @@ fn failure_of(messages: &[Message], output: &[u8]) -> Option<String> {
         return Some(String::from_utf8_lossy(output).into_owned());
     }
     Some(rendered.join("\n"))
+}
+
+/// The files each package's library compiles, workspace-relative with forward slashes.
+///
+/// A documented example is compiled by rustdoc into a binary this run never
+/// sees, so there is no coverage to read for it. What is known is the library
+/// it exercises, and these are its files.
+fn library_sources(
+    messages: &[Message],
+    packages: &[rust_mutants::cargo::Package],
+    root: &Path,
+) -> BTreeMap<String, Vec<PathBuf>> {
+    let mut found: BTreeMap<String, Vec<PathBuf>> = BTreeMap::new();
+    for unit in units_of(messages, root).unwrap_or_default() {
+        if !unit.target.is_lib() || unit.target.is_proc_macro() {
+            continue;
+        }
+        let Some(package) = packages
+            .iter()
+            .find(|package| package.id == unit.package_id)
+            .map(|package| package.name.clone())
+        else {
+            continue;
+        };
+        let files = found.entry(package).or_default();
+        for source in unit.sources {
+            if let Ok(relative) = source.strip_prefix(root) {
+                files.push(relative.to_path_buf());
+            }
+        }
+        files.sort();
+        files.dedup();
+    }
+    found
 }

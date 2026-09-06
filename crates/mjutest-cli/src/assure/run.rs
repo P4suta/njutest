@@ -136,7 +136,7 @@ pub fn run(
     )?;
     absorb(&mut report, &baseline);
 
-    if baseline.failure.is_none() {
+    if measurable(&baseline) {
         run_mutation(
             &mut Mutating {
                 unsafe_packages: &unsafe_packages,
@@ -863,6 +863,21 @@ fn take_inventory(report: &mut Report, request: &Request, metadata: &Metadata) -
     taken.packages.iter().cloned().collect()
 }
 
+/// Whether there is anything to measure mutations against.
+///
+/// A mutation is noticed by a test that passes without it and fails with it,
+/// so a suite that does not pass has nothing to say about one: the engine
+/// refuses to prepare a tree whose instrumented baseline fails, and a run that
+/// reached it anyway would report that refusal as an error over a failure this
+/// run has already found and already reports. The verdict is the baseline's.
+fn measurable(baseline: &baseline::Baseline) -> bool {
+    baseline.failure.is_none()
+        && !baseline
+            .targets
+            .iter()
+            .any(|measured| measured.status == TargetStatus::Failed)
+}
+
 /// How much of the workspace this run looked at.
 ///
 /// A run that named packages looked at those, and the contract reserves
@@ -1343,8 +1358,9 @@ fn limitation_detail(name: &str) -> String {
              in the instrumented build"
         }
         baseline::DOCTESTS_LIMITATION => {
-            "a library's documentation is run as one target and carries no coverage, so no \
-             mutation is routed to it and none is answered by it"
+            "rustdoc compiles a documented example into a binary this run never sees, so \
+             there is no coverage to read for it: it reaches every mutation in the files \
+             its library is made of and narrows none of them"
         }
         baseline::PROC_MACRO_LIMITATION => {
             "a procedural macro decides what it expands to during the build, and a mutation \

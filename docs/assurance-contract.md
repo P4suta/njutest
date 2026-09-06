@@ -53,12 +53,27 @@ every crate with a non-empty soundness inventory and every crate that links
 one, and may add sanitizers.
 
 Benchmarks are not part of either correctness contract. Doctests are run and
-classified as one target per library but carry no coverage and route no
-mutant; the limitation `doctests-not-routed` says so. A library that documents
-no example has nothing to run and is not a target: a target that ran nothing
-would raise a finding about documentation nobody wrote. A test binary that
-brings its own harness cannot be asked for one of its tests and is measured
-whole, which `custom-harness-whole-binary` says. A future performance
+classified as one target per library, and mutations are routed to them: a
+mutation only a documented example can notice is noticed by it rather than
+reported as surviving. What such a target carries is not coverage but the
+files its library is made of, so it reaches every mutation in them and narrows
+none of them, which `doctests-routed-by-file` says.
+
+One target per library rather than one per example is not a simplification.
+rustdoc merges a file's examples into one compilation, and asking that harness
+for one of them by name runs every example in the file — a filter that matches
+nothing filters everything out, and a filter that matches one example runs all
+of them. So a kill a documented example finds is attributed to the library's
+documentation, and `--test-runtool` is what would attribute it to the example.
+
+A library that documents no example has nothing to run and is not a target: a
+target that ran nothing would raise a finding about documentation nobody
+wrote. A test binary that brings its own harness cannot be asked for one of
+its tests and is measured whole, which `custom-harness-whole-binary` says.
+
+A mutation is measured against a suite that passes. A run whose baseline saw a
+target fail reports that and measures no mutation: there is nothing for a
+mutation to change about a test that was going to fail anyway. A future performance
 contract must be explicit rather than treating ordinary benchmarks as tests.
 
 ## Mutation routing

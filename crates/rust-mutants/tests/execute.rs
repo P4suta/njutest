@@ -101,6 +101,7 @@ const fn result(exit_code: i32) -> Observation {
         unstarted: false,
         timed_out: false,
         exit_code,
+        stale_catalog: false,
     }
 }
 
@@ -181,6 +182,7 @@ fn target() -> TestTarget {
             ),
             (OsString::from("CARGO_PKG_NAME"), OsString::from("demo")),
         ],
+        through: Vec::new(),
     }
 }
 
@@ -307,6 +309,7 @@ fn a_test_process_learns_which_cargo_built_it() {
         executable: PathBuf::from("/nowhere"),
         cwd: PathBuf::from("/nowhere"),
         cargo_env: Vec::new(),
+        through: Vec::new(),
     };
     let composed = environment(
         &Context {
@@ -346,5 +349,61 @@ fn a_test_process_learns_which_cargo_built_it() {
     assert!(
         !without.iter().any(|(name, _)| name == "CARGO"),
         "a caller that names no cargo says nothing about it"
+    );
+}
+
+#[test]
+fn a_target_cargo_runs_puts_the_harness_arguments_after_a_separator() {
+    let mut doc = target();
+    doc.kind = TargetKind::ProcMacro;
+    doc.executable = PathBuf::from("/bin/cargo");
+    doc.through = ["test", "--doc", "--package", "demo"]
+        .into_iter()
+        .map(OsString::from)
+        .collect();
+
+    let argv = ExecRequest::new(&doc)
+        .with_test("src/lib.rs - add (line 7)".to_owned())
+        .with_args(vec!["--format".to_owned(), "terse".to_owned()])
+        .argv();
+
+    assert_eq!(
+        argv,
+        [
+            "/bin/cargo",
+            "test",
+            "--doc",
+            "--package",
+            "demo",
+            "--",
+            "src/lib.rs - add (line 7)",
+            "--format",
+            "terse"
+        ]
+        .map(OsString::from),
+        "cargo takes its own arguments first and passes the rest of the line to the \
+         harness after a separator, and never `--exact`: rustdoc merges a file's examples \
+         into one compilation, where a filter naming one of them runs all of them"
+    );
+}
+
+#[test]
+fn a_runtime_that_named_another_catalog_is_an_error_however_the_process_exited() {
+    let said = format!(
+        "{}abc but def is active\n",
+        rust_mutants::instrument::STALE_CATALOG_MARKER
+    );
+    let observed = Observation {
+        unstarted: false,
+        timed_out: false,
+        exit_code: 101,
+        stale_catalog: said.contains(rust_mutants::instrument::STALE_CATALOG_MARKER),
+    };
+
+    assert_eq!(
+        outcome_of(observed, None),
+        Outcome::Errored,
+        "cargo turns the runtime's own 97 into its 101, which is the code a failing test \
+         has: a tree rebuilt behind the run's back would otherwise look exactly like a kill"
     );
 }

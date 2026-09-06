@@ -191,7 +191,7 @@ pub fn run_resuming(
     let Selected {
         targets: selected,
         limitations,
-    } = select(&built, workspace.toolchain, &options.root, watch)?;
+    } = select(&built, workspace.toolchain, options, watch)?;
     baseline.limitations.extend(limitations);
     let total = u64::try_from(selected.len()).unwrap_or(u64::MAX);
     let answers = crate::assure::schedule::measure(
@@ -227,6 +227,10 @@ pub fn run_resuming(
         if undocumented(&measured) {
             continue;
         }
+        let mut measured = measured;
+        if measured.target.unit == UnitKind::Doc {
+            measured.covered = documented_files(&built, &measured.target.package);
+        }
         if measured.target.unit == UnitKind::Doc {
             baseline.limitations.push(DOCTESTS_LIMITATION.to_owned());
         }
@@ -248,7 +252,7 @@ struct Selected {
 fn select(
     built: &build::Built,
     toolchain: &Toolchain,
-    root: &std::path::Path,
+    options: &BaselineOptions,
     watch: Watch<'_>,
 ) -> Result<Selected, RunnerError> {
     let mut selected = Selected::default();
@@ -269,8 +273,33 @@ fn select(
     }
     selected
         .targets
-        .extend(documentation(built, toolchain, root));
+        .extend(documentation(built, toolchain, &options.root));
     Ok(selected)
+}
+
+/// The whole of every file the package's library compiles, which is the coverage a documented example carries.
+///
+/// rustdoc compiles a documentation example into a binary of its own while
+/// cargo runs it, and this run never sees that binary: there is no coverage
+/// map to read and no profile to merge. What is known is which files the
+/// library it exercises is made of, so a documented example reaches every
+/// mutation in them and narrows none of them —
+/// `doctests-routed-by-file` says so on every report where one ran.
+fn documented_files(built: &build::Built, package: &str) -> BTreeSet<Block> {
+    built
+        .library_sources
+        .get(package)
+        .into_iter()
+        .flatten()
+        .map(|file| Block {
+            file: file.clone(),
+            start: crate::coverage::Point { line: 0, column: 0 },
+            end: crate::coverage::Point {
+                line: u32::MAX,
+                column: u32::MAX,
+            },
+        })
+        .collect()
 }
 
 /// Whether this is a library that documents no example, which the run finds out by asking cargo and which is not a target the report carries.
@@ -286,8 +315,8 @@ fn undocumented(measured: &Measured) -> bool {
         && measured.message.as_deref() == Some(RAN_NOTHING)
 }
 
-/// The name a run states when a library's documentation was run: it carries no coverage, so nothing is routed to it and it answers for no mutation.
-pub const DOCTESTS_LIMITATION: &str = "doctests-not-routed";
+/// The name a run states when a library's documentation was run: rustdoc compiles each example into a binary this run never sees, so the coverage it carries is the whole of every file its library is made of.
+pub const DOCTESTS_LIMITATION: &str = "doctests-routed-by-file";
 
 /// The name a run states when a test binary brings its own harness, which makes the whole binary one target rather than one target per test.
 pub const WHOLE_BINARY_LIMITATION: &str = "custom-harness-whole-binary";
@@ -432,7 +461,8 @@ fn command(target: &Target, options: &BaselineOptions) -> Spec {
     let mut argv: Vec<OsString> = vec![target.executable.as_os_str().to_owned()];
     if target.unit == UnitKind::Doc {
         argv.extend(documentation_arguments(target, options));
-    } else if !target.is_whole_binary() {
+    }
+    if !target.is_whole_binary() {
         argv.push(OsString::from(&target.path));
         argv.push(OsString::from("--exact"));
     }
