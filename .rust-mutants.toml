@@ -16,9 +16,7 @@ packages = ["rust-mutants"]
 
 [mutation]
 tier = "balanced"
-# Coverage routing is the one proof layer that ships, and it is off by default
-# until E6 makes it the default. Until then the ledger asks for it by name.
-coverage = true
+probe = true
 
 [execution]
 offline = true

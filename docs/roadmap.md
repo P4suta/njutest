@@ -32,6 +32,44 @@ that lets it be seen, tested, and audited — and both are completion criteria.
 | M10 ✓ | Equivalent mutants, proved | `[mutation] equivalence`: the compiler renders a mutation identically or it does not, and a run says `equivalent` only where the tests ran the position | `rust-mutants equivalence` over a whole catalog, `fixture-equivalent`, ADR 0013 | a mutation nothing could notice is not a finding, and one in code nothing calls still is |
 | M11 ✓ | The Rust-shaped gaps | fifty-one operators, mutation inside the assertion macros, the files `include!` pastes in, `#![no_std]` crates, a proc-macro crate's own tests, mutations routed to a library's documentation | six fixtures with fate tables, the rule-order guard, the skip reasons that are now emitted rather than named, a target cargo runs rather than the engine | every limitation the docs list is one a report carries |
 | E5 ✓ | The engine sees itself | `--trace[=DIR]` on every command, `trace summary`/`check`/`diff`, typed `verify`/`probe-exec`/`witness`/`route` records, sub-phases through `prepare`, `Session::route` as a question anyone can ask, and the byte span and source digest a reader re-mints an identity from | a scripted toolchain the tests drive instead of cargo, the suite cut into an inner loop that starts nothing and a `toolchain_` half that does, `cargo xtask engine-audit` re-deciding a run in nine layers, three committed runs it re-decides, the dogfood ledger and its weekly shard job, and one test per ledger the documentation keeps | every judged mutant leaves one route record, `engine-audit --trace` re-decides three committed runs with no violations, and `mise run test:fast` starts no cargo |
+| E6 ✓ | The contracts and the code (the engine) | a run compiles what it is told to (`[build]`, features, target, profile), it says which test noticed a mutation and what signal a process died from, a tree that reaches outside itself or does not link is refused before any round, a build script's generated code is skipped by name, a `harness = false` target answers by exiting, documented examples are a target a run can switch off, `build.rustflags` is read and put back rather than refusing the measurement, a crate that forbids what the guards allow is skipped whole, a cancelled build is a cancellation, attribution reads every span, bisection names what it isolated and what interacts, the budget is derived from what the target measured, four mutants are measured at once and delivered as they finish, coverage is on by default, a branch or a probe discharges a target that could not have noticed, and a survivor is asked whether the compiler renders it at all | `cargo::config` and `cargo::manifest` read what cargo does not report, `Session::judge`/`describe`/`source`, the driver and the report model in the engine, `Observer` and the worker pool, `prove::discharges` as a pure function, the evidence a run keeps for its own audit, the `proofs` layer that re-derives every discharge, `cache`/`select`/`identical`/`evidence` records, and eight fixtures for eight things nothing measured | `run --jobs 4 --probe` completes on the engine itself and `engine-audit --trace --ledger` re-decides it with no violations |
+
+## What E6 closed
+
+Two products' worth of documentation described an engine that did not exist.
+`--trace` had shipped, but the engine still could not be told what to compile:
+a project's features, target triple, and profile were nobody's to choose, so a
+run measured the defaults whatever the project ships. It compiles what it is
+told to now, the report says which program was measured, and a stored outcome
+is only reused for a run compiled the same way.
+
+Reading the rest of what the contracts promised found a run's worth of wrong
+answers. A tree that configures `build.rustflags` lost coverage routing
+entirely, because the coverage build replaces them and nobody read them. A
+crate that forbids one of the lints a guard's own attribute turns off had
+every mutant refused with nothing saying why. A tree that type-checks and
+fails to link was accepted, instrumented, and failed every round, where the
+failure reads as a mutation the compiler refused. `Ctrl-C` during a round was
+read as a tree that does not compile, so bisection condemned mutants nothing
+had refused. Attribution read only a diagnostic's primary span, so every type
+error whose primary span is the definition cost a bisection to rediscover what
+the message already said. And bisection, having found the offenders, said "the
+compiler refused this mutant, and no diagnostic named it".
+
+The proof layers were the other half. The compiler had been vouching for
+branch proofs and the probe had been recording what each test infects, and
+nothing read either back: a mutation the tests run and cannot observe was
+executed against every target that reached its line. `prove::discharges` puts
+the lemma and the premise together as a pure function, coverage is on by
+default, and 139 rows of the fixtures' fate ledgers moved from `survived` to
+`unreached` with no kill lost. What a run keeps beside its report — the
+measurement, the catalog with the branch bodies, every probe log — is what
+lets `engine-audit` re-decide every discharge without the engine.
+
+Turning coverage on turned up two more. The coverage build compiled the whole
+workspace where the run was about some of its packages, and a test that wrote
+into the tree during the coverage pass was absorbed by the reseal that takes
+in the instrumentation, so the drift report said nothing about it.
 
 ## What E5 closed
 

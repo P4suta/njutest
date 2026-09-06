@@ -55,16 +55,21 @@ push to block.
 
 ## Dogfooding the engine
 
-`dogfood.yml` runs `rust-mutants` over its own engine with `--coverage
+`dogfood.yml` runs `rust-mutants` over its own engine with `--probe --jobs 4
 --trace`, cut into four parts by `--shard K/4` so no part runs into the
-120-minute limit and reports every remaining mutant as interrupted. The
-`audit` job then:
+120-minute limit and reports every remaining mutant as interrupted. Coverage
+is measured because it is the default. The `audit` job then:
 
 1. merges the four reports into the one the whole would have written,
 2. asks `rust-mutants trace check` whether each recording is complete,
 3. runs `cargo xtask engine-audit <part> --trace <part>/trace --ledger
    .rust-mutants.toml` over every part, which re-mints every identity,
-   re-tallies every column, holds every row to the recording of what actually
-   ran, and refuses a survivor the ledger does not accept.
+   re-tallies every column, re-derives every discharge from the measurement
+   and the catalog the part kept, holds every row to the recording of what
+   actually ran, and refuses a survivor the ledger does not accept,
+4. says what moved since the last complete run, with `xtask report-diff`
+   against that run's own artifact. There is nothing to compare on the first
+   run of the workflow, and a diff against nothing is not a failure; a diff
+   that cannot be read is.
 
-The same three steps run locally as `mise run dogfood:engine:audit`.
+The first three steps run locally as `mise run dogfood:engine:audit`.

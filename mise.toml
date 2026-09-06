@@ -165,7 +165,7 @@ shell = "bash -c"
 run = """
 set -euo pipefail
 cargo build --release --bin rust-mutants
-./target/release/rust-mutants run --locked --offline --trace "$@"
+./target/release/rust-mutants run --locked --offline --trace --jobs 4 "$@"
 """
 
 [tasks."dogfood:engine:audit"]
@@ -175,7 +175,7 @@ run = """
 set -euo pipefail
 cargo build --release --bin rust-mutants
 cargo build --release -p xtask
-./target/release/rust-mutants run --locked --offline --trace "$@" || true
+./target/release/rust-mutants run --locked --offline --trace --jobs 4 "$@" || true
 run="$(ls -dt reports/mutation/*/ 2>/dev/null | head -1)"
 if [ -z "${run}" ] || [ ! -f "${run}run-report-v1.json" ]; then
   echo "the run left no report to re-decide; read what it said above" >&2
