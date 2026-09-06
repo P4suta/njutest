@@ -71,6 +71,7 @@ impl Settings {
         config.mutation.verify &= !scope.switches.no_verify;
         config.mutation.coverage |= scope.switches.coverage;
         config.mutation.coverage &= !scope.switches.no_coverage;
+        config.mutation.probe |= scope.switches.probe;
         config.execution.doctests &= !scope.switches.no_doctests;
         Ok(Self {
             root,
@@ -129,6 +130,7 @@ impl Settings {
             verify: self.config.mutation.verify,
             coverage: self.config.mutation.coverage,
             branch_proofs: self.config.mutation.coverage,
+            probe: self.config.mutation.probe,
             build_timeout: self.config.mutation.build_timeout,
             mutant_timeout: self.config.mutation.timeout,
             doctests: self.config.execution.doctests,

@@ -468,6 +468,19 @@ fn whole(
     write(stdout, &report::lines(&document));
     if !no_report {
         let written = store(&settings.report_directory(), id, &document)?;
+        for kept in rust_mutants::report::evidence::write(
+            session,
+            &settings.report_directory().join(id),
+            &settings.prepare_options()?,
+        ) {
+            session
+                .trace()
+                .evidence(rust_mutants::trace::EvidenceRecord {
+                    file: kept.file,
+                    bytes: kept.bytes,
+                    digest: kept.digest,
+                });
+        }
         let mut line = String::new();
         let ok = writeln!(line, "REPORT    {}", written.display());
         debug_assert!(ok.is_ok(), "writing to a String cannot fail");

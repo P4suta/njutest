@@ -26,7 +26,9 @@ pub const PROFILE_ENV: &str = "LLVM_PROFILE_FILE";
 pub const REGION_KIND_CODE: u32 = 0;
 
 /// A place in a file: a 1-based line and a 1-based byte column, which is the unit `llvm-cov` reports regions in.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub struct Point {
     /// The 1-based line.
     pub line: u32,
@@ -57,7 +59,7 @@ pub struct FileRegions {
 }
 
 /// One stretch of source a test really ran.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 pub struct Block {
     /// The file.
     pub file: PathBuf,

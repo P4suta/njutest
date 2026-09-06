@@ -220,3 +220,65 @@ fn exec_never_discharges_and_keeps_its_coverage_narrowing() {
     );
     session.close().expect("close");
 }
+
+#[test]
+fn a_target_whose_probe_never_infected_the_mutant_is_discharged() {
+    let fixture = Fixture::copy("fixture-probeable");
+    let session = probing(&fixture, true);
+    let mut proofs = Vec::new();
+    for mutant in session.catalog().mutants() {
+        for one in session.route(mutant).discharged() {
+            proofs.push(one.proof);
+        }
+    }
+    assert!(
+        proofs.contains(&rust_mutants::session::NEVER_INFECTED),
+        "a test that ran the mutation and whose value never differed cannot have noticed it: \
+         {proofs:?}"
+    );
+    session.close().expect("close");
+}
+
+#[test]
+fn probe_without_coverage_discharges_nothing() {
+    let fixture = Fixture::copy("fixture-probeable");
+    let session = probing(&fixture, false);
+    for mutant in session.catalog().mutants() {
+        assert!(
+            session.route(mutant).discharged().is_empty(),
+            "a proof without a measurement removes nothing: the lemma is the compiler's or the \
+             probe's, and the premise is the coverage layer's"
+        );
+    }
+    session.close().expect("close");
+}
+
+/// A prepared session that probes, measuring coverage or not.
+fn probing(fixture: &Fixture, coverage: bool) -> rust_mutants::session::Session {
+    let cancel = Cancel::new();
+    let workspace = Workspace::open(
+        fixture.root(),
+        OpenOptions {
+            cargo: Some(mjutest_devkit::paths::cargo_binary()),
+            temp_directory: fixture.temp().to_path_buf(),
+            env: std::env::vars_os().collect(),
+            offline: true,
+            locked: true,
+            ..OpenOptions::default()
+        },
+        &cancel,
+    )
+    .expect("the workspace opens");
+    workspace
+        .prepare(
+            &PrepareOptions {
+                tier: Tier::All,
+                coverage,
+                branch_proofs: coverage,
+                probe: true,
+                ..PrepareOptions::default()
+            },
+            &cancel,
+        )
+        .expect("the session prepares")
+}

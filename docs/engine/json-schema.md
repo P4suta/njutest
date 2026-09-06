@@ -118,6 +118,19 @@ get to it. A `discharged-mutant` says the same thing about a mutation the
 tests do run and cannot observe: every target that could have noticed it was
 removed by a proof.
 
+## Evidence
+
+A run that measured coverage writes `reached-v1.json` and `catalog-v1.json`
+beside its report, and copies every probe log into `probe/`. They are the
+premises its proof layers rest on: the measurement each target left behind,
+the catalog with the branch bodies the compiler vouched for, and what each
+probe process recorded. `cargo xtask engine-audit` reads them and re-decides
+every route without the engine that produced them, which is what makes a
+report's `discharged` a proof rather than a claim.
+
+Writing them never fails a run. A file that could not be written is one an
+audit calls unaudited, which is the honest answer.
+
 ## Recordings
 
 `rust-mutants trace` writes JSON Lines rather than a document; its shape is

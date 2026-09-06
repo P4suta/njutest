@@ -48,7 +48,7 @@ const ENCODED_RUSTFLAGS: &str = "CARGO_ENCODED_RUSTFLAGS";
 const RUSTFLAGS: &str = "RUSTFLAGS";
 
 /// What each target reached, and what the measurement could not establish.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Reached {
     /// Every target that ran, by identity, with the blocks its run covered. Empty when nothing was measured.
     pub targets: BTreeMap<String, BTreeSet<Block>>,

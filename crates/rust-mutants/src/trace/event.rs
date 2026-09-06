@@ -14,7 +14,7 @@ pub const SCHEMA: &str = "rust-mutants-trace-v1";
 /// understands whole, and the schema under `schema/` is held to this list by a
 /// test: a type added to one and not the other is a recording no consumer can
 /// validate.
-pub const EVERY_TYPE: [&str; 18] = [
+pub const EVERY_TYPE: [&str; 19] = [
     "run-start",
     "phase-start",
     "phase-end",
@@ -30,6 +30,7 @@ pub const EVERY_TYPE: [&str; 18] = [
     "probe-exec",
     "witness",
     "route",
+    "evidence",
     "mutant-exec",
     "note",
     "run-end",
@@ -131,6 +132,11 @@ pub enum Payload {
         /// The record.
         route: RouteRecord,
     },
+    /// A run kept one file an audit re-derives its proofs from.
+    Evidence {
+        /// The record.
+        evidence: EvidenceRecord,
+    },
     /// One mutant was executed against one target.
     MutantExec {
         /// The record.
@@ -168,6 +174,7 @@ impl Payload {
             Self::ProbeExec { .. } => "probe-exec",
             Self::Witness { .. } => "witness",
             Self::Route { .. } => "route",
+            Self::Evidence { .. } => "evidence",
             Self::MutantExec { .. } => "mutant-exec",
             Self::Note { .. } => "note",
             Self::RunEnd { .. } => "run-end",
@@ -520,6 +527,17 @@ pub struct MutantExecRecord {
     /// Whether it ran with nothing else this run started running beside it, which is what a confirming retry does.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub alone: bool,
+}
+
+/// One file a run kept beside its report, so an audit can re-derive what the run decided.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EvidenceRecord {
+    /// The path, relative to the run's own directory.
+    pub file: String,
+    /// How many bytes it holds.
+    pub bytes: u64,
+    /// The lowercase hex SHA-256 of those bytes.
+    pub digest: String,
 }
 
 /// A free-form note.

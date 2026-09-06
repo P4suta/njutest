@@ -147,6 +147,12 @@ pub struct Mutation {
     pub verify: bool,
     /// Measure once which target reached what, and run a mutant only against the targets that reached it.
     pub coverage: bool,
+    /// Ask each test what it would have noticed, so a target that ran a mutation without its value ever differing is not run against it.
+    ///
+    /// It costs a second instrumented tree and one run of every test, and it
+    /// removes work only where a mutation is a return replacement the probe
+    /// can answer for. A run says what it removed either way.
+    pub probe: bool,
     /// The mutants a reviewer declared equivalent, with the outcome the run must confirm.
     pub expect: Vec<Expectation>,
 }
@@ -160,6 +166,7 @@ impl Default for Mutation {
             build_timeout: None,
             verify: true,
             coverage: true,
+            probe: false,
             expect: Vec::new(),
         }
     }
@@ -554,6 +561,7 @@ version = 1
 # build_timeout = \"\"             # empty = no bound
 # verify = true                  # run the instrumented baseline before believing a mutant
 # coverage = true                # measure reach once, then run a mutant only where it was reached
+# probe = false                  # ask each test what it would have noticed, and skip what it could not
 
 # A mutant a reviewer declared equivalent. The run confirms the claim and
 # reports a stale expectation rather than hiding the mutant.

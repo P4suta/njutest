@@ -108,6 +108,22 @@ pub struct MutantDocument {
     pub original: String,
     /// What they become.
     pub replacement: String,
+    /// The body of the branch the compiler vouched the mutation changes nothing outside, when it did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<BranchDocument>,
+}
+
+/// The body a branch proof names, so an audit can re-derive a discharge from the measurement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BranchDocument {
+    /// The line the body's opening brace is on.
+    pub start_line: u32,
+    /// Its 1-based byte column.
+    pub start_column: u32,
+    /// The line the closing brace is on.
+    pub end_line: u32,
+    /// Its 1-based byte column.
+    pub end_column: u32,
 }
 
 /// One refused candidate.
@@ -266,5 +282,11 @@ pub fn mutant_document(session: &Session, mutant: &Mutant) -> MutantDocument {
         source_digest: mutant.candidate.source_digest.clone(),
         original: String::from_utf8_lossy(&mutant.candidate.original).into_owned(),
         replacement: String::from_utf8_lossy(&mutant.candidate.replacement).into_owned(),
+        branch: session.branch(mutant.index).map(|proof| BranchDocument {
+            start_line: proof.body_start.line,
+            start_column: proof.body_start.byte_column,
+            end_line: proof.body_end.line,
+            end_column: proof.body_end.byte_column,
+        }),
     }
 }

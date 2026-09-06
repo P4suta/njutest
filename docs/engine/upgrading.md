@@ -135,6 +135,12 @@ to find that out again. Reports that used to say `survived` for such a
 mutation now say `not_run` with `unreached`, which is the stronger answer: the
 tests have a gap where the mutant is.
 
+**A run keeps what an audit re-derives its proofs from.** `reached-v1.json`,
+`catalog-v1.json`, and a copy of every probe log are written beside the
+report, and an `evidence` recording names each with its digest. `--probe` asks
+each test what it would have noticed, so a target that ran a mutation without
+its value ever differing is not run against it.
+
 **A mutation the tests run and cannot observe is discharged.** With coverage
 on, the engine asks the compiler which mutations change nothing outside the
 branch they sit in, and a target whose measured run never entered that branch

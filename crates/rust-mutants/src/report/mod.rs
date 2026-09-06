@@ -9,4 +9,5 @@
 //! that validate against them are what say.
 
 pub mod catalog;
+pub mod evidence;
 pub mod run;

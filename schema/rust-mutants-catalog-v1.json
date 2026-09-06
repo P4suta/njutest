@@ -94,7 +94,19 @@
         "end_byte": { "type": "integer", "minimum": 0 },
         "source_digest": { "type": "string" },
         "original": { "type": "string" },
-        "replacement": { "type": "string" }
+        "replacement": { "type": "string" },
+        "branch": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["start_line", "start_column", "end_line", "end_column"],
+          "description": "The body the compiler vouched the mutation changes nothing outside, so an audit can re-derive a discharge from the measurement.",
+          "properties": {
+            "start_line": { "type": "integer", "minimum": 1 },
+            "start_column": { "type": "integer", "minimum": 1 },
+            "end_line": { "type": "integer", "minimum": 1 },
+            "end_column": { "type": "integer", "minimum": 1 }
+          }
+        }
       }
     },
     "rejection": {

@@ -555,6 +555,11 @@ fn one_of_each_measurement(recorder: &Recorder) {
         timeout_source: "derived".to_owned(),
         alone: true,
     });
+    recorder.evidence(rust_mutants::trace::EvidenceRecord {
+        file: "reached-v1.json".to_owned(),
+        bytes: 4096,
+        digest: "c".repeat(64),
+    });
     recorder.route(RouteRecord {
         mutant: "b".repeat(20),
         index: 1,

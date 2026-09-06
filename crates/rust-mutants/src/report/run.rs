@@ -343,6 +343,7 @@ fn mutant(one: &crate::run::Judged, catalog: Option<MutantDocument>) -> RunMutan
         source_digest: String::new(),
         original: String::new(),
         replacement: String::new(),
+        branch: None,
     });
     RunMutantDocument {
         index: catalog.index,

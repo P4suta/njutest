@@ -478,6 +478,12 @@ impl Session {
         self.workspace.workspace_digest()
     }
 
+    /// The directory every build of this session writes into, which is where the proof layers left their own files.
+    #[must_use]
+    pub fn target_dir(&self) -> &std::path::Path {
+        &self.workspace.target_dir
+    }
+
     /// The root of the copy everything runs in.
     #[must_use]
     pub fn snapshot_root(&self) -> &std::path::Path {
@@ -660,9 +666,6 @@ impl Session {
     /// known about it, and a proof that rested on its silence would rest on
     /// the measurement's failure.
     fn discharging(&self, mutant: &Mutant, route: Route) -> Route {
-        let Some(proof) = self.branch(mutant.index) else {
-            return route;
-        };
         let Route::Block {
             reaching,
             mut discharged,
@@ -671,23 +674,11 @@ impl Session {
         else {
             return route;
         };
-        let path = std::path::Path::new(&mutant.candidate.path);
         let mut kept = Vec::new();
         for target in reaching {
-            match self.reached.targets.get(&target) {
-                Some(covered)
-                    if crate::prove::discharges(
-                        proof,
-                        path,
-                        &covered.iter().cloned().collect::<Vec<_>>(),
-                    ) =>
-                {
-                    discharged.push(Discharge {
-                        target,
-                        proof: BRANCH_NEVER_TAKEN,
-                    });
-                }
-                _ => kept.push(target),
+            match self.proof_against(mutant, &target) {
+                Some(proof) => discharged.push(Discharge { target, proof }),
+                None => kept.push(target),
             }
         }
         if kept.is_empty() && !discharged.is_empty() {
@@ -698,6 +689,34 @@ impl Session {
             discharged,
             fallback,
         }
+    }
+
+    /// The proof that this target cannot have noticed this mutation, when a layer has one.
+    ///
+    /// Only a target the measurement actually read can be discharged by the
+    /// branch proof: one whose profile could not be read is in the route
+    /// because nothing is known about it, and a proof resting on its silence
+    /// would rest on the measurement's failure. The probe answers about the
+    /// targets it ran, and a mutant it never asked about is one it says
+    /// nothing about.
+    fn proof_against(&self, mutant: &Mutant, target: &str) -> Option<&'static str> {
+        if let Some(proof) = self.branch(mutant.index)
+            && let Some(covered) = self.reached.targets.get(target)
+            && crate::prove::discharges(
+                proof,
+                std::path::Path::new(&mutant.candidate.path),
+                &covered.iter().cloned().collect::<Vec<_>>(),
+            )
+        {
+            return Some(BRANCH_NEVER_TAKEN);
+        }
+        if self.probed.asked.contains(&mutant.index)
+            && let Some(infected) = self.probed.infected.get(target)
+            && !infected.contains(&mutant.index)
+        {
+            return Some(NEVER_INFECTED);
+        }
+        None
     }
 
     /// The recording this session writes to, which is the one the workspace was opened with.

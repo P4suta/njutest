@@ -12,7 +12,8 @@
 {"seq":12,"timestamp":"2027-01-15T08:00:11Z","elapsed_ms":11000,"type":"probe-exec","probe":{"target":"demo/lib/demo","outcome":"measured","infected":2,"duration_ms":8}}
 {"seq":13,"timestamp":"2027-01-15T08:00:12Z","elapsed_ms":12000,"type":"witness","witness":{"index":1,"witnesses":["ord"],"checked":true}}
 {"seq":14,"timestamp":"2027-01-15T08:00:13Z","elapsed_ms":13000,"type":"mutant-exec","mutant":{"id":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","index":1,"target":"demo/lib/demo","outcome":"killed","exit_code":101,"duration_ms":40,"tests_run":3,"signal":6,"failed_tests":["demo::tests::le_bound"],"timeout_ms":90000,"timeout_source":"derived","alone":true}}
-{"seq":15,"timestamp":"2027-01-15T08:00:14Z","elapsed_ms":14000,"type":"route","route":{"mutant":"bbbbbbbbbbbbbbbbbbbb","index":1,"granularity":"block","reaching":["demo/lib/demo"],"executed":["demo/lib/demo"]}}
-{"seq":16,"timestamp":"2027-01-15T08:00:15Z","elapsed_ms":15000,"type":"note","note":{"kind":"coverage","detail":"the tools are not installed"}}
-{"seq":17,"timestamp":"2027-01-15T08:00:16Z","elapsed_ms":16000,"type":"phase-end","phase":{"name":"prepare","duration_ms":15000}}
-{"seq":18,"timestamp":"2027-01-15T08:00:17Z","elapsed_ms":17000,"type":"run-end","run":{"outcome":"detected","events_emitted":17,"events_dropped":0}}
+{"seq":15,"timestamp":"2027-01-15T08:00:14Z","elapsed_ms":14000,"type":"evidence","evidence":{"file":"reached-v1.json","bytes":4096,"digest":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}}
+{"seq":16,"timestamp":"2027-01-15T08:00:15Z","elapsed_ms":15000,"type":"route","route":{"mutant":"bbbbbbbbbbbbbbbbbbbb","index":1,"granularity":"block","reaching":["demo/lib/demo"],"executed":["demo/lib/demo"]}}
+{"seq":17,"timestamp":"2027-01-15T08:00:16Z","elapsed_ms":16000,"type":"note","note":{"kind":"coverage","detail":"the tools are not installed"}}
+{"seq":18,"timestamp":"2027-01-15T08:00:17Z","elapsed_ms":17000,"type":"phase-end","phase":{"name":"prepare","duration_ms":16000}}
+{"seq":19,"timestamp":"2027-01-15T08:00:18Z","elapsed_ms":18000,"type":"run-end","run":{"outcome":"detected","events_emitted":18,"events_dropped":0}}

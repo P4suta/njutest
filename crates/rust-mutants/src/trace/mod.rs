@@ -16,8 +16,8 @@ use sha2::{Digest as _, Sha256};
 
 pub use event::{
     AttributionRecord, BisectRecord, BuildRecord, DischargeRecord, DiscoverFileRecord, EVERY_TYPE,
-    Event, ExecRecord, InstrumentRecord, MutantExecRecord, NoteRecord, OpenRecord, Payload,
-    PhaseRecord, ProbeExecRecord, RouteRecord, RunRecord, SCHEMA, SiteRecord, SkipCount,
+    Event, EvidenceRecord, ExecRecord, InstrumentRecord, MutantExecRecord, NoteRecord, OpenRecord,
+    Payload, PhaseRecord, ProbeExecRecord, RouteRecord, RunRecord, SCHEMA, SiteRecord, SkipCount,
     SnapshotRecord, SweepRecord, TargetRecord, ValidateRoundRecord, VerifyRecord, WitnessRecord,
 };
 pub use reader::{Problem, ReadError, check, read_events};
@@ -288,6 +288,11 @@ impl Recorder {
     /// Records how one mutant's targets were chosen, and which of them ran.
     pub fn route(&self, record: RouteRecord) {
         self.emit(Payload::Route { route: record });
+    }
+
+    /// Records one file a run kept for an audit.
+    pub fn evidence(&self, record: EvidenceRecord) {
+        self.emit(Payload::Evidence { evidence: record });
     }
 
     /// Records one mutant executed against one target.

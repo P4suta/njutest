@@ -42,6 +42,22 @@ fn count(value: usize) -> u64 {
     u64::try_from(value).unwrap_or(u64::MAX)
 }
 
+/// The directory the newest run wrote into.
+fn newest_run(fixture: &Fixture) -> PathBuf {
+    let directory = fixture.root().join("reports/mutation");
+    let pointer: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(directory.join("latest.json"))
+            .expect("a pointer to the newest run"),
+    )
+    .expect("the pointer is a document");
+    let relative = pointer["document"].as_str().expect("a document path");
+    directory
+        .join(relative)
+        .parent()
+        .expect("the run's own directory")
+        .to_path_buf()
+}
+
 fn stored(fixture: &Fixture) -> serde_json::Value {
     let directory = fixture.root().join("reports/mutation");
     let pointer: serde_json::Value = serde_json::from_str(
@@ -812,5 +828,46 @@ fn the_parts_of_a_catalog_over_two_packages_and_two_targets_are_the_whole_of_it(
         fates(&whole),
         "every mutation of every package reaches the same fate against the same target, \
          whichever part it was cut into"
+    );
+}
+
+#[test]
+fn a_coverage_run_keeps_what_the_audit_re_derives_from() {
+    let fixture = Fixture::copy("fixture-coverage");
+    let output = against(&fixture, &["run", "--offline", "--locked", "--tier", "all"]);
+    assert!(
+        output.status.code().is_some_and(|code| code < 2),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let directory = newest_run(&fixture);
+    for name in ["reached-v1.json", "catalog-v1.json"] {
+        assert!(
+            directory.join(name).is_file(),
+            "a proof layer removed executions, and a report that says so without the premises \
+             is a claim rather than a proof: {name}"
+        );
+    }
+    let reached: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(directory.join("reached-v1.json")).expect("the measurement"),
+    )
+    .expect("a document");
+    assert!(
+        reached["targets"]
+            .as_object()
+            .is_some_and(|targets| !targets.is_empty()),
+        "the measurement each target left behind is what a discharge rests on: {reached}"
+    );
+    let catalog: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(directory.join("catalog-v1.json")).expect("the catalog"),
+    )
+    .expect("a document");
+    assert!(
+        catalog["mutants"]
+            .as_array()
+            .expect("the rows")
+            .iter()
+            .any(|row| row["branch"].is_object()),
+        "and the body the compiler vouched for is what says which regions matter: {catalog}"
     );
 }

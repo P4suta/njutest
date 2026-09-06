@@ -269,6 +269,9 @@ pub struct Switches {
     /// Run every mutant against every target, measuring no coverage and proving nothing about reach.
     #[arg(long, conflicts_with = "coverage")]
     pub no_coverage: bool,
+    /// Ask each test what it would have noticed, and never run one against a mutation it could not have.
+    #[arg(long)]
+    pub probe: bool,
     /// Leave a library's documented examples out of the targets.
     #[arg(long)]
     pub no_doctests: bool,
