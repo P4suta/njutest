@@ -88,7 +88,16 @@ where
             return usage.exit_code;
         }
     };
-    match app::dispatch(&command.command, environment, stdout, cancel) {
+    let dispatched = app::dispatch(
+        &command.command,
+        environment,
+        Streams {
+            out: &mut *stdout,
+            err: &mut *stderr,
+        },
+        cancel,
+    );
+    match dispatched {
         Ok(code) => code,
         Err(error) if cancel.is_cancelled() => {
             let _written = writeln!(stderr, "rust-mutants: {error}");

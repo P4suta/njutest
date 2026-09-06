@@ -140,6 +140,12 @@ reads back what an earlier run of this exact tree established unless
 `--no-cache` is given; `cache` says what is stored and `cache --gc` removes
 what no run still owns.
 
+`--trace[=DIR]` records what the command did, as JSON Lines. A run records
+beside its report and every other command under `<reports>/traces/`; `trace
+summary`, `trace check`, and `trace diff` read one back. A recording is
+diagnostic exhaust and never evidence, so a directory that cannot be created
+costs one line on standard error and never the command.
+
 ## Guards
 
 Three forms. **Form C** for a position that is syntactically boolean (an
@@ -238,5 +244,6 @@ the first twenty hex digits; a prefix of four or more resolves a mutant.
 
 Every decision the engine takes — every site's form and skip reason, every
 validation round and the diagnostic that condemned each mutant, every bisect
-step, every build and execution — is recorded to the sink `OpenOptions`
-names. See [trace](trace.md).
+step, every build, verification and execution, and the route every judged
+mutant took — is recorded to the sink `OpenOptions` names. See
+[trace](trace.md).

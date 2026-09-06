@@ -244,6 +244,29 @@ impl Route {
         }
     }
 
+    /// The targets an execution of this route ran, given the target that answered and whether it detected the mutation.
+    ///
+    /// [`Session::exec`] walks the routed targets in order and stops at the
+    /// first one that detects, so what ran is the whole route when nothing
+    /// detected and the prefix ending at the answer when one did. An answer
+    /// this route does not hold is one target on its own, which is what
+    /// `--target` asks for.
+    #[must_use]
+    pub fn executed(&self, answered: &str, detected: bool) -> Vec<String> {
+        if answered.is_empty() {
+            return Vec::new();
+        }
+        let reaching: Vec<String> = self.reaching().into_iter().map(str::to_owned).collect();
+        let Some(at) = reaching.iter().position(|target| target == answered) else {
+            return vec![answered.to_owned()];
+        };
+        if detected {
+            reaching.into_iter().take(at.saturating_add(1)).collect()
+        } else {
+            reaching
+        }
+    }
+
     /// The record of this decision, with the targets that actually ran.
     #[must_use]
     pub fn record(&self, mutant: &Mutant, executed: Vec<String>) -> crate::trace::RouteRecord {
@@ -435,6 +458,12 @@ impl Session {
             },
             &targets,
         )
+    }
+
+    /// The recording this session writes to, which is the one the workspace was opened with.
+    #[must_use]
+    pub const fn trace(&self) -> &crate::trace::Recorder {
+        &self.workspace.trace
     }
 
     /// What the probe pass established: which mutants it could ask about, and what each target infected.

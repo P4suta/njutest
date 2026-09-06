@@ -66,6 +66,7 @@ impl Settings {
         &self,
         scope: &cli::Scope,
         environment: &Environment,
+        trace: rust_mutants::trace::Recorder,
     ) -> Result<OpenOptions, EngineError> {
         Ok(OpenOptions {
             cargo: None,
@@ -81,7 +82,7 @@ impl Settings {
             keep_temp: scope.switches.keep_temp,
             offline: self.config.execution.offline,
             locked: self.config.execution.locked,
-            trace: rust_mutants::trace::Recorder::disabled(),
+            trace,
         })
     }
 

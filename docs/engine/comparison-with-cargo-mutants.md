@@ -73,7 +73,7 @@ answer, and the tests here are mostly about those invariants.
 - **Stable identities.** A mutant's identity is a hash of what it is, so an
   expectation a reviewer wrote survives an edit elsewhere in the file.
 - **A catalog you can read before anything runs.** `list`, `catalog --json`,
-  `why-skipped`, `explain`, and `instrument --print` each answer a question
+  `why-skipped`, `explain`, and `instrument --file` each answer a question
   about what would be measured, without measuring it.
 - **Answers a script can act on.** A JSON Schema for the report, a documented
   exit policy, `--shard K/N` with a `merge` that refuses parts that disagree,

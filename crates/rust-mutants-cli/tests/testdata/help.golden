@@ -22,6 +22,8 @@ Commands:
                temporary directory
   merge        Combine the reports of the parts of one catalog into the report the whole would have
                written
+  trace        Read a recording back: what it counted, what each phase took, and what moved between
+               two of them
   report       Read back a stored run report
   cache        Say what the engine left in the temporary directory, and remove what no run still
                owns

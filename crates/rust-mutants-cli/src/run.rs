@@ -493,6 +493,7 @@ pub fn run(
             keep(mutant, options, &established);
             established
         };
+        route(session, mutant, &one);
         progress(&one, count(position).saturating_add(1), total);
         judged.push(one);
     }
@@ -508,6 +509,28 @@ pub fn run(
         shard: options.shard,
         duration: started.elapsed(),
     })
+}
+
+/// Records which targets could have noticed this mutation and which of them ran.
+///
+/// One record per judged mutant, whatever became of it: a mutant nothing
+/// reached leaves a route and no execution, and one an earlier run answered
+/// for names that run rather than a target. The record is the only place a
+/// reader can see a proof layer remove work, so it is written even when the
+/// mutant was never started.
+fn route(session: &Session, mutant: &Mutant, judged: &Judged) {
+    if !session.trace().is_enabled() {
+        return;
+    }
+    let decided = session.route(mutant);
+    let ran = if judged.source_run_id.is_some() || judged.outcome == Outcome::NotRun {
+        Vec::new()
+    } else {
+        decided.executed(&judged.target, judged.outcome.detected())
+    };
+    let mut record = decided.record(mutant, ran);
+    record.reused.clone_from(&judged.source_run_id);
+    session.trace().route(record);
 }
 
 /// One mutant, executed once and — when it timed out — once more on its own before the timeout is believed.

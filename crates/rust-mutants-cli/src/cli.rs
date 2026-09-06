@@ -134,6 +134,12 @@ pub enum Command {
         #[arg(long, value_name = "FILE")]
         output: Option<PathBuf>,
     },
+    /// Read a recording back: what it counted, what each phase took, and what moved between two of them.
+    Trace {
+        /// Which reading.
+        #[command(subcommand)]
+        command: TraceCommand,
+    },
     /// Read back a stored run report.
     Report {
         /// The workspace root. Defaults to the working directory.
@@ -209,6 +215,9 @@ pub struct Scope {
     /// How long one mutant execution may take before it is retried serially, as in `90s` or `5m`.
     #[arg(long, value_name = "DURATION")]
     pub timeout: Option<String>,
+    /// Record what the run does, as JSON Lines. Without a directory a run writes beside its report and every other command under `<reports>/traces/`.
+    #[arg(long, value_name = "DIR", num_args = 0..=1, default_missing_value = "")]
+    pub trace: Option<String>,
     /// How the workspace is treated.
     #[command(flatten)]
     pub switches: Switches,
@@ -277,6 +286,7 @@ impl Command {
             | Self::Doctor { .. }
             | Self::Merge { .. }
             | Self::Report { .. }
+            | Self::Trace { .. }
             | Self::Cache { .. } => None,
         }
     }
@@ -324,4 +334,46 @@ where
             exit_code: if to_stderr { crate::EXIT_USAGE } else { 0 },
         }
     })
+}
+
+/// What to ask of a recording.
+#[derive(Debug, Clone, Subcommand)]
+pub enum TraceCommand {
+    /// What a recording counted, what every phase took, and which commands were the slowest.
+    Summary {
+        /// The workspace root. Defaults to the working directory.
+        #[arg(long, value_name = "DIR")]
+        root: Option<PathBuf>,
+        /// Read this run's recording rather than the newest one.
+        #[arg(long, value_name = "ID")]
+        run: Option<String>,
+        /// Read a recording in this directory instead of one under the report directory.
+        #[arg(long, value_name = "DIR")]
+        dir: Option<PathBuf>,
+        /// Name at most this many of the slowest commands.
+        #[arg(long, value_name = "N", default_value_t = 5)]
+        slowest: usize,
+    },
+    /// Say whether a recording is complete: it begins, it ends, it lost nothing, and every phase it opened it closed.
+    Check {
+        /// The workspace root. Defaults to the working directory.
+        #[arg(long, value_name = "DIR")]
+        root: Option<PathBuf>,
+        /// Check this run's recording rather than the newest one.
+        #[arg(long, value_name = "ID")]
+        run: Option<String>,
+        /// Check a recording in this directory instead of one under the report directory.
+        #[arg(long, value_name = "DIR")]
+        dir: Option<PathBuf>,
+    },
+    /// What moved between two recordings.
+    Diff {
+        /// The workspace root. Defaults to the working directory.
+        #[arg(long, value_name = "DIR")]
+        root: Option<PathBuf>,
+        /// The run to read first.
+        a: String,
+        /// The run to read second.
+        b: String,
+    },
 }

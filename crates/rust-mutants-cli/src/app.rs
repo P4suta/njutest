@@ -3,6 +3,8 @@
 
 //! The commands: what each one opens, what it establishes, and what it writes.
 
+pub mod trace;
+
 use std::fmt::Write as _;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -36,9 +38,13 @@ pub const RESERVED_ENV: [&str; 3] = [
 pub fn dispatch(
     command: &cli::Command,
     environment: &Environment,
-    stdout: &mut dyn Write,
+    streams: crate::Streams<'_>,
     cancel: &Cancel,
 ) -> Result<u8, CliError> {
+    let crate::Streams {
+        out: stdout,
+        err: stderr,
+    } = streams;
     reserved(environment)?;
     match command {
         cli::Command::Init { root, force } => init(root.as_deref(), *force, environment, stdout),
@@ -70,7 +76,16 @@ pub fn dispatch(
         ),
         cli::Command::Cache { gc } => cache(*gc, environment, stdout),
         cli::Command::Merge { reports, output } => merge(reports, output.as_deref(), stdout),
-        _ => workspace_command(command, environment, stdout, cancel),
+        cli::Command::Trace { command } => trace::read(command, environment, stdout),
+        _ => workspace_command(
+            command,
+            environment,
+            crate::Streams {
+                out: stdout,
+                err: stderr,
+            },
+            cancel,
+        ),
     }
 }
 
@@ -90,27 +105,86 @@ fn reserved(environment: &Environment) -> Result<(), CliError> {
 fn workspace_command(
     command: &cli::Command,
     environment: &Environment,
-    stdout: &mut dyn Write,
+    streams: crate::Streams<'_>,
     cancel: &Cancel,
 ) -> Result<u8, CliError> {
+    let crate::Streams {
+        out: stdout,
+        err: stderr,
+    } = streams;
     let Some(scope) = command.scope() else {
         return Ok(0);
     };
     let settings = Settings::resolve(scope, environment)?;
+    let started = Timestamp::now();
+    let id = run_id(started);
+    let recorder = trace::recorder(
+        &trace::Recording {
+            scope,
+            settings: &settings,
+            id: &id,
+            command,
+        },
+        stderr,
+    );
+    let outcome = measured(
+        command,
+        &Running {
+            scope,
+            settings: &settings,
+            environment,
+            id: &id,
+            started,
+            recorder: &recorder,
+        },
+        stdout,
+        cancel,
+    );
+    trace::ended(&recorder, &outcome, cancel);
+    outcome
+}
+
+/// Everything a workspace command needs beyond what it prints.
+///
+/// The run is named before the workspace is opened, so a recording of the
+/// opening itself has somewhere to go.
+struct Running<'a> {
+    scope: &'a cli::Scope,
+    settings: &'a Settings,
+    environment: &'a Environment,
+    id: &'a str,
+    started: Timestamp,
+    recorder: &'a rust_mutants::trace::Recorder,
+}
+
+fn measured(
+    command: &cli::Command,
+    running: &Running<'_>,
+    stdout: &mut dyn Write,
+    cancel: &Cancel,
+) -> Result<u8, CliError> {
+    let Running {
+        scope,
+        settings,
+        environment,
+        id,
+        started,
+        recorder,
+    } = *running;
     let workspace = Workspace::open(
         &settings.root,
-        settings.open_options(scope, environment)?,
+        settings.open_options(scope, environment, recorder.clone())?,
         cancel,
     )?;
     let mut options = settings.prepare_options()?;
     if let Some(base) = base_of(scope) {
-        options.include = selected(&settings, base, environment, cancel)?;
+        options.include = selected(running, base, cancel)?;
     }
     match command {
         cli::Command::Equivalence { limit, .. } => {
             let discovery = session::preview(&workspace, &options, cancel)?;
             let root = settings.root.clone();
-            let open = settings.open_options(scope, environment)?;
+            let open = settings.open_options(scope, environment, recorder.clone())?;
             workspace.close()?;
             write(
                 stdout,
@@ -120,6 +194,7 @@ fn workspace_command(
                         open,
                         discovery: &discovery,
                         limit: *limit,
+                        trace: recorder,
                     },
                     cancel,
                 )?),
@@ -140,8 +215,10 @@ fn workspace_command(
                 command,
                 &Prepared {
                     session: &session,
-                    settings: &settings,
+                    settings,
                     environment,
+                    id,
+                    started,
                 },
                 cancel,
                 stdout,
@@ -165,11 +242,16 @@ fn base_of(scope: &cli::Scope) -> Option<&str> {
 /// A tree git cannot be asked about ends the command: a run that could not see
 /// what changed must never look like a run that saw nothing change.
 fn selected(
-    settings: &Settings,
+    running: &Running<'_>,
     base: &str,
-    environment: &Environment,
     cancel: &Cancel,
 ) -> Result<Vec<rust_mutants::glob::Pattern>, CliError> {
+    let Running {
+        settings,
+        environment,
+        recorder,
+        ..
+    } = *running;
     let report_directory = settings
         .config
         .reports
@@ -177,8 +259,7 @@ fn selected(
         .to_string_lossy()
         .into_owned();
     let excluded = [report_directory.as_str(), "target"];
-    let trace = rust_mutants::trace::Recorder::disabled();
-    let watch = rust_mutants::runner::Watched::new(cancel, &trace);
+    let watch = rust_mutants::runner::Watched::new(cancel, recorder);
     let asking = rust_mutants::git::Asking {
         root: &settings.root,
         env: &environment.vars,
@@ -219,6 +300,8 @@ struct Prepared<'a> {
     session: &'a Session,
     settings: &'a Settings,
     environment: &'a Environment,
+    id: &'a str,
+    started: Timestamp,
 }
 
 /// What a command that needs a prepared session does.
@@ -278,6 +361,8 @@ fn prepared(
                     no_report: *no_report,
                     no_cache: *no_cache,
                     environment: prepared.environment,
+                    id: prepared.id,
+                    started: prepared.started,
                 },
                 cancel,
                 stdout,
@@ -309,6 +394,8 @@ struct Whole<'a> {
     no_report: bool,
     no_cache: bool,
     environment: &'a Environment,
+    id: &'a str,
+    started: Timestamp,
 }
 
 fn whole(
@@ -324,8 +411,9 @@ fn whole(
         no_report,
         no_cache,
         environment,
+        id,
+        started,
     } = *whole;
-    let started = Timestamp::now();
     let shard = shard.map(run::Shard::parse).transpose()?;
     let outcomes = crate::outcomes::Store::new(&environment.cache_directory);
     let keyed = crate::outcomes::Keyed {
@@ -334,7 +422,6 @@ fn whole(
         args: args.to_vec(),
         timeout_ms: u64::try_from(settings.config.mutation.timeout.as_millis()).unwrap_or(u64::MAX),
     };
-    let id = run_id(started);
     let mut result = run::run(
         session,
         &run::Options {
@@ -345,7 +432,7 @@ fn whole(
             outcomes: (!no_cache).then_some(run::Reusing {
                 store: &outcomes,
                 keyed: &keyed,
-                run_id: &id,
+                run_id: id,
             }),
         },
         cancel,
@@ -372,7 +459,7 @@ fn whole(
         &result,
         report::selection_document(&settings.config),
         &run_report::Meta {
-            id: &id,
+            id,
             started_at: started,
             finished_at: finished,
         },
@@ -380,7 +467,7 @@ fn whole(
     write(stdout, "\n");
     write(stdout, &run_report::lines(&document));
     if !no_report {
-        let written = store(&settings.report_directory(), &id, &document)?;
+        let written = store(&settings.report_directory(), id, &document)?;
         prune(&settings.report_directory(), settings.config.reports.keep);
         let mut line = String::new();
         let ok = writeln!(line, "REPORT    {}", written.display());
@@ -423,26 +510,52 @@ fn store(
     Ok(path)
 }
 
-/// Keeps the newest `keep` run directories. Run names sort chronologically, so the oldest are the first.
+/// Keeps the newest `keep` stored runs and the newest `keep` recordings of the other commands. Both sort chronologically by name, so the oldest are the first.
+///
+/// A directory that holds no run report is not a run and never costs a run its
+/// place: `traces/` sorts after every run name, and counting it would leave
+/// `keep - 1` runs stored.
 fn prune(directory: &Path, keep: u32) {
     if keep == 0 {
         return;
     }
+    oldest(&stored_runs(directory), keep);
+    oldest(
+        &subdirectories(&directory.join(trace::TRACES_DIRECTORY_NAME)),
+        keep,
+    );
+}
+
+/// Removes everything but the newest `keep` of `directories`.
+fn oldest(directories: &[PathBuf], keep: u32) {
+    let excess = directories
+        .len()
+        .saturating_sub(usize::try_from(keep).unwrap_or(usize::MAX));
+    for old in directories.iter().take(excess) {
+        drop(std::fs::remove_dir_all(old));
+    }
+}
+
+/// Every directory under `directory` that holds a run report, oldest first.
+fn stored_runs(directory: &Path) -> Vec<PathBuf> {
+    subdirectories(directory)
+        .into_iter()
+        .filter(|path| path.join(run_report::FILE_NAME).is_file())
+        .collect()
+}
+
+/// Every directory directly under `directory`, in name order.
+fn subdirectories(directory: &Path) -> Vec<PathBuf> {
     let Ok(entries) = std::fs::read_dir(directory) else {
-        return;
+        return Vec::new();
     };
-    let mut runs: Vec<PathBuf> = entries
+    let mut found: Vec<PathBuf> = entries
         .filter_map(Result::ok)
         .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
         .map(|entry| entry.path())
         .collect();
-    runs.sort();
-    let excess = runs
-        .len()
-        .saturating_sub(usize::try_from(keep).unwrap_or(usize::MAX));
-    for old in runs.into_iter().take(excess) {
-        drop(std::fs::remove_dir_all(old));
-    }
+    found.sort();
+    found
 }
 
 fn init(
@@ -789,6 +902,7 @@ struct Asking<'a> {
     open: workspace::OpenOptions,
     discovery: &'a rust_mutants::discover::Discovery,
     limit: usize,
+    trace: &'a rust_mutants::trace::Recorder,
 }
 
 /// What the compiler said about one mutant.
@@ -807,7 +921,6 @@ struct Rendered {
 /// executed the position can tell the two apart
 /// ([ADR 0013](../../../docs/adr/0013-codegen-identity-is-the-equivalence-proof.md)).
 fn equivalence(asking: &Asking<'_>, cancel: &Cancel) -> Result<Vec<Rendered>, CliError> {
-    let trace = rust_mutants::trace::Recorder::disabled();
     let mut prover = rust_mutants::equivalence::Prover::open(
         asking.root,
         &rust_mutants::equivalence::ProveOptions {
@@ -815,7 +928,7 @@ fn equivalence(asking: &Asking<'_>, cancel: &Cancel) -> Result<Vec<Rendered>, Cl
             timeout: None,
         },
         cancel,
-        &trace,
+        asking.trace,
     )?;
     let mutants = asking.discovery.catalog.mutants();
     let wanted = if asking.limit == 0 {

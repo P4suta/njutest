@@ -31,7 +31,7 @@ first digit names an area:
 | `RM0004` | A configuration that parses but says something a run cannot honour: an expectation without a reason, a harness flag the engine owns, a report directory outside the workspace. |
 | `RM0005` | A configuration whose `version` is not one this release understands. |
 | `RM0006` | A process environment that already selects a mutant or names a catalog, so nothing a test process said would be about this run. |
-| `RM0007` | A stored run report that is not there or cannot be read. |
+| `RM0007` | A stored run report or recording that is not there or cannot be read. |
 | `RM0008` | A file a command would write that is already there, and `--force` was not given. |
 | `RM0009` | A report or configuration file that could not be written. |
 | `RM0010` | A change set git could not be asked for: the tree is not a repository, or it does not know the revision. A run that could not see what changed never reads as a run that saw nothing change. |
