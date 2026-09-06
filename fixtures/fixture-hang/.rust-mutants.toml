@@ -1,0 +1,10 @@
+# SPDX-FileCopyrightText: 2026 mjutest contributors
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# A mutation of this fixture never returns, so the bound on one execution has
+# to be one a suite can afford to wait for twice.
+
+version = 1
+
+[mutation]
+timeout = "2s"

@@ -1,0 +1,10 @@
+# SPDX-FileCopyrightText: 2026 mjutest contributors
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+[workspace]
+
+[package]
+name = "fixture-panics"
+version = "0.1.0"
+edition = "2024"
+publish = false
