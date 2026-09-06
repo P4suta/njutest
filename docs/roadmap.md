@@ -42,6 +42,13 @@ above.
 - Doctests are run as one target per library, says the contract. They are not
   run at all, and `doctests-not-routed` and `custom-harness-whole-binary` are
   limitation names no report carries.
+- The `generation` suite fails under load and passes in isolation, and did so
+  before mutations were measured more than one at a time. A mutant's budget is
+  five times its measured baseline duration, and the baseline is measured one
+  target at a time while the mutations are measured `[execution] jobs` at a
+  time, so the calibration and the execution do not share their conditions.
+  Measuring the baseline the same way would close that and shorten the second
+  longest phase of a run at once.
 - A mutation nothing reached is settled by running the package suite, says the
   contract; `docs/limitations.md` says it is reported as surviving; the code
   does the second. The decision (2026-09-06) is to do neither exactly: report
