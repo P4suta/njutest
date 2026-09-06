@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use rust_mutants::catalog::Mutant;
+use rust_mutants::execute::MutantResult;
 use rust_mutants::outcome::Outcome;
 use rust_mutants::session::{Request, Session};
 
@@ -734,7 +735,12 @@ fn against(
     match result.outcome {
         Outcome::Survived => Ok(None),
         Outcome::Killed | Outcome::TimedOut => Ok(Some(
-            match confirm(session, &request, judging.controls, watch)? {
+            match confirm(
+                session,
+                &narrowed(request, measured, &result),
+                judging.controls,
+                watch,
+            )? {
                 Ok(()) if result.outcome == Outcome::TimedOut => Disposition::TimedOut { on: name },
                 Ok(()) => Disposition::Killed { by: name },
                 Err(why) => Disposition::Unconfirmed { on: name, why },
@@ -810,6 +816,23 @@ impl Controls {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .insert(key, failure.clone());
         Ok(failure)
+    }
+}
+
+/// The request the pair confirmation is made with: the one that ran, or the target the package suite found the answer in.
+///
+/// A kill is confirmed against the test that found it — the original has to
+/// pass right now, and the kill has to reproduce — so a request that named no
+/// target is narrowed to the one that answered. Asking the whole suite again
+/// would put both questions to every other target as well.
+fn narrowed(request: Request, measured: Option<&Measured>, result: &MutantResult) -> Request {
+    if measured.is_some() || result.target.is_empty() {
+        return request;
+    }
+    Request {
+        target: Some(result.target.clone()),
+        test: None,
+        ..request
     }
 }
 

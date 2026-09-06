@@ -82,7 +82,9 @@ Mutation routing reads the baseline coverage at region granularity: a mutant
 is run by the targets whose executed regions contain its start position,
 cheapest target first. A position that cannot be placed in a region widens
 back to every target that executed the file, and a position no target
-executed is left to its package suite. Where rust-mutants proves a mutation
+executed is `unreached` where instrumentation described it and every target
+routing reads carries coverage, and left to the package suite where it did
+not. Where rust-mutants proves a mutation
 can only narrow the condition of a branch, the targets that never entered the
 body that branch gates are discharged from the reaching set instead of
 executed. Between preparing the catalog and executing it, a `probe` phase

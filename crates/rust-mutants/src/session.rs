@@ -295,6 +295,7 @@ impl Session {
         };
         let timeout = request.timeout.or(self.mutant_timeout);
         let mut last = None;
+        let mut silent = None;
         for target in targets {
             let mut exec = ExecRequest::new(target)
                 .with_args(request.args.clone())
@@ -316,9 +317,14 @@ impl Session {
             if result.outcome.detected() || cancel.is_cancelled() {
                 return Ok(result);
             }
-            last = Some(result);
+            if spoke(&result) {
+                last = Some(result);
+            } else {
+                silent = Some(result);
+            }
         }
-        last.ok_or_else(|| EngineError::from(SessionError::NoTargets))
+        last.or(silent)
+            .ok_or_else(|| EngineError::from(SessionError::NoTargets))
     }
 
     /// Runs one target with no mutant active: the original control.
@@ -336,6 +342,7 @@ impl Session {
         };
         let timeout = request.timeout.or(self.mutant_timeout);
         let mut last = None;
+        let mut silent = None;
         for target in targets {
             let mut exec = ExecRequest::new(target)
                 .with_args(request.args.clone())
@@ -354,12 +361,19 @@ impl Session {
                 duration_ms: u64::try_from(result.duration.as_millis()).unwrap_or(u64::MAX),
                 tests_run: result.tests_run,
             });
-            if result.outcome != crate::outcome::Outcome::Survived || cancel.is_cancelled() {
+            if cancel.is_cancelled()
+                || (result.outcome != crate::outcome::Outcome::Survived && spoke(&result))
+            {
                 return Ok(result);
             }
-            last = Some(result);
+            if spoke(&result) {
+                last = Some(result);
+            } else {
+                silent = Some(result);
+            }
         }
-        last.ok_or_else(|| EngineError::from(SessionError::NoTargets))
+        last.or(silent)
+            .ok_or_else(|| EngineError::from(SessionError::NoTargets))
     }
 
     /// Every way the snapshot stopped matching the tree that was instrumented: what a test wrote into the tree every later mutant is measured against.
@@ -536,6 +550,20 @@ fn layers(
 }
 
 /// What a mutant no measured target reached amounts to: nothing ran, because nothing that ran could have noticed.
+/// Whether a target said anything at all.
+///
+/// A request that names no target runs every one of them, and a package holds
+/// targets with no tests in them: a library or a binary whose harness is empty
+/// runs nothing and establishes nothing, in either direction. Reading that
+/// silence as an answer makes a mutant look inconclusive because a sibling
+/// target had no tests, and makes a control look failed for the same reason.
+const fn spoke(result: &MutantResult) -> bool {
+    !matches!(
+        (result.outcome, result.tests_run),
+        (crate::outcome::Outcome::Inconclusive, Some(0))
+    )
+}
+
 const fn unreached() -> MutantResult {
     MutantResult {
         outcome: crate::outcome::Outcome::NotRun,
