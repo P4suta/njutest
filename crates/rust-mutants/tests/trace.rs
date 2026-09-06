@@ -494,6 +494,7 @@ fn one_of_each_preparation(recorder: &Recorder) {
     });
     recorder.validate_round(rust_mutants::trace::ValidateRoundRecord {
         round: 1,
+        written: 2,
         condemned: 0,
         success: false,
         attributed: vec![rust_mutants::trace::AttributionRecord {

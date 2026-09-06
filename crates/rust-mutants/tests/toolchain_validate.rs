@@ -78,10 +78,12 @@ impl Compile for CargoScripted {
             },
         )
         .map_err(ValidateError::from)?;
+        let written = u32::try_from(files.len()).unwrap_or(u32::MAX);
         Ok(Attempt {
             files,
             messages: checked.messages,
             success: checked.success,
+            written,
         })
     }
 }

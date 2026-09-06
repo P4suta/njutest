@@ -864,6 +864,39 @@ fn pristine(
     }
 }
 
+/// Compiles the test binaries of the tree as it was copied, so a tree that type-checks and does not link is refused before any round.
+///
+/// A check answers "is this a program"; it does not answer "does this link".
+/// A tree that fails only at link time used to pass the gate and then fail
+/// every validation round, where the failure reads as a mutation the compiler
+/// refused and bisection goes looking for which one. It is neither, and it is
+/// the same failure `cargo test` would have given.
+fn links(
+    workspace: &Workspace,
+    options: &PrepareOptions,
+    cancel: &Cancel,
+) -> Result<(), EngineError> {
+    let built = compile(
+        &workspace.driver(cancel),
+        &CompileOptions {
+            kind: CompileKind::Tests,
+            packages: options.packages.clone(),
+            target_dir: Some(workspace.target_dir.clone()),
+            locked: workspace.locked,
+            offline: workspace.offline,
+            timeout: Workspace::timeout(options.build_timeout),
+            env: Vec::new(),
+            build: options.build.clone(),
+        },
+    )?;
+    if built.success {
+        return Ok(());
+    }
+    Err(EngineError::from(SessionError::PristineBroken {
+        first: crate::validate::first_error_of(&built.messages),
+    }))
+}
+
 /// The test binaries the instrumented build produced, and the directory their processes work in.
 type Built = (Vec<TestTarget>, PathBuf, BTreeMap<String, Duration>);
 
@@ -1031,6 +1064,7 @@ pub fn prepare(
     let phase = trace.phase("prepare");
     let pristine_phase = trace.phase("pristine");
     let checked = pristine(&workspace, options, cancel)?;
+    links(&workspace, options, cancel)?;
     pristine_phase.end();
     let discover_phase = trace.phase("discover");
     let discovery = discover::discover(
@@ -1135,6 +1169,7 @@ fn establish(
         last_build: Vec::new(),
         packages: options.packages.clone(),
         build: options.build.clone(),
+        written: BTreeMap::new(),
     };
     let validated = validate(
         &discovery.catalog,
@@ -1255,6 +1290,8 @@ struct TreeCompiler<'a> {
     packages: Vec<String>,
     /// What the project is compiled as, which every attempt compiles the same way.
     build: crate::cargo::BuildConfig,
+    /// What each file held when this last wrote it, so a round writes only what its condemnations changed.
+    written: BTreeMap<String, String>,
 }
 
 impl Compile for TreeCompiler<'_> {
@@ -1263,6 +1300,7 @@ impl Compile for TreeCompiler<'_> {
         condemned: &std::collections::BTreeSet<u32>,
     ) -> Result<Attempt, ValidateError> {
         let mut files: Vec<FileOutput> = Vec::new();
+        let mut written: u32 = 0;
         for (path, placements) in self.placements {
             let kept: Vec<Placement> = placements
                 .iter()
@@ -1283,11 +1321,15 @@ impl Compile for TreeCompiler<'_> {
                 lines_before: lines(source),
                 lines_after: body_lines(&file),
             });
-            std::fs::write(self.workspace.snapshot_root().join(path), &file.text).map_err(
-                |error| ValidateError::AttemptFailed {
-                    message: format!("cannot write {path}: {error}"),
-                },
-            )?;
+            if rewrite_needed(self.written.get(path), &file.text) {
+                std::fs::write(self.workspace.snapshot_root().join(path), &file.text).map_err(
+                    |error| ValidateError::AttemptFailed {
+                        message: format!("cannot write {path}: {error}"),
+                    },
+                )?;
+                let _replaced = self.written.insert(path.clone(), file.text.clone());
+                written = written.saturating_add(1);
+            }
             files.push(file);
         }
         let compiled = compile(
@@ -1311,8 +1353,20 @@ impl Compile for TreeCompiler<'_> {
             files,
             messages: compiled.messages,
             success,
+            written,
         })
     }
+}
+
+/// Whether a round has to write this file again: only what its condemnations changed.
+///
+/// Every round instruments every mutable file, because attribution needs each
+/// file's branch spans whatever it condemns. Writing them all back costs the
+/// whole tree in bytes for every round, and a file whose live set did not
+/// change holds what it already held.
+#[must_use]
+pub fn rewrite_needed(written: Option<&String>, next: &str) -> bool {
+    written.is_none_or(|last| last != next)
 }
 
 /// The name a target id takes, re-exported so a caller can build one without knowing the shape.

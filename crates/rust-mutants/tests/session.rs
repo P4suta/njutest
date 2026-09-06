@@ -5,7 +5,7 @@
 
 use std::time::Duration;
 
-use rust_mutants::session::Request;
+use rust_mutants::session::{Request, rewrite_needed};
 
 #[test]
 fn a_request_built_step_by_step_equals_the_literal_it_replaces() {
@@ -39,4 +39,22 @@ fn asking_for_the_whole_target_again_is_one_call_rather_than_a_struct_update() {
         "asking for the whole target changes what runs and nothing else"
     );
     assert_eq!(whole.mutant, one.mutant);
+}
+
+#[test]
+fn a_file_whose_kept_set_did_not_change_is_not_rewritten_between_rounds() {
+    let instrumented = "the file as one round wrote it".to_owned();
+    assert!(
+        rewrite_needed(None, &instrumented),
+        "a file nothing has written yet is a file to write"
+    );
+    assert!(
+        !rewrite_needed(Some(&instrumented), &instrumented),
+        "a round condemns mutants of some files and not others, and a file whose live set did \
+         not change holds what it already holds"
+    );
+    assert!(rewrite_needed(
+        Some(&instrumented),
+        "the file with one guard fewer"
+    ));
 }

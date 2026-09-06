@@ -62,6 +62,18 @@ downstream reach the build instead of the rejection it belongs in.
 Scoping a run is the one thing a person can do to make it shorter, and until
 this was so it did not shorten the longest part of one.
 
+The gate `prepare` stands on is that check of the whole workspace and then a
+test build of the packages the run is about. A check answers "is this a
+program"; it does not answer "does this link", and a tree that fails only at
+link time used to pass the gate and then fail every round, where the failure
+reads as a mutation the compiler refused. `preview` — what `list` and
+`why-skipped` stand on — still only type-checks: it rules on nothing, so it is
+answerable for a tree that does not link.
+
+Each round instruments every mutable file, because attribution needs each
+file's branch spans whatever it condemns, and writes back only the files whose
+text changed. `validate-round` says how many that was.
+
 ## Snapshot
 
 `snapshot::create` copies the tree byte for byte into

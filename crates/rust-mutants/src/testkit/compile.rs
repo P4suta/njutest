@@ -178,6 +178,7 @@ impl Compile for ScriptedCompile {
             files: vec![file],
             messages,
             success,
+            written: 1,
         })
     }
 }

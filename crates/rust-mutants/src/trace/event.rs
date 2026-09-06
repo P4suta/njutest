@@ -343,6 +343,9 @@ pub struct ValidateRoundRecord {
     pub condemned: u32,
     /// Whether the tree compiled.
     pub success: bool,
+    /// How many files this round had to write again, which is how many its condemnations changed.
+    #[serde(default)]
+    pub written: u32,
     /// The mutants an error was inside of, and what the compiler said.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attributed: Vec<AttributionRecord>,

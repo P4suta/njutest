@@ -25,6 +25,9 @@ pub struct Attempt {
     pub messages: Vec<Message>,
     /// Whether every unit compiled.
     pub success: bool,
+    /// How many of the files this attempt had to write again, which is how many its condemnations changed.
+    #[doc(alias = "rewritten")]
+    pub written: u32,
 }
 
 /// Instrumenting the tree with a set of mutants left out, and compiling it.
@@ -303,6 +306,7 @@ pub fn validate(
                 success: true,
                 attributed: Vec::new(),
                 unattributed: Vec::new(),
+                written: attempt.written,
             });
             break;
         }
@@ -311,6 +315,7 @@ pub fn validate(
             round: rounds,
             condemned: u32::try_from(condemned.len()).unwrap_or(u32::MAX),
             success: false,
+            written: attempt.written,
             attributed: attributions(&attributed),
             unattributed: attributed
                 .unattributed

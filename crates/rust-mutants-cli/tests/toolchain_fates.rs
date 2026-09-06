@@ -68,12 +68,23 @@ fn recorded(fixture: &Fixture, args: &[String]) -> Vec<Fate> {
     command.args(["--tier", "all", "--offline", "--locked"]);
     command.args(args);
     let output = command.output().expect("rust-mutants runs");
+    let code = output.status.code();
+    let said = String::from_utf8_lossy(&output.stderr);
+    let directory = fixture.root().join("reports/mutation");
+    if !directory.is_dir() {
+        assert_eq!(
+            code,
+            Some(2),
+            "a run that wrote no report at all is a run that was refused, and nothing else: \
+             {said}"
+        );
+        return Vec::new();
+    }
     assert!(
-        output.status.code().is_some_and(|code| code < 2),
-        "the run itself failed: {}",
-        String::from_utf8_lossy(&output.stderr)
+        code.is_some_and(|code| code < 2),
+        "the run itself failed: {said}"
     );
-    rows(&newest(&fixture.root().join("reports/mutation")))
+    rows(&newest(&directory))
 }
 
 fn newest(directory: &Path) -> PathBuf {

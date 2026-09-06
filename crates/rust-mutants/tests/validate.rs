@@ -188,6 +188,7 @@ fn a_pristine_tree_that_does_not_compile_is_not_the_mutants_fault() {
                     Message::BuildFinished { success: false },
                 ],
                 success: false,
+                written: 0,
             })
         }
     }

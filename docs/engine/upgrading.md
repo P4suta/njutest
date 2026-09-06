@@ -127,6 +127,12 @@ by increasing granularity finds the mutants that interact rather than
 condemning everything that was live. Those rows have `isolated: false` and say
 which other mutants they were refused with.
 
+**A tree that does not link is refused before any round.** The gate is a
+check of the whole workspace and then a test build of the packages the run is
+about. A tree that type-checks and fails at link time used to be accepted,
+instrumented, and then fail every round, where the failure reads as a mutation
+the compiler refused. `list` and `why-skipped` still only type-check.
+
 **A snapshot directory that is already gone is removed.** Cleanup released the
 lock, then retried five times with a backoff against a directory a sweeper had
 already taken, and reported `RM1011` for it.

@@ -578,6 +578,10 @@
             "success": {
               "type": "boolean"
             },
+            "written": {
+              "type": "integer",
+              "minimum": 0
+            },
             "attributed": {
               "type": "array",
               "items": {

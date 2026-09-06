@@ -617,3 +617,37 @@ fn the_app_integration_test_finds_its_binary_where_cargo_put_it() {
     }
     session.close().expect("close");
 }
+
+#[test]
+fn a_tree_that_checks_but_does_not_link_is_refused_before_any_round() {
+    let fixture = Fixture::copy("fixture-links-nowhere");
+    let workspace = open(&fixture);
+    let refused = workspace
+        .prepare(&PrepareOptions::default(), &Cancel::new())
+        .err()
+        .map(|error| error.to_string())
+        .expect("a tree that does not link is not a tree a run can measure");
+    assert!(
+        refused.contains("RM5001"),
+        "a check answers whether this is a program, not whether it links, and the failure of \
+         every round afterwards reads as a mutation the compiler refused: {refused}"
+    );
+    assert!(
+        refused.contains("a_symbol_no_library_supplies"),
+        "and the refusal is the linker's own words: {refused}"
+    );
+}
+
+#[test]
+fn list_and_why_skipped_still_only_type_check() {
+    let fixture = Fixture::copy("fixture-links-nowhere");
+    let workspace = open(&fixture);
+    let discovery =
+        rust_mutants::session::preview(&workspace, &PrepareOptions::default(), &Cancel::new())
+            .expect("a preview rules on nothing, so a tree that does not link is one it can read");
+    assert!(
+        !discovery.candidates.is_empty(),
+        "the preview still finds the candidates it would have proposed"
+    );
+    workspace.close().expect("close");
+}
