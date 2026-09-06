@@ -151,6 +151,12 @@ pub struct Execution {
     pub locked: bool,
     /// Harness flags to pass through; see [`ALLOWED_TEST_ARGS`].
     pub test_binary_args: Vec<String>,
+    /// Targets never to start, by the id a report names them with.
+    ///
+    /// A suite whose tests are about the text of what the compiler said fails
+    /// under instrumentation for a reason that is not the mutation. Naming it
+    /// here is a decision somebody made, and the report says so.
+    pub skip_targets: Vec<String>,
 }
 
 /// What is written under the report directory.
@@ -501,6 +507,7 @@ version = 1
 [execution]
 # offline = false
 # locked = false
+# skip_targets = []              # target ids never to start, as pkg/kind/name
 # test_binary_args = []          # allowed: {allowed}
 
 [reports]

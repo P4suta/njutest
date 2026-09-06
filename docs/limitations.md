@@ -94,6 +94,15 @@ below is stated fail-closed.
   every place inside it, which removes an execution on evidence that says
   nothing. Refusing the whole measurement routes every mutation everywhere
   instead.
+- A target with `harness = false` says what it found by exiting, and neither
+  `cargo metadata` nor the build's messages report the flag, so the engine
+  reads it from the manifest. How many of its tests ran is something only a
+  harness could have said, and the target carries `custom-harness` to say so.
+- A target named in `[execution] skip_targets` is never started, and carries
+  `target-skipped-by-configuration`. It is for a suite whose tests are about
+  the text of what the compiler said, which instrumentation changes: leaving
+  it out is a decision somebody made, and the report says so rather than
+  reporting a failure nobody can read.
 - A run composes `LLVM_PROFILE_FILE` for every test process it starts, so an
   inherited one never reaches one and an instrumented binary never falls back
   to `default_*.profraw` in its working directory. Without that, a project

@@ -27,8 +27,16 @@ pub const PROBE_TREE_NOT_BUILT: &str = "probe-tree-not-built";
 /// A probe log could not be read, so what that target infected is unknown.
 pub const PROBE_LOG_UNREADABLE: &str = "probe-log-unreadable";
 
+/// The target says what it found by exiting rather than by printing a summary, so how many of its tests ran is unknown.
+pub const CUSTOM_HARNESS: &str = "custom-harness";
+
+/// The configuration named this target as one never to start, so no mutation was measured against it.
+pub const TARGET_SKIPPED_BY_CONFIGURATION: &str = "target-skipped-by-configuration";
+
 /// Every limitation, in the order a reader meets them.
-pub const ALL: [&str; 6] = [
+pub const ALL: [&str; 8] = [
+    CUSTOM_HARNESS,
+    TARGET_SKIPPED_BY_CONFIGURATION,
     COVERAGE_BUILD_FAILED,
     COVERAGE_TOOLS_MISSING,
     COVERAGE_NOT_MEASURED,

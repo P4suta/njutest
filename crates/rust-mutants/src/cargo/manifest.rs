@@ -66,3 +66,53 @@ pub fn read_patches(text: &str) -> Vec<Patch> {
     found.sort_by(|one, other| (&one.source, &one.name).cmp(&(&other.source, &other.name)));
     found
 }
+
+/// Whether each target of the manifest at `path` is built with the libtest harness.
+///
+/// Neither `cargo metadata` nor the build's own messages say: the flag is in
+/// the manifest and nowhere else. A target without one is harnessed, which is
+/// cargo's default and what an auto-discovered target gets.
+///
+/// The key is `(kind, name)` in cargo's own words: `lib`, `bin`, `test`,
+/// `bench`, `example`.
+#[must_use]
+pub fn harnesses(path: &Path) -> std::collections::BTreeMap<(String, String), bool> {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return std::collections::BTreeMap::new();
+    };
+    read_harnesses(&text)
+}
+
+/// Whether each target `text` declares is built with the libtest harness.
+#[must_use]
+pub fn read_harnesses(text: &str) -> std::collections::BTreeMap<(String, String), bool> {
+    let mut found = std::collections::BTreeMap::new();
+    let Ok(document) = text.parse::<toml::Table>() else {
+        return found;
+    };
+    if let Some(toml::Value::Table(one)) = document.get("lib")
+        && let Some(harness) = one.get("harness").and_then(toml::Value::as_bool)
+    {
+        let name = one
+            .get("name")
+            .and_then(toml::Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
+        let _replaced = found.insert(("lib".to_owned(), name), harness);
+    }
+    for kind in ["bin", "test", "bench", "example"] {
+        let Some(toml::Value::Array(entries)) = document.get(kind) else {
+            continue;
+        };
+        for entry in entries {
+            let (Some(name), Some(harness)) = (
+                entry.get("name").and_then(toml::Value::as_str),
+                entry.get("harness").and_then(toml::Value::as_bool),
+            ) else {
+                continue;
+            };
+            let _replaced = found.insert((kind.to_owned(), name.to_owned()), harness);
+        }
+    }
+    found
+}

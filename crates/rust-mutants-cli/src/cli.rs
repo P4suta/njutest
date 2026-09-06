@@ -215,6 +215,9 @@ pub struct Scope {
     /// Let the build read this directory from outside the root, copying it beside the tree. Repeatable.
     #[arg(long = "allow-outside", value_name = "DIR")]
     pub allow_outside: Vec<PathBuf>,
+    /// Never start this target, by the id a report names it with. Repeatable.
+    #[arg(long = "skip-target", value_name = "PKG/KIND/NAME")]
+    pub skip_targets: Vec<String>,
     /// How long one mutant execution may take before it is retried serially, as in `90s` or `5m`.
     #[arg(long, value_name = "DURATION")]
     pub timeout: Option<String>,

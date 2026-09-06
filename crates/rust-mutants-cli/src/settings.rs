@@ -43,6 +43,10 @@ impl Settings {
         replace(&mut config.project.include, &scope.include);
         replace(&mut config.project.exclude, &scope.exclude);
         replace(&mut config.project.packages, &scope.packages);
+        config
+            .execution
+            .skip_targets
+            .extend(scope.skip_targets.iter().cloned());
         if let Some(text) = &scope.timeout {
             config.mutation.timeout =
                 rust_mutants::duration::parse(text).map_err(EngineError::from)?;
@@ -109,6 +113,7 @@ impl Settings {
             coverage: self.config.mutation.coverage,
             build_timeout: self.config.mutation.build_timeout,
             mutant_timeout: Some(self.config.mutation.timeout),
+            skip_targets: self.config.execution.skip_targets.clone(),
             ..PrepareOptions::default()
         })
     }

@@ -704,6 +704,23 @@
               "items": {
                 "type": "string"
               }
+            },
+            "details": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["id", "kind", "harness"],
+                "properties": {
+                  "id": { "type": "string", "minLength": 1 },
+                  "kind": { "type": "string", "minLength": 1 },
+                  "harness": { "type": "boolean" },
+                  "limitations": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                  }
+                }
+              }
             }
           }
         }

@@ -18,7 +18,7 @@ pub use event::{
     AttributionRecord, BisectRecord, BuildRecord, DischargeRecord, DiscoverFileRecord, EVERY_TYPE,
     Event, ExecRecord, InstrumentRecord, MutantExecRecord, NoteRecord, OpenRecord, Payload,
     PhaseRecord, ProbeExecRecord, RouteRecord, RunRecord, SCHEMA, SiteRecord, SkipCount,
-    SnapshotRecord, SweepRecord, ValidateRoundRecord, VerifyRecord, WitnessRecord,
+    SnapshotRecord, SweepRecord, TargetRecord, ValidateRoundRecord, VerifyRecord, WitnessRecord,
 };
 pub use reader::{Problem, ReadError, check, read_events};
 pub use sink::{

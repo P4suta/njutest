@@ -379,6 +379,23 @@ pub struct BisectRecord {
 pub struct BuildRecord {
     /// The target ids, in order.
     pub targets: Vec<String>,
+    /// What each target is, beyond its name.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub details: Vec<TargetRecord>,
+}
+
+/// One target the build produced.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TargetRecord {
+    /// `package/kind/name`.
+    pub id: String,
+    /// What kind of target it is.
+    pub kind: String,
+    /// Whether it is built with the libtest harness, which decides how its silence is read.
+    pub harness: bool,
+    /// What a run could not establish about it, each named.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub limitations: Vec<String>,
 }
 
 /// One target run with nothing active.

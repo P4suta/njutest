@@ -70,7 +70,7 @@ shape, and every line is checked against
 | `instrument` | per file: guards placed, the runtime module's name, and the line count before and after, which must be equal |
 | `validate-round` | per round: how many were condemned going in, whether the tree compiled, which mutant each error was attributed to with the compiler's first line, and the errors no branch accounts for |
 | `bisect` | per isolation: how many suspects, which offenders it named, how many compilations it cost |
-| `build` | the test binaries the build produced |
+| `build` | the test binaries the build produced, each with its kind, whether it carries the libtest harness, and what a run could not establish about it |
 | `verify` | per target: what the suite said with nothing active, how many tests ran, and how long the baseline took |
 | `probe-exec` | target, outcome, infected count |
 | `witness` | per candidate: the witness placed, whether it checked, and the diagnostic that refused it |

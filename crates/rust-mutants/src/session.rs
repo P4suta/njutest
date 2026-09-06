@@ -49,6 +49,15 @@ pub struct PrepareOptions {
     pub build_timeout: Option<Duration>,
     /// How long one mutant execution may take, when the caller does not say.
     pub mutant_timeout: Option<Duration>,
+    /// Targets never to start, by the id a report names them with.
+    ///
+    /// A target whose tests are about the text of what the compiler said —
+    /// a `trybuild` or a snapshot suite — fails under instrumentation for a
+    /// reason that is not the mutation, and would fail the verification of
+    /// every run. Naming it here leaves it out of the build's answer and says
+    /// so as a limitation, which is a decision somebody made rather than a
+    /// result nobody can read.
+    pub skip_targets: Vec<String>,
 }
 
 impl Default for PrepareOptions {
@@ -65,6 +74,7 @@ impl Default for PrepareOptions {
             max_rounds: crate::validate::DEFAULT_MAX_ROUNDS,
             build_timeout: None,
             mutant_timeout: None,
+            skip_targets: Vec::new(),
         }
     }
 }
@@ -808,9 +818,36 @@ fn built(
         workspace.toolchain.cargo(),
         &documentation_arguments(workspace),
     ));
+    let built: Vec<crate::trace::TargetRecord> = targets
+        .iter()
+        .map(|target| crate::trace::TargetRecord {
+            id: target.id.clone(),
+            kind: target.kind.name().to_owned(),
+            harness: target.harness,
+            limitations: target.limitations.clone(),
+        })
+        .collect();
+    let skipped: Vec<String> = targets
+        .iter()
+        .filter(|target| options.skip_targets.iter().any(|one| one == &target.id))
+        .map(|target| target.id.clone())
+        .collect();
+    targets.retain(|target| !skipped.contains(&target.id));
+    let mut details = built;
+    for detail in &mut details {
+        if skipped.contains(&detail.id) {
+            detail
+                .limitations
+                .push(crate::limitation::TARGET_SKIPPED_BY_CONFIGURATION.to_owned());
+        }
+    }
     trace.build(BuildRecord {
-        targets: targets.iter().map(|target| target.id.clone()).collect(),
+        targets: details.iter().map(|target| target.id.clone()).collect(),
+        details,
     });
+    if targets.is_empty() {
+        return Err(EngineError::from(SessionError::NoTargets));
+    }
     let scratch = workspace.target_dir.join("scratch");
     std::fs::create_dir_all(&scratch).map_err(|source| SessionError::WriteFailed {
         path: scratch.display().to_string(),
@@ -886,10 +923,7 @@ fn layers(
 /// silence as an answer makes a mutant look inconclusive because a sibling
 /// target had no tests, and makes a control look failed for the same reason.
 const fn spoke(result: &MutantResult) -> bool {
-    !matches!(
-        (result.outcome, result.tests_run),
-        (crate::outcome::Outcome::Inconclusive, Some(0))
-    )
+    execute::answered(result.outcome)
 }
 
 const fn unreached() -> MutantResult {

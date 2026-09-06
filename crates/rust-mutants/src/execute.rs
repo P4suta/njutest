@@ -147,6 +147,15 @@ pub struct TestTarget {
     pub cwd: PathBuf,
     /// What cargo sets for this target that the parent environment does not have: `CARGO_MANIFEST_DIR`, `CARGO_PKG_*`, `CARGO_BIN_EXE_*`.
     pub cargo_env: Vec<(OsString, OsString)>,
+    /// Whether the target is built with the libtest harness.
+    ///
+    /// A target with `harness = false` is a program that prints what it likes
+    /// and says what it found by exiting, so its exit status is the whole
+    /// answer and there is no summary line to read. Reading one anyway leaves
+    /// every mutation of such a target undecided.
+    pub harness: bool,
+    /// What a run could not establish about this target, each named.
+    pub limitations: Vec<String>,
     /// The arguments before the harness's own, for a target cargo runs rather than one the engine starts itself. Empty for a binary, and then `executable` is the binary.
     ///
     /// A library's documentation examples are compiled by rustdoc while cargo
@@ -183,9 +192,25 @@ impl TestTarget {
             name: name.into(),
             executable,
             cwd,
+            harness: true,
+            limitations: Vec::new(),
             cargo_env: Vec::new(),
             through: Vec::new(),
         }
+    }
+
+    /// Whether the target is built with the libtest harness, which decides how its silence is read.
+    #[must_use]
+    pub const fn with_harness(mut self, harness: bool) -> Self {
+        self.harness = harness;
+        self
+    }
+
+    /// What a run could not establish about this target.
+    #[must_use]
+    pub fn with_limitations(mut self, limitations: Vec<String>) -> Self {
+        self.limitations = limitations;
+        self
     }
 
     /// What cargo sets for this target that the parent environment does not have.
@@ -309,7 +334,7 @@ fn said(output: &[u8], needle: &str) -> bool {
 
 /// What one run of a test binary establishes about the mutant that was active during it. See the module documentation for the order.
 #[must_use]
-pub const fn outcome_of(observed: Observation, summary: Option<Summary>) -> Outcome {
+pub const fn outcome_of(observed: Observation, summary: Option<Summary>, harness: bool) -> Outcome {
     if observed.unstarted {
         return Outcome::Errored;
     }
@@ -324,6 +349,9 @@ pub const fn outcome_of(observed: Observation, summary: Option<Summary>) -> Outc
     }
     if observed.exit_code != 0 {
         return Outcome::Killed;
+    }
+    if !harness {
+        return Outcome::Survived;
     }
     match summary {
         Some(summary) if !summary.ran_nothing() => Outcome::Survived,
@@ -599,6 +627,19 @@ pub struct MutantResult {
     pub tests_run: Option<u32>,
 }
 
+/// Whether the target said anything about the mutation, which is what decides whether the next target is asked.
+///
+/// A run walks the targets a route holds and stops at the first that answers.
+/// `Inconclusive` is the outcome of a libtest target that ran no test or
+/// printed no summary: it said nothing, so the next target is asked. A target
+/// with no libtest harness answers by exiting and is never inconclusive, and
+/// a documentation target with no examples is inconclusive exactly like a
+/// libtest one that ran nothing.
+#[must_use]
+pub const fn answered(outcome: Outcome) -> bool {
+    !matches!(outcome, Outcome::Inconclusive)
+}
+
 /// Runs one test process and reads what it means.
 #[must_use]
 pub fn exec(
@@ -616,7 +657,7 @@ pub fn exec(
     trace.exec(ExecRecord::of(&spec, &result));
     let summary = parse_summary(&result.output);
     MutantResult {
-        outcome: outcome_of(Observation::of(&result), summary),
+        outcome: outcome_of(Observation::of(&result), summary, target.harness),
         target: target.id.clone(),
         exit_code: result.exit_code,
         duration: result.duration,
@@ -682,6 +723,7 @@ pub fn targets_of(
     target_dir: Option<&Path>,
 ) -> Vec<TestTarget> {
     let binaries = binaries_built(messages);
+    let mut harnesses: BTreeMap<String, BTreeMap<(String, String), bool>> = BTreeMap::new();
     let mut targets = Vec::new();
     for message in messages {
         let Message::CompilerArtifact(artifact) = message else {
@@ -711,6 +753,12 @@ pub fn targets_of(
                 .unwrap_or(&BTreeMap::new()),
         );
         env.extend(built_by_a_script(messages, &artifact.package_id));
+        let harness = harnesses
+            .entry(package.id.clone())
+            .or_insert_with(|| crate::cargo::manifest::harnesses(&package.manifest_path))
+            .get(&(kind.name().to_owned(), artifact.target.name.clone()))
+            .copied()
+            .unwrap_or(true);
         targets.push(
             TestTarget::new(
                 target_id(&package.name, kind, &artifact.target.name),
@@ -720,6 +768,12 @@ pub fn targets_of(
                 executable.clone(),
                 package.manifest_dir().to_path_buf(),
             )
+            .with_harness(harness)
+            .with_limitations(if harness {
+                Vec::new()
+            } else {
+                vec![crate::limitation::CUSTOM_HARNESS.to_owned()]
+            })
             .with_cargo_env(env),
         );
     }
@@ -755,16 +809,17 @@ pub fn documentation_targets(
             through.extend(arguments.iter().cloned());
             through.push(OsString::from("--package"));
             through.push(OsString::from(&package.name));
-            targets.push(TestTarget {
-                id: target_id(&package.name, TargetKind::Doc, &target.name),
-                package: package.name.clone(),
-                kind: TargetKind::Doc,
-                name: target.name.clone(),
-                executable: cargo.to_path_buf(),
-                cwd: package.manifest_dir().to_path_buf(),
-                cargo_env: Vec::new(),
-                through,
-            });
+            targets.push(
+                TestTarget::new(
+                    target_id(&package.name, TargetKind::Doc, &target.name),
+                    package.name.clone(),
+                    TargetKind::Doc,
+                    target.name.clone(),
+                    cargo.to_path_buf(),
+                    package.manifest_dir().to_path_buf(),
+                )
+                .with_through(through),
+            );
         }
     }
     targets.sort_by(|a, b| a.id.cmp(&b.id));

@@ -510,6 +510,12 @@ fn one_of_each_preparation(recorder: &Recorder) {
     });
     recorder.build(rust_mutants::trace::BuildRecord {
         targets: vec!["demo/lib/demo".to_owned()],
+        details: vec![rust_mutants::trace::TargetRecord {
+            id: "demo/lib/demo".to_owned(),
+            kind: "lib".to_owned(),
+            harness: true,
+            limitations: Vec::new(),
+        }],
     });
 }
 

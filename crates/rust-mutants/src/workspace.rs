@@ -124,8 +124,9 @@ pub enum SessionError {
     /// The instrumented baseline does not pass its own tests.
     #[error(
         "{}: {target} fails with nothing active, so no outcome under a mutation would be about \
-         the mutation. Fix the test, or pass --no-verify and read every result as being about \
-         the instrumentation as much as about the mutation:\n{output}",
+         the mutation. Fix the test, leave the target out with --skip-target {target}, or pass \
+         --no-verify and read every result as being about the instrumentation as much as about \
+         the mutation:\n{output}",
         error::SESSION_VERIFY_FAILED.code
     )]
     VerifyFailed {

@@ -120,23 +120,29 @@ const fn green() -> Summary {
 fn the_exit_status_is_read_in_one_fixed_order() {
     let mut failed = result(EXIT_CODE_UNAVAILABLE);
     failed.unstarted = true;
-    assert_eq!(outcome_of(failed, None), Outcome::Errored);
+    assert_eq!(outcome_of(failed, None, true), Outcome::Errored);
 
     let mut timed_out = result(EXIT_CODE_UNAVAILABLE);
     timed_out.timed_out = true;
-    assert_eq!(outcome_of(timed_out, None), Outcome::TimedOut);
+    assert_eq!(outcome_of(timed_out, None, true), Outcome::TimedOut);
 
     assert_eq!(
-        outcome_of(result(EXIT_CODE_UNAVAILABLE), None),
+        outcome_of(result(EXIT_CODE_UNAVAILABLE), None, true),
         Outcome::NotRun
     );
 
-    assert_eq!(outcome_of(result(97), Some(green())), Outcome::Errored);
+    assert_eq!(
+        outcome_of(result(97), Some(green()), true),
+        Outcome::Errored
+    );
 
-    assert_eq!(outcome_of(result(101), None), Outcome::Killed);
-    assert_eq!(outcome_of(result(1), None), Outcome::Killed);
+    assert_eq!(outcome_of(result(101), None, true), Outcome::Killed);
+    assert_eq!(outcome_of(result(1), None, true), Outcome::Killed);
 
-    assert_eq!(outcome_of(result(0), Some(green())), Outcome::Survived);
+    assert_eq!(
+        outcome_of(result(0), Some(green()), true),
+        Outcome::Survived
+    );
 
     let empty = Some(Summary {
         ok: true,
@@ -146,9 +152,9 @@ fn the_exit_status_is_read_in_one_fixed_order() {
         measured: 0,
         filtered_out: 3,
     });
-    assert_eq!(outcome_of(result(0), empty), Outcome::Inconclusive);
+    assert_eq!(outcome_of(result(0), empty, true), Outcome::Inconclusive);
 
-    assert_eq!(outcome_of(result(0), None), Outcome::Inconclusive);
+    assert_eq!(outcome_of(result(0), None, true), Outcome::Inconclusive);
 }
 
 #[test]
@@ -398,7 +404,7 @@ fn a_runtime_that_named_another_catalog_is_an_error_however_the_process_exited()
     };
 
     assert_eq!(
-        outcome_of(observed, None),
+        outcome_of(observed, None, true),
         Outcome::Errored,
         "cargo turns the runtime's own 97 into its 101, which is the code a failing test \
          has: a tree rebuilt behind the run's back would otherwise look exactly like a kill"
@@ -600,4 +606,67 @@ fn a_package_that_says_nothing_about_itself_still_sets_what_cargo_sets() {
     };
     assert_eq!(lookup("CARGO_PKG_VERSION_PRE").as_deref(), Some(""));
     assert_eq!(lookup("CARGO_PKG_AUTHORS").as_deref(), Some(""));
+}
+
+#[test]
+fn a_custom_harness_that_exits_zero_survived_and_one_that_exits_nonzero_killed() {
+    let ran = |exit_code: i32| {
+        outcome_of(
+            Observation {
+                unstarted: false,
+                timed_out: false,
+                exit_code,
+                stale_catalog: false,
+            },
+            None,
+            false,
+        )
+    };
+    assert_eq!(
+        ran(0),
+        Outcome::Survived,
+        "a target with no libtest harness prints what it likes and says what it found by \
+         exiting, so a zero is a test suite that passed with the mutation active"
+    );
+    assert_eq!(ran(1), Outcome::Killed);
+    assert_eq!(ran(101), Outcome::Killed);
+}
+
+#[test]
+fn a_libtest_target_that_printed_no_summary_is_undecided_rather_than_survived() {
+    let silent = outcome_of(
+        Observation {
+            unstarted: false,
+            timed_out: false,
+            exit_code: 0,
+            stale_catalog: false,
+        },
+        None,
+        true,
+    );
+    assert_eq!(
+        silent,
+        Outcome::Inconclusive,
+        "a libtest binary that exits zero and prints no summary ran nothing anybody can point \
+         at, and calling that a survivor claims a test passed that nobody saw"
+    );
+}
+
+#[test]
+fn silence_is_decided_by_the_harness() {
+    for (outcome, answers, why) in [
+        (
+            Outcome::Inconclusive,
+            false,
+            "a libtest target that ran no test, or printed no summary: it said nothing anybody \
+             can point at, and treating that as an answer hides every target after it",
+        ),
+        (Outcome::Survived, true, "a test ran and passed"),
+        (Outcome::Killed, true, "a target that failed"),
+        (Outcome::TimedOut, true, "a target that never returned"),
+        (Outcome::Errored, true, "a harness that failed"),
+        (Outcome::NotRun, true, "a target nothing reached"),
+    ] {
+        assert_eq!(rust_mutants::execute::answered(outcome), answers, "{why}");
+    }
 }
