@@ -190,6 +190,36 @@ where evidence the run already holds proves it could not observe the mutant,
 never by a time budget, a sample, or an exclusion of slow targets, and a layer
 that cannot establish its premise keeps the execution.
 
+### Proving that nothing could have noticed
+
+A mutation nothing noticed is a gap in the tests unless there was nothing to
+notice. `[mutation] equivalence` asks the compiler about every one of them:
+the tree is built, built again with the mutation spliced in, and the
+executables the two builds produced are compared byte for byte. Identical
+executables are the same programs, and the same program makes the same
+observations, so no test can tell the two apart. The argument needs neither a
+deterministic compiler nor a correct one
+([ADR 0013](adr/0013-codegen-identity-is-the-equivalence-proof.md)).
+
+Identical is what the engine says. `equivalent` is what this run says, and
+only where five premises hold: a control still builds the original to the
+bytes it built to, no test wrote into the tree while it was being measured,
+the package holds no `unsafe`, the route was decided by region and named at
+least one target, and no killer was recorded. The fourth carries the layer.
+A mutation of a function no test calls is dropped by the linker and the
+artifacts come out identical for the opposite of a reassuring reason, so a
+mutation nothing reached keeps its finding whatever the compiler did with it.
+
+The comparison is made under the project's own test profile, because that is
+the profile the tests run under: `x + 0` and `x - 0` are the same instructions
+at `opt-level = 1` and different ones at the `opt-level = 0` cargo gives a
+test profile by default. On a project that leaves it at the default the layer
+proves almost nothing, and says so rather than appearing to have looked.
+
+This removes findings and never executions. Every test that reaches the
+mutation has already run by the time the layer does, and turning the layer off
+leaves the finding in place.
+
 ## Mutation confirmation
 
 A mutant is `killed` only after:
@@ -220,11 +250,15 @@ Every cataloged mutant has exactly one report-v1 disposition, and the columns
 say what the records say:
 
 ```text
-cataloged      = rejected + executed + unreached
+cataloged      = rejected + executed + unreached + equivalent
 executed      >= killed + survived + timed_out
-accepted      <= survived + unreached
+accepted      <= survived + unreached + equivalent
 reused_killed <= killed        reused_survived <= survived
 ```
+
+`equivalent` is a column of its own rather than a part of `survived`, because
+a reader who cannot tell "nobody noticed this" from "nobody could have" cannot
+act on either.
 
 `executed` is an inequality because a pair that did not agree and a harness
 that could not run are executions that established neither a kill nor a

@@ -98,6 +98,7 @@ fn populated() -> Report {
                 killed: 7,
                 survived: 1,
                 timed_out: 0,
+                equivalent: 0,
                 unreached: 0,
                 accepted: 1,
                 reused_killed: 2,

@@ -3,6 +3,7 @@
     "mutants": {
       "accepted": 0,
       "cataloged": 7,
+      "equivalent": 0,
       "executed": 7,
       "killed": 5,
       "rejected": 0,

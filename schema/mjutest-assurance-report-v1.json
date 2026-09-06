@@ -157,6 +157,7 @@
             "survived",
             "timed_out",
             "unreached",
+            "equivalent",
             "accepted",
             "reused_killed",
             "reused_survived"
@@ -169,6 +170,7 @@
             "survived": { "$ref": "#/$defs/count" },
             "timed_out": { "$ref": "#/$defs/count" },
             "unreached": { "$ref": "#/$defs/count" },
+            "equivalent": { "$ref": "#/$defs/count" },
             "accepted": { "$ref": "#/$defs/count" },
             "reused_killed": { "$ref": "#/$defs/count" },
             "reused_survived": { "$ref": "#/$defs/count" }

@@ -275,6 +275,9 @@ pub struct MutantAccounting {
     pub timed_out: u32,
     /// How many no test could reach.
     pub unreached: u32,
+    /// How many the compiler renders identically to the code they mutate, which no test could have noticed.
+    #[serde(default)]
+    pub equivalent: u32,
     /// How many a reviewer accepted with a reason.
     pub accepted: u32,
     /// How many of `killed` came from a previous run.
