@@ -180,7 +180,8 @@ fn preparing_catalogs_instruments_validates_and_builds() {
         targets,
         [
             "fixture-simple/lib/fixture_simple",
-            "fixture-simple/test/parity"
+            "fixture-simple/test/parity",
+            "fixture-simple/doc/fixture_simple"
         ]
     );
     for target in session.targets() {
@@ -503,7 +504,15 @@ fn the_trace_says_what_every_phase_did() {
             _ => None,
         })
         .collect();
-    assert_eq!(executed.len(), 1, "{executed:?}");
+    assert_eq!(
+        executed
+            .iter()
+            .filter(|(_, target)| !target.contains("/doc/"))
+            .count(),
+        1,
+        "a library that documents no example answers nothing, and a request that names no \
+         target passes over it: {executed:?}"
+    );
 }
 
 #[test]

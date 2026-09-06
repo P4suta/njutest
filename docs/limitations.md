@@ -26,10 +26,12 @@ below is stated fail-closed.
 
 ## Decided in advance
 
-- Doctests are run as one target per library, without coverage, and route no
-  mutant (`doctests-not-routed`). A mutant only a doctest could kill is
-  reported as surviving, and the `unreached` reading of that says which tests
-  it is about.
+- Doctests are run as one target per library and mutations are routed to them
+  at file granularity (`doctests-routed-by-file`): a documented example
+  reaches every mutation in the files its library is made of and narrows none
+  of them. A kill one finds names the library's documentation and not the
+  example, because rustdoc merges a file's examples into one compilation whose
+  harness cannot be asked for one of them.
 - A `harness = false` test target is one target per binary
   (`custom-harness-whole-binary`).
 - Fuzz targets are found always and driven only when `[fuzz] run` says so;

@@ -83,6 +83,7 @@ impl UnitKind {
             TargetKind::Test => Self::Test,
             TargetKind::Example => Self::Example,
             TargetKind::ProcMacro => Self::ProcMacro,
+            TargetKind::Doc => Self::Doc,
         }
     }
 }

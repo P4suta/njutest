@@ -9,7 +9,6 @@ use std::path::Path;
 use crate::assure::baseline::Measured;
 use crate::coverage::{Block, Point};
 use crate::report::TargetStatus;
-use crate::targets::UnitKind;
 
 /// One or more target identities, cheapest first.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -421,7 +420,6 @@ pub fn route(
     let measured: Vec<&Measured> = baseline
         .iter()
         .filter(|measured| measured.status == TargetStatus::Passed)
-        .filter(|measured| measured.target.unit != UnitKind::Doc)
         .collect();
     let candidates: Vec<&Measured> = measured
         .iter()
@@ -461,10 +459,10 @@ pub fn route(
 
 /// What a run may say about a position no test reached: that nothing reaches it, where every measured test could have said so, and otherwise that the package suite has to answer.
 ///
-/// A library's documentation is not among the tests that could have said so and
-/// is not counted here: it carries no coverage by construction rather than by
-/// accident, and the limitation `doctests-not-routed` states that on every
-/// report where one ran.
+/// A documented example carries the whole of every file its library is made of,
+/// so it is a candidate for every position in them and narrows none: it counts
+/// here like any other test, and `doctests-routed-by-file` says how coarsely it
+/// was routed.
 fn nothing_reached(measured: &[&Measured], file_candidates: usize) -> Route {
     if measured.iter().any(|one| one.covered.is_empty()) {
         Route::Suite {

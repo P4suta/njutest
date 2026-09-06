@@ -491,7 +491,7 @@ fn built(
     watching: (&Cancel, &crate::trace::Recorder),
 ) -> Result<(Vec<TestTarget>, PathBuf), EngineError> {
     let (cancel, trace) = watching;
-    let targets = execute::targets_of(
+    let mut targets = execute::targets_of(
         last_build,
         &workspace.metadata.packages,
         Some(&workspace.target_dir),
@@ -499,6 +499,11 @@ fn built(
     if targets.is_empty() {
         return Err(EngineError::from(SessionError::NoTargets));
     }
+    targets.extend(execute::documentation_targets(
+        &workspace.metadata.packages,
+        workspace.toolchain.cargo(),
+        &documentation_arguments(workspace),
+    ));
     trace.build(BuildRecord {
         targets: targets.iter().map(|target| target.id.clone()).collect(),
     });
@@ -511,6 +516,21 @@ fn built(
         verify(workspace, &targets, &scratch, cancel)?;
     }
     Ok((targets, scratch))
+}
+
+/// What cargo is told before the documentation examples' own arguments, so that running them reuses the build this session already made.
+fn documentation_arguments(workspace: &Workspace) -> Vec<std::ffi::OsString> {
+    let mut args = vec![
+        std::ffi::OsString::from("--target-dir"),
+        workspace.target_dir.clone().into_os_string(),
+    ];
+    if workspace.locked {
+        args.push(std::ffi::OsString::from("--locked"));
+    }
+    if workspace.offline {
+        args.push(std::ffi::OsString::from("--offline"));
+    }
+    args
 }
 
 /// What the proof layers establish before anything is instrumented: which tests could not have noticed a return replacement, which branch proofs the compiler vouches for, and which targets reached what.

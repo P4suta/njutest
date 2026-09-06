@@ -36,16 +36,19 @@ pub enum TargetKind {
     Example,
     /// A procedural macro crate's own unit tests, which are an ordinary test binary.
     ProcMacro,
+    /// A library's documentation examples, which cargo runs and rustdoc compiles.
+    Doc,
 }
 
 impl TargetKind {
     /// Every kind, in the order a report lists them.
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::Lib,
         Self::Bin,
         Self::Test,
         Self::Example,
         Self::ProcMacro,
+        Self::Doc,
     ];
 
     /// The name used in a target id and in reports.
@@ -57,6 +60,7 @@ impl TargetKind {
             Self::Test => "test",
             Self::Example => "example",
             Self::ProcMacro => "proc-macro",
+            Self::Doc => "doc",
         }
     }
 
@@ -115,6 +119,16 @@ pub struct TestTarget {
     pub cwd: PathBuf,
     /// What cargo sets for this target that the parent environment does not have: `CARGO_MANIFEST_DIR`, `CARGO_PKG_*`, `CARGO_BIN_EXE_*`.
     pub cargo_env: Vec<(OsString, OsString)>,
+    /// The arguments before the harness's own, for a target cargo runs rather than one the engine starts itself. Empty for a binary, and then `executable` is the binary.
+    ///
+    /// A library's documentation examples are compiled by rustdoc while cargo
+    /// runs them, so there is no binary to start: the target is `cargo test
+    /// --doc …`, and what the harness is told goes after a `--`. Such a
+    /// harness is also asked for one example by name without `--exact`, which
+    /// it does not honour: a documented example is named
+    /// `src/lib.rs - f (line 7)`, and a name ending in the line it is on
+    /// cannot be the beginning of another one.
+    pub through: Vec<OsString>,
 }
 
 /// The libtest summary line of one run.
@@ -197,18 +211,28 @@ pub struct Observation {
     pub timed_out: bool,
     /// The exit status, or [`EXIT_CODE_UNAVAILABLE`].
     pub exit_code: i32,
+    /// Whether the runtime said the binary was built from another catalog, which is how that is recognised through a process that did not exit with it.
+    pub stale_catalog: bool,
 }
 
 impl Observation {
     /// What a supervised run looked like.
     #[must_use]
-    pub const fn of(result: &RunResult) -> Self {
+    pub fn of(result: &RunResult) -> Self {
         Self {
             unstarted: result.error.is_some(),
             timed_out: result.timed_out,
             exit_code: result.exit_code,
+            stale_catalog: said(&result.output, crate::instrument::STALE_CATALOG_MARKER),
         }
     }
+}
+
+/// Whether `output` holds `needle`.
+fn said(output: &[u8], needle: &str) -> bool {
+    output
+        .windows(needle.len())
+        .any(|window| window == needle.as_bytes())
 }
 
 /// What one run of a test binary establishes about the mutant that was active during it. See the module documentation for the order.
@@ -223,7 +247,7 @@ pub const fn outcome_of(observed: Observation, summary: Option<Summary>) -> Outc
     if observed.exit_code == EXIT_CODE_UNAVAILABLE {
         return Outcome::NotRun;
     }
-    if observed.exit_code == STALE_CATALOG_EXIT {
+    if observed.exit_code == STALE_CATALOG_EXIT || observed.stale_catalog {
         return Outcome::Errored;
     }
     if observed.exit_code != 0 {
@@ -389,9 +413,15 @@ impl<'a> ExecRequest<'a> {
     #[must_use]
     pub fn argv(&self) -> Vec<OsString> {
         let mut argv = vec![self.target.executable.clone().into_os_string()];
+        if !self.target.through.is_empty() {
+            argv.extend(self.target.through.iter().cloned());
+            argv.push(OsString::from("--"));
+        }
         if let Some(test) = &self.test {
             argv.push(OsString::from(test));
-            argv.push(OsString::from("--exact"));
+            if self.target.through.is_empty() {
+                argv.push(OsString::from("--exact"));
+            }
         }
         argv.extend(self.args.iter().map(OsString::from));
         argv
@@ -545,7 +575,47 @@ pub fn targets_of(
             executable: executable.clone(),
             cwd: package.manifest_dir().to_path_buf(),
             cargo_env: cargo_environment(package, kind, target_dir),
+            through: Vec::new(),
         });
+    }
+    targets.sort_by(|a, b| a.id.cmp(&b.id));
+    targets.dedup_by(|a, b| a.id == b.id);
+    targets
+}
+
+/// One target for each library whose documentation cargo would run, which is a target this engine does not start itself.
+///
+/// A documentation example is compiled by rustdoc while cargo runs it, so
+/// there is no binary in the build's messages to find: what there is, is a
+/// command. `doctest = false` on the library is cargo's own way of saying
+/// there is nothing to run, and it is honoured.
+#[must_use]
+pub fn documentation_targets(
+    packages: &[Package],
+    cargo: &Path,
+    arguments: &[OsString],
+) -> Vec<TestTarget> {
+    let mut targets = Vec::new();
+    for package in packages {
+        for target in &package.targets {
+            if !target.is_lib() || target.is_proc_macro() || !target.doctest {
+                continue;
+            }
+            let mut through = vec![OsString::from("test"), OsString::from("--doc")];
+            through.extend(arguments.iter().cloned());
+            through.push(OsString::from("--package"));
+            through.push(OsString::from(&package.name));
+            targets.push(TestTarget {
+                id: target_id(&package.name, TargetKind::Doc, &target.name),
+                package: package.name.clone(),
+                kind: TargetKind::Doc,
+                name: target.name.clone(),
+                executable: cargo.to_path_buf(),
+                cwd: package.manifest_dir().to_path_buf(),
+                cargo_env: Vec::new(),
+                through,
+            });
+        }
     }
     targets.sort_by(|a, b| a.id.cmp(&b.id));
     targets.dedup_by(|a, b| a.id == b.id);

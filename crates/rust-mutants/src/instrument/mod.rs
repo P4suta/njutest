@@ -28,6 +28,16 @@ pub use runtime::{
     ACTIVE_ENV, CATALOG_ENV, MODULE_STEM, RUNTIME_MARKER, STALE_CATALOG_EXIT, module_name,
 };
 
+/// The first words the runtime prints before it exits [`runtime::STALE_CATALOG_EXIT`].
+///
+/// A test binary the engine starts itself is recognised by that exit code. One
+/// cargo starts for it — a documentation example — reaches the engine as
+/// cargo's own 101, which is the code a failing test has, so a tree that had
+/// been rebuilt behind the run's back would look exactly like a kill. What
+/// cargo does pass through is the output, and this is the engine's own
+/// sentence in it.
+pub const STALE_CATALOG_MARKER: &str = "rust-mutants: this binary was built from catalog ";
+
 /// The text inserted before the innermost function holding a guard, so that a guard's own lint noise never trips a crate's deny policy anywhere else. It holds no line break.
 pub const ALLOW_ATTRIBUTE: &str = "#[allow(warnings, unused, unused_qualifications, unfulfilled_lint_expectations, clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery, clippy::cargo)] ";
 

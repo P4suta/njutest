@@ -698,31 +698,26 @@ fn what_changed_outside_a_package_does_not_make_its_own_evidence_stale() {
 }
 
 #[test]
-fn the_documentation_of_a_library_is_run_as_one_target_and_routes_nothing() {
+fn a_mutation_only_a_documented_example_can_notice_is_noticed_by_it() {
     let fixture = fixture("fixture-doctest");
     verify(&fixture, &[]);
     let report = document(&fixture);
 
-    let documentation: Vec<&serde_json::Value> = report["targets"]
-        .as_array()
-        .expect("targets")
-        .iter()
-        .filter(|target| {
-            target["name"]
-                .as_str()
-                .is_some_and(|name| name.contains("/doc/"))
-        })
-        .collect();
-    assert_eq!(
-        documentation.len(),
-        1,
-        "one target per library, whatever the library documents: {:?}",
-        report["targets"]
-    );
-    assert_eq!(
-        documentation[0]["status"], "passed",
-        "a documented example that does not hold is a failing test rather than something \
-         nobody looked at"
+    let killer = |line: u64| -> String {
+        report["mutants"]
+            .as_array()
+            .expect("mutants")
+            .iter()
+            .find(|mutant| mutant["position"]["line"] == line && mutant["rule"] == "div-to-mul@1")
+            .and_then(|mutant| mutant["killed_by"].as_str())
+            .unwrap_or("nothing")
+            .to_owned()
+    };
+    assert!(
+        killer(21).contains("/doc/"),
+        "only the documentation exercises `half`, so only the documentation can notice a \
+         mutation of it: {}",
+        report["mutants"]
     );
 
     let stated: Vec<&str> = report["limitations"]
@@ -732,20 +727,9 @@ fn the_documentation_of_a_library_is_run_as_one_target_and_routes_nothing() {
         .filter_map(|one| one["name"].as_str())
         .collect();
     assert!(
-        stated.contains(&"doctests-not-routed"),
-        "the target carries no coverage, so nothing is routed to it and the report says so: \
-         {stated:?}"
-    );
-
-    let killers: Vec<&str> = report["mutants"]
-        .as_array()
-        .expect("mutants")
-        .iter()
-        .filter_map(|mutant| mutant["killed_by"].as_str())
-        .collect();
-    assert!(
-        !killers.iter().any(|by| by.contains("/doc/")),
-        "a target no mutation is routed to answers for no mutation: {killers:?}"
+        stated.contains(&"doctests-routed-by-file"),
+        "rustdoc compiles an example into a binary this run never sees, so what it reaches \
+         is known by file and not by region: {stated:?}"
     );
 }
 
