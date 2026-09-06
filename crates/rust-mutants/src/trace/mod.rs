@@ -6,6 +6,7 @@
 mod event;
 mod reader;
 mod sink;
+pub mod summary;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};

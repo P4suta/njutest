@@ -14,6 +14,7 @@ use std::fs;
 use std::io;
 
 use rust_mutants::testkit::trace::{memory_recorder, stepping_clock, type_names};
+use rust_mutants::trace::summary::{diff, render, summarize};
 use rust_mutants::trace::{
     DirSink, EVERY_TYPE, ExecRecord, FILE_NAME, MemorySink, OUTPUT_DIRECTORY_NAME,
     OUTPUT_FILE_LIMIT, OpenRecord, Payload, ProbeExecRecord, Problem, Recorder, RouteRecord,
@@ -708,4 +709,98 @@ fn event(seq: u64, payload: Payload) -> rust_mutants::trace::Event {
         elapsed_ms: seq.saturating_mul(1000),
         payload,
     }
+}
+
+#[test]
+fn a_summary_counts_the_types_times_every_phase_and_names_the_slowest_commands() {
+    let recorder = memory_recorder();
+    let outer = recorder.phase("prepare");
+    let inner = recorder.phase("validate");
+    recorder.exec(exec(&["cargo", "check", "--workspace"]));
+    one_of_each_preparation(&recorder);
+    inner.end();
+    recorder.exec(exec(&["cargo", "test", "--no-run"]));
+    one_of_each_measurement(&recorder);
+    outer.end();
+    recorder.run_end("detected", None);
+
+    let summary = summarize(&recorder.events(), 2);
+    assert_eq!(summary.events, recorder.events().len() as u64);
+    assert_eq!(summary.dropped, 0);
+    assert_eq!(
+        summary.counts.get("exec").copied(),
+        Some(3),
+        "the types are counted: {:?}",
+        summary.counts
+    );
+
+    let phases: Vec<&str> = summary
+        .phases
+        .iter()
+        .map(|phase| phase.path.as_str())
+        .collect();
+    assert_eq!(
+        phases,
+        ["prepare", "prepare/validate"],
+        "a nested phase is named by the path a reader would follow"
+    );
+    assert!(
+        summary.phases.iter().all(|phase| phase.duration_ms > 0),
+        "every phase says how long it took: {:?}",
+        summary.phases
+    );
+
+    assert_eq!(summary.slowest.len(), 2, "only what was asked for");
+    assert!(
+        summary.slowest[0].duration_ms >= summary.slowest[1].duration_ms,
+        "the slowest first: {:?}",
+        summary.slowest
+    );
+    assert_eq!(
+        summary.executions.get("killed").copied(),
+        Some(1),
+        "an execution is counted by what it established"
+    );
+    assert_eq!(
+        summary.routes.get("block").copied(),
+        Some(1),
+        "and a route by what decided it"
+    );
+    assert_eq!(summary.rounds, 1, "one validation round");
+    assert_eq!(summary.bisections, 5, "and what isolation cost");
+}
+
+#[test]
+fn a_summary_renders_as_lines_a_person_reads_and_a_diff_says_what_moved() {
+    let recorder = memory_recorder();
+    let phase = recorder.phase("prepare");
+    recorder.exec(exec(&["cargo", "check"]));
+    phase.end();
+    recorder.run_end("detected", None);
+    let before = summarize(&recorder.events(), 3);
+
+    let rendered = render(&before);
+    assert!(rendered.contains("EVENTS\t"), "{rendered}");
+    assert!(rendered.contains("PHASE\tprepare"), "{rendered}");
+    assert!(rendered.contains("SLOWEST\t"), "{rendered}");
+
+    let second = memory_recorder();
+    let phase = second.phase("prepare");
+    second.exec(exec(&["cargo", "check"]));
+    second.exec(exec(&["cargo", "test"]));
+    phase.end();
+    second.run_end("detected", None);
+    let after = summarize(&second.events(), 3);
+
+    let moved = diff(&before, &after);
+    assert!(
+        moved
+            .iter()
+            .any(|change| change.what == "exec" && change.from == 1 && change.to == 2),
+        "{moved:?}"
+    );
+    assert!(
+        !moved.iter().any(|change| change.from == change.to),
+        "a diff says what moved, not what stayed: {moved:?}"
+    );
 }

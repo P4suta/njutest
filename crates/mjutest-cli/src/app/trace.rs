@@ -155,28 +155,9 @@ fn engine(root: &Path, run: &str, out: &mut dyn Write) {
         super::say(out, "ENGINE\tunreadable");
         return;
     };
-    super::say(out, &format!("ENGINE\tEVENTS\t{}", events.len()));
-    let mut timed: Vec<(u64, String)> = Vec::new();
-    for event in &events {
-        match &event.payload {
-            rust_mutants::trace::Payload::PhaseEnd { phase } => super::say(
-                out,
-                &format!(
-                    "ENGINE\tPHASE\t{}\t{}ms",
-                    phase.name,
-                    phase.duration_ms.unwrap_or_default()
-                ),
-            ),
-            rust_mutants::trace::Payload::Exec { exec } => {
-                timed.push((exec.duration_ms, said(&exec.argv)));
-            }
-            _ => {}
-        }
-    }
-    timed.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
-    timed.truncate(SLOWEST_KEPT);
-    for (duration, command) in timed {
-        super::say(out, &format!("ENGINE\tSLOWEST\t{duration}ms\t{command}"));
+    let summary = rust_mutants::trace::summary::summarize(&events, SLOWEST_KEPT);
+    for line in rust_mutants::trace::summary::render(&summary).lines() {
+        super::say(out, &format!("ENGINE\t{line}"));
     }
 }
 
