@@ -37,6 +37,7 @@ fn mutant(index: u32, outcome: &str, expected: bool) -> RunMutantDocument {
         signal: None,
         not_run_reason: None,
         route: None,
+        identical: None,
         retried: false,
         expected,
         unreached: false,

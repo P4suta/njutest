@@ -78,6 +78,7 @@ shape, and every line is checked against
 | `mutant-exec` | id, index, target, outcome, exit code, duration, tests run, signal, failed tests, the budget it was given and where that came from, and whether it had the machine to itself |
 | `cache` | what an earlier run of this exact tree said about one mutant: the key, whether a record answered, and the run that established it |
 | `select` | why one mutant was never executed |
+| `identical` | what the equivalence layer said about one mutation: `identical`, `differs`, or nothing at all |
 | `evidence` | one file the run kept for an audit: its path, its size, and its digest |
 | `note` | a free-form note: progress, a decision, a limitation |
 | `run-end` | `outcome`, `events_emitted`, `events_dropped` |

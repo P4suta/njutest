@@ -130,6 +130,8 @@ pub struct Judged {
     pub route: Option<crate::report::run::RouteDocument>,
     /// Whether this run measured it, rather than reusing what an earlier one established or never reaching it. A measurement records its own route.
     pub measured: bool,
+    /// Whether the compiler renders the mutation identically to what it mutates, when the equivalence layer was asked.
+    pub identical: Option<bool>,
 }
 
 /// Whether a reviewer's claim about one mutant held.
@@ -477,6 +479,8 @@ pub struct Options<'a> {
     pub expectations: &'a [Expectation],
     /// The machine, which a confirming retry takes to itself.
     pub quiet: &'a Quiet,
+    /// The tree the equivalence layer builds and mutates, when a run asks it. `None` asks nothing.
+    pub equivalence: Option<&'a Equivalence<'a>>,
     /// How many mutants to measure at once. Zero is [`jobs`]'s own answer.
     pub jobs: usize,
     /// Further arguments for the harness.
@@ -595,6 +599,10 @@ pub fn run<O: Observer>(
     } else {
         pool::judge(session, &places, options, (cancel, observer))?
     };
+    let mut judged = judged;
+    if let Some(asking) = options.equivalence {
+        equivalence(session, asking, &mut judged, cancel);
+    }
     let interrupted = judged
         .iter()
         .any(|one| one.not_run_reason == Some(NotRunReason::Interrupted));
@@ -610,6 +618,84 @@ pub fn run<O: Observer>(
         shard: options.shard,
         duration: started.elapsed(),
     })
+}
+
+/// Asks the compiler whether each survivor's mutation is one it renders at all.
+///
+/// Only a survivor is asked: a mutation a test noticed is one the compiler
+/// plainly rendered, and asking about it would pay a build for an answer the
+/// run already has. What the layer says is `identical`, `differs`, or nothing
+/// at all — never `equivalent`, which is a claim about behaviour that a
+/// comparison of two binaries cannot make. Whatever it fails at leaves the
+/// survivor a survivor.
+fn equivalence(
+    session: &Session,
+    asking: &Equivalence<'_>,
+    judged: &mut [Judged],
+    cancel: &Cancel,
+) {
+    let survivors: Vec<usize> = judged
+        .iter()
+        .enumerate()
+        .filter(|(_, one)| one.outcome == Outcome::Survived)
+        .map(|(at, _)| at)
+        .collect();
+    if survivors.is_empty() {
+        return;
+    }
+    let phase = session.trace().phase("equivalence");
+    let opened =
+        crate::equivalence::Prover::open(asking.root, &asking.options, cancel, session.trace());
+    let Ok(mut prover) = opened else {
+        phase.end();
+        return;
+    };
+    for at in survivors {
+        if cancel.is_cancelled() {
+            break;
+        }
+        let Some(one) = judged.get(at) else {
+            continue;
+        };
+        let Some(mutant) = session.catalog().by_index(one.index) else {
+            continue;
+        };
+        let Ok(answer) = prover.identical(&mutant.candidate, cancel) else {
+            break;
+        };
+        session.trace().identical(crate::trace::IdenticalRecord {
+            index: one.index,
+            identity: answer.name().to_owned(),
+            detail: match answer {
+                crate::equivalence::artifacts::Identity::NotEstablished(why) => {
+                    Some(why.to_owned())
+                }
+                _ => None,
+            },
+        });
+        if let Some(one) = judged.get_mut(at) {
+            one.identical = match answer {
+                crate::equivalence::artifacts::Identity::Identical => Some(true),
+                crate::equivalence::artifacts::Identity::Differs => Some(false),
+                crate::equivalence::artifacts::Identity::NotEstablished(_) => None,
+            };
+        }
+    }
+    drop(prover.close());
+    phase.end();
+}
+
+/// What the equivalence layer needs: the tree the user wrote, and how it is built.
+///
+/// It is the project's own tree rather than the snapshot, because what is
+/// compared is what the project's own `cargo test --no-run` produces, with
+/// nothing instrumented in it.
+#[derive(Debug)]
+pub struct Equivalence<'a> {
+    /// The source root, which is what a person would build.
+    pub root: &'a std::path::Path,
+    /// How the tree is copied, which cargo builds it, and what it is compiled as.
+    pub options: crate::equivalence::ProveOptions,
 }
 
 /// How many mutants a run measures at once. Zero is the default: as many as the machine has, capped at four.
@@ -883,6 +969,7 @@ fn execute(
         not_run_reason: not_run_because(result.outcome, &judgement.route),
         route: None,
         measured: true,
+        identical: None,
         source_run_id: None,
     })
 }
@@ -935,6 +1022,7 @@ fn reuse(session: &Session, mutant: &Mutant, options: &Options<'_>) -> Option<Ju
         not_run_reason: None,
         route: None,
         measured: false,
+        identical: None,
         source_run_id: Some(record.run_id),
     })
 }
@@ -981,6 +1069,7 @@ fn unexecuted(mutant: &Mutant, reason: NotRunReason) -> Judged {
         not_run_reason: Some(reason),
         route: None,
         measured: false,
+        identical: None,
         source_run_id: None,
     }
 }

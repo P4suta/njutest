@@ -565,6 +565,11 @@ fn one_of_each_measurement(recorder: &Recorder) {
         mutant: "b".repeat(20),
         reason: "unreached".to_owned(),
     });
+    recorder.identical(rust_mutants::trace::IdenticalRecord {
+        index: 1,
+        identity: "identical".to_owned(),
+        detail: None,
+    });
     recorder.evidence(rust_mutants::trace::EvidenceRecord {
         file: "reached-v1.json".to_owned(),
         bytes: 4096,

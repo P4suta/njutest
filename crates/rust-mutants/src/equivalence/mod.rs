@@ -38,6 +38,10 @@ pub const NO_SUCH_FILE: &str = "the tree holds no file the mutation is in";
 /// The reason a build that did not succeed establishes nothing.
 pub const DID_NOT_BUILD: &str = "the tree with the mutation spliced in did not build";
 
+/// The reason a mutation the compiler refuses establishes nothing about equivalence.
+pub const DOES_NOT_BUILD: &str =
+    "the mutated tree does not build, so there are not two programs to compare";
+
 /// The reason a control that stopped matching withdraws the layer.
 pub const CONTROL_DRIFTED: &str = "the original tree stopped building to the bytes it built to, so nothing here compares two programs";
 
@@ -48,6 +52,8 @@ pub struct ProveOptions {
     pub open: OpenOptions,
     /// How long one build may take.
     pub timeout: Option<Duration>,
+    /// What the project is compiled as, which is a parameter of the question rather than of the answer.
+    pub build: crate::cargo::BuildConfig,
 }
 
 /// A tree of its own, built once, and asked one mutation at a time whether the compiler renders it identically.
@@ -87,7 +93,7 @@ impl Prover {
             withdrawn: false,
             options: options.clone(),
         };
-        prover.original = prover.build(cancel)?;
+        prover.original = prover.build(cancel)?.unwrap_or_default();
         Ok(prover)
     }
 
@@ -134,12 +140,14 @@ impl Prover {
             self.withdrawn = true;
             return Ok(Identity::NotEstablished(CONTROL_DRIFTED));
         }
-        let mutated = mutated?;
+        let Some(mutated) = mutated? else {
+            return Ok(Identity::NotEstablished(DOES_NOT_BUILD));
+        };
         let answer = artifacts::compare(&self.original, &mutated);
         if answer != Identity::Identical {
             return Ok(answer);
         }
-        let control = self.build(cancel)?;
+        let control = self.build(cancel)?.unwrap_or_default();
         if control == self.original {
             Ok(Identity::Identical)
         } else {
@@ -163,7 +171,13 @@ impl Prover {
         Ok(())
     }
 
-    fn build(&self, cancel: &Cancel) -> Result<Artifacts, EngineError> {
+    /// What one build of the tree produced, or nothing when the tree did not build.
+    ///
+    /// A mutation the compiler refuses is not one it renders identically: the
+    /// question is about two programs, and there is only one. Saying so is
+    /// what keeps a build failure from reading as an empty set of artifacts
+    /// equal to another empty set.
+    fn build(&self, cancel: &Cancel) -> Result<Option<Artifacts>, EngineError> {
         let built = compile(
             &self.workspace.driver(cancel),
             &CompileOptions {
@@ -171,17 +185,18 @@ impl Prover {
                 locked: self.options.open.locked,
                 offline: self.options.open.offline,
                 timeout: self.options.timeout,
+                build: self.options.build.clone(),
                 ..CompileOptions::default()
             },
         )?;
         if !built.success {
-            return Ok(Artifacts::new());
+            return Ok(None);
         }
         let targets = targets_of(&built.messages, &self.workspace.metadata().packages, None);
         let executables: Vec<(&str, &Path)> = targets
             .iter()
             .map(|target| (target.id.as_str(), target.executable.as_path()))
             .collect();
-        Ok(artifacts::digests(executables).unwrap_or_default())
+        Ok(Some(artifacts::digests(executables).unwrap_or_default()))
     }
 }

@@ -126,6 +126,11 @@ impl Build {
 }
 
 /// How mutants are proposed and executed.
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each is one switch a person writes in a file and one flag on the command line, and \
+              a switch is a bool wherever it is stored"
+)]
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Mutation {
@@ -153,6 +158,12 @@ pub struct Mutation {
     /// removes work only where a mutation is a return replacement the probe
     /// can answer for. A run says what it removed either way.
     pub probe: bool,
+    /// After the run, ask the compiler whether each survivor's mutation is one it renders at all.
+    ///
+    /// It costs a tree of its own and one build per survivor, and it never
+    /// says a mutation is equivalent: what it can say is that the compiler
+    /// renders the two identically, which is a fact about the binaries.
+    pub equivalence: bool,
     /// The mutants a reviewer declared equivalent, with the outcome the run must confirm.
     pub expect: Vec<Expectation>,
 }
@@ -167,6 +178,7 @@ impl Default for Mutation {
             verify: true,
             coverage: true,
             probe: false,
+            equivalence: false,
             expect: Vec::new(),
         }
     }
@@ -562,6 +574,7 @@ version = 1
 # verify = true                  # run the instrumented baseline before believing a mutant
 # coverage = true                # measure reach once, then run a mutant only where it was reached
 # probe = false                  # ask each test what it would have noticed, and skip what it could not
+# equivalence = false            # ask the compiler whether a survivor's mutation is one it renders
 
 # A mutant a reviewer declared equivalent. The run confirms the claim and
 # reports a stale expectation rather than hiding the mutant.

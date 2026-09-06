@@ -16,10 +16,10 @@ use sha2::{Digest as _, Sha256};
 
 pub use event::{
     AttributionRecord, BisectRecord, BuildRecord, CacheRecord, DischargeRecord, DiscoverFileRecord,
-    EVERY_TYPE, Event, EvidenceRecord, ExecRecord, InstrumentRecord, MutantExecRecord, NoteRecord,
-    OpenRecord, Payload, PhaseRecord, ProbeExecRecord, RouteRecord, RunRecord, SCHEMA,
-    SelectRecord, SiteRecord, SkipCount, SnapshotRecord, SweepRecord, TargetRecord,
-    ValidateRoundRecord, VerifyRecord, WitnessRecord,
+    EVERY_TYPE, Event, EvidenceRecord, ExecRecord, IdenticalRecord, InstrumentRecord,
+    MutantExecRecord, NoteRecord, OpenRecord, Payload, PhaseRecord, ProbeExecRecord, RouteRecord,
+    RunRecord, SCHEMA, SelectRecord, SiteRecord, SkipCount, SnapshotRecord, SweepRecord,
+    TargetRecord, ValidateRoundRecord, VerifyRecord, WitnessRecord,
 };
 pub use reader::{Problem, ReadError, check, read_events};
 pub use sink::{
@@ -299,6 +299,11 @@ impl Recorder {
     /// Records why one mutant was never executed.
     pub fn select(&self, record: SelectRecord) {
         self.emit(Payload::Select { select: record });
+    }
+
+    /// Records what the equivalence layer said about one mutation.
+    pub fn identical(&self, record: IdenticalRecord) {
+        self.emit(Payload::Identical { identical: record });
     }
 
     /// Records one file a run kept for an audit.

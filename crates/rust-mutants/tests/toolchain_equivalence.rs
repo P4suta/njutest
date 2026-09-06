@@ -9,6 +9,7 @@
 )]
 
 use mjutest_devkit::fixture::Fixture;
+use rust_mutants::catalog::Candidate;
 use rust_mutants::equivalence::artifacts::Identity;
 use rust_mutants::equivalence::{ProveOptions, Prover};
 use rust_mutants::runner::Cancel;
@@ -74,4 +75,46 @@ fn a_mutation_the_compiler_renders_identically_is_identical_and_one_it_renders_i
         "and the original built to the same bytes every time it was asked to"
     );
     prover.close().expect("the tree goes away");
+}
+
+#[test]
+fn a_mutation_whose_tree_does_not_build_is_not_established_for_that_reason() {
+    let fixture = Fixture::copy("fixture-equivalent");
+    let cancel = Cancel::new();
+    let mut prover = Prover::open(
+        fixture.root(),
+        &ProveOptions {
+            open: OpenOptions {
+                cargo: Some(mjutest_devkit::paths::cargo_binary()),
+                temp_directory: fixture.temp().to_path_buf(),
+                env: std::env::vars_os().collect(),
+                locked: true,
+                offline: true,
+                ..OpenOptions::default()
+            },
+            ..ProveOptions::default()
+        },
+        &cancel,
+        &Recorder::disabled(),
+    )
+    .expect("the prover opens");
+
+    let refused = Candidate {
+        path: "src/lib.rs".to_owned(),
+        rule: rust_mutants::rule::Registry::canonical()
+            .lookup("return-default")
+            .expect("a rule"),
+        span: rust_mutants::span::Span::new(0, 2).expect("a span"),
+        original: b"//".to_vec(),
+        replacement: b"}{".to_vec(),
+        source_digest: "0".repeat(64),
+    };
+    let answer = prover.identical(&refused, &cancel).expect("an answer");
+    assert_eq!(
+        answer,
+        Identity::NotEstablished(rust_mutants::equivalence::DOES_NOT_BUILD),
+        "a mutation the compiler refuses is not one it renders identically: the question is \
+         about two programs and there is only one"
+    );
+    prover.close().expect("close");
 }

@@ -272,6 +272,9 @@ pub struct Switches {
     /// Ask each test what it would have noticed, and never run one against a mutation it could not have.
     #[arg(long)]
     pub probe: bool,
+    /// After the run, ask the compiler whether each survivor's mutation is one it renders at all.
+    #[arg(long)]
+    pub equivalence: bool,
     /// Leave a library's documented examples out of the targets.
     #[arg(long)]
     pub no_doctests: bool,

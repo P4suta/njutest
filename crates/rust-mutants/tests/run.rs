@@ -30,6 +30,7 @@ fn judged(index: u32, outcome: Outcome) -> Judged {
         retried: false,
         expected: false,
         measured: true,
+        identical: None,
         source_run_id: None,
     }
 }

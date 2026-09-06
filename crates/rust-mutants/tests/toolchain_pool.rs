@@ -77,6 +77,7 @@ fn measured(session: &Session, jobs: usize, observer: &mut Delivered) -> Run {
         &Options {
             expectations: &[],
             quiet: &quiet,
+            equivalence: None,
             jobs,
             args: &[],
             shard: None,
@@ -187,6 +188,7 @@ fn cancellation_leaves_every_unjudged_mutant_not_run_and_the_run_interrupted() {
         &Options {
             expectations: &[],
             quiet: &quiet,
+            equivalence: None,
             jobs: 4,
             args: &[],
             shard: None,
@@ -277,5 +279,61 @@ fn every_judged_mutant_leaves_one_route_record_from_the_engine() {
         named.len(),
         finished.judged.len(),
         "and never two for one mutant, however many times it was executed"
+    );
+}
+
+#[test]
+fn the_equivalence_layer_asks_only_about_survivors_and_writes_identical_never_equivalent() {
+    let fixture = Fixture::copy("fixture-equivalent");
+    let session = prepared(&fixture);
+    let quiet = Quiet::default();
+    let asking = rust_mutants::run::Equivalence {
+        root: fixture.root(),
+        options: rust_mutants::equivalence::ProveOptions {
+            build: rust_mutants::cargo::BuildConfig::default(),
+            open: OpenOptions {
+                cargo: Some(mjutest_devkit::paths::cargo_binary()),
+                temp_directory: fixture.temp().to_path_buf(),
+                env: std::env::vars_os().collect(),
+                locked: true,
+                offline: true,
+                ..OpenOptions::default()
+            },
+            timeout: None,
+        },
+    };
+    let finished = run(
+        &session,
+        &Options {
+            expectations: &[],
+            quiet: &quiet,
+            equivalence: Some(&asking),
+            jobs: 1,
+            args: &[],
+            shard: None,
+            outcomes: None,
+        },
+        &Cancel::new(),
+        &mut Delivered::default(),
+    )
+    .expect("the run finishes");
+    session.close().expect("close");
+
+    for one in &finished.judged {
+        if one.outcome != Outcome::Survived {
+            assert_eq!(
+                one.identical, None,
+                "a mutation a test noticed is one the compiler plainly rendered, and asking \
+                 about it would pay a build for an answer the run already has"
+            );
+        }
+    }
+    assert!(
+        finished
+            .judged
+            .iter()
+            .any(|one| one.outcome == Outcome::Survived && one.identical == Some(true)),
+        "the fixture holds a mutation the compiler renders identically, and what the layer \
+         says is identical rather than equivalent"
     );
 }

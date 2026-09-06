@@ -56,6 +56,24 @@ discharged from is a violation, a discharge whose premises the run did not
 keep is unaudited, and a discharged pair the recording then executed is a
 violation.
 
+## After the run
+
+`--equivalence` asks the compiler whether each survivor's mutation is one it
+renders at all: the tree the user wrote is built once, the mutation is spliced
+in, and the two builds' executables are compared byte for byte. An answer of
+`identical` says the compiler produced the same program, and the control is
+built again to check that the tree builds reproducibly at all — a tree whose
+build is not reproducible proves nothing, and one such answer withdraws every
+answer afterwards.
+
+It never says `equivalent`. Two binaries being the same bytes is a fact about
+what the compiler produced under the profile the tests run; whether the
+mutation could change behaviour is a question about the program, and a
+comparison of binaries does not answer it
+([ADR 0013](../adr/0013-codegen-identity-is-the-equivalence-proof.md)). A
+mutation the compiler refuses establishes nothing either: the question is
+about two programs, and there is only one.
+
 ## Where a layer is silent
 
 `llvm-cov` regions nest. What says a body ran is a region that *begins* inside

@@ -14,7 +14,7 @@ pub const SCHEMA: &str = "rust-mutants-trace-v1";
 /// understands whole, and the schema under `schema/` is held to this list by a
 /// test: a type added to one and not the other is a recording no consumer can
 /// validate.
-pub const EVERY_TYPE: [&str; 21] = [
+pub const EVERY_TYPE: [&str; 22] = [
     "run-start",
     "phase-start",
     "phase-end",
@@ -32,6 +32,7 @@ pub const EVERY_TYPE: [&str; 21] = [
     "route",
     "cache",
     "select",
+    "identical",
     "evidence",
     "mutant-exec",
     "note",
@@ -144,6 +145,11 @@ pub enum Payload {
         /// The record.
         select: SelectRecord,
     },
+    /// Whether the compiler renders one mutation identically to what it mutates.
+    Identical {
+        /// The record.
+        identical: IdenticalRecord,
+    },
     /// A run kept one file an audit re-derives its proofs from.
     Evidence {
         /// The record.
@@ -188,6 +194,7 @@ impl Payload {
             Self::Route { .. } => "route",
             Self::Cache { .. } => "cache",
             Self::Select { .. } => "select",
+            Self::Identical { .. } => "identical",
             Self::Evidence { .. } => "evidence",
             Self::MutantExec { .. } => "mutant-exec",
             Self::Note { .. } => "note",
@@ -564,6 +571,18 @@ pub struct SelectRecord {
     pub mutant: String,
     /// `unreached`, `discharged`, or `interrupted`.
     pub reason: String,
+}
+
+/// What the equivalence layer said about one mutation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IdenticalRecord {
+    /// The mutant's dense catalog index.
+    pub index: u32,
+    /// `identical`, `differs`, or `not-established`.
+    pub identity: String,
+    /// Why nothing was established, when nothing was.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
 }
 
 /// One file a run kept beside its report, so an audit can re-derive what the run decided.

@@ -180,6 +180,9 @@ pub struct RunMutantDocument {
     /// Which targets could have noticed it, and which of them ran.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub route: Option<RouteDocument>,
+    /// Whether the compiler renders the mutation identically to what it mutates, when the equivalence layer was asked. Never a claim that it is equivalent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identical: Option<bool>,
     /// Whether a reviewer declared this outcome in advance and the run confirmed the claim.
     pub expected: bool,
     /// Whether no measured target reaches it, which is why it never ran.
@@ -371,6 +374,7 @@ fn mutant(one: &crate::run::Judged, catalog: Option<MutantDocument>) -> RunMutan
         retried: one.retried,
         not_run_reason: one.not_run_reason.map(|reason| reason.name().to_owned()),
         route: one.route.clone(),
+        identical: one.identical,
         expected: one.expected,
         unreached: one.not_run_reason == Some(crate::run::NotRunReason::Unreached),
         source_run_id: one.source_run_id.clone(),

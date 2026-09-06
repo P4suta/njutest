@@ -174,11 +174,8 @@ fn measured(
         started,
         recorder,
     } = *running;
-    let workspace = Workspace::open(
-        &settings.root,
-        settings.open_options(scope, environment, recorder.clone())?,
-        cancel,
-    )?;
+    let open = settings.open_options(scope, environment, recorder.clone())?;
+    let workspace = Workspace::open(&settings.root, open.clone(), cancel)?;
     let mut options = settings.prepare_options()?;
     if let Some(base) = base_of(scope) {
         options.include = selected(running, base, cancel)?;
@@ -219,6 +216,7 @@ fn measured(
                 &Prepared {
                     session: &session,
                     settings,
+                    open: &open,
                     environment,
                     id,
                     started,
@@ -302,6 +300,8 @@ fn previewed(
 struct Prepared<'a> {
     session: &'a Session,
     settings: &'a Settings,
+    /// How the workspace was opened, so a layer that opens a tree of its own does it the same way.
+    open: &'a workspace::OpenOptions,
     environment: &'a Environment,
     id: &'a str,
     started: Timestamp,
@@ -361,6 +361,7 @@ fn prepared(
                 session,
                 &Whole {
                     settings,
+                    open: prepared.open,
                     args,
                     shard: shard.as_deref(),
                     no_report: *no_report,
@@ -394,6 +395,8 @@ fn one(
 /// Everything a whole run needs beyond the session.
 struct Whole<'a> {
     settings: &'a Settings,
+    /// How the workspace was opened, so the equivalence layer can open a tree of its own the same way.
+    open: &'a workspace::OpenOptions,
     args: &'a [String],
     shard: Option<&'a str>,
     no_report: bool,
@@ -411,6 +414,7 @@ fn whole(
 ) -> Result<u8, CliError> {
     let Whole {
         settings,
+        open,
         args,
         shard,
         no_report,
@@ -420,6 +424,7 @@ fn whole(
         started,
     } = *whole;
     let shard = shard.map(run::Shard::parse).transpose()?;
+    let asking = asking_equivalence(settings, open);
     let outcomes = crate::outcomes::Store::new(&environment.cache_directory);
     let keyed = crate::outcomes::Keyed {
         workspace: session.workspace_digest().to_owned(),
@@ -432,6 +437,7 @@ fn whole(
         session,
         &run::Options {
             quiet: &run::Quiet::default(),
+            equivalence: asking.as_ref(),
             jobs: settings.config.execution.jobs,
             expectations: &settings.config.mutation.expect,
             args,
@@ -467,20 +473,7 @@ fn whole(
     write(stdout, "\n");
     write(stdout, &report::lines(&document));
     if !no_report {
-        let written = store(&settings.report_directory(), id, &document)?;
-        for kept in rust_mutants::report::evidence::write(
-            session,
-            &settings.report_directory().join(id),
-            &settings.prepare_options()?,
-        ) {
-            session
-                .trace()
-                .evidence(rust_mutants::trace::EvidenceRecord {
-                    file: kept.file,
-                    bytes: kept.bytes,
-                    digest: kept.digest,
-                });
-        }
+        let written = stored_with_evidence(session, settings, id, &document)?;
         let mut line = String::new();
         let ok = writeln!(line, "REPORT    {}", written.display());
         debug_assert!(ok.is_ok(), "writing to a String cannot fail");
@@ -488,6 +481,52 @@ fn whole(
     }
     prune(&settings.report_directory(), settings.config.reports.keep);
     Ok(document.run.exit_code)
+}
+
+/// Writes the report and everything an audit re-derives its proofs from, and names the report.
+fn stored_with_evidence(
+    session: &Session,
+    settings: &Settings,
+    id: &str,
+    document: &run_report::RunDocument,
+) -> Result<PathBuf, CliError> {
+    let written = store(&settings.report_directory(), id, document)?;
+    for one in rust_mutants::report::evidence::write(
+        session,
+        &settings.report_directory().join(id),
+        &settings.prepare_options()?,
+    ) {
+        session
+            .trace()
+            .evidence(rust_mutants::trace::EvidenceRecord {
+                file: one.file,
+                bytes: one.bytes,
+                digest: one.digest,
+            });
+    }
+    Ok(written)
+}
+
+/// What the equivalence layer is asked, when a run asks it.
+fn asking_equivalence<'a>(
+    settings: &'a Settings,
+    open: &workspace::OpenOptions,
+) -> Option<run::Equivalence<'a>> {
+    settings
+        .config
+        .mutation
+        .equivalence
+        .then(|| run::Equivalence {
+            root: &settings.root,
+            options: rust_mutants::equivalence::ProveOptions {
+                build: settings.config.build.config(),
+                open: workspace::OpenOptions {
+                    trace: rust_mutants::trace::Recorder::disabled(),
+                    ..open.clone()
+                },
+                timeout: settings.config.mutation.build_timeout,
+            },
+        })
 }
 
 /// The name of a run: the instant it started, which sorts chronologically as a directory name.
@@ -955,6 +994,7 @@ fn equivalence(asking: &Asking<'_>, cancel: &Cancel) -> Result<Vec<Rendered>, Cl
     let mut prover = rust_mutants::equivalence::Prover::open(
         asking.root,
         &rust_mutants::equivalence::ProveOptions {
+            build: rust_mutants::cargo::BuildConfig::default(),
             open: asking.open.clone(),
             timeout: None,
         },

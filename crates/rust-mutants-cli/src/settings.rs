@@ -72,6 +72,7 @@ impl Settings {
         config.mutation.coverage |= scope.switches.coverage;
         config.mutation.coverage &= !scope.switches.no_coverage;
         config.mutation.probe |= scope.switches.probe;
+        config.mutation.equivalence |= scope.switches.equivalence;
         config.execution.doctests &= !scope.switches.no_doctests;
         Ok(Self {
             root,

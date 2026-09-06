@@ -74,6 +74,13 @@ The report says `discharged` where it would have said `survived`, and names
 the proof. A proof without a measurement removes nothing: the lemma is the
 compiler's and the premise is the coverage layer's.
 
+`[mutation] equivalence` asks, after the run, whether the compiler renders
+each survivor's mutation identically to what it mutates. It costs a tree of
+its own and one build per survivor, and it never says a mutation is
+equivalent: what it can say is that the two binaries are the same bytes, which
+is a fact about what the compiler produced. Only survivors are asked, because
+a mutation a test noticed is one the compiler plainly rendered.
+
 `[mutation] timeout` is `auto` or a duration. `auto` is five times what that
 target's own baseline took when the run verified it, and never below thirty
 seconds — a budget shorter than a machine's own noise makes a timeout a

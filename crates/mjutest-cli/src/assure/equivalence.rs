@@ -162,6 +162,7 @@ pub fn prove(
     let mut prover = rust_mutants::equivalence::Prover::open(
         proving.root,
         &rust_mutants::equivalence::ProveOptions {
+            build: rust_mutants::cargo::BuildConfig::default(),
             open: proving.open.clone(),
             timeout: proving.timeout,
         },
