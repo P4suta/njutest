@@ -92,6 +92,17 @@ fn split_escaped(text: &str) -> Vec<String> {
     items
 }
 
+/// Whether the file is one this engine reads as Rust.
+///
+/// A dep-info names every file the compilation depended on, and not all of
+/// them are programs: `#[doc = include_str!("../README.md")]` puts a markdown
+/// file in there, and so does any other `include_str!` or `include_bytes!`.
+/// Reading one as Rust fails, and failing a run over it would refuse to
+/// measure a project the compiler is perfectly happy with.
+fn is_rust(path: &Path) -> bool {
+    path.extension().is_some_and(|extension| extension == "rs")
+}
+
 /// The units of a compilation, each with the sources its dep-info names, resolved against `workspace_root` (the directory rustc ran in). Build scripts are left out: they are never mutated.
 ///
 /// # Errors
@@ -174,6 +185,7 @@ fn unit_of(artifact: &Artifact, workspace_root: &Path) -> Result<Unit, CargoErro
                 workspace_root.join(path)
             }
         })
+        .filter(|path| is_rust(path))
         .collect();
     sources.sort();
     sources.dedup();

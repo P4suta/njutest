@@ -107,6 +107,25 @@ fn workspace_command(
         options.include = selected(&settings, base, environment, cancel)?;
     }
     match command {
+        cli::Command::Equivalence { limit, .. } => {
+            let discovery = session::preview(&workspace, &options, cancel)?;
+            let root = settings.root.clone();
+            let open = settings.open_options(scope, environment)?;
+            workspace.close()?;
+            write(
+                stdout,
+                &rendered(&equivalence(
+                    &Asking {
+                        root: &root,
+                        open,
+                        discovery: &discovery,
+                        limit: *limit,
+                    },
+                    cancel,
+                )?),
+            );
+            Ok(0)
+        }
         cli::Command::List { .. }
         | cli::Command::WhySkipped { .. }
         | cli::Command::Instrument { .. } => {
@@ -762,4 +781,84 @@ fn read_sources(
 /// The text of one file of a prepared session.
 fn read_source(session: &Session, path: &str) -> Option<String> {
     std::fs::read_to_string(session.snapshot_root().join(path)).ok()
+}
+
+/// What one equivalence pass is asked about.
+struct Asking<'a> {
+    root: &'a Path,
+    open: workspace::OpenOptions,
+    discovery: &'a rust_mutants::discover::Discovery,
+    limit: usize,
+}
+
+/// What the compiler said about one mutant.
+struct Rendered {
+    display_id: String,
+    path: String,
+    rule: String,
+    answer: String,
+}
+
+/// Asks the compiler about every mutant of the catalog, or the first `limit` of them.
+///
+/// This says `identical` and never `equivalent`: a mutation of a function
+/// nothing calls is dropped by the linker and comes out identical for the
+/// opposite of a reassuring reason, and only a run that knows which tests
+/// executed the position can tell the two apart
+/// ([ADR 0013](../../../docs/adr/0013-codegen-identity-is-the-equivalence-proof.md)).
+fn equivalence(asking: &Asking<'_>, cancel: &Cancel) -> Result<Vec<Rendered>, CliError> {
+    let trace = rust_mutants::trace::Recorder::disabled();
+    let mut prover = rust_mutants::equivalence::Prover::open(
+        asking.root,
+        &rust_mutants::equivalence::ProveOptions {
+            open: asking.open.clone(),
+            timeout: None,
+        },
+        cancel,
+        &trace,
+    )?;
+    let mutants = asking.discovery.catalog.mutants();
+    let wanted = if asking.limit == 0 {
+        mutants.len()
+    } else {
+        asking.limit.min(mutants.len())
+    };
+    let mut said = Vec::with_capacity(wanted);
+    for mutant in mutants.iter().take(wanted) {
+        let answer = prover.identical(&mutant.candidate, cancel)?;
+        said.push(Rendered {
+            display_id: mutant.display_id.clone(),
+            path: mutant.candidate.path.clone(),
+            rule: mutant.candidate.rule.to_string(),
+            answer: answer.name().to_owned(),
+        });
+    }
+    prover.close()?;
+    Ok(said)
+}
+
+/// One line per mutant, and a count of each answer.
+fn rendered(said: &[Rendered]) -> String {
+    let mut text = String::new();
+    let mut identical = 0usize;
+    for one in said {
+        if one.answer == "identical" {
+            identical = identical.saturating_add(1);
+        }
+        let written = writeln!(
+            text,
+            "{}\t{}\t{}\t{}",
+            one.display_id, one.answer, one.rule, one.path
+        );
+        debug_assert!(written.is_ok(), "writing to a String cannot fail");
+    }
+    let written = writeln!(
+        text,
+        "EQUIVALENCE\tasked={}\tidentical={}\tidentical is not equivalent: code nothing links \
+         comes out identical because the linker dropped it",
+        said.len(),
+        identical
+    );
+    debug_assert!(written.is_ok(), "writing to a String cannot fail");
+    text
 }

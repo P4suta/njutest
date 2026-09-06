@@ -83,6 +83,27 @@ pub struct Entry {
     pub sha256: String,
 }
 
+/// One entry the snapshot did not copy because it is not a regular file.
+///
+/// A symbolic link, a Windows reparse point, and a device or socket are not
+/// files this engine copies: following one can leave the tree, and copying one
+/// is not copying what it stands for. Refusing to *run* over one is a
+/// different thing, and it refuses to measure trees the compiler is perfectly
+/// happy with — a `node_modules` beside the Rust, a `.git` hook directory, a
+/// convenience link to a sibling checkout. So the entry is recorded, its
+/// spelling goes into the workspace digest, and the build is left to say
+/// whether it mattered: a tree missing something it needs does not compile,
+/// and the pristine gate reports that before anything is measured.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PassedOver {
+    /// The path relative to the tree, with forward slashes.
+    pub rel_path: String,
+    /// What it is.
+    pub kind: SnapshotErrorKind,
+    /// What it points at, when it is a link and the target reads.
+    pub target: Option<String>,
+}
+
 impl Entry {
     /// The size and digest without the path.
     #[must_use]
@@ -221,6 +242,24 @@ impl SnapshotErrorKind {
             Self::CleanupFailed => error::SNAPSHOT_CLEANUP_FAILED,
         }
     }
+
+    /// The wire name a manifest and a digest use.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::InvalidOptions => "invalid-options",
+            Self::SourceRoot => "source-root",
+            Self::Walk => "walk",
+            Self::Symlink => "symbolic-link",
+            Self::ReparsePoint => "reparse-point",
+            Self::Irregular => "irregular-file",
+            Self::UnsupportedName => "unsupported-name",
+            Self::Destination => "destination",
+            Self::Copy => "copy",
+            Self::CleanupRefused => "cleanup-refused",
+            Self::CleanupFailed => "cleanup-failed",
+        }
+    }
 }
 
 /// Every error this module returns, so a caller can always reach the code and the path without matching on message text.
@@ -318,6 +357,7 @@ pub struct Snapshot {
     dir: PathBuf,
     dest_parent: PathBuf,
     manifest: Vec<Entry>,
+    passed_over: Vec<PassedOver>,
     workspace_digest: String,
     stable_dir: bool,
     owner: Option<Owner>,
@@ -360,7 +400,13 @@ pub fn create(
     let mut walker = Walker::new(source_root, &patterns);
     walker.walk("")?;
     walker.rejection()?;
-    let Walker { files, dirs, .. } = walker;
+    let Walker {
+        files,
+        dirs,
+        mut passed_over,
+        ..
+    } = walker;
+    passed_over.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
 
     let (dir, stable) = destination(&options.dest_parent, source_root, now)?;
     let owner = claim_destination(&dir, now)?;
@@ -370,14 +416,15 @@ pub fn create(
         dest_parent: dir.parent().map(Path::to_path_buf).unwrap_or_default(),
         dir,
         manifest: Vec::new(),
-        workspace_digest: workspace_digest(&[]),
+        workspace_digest: digest_of(&[], &passed_over),
+        passed_over,
         stable_dir: stable,
         owner: Some(owner),
         state: State::Live,
     };
     match populate(&snapshot.root, &dirs, &files) {
         Ok(manifest) => {
-            snapshot.workspace_digest = workspace_digest(&manifest);
+            snapshot.workspace_digest = digest_of(&manifest, &snapshot.passed_over);
             snapshot.manifest = manifest;
             Ok(snapshot)
         }
@@ -439,11 +486,22 @@ fn path_of(root: &Path, rel: &str) -> PathBuf {
 /// Computes the frozen digest of a manifest.
 #[must_use]
 pub fn workspace_digest(entries: &[Entry]) -> String {
+    digest_of(entries, &[])
+}
+
+/// The digest of a manifest and of what the walk passed over, so that two trees differing only in a link they hold are two trees.
+#[must_use]
+pub fn digest_of(entries: &[Entry], passed_over: &[PassedOver]) -> String {
     let mut hasher = Sha256::new();
     write_length_prefixed(&mut hasher, WORKSPACE_DOMAIN);
     for entry in entries {
         write_length_prefixed(&mut hasher, &entry.rel_path);
         write_length_prefixed(&mut hasher, &entry.sha256);
+    }
+    for entry in passed_over {
+        write_length_prefixed(&mut hasher, &entry.rel_path);
+        write_length_prefixed(&mut hasher, entry.kind.name());
+        write_length_prefixed(&mut hasher, entry.target.as_deref().unwrap_or(""));
     }
     hex::encode(hasher.finalize())
 }
@@ -504,6 +562,15 @@ struct Walker<'a> {
     files: Vec<Record>,
     dirs: Vec<Record>,
     rejected: Vec<SnapshotError>,
+    passed_over: Vec<PassedOver>,
+    /// Whether an entry that is not a regular file is recorded and walked past rather than refused.
+    ///
+    /// It is, in the tree being copied: what a user keeps beside their Rust is
+    /// their business, and the build says whether a link mattered. It is not,
+    /// in the snapshot being re-walked afterwards, where such an entry can only
+    /// have appeared while the tests were running, which is the drift the
+    /// re-walk is there to find.
+    forgiving: bool,
 }
 
 impl<'a> Walker<'a> {
@@ -514,6 +581,8 @@ impl<'a> Walker<'a> {
             files: Vec::new(),
             dirs: Vec::new(),
             rejected: Vec::new(),
+            passed_over: Vec::new(),
+            forgiving: true,
         }
     }
 
@@ -586,17 +655,12 @@ impl<'a> Walker<'a> {
             })?;
             let file_type = meta.file_type();
             if file_type.is_symlink() {
-                self.reject(
-                    SnapshotErrorKind::Symlink,
-                    rel,
-                    "refuses to follow a symbolic link",
-                );
+                let target = fs::read_link(&abs)
+                    .ok()
+                    .map(|path| path.to_string_lossy().into_owned());
+                self.pass_over(SnapshotErrorKind::Symlink, rel, target);
             } else if platform::is_reparse_point(&meta) {
-                self.reject(
-                    SnapshotErrorKind::ReparsePoint,
-                    rel,
-                    "refuses to follow a reparse point (junction or mount point)",
-                );
+                self.pass_over(SnapshotErrorKind::ReparsePoint, rel, None);
             } else if file_type.is_dir() {
                 if is_cache_directory(&abs) {
                     return Ok(());
@@ -610,14 +674,8 @@ impl<'a> Walker<'a> {
             } else if file_type.is_file() {
                 self.files.push(Record { rel, abs, meta });
             } else {
-                self.reject(
-                    SnapshotErrorKind::Irregular,
-                    rel,
-                    format!(
-                        "refuses a file that is neither a directory nor a regular file ({})",
-                        platform::describe(&meta)
-                    ),
-                );
+                let what = platform::describe(&meta);
+                self.pass_over(SnapshotErrorKind::Irregular, rel, Some(what.to_owned()));
             }
         }
         Ok(())
@@ -646,6 +704,26 @@ impl<'a> Walker<'a> {
 
     fn reject(&mut self, kind: SnapshotErrorKind, rel: String, message: impl Into<String>) {
         self.rejected.push(SnapshotError::new(kind, rel, message));
+    }
+
+    /// Records an entry that is not a regular file, which the snapshot does not copy, or refuses it where it can only have appeared during measurement.
+    fn pass_over(&mut self, kind: SnapshotErrorKind, rel: String, target: Option<String>) {
+        if self.forgiving {
+            self.passed_over.push(PassedOver {
+                rel_path: rel,
+                kind,
+                target,
+            });
+            return;
+        }
+        let what = match kind {
+            SnapshotErrorKind::Symlink => "refuses to follow a symbolic link",
+            SnapshotErrorKind::ReparsePoint => {
+                "refuses to follow a reparse point (junction or mount point)"
+            }
+            _ => "refuses a file that is neither a directory nor a regular file",
+        };
+        self.reject(kind, rel, what);
     }
 
     /// Fails with the refused entry that sorts first by relative path, if any. Reporting the first in path order rather than in visit order means a user who fixes it and runs again is told about the next one, in an order that does not depend on how the filesystem laid the directory out.
@@ -882,6 +960,12 @@ impl Snapshot {
         &self.manifest
     }
 
+    /// Every entry the walk did not copy because it is not a regular file, in path order.
+    #[must_use]
+    pub fn passed_over(&self) -> &[PassedOver] {
+        &self.passed_over
+    }
+
     /// The frozen digest of the manifest; see the module documentation.
     #[must_use]
     pub fn workspace_digest(&self) -> &str {
@@ -906,6 +990,7 @@ impl Snapshot {
     /// The walk failures and refusals of [`create`].
     pub fn redigest(&self) -> Result<Vec<Drift>, SnapshotError> {
         let mut walker = Walker::new(&self.root, &[]);
+        walker.forgiving = false;
         walker.walk("")?;
         walker.rejection()?;
         let recorded: std::collections::BTreeMap<&str, &Entry> = self
@@ -960,6 +1045,7 @@ impl Snapshot {
     pub fn reseal(&mut self) -> Result<Vec<Drift>, SnapshotError> {
         let absorbed = self.redigest()?;
         let mut walker = Walker::new(&self.root, &[]);
+        walker.forgiving = false;
         walker.walk("")?;
         walker.rejection()?;
         let mut manifest = Vec::with_capacity(walker.files.len());
@@ -979,7 +1065,7 @@ impl Snapshot {
             });
         }
         manifest.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
-        self.workspace_digest = workspace_digest(&manifest);
+        self.workspace_digest = digest_of(&manifest, &self.passed_over);
         self.manifest = manifest;
         Ok(absorbed)
     }

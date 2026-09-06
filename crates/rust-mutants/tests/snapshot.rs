@@ -309,23 +309,48 @@ fn a_configured_report_directory_that_escapes_the_root_is_an_invalid_option() {
 
 #[cfg(unix)]
 #[test]
-fn symbolic_links_are_refused_naming_the_first_path_in_order_and_nothing_is_left_behind() {
+fn symbolic_links_are_recorded_and_not_followed() {
     let fx = fixture();
     std::os::unix::fs::symlink("main.rs", fx.source.join("src/zz-link.rs")).expect("symlink");
     std::os::unix::fs::symlink("..", fx.source.join("src/aa-up")).expect("symlink");
-    let error = create(&fx.source, &options(&fx), now()).unwrap_err();
-    assert_eq!(error.kind(), SnapshotErrorKind::Symlink);
-    assert_eq!(error.path(), "src/aa-up");
-    assert!(error.to_string().contains("RM1004"), "{error}");
+
+    let snapshot = create(&fx.source, &options(&fx), now()).expect("a tree with links in it");
+
+    let passed: Vec<(&str, &str)> = snapshot
+        .passed_over()
+        .iter()
+        .map(|one| (one.rel_path.as_str(), one.kind.name()))
+        .collect();
+    assert_eq!(
+        passed,
+        [
+            ("src/aa-up", "symbolic-link"),
+            ("src/zz-link.rs", "symbolic-link")
+        ],
+        "following a link can leave the tree; refusing to measure a project that holds one \
+         refuses to measure a project the compiler is perfectly happy with"
+    );
     assert!(
-        snapshot_dirs(&fx.dest).is_empty(),
-        "a refused tree creates no directory"
+        !snapshot.root().join("src/zz-link.rs").exists(),
+        "and it is not copied"
+    );
+
+    let targets: Vec<Option<&str>> = snapshot
+        .passed_over()
+        .iter()
+        .map(|one| one.target.as_deref())
+        .collect();
+    assert_eq!(
+        targets,
+        [Some(".."), Some("main.rs")],
+        "what the link points at is in the digest, so two trees differing only in a link \
+         are two trees"
     );
 }
 
 #[cfg(unix)]
 #[test]
-fn irregular_files_are_refused() {
+fn irregular_files_are_recorded_and_not_copied() {
     let fx = fixture();
     rustix::fs::mkfifoat(
         rustix::fs::CWD,
@@ -333,10 +358,24 @@ fn irregular_files_are_refused() {
         rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR,
     )
     .expect("fifo");
-    let error = create(&fx.source, &options(&fx), now()).unwrap_err();
-    assert_eq!(error.kind(), SnapshotErrorKind::Irregular);
-    assert_eq!(error.path(), "src/pipe");
-    assert!(error.to_string().contains("a named pipe"), "{error}");
+
+    let snapshot = create(&fx.source, &options(&fx), now()).expect("a tree with a pipe in it");
+
+    let passed: Vec<(&str, &str, Option<&str>)> = snapshot
+        .passed_over()
+        .iter()
+        .map(|one| {
+            (
+                one.rel_path.as_str(),
+                one.kind.name(),
+                one.target.as_deref(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        passed,
+        [("src/pipe", "irregular-file", Some("a named pipe"))]
+    );
 }
 
 #[cfg(unix)]

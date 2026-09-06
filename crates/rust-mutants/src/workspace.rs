@@ -258,6 +258,12 @@ impl Workspace {
         self.snapshot.dir()
     }
 
+    /// Every entry the snapshot did not copy because it is not a regular file.
+    #[must_use]
+    pub fn passed_over(&self) -> &[snapshot::PassedOver] {
+        self.snapshot.passed_over()
+    }
+
     /// The frozen digest of the copied tree.
     #[must_use]
     pub fn workspace_digest(&self) -> &str {

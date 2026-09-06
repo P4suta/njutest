@@ -22,3 +22,9 @@ position brought its runtime module into the includer's scope, where the
 includer's module of the same name already was, and every mutant of both
 files came back `compile-rejected` — the tool's own breakage, reported as
 the compiler's judgement about the user's code.
+
+The library's own documentation is this file, pulled in with
+`#[doc = include_str!]`. A dep-info names every file a compilation depended
+on, so this markdown is in there beside the Rust — and reading it as Rust,
+which is what discovery used to do with everything a dep-info named, failed
+the whole run.
