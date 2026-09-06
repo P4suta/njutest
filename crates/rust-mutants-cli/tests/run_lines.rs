@@ -107,6 +107,7 @@ fn document() -> RunDocument {
         skips: Vec::new(),
         expectations: vec![ExpectationDocument {
             id: "0000000000000001".to_owned(),
+            locator: None,
             reason: "equivalent under the invariant the type carries".to_owned(),
             outcome: "survived".to_owned(),
             mutant: Some(format!("{:064x}", 1)),

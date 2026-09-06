@@ -109,6 +109,7 @@ fn prepare(fixture: &str) -> Tree {
             include: Vec::new(),
             exclude: Vec::new(),
             packages: Vec::new(),
+            skips: Vec::new(),
         },
         &trace,
     )

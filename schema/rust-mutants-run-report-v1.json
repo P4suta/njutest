@@ -307,6 +307,19 @@
         "required": ["id", "reason", "outcome", "mutant", "standing", "actual", "why"],
         "properties": {
           "id": { "type": "string", "minLength": 1 },
+          "locator": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "item", "rule", "original"],
+            "properties": {
+              "path": { "type": "string", "minLength": 1 },
+              "item": { "type": "string" },
+              "rule": { "type": "string", "minLength": 1 },
+              "original": { "type": "string" },
+              "line": { "type": "integer", "minimum": 1 }
+            },
+            "description": "Where the mutation is and what it edits, when the claim named it that way rather than by identity."
+          },
           "reason": { "type": "string", "minLength": 1 },
           "outcome": { "enum": ["killed", "survived", "timed_out"] },
           "mutant": { "oneOf": [{ "type": "null" }, { "type": "string" }] },

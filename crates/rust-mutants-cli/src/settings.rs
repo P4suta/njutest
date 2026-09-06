@@ -137,6 +137,13 @@ impl Settings {
             doctests: self.config.execution.doctests,
             build: self.config.build.config(),
             skip_targets: self.config.execution.skip_targets.clone(),
+            skips: self
+                .config
+                .mutation
+                .skip
+                .iter()
+                .map(crate::config::Skip::rule)
+                .collect::<Result<Vec<_>, _>>()?,
             ..PrepareOptions::default()
         })
     }

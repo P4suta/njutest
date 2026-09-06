@@ -282,8 +282,8 @@ condemned on the strength of what a half-finished command printed.
 `unsupported-site`, `excluded`, `test-only-file`, `no-std-crate`,
 `included-expression`, `generated-outside-workspace`, `forbidden-lints`,
 `const-fn-body`, `let-condition`, `open-range`, `unstated-return-type`,
-`loop-value`, `annotated`. Each is counted and named; `rust-mutants
-why-skipped` lists them. A skip is a decision the tool made and says; a
+`loop-value`, `annotated`, `configured`. Each is counted and named;
+`rust-mutants why-skipped` lists them. A skip is a decision the tool made and says; a
 rejection (a mutant the compiler refused) is a fact about the program and is
 reported with the diagnostic.
 
@@ -295,6 +295,13 @@ all. The reason is required (`RM2008`), `skip` is the only directive
 rather than a comment nobody notices is stale. Markers are read from the gaps
 between tokens, so the words inside a string literal are a string and a
 documentation comment, which is an attribute by then, is never a marker.
+
+`[[mutation.skip]]` says the same thing from the configuration file, where
+the code cannot be edited or where one entry covers what a hundred markers
+would: a path glob, a reason, and at most one of a line range or an item.
+It is applied where the walk's own decisions are, so every tally says the
+same thing about the file, and an entry that hid nothing is the same
+`unmatched-skip` finding a stale marker is.
 
 Every place a rule targets has a decision: a candidate with its guard form, or
 a skip with its reason. A rule that passed over a place without saying so is

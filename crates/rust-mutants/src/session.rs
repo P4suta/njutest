@@ -24,6 +24,42 @@ use crate::validate::{
 };
 use crate::workspace::{SessionError, Workspace};
 
+/// Where a mutation is and what it edits, which is how a reviewer names one that outlives an edit elsewhere in the file.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Locator {
+    /// The workspace-relative path with forward slashes.
+    pub path: String,
+    /// The item, as a reader writes it. A suffix is enough: `clamp`, `Type::method`, `mod::path::Type::method`.
+    pub item: String,
+    /// The rule's name.
+    pub rule: String,
+    /// The bytes the edit replaces, as text.
+    pub original: String,
+    /// The line, as a hint that separates two mutations the rest would name together.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line: Option<u32>,
+}
+
+/// Why a locator named no one mutation.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum LocateError {
+    /// The catalog holds no such mutation.
+    #[error("no mutation of this catalog is the one described")]
+    Nothing,
+    /// The catalog holds more than one, and the line did not separate them.
+    #[error("{} mutations of this catalog are the one described: {}", display_ids.len(), display_ids.join(", "))]
+    Several {
+        /// What it could have meant.
+        display_ids: Vec<String>,
+    },
+}
+
+/// Whether an item path is the one a locator names, which a suffix says.
+fn names(item: &str, wanted: &str) -> bool {
+    item == wanted || item.ends_with(&format!("::{wanted}"))
+}
+
 /// Configures [`Workspace::prepare`].
 #[derive(Debug, Clone)]
 #[expect(
@@ -42,6 +78,8 @@ pub struct PrepareOptions {
     pub exclude: Vec<Pattern>,
     /// The member packages to mutate. Empty means every member.
     pub packages: Vec<String>,
+    /// The places a reviewer configured the run to pass over, each with the reason they gave.
+    pub skips: Vec<discover::SkipRule>,
     /// Run every test target once with nothing active, and refuse to hand back a session whose instrumented baseline does not pass.
     pub verify: bool,
     /// Build and run the probe tree, which says which tests could not have noticed a return replacement however far they ran.
@@ -88,6 +126,7 @@ impl Default for PrepareOptions {
             include: Vec::new(),
             exclude: Vec::new(),
             packages: Vec::new(),
+            skips: Vec::new(),
             verify: true,
             probe: false,
             coverage: true,
@@ -431,6 +470,8 @@ pub struct Session {
     sources: BTreeMap<String, Vec<u8>>,
     /// Which package each mutant belongs to.
     packages: BTreeMap<u32, String>,
+    /// The item each mutant sits in, by catalog index.
+    items: BTreeMap<u32, String>,
     /// The branch proof of every mutant that has one, by catalog index.
     proofs: BTreeMap<u32, crate::syntax::branch::Proof>,
     reached: crate::reach::Reached,
@@ -509,6 +550,60 @@ impl Session {
     #[must_use]
     pub fn package_of(&self, index: u32) -> Option<&str> {
         self.packages.get(&index).map(String::as_str)
+    }
+
+    /// The item a mutant sits in, as a reader writes it.
+    #[must_use]
+    pub fn item_of(&self, index: u32) -> Option<&str> {
+        self.items.get(&index).map(String::as_str)
+    }
+
+    /// The one mutant a locator names.
+    ///
+    /// A locator says where a mutation is and what it edits rather than what
+    /// its identity is, so it survives an edit anywhere else in the file: an
+    /// identity is minted from the whole file's digest, and any change to the
+    /// file renames every mutant in it. The line is a hint that separates two
+    /// mutations a locator would otherwise name together, never the thing that
+    /// identifies one: code moves down a file and the claim about it does not
+    /// stop being true.
+    ///
+    /// # Errors
+    /// Returns [`LocateError::Nothing`] when the catalog holds no such
+    /// mutation and [`LocateError::Several`] when it holds more than one and
+    /// the line does not separate them.
+    pub fn locate(&self, locator: &Locator) -> Result<&Mutant, LocateError> {
+        let matching: Vec<&Mutant> = self
+            .catalog
+            .mutants()
+            .iter()
+            .filter(|mutant| {
+                mutant.candidate.path == locator.path
+                    && mutant.candidate.rule.name == locator.rule
+                    && mutant.candidate.original == locator.original.as_bytes()
+                    && self
+                        .item_of(mutant.index)
+                        .is_some_and(|item| names(item, &locator.item))
+            })
+            .collect();
+        let narrowed = match locator.line {
+            Some(line) if matching.len() > 1 => matching
+                .iter()
+                .copied()
+                .filter(|mutant| self.position(mutant).is_some_and(|at| at.line == line))
+                .collect(),
+            _ => matching,
+        };
+        match narrowed.as_slice() {
+            [] => Err(LocateError::Nothing),
+            [one] => Ok(one),
+            several => Err(LocateError::Several {
+                display_ids: several
+                    .iter()
+                    .map(|mutant| mutant.display_id.clone())
+                    .collect(),
+            }),
+        }
     }
 
     /// The source of one of the tree's mutable files, as it was before instrumentation.
@@ -1063,6 +1158,7 @@ pub fn preview(
             include: options.include.clone(),
             exclude: options.exclude.clone(),
             packages: options.packages.clone(),
+            skips: options.skips.clone(),
         },
         &trace,
     )?;
@@ -1487,6 +1583,7 @@ fn gated(
             include: options.include.clone(),
             exclude: options.exclude.clone(),
             packages: options.packages.clone(),
+            skips: options.skips.clone(),
         },
         trace,
     )?;
@@ -1545,14 +1642,22 @@ pub fn prepare(
     let (targets, scratch, baseline) = built(&workspace, &last_build, options, (cancel, &trace))?;
     build_phase.end();
     phase.end();
-    let packages = discovery
+    let indexed: Vec<(u32, &discover::Located)> = discovery
         .candidates
         .iter()
         .filter_map(|located| {
             let id = located.found.candidate.id().ok()?;
             let mutant = discovery.catalog.by_id(&id)?;
-            Some((mutant.index, located.package.clone()))
+            Some((mutant.index, located))
         })
+        .collect();
+    let packages = indexed
+        .iter()
+        .map(|(index, located)| (*index, located.package.clone()))
+        .collect();
+    let items = indexed
+        .iter()
+        .map(|(index, located)| (*index, located.found.item.clone()))
         .collect();
     Ok(Session {
         catalog: discovery.catalog,
@@ -1560,6 +1665,7 @@ pub fn prepare(
         claims: discovery.claims,
         sources,
         packages,
+        items,
         proofs,
         reached,
         probed,

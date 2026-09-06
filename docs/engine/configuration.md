@@ -137,6 +137,46 @@ compares the outcome, and says which of three things happened.
 `reason` is required by the shape itself. An expectation without one is a
 suppression, and a report cannot audit a suppression.
 
+The same claim can be addressed by where the mutation is rather than by an
+identity, which is minted from the whole file's digest and so changes when
+anything in the file does:
+
+```toml
+[[mutation.expect]]
+path = "src/lib.rs"
+item = "clamp"                 # a suffix of the item path is enough
+rule = "le-to-lt"
+original = "<="                # the bytes the edit replaces
+line = 42                      # a hint, when the rest names more than one
+reason = "the bound is equivalent under the invariant the type carries"
+outcome = "survived"
+```
+
+Never both: an identity and a locator are two ways of naming one mutant and
+two chances to name different ones. A locator whose line has moved still
+holds, and the report says where the mutation is now.
+
+## Configured skips
+
+```toml
+[[mutation.skip]]
+path = "src/scanner/**"        # glob against the workspace-relative path
+lines = "40-58"                # inclusive; only with a literal path
+item = "Scanner::skip_ws"      # a suffix of the item path; not with lines
+reason = "a hand-tuned loop; a mutant here is a timeout, not a finding"
+```
+
+A configured skip is the decision a `rust-mutants: skip` comment makes,
+written where the code cannot be edited or where one entry covers what a
+hundred comments would. `reason` is required for the same reason an
+expectation's is. `lines` and `item` are two ways of saying where, so an
+entry says it once, and `lines` needs a literal path: line forty of every
+file a glob matches is not a place anybody meant.
+
+An entry that hid nothing is an `unmatched-skip` finding, exactly as a
+comment that hid nothing is. A skip that quietly stops meaning anything when
+the code under it moves is worse than no skip at all.
+
 ## Reserved environment
 
 A run composes `RUST_MUTANTS_ACTIVE`, `RUST_MUTANTS_CATALOG`, and

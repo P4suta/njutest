@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 
 use jiff::Timestamp;
 use rust_mutants::EngineError;
+use rust_mutants::run::Expectation;
 use rust_mutants::runner::Cancel;
 use rust_mutants::session::{self, Request, Session};
 use rust_mutants::workspace::{self, Workspace};
@@ -433,13 +434,14 @@ fn whole(
         timeout: crate::config::render_timeout(settings.config.mutation.timeout),
         build: settings.config.build.config().arguments(),
     };
+    let expectations = expectations(settings);
     let mut result = run::run(
         session,
         &run::Options {
             quiet: &run::Quiet::default(),
             equivalence: asking.as_ref(),
             jobs: settings.config.execution.jobs,
-            expectations: &settings.config.mutation.expect,
+            expectations: &expectations,
             args,
             shard,
             outcomes: (!no_cache).then_some(run::Reusing {
@@ -454,11 +456,7 @@ fn whole(
             borrowed: std::marker::PhantomData,
         },
     )?;
-    result.expectations = run::verify(
-        session,
-        &settings.config.mutation.expect,
-        &mut result.judged,
-    );
+    result.expectations = run::verify(session, &expectations, &mut result.judged);
     let finished = Timestamp::now();
     let document = run_report::document(
         session,
@@ -938,6 +936,17 @@ fn merge(
 }
 
 /// A closed stream is the reader's choice, not a failure of ours.
+/// The claims the file wrote, as the engine reads them.
+fn expectations(settings: &Settings) -> Vec<Expectation> {
+    settings
+        .config
+        .mutation
+        .expect
+        .iter()
+        .map(crate::config::Expect::expectation)
+        .collect()
+}
+
 fn write(stream: &mut dyn Write, text: &str) {
     let _written = stream
         .write_all(text.as_bytes())

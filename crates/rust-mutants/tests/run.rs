@@ -134,6 +134,7 @@ fn a_mutant_a_reviewer_expected_to_survive_is_not_a_finding_and_a_stale_claim_is
     let expectations = vec![
         Verified {
             id: "aaaa".to_owned(),
+            locator: None,
             reason: "equivalent under the invariant".to_owned(),
             outcome: Outcome::Survived,
             mutant: Some(met.id.clone()),
@@ -141,6 +142,7 @@ fn a_mutant_a_reviewer_expected_to_survive_is_not_a_finding_and_a_stale_claim_is
         },
         Verified {
             id: "bbbb".to_owned(),
+            locator: None,
             reason: "was equivalent last week".to_owned(),
             outcome: Outcome::Survived,
             mutant: Some(judged(2, Outcome::Killed).id),
@@ -150,6 +152,7 @@ fn a_mutant_a_reviewer_expected_to_survive_is_not_a_finding_and_a_stale_claim_is
         },
         Verified {
             id: "cccc".to_owned(),
+            locator: None,
             reason: "for a mutant that is gone".to_owned(),
             outcome: Outcome::Survived,
             mutant: None,

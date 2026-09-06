@@ -21,7 +21,7 @@ use rust_mutants::discover::{
 use rust_mutants::glob::Pattern;
 use rust_mutants::rule::{Registry, Tier};
 use rust_mutants::runner::Cancel;
-use rust_mutants::syntax::Selection;
+use rust_mutants::syntax::{Selection, SkipReason};
 use rust_mutants::trace::{MemorySink, Payload, Recorder, Sink};
 
 static REGISTRY: Registry = Registry::canonical();
@@ -89,6 +89,7 @@ fn options<'r>() -> DiscoverOptions<'r> {
         include: Vec::new(),
         exclude: Vec::new(),
         packages: Vec::new(),
+        skips: Vec::new(),
     }
 }
 
@@ -399,7 +400,7 @@ fn a_unit_source_outside_the_root_is_a_whole_file_skip_not_an_error() {
     let generated: Vec<&rust_mutants::syntax::Skip> = discovery
         .skips
         .iter()
-        .filter(|skip| skip.reason == rust_mutants::syntax::SkipReason::GeneratedOutsideWorkspace)
+        .filter(|skip| skip.reason == SkipReason::GeneratedOutsideWorkspace)
         .collect();
     assert_eq!(generated.len(), 1, "{:?}", discovery.skips);
     assert_eq!(
@@ -544,5 +545,57 @@ fn a_crate_that_forbids_what_the_guards_allow_is_skipped_whole_and_a_crate_that_
             row("forbids/src/lib.rs", "forbids", 0, "forbidden-lints:5"),
         ],
         "forbid is the one level an allow cannot override, and every guard carries an allow"
+    );
+}
+
+#[test]
+fn a_configured_skip_is_counted_per_entry_and_an_unmatched_one_is_reported() {
+    let prepared = prepare("fixture-simple");
+    let mut opts = options();
+    opts.skips = vec![
+        rust_mutants::discover::SkipRule {
+            path: Pattern::compile("src/lib.rs").expect("pattern"),
+            lines: None,
+            item: Some("is_even".to_owned()),
+            reason: "parity is checked by the integration test".to_owned(),
+        },
+        rust_mutants::discover::SkipRule {
+            path: Pattern::compile("src/nowhere.rs").expect("pattern"),
+            lines: None,
+            item: None,
+            reason: "a file that is not there".to_owned(),
+        },
+    ];
+    let discovery = run(&prepared, &opts, &Recorder::disabled());
+    let configured: Vec<(&str, u32)> = discovery
+        .skips
+        .iter()
+        .filter(|skip| skip.reason == SkipReason::Configured)
+        .map(|skip| (skip.path.as_str(), skip.count))
+        .collect();
+    assert_eq!(
+        configured,
+        [("src/lib.rs", 6)],
+        "what the entry hid is counted where the file's other skips are"
+    );
+    assert!(
+        discovery
+            .candidates
+            .iter()
+            .all(|located| located.found.item != "is_even"),
+        "and nothing it hid is in the catalog"
+    );
+    let claims: Vec<(&str, bool)> = discovery
+        .claims
+        .iter()
+        .map(|claim| (claim.reason.as_str(), claim.matched))
+        .collect();
+    assert_eq!(
+        claims,
+        [
+            ("parity is checked by the integration test", true),
+            ("a file that is not there", false),
+        ],
+        "an entry that hides nothing is a claim about code that has moved or gone"
     );
 }

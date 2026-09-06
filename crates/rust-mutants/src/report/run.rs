@@ -195,8 +195,11 @@ pub struct RunMutantDocument {
 /// One declared expectation, as the run left it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExpectationDocument {
-    /// The identity or prefix the file wrote.
+    /// The identity, prefix, or locator the file wrote, as a reader reads it.
     pub id: String,
+    /// The locator the file wrote, when it wrote one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub locator: Option<crate::session::Locator>,
     /// Why the reviewer claims the outcome.
     pub reason: String,
     /// The outcome claimed.
@@ -295,16 +298,20 @@ pub fn document(
             .iter()
             .map(|verified| ExpectationDocument {
                 id: verified.id.clone(),
+                locator: verified.locator.clone(),
                 reason: verified.reason.clone(),
                 outcome: verified.outcome.name().to_owned(),
                 mutant: verified.mutant.clone(),
                 standing: standing_name(&verified.standing).to_owned(),
                 actual: match &verified.standing {
                     Standing::Stale { actual } => Some(actual.name().to_owned()),
-                    Standing::Met | Standing::Unmatched { .. } => None,
+                    Standing::Met | Standing::Moved { .. } | Standing::Unmatched { .. } => None,
                 },
                 why: match &verified.standing {
                     Standing::Unmatched { why } => Some(why.clone()),
+                    Standing::Moved { from, to } => {
+                        Some(format!("the mutation moved from line {from} to line {to}"))
+                    }
                     Standing::Met | Standing::Stale { .. } => None,
                 },
             })
@@ -315,7 +322,7 @@ pub fn document(
 
 const fn standing_name(standing: &Standing) -> &'static str {
     match standing {
-        Standing::Met => "met",
+        Standing::Met | Standing::Moved { .. } => "met",
         Standing::Stale { .. } => "stale",
         Standing::Unmatched { .. } => "unmatched",
     }

@@ -238,6 +238,8 @@ pub(super) struct Walker<'a> {
     matched: Vec<bool>,
     /// The marker whose scope the walk is inside, if any.
     annotation: Option<usize>,
+    /// The items the walk is inside, outermost first: modules, impls, traits, and the function or constant itself.
+    items: Vec<String>,
     includes: Vec<Include>,
 }
 
@@ -265,6 +267,7 @@ impl<'a> Walker<'a> {
             markers: Vec::new(),
             matched: Vec::new(),
             annotation: None,
+            items: Vec::new(),
             includes: Vec::new(),
         }
     }
@@ -299,6 +302,18 @@ impl<'a> Walker<'a> {
     /// The marker that speaks about a place starting on `line`, if one does.
     fn marker_at(&self, line: u32) -> Option<usize> {
         self.markers.iter().position(|marker| marker.scope == line)
+    }
+
+    /// The item the walk is inside, as a reader writes it: `mod::path::Type::method`.
+    fn item_path(&self) -> String {
+        self.items.join("::")
+    }
+
+    /// Walks something under the name it goes by.
+    fn within_item(&mut self, name: String, walk: impl FnOnce(&mut Self)) {
+        self.items.push(name);
+        walk(self);
+        let _left = self.items.pop();
     }
 
     /// The line a byte offset sits on.
@@ -451,6 +466,7 @@ impl<'a> Walker<'a> {
             replacement: edit.replacement,
             source_digest: self.digest.to_owned(),
         };
+        let item = self.item_path();
         let hint = SiteHint {
             form: site.form,
             site: site.span,
@@ -467,6 +483,7 @@ impl<'a> Walker<'a> {
         self.found.push(Found {
             candidate,
             position,
+            item,
             hint,
             branch,
             probe: edit.probe,
@@ -651,27 +668,38 @@ impl<'a> Walker<'a> {
         match item {
             Item::Fn(f) => {
                 let start = self.allow_offset(Some(&f.vis), &f.sig);
-                self.walk_fn(&f.sig, &f.block, start);
+                let name = f.sig.ident.to_string();
+                self.within_item(name, |walker| walker.walk_fn(&f.sig, &f.block, start));
             }
             Item::Impl(i) => {
-                for member in &i.items {
-                    self.walk_impl_item(member);
-                }
+                self.within_item(implemented(i), |walker| {
+                    for member in &i.items {
+                        walker.walk_impl_item(member);
+                    }
+                });
             }
             Item::Trait(t) => {
-                for member in &t.items {
-                    self.walk_trait_item(member);
-                }
+                self.within_item(t.ident.to_string(), |walker| {
+                    for member in &t.items {
+                        walker.walk_trait_item(member);
+                    }
+                });
             }
             Item::Mod(m) => {
                 if let Some((_, items)) = &m.content {
                     self.mod_depth = self.mod_depth.saturating_add(1);
-                    self.walk_items(items);
+                    self.within_item(m.ident.to_string(), |walker| walker.walk_items(items));
                     self.mod_depth = self.mod_depth.saturating_sub(1);
                 }
             }
-            Item::Const(c) => self.walk_const_expr(&c.expr),
-            Item::Static(s) => self.walk_const_expr(&s.expr),
+            Item::Const(c) => {
+                let name = c.ident.to_string();
+                self.within_item(name, |walker| walker.walk_const_expr(&c.expr));
+            }
+            Item::Static(s) => {
+                let name = s.ident.to_string();
+                self.within_item(name, |walker| walker.walk_const_expr(&s.expr));
+            }
             Item::Enum(e) => {
                 for variant in &e.variants {
                     if let Some((_, discriminant)) = &variant.discriminant {
@@ -688,10 +716,18 @@ impl<'a> Walker<'a> {
         match member {
             ImplItem::Fn(f) => {
                 let start = self.allow_offset(Some(&f.vis), &f.sig);
-                self.maybe_suppressed(&f.attrs, |walker| walker.walk_fn(&f.sig, &f.block, start));
+                let name = f.sig.ident.to_string();
+                self.within_item(name, |walker| {
+                    walker.maybe_suppressed(&f.attrs, |walker| {
+                        walker.walk_fn(&f.sig, &f.block, start);
+                    });
+                });
             }
             ImplItem::Const(c) => {
-                self.maybe_suppressed(&c.attrs, |walker| walker.walk_const_expr(&c.expr));
+                let name = c.ident.to_string();
+                self.within_item(name, |walker| {
+                    walker.maybe_suppressed(&c.attrs, |walker| walker.walk_const_expr(&c.expr));
+                });
             }
             ImplItem::Macro(m) => self.macro_site(&m.mac),
             _ => {}
@@ -703,12 +739,20 @@ impl<'a> Walker<'a> {
             TraitItem::Fn(f) => {
                 if let Some(block) = &f.default {
                     let start = self.allow_offset(None, &f.sig);
-                    self.maybe_suppressed(&f.attrs, |walker| walker.walk_fn(&f.sig, block, start));
+                    let name = f.sig.ident.to_string();
+                    self.within_item(name, |walker| {
+                        walker.maybe_suppressed(&f.attrs, |walker| {
+                            walker.walk_fn(&f.sig, block, start);
+                        });
+                    });
                 }
             }
             TraitItem::Const(c) => {
                 if let Some((_, expr)) = &c.default {
-                    self.maybe_suppressed(&c.attrs, |walker| walker.walk_const_expr(expr));
+                    let name = c.ident.to_string();
+                    self.within_item(name, |walker| {
+                        walker.maybe_suppressed(&c.attrs, |walker| walker.walk_const_expr(expr));
+                    });
                 }
             }
             TraitItem::Macro(m) => self.macro_site(&m.mac),
@@ -1760,6 +1804,36 @@ const DEFAULTS: [&str; 26] = [
     "char", "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize",
     "f32", "f64", "str", "PathBuf",
 ];
+
+/// The name an `impl` block goes by: the type it is for, or `<Type as Trait>` when it implements one.
+fn implemented(block: &syn::ItemImpl) -> String {
+    let name = type_name(&block.self_ty);
+    match &block.trait_ {
+        Some((path, _)) => {
+            let trait_name = path
+                .segments
+                .last()
+                .map_or_else(String::new, |segment| segment.ident.to_string());
+            format!("<{name} as {trait_name}>")
+        }
+        None => name,
+    }
+}
+
+/// The last segment of a type's name, which is what a reader writes.
+fn type_name(ty: &Type) -> String {
+    match ty {
+        Type::Path(path) => path
+            .path
+            .segments
+            .last()
+            .map_or_else(String::new, |segment| segment.ident.to_string()),
+        Type::Paren(one) => type_name(&one.elem),
+        Type::Group(one) => type_name(&one.elem),
+        Type::Reference(one) => type_name(&one.elem),
+        _ => String::new(),
+    }
+}
 
 /// The guard an arm's pattern carries, when it carries one. In `syn` the guard is part of the pattern rather than of the arm.
 fn guard_of(pat: &Pat) -> Option<&Expr> {

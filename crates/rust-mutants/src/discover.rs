@@ -27,6 +27,44 @@ pub struct DiscoverOptions<'r> {
     pub exclude: Vec<Pattern>,
     /// The member packages to discover in, by name. Empty means every member. A package left out is not a skip: nothing was decided about it.
     pub packages: Vec<String>,
+    /// The places a reviewer configured the run to pass over, each with the reason they gave.
+    pub skips: Vec<SkipRule>,
+}
+
+/// One `[[mutation.skip]]` entry: where to pass over, and why.
+///
+/// A configured skip is the decision a `rust-mutants: skip` marker makes,
+/// written where the code cannot be edited or where one entry covers what a
+/// hundred markers would. Like a marker it names a reason, and one that hides
+/// nothing is reported rather than left to rot.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkipRule {
+    /// The paths it speaks about, as a glob against the workspace-relative path.
+    pub path: Pattern,
+    /// The lines it speaks about, inclusive and 1-based. `None` is every line of the file.
+    pub lines: Option<(u32, u32)>,
+    /// The item it speaks about, by a suffix of the item path. `None` is every item.
+    pub item: Option<String>,
+    /// Why its author wrote it.
+    pub reason: String,
+}
+
+impl SkipRule {
+    /// Whether this entry speaks about a place.
+    #[must_use]
+    pub fn covers(&self, path: &str, line: u32, item: &str) -> bool {
+        if !self.path.matches(path) {
+            return false;
+        }
+        if let Some((from, to)) = self.lines
+            && !(from..=to).contains(&line)
+        {
+            return false;
+        }
+        self.item
+            .as_ref()
+            .is_none_or(|wanted| item == wanted || item.ends_with(&format!("::{wanted}")))
+    }
 }
 
 /// One candidate plus the package it belongs to.
@@ -182,27 +220,13 @@ pub fn discover(
     trace: &Recorder,
 ) -> Result<Discovery, DiscoverError> {
     let root = input.root;
-    let members = selected_members(input.metadata, &options.packages)?;
-    let mut assigner = Assigner {
-        root,
-        units: input.units,
-        workspace_manifest: input
-            .metadata
-            .workspace_root
-            .join(crate::cargo::manifest::FILE_NAME),
-        assignments: BTreeMap::new(),
-        generated: BTreeMap::new(),
-    };
-    for package in &members {
-        for target in &package.targets {
-            assigner.assign(package, target)?;
-        }
-    }
+    let assigner = assigned(input, options)?;
     let assignments = assigner.assignments;
     let mut files = Vec::new();
     let mut candidates = Vec::new();
     let mut skips = Vec::new();
     let mut claims: Vec<SkipClaim> = Vec::new();
+    let mut configured = vec![false; options.skips.len()];
     let mut builder = Builder::new();
     for (path, package) in &assigner.generated {
         let report = whole_file(path, package, SkipReason::GeneratedOutsideWorkspace);
@@ -215,7 +239,7 @@ pub fn discover(
         .collect();
     let fragments = pasted_in(&read);
     for ((path, discovery), assignment) in read.into_iter().zip(assignments.values()) {
-        let discovery = match discovery {
+        let mut discovery = match discovery {
             Ok(discovery) => discovery,
             Err(error) if fragments.contains(path.as_str()) => {
                 let report = fragment(path, &assignment.package);
@@ -233,6 +257,9 @@ pub fn discover(
             Role::NoStd => Some(SkipReason::NoStdCrate),
             Role::TestOnly => Some(SkipReason::TestOnlyFile),
         };
+        if role.is_none() {
+            configure(&mut discovery, &options.skips, &mut configured);
+        }
         let report = report(&discovery, &assignment.package, role);
         trace.discover_file(record(&discovery, &report));
         if role.is_none() {
@@ -249,6 +276,7 @@ pub fn discover(
         files.push(report);
     }
     skips.sort();
+    configured_claims(&options.skips, &configured, trace, &mut claims);
     claims.sort_by(|one, other| (&one.path, one.line).cmp(&(&other.path, other.line)));
     let catalog = builder.build()?;
     Ok(Discovery {
@@ -258,6 +286,103 @@ pub fn discover(
         claims,
         catalog,
     })
+}
+
+/// Which unit compiled each file the run may mutate, and what each file is to the run.
+fn assigned<'a>(
+    input: &'a Input<'a>,
+    options: &DiscoverOptions<'_>,
+) -> Result<Assigner<'a>, DiscoverError> {
+    let members = selected_members(input.metadata, &options.packages)?;
+    let mut assigner = Assigner {
+        root: input.root,
+        units: input.units,
+        workspace_manifest: input
+            .metadata
+            .workspace_root
+            .join(crate::cargo::manifest::FILE_NAME),
+        assignments: BTreeMap::new(),
+        generated: BTreeMap::new(),
+    };
+    for package in &members {
+        for target in &package.targets {
+            assigner.assign(package, target)?;
+        }
+    }
+    Ok(assigner)
+}
+
+/// The configured entries, recorded and kept beside the markers.
+fn configured_claims(
+    rules: &[SkipRule],
+    matched: &[bool],
+    trace: &Recorder,
+    into: &mut Vec<SkipClaim>,
+) {
+    for (rule, matched) in rules.iter().zip(matched) {
+        let claim = SkipClaim {
+            path: rule.path.to_string(),
+            line: rule.lines.map_or(0, |(from, _)| from),
+            reason: rule.reason.clone(),
+            matched: *matched,
+        };
+        trace.skip_claim(SkipClaimRecord {
+            path: claim.path.clone(),
+            line: claim.line,
+            reason: claim.reason.clone(),
+            matched: claim.matched,
+        });
+        into.push(claim);
+    }
+}
+
+/// Takes out of one file's walk what a `[[mutation.skip]]` entry speaks about.
+///
+/// A configured skip is applied where the walk's own decisions are, so every
+/// tally, every decision and every report row says the same thing about the
+/// file. Which entries hid something is what the run reports back: an entry
+/// that hides nothing is a claim about code that has moved or gone.
+fn configure(discovery: &mut FileDiscovery, rules: &[SkipRule], matched: &mut [bool]) {
+    if rules.is_empty() {
+        return;
+    }
+    let mut hidden = 0u32;
+    let path = discovery.path.clone();
+    discovery.candidates.retain(|found| {
+        let Some(at) = rules
+            .iter()
+            .position(|rule| rule.covers(&path, found.position.line, &found.item))
+        else {
+            return true;
+        };
+        if let Some(claimed) = matched.get_mut(at) {
+            *claimed = true;
+        }
+        hidden = hidden.saturating_add(1);
+        for decision in &mut discovery.decisions {
+            if decision.offset == found.candidate.span.start
+                && decision.rule == found.candidate.rule.name
+            {
+                decision.form = None;
+                decision.skip = Some(SkipReason::Configured);
+                decision.note = Some(
+                    rules
+                        .get(at)
+                        .map_or_else(String::new, |rule| rule.reason.clone()),
+                );
+            }
+        }
+        false
+    });
+    if hidden == 0 {
+        return;
+    }
+    discovery.skips.push(Skip {
+        reason: SkipReason::Configured,
+        path,
+        count: hidden,
+    });
+    discovery.skips.sort_by_key(|skip| skip.reason);
 }
 
 /// The markers of one file the run measures, recorded and kept.

@@ -77,6 +77,8 @@ pub struct Found {
     pub candidate: Candidate,
     /// Where the edit starts.
     pub position: Position,
+    /// The item the edit sits in, as a reader writes it: `mod::path::Type::method`, or `<Type as Trait>::method`. Empty at the top level of a file.
+    pub item: String,
     /// The rewrite site.
     pub hint: SiteHint,
     /// What a branch proof about this edit would rest on, once the compiler has vouched for its witnesses. `None` where the syntax supports no proof.
@@ -124,11 +126,13 @@ pub enum SkipReason {
     LoopValue,
     /// A marker in the source says to pass this place over, and why.
     Annotated,
+    /// A `[[mutation.skip]]` entry in the configuration says to pass this place over, and why.
+    Configured,
 }
 
 impl SkipReason {
     /// Every reason, in rank order.
-    pub const ALL: [Self; 17] = [
+    pub const ALL: [Self; 18] = [
         Self::ConstContext,
         Self::MacroInvocation,
         Self::CfgAttribute,
@@ -146,6 +150,7 @@ impl SkipReason {
         Self::UnstatedReturnType,
         Self::LoopValue,
         Self::Annotated,
+        Self::Configured,
     ];
 
     /// The kebab-case name used in reports and on the command line.
@@ -169,6 +174,7 @@ impl SkipReason {
             Self::UnstatedReturnType => "unstated-return-type",
             Self::LoopValue => "loop-value",
             Self::Annotated => "annotated",
+            Self::Configured => "configured",
         }
     }
 
@@ -222,6 +228,9 @@ impl SkipReason {
             }
             Self::Annotated => {
                 "a rust-mutants: skip marker in the source says to pass this place over, and the reason its author wrote is reported beside it"
+            }
+            Self::Configured => {
+                "a [[mutation.skip]] entry in the configuration says to pass this place over, and the reason its author wrote is reported beside it"
             }
         }
     }

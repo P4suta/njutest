@@ -7,12 +7,13 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use rust_mutants::discover::SkipRule;
 use rust_mutants::error::{self, ErrorCode};
 use rust_mutants::glob::Pattern;
 use rust_mutants::outcome::Outcome;
 use rust_mutants::rule::{Registry, Tier};
 use rust_mutants::run::Expectation;
-use rust_mutants::session::Timeout;
+use rust_mutants::session::{Locator, Timeout};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// The file a run reads, in the workspace root.
@@ -165,7 +166,133 @@ pub struct Mutation {
     /// renders the two identically, which is a fact about the binaries.
     pub equivalence: bool,
     /// The mutants a reviewer declared equivalent, with the outcome the run must confirm.
-    pub expect: Vec<Expectation>,
+    pub expect: Vec<Expect>,
+    /// The places a reviewer decided are not worth measuring, each with the reason.
+    pub skip: Vec<Skip>,
+}
+
+/// One `[[mutation.expect]]` entry, as a person writes it.
+///
+/// The mutant is named either by identity, which is exact and changes when
+/// anything in the file does, or by a locator — path, item, rule, and the
+/// bytes the edit replaces — which survives an edit elsewhere in the file.
+/// Never both.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Expect {
+    /// The identity, or a prefix that names exactly one mutant.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    /// The workspace-relative path the mutation is in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    /// The item the mutation is in, by a suffix of its path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub item: Option<String>,
+    /// The rule that produced it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rule: Option<String>,
+    /// The bytes the edit replaces, as text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original: Option<String>,
+    /// The line, as a hint that separates two mutations the rest would name together.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line: Option<u32>,
+    /// Why the outcome is what it is. Required.
+    pub reason: String,
+    /// The outcome the run must confirm.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outcome: Option<String>,
+}
+
+impl Expect {
+    /// How the claim is written back to a reader.
+    #[must_use]
+    pub fn name(&self) -> String {
+        self.id.clone().unwrap_or_else(|| {
+            format!(
+                "{} {} {} {:?}",
+                self.path.as_deref().unwrap_or_default(),
+                self.item.as_deref().unwrap_or_default(),
+                self.rule.as_deref().unwrap_or_default(),
+                self.original.as_deref().unwrap_or_default()
+            )
+        })
+    }
+
+    /// Whether the entry names a mutant by where it is rather than by identity.
+    #[must_use]
+    pub const fn is_locator(&self) -> bool {
+        self.path.is_some()
+            || self.item.is_some()
+            || self.rule.is_some()
+            || self.original.is_some()
+            || self.line.is_some()
+    }
+
+    /// The outcome claimed, which is `survived` when the entry does not say.
+    #[must_use]
+    pub fn outcome(&self) -> Option<Outcome> {
+        self.outcome
+            .as_deref()
+            .map_or(Some(Outcome::Survived), Outcome::parse)
+    }
+
+    /// The claim as the engine reads it.
+    #[must_use]
+    pub fn expectation(&self) -> Expectation {
+        Expectation {
+            id: self.id.clone(),
+            locator: self.is_locator().then(|| Locator {
+                path: self.path.clone().unwrap_or_default(),
+                item: self.item.clone().unwrap_or_default(),
+                rule: self.rule.clone().unwrap_or_default(),
+                original: self.original.clone().unwrap_or_default(),
+                line: self.line,
+            }),
+            reason: self.reason.clone(),
+            outcome: self.outcome().unwrap_or(Outcome::Survived),
+        }
+    }
+}
+
+/// One `[[mutation.skip]]` entry, as a person writes it.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Skip {
+    /// The paths it speaks about, as a glob against the workspace-relative path.
+    pub path: String,
+    /// The lines it speaks about, as `from-to`, inclusive and 1-based. Only with a literal path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lines: Option<String>,
+    /// The item it speaks about, by a suffix of the item path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub item: Option<String>,
+    /// Why its author wrote it. Required.
+    pub reason: String,
+}
+
+impl Skip {
+    /// The range the entry names, when it names one.
+    #[must_use]
+    pub fn range(&self) -> Option<(u32, u32)> {
+        let text = self.lines.as_deref()?;
+        let (from, to) = text.split_once('-')?;
+        Some((from.trim().parse().ok()?, to.trim().parse().ok()?))
+    }
+
+    /// The entry as the engine reads it.
+    ///
+    /// # Errors
+    /// Returns the pattern's own failure when the path is not a glob.
+    pub fn rule(&self) -> Result<SkipRule, rust_mutants::glob::GlobError> {
+        Ok(SkipRule {
+            path: Pattern::compile(&self.path)?,
+            lines: self.range(),
+            item: self.item.clone(),
+            reason: self.reason.clone(),
+        })
+    }
 }
 
 impl Default for Mutation {
@@ -180,6 +307,7 @@ impl Default for Mutation {
             probe: false,
             equivalence: false,
             expect: Vec::new(),
+            skip: Vec::new(),
         }
     }
 }
@@ -390,36 +518,124 @@ impl Config {
         &self,
         invalid: &impl Fn(String) -> ConfigError,
     ) -> Result<(), ConfigError> {
-        let mut seen: BTreeSet<&str> = BTreeSet::new();
+        let mut seen: BTreeSet<String> = BTreeSet::new();
         for expectation in &self.mutation.expect {
-            if expectation.id.trim().is_empty() {
-                return Err(invalid(
-                    "an expectation names no mutant; write the identity or a prefix of it"
-                        .to_owned(),
-                ));
+            let name = expectation.name();
+            match (&expectation.id, expectation.is_locator()) {
+                (Some(id), false) if !id.trim().is_empty() => {}
+                (Some(_), false) => {
+                    return Err(invalid(
+                        "an expectation names no mutant; write the identity or a prefix of it"
+                            .to_owned(),
+                    ));
+                }
+                (Some(_), true) => {
+                    return Err(invalid(format!(
+                        "the expectation for {name:?} names a mutant twice, by identity and by \
+                         where it is; a claim names it once"
+                    )));
+                }
+                (None, true) => {
+                    for (field, value) in [
+                        ("path", &expectation.path),
+                        ("item", &expectation.item),
+                        ("rule", &expectation.rule),
+                        ("original", &expectation.original),
+                    ] {
+                        if value.as_ref().is_none_or(|text| text.trim().is_empty()) {
+                            return Err(invalid(format!(
+                                "the expectation for {name:?} names no {field}; a locator is a \
+                                 path, an item, a rule and the bytes the edit replaces"
+                            )));
+                        }
+                    }
+                }
+                (None, false) => {
+                    return Err(invalid(
+                        "an expectation names no mutant; write the identity or a prefix of it, \
+                         or the path, item, rule and original of one"
+                            .to_owned(),
+                    ));
+                }
             }
             if expectation.reason.trim().is_empty() {
                 return Err(invalid(format!(
-                    "the expectation for {:?} has a blank reason, which is a suppression rather \
-                     than a claim a report can audit",
-                    expectation.id
+                    "the expectation for {name:?} has a blank reason, which is a suppression \
+                     rather than a claim a report can audit"
                 )));
             }
+            let Some(outcome) = expectation.outcome() else {
+                return Err(invalid(format!(
+                    "the expectation for {name:?} expects {:?}, which is not an outcome; write \
+                     survived, killed, or timed_out",
+                    expectation.outcome.as_deref().unwrap_or_default()
+                )));
+            };
             if !matches!(
-                expectation.outcome,
+                outcome,
                 Outcome::Survived | Outcome::Killed | Outcome::TimedOut
             ) {
                 return Err(invalid(format!(
-                    "the expectation for {:?} expects {}, which is not an outcome a run confirms; \
-                     write survived, killed, or timed_out",
-                    expectation.id,
-                    expectation.outcome.name()
+                    "the expectation for {name:?} expects {}, which is not an outcome a run \
+                     confirms; write survived, killed, or timed_out",
+                    outcome.name()
                 )));
             }
-            if !seen.insert(expectation.id.as_str()) {
+            if !seen.insert(name.clone()) {
                 return Err(invalid(format!(
-                    "two expectations name {:?}; a mutant has one reason",
-                    expectation.id
+                    "two expectations name {name:?}; a mutant has one reason"
+                )));
+            }
+        }
+        self.check_skips(invalid)
+    }
+
+    fn check_skips(&self, invalid: &impl Fn(String) -> ConfigError) -> Result<(), ConfigError> {
+        for skip in &self.mutation.skip {
+            if skip.path.trim().is_empty() {
+                return Err(invalid(
+                    "a skip names no path; write a glob against the workspace-relative path"
+                        .to_owned(),
+                ));
+            }
+            if skip.reason.trim().is_empty() {
+                return Err(invalid(format!(
+                    "the skip for {:?} has a blank reason, which is a suppression rather than a \
+                     decision a reviewer can read",
+                    skip.path
+                )));
+            }
+            if skip.lines.is_some() && skip.item.is_some() {
+                return Err(invalid(format!(
+                    "the skip for {:?} says where twice, by lines and by item; a skip says it once",
+                    skip.path
+                )));
+            }
+            if let Some(text) = &skip.lines {
+                if skip.path.contains(['*', '?', '[']) {
+                    return Err(invalid(format!(
+                        "the skip for {:?} names lines of a glob; line forty of every file it \
+                         matches is not a place anybody meant",
+                        skip.path
+                    )));
+                }
+                let Some((from, to)) = skip.range() else {
+                    return Err(invalid(format!(
+                        "the skip for {:?} writes its lines as {text:?}; write them as from-to",
+                        skip.path
+                    )));
+                };
+                if from == 0 || to < from {
+                    return Err(invalid(format!(
+                        "the skip for {:?} names lines {from} to {to}, which describes nothing",
+                        skip.path
+                    )));
+                }
+            }
+            if let Err(error) = skip.rule() {
+                return Err(invalid(format!(
+                    "the skip for {:?} is not a pattern: {error}",
+                    skip.path
                 )));
             }
         }
@@ -582,6 +798,25 @@ version = 1
 # id = \"\"                        # identity, or a prefix that names exactly one
 # reason = \"\"                    # required
 # outcome = \"survived\"           # survived | killed | timed_out
+
+# The same claim, addressed by where the mutation is rather than by an
+# identity the next edit to the file will change. Never both.
+# [[mutation.expect]]
+# path = \"src/lib.rs\"
+# item = \"clamp\"                 # a suffix of the item path is enough
+# rule = \"le-to-lt\"
+# original = \"<=\"                # the bytes the edit replaces
+# line = 42                       # a hint, when the rest names more than one
+# reason = \"\"                    # required
+# outcome = \"survived\"           # survived | killed | timed_out
+
+# A place a reviewer decided is not worth measuring. The same decision a
+# rust-mutants: skip comment makes, written where the code cannot be edited.
+# [[mutation.skip]]
+# path = \"src/scanner/**\"        # glob against the workspace-relative path
+# lines = \"40-58\"                # inclusive; only with a literal path
+# item = \"Scanner::skip_ws\"      # a suffix of the item path; not with lines
+# reason = \"\"                    # required
 
 [execution]
 # offline = false

@@ -128,10 +128,10 @@ keep = 3
     );
     assert!(!config.mutation.verify);
     assert_eq!(config.mutation.expect.len(), 1);
-    assert_eq!(config.mutation.expect[0].id, "b8e3f78d");
+    assert_eq!(config.mutation.expect[0].id.as_deref(), Some("b8e3f78d"));
     assert_eq!(
-        config.mutation.expect[0].outcome,
-        rust_mutants::outcome::Outcome::Survived
+        config.mutation.expect[0].outcome(),
+        Some(rust_mutants::outcome::Outcome::Survived)
     );
     assert!(config.execution.offline && config.execution.locked);
     assert_eq!(config.execution.test_binary_args, ["--test-threads=1"]);
@@ -323,5 +323,88 @@ jobs = 2
             jobs: Some(2),
         },
         "an empty name and a zero are what nobody said, not what somebody asked for"
+    );
+}
+
+#[test]
+fn a_configured_skip_names_a_path_a_reason_and_at_most_one_of_lines_or_item() {
+    let good = parse(
+        "version = 1\n[[mutation.skip]]\npath = \"src/scanner/**\"\nitem = \"Scanner::skip_ws\"\nreason = \"a hand-tuned loop; a mutant here is a timeout, not a finding\"\n",
+    )
+    .expect("a skip that names a path, an item and a reason");
+    assert_eq!(good.mutation.skip.len(), 1);
+    assert_eq!(
+        good.mutation.skip[0].item.as_deref(),
+        Some("Scanner::skip_ws")
+    );
+
+    assert_eq!(
+        kind("version = 1\n[[mutation.skip]]\npath = \"src/lib.rs\"\nreason = \"\"\n"),
+        ConfigErrorKind::Invalid,
+        "a skip nobody explained is one nobody can review"
+    );
+    assert_eq!(
+        kind(
+            "version = 1\n[[mutation.skip]]\npath = \"src/lib.rs\"\nlines = \"40-58\"\nitem = \"f\"\nreason = \"why\"\n"
+        ),
+        ConfigErrorKind::Invalid,
+        "lines and an item are two ways to say where, and a skip says it once"
+    );
+    assert_eq!(
+        kind(
+            "version = 1\n[[mutation.skip]]\npath = \"src/lib.rs\"\nlines = \"58-40\"\nreason = \"why\"\n"
+        ),
+        ConfigErrorKind::Invalid,
+        "a range that ends before it starts describes nothing"
+    );
+}
+
+#[test]
+fn lines_requires_a_literal_path() {
+    assert_eq!(
+        kind(
+            "version = 1\n[[mutation.skip]]\npath = \"src/**\"\nlines = \"40-58\"\nreason = \"why\"\n"
+        ),
+        ConfigErrorKind::Invalid,
+        "line forty of every file a glob matches is not a place anybody meant"
+    );
+    let good = parse(
+        "version = 1\n[[mutation.skip]]\npath = \"src/lib.rs\"\nlines = \"40-58\"\nreason = \"why\"\n",
+    )
+    .expect("a literal path with a range");
+    assert_eq!(good.mutation.skip[0].lines.as_deref(), Some("40-58"));
+}
+
+#[test]
+fn an_expectation_is_addressed_by_id_or_by_locator_and_never_both() {
+    let by_id = parse("version = 1\n[[mutation.expect]]\nid = \"abc\"\nreason = \"why\"\n")
+        .expect("an expectation by identity");
+    assert_eq!(by_id.mutation.expect[0].id.as_deref(), Some("abc"));
+    assert!(!by_id.mutation.expect[0].is_locator());
+
+    let by_locator = parse(
+        "version = 1\n[[mutation.expect]]\npath = \"src/lib.rs\"\nitem = \"clamp\"\nrule = \"le-to-lt\"\noriginal = \"<=\"\nline = 42\nreason = \"the bound is equivalent under the invariant the type carries\"\n",
+    )
+    .expect("an expectation by locator");
+    let locator = by_locator.mutation.expect[0]
+        .expectation()
+        .locator
+        .expect("a locator");
+    assert_eq!(locator.item, "clamp");
+    assert_eq!(locator.line, Some(42));
+
+    assert_eq!(
+        kind(
+            "version = 1\n[[mutation.expect]]\nid = \"abc\"\npath = \"src/lib.rs\"\nitem = \"clamp\"\nrule = \"le-to-lt\"\noriginal = \"<=\"\nreason = \"why\"\n"
+        ),
+        ConfigErrorKind::Invalid,
+        "an identity and a locator are two ways to name one mutant, and a claim names it once"
+    );
+    assert_eq!(
+        kind(
+            "version = 1\n[[mutation.expect]]\npath = \"src/lib.rs\"\nitem = \"clamp\"\nreason = \"why\"\n"
+        ),
+        ConfigErrorKind::Invalid,
+        "a locator that names no rule and no original names a place, not a mutation"
     );
 }

@@ -155,6 +155,7 @@ fn prepare_fixture(name: &str) -> CargoScripted {
             include: Vec::new(),
             exclude: Vec::new(),
             packages: Vec::new(),
+            skips: Vec::new(),
         },
         &trace,
     )

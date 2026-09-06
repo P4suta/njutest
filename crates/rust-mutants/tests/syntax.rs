@@ -304,6 +304,7 @@ fn skip_reasons_are_named_explained_and_ranked() {
             "unstated-return-type",
             "loop-value",
             "annotated",
+            "configured",
         ]
     );
     for reason in SkipReason::ALL {
@@ -868,5 +869,31 @@ fn a_marker_over_cfg_code_is_matched_by_the_sites_the_walker_still_sees() {
     assert!(
         d.annotations[0].matched,
         "the walker sees the sites whatever the platform, so the answer does not change with it"
+    );
+}
+
+#[test]
+fn every_candidate_names_the_item_it_sits_in() {
+    let src = "pub mod inner {\n    pub struct Counter {\n        pub n: u32,\n    }\n    impl Counter {\n        pub fn bump(&mut self) -> bool {\n            self.n += 1;\n            self.n > 10\n        }\n    }\n    impl std::fmt::Debug for Counter {\n        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n            write!(f, \"{}\", self.n + 1)\n        }\n    }\n}\npub fn free(a: i32) -> i32 {\n    a + 1\n}\n";
+    let d = discover(src);
+    assert_coherent(src, &d);
+    let items: Vec<(&str, &str)> = d
+        .candidates
+        .iter()
+        .map(|found| (found.candidate.rule.name, found.item.as_str()))
+        .collect();
+    assert!(
+        items.contains(&("gt-to-ge", "inner::Counter::bump")),
+        "a method is named by its module, its type and itself: {items:?}"
+    );
+    assert!(
+        items.contains(&("return-default", "free")),
+        "a free function is named by itself: {items:?}"
+    );
+    assert!(
+        items
+            .iter()
+            .all(|(_, item)| !item.is_empty() && !item.starts_with("::")),
+        "nothing is nameless and nothing starts with a separator: {items:?}"
     );
 }

@@ -11,8 +11,7 @@ use crate::catalog::Mutant;
 use crate::discover::SkipClaim;
 use crate::outcome::Outcome;
 use crate::runner::Cancel;
-use crate::session::{Request, Session};
-use serde::{Deserialize, Serialize};
+use crate::session::{Locator, Request, Session};
 
 /// The machine: shared while a run measures several mutations at once, and given to one of them when a budget expires.
 ///
@@ -44,44 +43,37 @@ impl Quiet {
     }
 }
 
-/// One mutant whose outcome a reviewer declared in advance, so the run verifies the claim instead of hiding the mutant.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
+/// One mutant a reviewer declared, with the outcome the run must confirm.
+///
+/// A claim names its mutant either by identity, which is exact and moves when
+/// anything in the file does, or by a locator, which says where the mutation
+/// is and what it edits and survives an edit elsewhere. Never both: two ways
+/// of naming one thing are two chances to name different things.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Expectation {
-    /// The mutant, by identity or by a prefix that names exactly one.
-    pub id: String,
+    /// The mutant by identity or by a prefix that names exactly one.
+    pub id: Option<String>,
+    /// The mutant by where it is and what it edits.
+    pub locator: Option<Locator>,
     /// Why the outcome is what it is. Required: an expectation without a reason is a suppression, and a report cannot audit one.
     pub reason: String,
     /// The outcome the run must confirm.
-    #[serde(
-        default = "expected_by_default",
-        deserialize_with = "outcome",
-        serialize_with = "outcome_name"
-    )]
     pub outcome: Outcome,
 }
 
-const fn expected_by_default() -> Outcome {
-    Outcome::Survived
-}
-
-/// An outcome, as a person writes it.
-fn outcome<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Outcome, D::Error> {
-    let text = String::deserialize(deserializer)?;
-    Outcome::parse(&text).ok_or_else(|| {
-        serde::de::Error::custom(format!(
-            "{text:?} is not an outcome; write {}",
-            Outcome::ALL.map(Outcome::name).join(", ")
-        ))
-    })
-}
-
-#[expect(
-    clippy::trivially_copy_pass_by_ref,
-    reason = "serde's serialize_with hands the field by reference, whatever its shape"
-)]
-fn outcome_name<S: serde::Serializer>(value: &Outcome, serializer: S) -> Result<S::Ok, S::Error> {
-    serializer.serialize_str(value.name())
+impl Expectation {
+    /// How the claim is written back to a reader.
+    #[must_use]
+    pub fn name(&self) -> String {
+        match (&self.id, &self.locator) {
+            (Some(id), _) => id.clone(),
+            (None, Some(locator)) => format!(
+                "{} {} {} {:?}",
+                locator.path, locator.item, locator.rule, locator.original
+            ),
+            (None, None) => String::new(),
+        }
+    }
 }
 
 /// The exit code of a run that established detection for everything it executed.
@@ -141,6 +133,13 @@ pub struct Judged {
 pub enum Standing {
     /// The run confirmed it.
     Met,
+    /// The run confirmed it, and the code it is about has moved since it was written.
+    Moved {
+        /// The line the claim named.
+        from: u32,
+        /// The line the mutation is on now.
+        to: u32,
+    },
     /// The run contradicted it.
     Stale {
         /// What the run established instead.
@@ -156,8 +155,10 @@ pub enum Standing {
 /// One declared expectation, as the run left it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Verified {
-    /// The identity or prefix the file wrote.
+    /// The identity, prefix, or locator the file wrote, as a reader reads it.
     pub id: String,
+    /// The locator the file wrote, when it wrote one.
+    pub locator: Option<Locator>,
     /// Why the reviewer claims the outcome.
     pub reason: String,
     /// The outcome claimed.
@@ -384,7 +385,7 @@ impl Run {
         }
         for expectation in &self.expectations {
             match &expectation.standing {
-                Standing::Met => {}
+                Standing::Met | Standing::Moved { .. } => {}
                 Standing::Stale { actual } => findings.push(Finding {
                     kind: FindingKind::StaleExpectation,
                     mutant: expectation.mutant.clone(),
@@ -637,6 +638,28 @@ pub fn run<O: Observer>(
         shard: options.shard,
         duration: started.elapsed(),
     })
+}
+
+/// The mutant a claim names, and where it has moved to since the claim was written.
+fn addressed<'s>(
+    session: &'s Session,
+    expectation: &Expectation,
+) -> Result<(&'s Mutant, Option<Standing>), String> {
+    if let Some(id) = &expectation.id {
+        return session
+            .resolve(id)
+            .map(|mutant| (mutant, None))
+            .map_err(|error| error.to_string());
+    }
+    let Some(locator) = &expectation.locator else {
+        return Err("the claim names no mutant".to_owned());
+    };
+    let mutant = session.locate(locator).map_err(|error| error.to_string())?;
+    let moved = locator.line.and_then(|from| {
+        let to = session.position(mutant)?.line;
+        (to != from).then_some(Standing::Moved { from, to })
+    });
+    Ok((mutant, moved))
 }
 
 /// Asks the compiler whether each survivor's mutation is one it renders at all.
@@ -1103,15 +1126,10 @@ pub fn verify(
     expectations
         .iter()
         .map(|expectation| {
-            let resolved = session.resolve(&expectation.id);
+            let resolved = addressed(session, expectation);
             let (mutant, standing) = match resolved {
-                Err(error) => (
-                    None,
-                    Standing::Unmatched {
-                        why: error.to_string(),
-                    },
-                ),
-                Ok(mutant) => {
+                Err(why) => (None, Standing::Unmatched { why }),
+                Ok((mutant, moved)) => {
                     let id = mutant.id.clone();
                     let found = judged.iter_mut().find(|one| one.id == id);
                     match found {
@@ -1124,7 +1142,7 @@ pub fn verify(
                         ),
                         Some(one) if one.outcome == expectation.outcome => {
                             one.expected = true;
-                            (Some(id), Standing::Met)
+                            (Some(id), moved.unwrap_or(Standing::Met))
                         }
                         Some(one) => (
                             Some(id),
@@ -1136,7 +1154,8 @@ pub fn verify(
                 }
             };
             Verified {
-                id: expectation.id.clone(),
+                id: expectation.name(),
+                locator: expectation.locator.clone(),
                 reason: expectation.reason.clone(),
                 outcome: expectation.outcome,
                 mutant,

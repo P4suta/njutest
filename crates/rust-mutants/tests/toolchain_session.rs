@@ -702,3 +702,57 @@ fn a_session_describes_itself_and_hands_out_its_sources() {
     assert_eq!(session.source("src/nothing.rs"), None);
     session.close().expect("close");
 }
+
+#[test]
+fn a_mutant_is_located_by_its_locator_and_a_moved_line_is_reported_not_guessed() {
+    let fixture = Fixture::copy("fixture-simple");
+    let session = prepare(&fixture);
+
+    let locator = rust_mutants::session::Locator {
+        path: "src/lib.rs".to_owned(),
+        item: "max".to_owned(),
+        rule: "gt-to-ge".to_owned(),
+        original: ">".to_owned(),
+        line: None,
+    };
+    let found = session.locate(&locator).expect("the one mutant it names");
+    assert_eq!(found.candidate.rule.name, "gt-to-ge");
+    assert_eq!(
+        session.item_of(found.index),
+        Some("max"),
+        "a locator names the item a reader would name"
+    );
+
+    let several = rust_mutants::session::Locator {
+        item: "max".to_owned(),
+        rule: "return-default".to_owned(),
+        original: "a".to_owned(),
+        ..locator.clone()
+    };
+    assert!(
+        session.locate(&several).is_ok(),
+        "one branch of the returned if is one mutation"
+    );
+
+    let elsewhere = rust_mutants::session::Locator {
+        item: "no_such_function".to_owned(),
+        ..locator.clone()
+    };
+    assert!(
+        matches!(
+            session.locate(&elsewhere),
+            Err(rust_mutants::session::LocateError::Nothing)
+        ),
+        "a locator that names nothing says so rather than guessing"
+    );
+
+    let moved = rust_mutants::session::Locator {
+        line: Some(1),
+        ..locator
+    };
+    assert!(
+        session.locate(&moved).is_ok(),
+        "the line is a hint that separates two mutations, never the thing that identifies one"
+    );
+    session.close().expect("the session closes");
+}
