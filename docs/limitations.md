@@ -57,6 +57,11 @@ below is stated fail-closed.
   edition 2015 — is `no-std-crate`.
 - A file another file pastes in with `include!` where an expression goes is
   `included-expression`: it is a fragment rather than a program.
+- A procedural macro's own unit tests are measured like any others; what it
+  expands to is not (`proc-macro-expansion-not-measured`). A macro decides that
+  during the build and a mutation is activated for a test process, so the two
+  never meet, and cargo does not rebuild for an environment variable. A
+  mutation only the expansion would change is reported as surviving.
 - Coverage routing says nothing about a place its export never instrumented,
   and such a mutant is run everywhere. A tree that configures its own
   `rustflags` is not routed by coverage at all

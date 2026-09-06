@@ -289,6 +289,7 @@ impl Session {
         let context = Context {
             base_env: &self.workspace.base_env,
             cargo: Some(self.workspace.toolchain.cargo()),
+            sysroot: self.workspace.toolchain.sysroot(),
             active: Some((mutant.id.as_str(), self.catalog.digest())),
             probe: None,
             profile: None,
@@ -336,6 +337,7 @@ impl Session {
         let context = Context {
             base_env: &self.workspace.base_env,
             cargo: Some(self.workspace.toolchain.cargo()),
+            sysroot: self.workspace.toolchain.sysroot(),
             active: None,
             probe: None,
             profile: None,
@@ -747,6 +749,7 @@ fn verify(
     let context = Context {
         base_env: &workspace.base_env,
         cargo: Some(workspace.toolchain.cargo()),
+        sysroot: workspace.toolchain.sysroot(),
         active: None,
         probe: None,
         profile: None,

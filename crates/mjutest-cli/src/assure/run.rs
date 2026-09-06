@@ -1266,6 +1266,12 @@ fn limitation_detail(name: &str) -> String {
             "a library's documentation is run as one target and carries no coverage, so no \
              mutation is routed to it and none is answered by it"
         }
+        baseline::PROC_MACRO_LIMITATION => {
+            "a procedural macro decides what it expands to during the build, and a mutation \
+             is activated for a test process: the two never meet, and cargo does not rebuild \
+             for an environment variable, so what the macro emits is not measured and is not \
+             claimed. Its own unit tests are measured like any others"
+        }
         baseline::WHOLE_BINARY_LIMITATION => {
             "a test binary brings its own harness, so it cannot be asked for one of its \
              tests and is measured whole"

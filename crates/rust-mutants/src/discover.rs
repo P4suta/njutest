@@ -136,7 +136,6 @@ enum Role {
     Mutable,
     NoStd,
     TestOnly,
-    ProcMacro,
 }
 
 /// One file the units named, with the package and the role it was given.
@@ -205,7 +204,6 @@ pub fn discover(
             Role::Mutable => None,
             Role::NoStd => Some(SkipReason::NoStdCrate),
             Role::TestOnly => Some(SkipReason::TestOnlyFile),
-            Role::ProcMacro => Some(SkipReason::ProcMacroCrate),
         };
         let report = report(&discovery, &assignment.package, role);
         trace.discover_file(record(&discovery, &report));
@@ -316,9 +314,7 @@ impl Assigner<'_> {
         for unit in &compiled {
             for source in &unit.sources {
                 let path = relative(self.root, source)?;
-                let role = if target.is_proc_macro() {
-                    Role::ProcMacro
-                } else if no_std {
+                let role = if no_std {
                     Role::NoStd
                 } else if unit.test && !non_test.contains(&source.as_path()) {
                     Role::TestOnly

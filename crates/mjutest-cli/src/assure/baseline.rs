@@ -260,6 +260,13 @@ fn select(
             .limitations
             .push(WHOLE_BINARY_LIMITATION.to_owned());
     }
+    if built
+        .units
+        .iter()
+        .any(|unit| unit.kind == UnitKind::ProcMacro)
+    {
+        selected.limitations.push(PROC_MACRO_LIMITATION.to_owned());
+    }
     selected
         .targets
         .extend(documentation(built, toolchain, root));
@@ -284,6 +291,9 @@ pub const DOCTESTS_LIMITATION: &str = "doctests-not-routed";
 
 /// The name a run states when a test binary brings its own harness, which makes the whole binary one target rather than one target per test.
 pub const WHOLE_BINARY_LIMITATION: &str = "custom-harness-whole-binary";
+
+/// The name a run states when a procedural macro is in scope: what the macro expands to is decided during the build and this run does not measure it.
+pub const PROC_MACRO_LIMITATION: &str = "proc-macro-expansion-not-measured";
 
 /// One target for each library the build produced: cargo compiles and runs everything that library documents, in one process.
 ///

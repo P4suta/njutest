@@ -121,7 +121,6 @@
             "unsupported-site",
             "excluded",
             "test-only-file",
-            "proc-macro-crate",
             "no-std-crate",
             "included-expression"
           ]

@@ -123,3 +123,23 @@ measure a project the compiler is perfectly happy with.
 An `include!` whose argument is not a single string literal — `concat!` and
 `env!` around an `OUT_DIR` path, say — names a file this run cannot name, and a
 file it cannot name it says nothing about.
+
+## What a procedural macro tells a run
+
+A proc-macro crate's `--test` build is an ordinary executable: it links the
+crate as a library and runs its unit tests in a process of its own, so what
+those tests reach is measured exactly like anything else. Most of such a crate
+is helper functions, and they are now measured.
+
+The expansion is not. A macro decides what it expands to during the build, a
+mutation is activated for a test process, and the two never meet — and cargo's
+fingerprint does not include the activation variable, so changing it would not
+rebuild anything even if the timing worked. A mutation only the expansion would
+change is therefore reported as surviving, and
+`proc-macro-expansion-not-measured` says why rather than letting the reader
+read it as a gap in the tests.
+
+The test binary is built with `prefer-dynamic`, so starting it directly — which
+is what the engine does, never through `cargo test` — needs the toolchain's own
+library directories on the dynamic search path. The engine puts them there,
+from the sysroot rustc names as its own.

@@ -203,6 +203,7 @@ fn the_environment_is_the_base_plus_cargos_own_plus_the_activation() {
         &Context {
             base_env: &base,
             cargo: None,
+            sysroot: None,
             active: Some(("abc", "digest")),
             probe: None,
             profile: None,
@@ -249,6 +250,7 @@ fn the_environment_is_the_base_plus_cargos_own_plus_the_activation() {
         &Context {
             base_env: &base,
             cargo: None,
+            sysroot: None,
             active: None,
             probe: None,
             profile: None,
@@ -310,6 +312,7 @@ fn a_test_process_learns_which_cargo_built_it() {
         &Context {
             base_env: &[],
             cargo: Some(Path::new("/opt/toolchain/bin/cargo")),
+            sysroot: None,
             active: None,
             probe: None,
             profile: None,
@@ -332,6 +335,7 @@ fn a_test_process_learns_which_cargo_built_it() {
         &Context {
             base_env: &[],
             cargo: None,
+            sysroot: None,
             active: None,
             probe: None,
             profile: None,

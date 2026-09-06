@@ -98,8 +98,6 @@ pub enum SkipReason {
     Excluded,
     /// A file only a test unit compiles.
     TestOnlyFile,
-    /// A file of a `proc-macro` crate.
-    ProcMacroCrate,
     /// A file of a `#![no_std]` crate.
     NoStdCrate,
     /// A file another file pastes in at expression position, which is a fragment rather than a program.
@@ -108,7 +106,7 @@ pub enum SkipReason {
 
 impl SkipReason {
     /// Every reason, in rank order.
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 9] = [
         Self::ConstContext,
         Self::MacroInvocation,
         Self::CfgAttribute,
@@ -116,7 +114,6 @@ impl SkipReason {
         Self::UnsupportedSite,
         Self::Excluded,
         Self::TestOnlyFile,
-        Self::ProcMacroCrate,
         Self::NoStdCrate,
         Self::IncludedExpression,
     ];
@@ -132,7 +129,6 @@ impl SkipReason {
             Self::UnsupportedSite => "unsupported-site",
             Self::Excluded => "excluded",
             Self::TestOnlyFile => "test-only-file",
-            Self::ProcMacroCrate => "proc-macro-crate",
             Self::NoStdCrate => "no-std-crate",
             Self::IncludedExpression => "included-expression",
         }
@@ -160,9 +156,6 @@ impl SkipReason {
             Self::Excluded => "the include and exclude patterns removed the file",
             Self::TestOnlyFile => {
                 "only a test unit compiles the file, so no non-test binary could carry the mutant"
-            }
-            Self::ProcMacroCrate => {
-                "the crate is a proc-macro crate, which runs inside the compiler rather than inside a test"
             }
             Self::NoStdCrate => {
                 "the crate is #![no_std], and the v1 runtime needs std for the environment and the process exit"
