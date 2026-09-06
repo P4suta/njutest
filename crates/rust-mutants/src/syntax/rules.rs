@@ -175,3 +175,59 @@ pub(super) fn has_let(expr: &Expr) -> bool {
         _ => false,
     }
 }
+
+/// How many of an assertion macro's leading arguments are expressions the tests are about.
+///
+/// The allowlist is fixed here rather than configured. What a macro does with
+/// its tokens is the macro's business, and a guard spliced into an invocation
+/// the engine does not understand is a guess: these six expand their leading
+/// arguments as expressions, evaluate them, and compare or test them, which is
+/// exactly what a mutation of one of them is a question about. `panic!`,
+/// `unreachable!`, `write!` and `format!` are not here — their arguments are a
+/// message and a format string, and mutating those asks nothing about the
+/// program.
+pub(super) fn assertion_arity(path: &syn::Path) -> Option<usize> {
+    if path.segments.len() != 1 {
+        return None;
+    }
+    Some(match path.segments.first()?.ident.to_string().as_str() {
+        "assert" | "debug_assert" | "matches" => 1,
+        "assert_eq" | "assert_ne" | "debug_assert_eq" | "debug_assert_ne" => 2,
+        _ => return None,
+    })
+}
+
+/// Whether the macro's leading arguments are conditions rather than values.
+pub(super) fn assertion_is_condition(path: &syn::Path) -> bool {
+    matches!(
+        path.segments
+            .first()
+            .map(|one| one.ident.to_string())
+            .as_deref(),
+        Some("assert" | "debug_assert")
+    )
+}
+
+/// The macro's arguments, split at the commas between them.
+///
+/// Only a comma at depth zero separates arguments: one inside `f(a, b)` or
+/// `[a, b]` belongs to the argument it is in, and `proc_macro2` has already
+/// grouped those for us.
+pub(super) fn arguments(tokens: &proc_macro2::TokenStream) -> Vec<proc_macro2::TokenStream> {
+    let mut split: Vec<proc_macro2::TokenStream> = Vec::new();
+    let mut current: Vec<proc_macro2::TokenTree> = Vec::new();
+    for tree in tokens.clone() {
+        match &tree {
+            proc_macro2::TokenTree::Punct(punct)
+                if punct.as_char() == ',' && punct.spacing() == proc_macro2::Spacing::Alone =>
+            {
+                split.push(std::mem::take(&mut current).into_iter().collect());
+            }
+            _ => current.push(tree),
+        }
+    }
+    if !current.is_empty() {
+        split.push(current.into_iter().collect());
+    }
+    split
+}

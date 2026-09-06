@@ -143,7 +143,7 @@ fn a_file_only_the_test_unit_compiles_is_a_test_only_file_skip() {
     assert_eq!(
         table(&discovery),
         [
-            row("src/lib.rs", "fixture-simple", 6, "test-code:5"),
+            row("src/lib.rs", "fixture-simple", 6, "test-code:2"),
             row("src/testutil.rs", "fixture-simple", 0, "test-only-file:2"),
         ]
     );
@@ -182,7 +182,7 @@ fn a_file_only_the_test_unit_compiles_is_a_test_only_file_skip() {
         .iter()
         .map(|s| (s.reason.name(), s.count))
         .collect();
-    assert_eq!(total, [("test-code", 5), ("test-only-file", 2)]);
+    assert_eq!(total, [("test-code", 2), ("test-only-file", 2)]);
 }
 
 #[test]
@@ -198,7 +198,7 @@ fn a_nested_member_reports_workspace_relative_paths_and_a_binary_is_mutable() {
                 3,
                 "macro-invocation:1"
             ),
-            row("crates/core/src/lib.rs", "fixture-core", 6, "test-code:2"),
+            row("crates/core/src/lib.rs", "fixture-core", 6, "test-code:1"),
             row("crates/core/src/util.rs", "fixture-core", 3, ""),
         ]
     );
@@ -212,9 +212,9 @@ fn every_rule_fires_in_the_families_fixture_exactly_as_the_golden_says() {
     let discovery = run(&prepared, &options(), &Recorder::disabled());
     assert_eq!(
         table(&discovery),
-        [row("src/lib.rs", "fixture-families", 119, "test-code:1")]
+        [row("src/lib.rs", "fixture-families", 125, "test-code:1")]
     );
-    assert_eq!(discovery.catalog.len(), 119);
+    assert_eq!(discovery.catalog.len(), 125);
     assert_eq!(discovery.catalog.duplicates().len(), 0);
 }
 
@@ -258,7 +258,7 @@ fn include_and_exclude_patterns_remove_files_and_count_what_they_hid() {
         table(&discovery),
         [
             row("crates/app/src/main.rs", "fixture-app", 0, "excluded:3"),
-            row("crates/core/src/lib.rs", "fixture-core", 6, "test-code:2"),
+            row("crates/core/src/lib.rs", "fixture-core", 6, "test-code:1"),
             row("crates/core/src/util.rs", "fixture-core", 3, ""),
         ]
     );
@@ -285,7 +285,7 @@ fn selecting_packages_leaves_the_others_out_entirely() {
     assert_eq!(
         table(&discovery),
         [
-            row("crates/core/src/lib.rs", "fixture-core", 6, "test-code:2"),
+            row("crates/core/src/lib.rs", "fixture-core", 6, "test-code:1"),
             row("crates/core/src/util.rs", "fixture-core", 3, ""),
         ]
     );

@@ -61,7 +61,27 @@ compiler refuses, which is where acceptance is settled
 ([ADR 0008](../adr/0008-compiler-validated-acceptance-and-the-type-witness-pass.md)):
 proposing it costs a `cargo check` diagnostic and never a wrong answer.
 
-Deferred to a later version: mutation inside `assert!`-family macros.
+An assertion macro's leading arguments are walked as the expressions they are:
+`assert!`, `debug_assert!` and `matches!` for their first, `assert_eq!`,
+`assert_ne!`, `debug_assert_eq!` and `debug_assert_ne!` for their first two.
+`proc_macro2` keeps the byte position of every token, so parsing an argument
+back into an expression re-reads the same bytes rather than a pretty-printed
+copy, and an edit inside one is an edit where the reader sees it. An argument
+that does not parse as an expression puts the whole invocation back to being a
+`macro-invocation` skip.
+
+The allowlist is fixed in the code and is not configurable. What a macro does
+with its tokens is the macro's business, and a guard spliced into an invocation
+the engine does not understand is a guess. `panic!`, `unreachable!`, `write!`
+and `format!` are not on it: their arguments are a message and a format string,
+and mutating those asks nothing about the program.
+
+Mutating a macro's *expansion* is not the answer and will not become one.
+`-Zunpretty=expanded` is nightly, which would break the rule that the engine
+adds nothing to the project under test; the expansion is pretty-printed, which
+breaks byte splicing and the line-count invariant at the root; and both a
+mutant's identity and an llvm-cov region are coordinates in the original file,
+so there would be nothing to map an expansion's positions onto.
 
 ## Proofs the engine states
 
