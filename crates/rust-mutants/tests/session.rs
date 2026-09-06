@@ -501,3 +501,39 @@ fn the_trace_says_what_every_phase_did() {
         .collect();
     assert_eq!(executed.len(), 1, "{executed:?}");
 }
+
+#[test]
+fn a_target_with_no_tests_in_it_answers_neither_question() {
+    let fixture = fixture("fixture-subprocess");
+    let session = prepare(&fixture);
+    let cancel = Cancel::new();
+    let mutant = session
+        .catalog()
+        .mutants()
+        .iter()
+        .find(|mutant| mutant.candidate.rule.name == "negate-condition")
+        .expect("a negate-condition mutant")
+        .display_id
+        .clone();
+    let request = Request {
+        mutant,
+        ..Request::default()
+    };
+
+    let killed = session.exec(&request, &cancel).expect("exec");
+    assert_eq!(
+        killed.outcome,
+        Outcome::Killed,
+        "the library and the binary hold no tests, and passing over them is what lets \
+         the one target that does hold tests answer"
+    );
+    assert_eq!(killed.target, "fixture-subprocess/test/through_the_binary");
+
+    let control = session.control(&request, &cancel).expect("control");
+    assert_eq!(
+        control.outcome,
+        Outcome::Survived,
+        "the original passes, and a sibling target that ran nothing is not a reason to \
+         say it did not"
+    );
+}

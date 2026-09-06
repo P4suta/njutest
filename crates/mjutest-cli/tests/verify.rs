@@ -813,3 +813,43 @@ fn a_library_that_documents_no_example_is_not_a_target_that_ran_nothing() {
         "and nothing was left out of the routing either: {stated:?}"
     );
 }
+
+#[test]
+fn a_mutation_only_another_process_reaches_is_settled_by_the_suite_that_reaches_it() {
+    let fixture = fixture("fixture-subprocess");
+    verify(&fixture, &[]);
+    let report = document(&fixture);
+
+    let mutants = report["mutants"].as_array().expect("mutants");
+    let outcomes: Vec<&str> = mutants
+        .iter()
+        .filter_map(|mutant| mutant["outcome"].as_str())
+        .collect();
+    assert!(
+        !outcomes.contains(&"unreached"),
+        "nothing links the library into the test binary, so no region of it is \
+         instrumented and the coverage is silent rather than empty: {outcomes:?}"
+    );
+    assert_eq!(
+        outcomes.iter().filter(|one| **one == "killed").count(),
+        2,
+        "the test runs the binary, the binary calls the library, and two of the three \
+         mutations make it say something else: {outcomes:?}"
+    );
+    assert_eq!(
+        report["verdict"], "INSUFFICIENT",
+        "one mutation nothing noticed is a gap in the suite, and neither of the other \
+         two is a test that fails on the original code"
+    );
+
+    let killers: Vec<&str> = mutants
+        .iter()
+        .filter_map(|mutant| mutant["killed_by"].as_str())
+        .collect();
+    assert!(
+        killers
+            .iter()
+            .all(|by| by.contains("through_the_binary") || by.contains("package-suite")),
+        "a kill the suite found still names the target that found it: {killers:?}"
+    );
+}

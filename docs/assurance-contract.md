@@ -193,8 +193,16 @@ A mutant is `killed` only after:
 
 Each distinct control command — the target binary, arguments, and environment
 of the killing request — runs once per mutation phase and its outcome answers
-every kill that shares it. The snapshot is frozen for the whole phase and
-re-verified afterwards.
+every kill that shares it. A request that named no target, because the package
+suite is what settled the mutation, is narrowed to the target the suite found
+the answer in: the control and the second execution are about the test that
+found the kill, not about the suite around it. The snapshot is frozen for the
+whole phase and re-verified afterwards.
+
+A target with no tests in it — a library or a binary whose harness is empty —
+answers neither question, and a suite request passes over it. Reading its
+silence as an answer would make a mutation inconclusive because a sibling
+target had nothing to run.
 
 An original control failure is `flaky-mutation-control`; a non-reproducing
 kill is `flaky-mutation-kill`. Both are inconclusive evidence and prevent an
@@ -250,11 +258,13 @@ than the recorded one is still covered; a target that entered it is a test
 nothing was ever run against. Fuzz targets and targets restored from a
 checkpoint disqualify a survival in both directions.
 
-#### A mutant no target reaches
+#### A mutant the evidence cannot say nothing reaches
 
-Settled by running the package suite, so the verdict is a statement about that
-suite, keyed by the conjunction of every target's behaviour key and of what
-the package-level run itself reads.
+Settled by running the package suite, which runs every prepared target, so the
+claim is recorded as the conjunction of those targets' own behaviour keys: a
+target that enters or leaves the suite refuses reuse where one key over the
+package would have hidden it. A mutant both premises of `unreached` hold for
+is a claim about the code and is reused by nothing.
 
 #### A timeout
 
