@@ -108,7 +108,11 @@
         "path": { "type": "string", "minLength": 1 },
         "rule": { "type": "string", "minLength": 1 },
         "code": { "type": ["string", "null"] },
-        "diagnostic": { "type": "string" }
+        "diagnostic": { "type": "string" },
+        "isolated": {
+          "type": "boolean",
+          "description": "Whether the compiler refused it on its own, rather than only alongside another mutant."
+        }
       }
     },
     "skip": {

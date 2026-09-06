@@ -259,8 +259,17 @@ fn diagnostic_of(message: &Message) -> &Diagnostic {
 fn every_cargo_error_kind_has_a_code_in_the_workspace_area() {
     for kind in CargoErrorKind::ALL {
         let code = kind.code().code;
-        assert!(code.starts_with("RM1") || code.starts_with("RM2"), "{code}");
+        assert!(
+            code.starts_with("RM1") || code.starts_with("RM2") || kind == CargoErrorKind::Cancelled,
+            "{code}"
+        );
     }
+    assert_eq!(
+        CargoErrorKind::Cancelled.code().code,
+        "RM0001",
+        "a command nobody waited for is the caller's cancellation, not a fact about the \
+         workspace, and it is the one cargo failure that is not"
+    );
     let error: CargoError = parse_dep_info("").unwrap_err();
     assert_eq!(error.kind().code().code, "RM2001");
 }

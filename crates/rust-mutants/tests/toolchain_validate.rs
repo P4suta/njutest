@@ -192,8 +192,16 @@ fn prepare_fixture(name: &str) -> CargoScripted {
 fn the_compiler_decides_which_mutants_are_real_and_says_why_for_each() {
     let mut fixture = prepare_fixture("fixture-rejectable");
     let catalog = fixture.catalog.clone();
-    let validated =
-        validate(&catalog, &mut fixture, options(), &Recorder::disabled()).expect("validate");
+    let validated = validate(
+        &catalog,
+        &mut fixture,
+        &rust_mutants::validate::Validating {
+            options: options(),
+            cancel: &Cancel::new(),
+            trace: &Recorder::disabled(),
+        },
+    )
+    .expect("validate");
 
     let mut rejected: Vec<(&str, &str)> = validated
         .rejections

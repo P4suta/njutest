@@ -63,11 +63,13 @@ pub enum CargoErrorKind {
     DepInfoUnreadable,
     /// An artifact's dep-info file could not be read.
     DepInfoMissing,
+    /// The caller cancelled before the command finished, so what it printed says nothing.
+    Cancelled,
 }
 
 impl CargoErrorKind {
     /// Every kind, in code order.
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::ToolchainNotFound,
         Self::VersionUnreadable,
         Self::CommandFailed,
@@ -75,6 +77,7 @@ impl CargoErrorKind {
         Self::MessageUnparsable,
         Self::DepInfoUnreadable,
         Self::DepInfoMissing,
+        Self::Cancelled,
     ];
 
     /// The stable code of this failure.
@@ -88,6 +91,7 @@ impl CargoErrorKind {
             Self::MessageUnparsable => error::CARGO_MESSAGE_UNPARSABLE,
             Self::DepInfoUnreadable => error::DEP_INFO_UNREADABLE,
             Self::DepInfoMissing => error::DEP_INFO_MISSING,
+            Self::Cancelled => error::INTERRUPTED,
         }
     }
 }

@@ -372,6 +372,9 @@ pub struct BisectRecord {
     pub offenders: Vec<u32>,
     /// How many compilations it cost.
     pub attempts: u32,
+    /// How many of the offenders it could put the compiler's own words to.
+    #[serde(default)]
+    pub diagnosed: u32,
 }
 
 /// The test binaries a build produced.

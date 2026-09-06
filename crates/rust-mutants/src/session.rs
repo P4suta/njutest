@@ -20,7 +20,7 @@ use crate::snapshot::Drift;
 use crate::syntax::{Found, LineIndex, Position, Selection, Skip};
 use crate::trace::{BuildRecord, InstrumentRecord, MutantExecRecord};
 use crate::validate::{
-    Attempt, Compile, Rejection, ValidateError, ValidateOptions, Validated, validate,
+    Attempt, Compile, Rejection, ValidateError, ValidateOptions, Validated, Validating, validate,
 };
 use crate::workspace::{SessionError, Workspace};
 
@@ -1139,10 +1139,13 @@ fn establish(
     let validated = validate(
         &discovery.catalog,
         &mut writer,
-        ValidateOptions {
-            max_rounds: options.max_rounds,
+        &Validating {
+            options: ValidateOptions {
+                max_rounds: options.max_rounds,
+            },
+            cancel,
+            trace,
         },
-        trace,
     )?;
     Ok((validated, writer.last_build))
 }

@@ -189,6 +189,12 @@ pub fn compile(driver: &Driver<'_>, options: &CompileOptions) -> Result<Compiled
     spec.timeout = options.timeout;
     let result = run(&spec, driver.cancel);
     driver.trace.exec(ExecRecord::of(&spec, &result));
+    if driver.cancel.is_cancelled() {
+        return Err(CargoError::new(
+            CargoErrorKind::Cancelled,
+            "the compilation was cancelled",
+        ));
+    }
     if result.error.is_some() || result.timed_out {
         return Err(command_failed(&spec, &result));
     }

@@ -507,6 +507,7 @@ fn one_of_each_preparation(recorder: &Recorder) {
         suspects: 4,
         offenders: vec![3],
         attempts: 5,
+        diagnosed: 1,
     });
     recorder.build(rust_mutants::trace::BuildRecord {
         targets: vec!["demo/lib/demo".to_owned()],

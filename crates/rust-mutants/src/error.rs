@@ -30,7 +30,8 @@ const DURATION_INVALID: ErrorCode = ErrorCode {
     summary: "a duration the caller gave is not a duration",
 };
 
-const INTERRUPTED: ErrorCode = ErrorCode {
+/// The caller cancelled before the operation finished, so nothing it saw says anything.
+pub const INTERRUPTED: ErrorCode = ErrorCode {
     code: "RM0001",
     summary: "the caller cancelled the operation before it completed",
 };

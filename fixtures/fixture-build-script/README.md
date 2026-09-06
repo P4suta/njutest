@@ -25,6 +25,12 @@ through `OUT_DIR`. The engine starts test processes itself, so it has to say
 so too: `a_test_process_is_told_where_the_build_directory_is` fails otherwise,
 for a reason that is not the mutation.
 
+`FIXTURE_BUILD_SCRIPT_PAUSE_MS` makes the build script take that many
+milliseconds, and `FIXTURE_BUILD_SCRIPT_MARKER` names a file it creates before
+it waits, so a test about interrupting a run can wait until the run is
+certainly inside a compilation. Unset, both do nothing and the fates below are
+what a run establishes.
+
 ## Fates
 
 What one run of this fixture establishes for every mutation of it, and

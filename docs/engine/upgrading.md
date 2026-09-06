@@ -104,6 +104,29 @@ cargo's own — the home directory first, the nearest file last.
 probe process ends with when it cannot record what it saw, and reading it as a
 failing test credited a test that never ran.
 
+**A cancelled build is a cancellation.** `Ctrl-C` during a compilation used
+to be read as a tree that does not compile: the half-finished command printed
+nothing a diagnostic could be attributed to, so validation bisected and
+condemned mutants nothing had refused. `cargo::CargoErrorKind::Cancelled` and
+`ValidateError::Cancelled` both carry `RM0001`, and the run exits 130 having
+written nothing.
+
+**Attribution reads every span of a diagnostic, not only the primary one.**
+The compiler points at the place it decided, which for a type error is often
+the definition rather than the edit; the edit is named by another span of the
+same message, or by one of its notes. Runs that used to bisect for such an
+error now attribute it directly, which is faster and names the mutant with the
+compiler's own words. Nothing that named no branch at all is attributed.
+
+**A refusal says whether the compiler refused it on its own.** Rejection rows
+gained `isolated`. Bisection compiles each offender it isolated once more,
+alone, so the row carries the compiler's words about *that* mutant rather than
+"no diagnostic named it"; a `bisect` recording says how many it could. When
+neither half of a suspect set fails, the offence straddles them, and narrowing
+by increasing granularity finds the mutants that interact rather than
+condemning everything that was live. Those rows have `isolated: false` and say
+which other mutants they were refused with.
+
 **A snapshot directory that is already gone is removed.** Cleanup released the
 lock, then retried five times with a backoff against a directory a sweeper had
 already taken, and reported `RM1011` for it.

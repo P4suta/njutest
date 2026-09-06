@@ -661,6 +661,10 @@
             "attempts": {
               "type": "integer",
               "minimum": 0
+            },
+            "diagnosed": {
+              "type": "integer",
+              "minimum": 0
             }
           }
         }

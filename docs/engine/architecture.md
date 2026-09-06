@@ -216,6 +216,34 @@ Whether an edit is a program is a fact about the toolchain, never assumed:
 `value / 0` for a run-time `value` — a mutant that dies at run time rather
 than at compile time.
 
+## Validation, stated
+
+A round instruments every candidate that is still live, compiles, and reads
+what the compiler said. An error is attributed to the mutant whose branch holds
+one of its spans — the primary one first, then the others, then the spans of
+its notes, because the compiler points at the place it decided and for a type
+error that is often the definition rather than the edit. The mutants an error
+names are condemned, the file is written again without them, and the next round
+follows.
+
+What no span names is what bisection is for. It halves the live set, and a half
+that still fails is halved again, so an offender the compiler refuses on its
+own is found in a logarithmic number of builds. When neither half fails, the
+offence straddles them — a combination only ever seen with mutants from both
+sides live — and narrowing by increasing granularity finds the mutants that
+interact rather than condemning everything that happened to be live. The search
+is bounded; running out of the budget condemns what is left, which is the same
+answer halving alone gave.
+
+Every offence bisection names is then compiled once more on its own, so the
+report carries the compiler's words about that mutant rather than a sentence
+saying there were none. A row says `isolated` when the compiler refused it
+alone, and names the mutants it was refused with when it did not.
+
+A build nobody waited for is a cancellation and not a tree that does not
+compile: `Ctrl-C` during a round ends validation with `RM0001`, and nothing is
+condemned on the strength of what a half-finished command printed.
+
 ## Skips, stated
 
 `const-context`, `macro-invocation`, `cfg-attribute`, `test-code`,

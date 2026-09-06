@@ -244,7 +244,11 @@
           "path": { "type": "string" },
           "rule": { "type": "string" },
           "code": { "oneOf": [{ "type": "null" }, { "type": "string" }] },
-          "diagnostic": { "type": "string" }
+          "diagnostic": { "type": "string" },
+          "isolated": {
+            "type": "boolean",
+            "description": "Whether the compiler refused it on its own, rather than only alongside another mutant."
+          }
         }
       }
     },

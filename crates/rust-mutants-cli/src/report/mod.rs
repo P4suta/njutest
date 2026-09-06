@@ -260,6 +260,14 @@ pub struct RejectionDocument {
     pub code: Option<String>,
     /// What the compiler said.
     pub diagnostic: String,
+    /// Whether the compiler refused it on its own, rather than only alongside another mutant.
+    #[serde(default = "yes")]
+    pub isolated: bool,
+}
+
+/// The default of a field an older report does not carry: a refusal the compiler named directly is one it made on its own.
+const fn yes() -> bool {
+    true
 }
 
 /// One reason places were passed over, and how many.
@@ -340,6 +348,7 @@ pub fn rejection_documents(session: &Session) -> Vec<RejectionDocument> {
             rule: rejection.rule.clone(),
             code: rejection.code.clone(),
             diagnostic: rejection.diagnostic.clone(),
+            isolated: rejection.isolated,
         })
         .collect()
 }

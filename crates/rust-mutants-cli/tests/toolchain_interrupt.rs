@@ -153,3 +153,71 @@ fn a_run_that_is_interrupted_exits_130_and_leaves_no_process_and_no_snapshot_beh
         "an interrupted run removes its snapshot like any other: {left:?}"
     );
 }
+
+#[test]
+fn ctrl_c_during_a_compilation_exits_130_and_writes_no_rejection() {
+    let dir = tempfile::Builder::new()
+        .prefix("rust-mutants-interrupt-build-")
+        .tempdir()
+        .expect("tempdir");
+    let root = dir.path().join("fixture-build-script");
+    copy_tree(
+        &mjutest_devkit::paths::fixtures_dir().join("fixture-build-script"),
+        &root,
+    );
+    let temp = dir.path().join("temp");
+    std::fs::create_dir_all(&temp).expect("mkdir");
+    let cache = dir.path().join("cache");
+    std::fs::create_dir_all(&cache).expect("mkdir");
+    let marker = dir.path().join("compiling");
+
+    let child = Command::new(env!("CARGO_BIN_EXE_rust-mutants"))
+        .args(["run", "--offline", "--locked", "--tier", "all"])
+        .args(["--root", &root.to_string_lossy()])
+        .env("NO_COLOR", "1")
+        .env("TMPDIR", &temp)
+        .env("XDG_CACHE_HOME", &cache)
+        .env("FIXTURE_BUILD_SCRIPT_PAUSE_MS", "20000")
+        .env("FIXTURE_BUILD_SCRIPT_MARKER", &marker)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("rust-mutants starts");
+    let pid = child.id();
+
+    let deadline = Instant::now()
+        .checked_add(Duration::from_secs(300))
+        .expect("a deadline five minutes out");
+    while !marker.is_file() {
+        assert!(Instant::now() < deadline, "the run never reached a build");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    rustix::process::kill_process(
+        rustix::process::Pid::from_raw(pid.try_into().expect("a pid fits")).expect("a live pid"),
+        rustix::process::Signal::INT,
+    )
+    .expect("the signal is delivered");
+
+    let output = child.wait_with_output().expect("the run ends");
+    assert_eq!(
+        output.status.code(),
+        Some(130),
+        "a build nobody waited for is a cancellation, not a tree that does not compile: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let said = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        said.contains("RM0001"),
+        "the cancellation says so by its own code: {said}"
+    );
+    assert!(
+        !root.join("reports").exists(),
+        "a run that never got a session establishes nothing and writes nothing"
+    );
+
+    let stragglers = in_group(pid);
+    assert!(
+        stragglers.is_empty(),
+        "the run left {stragglers:?} behind in its own process group"
+    );
+}

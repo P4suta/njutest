@@ -12,10 +12,11 @@
 
 use std::collections::BTreeSet;
 
-use crate::cargo::Message;
+use crate::cargo::{CargoError, CargoErrorKind, Message};
 use crate::catalog::{Builder, Catalog};
 use crate::instrument::{Placement, instrument_file, plan_file};
 use crate::rule::{Registry, Tier};
+use crate::runner::Cancel;
 use crate::syntax::{Selection, discover_file};
 use crate::validate::{Attempt, Compile, ValidateError};
 
@@ -35,6 +36,8 @@ pub struct ScriptedCompile {
     attributable: BTreeSet<u32>,
     unattributable: BTreeSet<u32>,
     attempts: Vec<BTreeSet<u32>>,
+    cancelling: Option<(usize, Cancel)>,
+    interacting: BTreeSet<u32>,
 }
 
 impl ScriptedCompile {
@@ -67,7 +70,31 @@ impl ScriptedCompile {
             attributable: BTreeSet::new(),
             unattributable: BTreeSet::new(),
             attempts: Vec::new(),
+            cancelling: None,
+            interacting: BTreeSet::new(),
         }
+    }
+
+    /// Refuses the tree only while every mutant of `together` is live, with a diagnostic inside no branch.
+    ///
+    /// Each of them compiles on its own, so bisection halves the suspects,
+    /// finds no half that fails, and comes back with the whole set: what the
+    /// compiler refused is the combination and not any one of them.
+    #[must_use]
+    pub fn interacting(mut self, together: &[u32]) -> Self {
+        self.interacting = together.iter().copied().collect();
+        self
+    }
+
+    /// Cancels `cancel` during the `nth` attempt, in the middle of the compilation rather than between two of them.
+    ///
+    /// A cancelled build prints whatever it had got to and stops. Reading that
+    /// as a failed build condemns mutants nothing refused, so a test of the
+    /// loop has to be able to stop one the way a person does.
+    #[must_use]
+    pub fn cancelling_at(mut self, nth: usize, cancel: &Cancel) -> Self {
+        self.cancelling = Some((nth, cancel.clone()));
+        self
     }
 
     /// Refuses the mutants of `attributable` with a diagnostic inside each one's own branch, and those of `unattributable` with one that lands outside every branch.
@@ -106,6 +133,15 @@ impl ScriptedCompile {
 impl Compile for ScriptedCompile {
     fn attempt(&mut self, condemned: &BTreeSet<u32>) -> Result<Attempt, ValidateError> {
         self.attempts.push(condemned.clone());
+        if let Some((nth, cancel)) = &self.cancelling
+            && self.attempts.len() >= *nth
+        {
+            cancel.cancel();
+            return Err(ValidateError::Cargo(CargoError::new(
+                CargoErrorKind::Cancelled,
+                "the compilation was cancelled",
+            )));
+        }
         let kept: Vec<Placement> = self
             .placements
             .iter()
@@ -133,6 +169,9 @@ impl Compile for ScriptedCompile {
         for index in self.unattributable.intersection(&live) {
             messages.push(diagnostic_at(&self.path, 0, 1, *index));
         }
+        if !self.interacting.is_empty() && self.interacting.is_subset(&live) {
+            messages.push(diagnostic_at(&self.path, 0, 1, u32::MAX));
+        }
         let success = messages.is_empty();
         messages.push(Message::BuildFinished { success });
         Ok(Attempt {
@@ -141,6 +180,40 @@ impl Compile for ScriptedCompile {
             success,
         })
     }
+}
+
+/// A `compiler-message` whose primary span is somewhere nothing owns and whose secondary span covers `[start, end)` of `path`.
+///
+/// The compiler points at the place it decided, which for a type error is
+/// often the definition rather than the edit. A run that reads only the
+/// primary span attributes such an error to nobody and bisects for it.
+///
+/// # Panics
+/// When the message this composes does not parse, which is a broken testkit.
+#[must_use]
+pub fn diagnostic_beside(path: &str, start: u32, end: u32, index: u32) -> Message {
+    let json = format!(
+        r#"{{"reason":"compiler-message","package_id":"p","manifest_path":"/w/Cargo.toml","target":{{"kind":["lib"],"crate_types":["lib"],"name":"demo","src_path":"/w/src/lib.rs","edition":"2024"}},"message":{{"message":"mutant {index} does not compile","code":{{"code":"E0999","explanation":""}},"level":"error","spans":[{{"file_name":"{path}","byte_start":0,"byte_end":1,"line_start":1,"line_end":1,"column_start":1,"column_end":2,"is_primary":true,"text":[],"label":null}},{{"file_name":"{path}","byte_start":{start},"byte_end":{end},"line_start":1,"line_end":1,"column_start":1,"column_end":2,"is_primary":false,"text":[],"label":"expected because of this"}}],"children":[],"rendered":"error[E0999]: mutant {index} does not compile\n"}}}}"#
+    );
+    crate::cargo::parse_messages(json.as_bytes())
+        .ok()
+        .and_then(|messages| messages.into_iter().next())
+        .unwrap_or_else(|| panic!("the composed diagnostic parses"))
+}
+
+/// A `compiler-message` whose spans name nothing and whose child note covers `[start, end)` of `path`.
+///
+/// # Panics
+/// When the message this composes does not parse, which is a broken testkit.
+#[must_use]
+pub fn diagnostic_noted(path: &str, start: u32, end: u32, index: u32) -> Message {
+    let json = format!(
+        r#"{{"reason":"compiler-message","package_id":"p","manifest_path":"/w/Cargo.toml","target":{{"kind":["lib"],"crate_types":["lib"],"name":"demo","src_path":"/w/src/lib.rs","edition":"2024"}},"message":{{"message":"mutant {index} does not compile","code":{{"code":"E0999","explanation":""}},"level":"error","spans":[{{"file_name":"{path}","byte_start":0,"byte_end":1,"line_start":1,"line_end":1,"column_start":1,"column_end":2,"is_primary":true,"text":[],"label":null}}],"children":[{{"message":"the size is not known","code":null,"level":"note","spans":[{{"file_name":"{path}","byte_start":{start},"byte_end":{end},"line_start":1,"line_end":1,"column_start":1,"column_end":2,"is_primary":true,"text":[],"label":null}}],"children":[],"rendered":null}}],"rendered":"error[E0999]: mutant {index} does not compile\n"}}}}"#
+    );
+    crate::cargo::parse_messages(json.as_bytes())
+        .ok()
+        .and_then(|messages| messages.into_iter().next())
+        .unwrap_or_else(|| panic!("the composed diagnostic parses"))
 }
 
 /// A `compiler-message` about mutant `index`, whose primary span covers `[start, end)` of `path`.

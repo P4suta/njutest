@@ -354,3 +354,42 @@ fn compiler_message(root: &std::path::Path, said: &str) -> String {
         source = source.display(),
     )
 }
+
+#[test]
+fn a_compile_stopped_by_cancellation_is_an_error_not_a_failed_build() {
+    let fixture = Fixture::copy("fixture-simple");
+    let script = toolchain_answers()
+        .answering(
+            Invocation::new("cargo", &["metadata"]).printing(&metadata_document(fixture.root())),
+        )
+        .answering(Invocation::new("cargo", &["check"]).taking(30_000));
+    let (opened, _installed) = opened(&fixture, &script);
+    let workspace = opened.expect("open");
+
+    let cancel = Cancel::new();
+    let waiting = cancel.clone();
+    let stopping = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        waiting.cancel();
+    });
+    let error = rust_mutants::cargo::compile(
+        &rust_mutants::testkit::workspace::driver(&workspace, &cancel),
+        &rust_mutants::cargo::CompileOptions {
+            kind: rust_mutants::cargo::CompileKind::Check,
+            locked: true,
+            offline: true,
+            ..rust_mutants::cargo::CompileOptions::default()
+        },
+    )
+    .expect_err("a cancelled compilation does not answer");
+    stopping.join().expect("the canceller");
+
+    assert_eq!(
+        error.kind(),
+        rust_mutants::cargo::CargoErrorKind::Cancelled,
+        "a build nobody waited for printed nothing about the tree, and reading its silence as \
+         a failed build condemns mutants the compiler never saw"
+    );
+    assert_eq!(error.kind().code().code, "RM0001");
+    workspace.close().expect("close");
+}

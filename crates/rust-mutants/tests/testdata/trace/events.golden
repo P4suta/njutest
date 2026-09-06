@@ -6,7 +6,7 @@
 {"seq":6,"timestamp":"2027-01-15T08:00:05Z","elapsed_ms":5000,"type":"discover-file","discover":{"path":"src/lib.rs","candidates":2,"sites":[{"line":3,"column":9,"rule":"le-to-lt","form":"C"}],"skips":[{"reason":"macro-invocation","count":1}]}}
 {"seq":7,"timestamp":"2027-01-15T08:00:06Z","elapsed_ms":6000,"type":"instrument","instrument":{"path":"src/lib.rs","guards":2,"module":"__rm_0000","lines_before":10,"lines_after":10}}
 {"seq":8,"timestamp":"2027-01-15T08:00:07Z","elapsed_ms":7000,"type":"validate-round","round":{"round":1,"condemned":0,"success":false,"attributed":[{"index":1,"code":"E0308","said":"mismatched types"}],"unattributed":["error: something else"]}}
-{"seq":9,"timestamp":"2027-01-15T08:00:08Z","elapsed_ms":8000,"type":"bisect","bisect":{"suspects":4,"offenders":[3],"attempts":5}}
+{"seq":9,"timestamp":"2027-01-15T08:00:08Z","elapsed_ms":8000,"type":"bisect","bisect":{"suspects":4,"offenders":[3],"attempts":5,"diagnosed":1}}
 {"seq":10,"timestamp":"2027-01-15T08:00:09Z","elapsed_ms":9000,"type":"build","build":{"targets":["demo/lib/demo"],"details":[{"id":"demo/lib/demo","kind":"lib","harness":true}]}}
 {"seq":11,"timestamp":"2027-01-15T08:00:10Z","elapsed_ms":10000,"type":"verify","verify":{"target":"demo/lib/demo","outcome":"survived","tests_run":3,"duration_ms":12}}
 {"seq":12,"timestamp":"2027-01-15T08:00:11Z","elapsed_ms":11000,"type":"probe-exec","probe":{"target":"demo/lib/demo","outcome":"measured","infected":2,"duration_ms":8}}
