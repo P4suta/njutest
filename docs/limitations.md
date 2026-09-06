@@ -47,8 +47,16 @@ below is stated fail-closed.
 - Repository reads are not observed at run time. A package that uses a
   directory-reading API keys the whole snapshot for evidence reuse; nothing
   is excluded from testing.
-- Mutation inside macro invocations, `const` contexts, `#[cfg]`-guarded code,
-  and `#![no_std]` crates is skipped with a stated reason.
+- Mutation inside a macro invocation the engine has no allowlist entry for, a
+  `const` context, and `#[cfg]`-guarded code is skipped with a stated reason.
+  The leading arguments of the six assertion macros are mutated; the rest of
+  every invocation is `macro-invocation`.
+- A `#![no_std]` crate is measured: the runtime borrows `std` under a name of
+  its own. A crate the host cannot lend `std` to — one supplying a
+  `#[panic_handler]`, a `#[global_allocator]`, or `#![no_main]`, or written in
+  edition 2015 — is `no-std-crate`.
+- A file another file pastes in with `include!` where an expression goes is
+  `included-expression`: it is a fragment rather than a program.
 - Coverage routing says nothing about a place its export never instrumented,
   and such a mutant is run everywhere. A tree that configures its own
   `rustflags` is not routed by coverage at all

@@ -15,7 +15,9 @@ use rust_mutants::cargo::{
     CompileKind, CompileOptions, Driver, LocateOptions, Metadata, MetadataOptions, Toolchain,
     compile,
 };
-use rust_mutants::discover::{DiscoverError, DiscoverOptions, Discovery, Input, discover};
+use rust_mutants::discover::{
+    DiscoverError, DiscoverOptions, Discovery, Input, discover, freestanding,
+};
 use rust_mutants::glob::Pattern;
 use rust_mutants::rule::{Registry, Tier};
 use rust_mutants::runner::Cancel;
@@ -238,12 +240,33 @@ fn macro_invocations_count_once_and_a_proc_macro_crate_is_skipped_whole() {
 }
 
 #[test]
-fn a_no_std_crate_is_skipped_whole_with_its_candidates_counted() {
+fn a_no_std_crate_the_host_can_lend_std_to_is_measured_like_any_other() {
     let prepared = prepare("fixture-no-std");
     let discovery = run(&prepared, &options(), &Recorder::disabled());
+
     assert_eq!(
         table(&discovery),
-        [row("src/lib.rs", "fixture-no-std", 0, "no-std-crate:2")]
+        [row("src/lib.rs", "fixture-no-std", 4, "test-code:1")],
+        "`#![no_std]` withholds the implicit link to std and its prelude, and forbids \
+         neither an explicit link nor an explicit path"
+    );
+    assert_eq!(discovery.catalog.len(), 4);
+}
+
+#[test]
+fn a_crate_that_supplies_what_std_does_is_skipped_whole_with_its_candidates_counted() {
+    let prepared = prepare("fixture-no-std-freestanding");
+    let discovery = run(&prepared, &options(), &Recorder::disabled());
+
+    assert_eq!(
+        table(&discovery),
+        [row(
+            "src/lib.rs",
+            "fixture-no-std-freestanding",
+            0,
+            "no-std-crate:2"
+        )],
+        "std supplies a panic handler too, and only one may exist"
     );
     assert!(discovery.catalog.is_empty());
 }
@@ -441,5 +464,45 @@ fn a_file_pasted_in_where_an_expression_goes_is_a_skip_and_not_the_end_of_the_ru
         ],
         "a fragment is a place that was not mutated, and a project the compiler is happy \
          with is not one this engine refuses to look at"
+    );
+}
+
+#[test]
+fn what_the_host_cannot_lend_std_to_is_read_out_of_the_crate_root() {
+    assert!(
+        !freestanding("#![no_std]\npub fn f() {}\n", "2024"),
+        "the attribute withholds the implicit link and the prelude, and forbids neither an \
+         explicit link nor an explicit path"
+    );
+    assert!(
+        !freestanding("#![cfg_attr(not(test), no_std)]\npub fn f() {}\n", "2024"),
+        "under cfg(test), which is how every test of the crate is built, the crate has std"
+    );
+    assert!(
+        freestanding(
+            "#![no_std]\n#[panic_handler]\nfn p(_: &core::panic::PanicInfo) -> ! { loop {} }\n",
+            "2024"
+        ),
+        "std supplies a panic handler too, and only one may exist"
+    );
+    assert!(
+        freestanding(
+            "#![no_std]\n#[global_allocator]\nstatic A: X = X;\n",
+            "2024"
+        ),
+        "and an allocator too"
+    );
+    assert!(
+        freestanding("#![no_std]\n#![no_main]\npub fn f() {}\n", "2024"),
+        "and the entry point"
+    );
+    assert!(
+        freestanding("#![no_std]\npub fn f() {}\n", "2015"),
+        "`extern crate` resolves differently in 2015, and the engine does not run what it \
+         does not test"
+    );
+    assert!(
+        !freestanding("pub fn f( {}\n", "2024"),
+        "a root that does not parse is answered by the walk, which reports the failure"
     );
 }

@@ -197,7 +197,7 @@ than at compile time.
 
 `const-context`, `macro-invocation`, `cfg-attribute`, `test-code`,
 `unsupported-site`, `excluded`, `test-only-file`, `proc-macro-crate`,
-`no-std-crate`. Each is counted and named; `rust-mutants why-skipped` lists
+`no-std-crate`, `included-expression`. Each is counted and named; `rust-mutants why-skipped` lists
 them. A skip is a decision the tool made and says; a rejection (a mutant the
 compiler refused) is a fact about the program and is reported with the
 diagnostic.

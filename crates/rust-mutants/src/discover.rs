@@ -312,7 +312,7 @@ impl Assigner<'_> {
         let no_std = non_test
             .iter()
             .any(|path| relative(self.root, path).is_ok_and(|rel| rel == crate_root))
-            && crate_root_is_no_std(self.root, &crate_root);
+            && crate_root_is_freestanding(self.root, &crate_root, &target.edition);
         for unit in &compiled {
             for source in &unit.sources {
                 let path = relative(self.root, source)?;
@@ -351,12 +351,54 @@ impl Assigner<'_> {
     }
 }
 
-/// Whether the crate root at `rel` declares `#![no_std]`. A root that does not parse is answered `false` here; the walk reports the parse failure.
-fn crate_root_is_no_std(root: &Path, rel: &str) -> bool {
-    std::fs::read_to_string(root.join(rel))
-        .ok()
-        .and_then(|text| syn::parse_file(&text).ok())
-        .is_some_and(|file| file.attrs.iter().any(|attr| attr.path().is_ident("no_std")))
+/// Whether the crate at `rel` is one this host cannot lend `std` to. A root that does not parse is answered `false` here; the walk reports the parse failure.
+///
+/// `#![no_std]` on its own is not that crate. It withholds the implicit link
+/// to `std` and its prelude, and forbids neither an explicit link nor an
+/// explicit path, so the runtime module borrows `std` under a name of its own
+/// and the crate is measured like any other. What cannot be measured is a
+/// crate that would then have two of something only one of which may exist: a
+/// `#[panic_handler]` or a `#[global_allocator]` of its own, which `std`
+/// brings too, or a `#![no_main]` crate, whose entry point `std` also
+/// supplies. Edition 2015 is left out because `extern crate` resolves
+/// differently there and the engine does not test what it does not run.
+fn crate_root_is_freestanding(root: &Path, rel: &str, edition: &str) -> bool {
+    std::fs::read_to_string(root.join(rel)).is_ok_and(|text| freestanding(&text, edition))
+}
+
+/// Whether a crate root's own text says the host cannot lend it `std`.
+///
+/// A root that does not parse is answered `false` here; the walk reports the
+/// parse failure. `#![cfg_attr(not(test), no_std)]` is not `#![no_std]`: under
+/// `cfg(test)` — which is how every test of the crate is built — the crate has
+/// `std`, and this answers about the crate as its tests will see it.
+#[must_use]
+pub fn freestanding(source: &str, edition: &str) -> bool {
+    let Ok(file) = syn::parse_file(source) else {
+        return false;
+    };
+    if !file.attrs.iter().any(|attr| attr.path().is_ident("no_std")) {
+        return false;
+    }
+    if edition == "2015" {
+        return true;
+    }
+    file.attrs
+        .iter()
+        .any(|attr| attr.path().is_ident("no_main"))
+        || file.items.iter().any(item_supplies_what_std_does)
+}
+
+/// Whether the item is one `std` also supplies, so that linking `std` beside it would be two of something only one of which may exist.
+fn item_supplies_what_std_does(item: &syn::Item) -> bool {
+    let attrs = match item {
+        syn::Item::Fn(one) => &one.attrs,
+        syn::Item::Static(one) => &one.attrs,
+        _ => return false,
+    };
+    attrs.iter().any(|attr| {
+        attr.path().is_ident("panic_handler") || attr.path().is_ident("global_allocator")
+    })
 }
 
 /// The workspace-relative, `/`-separated spelling of `path`.
