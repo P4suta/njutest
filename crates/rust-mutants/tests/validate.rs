@@ -10,7 +10,6 @@
     reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
 )]
 
-use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
@@ -18,11 +17,12 @@ use rust_mutants::cargo::{
     CompileKind, CompileOptions, Driver, LocateOptions, Message, Metadata, MetadataOptions,
     Toolchain, compile,
 };
-use rust_mutants::catalog::{Builder, Catalog};
+use rust_mutants::catalog::Catalog;
 use rust_mutants::instrument::{Placement, instrument_file, plan_file};
 use rust_mutants::rule::{Registry, Tier};
 use rust_mutants::runner::Cancel;
-use rust_mutants::syntax::{Selection, discover_file};
+use rust_mutants::syntax::Selection;
+use rust_mutants::testkit::compile::{ScriptedCompile, diagnostic_at};
 use rust_mutants::trace::Recorder;
 use rust_mutants::validate::{
     Attempt, Compile, ValidateError, ValidateOptions, Validated, attribute, validate,
@@ -30,96 +30,17 @@ use rust_mutants::validate::{
 
 static REGISTRY: Registry = Registry::canonical();
 
-/// Instruments one file for real, then decides the outcome from a script: which mutants are poison, and whether their diagnostic points inside the branch (attributable) or somewhere else (not).
-struct Scripted {
-    path: String,
-    source: Vec<u8>,
-    placements: Vec<Placement>,
-    catalog: Catalog,
-    attributable: BTreeSet<u32>,
-    unattributable: BTreeSet<u32>,
-    attempts: RefCell<Vec<BTreeSet<u32>>>,
-}
-
-impl Scripted {
-    fn new(source: &str, attributable: &[u32], unattributable: &[u32]) -> Self {
-        let selection = Selection::tier(&REGISTRY, Tier::All);
-        let discovery =
-            discover_file("src/lib.rs", source.as_bytes(), &selection).expect("discover");
-        let mut builder = Builder::new();
-        for found in &discovery.candidates {
-            builder.add(found.candidate.clone()).expect("add");
-        }
-        let catalog = builder.build().expect("catalog");
-        let placements = plan_file(&catalog, "src/lib.rs", &discovery.candidates).expect("plan");
-        Self {
-            path: "src/lib.rs".to_owned(),
-            source: source.as_bytes().to_vec(),
-            placements,
-            catalog,
-            attributable: attributable.iter().copied().collect(),
-            unattributable: unattributable.iter().copied().collect(),
-            attempts: RefCell::new(Vec::new()),
-        }
-    }
-
-    fn attempts(&self) -> Vec<BTreeSet<u32>> {
-        self.attempts.borrow().clone()
-    }
-}
-
-impl Compile for Scripted {
-    fn attempt(&mut self, condemned: &BTreeSet<u32>) -> Result<Attempt, ValidateError> {
-        self.attempts.borrow_mut().push(condemned.clone());
-        let kept: Vec<Placement> = self
-            .placements
-            .iter()
-            .filter(|placement| !condemned.contains(&placement.index))
-            .cloned()
-            .collect();
-        let file = instrument_file(&self.path, &self.source, &kept, self.catalog.digest())?;
-        let live: BTreeSet<u32> = kept.iter().map(|placement| placement.index).collect();
-        let mut messages = Vec::new();
-        for index in self.attributable.intersection(&live) {
-            let branch = file
-                .branches
-                .iter()
-                .find(|branch| branch.index == *index)
-                .expect("a branch for a live mutant");
-            messages.push(error_at(
-                &self.path,
-                branch.span.start,
-                branch.span.end,
-                *index,
-            ));
-        }
-        for index in self.unattributable.intersection(&live) {
-            messages.push(error_at(&self.path, 0, 1, *index));
-        }
-        let success = messages.is_empty();
-        messages.push(Message::BuildFinished { success });
-        Ok(Attempt {
-            files: vec![file],
-            messages,
-            success,
-        })
-    }
-}
-
-/// A `compiler-message` whose primary span covers `[start, end)`.
-fn error_at(path: &str, start: u32, end: u32, index: u32) -> Message {
-    let json = format!(
-        r#"{{"reason":"compiler-message","package_id":"p","manifest_path":"/w/Cargo.toml","target":{{"kind":["lib"],"crate_types":["lib"],"name":"demo","src_path":"/w/src/lib.rs","edition":"2024"}},"message":{{"message":"mutant {index} does not compile","code":{{"code":"E0999","explanation":""}},"level":"error","spans":[{{"file_name":"{path}","byte_start":{start},"byte_end":{end},"line_start":1,"line_end":1,"column_start":1,"column_end":2,"is_primary":true,"text":[],"label":null}}],"children":[],"rendered":"error[E0999]: mutant {index} does not compile\n"}}}}"#
-    );
-    rust_mutants::cargo::parse_messages(json.as_bytes()).expect("json")[0].clone()
-}
-
 fn options() -> ValidateOptions {
     ValidateOptions::default()
 }
 
-fn run(scripted: &mut Scripted) -> Result<Validated, ValidateError> {
-    let catalog = scripted.catalog.clone();
+fn scripted(attributable: &[u32], unattributable: &[u32]) -> ScriptedCompile {
+    ScriptedCompile::from_source("src/lib.rs", SOURCE, Tier::All)
+        .refusing(attributable, unattributable)
+}
+
+fn run(scripted: &mut ScriptedCompile) -> Result<Validated, ValidateError> {
+    let catalog = scripted.catalog().clone();
     validate(&catalog, scripted, options(), &Recorder::disabled())
 }
 
@@ -127,24 +48,24 @@ const SOURCE: &str = "pub fn f(a: i32, b: i32) -> i32 {\n    let c = a + b;\n   
 
 #[test]
 fn an_error_inside_a_branch_belongs_to_that_mutant_and_one_outside_belongs_to_nobody() {
-    let scripted = Scripted::new(SOURCE, &[], &[]);
+    let scripted = scripted(&[], &[]);
     let file = instrument_file(
         "src/lib.rs",
-        &scripted.source,
-        &scripted.placements,
-        scripted.catalog.digest(),
+        scripted.source(),
+        scripted.placements(),
+        scripted.catalog().digest(),
     )
     .expect("instrument");
     let branch = file.branches[2];
     let messages = vec![
-        error_at(
+        diagnostic_at(
             "src/lib.rs",
             branch.span.start,
             branch.span.end,
             branch.index,
         ),
-        error_at("src/lib.rs", 0, 1, 999),
-        error_at("src/other.rs", branch.span.start, branch.span.end, 7),
+        diagnostic_at("src/lib.rs", 0, 1, 999),
+        diagnostic_at("src/other.rs", branch.span.start, branch.span.end, 7),
     ];
     let attributed = attribute(&[file], &messages);
     assert_eq!(attributed.condemned, BTreeSet::from([branch.index]));
@@ -162,16 +83,16 @@ fn an_error_inside_a_branch_belongs_to_that_mutant_and_one_outside_belongs_to_no
 
 #[test]
 fn a_warning_is_not_a_rejection() {
-    let scripted = Scripted::new(SOURCE, &[], &[]);
+    let scripted = scripted(&[], &[]);
     let file = instrument_file(
         "src/lib.rs",
-        &scripted.source,
-        &scripted.placements,
-        scripted.catalog.digest(),
+        scripted.source(),
+        scripted.placements(),
+        scripted.catalog().digest(),
     )
     .expect("instrument");
     let branch = file.branches[0];
-    let warning = error_at(
+    let warning = diagnostic_at(
         "src/lib.rs",
         branch.span.start,
         branch.span.end,
@@ -188,13 +109,13 @@ fn a_warning_is_not_a_rejection() {
 
 #[test]
 fn a_tree_that_compiles_is_accepted_whole_in_one_round() {
-    let mut scripted = Scripted::new(SOURCE, &[], &[]);
+    let mut scripted = scripted(&[], &[]);
     let validated = run(&mut scripted).expect("validate");
     assert_eq!(validated.rounds, 1);
     assert!(validated.rejections.is_empty());
     assert_eq!(
         validated.accepted.len(),
-        scripted.catalog.len(),
+        scripted.catalog().len(),
         "every mutant is accepted"
     );
     assert_eq!(scripted.attempts(), [BTreeSet::new()]);
@@ -202,7 +123,7 @@ fn a_tree_that_compiles_is_accepted_whole_in_one_round() {
 
 #[test]
 fn an_attributable_error_condemns_one_mutant_and_costs_one_more_round() {
-    let mut scripted = Scripted::new(SOURCE, &[1, 4], &[]);
+    let mut scripted = scripted(&[1, 4], &[]);
     let validated = run(&mut scripted).expect("validate");
     assert_eq!(validated.rounds, 2, "both are attributed in the same round");
     let rejected: Vec<u32> = validated
@@ -214,7 +135,7 @@ fn an_attributable_error_condemns_one_mutant_and_costs_one_more_round() {
     assert!(!validated.accepted.contains(&1) && !validated.accepted.contains(&4));
     assert_eq!(
         validated.accepted.len(),
-        scripted.catalog.len() - 2,
+        scripted.catalog().len() - 2,
         "a refusal never costs a sibling"
     );
     let rejection = &validated.rejections[0];
@@ -223,7 +144,7 @@ fn an_attributable_error_condemns_one_mutant_and_costs_one_more_round() {
     assert_eq!(rejection.path, "src/lib.rs");
     assert_eq!(
         rejection.id,
-        scripted.catalog.by_index(1).expect("mutant").id
+        scripted.catalog().by_index(1).expect("mutant").id
     );
     assert_eq!(
         scripted.attempts(),
@@ -233,7 +154,7 @@ fn an_attributable_error_condemns_one_mutant_and_costs_one_more_round() {
 
 #[test]
 fn an_unattributable_error_is_isolated_by_bisection() {
-    let mut scripted = Scripted::new(SOURCE, &[], &[3]);
+    let mut scripted = scripted(&[], &[3]);
     let validated = run(&mut scripted).expect("validate");
     let rejected: Vec<u32> = validated
         .rejections
@@ -248,7 +169,7 @@ fn an_unattributable_error_is_isolated_by_bisection() {
         scripted.attempts()
     );
     assert!(!validated.accepted.contains(&3));
-    assert_eq!(validated.accepted.len(), scripted.catalog.len() - 1);
+    assert_eq!(validated.accepted.len(), scripted.catalog().len() - 1);
 }
 
 #[test]
@@ -259,16 +180,16 @@ fn a_pristine_tree_that_does_not_compile_is_not_the_mutants_fault() {
             Ok(Attempt {
                 files: Vec::new(),
                 messages: vec![
-                    error_at("src/lib.rs", 0, 1, 0),
+                    diagnostic_at("src/lib.rs", 0, 1, 0),
                     Message::BuildFinished { success: false },
                 ],
                 success: false,
             })
         }
     }
-    let scripted = Scripted::new(SOURCE, &[], &[]);
+    let scripted = scripted(&[], &[]);
     let error = validate(
-        &scripted.catalog,
+        scripted.catalog(),
         &mut Broken,
         options(),
         &Recorder::disabled(),

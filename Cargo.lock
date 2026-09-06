@@ -1886,6 +1886,7 @@ dependencies = [
  "mjutest-devkit",
  "proc-macro2",
  "proptest",
+ "rust-mutants",
  "rustix",
  "serde",
  "serde_json",

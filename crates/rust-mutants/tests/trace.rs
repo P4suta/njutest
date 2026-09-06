@@ -13,39 +13,19 @@
 use std::fs;
 use std::io;
 
-use jiff::Timestamp;
+use rust_mutants::testkit::trace::{memory_recorder, stepping_clock, type_names};
 use rust_mutants::trace::{
-    Clock, DirSink, Event, ExecRecord, FILE_NAME, MemorySink, OUTPUT_DIRECTORY_NAME,
-    OUTPUT_FILE_LIMIT, OpenRecord, Payload, Problem, Recorder, SCHEMA, Sink, SnapshotRecord,
-    SweepRecord, TRUNCATION_MARKER, check, read_events,
+    DirSink, ExecRecord, FILE_NAME, MemorySink, OUTPUT_DIRECTORY_NAME, OUTPUT_FILE_LIMIT,
+    OpenRecord, Payload, Problem, Recorder, SCHEMA, Sink, SnapshotRecord, SweepRecord,
+    TRUNCATION_MARKER, check, read_events,
 };
 use sha2::{Digest as _, Sha256};
-
-/// A clock that advances one second per reading, from a fixed origin.
-fn stepping_clock() -> Clock {
-    Clock::stepping(
-        Timestamp::from_second(1_800_000_000).expect("in range"),
-        std::time::Duration::from_secs(1),
-    )
-}
-
-/// A recorder over a memory sink, which is what a test reads back: the recorder owns its sink and answers with what the sink kept.
-fn recording() -> Recorder {
-    Recorder::new(Sink::Memory(MemorySink::unbounded()), stepping_clock())
-}
 
 /// A directory sink that has been closed, so everything written to it fails: the reachable form of "the disk is gone".
 fn broken(dir: &std::path::Path) -> Sink {
     let sink = DirSink::create(&dir.join("recording")).expect("the sink");
     sink.close().expect("closed");
     Sink::Dir(sink)
-}
-
-fn types(events: &[Event]) -> Vec<String> {
-    events
-        .iter()
-        .map(|e| e.payload.type_name().to_owned())
-        .collect()
 }
 
 fn exec(argv: &[&str]) -> ExecRecord {
@@ -78,14 +58,17 @@ fn the_schema_is_frozen() {
 
 #[test]
 fn a_recording_starts_with_run_start_and_ends_with_run_end_carrying_the_accounting() {
-    let recorder = recording();
+    let recorder = memory_recorder();
     assert!(recorder.is_enabled());
     recorder.note("progress", "one");
     recorder.note("progress", "two");
     recorder.run_end("prepared", None);
 
     let events = recorder.events();
-    assert_eq!(types(&events), ["run-start", "note", "note", "run-end"]);
+    assert_eq!(
+        type_names(&events),
+        ["run-start", "note", "note", "run-end"]
+    );
     let seqs: Vec<u64> = events.iter().map(|e| e.seq).collect();
     assert_eq!(seqs, [1, 2, 3, 4]);
     assert_eq!(events[0].timestamp, "2027-01-15T08:00:00Z");
@@ -112,12 +95,12 @@ fn a_recording_starts_with_run_start_and_ends_with_run_end_carrying_the_accounti
 
 #[test]
 fn run_end_happens_once_and_nothing_is_recorded_afterwards() {
-    let recorder = recording();
+    let recorder = memory_recorder();
     recorder.run_end("errored", Some("boom".to_owned()));
     recorder.note("progress", "too late");
     recorder.run_end("ok", None);
     let events = recorder.events();
-    assert_eq!(types(&events), ["run-start", "run-end"]);
+    assert_eq!(type_names(&events), ["run-start", "run-end"]);
     match &events[1].payload {
         Payload::RunEnd { run } => assert_eq!(run.error.as_deref(), Some("boom")),
         other => panic!("{other:?}"),
@@ -130,7 +113,7 @@ fn run_end_happens_once_and_nothing_is_recorded_afterwards() {
 
 #[test]
 fn a_phase_guard_ends_its_phase_once_with_its_duration_and_phases_nest() {
-    let recorder = recording();
+    let recorder = memory_recorder();
     let outer = recorder.phase("prepare");
     let inner = recorder.phase("discover");
     inner.end();
@@ -141,7 +124,7 @@ fn a_phase_guard_ends_its_phase_once_with_its_duration_and_phases_nest() {
     recorder.run_end("ok", None);
     let events = recorder.events();
     assert_eq!(
-        types(&events),
+        type_names(&events),
         [
             "run-start",
             "phase-start",
@@ -202,7 +185,7 @@ fn events_are_sequenced_in_delivery_order_across_threads() {
 
 #[test]
 fn exec_keeps_environment_names_only_sorted_and_deduplicated_and_digests_the_output() {
-    let recorder = recording();
+    let recorder = memory_recorder();
     let record = ExecRecord {
         env_names: vec![
             "RUST_MUTANTS_ACTIVE=deadbeef".to_owned(),
@@ -261,7 +244,7 @@ fn one_sink_failing_costs_that_sink_the_event_and_not_the_others() {
     recorder.run_end("ok", None);
 
     let events = recorder.events();
-    assert_eq!(types(&events), ["run-start", "note", "run-end"]);
+    assert_eq!(type_names(&events), ["run-start", "note", "run-end"]);
     match &events[2].payload {
         Payload::RunEnd { run } => assert_eq!(
             run.events_dropped, 0,
@@ -280,7 +263,7 @@ fn a_sink_that_counts_its_own_drops_is_the_authority() {
     recorder.run_end("ok", None);
     let events = recorder.events();
     assert_eq!(events.len(), 4, "the ring keeps the newest four");
-    assert_eq!(types(&events), ["note", "note", "note", "run-end"]);
+    assert_eq!(type_names(&events), ["note", "note", "note", "run-end"]);
     match &events[3].payload {
         Payload::RunEnd { run } => {
             assert_eq!(run.events_dropped, 2);
@@ -340,7 +323,7 @@ fn a_recording_writes_one_json_line_per_event_and_the_reader_round_trips() {
     }
     let events = read_events(text.as_bytes()).expect("read");
     assert_eq!(
-        types(&events),
+        type_names(&events),
         [
             "run-start",
             "phase-start",
@@ -383,7 +366,7 @@ fn dir_sink_claims_its_directory_exclusively_and_preserves_output_beside_the_str
     let stream = fs::read_to_string(dir.join(FILE_NAME)).expect("stream");
     let events = read_events(stream.as_bytes()).expect("read");
     assert_eq!(
-        types(&events),
+        type_names(&events),
         ["run-start", "exec", "exec", "exec", "run-end"]
     );
     let execs: Vec<&ExecRecord> = events
@@ -428,7 +411,7 @@ fn the_reader_refuses_a_malformed_line_and_names_it() {
 
 #[test]
 fn check_reports_sequence_gaps_a_missing_run_end_and_drops() {
-    let recorder = recording();
+    let recorder = memory_recorder();
     recorder.note("a", "1");
     recorder.note("b", "2");
     let mut events = recorder.events();

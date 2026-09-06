@@ -15,6 +15,10 @@ homepage.workspace = true
 authors.workspace = true
 readme.workspace = true
 
+[features]
+# Fakes and generators the suites drive the engine's own seams with. Never on for a product.
+testkit = []
+
 [dependencies]
 hex = { workspace = true }
 jiff = { workspace = true, features = ["serde"] }
@@ -35,6 +39,7 @@ windows-sys = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
+rust-mutants = { workspace = true, features = ["testkit"] }
 mjutest-devkit = { workspace = true }
 proptest = { workspace = true }
 tempfile = { workspace = true }
