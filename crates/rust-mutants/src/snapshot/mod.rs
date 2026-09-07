@@ -835,7 +835,30 @@ fn copy_file(src: &Path, dst: &Path, meta: &Metadata) -> io::Result<(u64, String
     }
     platform::finalize_file_permissions(&output, meta)?;
     output.flush()?;
+    keep_times(&output, meta);
     Ok((size, hex::encode(hasher.finalize())))
+}
+
+/// Gives the copy the time the original was written, and says nothing when it cannot.
+///
+/// Cargo decides whether to compile a file by comparing its modification time
+/// with the artifact built from it. A copy stamped with *now* is newer than
+/// every artifact any earlier run left behind, so the whole dependency graph
+/// is compiled again on every run however much of it is already there — which
+/// makes the build cache this engine keeps between runs worth nothing.
+///
+/// The time is metadata, not content: the manifest's digests are of the bytes,
+/// and nothing about drift, identity or instrumentation reads a timestamp. A
+/// copy that carries it is a more faithful copy, and a filesystem that will
+/// not set it costs a rebuild rather than a run.
+fn keep_times(output: &File, meta: &Metadata) {
+    let Ok(modified) = meta.modified() else {
+        return;
+    };
+    let times = fs::FileTimes::new()
+        .set_modified(modified)
+        .set_accessed(meta.accessed().unwrap_or(modified));
+    let _kept = output.set_times(times);
 }
 
 /// The size and lowercase hex SHA-256 of a file already on disk: the read-only half of [`copy_file`], used by [`Snapshot::redigest`].

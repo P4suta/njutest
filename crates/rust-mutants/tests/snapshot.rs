@@ -836,3 +836,40 @@ fn a_directory_with_a_file_of_that_name_that_is_not_the_tag_is_copied() {
         "the signature is what tags a cache, not the name"
     );
 }
+
+#[test]
+fn a_copied_file_keeps_the_time_the_original_was_written() {
+    let source = tempfile::tempdir().expect("a source tree");
+    let destination = tempfile::tempdir().expect("somewhere to copy to");
+    fs::write(
+        source.path().join("Cargo.toml"),
+        "[package]\nname = \"demo\"\n",
+    )
+    .expect("a manifest");
+    fs::create_dir_all(source.path().join("src")).expect("a source directory");
+    let file = source.path().join("src/lib.rs");
+    fs::write(&file, "pub fn one() -> u8 { 1 }\n").expect("a library");
+    let long_ago = std::time::SystemTime::UNIX_EPOCH
+        .checked_add(Duration::from_secs(1_600_000_000))
+        .expect("a time before now");
+    fs::File::options()
+        .write(true)
+        .open(&file)
+        .expect("the library")
+        .set_times(fs::FileTimes::new().set_modified(long_ago))
+        .expect("a time somebody could have written it");
+
+    let snapshot = create(source.path(), &Options::new(destination.path()), now())
+        .expect("the tree is copied");
+    let copied = fs::metadata(snapshot.root().join("src/lib.rs"))
+        .expect("the copy")
+        .modified()
+        .expect("a modification time");
+    assert_eq!(
+        copied, long_ago,
+        "cargo decides whether to compile a file by comparing its time with the artifact's. A \
+         copy stamped with now is a copy cargo has to build again, every run, whatever it \
+         already built."
+    );
+    snapshot.cleanup().expect("the copy goes away");
+}
