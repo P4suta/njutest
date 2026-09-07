@@ -177,7 +177,28 @@ caller with its own evidence.
 document verbatim, `html` one page that fetches nothing, and `stryker` the
 mutation testing report every Stryker reader understands, with columns in
 UTF-16 as that schema counts them. `report --tui` reads it at the terminal
-instead. `doctor --json` answers with a `rust-mutants/doctor` document.
+instead.
+
+`doctor` answers about this environment rather than about any code: one check
+per thing a run needs — `cargo`, `rustc`, `host`, `workspace`, `config`,
+`temp`, `git`, `targets`, `environment`, `cache`, `disk`, `snapshots`,
+`llvm-tools` — each standing `ok`, `warn` or `fail`, and each carrying the
+next step when there is one. A warning is a run that costs more or measures
+less, never a reason not to run, so only a failure changes the exit code.
+`doctor --json` answers with a `rust-mutants/doctor` document.
+
+`diagnostics [RUN]` gathers one run into one directory: the report, the
+catalog, the measurement, the probe logs, the recording, the configuration, a
+fresh doctor document, what the toolchain says about itself, and the **names**
+of the variables that were set — never a value, because a bundle travels and a
+value that travels with it is one nobody chose to publish. `bundle.json` says
+what is held and what the run did not leave, so a reader can tell a run that
+had nothing to say from a file that never arrived.
+
+These two are the only commands that do not refuse to start under a reserved
+variable. Every other command refuses, because nothing a test process said
+under an inherited activation would be about this run; these report it,
+because they are what a person runs to find out that it is set.
 
 `run --shard K/N` runs one part of the catalog, cut by index, and `merge`
 reassembles the parts into the report the whole would have written. A run

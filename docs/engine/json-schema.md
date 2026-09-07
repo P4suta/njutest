@@ -130,7 +130,8 @@ cut from.
 
 ## The run as it happens
 
-`run --json` writes `rust-mutants-run-stream-v1`: one JSON object per line,
+`run --json` writes `rust-mutants-run-stream-v1`
+(`schema/rust-mutants-run-stream-v1.json`): one JSON object per line,
 flushed as the run reaches it, for a program rather than a person. The kinds
 are `run-start`, `phase-start`, `phase-end`, `mutant`, `finding`, `run-end`,
 and `error`, each carrying a `type`. A reader takes a line at a time and
@@ -149,7 +150,8 @@ one or the other and never both.
 
 ## One mutant, explained
 
-`explain <prefix>` writes `rust-mutants/explain` v1: the catalog's row for the
+`explain <prefix>` writes `rust-mutants/explain` v1
+(`schema/rust-mutants-explain-v1.json`): the catalog's row for the
 mutant, what the run made of it, the route it took, the command that puts it
 back to the tests, and the mutation as a unified diff against the file. It is
 built from the two documents a run stores — the catalog it kept and the report
@@ -162,11 +164,41 @@ which the recorded `source_digest` settles. When it is not, `source` says why
 there is none: a diff against a file the run never saw would be a lie about
 what was measured.
 
+## What this environment would do
+
+`doctor` writes `rust-mutants/doctor` v1
+(`schema/rust-mutants-doctor-v1.json`): one check per thing a run needs, each
+with a `name`, a `detail`, a `status` of `ok`, `warn` or `fail`, and a
+`remedy` when there is something to do about it. `ok` on the document is true
+when no check failed — a warning is a run that costs more or measures less,
+not a run that cannot happen — and the exit code follows it.
+
+The checks are `cargo`, `rustc`, `host`, `workspace`, `config`, `temp`,
+`git`, `targets`, `environment`, `cache`, `disk`, `snapshots` and
+`llvm-tools`. A reserved variable is the one thing every other command
+refuses to start under; `doctor` and `diagnostics` report it instead, because
+they are what a person runs to find out that it is set.
+
+## A bug report, gathered
+
+`diagnostics [RUN]` writes `rust-mutants/diagnostics` v1
+(`schema/rust-mutants-diagnostics-v1.json`) as `bundle.json`, beside a
+directory holding the run report, the catalog, the measurement, the probe
+logs, the recording, the configuration, a fresh `doctor-v1.json`,
+`toolchain.txt`, and `environment.txt`. `held` names what is in it and
+`absent` names what the run did not leave, so a reader knows the difference
+between a run that had nothing to say and a file that never arrived.
+
+`environment.txt` carries the **names** of the variables that were set and no
+value of any of them. A bundle travels, and a value that travels with it is a
+value its owner did not choose to publish.
+
 ## Evidence
 
-A run that measured coverage writes `reached-v1.json` and `catalog-v1.json`
-beside its report, and copies every probe log into `probe/`. They are the
-premises its proof layers rest on: the measurement each target left behind,
+A run writes `reached-v1.json` (`schema/rust-mutants-reached-v1.json`) and
+`catalog-v1.json` beside its report, and copies every probe log into
+`probe/`. They are the premises its proof layers rest on: the measurement
+each target left behind — empty when nothing was measured, which says so —
 the catalog with the branch bodies the compiler vouched for, and what each
 probe process recorded. `cargo xtask engine-audit` reads them and re-decides
 every route without the engine that produced them, which is what makes a

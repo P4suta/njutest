@@ -206,6 +206,9 @@ pub enum Command {
         /// The workspace root. Defaults to the working directory.
         #[arg(long, value_name = "DIR")]
         root: Option<PathBuf>,
+        /// Ask about these packages rather than every member. Repeatable.
+        #[arg(long = "package", short = 'p', value_name = "NAME")]
+        packages: Vec<String>,
         /// Print the `rust-mutants/doctor` document rather than the lines a person reads.
         #[arg(long)]
         json: bool,
@@ -248,6 +251,18 @@ pub enum Command {
         /// Read it at the terminal instead of writing it.
         #[arg(long, conflicts_with_all = ["format", "output"])]
         tui: bool,
+    },
+    /// Gather everything one run established into one directory, for a bug report.
+    Diagnostics {
+        /// The run, by its identity. Defaults to the newest.
+        #[arg(value_name = "RUN")]
+        run: Option<String>,
+        /// The workspace root. Defaults to the working directory.
+        #[arg(long, value_name = "DIR")]
+        root: Option<PathBuf>,
+        /// Write the bundle here rather than beside the run.
+        #[arg(long, value_name = "DIR")]
+        output: Option<PathBuf>,
     },
     /// Say what the engine left in the temporary directory, and remove what no run still owns.
     Cache {
@@ -433,6 +448,7 @@ impl Command {
             | Self::Merge { .. }
             | Self::Report { .. }
             | Self::Trace { .. }
+            | Self::Diagnostics { .. }
             | Self::Cache { .. } => None,
         }
     }
@@ -445,6 +461,7 @@ impl Command {
             | Self::Doctor { root, .. }
             | Self::Report { root, .. }
             | Self::Cache { root, .. }
+            | Self::Diagnostics { root, .. }
             | Self::Merge { root, .. } => root.as_ref(),
             _ => match self.scope() {
                 Some(scope) => scope.root.as_ref(),

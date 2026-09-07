@@ -26,6 +26,7 @@ Commands:
   trace        Read a recording back: what it counted, what each phase took, and what moved between
                two of them
   report       Read back a stored run report
+  diagnostics  Gather everything one run established into one directory, for a bug report
   cache        Say what the engine left in the temporary directory, and remove what no run still
                owns
   help         Print this message or the help of the given subcommand(s)

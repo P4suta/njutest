@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mjutest.dev/schema/rust-mutants-doctor-v1.json",
+  "title": "rust-mutants doctor v1",
+  "description": "What a run would find in this environment: one check per thing a run needs, each with how it stands and what to do about it.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "document_type",
+    "schema_version",
+    "tool_version",
+    "ok",
+    "checks"
+  ],
+  "properties": {
+    "document_type": {
+      "const": "rust-mutants/doctor"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "tool_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "ok": {
+      "description": "Whether every check is one a run works with, which a warning also is.",
+      "type": "boolean"
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/check"
+      }
+    }
+  },
+  "$defs": {
+    "check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "ok", "status", "detail"],
+      "properties": {
+        "name": {
+          "description": "What was checked.",
+          "type": "string",
+          "minLength": 1
+        },
+        "ok": {
+          "description": "Whether a run works with the world in this state. A warning is ok.",
+          "type": "boolean"
+        },
+        "status": {
+          "description": "How it stands. `ok` and `warn` both leave `ok` true; only `fail` stops a run.",
+          "enum": ["ok", "warn", "fail"]
+        },
+        "detail": {
+          "description": "What was found.",
+          "type": "string"
+        },
+        "remedy": {
+          "description": "What to do about it. Absent when there is nothing to do.",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}

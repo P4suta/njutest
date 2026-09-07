@@ -112,6 +112,7 @@ const fn named(command: &cli::Command) -> &'static str {
         cli::Command::WhySkipped { .. } => "why-skipped",
         cli::Command::Equivalence { .. } => "equivalence",
         cli::Command::Init { .. }
+        | cli::Command::Diagnostics { .. }
         | cli::Command::Doctor { .. }
         | cli::Command::Report { .. }
         | cli::Command::Merge { .. }

@@ -129,3 +129,54 @@ fn the_exit_codes_the_page_documents_are_the_ones_the_run_returns() {
         );
     }
 }
+
+#[test]
+fn every_schema_the_engine_ships_is_named_on_the_page_that_documents_them() {
+    let directory = mjutest_devkit::paths::workspace_root().join("schema");
+    let text = page("docs/engine/json-schema.md");
+    let mut shipped = BTreeSet::new();
+    let entries = std::fs::read_dir(&directory)
+        .unwrap_or_else(|error| panic!("{}: {error}", directory.display()));
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let json = std::path::Path::new(&name)
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("json"));
+        if name.starts_with("rust-mutants-") && json {
+            shipped.insert(name);
+        }
+    }
+    assert!(!shipped.is_empty(), "the engine ships schemas");
+    let missing: Vec<&String> = shipped
+        .iter()
+        .filter(|name| !text.contains(&format!("schema/{name}")))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "docs/engine/json-schema.md names no schema/ path for {missing:?}"
+    );
+
+    let named: BTreeSet<String> = text
+        .match_indices("schema/rust-mutants-")
+        .filter_map(|(at, _)| {
+            let rest = text.get(at.checked_add("schema/".len())?..)?;
+            let end = rest.find(|character: char| {
+                !character.is_ascii_alphanumeric() && character != '-' && character != '.'
+            })?;
+            rest.get(..end).map(ToOwned::to_owned)
+        })
+        .filter(|name| {
+            std::path::Path::new(name)
+                .extension()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("json"))
+        })
+        .collect();
+    let unshipped: Vec<&String> = named
+        .iter()
+        .filter(|name| !shipped.contains(*name))
+        .collect();
+    assert!(
+        unshipped.is_empty(),
+        "docs/engine/json-schema.md names schemas that are not under schema/: {unshipped:?}"
+    );
+}

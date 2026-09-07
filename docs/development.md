@@ -250,6 +250,14 @@ of a failed run, and the `explain` family of commands. The rule for all of it
 is [ADR 0002](adr/0002-trace-is-not-evidence.md): never a claim, never a
 failure, always honest about what was dropped.
 
+Both products bundle a run the same way. `rust-mutants doctor` says what the
+engine would find in this environment, and `rust-mutants diagnostics` gathers
+one run — report, catalog, measurement, probe logs, recording, configuration,
+doctor document, toolchain — into one directory to attach to an issue, with
+the names of the variables that were set and none of their values. What to
+reach for when something is wrong is [engine
+troubleshooting](engine/troubleshooting.md).
+
 `mjutest trace summary` is where a person asks where a run went. It counts the
 events by type, times every stage the run said it had reached, counts the
 commands by program, says how many executions each proof removed, and names the

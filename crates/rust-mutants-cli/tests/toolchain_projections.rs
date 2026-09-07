@@ -168,3 +168,103 @@ fn the_doctor_says_the_same_thing_in_lines_and_in_a_document() {
         assert!(stdout(&lines).contains(name), "{name}");
     }
 }
+
+#[test]
+fn the_doctor_document_validates_against_the_schema_it_answers_to() {
+    let fixture = Fixture::copy("fixture-simple");
+    let asked = against(&fixture, &["doctor", "--json"]);
+    let document: serde_json::Value =
+        serde_json::from_str(&stdout(&asked)).expect("the answer is JSON");
+    let schema: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(
+            mjutest_devkit::paths::workspace_root().join("schema/rust-mutants-doctor-v1.json"),
+        )
+        .expect("the schema"),
+    )
+    .expect("the schema is a document");
+    let validator = jsonschema::validator_for(&schema).expect("the schema compiles");
+    let errors: Vec<String> = validator
+        .iter_errors(&document)
+        .map(|error| format!("{}: {error}", error.instance_path()))
+        .collect();
+    assert!(errors.is_empty(), "{errors:#?}\n{document}");
+}
+
+#[test]
+fn the_doctor_answers_about_every_thing_a_run_needs() {
+    let fixture = Fixture::copy("fixture-simple");
+    let asked = against(&fixture, &["doctor", "--json"]);
+    let document: serde_json::Value =
+        serde_json::from_str(&stdout(&asked)).expect("the answer is JSON");
+    let names: Vec<&str> = document["checks"]
+        .as_array()
+        .expect("the checks")
+        .iter()
+        .filter_map(|check| check["name"].as_str())
+        .collect();
+    for needed in [
+        "cargo",
+        "rustc",
+        "host",
+        "workspace",
+        "config",
+        "temp",
+        "git",
+        "targets",
+        "environment",
+        "cache",
+        "disk",
+        "snapshots",
+        "llvm-tools",
+    ] {
+        assert!(
+            names.contains(&needed),
+            "{needed} is not asked about: {names:?}"
+        );
+    }
+}
+
+#[test]
+fn a_package_with_nothing_to_run_is_a_warning_that_names_it() {
+    let fixture = Fixture::copy("fixture-macros");
+    let asked = against(&fixture, &["doctor"]);
+    let text = stdout(&asked);
+    assert!(text.contains("WARN targets"), "{text}");
+    assert!(text.contains("fixture-macros-derive"), "{text}");
+    assert_eq!(
+        asked.status.code(),
+        Some(0),
+        "a warning is not a reason not to run: {text}"
+    );
+}
+
+#[test]
+fn a_root_that_is_a_member_of_a_workspace_fails_and_names_the_root_to_use() {
+    let fixture = Fixture::copy("fixture-workspace");
+    let member = fixture.root().join("crates/core");
+    let asked = Command::new(env!("CARGO_BIN_EXE_rust-mutants"))
+        .env("NO_COLOR", "1")
+        .env("TMPDIR", fixture.temp())
+        .env("XDG_CACHE_HOME", fixture.cache())
+        .args(["doctor", "--root", &member.to_string_lossy()])
+        .output()
+        .expect("rust-mutants runs");
+    let text = String::from_utf8_lossy(&asked.stdout).into_owned();
+    assert!(text.contains("FAIL workspace"), "{text}");
+    assert!(
+        text.contains(&fixture.root().display().to_string()),
+        "the root to use is named: {text}"
+    );
+    assert_eq!(asked.status.code(), Some(2), "{text}");
+}
+
+#[test]
+fn a_snapshot_an_earlier_run_left_behind_is_a_warning_that_says_what_removes_it() {
+    let fixture = Fixture::copy("fixture-simple");
+    std::fs::create_dir_all(fixture.temp().join("rust-mutants-snap-abandoned"))
+        .expect("a leftover snapshot");
+    let asked = against(&fixture, &["doctor"]);
+    let text = stdout(&asked);
+    assert!(text.contains("WARN snapshots"), "{text}");
+    assert!(text.contains("cache --gc"), "{text}");
+}
