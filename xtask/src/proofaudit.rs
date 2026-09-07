@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mjutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! An independent re-decision of what a completed run recorded. [ADR 0004](../../../docs/adr/0004-proof-layers-not-budgets.md) ships a proof layer only against a re-implementation that never calls the runner's, so nothing here consults the code that wrote the report: every verdict is re-derived from the recording alone, and wherever the recording does not carry enough to re-derive one, that is said plainly rather than read as agreement.
+//! An independent re-decision of what a completed run recorded. [ADR 0004](../../docs/adr/0004-proof-layers-not-budgets.md) ships a proof layer only against a re-implementation that never calls the runner's, so nothing here consults the code that wrote the report: every verdict is re-derived from the recording alone, and wherever the recording does not carry enough to re-derive one, that is said plainly rather than read as agreement.
 
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
@@ -380,7 +380,7 @@ struct FindingRow {
 
 /// Whether any layer removed a target that then killed the mutation it removed.
 ///
-/// [ADR 0004](../../../docs/adr/0004-proof-layers-not-budgets.md) decision 5
+/// [ADR 0004](../../docs/adr/0004-proof-layers-not-budgets.md) decision 5
 /// ships a layer only against a re-implementation that is not asked whether it
 /// agrees with itself, and holds it to every kill the run proved: a layer that
 /// would drop one recorded killer is unsound. The recording of the routes and

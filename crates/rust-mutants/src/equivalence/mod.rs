@@ -14,7 +14,7 @@
 //! linker, and the artifacts come out identical for a reason that is the
 //! opposite of reassuring. Saying `Identical` is the engine's whole claim, and
 //! the premises that turn it into a verdict live where the evidence does
-//! ([ADR 0013](../../../docs/adr/0013-codegen-identity-is-the-equivalence-proof.md)).
+//! ([ADR 0013](../../../../docs/adr/0013-codegen-identity-is-the-equivalence-proof.md)).
 
 pub mod artifacts;
 

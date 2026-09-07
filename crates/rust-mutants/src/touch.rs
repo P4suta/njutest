@@ -15,6 +15,9 @@
 //! it, so everything it reached has to reach every test of its target: the
 //! fallback is toward running more, never less.
 //!
+//! Why the guards rather than a coverage build:
+//! [ADR 0014](../../../docs/adr/0014-the-guards-are-the-measurement.md).
+//!
 //! The reader is fail-closed, for the reason [`crate::probe::log`] is: a
 //! truncated line or a header naming another catalog yields no facts at all,
 //! because a smaller wrong answer is what a partially-written log looks like and

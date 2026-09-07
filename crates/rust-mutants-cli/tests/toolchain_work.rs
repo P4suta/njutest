@@ -3,9 +3,12 @@
 
 //! What a run costs, counted in pairs, held to a ceiling that may fall and never rise.
 //!
-//! A pair is one mutant asked of one target: one test process started. It is
-//! the same number on every machine, at every job count, under every load,
-//! which is what makes it a thing a gate can hold. A duration is not.
+//! A pair is one mutant asked of one target: one test process started. A test
+//! is what that process is asked for, and the two fall separately — a route
+//! that puts a mutation to one test of a target rather than to all of its two
+//! hundred costs the same pair and a two-hundredth of the tests. Both are the
+//! same number on every machine, at every job count, under every load, which
+//! is what makes them things a gate can hold. A duration is not.
 
 #![expect(
     clippy::expect_used,
@@ -19,12 +22,14 @@ use std::process::Command;
 use mjutest_devkit::fixture::Fixture;
 use rust_mutants::work::Work;
 
-/// One line of the ceiling: a fixture, what a whole run would start, and what this engine starts.
+/// One line of the ceiling: a fixture, and what a whole run and this engine start of each unit.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Ceiling {
     fixture: String,
     whole: u64,
     started: u64,
+    tests_whole: u64,
+    tests_started: u64,
 }
 
 fn ceilings() -> Vec<Ceiling> {
@@ -38,13 +43,15 @@ fn ceilings() -> Vec<Ceiling> {
             let fields: Vec<&str> = line.split_whitespace().collect();
             assert_eq!(
                 fields.len(),
-                3,
-                "a ceiling is a fixture and two counts: {line}"
+                5,
+                "a ceiling is a fixture and four counts: {line}"
             );
             Ceiling {
                 fixture: fields[0].to_owned(),
                 whole: fields[1].parse().expect("a count"),
                 started: fields[2].parse().expect("a count"),
+                tests_whole: fields[3].parse().expect("a count"),
+                tests_started: fields[4].parse().expect("a count"),
             }
         })
         .collect()
@@ -89,32 +96,35 @@ fn no_fixture_starts_more_processes_than_the_ceiling_allows() {
             ceiling.fixture
         );
         assert_eq!(
-            work.whole, ceiling.whole,
+            (work.whole, work.tests_whole),
+            (ceiling.whole, ceiling.tests_whole),
             "{}: what a whole run would start changed; if that is right, the ceiling says so too",
             ceiling.fixture
         );
-        if work.started > ceiling.started {
-            risen.push(format!(
-                "{}: {} started, {} allowed",
-                ceiling.fixture, work.started, ceiling.started
-            ));
-        }
-        if work.started < ceiling.started {
-            fallen.push(format!(
-                "{}: {} started, {} allowed",
-                ceiling.fixture, work.started, ceiling.started
-            ));
+        for (unit, started, allowed) in [
+            ("pairs", work.started, ceiling.started),
+            ("tests", work.tests_started, ceiling.tests_started),
+        ] {
+            let said = format!(
+                "{}: {started} {unit} started, {allowed} allowed",
+                ceiling.fixture
+            );
+            if started > allowed {
+                risen.push(said);
+            } else if started < allowed {
+                fallen.push(said);
+            }
         }
     }
     assert!(
         risen.is_empty(),
-        "the engine started more processes than it used to for the same question. That is a \
+        "the engine started more of something than it used to for the same question. That is a \
          change to argue for, not one to notice later:\n{}",
         risen.join("\n")
     );
     assert!(
         fallen.is_empty(),
-        "the engine starts fewer processes than the ceiling allows, which is the point — lower \
+        "the engine starts fewer than the ceiling allows, which is the point — lower \
          xtask/work_ceiling.txt to what it is now, so it can never rise back:\n{}",
         fallen.join("\n")
     );

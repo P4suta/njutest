@@ -218,7 +218,7 @@ impl Request {
 
 /// Which targets could notice a mutation, and what the route rests on.
 ///
-/// A route is the reach layer of [ADR 0004](../../docs/adr/0004-proof-layers-not-budgets.md):
+/// A route is the reach layer of [ADR 0004](../../../docs/adr/0004-proof-layers-not-budgets.md):
 /// a rule that removes an execution because evidence the run already holds
 /// says the execution could not observe the mutant. Every fallback is toward
 /// running more, and every one of them is named, so a reader who sees a run go

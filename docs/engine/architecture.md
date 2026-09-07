@@ -152,7 +152,20 @@ A killed mutant's row says which tests failed with it active (`killed_by`) and
 the signal the process died from, when it died from one. Both come from the
 harness's own per-test lines, which is also what `mutant-exec` records.
 
-Coverage is measured unless `--no-coverage` says otherwise. It builds the tree once more with `-C instrument-coverage`, runs
+Reach is measured by the guards, on the run that already verifies the
+baseline. `RUST_MUTANTS_TOUCH` names a log; every guard records the index it
+was asked about against the thread that reached it, and libtest names each
+test's thread after the test, so the answer is per test and the measurement
+costs the run nothing it was not already spending. A mutation then goes to the
+tests that reached it: a target no test of which reached it is not started,
+and a target some of whose tests did runs exactly those in one process. What
+nothing can attribute to a test — the main thread, a benchmark, a thread a
+test spawned — reaches every test of its target, and a set of tests that does
+not pass on its own takes its target off test routing altogether. `--no-touch`
+asks for the answer a run with nothing removed gives. See
+[ADR 0014](../adr/0014-the-guards-are-the-measurement.md).
+
+Coverage is the second opinion, and `--coverage` asks for it. It builds the tree once more with `-C instrument-coverage`, runs
 every test target once with nothing active, and reads back which target
 executed which regions. A mutant is then only run against the targets that
 reached it, and one no measured target reaches is reported as

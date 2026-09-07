@@ -225,7 +225,7 @@ impl Observer for Display<'_> {
 /// recording, though, and a display is one more reader of that: a tee of the
 /// recorder's sink hands each event to this thread, which writes the line a
 /// person watching wants. A recording never fails a run
-/// ([ADR 0002](../../../docs/adr/0002-trace-is-diagnostic-exhaust.md)), and
+/// ([ADR 0002](../../../docs/adr/0002-trace-is-not-evidence.md)), and
 /// neither does this.
 #[must_use]
 pub fn phase_line(event: &Event) -> Option<String> {

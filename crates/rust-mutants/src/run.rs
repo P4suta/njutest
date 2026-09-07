@@ -837,11 +837,20 @@ pub struct Equivalence<'a> {
 
 /// How many mutants a run measures at once. Zero is the default: as many as the machine has, capped at four.
 ///
-/// Each test binary already runs its own tests on as many threads as the
-/// machine has, so a run that started one process per core would have every
-/// process contending with every other and would measure the contention. Four
-/// is the number that keeps a machine busy without making a duration a fact
-/// about the load.
+/// Each test binary runs its own tests on as many threads as the machine has,
+/// so a run that started one process per core would have every process
+/// contending with every other and would measure the contention. Four is the
+/// number that keeps a machine busy without making a duration a fact about
+/// the load.
+///
+/// The guards narrow most executions to the tests that reached the mutation,
+/// and a process running one test does not use the machine the way one running
+/// a whole suite does. The cap stays anyway, because the ones that fall back —
+/// a target the record could not attribute, a set of tests that does not answer
+/// on its own — still run everything, and a budget is five times a baseline
+/// measured with the machine to itself. A person who knows their suite says
+/// `--jobs`, and a run that says nothing keeps the answer that is right when
+/// the fallback fires.
 #[must_use]
 pub fn jobs(configured: usize) -> usize {
     if configured > 0 {

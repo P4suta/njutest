@@ -18,6 +18,14 @@ one test process started. A run that asked every target about every mutant
 would start `mutants × targets` of them, and every pair short of that is one
 something removed.
 
+A pair is a process, and a process is not the whole of what a run does: one
+that runs the two tests that reached a mutation costs less than one that runs
+the target's two hundred. So the ledger counts **tests** as well, and that is
+the number the guards move
+([ADR 0014](../adr/0014-the-guards-are-the-measurement.md)). Every test a run
+started is in it, including the ones it started to establish that a filtered
+set answers on its own.
+
 The unit is a count and not a duration on purpose. A second is about this
 machine, this load, this job count; it cannot be compared between two runs and
 it cannot be ratcheted. A pair is the same number everywhere, so a change that
@@ -26,8 +34,10 @@ makes the engine do less is a change a test can see —
 allowlist it may shrink and never grow.
 
 ```
-WORK  started=11 of 33 pairs across 3 targets; 66.7% removed
-      (unreached=20 answered=2)
+WORK  started=15 of 42 pairs across 3 targets; 64.3% removed
+      (unreached=25 answered=2)
+      tests=18 of 70; 74.3% removed (3 of them establishing that a
+      filtered set answers on its own)
 ```
 
 `rust_mutants::work::Work` derives that from the stored report alone, so an
@@ -116,9 +126,19 @@ weekly.
 
 | Layer | Lemma | Premise | Removes |
 | --- | --- | --- | --- |
+| guard routing | — | no test of this target reached the mutation, or only these did | the (mutant, target) pair, or every test of it the record did not name |
 | coverage routing | — | this target's measured run covered no region holding the mutation | the (mutant, target) pair |
 | `branch-never-taken` | the compiler: this mutation changes nothing outside the body the condition gates | this target's measured run covered no region beginning inside that body | the (mutant, target) pair |
 | `never-infected` | the probe: this test ran the mutation and its value never differed | the probe log this target's own run appended to | the (mutant, target) pair |
+
+Guard routing is the default and costs no build: the guards of the
+instrumented tree record which of a target's tests reached them on the run
+that verifies the baseline, and libtest names each test's thread after the
+test. Coverage routing is the same claim established by an LLVM coverage
+build, kept behind `--coverage` as an independent second opinion the
+differential harness holds the guards to. A run may make both, and then the
+guards decide the route and the regions remain the premise
+`branch-never-taken` rests on.
 
 A mutation every target is removed from is not executed at all: `unreached`
 when the measurement placed it and nothing ran it, `discharged` when a proof
@@ -127,12 +147,14 @@ mutant is — and neither is a survivor, because nothing measured it.
 
 ## A proof without a premise removes nothing
 
-The lemma is the compiler's or the probe's; the premise is always the
-measurement's. `--no-coverage` measures nothing, so it discharges nothing,
-whatever the compiler vouched for. A target whose profile could not be read is
-one the measurement says nothing about, so it is routed to and never
-discharged: a proof resting on its silence would rest on the measurement's
-failure.
+The lemma is the compiler's or the probe's; the premise is always a
+measurement's. `--no-coverage --no-touch` measures nothing, so it discharges
+nothing, whatever the compiler vouched for; `--no-coverage` alone still has
+the guards, so a probe still discharges and `branch-never-taken` — whose
+premise is a coverage region — does not. A target whose profile could not be
+read, or whose guards recorded nothing this run can route by, is one the
+measurement says nothing about: it is routed to and never discharged, because
+a proof resting on its silence would rest on the measurement's failure.
 
 `prove::discharges(proof, path, covered)` is the pure function of the two. A
 caller with its own coverage — `mjutest` is one — discharges with its own
@@ -146,6 +168,7 @@ proof. Beside its report a run writes:
 
 | File | What it holds |
 | --- | --- |
+| `touched-v1.json` | which of each target's tests reached which mutation, what was reached where nothing named a test, and which targets said nothing this run can route by |
 | `reached-v1.json` | every region each target's measured run covered, every region the build instrumented, and what the measurement could not establish |
 | `catalog-v1.json` | every mutant, with the body of the branch the compiler vouched for |
 | `probe/<target>.log` | what each probe process appended |
@@ -186,6 +209,18 @@ discharge everything a function's own region touches. Neither is what the
 measurement says.
 
 A library's documented examples are compiled by rustdoc while cargo runs them,
-so no coverage build instruments them: a mutation is routed to a documentation
-target by the file it is in (`doctests-routed-by-file`), which is wider than a
-region and is the direction a fallback must go.
+so no coverage build instruments them and the engine does not start their
+processes itself: a mutation is routed to a documentation target by the file
+it is in (`doctests-routed-by-file`), which is wider than a region and is the
+direction a fallback must go. The guards are silent in three more places, and
+each of them runs more rather than less:
+
+- a target the engine does not start itself — a documented example, one the
+  project configured a runner for — is not asked (`touch-not-recorded`), and
+  every test of it stays in every route;
+- a site reached on a thread nothing can name a test after — the main thread,
+  a benchmark, one a test spawned — reaches **every** test of its target,
+  because the record could not say which one;
+- a set of tests that does not pass on its own takes its target off test
+  routing for good, and the run notes `test-routing-unsound` with the target
+  it was about.

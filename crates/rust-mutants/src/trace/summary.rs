@@ -4,7 +4,7 @@
 //! Reading a recording as numbers: where a run went, and what moved between two of them.
 //!
 //! A trace is diagnostic exhaust and never evidence
-//! ([ADR 0002](../../../docs/adr/0002-trace-is-not-evidence.md)), so nothing
+//! ([ADR 0002](../../../../docs/adr/0002-trace-is-not-evidence.md)), so nothing
 //! here is a claim about a program. What it is for is the question a person
 //! asks of a run that took eleven minutes: which part of it did.
 

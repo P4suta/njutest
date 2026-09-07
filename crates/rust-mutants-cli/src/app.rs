@@ -958,6 +958,11 @@ fn addressed(text: &str) -> Result<(String, Option<(u32, u32)>), CliError> {
 /// What a run would cost, from what preparing established and before a mutant is executed.
 fn estimate(session: &Session, filter: &run::Filter) -> String {
     let targets = u64::try_from(session.targets().len()).unwrap_or(u64::MAX);
+    let held: u64 = session
+        .targets()
+        .iter()
+        .map(|target| u64::from(session.tests_of(&target.id)))
+        .sum();
     let mut counted = Estimated::default();
     let mut text = String::new();
     for index in session.accepted() {
@@ -983,7 +988,14 @@ fn estimate(session: &Session, filter: &run::Filter) -> String {
         } else {
             counted.selected = counted.selected.saturating_add(1);
             counted.pairs = counted.pairs.saturating_add(reaching);
+            counted.tests = counted.tests.saturating_add(
+                u64::try_from(
+                    route.started(|target| usize::try_from(session.tests_of(target)).unwrap_or(1)),
+                )
+                .unwrap_or(u64::MAX),
+            );
         }
+        counted.tests_whole = counted.tests_whole.saturating_add(held);
         let written = writeln!(
             text,
             "#{:<5} {}  {:<22} {}:{}  {}  {} targets",
@@ -1018,6 +1030,10 @@ struct Estimated {
     unreached: u64,
     /// The pairs a proof removed.
     discharged: u64,
+    /// The tests a run would start, which is what the pairs are asked for.
+    tests: u64,
+    /// The tests a run that asked every test of every target about every mutant would start.
+    tests_whole: u64,
 }
 
 impl Estimated {
@@ -1037,15 +1053,27 @@ impl Estimated {
             widened(removed) / widened(whole) * 100.0
         };
         let seconds = self.pairs.saturating_mul(each.as_secs().max(1));
+        let tests_share = if self.tests_whole == 0 {
+            0.0
+        } else {
+            widened(
+                self.tests_whole
+                    .saturating_sub(self.tests.min(self.tests_whole)),
+            ) / widened(self.tests_whole)
+                * 100.0
+        };
         format!(
             "\nWOULD START  {} of {whole} pairs ({} mutants against {targets} targets); \
              {share:.1}% removed\n\
+             WHICH RUN    {} of {} tests; {tests_share:.1}% removed\n\
              REMOVED BY   unreached={} discharged={} unselected={} nothing-to-ask={}\n\
              AT MOST      {} mutants execute; one target that answers ends the rest\n\
              ROUGHLY      {}:{:02}:{:02} on this machine at ~{}s a target, which is a guess about \
              the machine rather than about the work\n",
             self.pairs,
             self.cataloged,
+            self.tests,
+            self.tests_whole,
             self.unreached,
             self.discharged,
             self.unselected,
@@ -1512,6 +1540,12 @@ fn doctor_document(
     checks.push(disk_check(&environment.temp_directory));
     checks.push(snapshots_check(&reports, environment));
     checks.push(llvm_tools_check(toolchain.as_ref().ok()));
+    checks.push(guards_check(
+        toolchain
+            .as_ref()
+            .ok()
+            .map(rust_mutants::cargo::Toolchain::host),
+    ));
     doctor_report::DoctorDocument::of(checks)
 }
 
@@ -2073,6 +2107,47 @@ fn snapshots_check(reports: &Path, environment: &Environment) -> doctor_report::
 /// Coverage routing fails open — a measurement it cannot make routes every
 /// mutation everywhere — so a missing component is a warning about how much a
 /// run will cost, never a reason not to run.
+/// Whether the guards of an instrumented tree can say which test reached them, on the host a run compiles for.
+///
+/// The record is per test because libtest gives each test a thread of its own
+/// named after it, and it only does that where the platform has threads. On
+/// one that does not, every touch is recorded under a name no test answers
+/// for, so every mutation is put to every test of its target: sound, and none
+/// of the saving. Saying so before a run is better than a person reading a
+/// work ledger afterwards and wondering.
+fn guards_check(host: Option<&str>) -> doctor_report::Check {
+    use doctor_report::Standing::{Ok as Well, Warn};
+    let threadless = ["wasm", "emscripten", "zkvm"];
+    let Some(host) = host else {
+        return doctor_report::Check::new(
+            "guards",
+            Warn,
+            "there is no toolchain to say what this host is",
+            Some("install a toolchain with rustup, or put cargo on PATH"),
+        );
+    };
+    if threadless.iter().any(|family| host.contains(family)) {
+        return doctor_report::Check::new(
+            "guards",
+            Warn,
+            &format!(
+                "{host} runs its tests without a thread each, so a touch cannot be attributed to \
+                 a test and every mutation goes to every test of its target"
+            ),
+            Some("route by the coverage build instead: --coverage"),
+        );
+    }
+    doctor_report::Check::new(
+        "guards",
+        Well,
+        &format!(
+            "{host} gives each test a thread named after it, so a mutation goes to the tests \
+             that reached it"
+        ),
+        None,
+    )
+}
+
 fn llvm_tools_check(toolchain: Option<&rust_mutants::cargo::Toolchain>) -> doctor_report::Check {
     use doctor_report::Standing::{Ok as Well, Warn};
     let advise = Some("rustup component add llvm-tools");

@@ -1,21 +1,25 @@
 # SPDX-FileCopyrightText: 2026 mjutest contributors
 # SPDX-License-Identifier: MIT OR Apache-2.0
 #
-# What a run of each fixture costs, in pairs: one mutant asked of one target,
-# which is one test process started. A pair is the unit because it is the same
-# number on every machine, at every job count, under every load — a duration is
-# not, and a thing measured in durations cannot be ratcheted.
+# What a run of each fixture costs, in two units. A **pair** is one mutant
+# asked of one target, which is one test process started. A **test** is what
+# that process is asked for: a route that puts a mutation to one test of a
+# target rather than to all of its two hundred costs the same pair and a
+# two-hundredth of the tests, so the two fall separately and both are here.
+# Neither is a duration: both are the same number on every machine, at every
+# job count, under every load, and a thing measured in durations cannot be
+# ratcheted.
 #
-# `whole` is what a run that asked every target about every mutant would start.
-# `started` is what this engine starts. **This file may shrink and never grow.**
-# A change that makes the engine start more processes for the same question is
-# a change to argue for in a pull request, not one to notice in a graph later.
+# `whole` is what a run that asked every target about every mutant would start,
+# and `started` is what this engine starts. **This file may shrink and never
+# grow.** A change that makes the engine start more for the same question is a
+# change to argue for in a pull request, not one to notice in a graph later.
 #
-# The command is fixed so the number is: `run --tier all --offline --locked
+# The command is fixed so the numbers are: `run --tier all --offline --locked
 # --jobs 1`, with the configuration the fixture carries and nothing else.
 #
-# fixture             whole  started
-fixture-simple           33       11
-fixture-coverage         42       14
-fixture-unreached        16        4
-fixture-baseline         51       15
+# fixture             whole  started  tests  tests_started
+fixture-simple           33       11     33             11
+fixture-coverage         42       14     70             17
+fixture-unreached        16        4     16              4
+fixture-baseline         51       15     51             15

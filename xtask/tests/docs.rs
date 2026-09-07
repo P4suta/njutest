@@ -154,3 +154,85 @@ fn links(text: &str) -> Vec<String> {
     }
     found
 }
+
+/// Every file of the repository a link could be written in, source and page alike.
+fn linking_files() -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    let mut stack = vec![root()];
+    while let Some(directory) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&directory) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+                if !matches!(name.as_str(), "target" | ".git" | "node_modules") {
+                    stack.push(path);
+                }
+                continue;
+            }
+            if path
+                .extension()
+                .is_some_and(|extension| extension == "rs" || extension == "md")
+            {
+                found.push(path);
+            }
+        }
+    }
+    found.sort();
+    found
+}
+
+/// Every local path one file links to, as written.
+///
+/// A markdown link target is what a reader clicks, in a page and in the doc
+/// comment of an item alike. Anything else that looks like a path is not a
+/// link: a test that writes `docs/design.md` into a fixture is naming a file
+/// it creates, not one this repository holds.
+fn linked(text: &str) -> BTreeSet<String> {
+    let mut found = BTreeSet::new();
+    let mut rest = text;
+    while let Some(at) = rest.find("](") {
+        let after = rest.get(at.saturating_add(2)..).unwrap_or_default();
+        let end = after.find(')').unwrap_or(after.len());
+        let target = after.get(..end).unwrap_or_default();
+        let target = target.split('#').next().unwrap_or_default().trim();
+        let looks_like_a_path = !target.is_empty()
+            && !target.contains("://")
+            && !target.starts_with('#')
+            && !target.starts_with("mailto:")
+            && !target.contains(char::is_whitespace)
+            && !target.contains('"')
+            && target.contains('.');
+        if looks_like_a_path {
+            found.insert(target.to_owned());
+        }
+        rest = after.get(end..).unwrap_or_default();
+    }
+    found
+}
+
+#[test]
+fn every_page_a_file_of_this_repository_links_to_is_one_it_holds() {
+    let mut dangling = Vec::new();
+    for path in linking_files() {
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let relative = path.strip_prefix(root()).unwrap_or(&path).to_owned();
+        let beside = path.parent().map_or_else(root, Path::to_path_buf);
+        for target in linked(&text) {
+            if beside.join(&target).exists() {
+                continue;
+            }
+            dangling.push(format!("{}: {target}", relative.display()));
+        }
+    }
+    assert!(
+        dangling.is_empty(),
+        "a link to a page nobody holds is a reader following it and finding nothing; rustdoc \
+         checks the links that name items and not the ones that name files:\n{}",
+        dangling.join("\n")
+    );
+}

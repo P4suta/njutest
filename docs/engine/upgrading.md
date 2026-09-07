@@ -75,6 +75,40 @@ now names the target that failed with nothing active and says that
 `--no-verify` is the way past it.
 
 
+## Upgrading to E10
+
+**A mutation goes to the tests that reached it.** The guards of the
+instrumented tree record which of a target's tests reached them, on the run
+that already verified the baseline, and libtest names each test's thread after
+the test. A target no test of which reached a mutation is not run at all, and
+a target some of whose tests did runs exactly those in one process. Nothing
+about the outcomes changed: `--no-touch` asks for the answer a run with
+nothing removed gives, and the differential harness holds every combination of
+the two measurements to it. See
+[ADR 0014](../adr/0014-the-guards-are-the-measurement.md).
+
+**`RUST_MUTANTS_TOUCH` is reserved.** A run composes it for every test process
+it starts and refuses to inherit it, exactly as it does the other three. A
+process that finds it already set ends with `RM0006`.
+
+**The `WORK` line counts tests as well as pairs.** A pair is a process; a test
+is what the process was asked for, and the two fall separately. The dry run
+says the same, and `xtask/work_ceiling.txt` has two more columns.
+
+**`touched-v1.json` goes beside the report.** It is what the guards recorded,
+and `cargo xtask engine-audit` re-decides every route from it without the
+engine.
+
+**`branch-never-taken` still needs a coverage build.** Its premise is a
+coverage region, so a run that measures only with the guards does not discharge
+by it. Pass `--coverage` where that layer is worth its build.
+
+**Two limitations are new**, both of which run more rather than less:
+`touch-not-recorded` for a target the engine does not start itself, and
+`touch-log-unreadable` for a record that did not read back. A set of tests
+that only passes beside its neighbours is noted `test-routing-unsound` and its
+target runs every test it has.
+
 ## Upgrading to E9
 
 **A run says how much work it did.** The `WORK` line counts pairs — one mutant

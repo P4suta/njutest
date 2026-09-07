@@ -42,7 +42,7 @@ pub enum Sink {
 /// A sink that hands each event to whoever is listening on the other end.
 ///
 /// A recording is diagnostic exhaust and never evidence
-/// ([ADR 0002](../../../../docs/adr/0002-trace-is-diagnostic-exhaust.md)), so
+/// ([ADR 0002](../../../../docs/adr/0002-trace-is-not-evidence.md)), so
 /// a reader that has gone away costs the event and never the run.
 #[derive(Debug)]
 pub struct ChannelSink {
