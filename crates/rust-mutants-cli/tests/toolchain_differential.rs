@@ -1,0 +1,168 @@
+// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! Whether removing the work changed the answer.
+//!
+//! Every proof layer exists to not run something. The claim each one makes is
+//! not "this was probably fine to skip" but "running it would have established
+//! exactly this", and a claim of that shape is one a test can call. So: run a
+//! fixture twice, once with every layer on and once with every layer off, and
+//! hold the two reports to each other mutant by mutant.
+//!
+//! A mutant the proved run never started a process for, because a measurement
+//! or a proof said no target could notice it, has to be one the whole run
+//! found nothing noticed either. If a discharged mutant turns out to be killed
+//! when something actually runs it, the proof is wrong, and this is where that
+//! is found out rather than in somebody's report.
+
+#![expect(
+    clippy::expect_used,
+    reason = "a test reports a setup failure by panicking and reads a document as a table"
+)]
+
+use std::collections::BTreeMap;
+use std::process::Command;
+
+use mjutest_devkit::fixture::Fixture;
+use rust_mutants::report::run::{RunDocument, RunMutantDocument};
+use rust_mutants::work::Work;
+
+/// The fixtures the layers have something to say about.
+const FIXTURES: [&str; 4] = [
+    "fixture-simple",
+    "fixture-coverage",
+    "fixture-unreached",
+    "fixture-probeable",
+];
+
+/// What a run established about one tree, and what it cost to establish it.
+struct Established {
+    rows: BTreeMap<String, RunMutantDocument>,
+    work: Work,
+}
+
+fn established(name: &str, extra: &[&str]) -> Established {
+    let fixture = Fixture::copy(name);
+    let output = Command::new(env!("CARGO_BIN_EXE_rust-mutants"))
+        .env("NO_COLOR", "1")
+        .env("TMPDIR", fixture.temp())
+        .env("XDG_CACHE_HOME", fixture.cache())
+        .args(["run", "--tier", "all", "--offline", "--locked"])
+        .args(["--jobs", "1", "--ui", "quiet", "--no-cache"])
+        .args(extra)
+        .args(["--root", &fixture.root().to_string_lossy()])
+        .output()
+        .expect("rust-mutants runs");
+    assert!(
+        output.status.code().is_some_and(|code| code <= 1),
+        "{name} {extra:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let directory = std::fs::read_dir(fixture.root().join("reports/mutation"))
+        .expect("the run stored a report")
+        .flatten()
+        .map(|entry| entry.path())
+        .find(|path| path.join("run-report-v1.json").is_file())
+        .expect("a stored run");
+    let text = std::fs::read_to_string(directory.join("run-report-v1.json")).expect("the report");
+    let document: RunDocument = serde_json::from_str(&text).expect("the report reads back");
+    Established {
+        work: Work::of(&document),
+        rows: document
+            .mutants
+            .into_iter()
+            .map(|row| (row.id.clone(), row))
+            .collect(),
+    }
+}
+
+/// What a run that removed nothing would have said about a mutant a proof removed.
+///
+/// A proof removes a (mutant, target) pair by claiming the target could not
+/// have noticed. A mutant every target was removed from is therefore one no
+/// test notices: a survivor. That is the whole claim, and it is falsifiable.
+fn claimed(row: &RunMutantDocument) -> &str {
+    match (row.outcome.as_str(), row.not_run_reason.as_deref()) {
+        ("not_run", Some("unreached" | "discharged")) => "survived",
+        (outcome, _) => outcome,
+    }
+}
+
+#[test]
+fn every_proof_that_removed_a_run_claimed_the_answer_a_whole_run_gives() {
+    let mut removed_something: u32 = 0;
+    let mut claims: u32 = 0;
+    for name in FIXTURES {
+        let probe: &[&str] = if name == "fixture-probeable" {
+            &["--probe"]
+        } else {
+            &[]
+        };
+        let proved = established(name, probe);
+        let whole = established(name, &["--no-coverage"]);
+        assert_eq!(
+            proved.rows.len(),
+            whole.rows.len(),
+            "{name}: the two runs cataloged different trees, so nothing below compares"
+        );
+        if proved.work.started < whole.work.started {
+            removed_something = removed_something.saturating_add(1);
+        }
+        for (id, row) in &proved.rows {
+            let Some(other) = whole.rows.get(id) else {
+                panic!("{name}: {id} is in the proved run and not in the whole one");
+            };
+            if row.outcome == "inconclusive" || other.outcome == "inconclusive" {
+                continue;
+            }
+            if row.outcome == "not_run" && claimed(row) != row.outcome.as_str() {
+                claims = claims.saturating_add(1);
+            }
+            assert_eq!(
+                claimed(row),
+                claimed(other),
+                "{name}: {} was {} with every layer on and {} with every layer off. A proof that \
+                 removes work has to leave the answer where a whole run leaves it; this one moved \
+                 it.",
+                row.display_id,
+                describe(row),
+                describe(other),
+            );
+        }
+    }
+    assert!(
+        removed_something > 0,
+        "no fixture cost less with the layers on than with them off, so this test proved nothing \
+         about them"
+    );
+    assert!(
+        claims > 0,
+        "no mutant was removed by a proof at all, so every comparison above was between two \
+         measurements and none of them was a claim being checked"
+    );
+}
+
+/// What a row says happened to it, as a sentence a failing assertion can carry.
+fn describe(row: &RunMutantDocument) -> String {
+    match (row.outcome.as_str(), row.not_run_reason.as_deref()) {
+        ("not_run", Some(reason)) => format!("not run ({reason})"),
+        (outcome, _) => outcome.to_owned(),
+    }
+}
+
+#[test]
+fn the_layers_remove_work_rather_than_only_promising_to() {
+    let proved = established("fixture-unreached", &[]);
+    let whole = established("fixture-unreached", &["--no-coverage"]);
+    assert!(
+        proved.work.started < whole.work.started,
+        "a fixture built to hold code no test reaches should cost less measured than unmeasured: \
+         {} against {}",
+        proved.work.started,
+        whole.work.started
+    );
+    assert!(
+        proved.work.answers_for_the_whole() && whole.work.answers_for_the_whole(),
+        "neither run was asked for less than the whole catalog"
+    );
+}
