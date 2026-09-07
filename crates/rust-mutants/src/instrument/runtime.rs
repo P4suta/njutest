@@ -39,6 +39,17 @@ pub const CATALOG_ENV: &str = "RUST_MUTANTS_CATALOG";
 /// catalog than the one activating it.
 pub const STALE_CATALOG_EXIT: i32 = 97;
 
+/// Names the file the guards append to, saying which of the process's threads reached them.
+pub const TOUCH_ENV: &str = "RUST_MUTANTS_TOUCH";
+
+/// The exit status of a test process asked to record what its guards saw that could not.
+///
+/// Silence is what licenses a run to skip a test, so a process that cannot
+/// write ends rather than leaving one. The session reads this code as "measure
+/// this target again with nothing to record", which routes every test of it at
+/// every mutant of it.
+pub const TOUCH_UNAVAILABLE_EXIT: i32 = 96;
+
 /// The name the generated module takes when the file does not already spell
 /// it; otherwise a digit is appended until one is free.
 pub const MODULE_STEM: &str = "__rm";
@@ -126,10 +137,21 @@ mod {{MODULE}} {
 {{IDS}}    ];
     const UNINIT: u32 = u32::MAX - 1;
     const NONE: u32 = u32::MAX;
+    const TOUCH_BASE: u32 = {{BASE}};
+    const TOUCH_SPAN: usize = {{SPAN}};
+    const TOUCH_BATCH: usize = 64;
+    const TOUCH_UNKNOWN: u8 = 0;
+    const TOUCH_OFF: u8 = 1;
+    const TOUCH_ON: u8 = 2;
     static ACTIVE: __rm_std::sync::atomic::AtomicU32 = __rm_std::sync::atomic::AtomicU32::new(UNINIT);
+    static TOUCHING: __rm_std::sync::atomic::AtomicU8 = __rm_std::sync::atomic::AtomicU8::new(TOUCH_UNKNOWN);
+    static TOUCH_SINK: __rm_std::sync::OnceLock<__rm_std::sync::Mutex<__rm_std::fs::File>> = __rm_std::sync::OnceLock::new();
 
     #[inline(always)]
     pub(crate) fn active(index: u32) -> bool {
+        if TOUCHING.load(__rm_std::sync::atomic::Ordering::Relaxed) != TOUCH_OFF {
+            touch(index);
+        }
         let selected = ACTIVE.load(__rm_std::sync::atomic::Ordering::Relaxed);
         if selected != UNINIT {
             return selected == index;
@@ -137,6 +159,126 @@ mod {{MODULE}} {
         let resolved = resolve();
         ACTIVE.store(resolved, __rm_std::sync::atomic::Ordering::Relaxed);
         resolved == index
+    }
+
+    struct Seen {
+        name: __rm_std::string::String,
+        eager: bool,
+        bits: __rm_std::vec::Vec<bool>,
+        touched: __rm_std::vec::Vec<u32>,
+    }
+
+    impl Seen {
+        fn new() -> Seen {
+            let named = __rm_std::thread::current().name().map(__rm_std::string::ToString::to_string);
+            let eager = match &named {
+                __rm_std::option::Option::Some(name) => name == "main",
+                __rm_std::option::Option::None => true,
+            };
+            let mut bits = __rm_std::vec::Vec::new();
+            bits.resize(TOUCH_SPAN, false);
+            Seen {
+                name: match named {
+                    __rm_std::option::Option::Some(name) if !eager => name,
+                    _ => __rm_std::string::String::from("{{UNATTRIBUTED}}"),
+                },
+                eager,
+                bits,
+                touched: __rm_std::vec::Vec::new(),
+            }
+        }
+
+        fn saw(&mut self, index: u32) {
+            let at = index.wrapping_sub(TOUCH_BASE) as usize;
+            if at >= self.bits.len() || self.bits[at] {
+                return;
+            }
+            self.bits[at] = true;
+            self.touched.push(index);
+            if self.eager || self.touched.len() >= TOUCH_BATCH {
+                self.flush();
+            }
+        }
+
+        fn flush(&mut self) {
+            if self.touched.is_empty() {
+                return;
+            }
+            let mut line = __rm_std::string::String::from("{{SITES}}\t");
+            line.push_str(&self.name);
+            let mut at = 0;
+            while at < self.touched.len() {
+                line.push_str(if at == 0 { "\t" } else { "," });
+                line.push_str(&__rm_std::format!("{}", self.touched[at]));
+                at += 1;
+            }
+            line.push_str("\n");
+            self.touched.clear();
+            append(&line);
+        }
+    }
+
+    impl __rm_std::ops::Drop for Seen {
+        fn drop(&mut self) {
+            self.flush();
+        }
+    }
+
+    __rm_std::thread_local! {
+        static SEEN: __rm_std::cell::RefCell<Seen> = __rm_std::cell::RefCell::new(Seen::new());
+    }
+
+    #[inline(never)]
+    fn touch(index: u32) {
+        if !touching() {
+            return;
+        }
+        let _ = SEEN.try_with(|seen| match seen.try_borrow_mut() {
+            __rm_std::result::Result::Ok(mut seen) => seen.saw(index),
+            __rm_std::result::Result::Err(_) => (),
+        });
+    }
+
+    fn touching() -> bool {
+        let known = TOUCHING.load(__rm_std::sync::atomic::Ordering::Relaxed);
+        if known != TOUCH_UNKNOWN {
+            return known == TOUCH_ON;
+        }
+        let on = match __rm_std::env::var("{{TOUCH_ENV}}") {
+            __rm_std::result::Result::Ok(value) => !value.is_empty(),
+            __rm_std::result::Result::Err(_) => false,
+        };
+        TOUCHING.store(if on { TOUCH_ON } else { TOUCH_OFF }, __rm_std::sync::atomic::Ordering::Relaxed);
+        on
+    }
+
+    fn append(line: &str) {
+        let sink = TOUCH_SINK.get_or_init(opened);
+        let mut file = match sink.lock() {
+            __rm_std::result::Result::Ok(guard) => guard,
+            __rm_std::result::Result::Err(poisoned) => poisoned.into_inner(),
+        };
+        if __rm_std::io::Write::write_all(&mut *file, line.as_bytes()).is_err() {
+            __rm_std::process::exit({{TOUCH_EXIT}});
+        }
+    }
+
+    #[cold]
+    fn opened() -> __rm_std::sync::Mutex<__rm_std::fs::File> {
+        let path = match __rm_std::env::var("{{TOUCH_ENV}}") {
+            __rm_std::result::Result::Ok(value) => value,
+            __rm_std::result::Result::Err(_) => __rm_std::process::exit({{TOUCH_EXIT}}),
+        };
+        let opened = __rm_std::fs::OpenOptions::new().create(true).append(true).open(&path);
+        let mut file = match opened {
+            __rm_std::result::Result::Ok(file) => file,
+            __rm_std::result::Result::Err(_) => __rm_std::process::exit({{TOUCH_EXIT}}),
+        };
+        let header = __rm_std::format!("{{TOUCH_SCHEMA}} {}\n", CATALOG);
+        if __rm_std::io::Write::write_all(&mut file, header.as_bytes()).is_err() {
+            __rm_std::process::exit({{TOUCH_EXIT}});
+        }
+        __rm_std::sync::Mutex::new(file)
     }
 
     #[cold]
@@ -173,7 +315,8 @@ mod {{MODULE}} {
 /// a `#![no_std]` crate: `#![no_std]` withholds the implicit link and the
 /// prelude, and forbids neither an explicit link nor an explicit path. Nothing
 /// in the module is `unsafe`, so a crate that forbids unsafe code still does.
-pub(super) fn render(
+#[must_use]
+pub fn render(
     module: &str,
     catalog_digest: &str,
     placements: &[Placement],
@@ -190,18 +333,60 @@ pub(super) fn render(
         let written = writeln!(table, "        ({id:?}, {index}),");
         debug_assert!(written.is_ok(), "writing to a String cannot fail");
     }
+    let reach = touched(placements);
 
     let text = TEMPLATE
         .replace("{{MODULE}}", module)
         .replace("{{MARKER}}", RUNTIME_MARKER)
         .replace("{{CATALOG}}", catalog_digest)
         .replace("{{IDS}}", &table)
+        .replace("{{BASE}}", &reach.base.to_string())
+        .replace("{{SPAN}}", &reach.span.to_string())
         .replace("{{ACTIVE_ENV}}", ACTIVE_ENV)
         .replace("{{CATALOG_ENV}}", CATALOG_ENV)
-        .replace("{{EXIT}}", &STALE_CATALOG_EXIT.to_string());
+        .replace("{{TOUCH_ENV}}", TOUCH_ENV)
+        .replace("{{TOUCH_SCHEMA}}", crate::touch::SCHEMA)
+        .replace("{{UNATTRIBUTED}}", crate::touch::UNATTRIBUTED)
+        .replace("{{SITES}}", crate::touch::SITES)
+        .replace("{{EXIT}}", &STALE_CATALOG_EXIT.to_string())
+        .replace("{{TOUCH_EXIT}}", &TOUCH_UNAVAILABLE_EXIT.to_string());
     if newline == "\n" {
         text
     } else {
         text.replace('\n', newline)
     }
+}
+
+/// The window of catalog indices one file's guards can report, which is what sizes the per-thread record of what it already said.
+///
+/// A file's mutants are numbered by the catalog rather than by the file, so the
+/// window is the lowest of them and how far the highest reaches past it. A guard
+/// outside it — which the catalog's numbering does not produce — is recorded
+/// every time rather than once, and a repeated record is a line the reader
+/// unions, never a fact it loses.
+fn touched(placements: &[Placement]) -> Window {
+    let lowest = placements
+        .iter()
+        .map(|placement| placement.index)
+        .min()
+        .unwrap_or(0);
+    let highest = placements
+        .iter()
+        .map(|placement| placement.index)
+        .max()
+        .unwrap_or(0);
+    Window {
+        base: lowest,
+        span: usize::try_from(highest.saturating_sub(lowest))
+            .unwrap_or(0)
+            .saturating_add(1),
+    }
+}
+
+/// The catalog indices one file's guards can report.
+struct Window {
+    /// The lowest of them.
+    base: u32,
+    /// How many there are from `base` up to and including the highest.
+    span: usize,
 }

@@ -27,10 +27,11 @@ use crate::settings::Settings;
 use crate::{Environment, cli, report, run};
 
 /// The variables a run composes for itself, which it therefore refuses to inherit.
-pub const RESERVED_ENV: [&str; 3] = [
+pub const RESERVED_ENV: [&str; 4] = [
     "RUST_MUTANTS_ACTIVE",
     "RUST_MUTANTS_CATALOG",
     "RUST_MUTANTS_PROBE",
+    "RUST_MUTANTS_TOUCH",
 ];
 
 /// Does what the command asks and returns the exit code it earns.

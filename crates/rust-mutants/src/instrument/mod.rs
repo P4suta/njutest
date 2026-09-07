@@ -25,7 +25,8 @@ use crate::splice::{Splice, apply, count_lines};
 use crate::syntax::{Form, Found, SiteHint};
 
 pub use runtime::{
-    ACTIVE_ENV, CATALOG_ENV, MODULE_STEM, RUNTIME_MARKER, STALE_CATALOG_EXIT, module_name,
+    ACTIVE_ENV, CATALOG_ENV, MODULE_STEM, RUNTIME_MARKER, STALE_CATALOG_EXIT, TOUCH_ENV,
+    TOUCH_UNAVAILABLE_EXIT, module_name, render,
 };
 
 /// The first words the runtime prints before it exits [`runtime::STALE_CATALOG_EXIT`].
@@ -318,7 +319,7 @@ pub fn instrument_file(
     if !text.is_empty() && !text.ends_with('\n') {
         text.push('\n');
     }
-    text.push_str(&runtime::render(
+    text.push_str(&render(
         &file.module,
         catalog_digest,
         placements,

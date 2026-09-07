@@ -186,3 +186,30 @@ fn every_engine_page_says_what_it_is_the_status_of() {
         "these pages do not say whether what they describe is implemented: {without:?}"
     );
 }
+
+#[test]
+fn the_configuration_page_names_every_variable_a_run_composes_and_no_other() {
+    let text = page("docs/engine/configuration.md");
+    let section = text
+        .split("## Reserved environment")
+        .nth(1)
+        .expect("the reserved environment section")
+        .split("\n## ")
+        .next()
+        .expect("the end of it");
+    let documented: BTreeSet<String> = section
+        .lines()
+        .flat_map(backticked)
+        .filter(|name| name.starts_with("RUST_MUTANTS_"))
+        .collect();
+    let in_code: BTreeSet<String> = rust_mutants::execute::RESERVED_ENV
+        .iter()
+        .map(|name| (*name).to_owned())
+        .collect();
+    assert_eq!(
+        documented, in_code,
+        "a variable a run composes that the page does not name is one a reader sets and loses \
+         a run to, and one the page names that the code does not is one they leave set for \
+         nothing"
+    );
+}

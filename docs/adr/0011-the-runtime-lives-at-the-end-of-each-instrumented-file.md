@@ -43,11 +43,27 @@ tree can never be mistaken for a survivor. The probe runtime is the same
 module in the probe tree, appending to the infection log named by
 `RUST_MUTANTS_PROBE`, and exits 98 when it cannot.
 
+The same module is also what measures reach. When `RUST_MUTANTS_TOUCH` names
+a file, every guard records the thread that reached it, and libtest names
+each test's thread after the test, so the record is per test rather than per
+target. It buffers per thread and appends on the thread's way out; a thread
+nothing can name a test after — the main one, one a test spawned — writes
+`-`, and everything under that name has to reach every test of its target.
+The process exits 96 rather than running on when it cannot record, because
+silence is what licenses a run to skip a test.
+
 ## Consequences
 
 - No crate root is touched, no line moves, and a file reached through
   `#[path]` or compiled into both a library and a binary is correct without
   special handling.
+- Every file carries its own copy of the module, so what the module holds is
+  paid for once per instrumented file. Sixty copies of it compile in 0.74 s
+  and 209 MB against 0.18 s and 119 MB for the same sixty without the
+  recording, which is about 9 ms and 1.5 MB a file — measured with `rustc
+  --crate-type lib` on one generated file holding all sixty. That is what a
+  shared runtime crate would buy, and it is not worth the crate boundary this
+  decision exists to avoid.
 - A file included at expression position by `include!` cannot carry the
   module, and does not parse as a set of items either: it is a fragment of one
   program rather than a program. Discovery reads the includes of the files that

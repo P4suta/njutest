@@ -469,11 +469,13 @@ A test process the engine starts is told what cargo would have told it:
 ### The environment a test process gets
 
 A test process inherits the environment the run was started with, plus what
-cargo sets for its target, minus the four variables a run composes for
+cargo sets for its target, minus the five variables a run composes for
 itself: `RUST_MUTANTS_ACTIVE`, `RUST_MUTANTS_CATALOG`, `RUST_MUTANTS_PROBE`,
-and `LLVM_PROFILE_FILE`. The first three decide which mutation is active, and
-an inherited one would make every answer be about somebody else's run. The
-fourth is there because a measurement *of this engine* sets it: an
+`RUST_MUTANTS_TOUCH`, and `LLVM_PROFILE_FILE`. The first four decide which
+mutation is active and what the guards are to record, and an inherited one
+would make every answer be about somebody else's run — or append this run's
+touches to a file another run is about to read. The fifth is there because a
+measurement *of this engine* sets it: an
 instrumented test process that inherited it would write over the very
 measurement that started the run. Removing it is not enough on its own, since
 an instrumented binary with no path writes `default_*.profraw` into its

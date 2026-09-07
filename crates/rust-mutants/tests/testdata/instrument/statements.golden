@@ -43,10 +43,21 @@ mod __rm {
     ];
     const UNINIT: u32 = u32::MAX - 1;
     const NONE: u32 = u32::MAX;
+    const TOUCH_BASE: u32 = 0;
+    const TOUCH_SPAN: usize = 15;
+    const TOUCH_BATCH: usize = 64;
+    const TOUCH_UNKNOWN: u8 = 0;
+    const TOUCH_OFF: u8 = 1;
+    const TOUCH_ON: u8 = 2;
     static ACTIVE: __rm_std::sync::atomic::AtomicU32 = __rm_std::sync::atomic::AtomicU32::new(UNINIT);
+    static TOUCHING: __rm_std::sync::atomic::AtomicU8 = __rm_std::sync::atomic::AtomicU8::new(TOUCH_UNKNOWN);
+    static TOUCH_SINK: __rm_std::sync::OnceLock<__rm_std::sync::Mutex<__rm_std::fs::File>> = __rm_std::sync::OnceLock::new();
 
     #[inline(always)]
     pub(crate) fn active(index: u32) -> bool {
+        if TOUCHING.load(__rm_std::sync::atomic::Ordering::Relaxed) != TOUCH_OFF {
+            touch(index);
+        }
         let selected = ACTIVE.load(__rm_std::sync::atomic::Ordering::Relaxed);
         if selected != UNINIT {
             return selected == index;
@@ -54,6 +65,126 @@ mod __rm {
         let resolved = resolve();
         ACTIVE.store(resolved, __rm_std::sync::atomic::Ordering::Relaxed);
         resolved == index
+    }
+
+    struct Seen {
+        name: __rm_std::string::String,
+        eager: bool,
+        bits: __rm_std::vec::Vec<bool>,
+        touched: __rm_std::vec::Vec<u32>,
+    }
+
+    impl Seen {
+        fn new() -> Seen {
+            let named = __rm_std::thread::current().name().map(__rm_std::string::ToString::to_string);
+            let eager = match &named {
+                __rm_std::option::Option::Some(name) => name == "main",
+                __rm_std::option::Option::None => true,
+            };
+            let mut bits = __rm_std::vec::Vec::new();
+            bits.resize(TOUCH_SPAN, false);
+            Seen {
+                name: match named {
+                    __rm_std::option::Option::Some(name) if !eager => name,
+                    _ => __rm_std::string::String::from("-"),
+                },
+                eager,
+                bits,
+                touched: __rm_std::vec::Vec::new(),
+            }
+        }
+
+        fn saw(&mut self, index: u32) {
+            let at = index.wrapping_sub(TOUCH_BASE) as usize;
+            if at >= self.bits.len() || self.bits[at] {
+                return;
+            }
+            self.bits[at] = true;
+            self.touched.push(index);
+            if self.eager || self.touched.len() >= TOUCH_BATCH {
+                self.flush();
+            }
+        }
+
+        fn flush(&mut self) {
+            if self.touched.is_empty() {
+                return;
+            }
+            let mut line = __rm_std::string::String::from("t\t");
+            line.push_str(&self.name);
+            let mut at = 0;
+            while at < self.touched.len() {
+                line.push_str(if at == 0 { "\t" } else { "," });
+                line.push_str(&__rm_std::format!("{}", self.touched[at]));
+                at += 1;
+            }
+            line.push_str("\n");
+            self.touched.clear();
+            append(&line);
+        }
+    }
+
+    impl __rm_std::ops::Drop for Seen {
+        fn drop(&mut self) {
+            self.flush();
+        }
+    }
+
+    __rm_std::thread_local! {
+        static SEEN: __rm_std::cell::RefCell<Seen> = __rm_std::cell::RefCell::new(Seen::new());
+    }
+
+    #[inline(never)]
+    fn touch(index: u32) {
+        if !touching() {
+            return;
+        }
+        let _ = SEEN.try_with(|seen| match seen.try_borrow_mut() {
+            __rm_std::result::Result::Ok(mut seen) => seen.saw(index),
+            __rm_std::result::Result::Err(_) => (),
+        });
+    }
+
+    fn touching() -> bool {
+        let known = TOUCHING.load(__rm_std::sync::atomic::Ordering::Relaxed);
+        if known != TOUCH_UNKNOWN {
+            return known == TOUCH_ON;
+        }
+        let on = match __rm_std::env::var("RUST_MUTANTS_TOUCH") {
+            __rm_std::result::Result::Ok(value) => !value.is_empty(),
+            __rm_std::result::Result::Err(_) => false,
+        };
+        TOUCHING.store(if on { TOUCH_ON } else { TOUCH_OFF }, __rm_std::sync::atomic::Ordering::Relaxed);
+        on
+    }
+
+    fn append(line: &str) {
+        let sink = TOUCH_SINK.get_or_init(opened);
+        let mut file = match sink.lock() {
+            __rm_std::result::Result::Ok(guard) => guard,
+            __rm_std::result::Result::Err(poisoned) => poisoned.into_inner(),
+        };
+        if __rm_std::io::Write::write_all(&mut *file, line.as_bytes()).is_err() {
+            __rm_std::process::exit(96);
+        }
+    }
+
+    #[cold]
+    fn opened() -> __rm_std::sync::Mutex<__rm_std::fs::File> {
+        let path = match __rm_std::env::var("RUST_MUTANTS_TOUCH") {
+            __rm_std::result::Result::Ok(value) => value,
+            __rm_std::result::Result::Err(_) => __rm_std::process::exit(96),
+        };
+        let opened = __rm_std::fs::OpenOptions::new().create(true).append(true).open(&path);
+        let mut file = match opened {
+            __rm_std::result::Result::Ok(file) => file,
+            __rm_std::result::Result::Err(_) => __rm_std::process::exit(96),
+        };
+        let header = __rm_std::format!("rust-mutants-touch-v1 {}\n", CATALOG);
+        if __rm_std::io::Write::write_all(&mut file, header.as_bytes()).is_err() {
+            __rm_std::process::exit(96);
+        }
+        __rm_std::sync::Mutex::new(file)
     }
 
     #[cold]
