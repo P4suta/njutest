@@ -1913,6 +1913,70 @@ fn plural(count: usize, thing: &str) -> String {
 /// the catalog the run kept, re-implements the rule — a target whose covered
 /// regions begin nowhere inside the body a branch proof names cannot have
 /// noticed the mutation — and says whether the run's own answer follows.
+/// Whether the measurement the run kept accounts for every target the run built.
+///
+/// A route removes a target by saying that target ran and covered nothing
+/// there, and it can only say that about a target the measurement **named**.
+/// A measurement that names neither the target nor a reason it could not read
+/// it is one a route could narrow by without anybody having looked, which is
+/// how a kill becomes a survivor.
+fn measured_every_target(report: &Report, reached: Option<&str>, notes: &mut Notes<'_>) {
+    let Some(reached) = reached else {
+        notes.unaudited(
+            "measurement",
+            "the run kept no measurement, so what it was allowed to narrow by cannot be \
+             re-derived"
+                .to_owned(),
+        );
+        return;
+    };
+    let Ok(document) = serde_json::from_str::<Value>(reached) else {
+        notes.violated(
+            "measurement",
+            "the measurement the run kept is not a document".to_owned(),
+        );
+        return;
+    };
+    let named: BTreeSet<&str> = document
+        .get("targets")
+        .and_then(Value::as_object)
+        .map(|targets| targets.keys().map(String::as_str).collect())
+        .unwrap_or_default();
+    if named.is_empty() {
+        notes.unaudited(
+            "measurement",
+            "the measurement names no target, so the run narrowed by nothing".to_owned(),
+        );
+        return;
+    }
+    let excused: BTreeSet<String> = document
+        .get("limitations")
+        .and_then(Value::as_array)
+        .map(|entries| {
+            entries
+                .iter()
+                .filter_map(Value::as_str)
+                .filter_map(|one| one.split_once(':').map(|(_, target)| target.to_owned()))
+                .collect()
+        })
+        .unwrap_or_default();
+    for target in &report.targets {
+        if target.contains("/doc/") {
+            continue;
+        }
+        if !named.contains(target.as_str()) && !excused.contains(target) {
+            notes.violated(
+                "measurement",
+                format!(
+                    "the run built {target} and the measurement neither names it nor says it \
+                     could not read it; a route that narrowed by this measurement narrowed by a \
+                     target nobody looked at"
+                ),
+            );
+        }
+    }
+}
+
 fn proofs(report: &Report, evidence: &Evidence<'_>, audit: &mut Audit) {
     let mut notes = Notes::on(audit, Layer::Proofs);
     let discharged = report
@@ -1937,6 +2001,7 @@ fn proofs(report: &Report, evidence: &Evidence<'_>, audit: &mut Audit) {
     if let Some(recorded) = evidence.recorded {
         selected(report, recorded, &mut notes);
     }
+    measured_every_target(report, evidence.reached, &mut notes);
     let claims = claimed(report);
     if claims.is_empty() {
         notes.unaudited(

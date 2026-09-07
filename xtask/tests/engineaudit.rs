@@ -1102,3 +1102,39 @@ fn an_outcome_an_earlier_run_established_is_work_this_one_did_not_do() {
         audit.remarks
     );
 }
+
+#[test]
+fn a_measurement_that_does_not_account_for_a_target_the_run_built_is_a_violation() {
+    let reached = serde_json::json!({
+        "targets": {"demo/test/elsewhere": []},
+        "instrumented": [],
+        "limitations": []
+    });
+    let audit = audited_with_evidence(&base(), &reached, &serde_json::json!({"mutants": []}));
+    assert!(
+        violations(&audit, Layer::Proofs)
+            .iter()
+            .any(|one| one.contains(TARGET)),
+        "the run built {TARGET} and the measurement neither names it nor says it could not read \
+         it, so a route that narrowed by this measurement narrowed by a target nobody looked \
+         at: {:?}",
+        audit.remarks
+    );
+}
+
+#[test]
+fn a_measurement_that_says_it_could_not_read_a_target_has_accounted_for_it() {
+    let reached = serde_json::json!({
+        "targets": {"demo/test/elsewhere": []},
+        "instrumented": [],
+        "limitations": [format!("coverage-not-measured:{TARGET}")]
+    });
+    let audit = audited_with_evidence(&base(), &reached, &serde_json::json!({"mutants": []}));
+    assert!(
+        !violations(&audit, Layer::Proofs)
+            .iter()
+            .any(|one| one.contains("nobody looked at")),
+        "a measurement that says which target it could not read has accounted for it: {:?}",
+        audit.remarks
+    );
+}
