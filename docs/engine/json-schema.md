@@ -131,10 +131,16 @@ cut from.
 ## The run as it happens
 
 `run --json` writes `rust-mutants-run-stream-v1`
-(`schema/rust-mutants-run-stream-v1.json`): one JSON object per line,
-flushed as the run reaches it, for a program rather than a person. The kinds
-are `run-start`, `phase-start`, `phase-end`, `mutant`, `finding`, `run-end`,
-and `error`, each carrying a `type`. A reader takes a line at a time and
+(`schema/rust-mutants-run-stream-v1.json`): one JSON object per line, each
+flushed as it is written, for a program rather than a person. The kinds are
+`run-start`, `phase-start`, `phase-end`, `mutant`, `finding`, `run-end`, and
+`error`, each carrying a `type`.
+
+`run-start` is written **before anything is prepared** — before the snapshot,
+the instrumented build and the validation rounds — so a consumer knows what
+the run is about the moment it begins, and can tell a slow run from a hung
+one. The phase lines follow when preparing finishes, and a `mutant` line
+arrives as each mutant is judged. A reader takes a line at a time and
 ignores a kind it does not know, which is what lets a later release say more
 without breaking a consumer that already works;
 `rust_mutants::report::stream::read_line` is that reader, shipped so a

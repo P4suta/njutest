@@ -126,12 +126,10 @@ pub fn project(
         if !files.contains_key(&mutant.path) {
             let source = match sources.get(&mutant.path) {
                 Some(super::sources::Held::Measured(text)) => text.clone(),
-                Some(super::sources::Held::Changed) | None => {
-                    return Err(crate::error::CliError::SourceUnreadable {
-                        path: mutant.path.clone(),
-                        root: root.to_path_buf(),
-                    });
+                Some(super::sources::Held::Changed) => {
+                    return Err(crate::error::CliError::moved_on(&mutant.path));
                 }
+                None => return Err(crate::error::CliError::absent(&mutant.path, root)),
             };
             files.insert(
                 mutant.path.clone(),

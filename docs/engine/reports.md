@@ -51,6 +51,12 @@ reads. Each result carries a `partialFingerprints` entry holding the mutant's
 identity, so a code scanning view can tell one run's finding from the next
 run's.
 
+A finding that is not about a mutant the report still holds — a claim nothing
+answers to, a marker that hides nothing — has no place in the code to point
+at. It is still a result, with no location rather than an invented one, and in
+JUnit it is a failing case in a `findings` suite of its own. A finding nobody
+can see in the view they actually read is a finding that does not exist.
+
 ## The page
 
 `--format html` writes one file that fetches nothing: no font, no stylesheet,

@@ -7,6 +7,12 @@
 //! SARIF describes what is wrong with the code, and a mutant the tests noticed
 //! is the tests working. The rules are the operators the run's findings came
 //! from, so a reader can group by what asked the question.
+//!
+//! Every finding is a result, including one that is not about a mutant the
+//! report still holds — a claim nothing answers to, a marker that hides
+//! nothing. Those carry no location rather than an invented one: SARIF allows
+//! a result with none, and a location a reader would go and look at had
+//! better be one.
 
 use std::collections::BTreeMap;
 
@@ -38,7 +44,7 @@ pub struct Run {
     /// What produced it.
     pub tool: Tool,
     /// One result per finding.
-    pub results: Vec<Result>,
+    pub results: Vec<Reported>,
 }
 
 /// What produced the results.
@@ -74,19 +80,21 @@ pub struct ReportingDescriptor {
     pub short_description: Message,
 }
 
-/// One finding.
+/// One finding, as SARIF reports one.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct Result {
-    /// The operator that proposed the mutation.
-    pub rule_id: String,
+pub struct Reported {
+    /// The operator that proposed the mutation, when the finding is about one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rule_id: Option<String>,
     /// How much it matters: a survivor is a warning, a run that established nothing is an error.
     pub level: String,
     /// What a reader is told.
     pub message: Message,
-    /// Where it is.
+    /// Where it is. Empty when the finding is not about a place in the code.
     pub locations: Vec<Location>,
     /// What makes two runs' findings the same finding.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub partial_fingerprints: BTreeMap<String, String>,
 }
 
@@ -150,6 +158,15 @@ pub fn log(document: &RunDocument) -> Log {
     let mut rules: BTreeMap<String, ReportingDescriptor> = BTreeMap::new();
     for finding in &document.findings {
         let Some(mutant) = finding.mutant.as_deref().and_then(|id| named.get(id)) else {
+            results.push(Reported {
+                rule_id: None,
+                level: level_of(&finding.kind).to_owned(),
+                message: Message {
+                    text: format!("{}: {}", finding.kind, finding.detail),
+                },
+                locations: Vec::new(),
+                partial_fingerprints: BTreeMap::new(),
+            });
             continue;
         };
         rules
@@ -164,7 +181,7 @@ pub fn log(document: &RunDocument) -> Log {
                     ),
                 },
             });
-        results.push(result(finding.kind.as_str(), &finding.detail, mutant));
+        results.push(reported(finding.kind.as_str(), &finding.detail, mutant));
     }
     Log {
         schema: SCHEMA.to_owned(),
@@ -183,11 +200,11 @@ pub fn log(document: &RunDocument) -> Log {
     }
 }
 
-fn result(kind: &str, detail: &str, mutant: &RunMutantDocument) -> Result {
+fn reported(kind: &str, detail: &str, mutant: &RunMutantDocument) -> Reported {
     let mut fingerprints = BTreeMap::new();
     fingerprints.insert("rustMutantsMutantId/v1".to_owned(), mutant.id.clone());
-    Result {
-        rule_id: mutant.rule.clone(),
+    Reported {
+        rule_id: Some(mutant.rule.clone()),
         level: level_of(kind).to_owned(),
         message: Message {
             text: format!("{kind}: {detail}"),

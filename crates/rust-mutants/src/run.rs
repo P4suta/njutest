@@ -1094,6 +1094,21 @@ pub enum NotRunReason {
 }
 
 impl NotRunReason {
+    /// Every reason, in the order a report's schema lists them.
+    pub const ALL: [Self; 5] = [
+        Self::Unreached,
+        Self::Discharged,
+        Self::Interrupted,
+        Self::Unselected,
+        Self::StoppedEarly,
+    ];
+
+    /// The reason that answers to `name`, when one does.
+    #[must_use]
+    pub fn parse(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|one| one.name() == name)
+    }
+
     /// The kebab-case name a report and a recording use.
     #[must_use]
     pub const fn name(self) -> &'static str {

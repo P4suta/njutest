@@ -127,6 +127,40 @@ fn a_junit_report_makes_a_survivor_a_failure_and_a_mutant_nothing_ran_a_skip() {
 }
 
 #[test]
+fn a_finding_no_mutant_row_carries_is_a_failing_case_of_its_own() {
+    let fixture = measured();
+    std::fs::write(
+        fixture.root().join(".rust-mutants.toml"),
+        concat!(
+            "[[mutation.expect]]\n",
+            "id = \"0000000000000000000000000000\"\n",
+            "reason = \"a claim about a mutant that is not there\"\n",
+            "outcome = \"survived\"\n"
+        ),
+    )
+    .expect("a configuration");
+    let ran = against(
+        &fixture,
+        &[
+            "run",
+            "--offline",
+            "--locked",
+            "--ui",
+            "quiet",
+            "--jobs",
+            "1",
+        ],
+    );
+    assert_eq!(ran.status.code(), Some(1), "{ran:?}");
+    let text = projected(&fixture, "junit");
+    assert!(
+        text.contains("<testsuite name=\"findings\""),
+        "a finding nobody can see in the view they read is one that does not exist: {text}"
+    );
+    assert!(text.contains("unmatched-expectation"), "{text}");
+}
+
+#[test]
 fn a_sarif_report_names_every_finding_with_the_place_it_is() {
     let fixture = measured();
     let text = projected(&fixture, "sarif");
@@ -136,21 +170,35 @@ fn a_sarif_report_names_every_finding_with_the_place_it_is() {
     assert_eq!(run["tool"]["driver"]["name"], "rust-mutants");
     let results = run["results"].as_array().expect("the results");
     assert!(!results.is_empty(), "a run with a survivor reports it");
+    let report: serde_json::Value =
+        serde_json::from_str(&projected(&fixture, "json")).expect("the stored report");
+    assert_eq!(
+        results.len(),
+        report["findings"].as_array().expect("the findings").len(),
+        "every finding is a result, including one no mutant row carries"
+    );
     for result in results {
-        let location = &result["locations"][0]["physicalLocation"];
         assert!(
-            location["artifactLocation"]["uri"]
+            result["level"].as_str().is_some_and(|it| !it.is_empty()),
+            "{result}"
+        );
+        let Some(location) = result["locations"].as_array().and_then(|all| all.first()) else {
+            continue;
+        };
+        let physical = &location["physicalLocation"];
+        assert!(
+            physical["artifactLocation"]["uri"]
                 .as_str()
                 .is_some_and(|uri| !uri.is_empty()),
             "{result}"
         );
         assert!(
-            location["region"]["startLine"].as_u64().is_some(),
+            physical["region"]["startLine"].as_u64().is_some(),
             "{result}"
         );
         assert!(
             result["ruleId"].as_str().is_some_and(|it| !it.is_empty()),
-            "{result}"
+            "a result that names a place names the operator that made it: {result}"
         );
     }
     golden("sarif.golden", &steady(&text, &fixture));

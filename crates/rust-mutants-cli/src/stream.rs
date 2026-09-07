@@ -26,6 +26,30 @@ pub fn say(stream: &mut dyn Write, line: &Line) {
     let _flushed = stream.flush();
 }
 
+/// The line that opens the stream, written before anything is prepared.
+///
+/// A consumer that has to wait for the snapshot, the instrumented build and
+/// the validation rounds before it hears anything cannot tell a slow run from
+/// a hung one, which is the one thing a stream is for. This says what the run
+/// is about at the moment it begins.
+pub fn started(
+    stream: &mut dyn Write,
+    run_id: &str,
+    root_name: &str,
+    selection: rust_mutants::report::catalog::SelectionDocument,
+) {
+    say(
+        stream,
+        &Line::RunStart {
+            schema: SCHEMA.to_owned(),
+            tool_version: rust_mutants::VERSION.to_owned(),
+            run_id: run_id.to_owned(),
+            root_name: root_name.to_owned(),
+            selection,
+        },
+    );
+}
+
 /// The lines a run writes while it is happening.
 #[expect(
     missing_debug_implementations,
@@ -40,25 +64,6 @@ impl<'a> Writer<'a> {
     /// A writer that writes what `session` judged to `stream`.
     pub const fn new(stream: &'a mut dyn Write, session: &'a Session) -> Self {
         Self { stream, session }
-    }
-
-    /// The line that opens the stream.
-    pub fn started(
-        &mut self,
-        run_id: &str,
-        root_name: &str,
-        selection: rust_mutants::report::catalog::SelectionDocument,
-    ) {
-        say(
-            self.stream,
-            &Line::RunStart {
-                schema: SCHEMA.to_owned(),
-                tool_version: rust_mutants::VERSION.to_owned(),
-                run_id: run_id.to_owned(),
-                root_name: root_name.to_owned(),
-                selection,
-            },
-        );
     }
 
     /// One phase line for each phase the recorder has finished.

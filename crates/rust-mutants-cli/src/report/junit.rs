@@ -8,6 +8,11 @@
 //! survivor is a gap in the tests and that is exactly what a failing case
 //! means to a reader of this format. A mutant the run could not decide is an
 //! error, and one nothing ran is skipped with the reason it was not run.
+//!
+//! A finding that is not about a mutant the report still holds — a claim
+//! nothing answers to, a marker that hides nothing — has no row to sit on, so
+//! it gets a suite of its own. A finding nobody can see in the view they
+//! actually read is a finding that does not exist.
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -36,8 +41,48 @@ pub fn document(document: &RunDocument) -> String {
     for (path, mutants) in files {
         suite(&mut out, path, &mutants);
     }
+    loose(&mut out, document);
     out.push_str("</testsuites>\n");
     out
+}
+
+/// The findings no mutant row carries, as a suite of their own.
+fn loose(out: &mut String, document: &RunDocument) {
+    let held: std::collections::BTreeSet<&str> = document
+        .mutants
+        .iter()
+        .map(|mutant| mutant.id.as_str())
+        .collect();
+    let orphaned: Vec<&super::run::FindingDocument> = document
+        .findings
+        .iter()
+        .filter(|finding| {
+            !finding
+                .mutant
+                .as_deref()
+                .is_some_and(|id| held.contains(id))
+        })
+        .collect();
+    if orphaned.is_empty() {
+        return;
+    }
+    let _written = writeln!(
+        out,
+        "  <testsuite name=\"findings\" tests=\"{count}\" failures=\"{count}\" errors=\"0\" \
+         skipped=\"0\" time=\"0.000\">",
+        count = orphaned.len(),
+    );
+    for finding in orphaned {
+        let _written = write!(
+            out,
+            "    <testcase name=\"{kind}\" classname=\"findings\" time=\"0.000\">\n\
+             \x20     <failure message=\"{kind}\" type=\"{kind}\">{detail}</failure>\n\
+             \x20 </testcase>\n",
+            kind = escape(&finding.kind),
+            detail = escape(&finding.detail),
+        );
+    }
+    out.push_str("  </testsuite>\n");
 }
 
 fn suite(out: &mut String, path: &str, mutants: &[&RunMutantDocument]) {

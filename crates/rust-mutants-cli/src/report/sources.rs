@@ -48,12 +48,8 @@ pub fn read(document: &RunDocument, root: &Path) -> Result<BTreeMap<String, Held
         if held.contains_key(&mutant.path) {
             continue;
         }
-        let bytes = std::fs::read(root.join(&mutant.path)).map_err(|_error| {
-            CliError::SourceUnreadable {
-                path: mutant.path.clone(),
-                root: root.to_path_buf(),
-            }
-        })?;
+        let bytes = std::fs::read(root.join(&mutant.path))
+            .map_err(|_error| CliError::absent(&mutant.path, root))?;
         let same = mutant.source_digest.is_empty()
             || rust_mutants::id::digest(&bytes) == mutant.source_digest;
         let text = String::from_utf8_lossy(&bytes).into_owned();

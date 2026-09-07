@@ -156,5 +156,8 @@ fn copy_tree(from: &Path, to: &Path) -> bool {
         };
         copied = copied || done;
     }
+    if !copied {
+        let _removed = std::fs::remove_dir_all(to);
+    }
     copied
 }

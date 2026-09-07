@@ -79,17 +79,16 @@ pub enum CliError {
         /// What it takes.
         expected: String,
     },
-    /// A source file the report names cannot be read from the root given.
+    /// A source file the report names is not the one the run measured, or is not there at all.
     #[error(
-        "{}: {path} is not under {}, so the mutation cannot be shown as a change",
-        error::SOURCE_UNREADABLE.code,
-        root.display()
+        "{}: {path} {why}, so the mutation cannot be shown as a change",
+        error::SOURCE_UNREADABLE.code
     )]
     SourceUnreadable {
         /// The workspace-relative path the report names.
         path: String,
-        /// The tree it was looked for under.
-        root: PathBuf,
+        /// Which of the two things is wrong with it.
+        why: String,
     },
     /// A file the command had to write could not be written.
     #[error("{}: writing {}: {source}", error::WRITE_FAILED.code, path.display())]
@@ -122,6 +121,24 @@ impl CliError {
             Self::ChangeSetUnavailable { .. } => error::CHANGE_SET_UNAVAILABLE,
             Self::SourceUnreadable { .. } => error::SOURCE_UNREADABLE,
             Self::WriteFailed { .. } => error::WRITE_FAILED,
+        }
+    }
+
+    /// A file the report names that this tree does not hold.
+    #[must_use]
+    pub fn absent(path: &str, root: &Path) -> Self {
+        Self::SourceUnreadable {
+            path: path.to_owned(),
+            why: format!("is not under {}", root.display()),
+        }
+    }
+
+    /// A file this tree holds that is not the one the run measured.
+    #[must_use]
+    pub fn moved_on(path: &str) -> Self {
+        Self::SourceUnreadable {
+            path: path.to_owned(),
+            why: "changed since the run".to_owned(),
         }
     }
 

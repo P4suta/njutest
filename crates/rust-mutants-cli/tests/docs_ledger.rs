@@ -180,3 +180,28 @@ fn every_schema_the_engine_ships_is_named_on_the_page_that_documents_them() {
         "docs/engine/json-schema.md names schemas that are not under schema/: {unshipped:?}"
     );
 }
+
+#[test]
+fn every_reason_a_mutant_did_not_run_is_one_the_schema_and_the_pages_name() {
+    let schema = std::fs::read_to_string(
+        mjutest_devkit::paths::workspace_root().join("schema/rust-mutants-run-report-v1.json"),
+    )
+    .unwrap_or_else(|error| panic!("the run report schema: {error}"));
+    let started = page("docs/engine/getting-started.md");
+    for reason in rust_mutants_cli::run::NotRunReason::ALL {
+        let name = reason.name();
+        assert_eq!(
+            rust_mutants_cli::run::NotRunReason::parse(name),
+            Some(reason),
+            "{name} does not read back"
+        );
+        assert!(
+            schema.contains(&format!("\"{name}\"")),
+            "schema/rust-mutants-run-report-v1.json does not admit not_run_reason {name}"
+        );
+        assert!(
+            started.contains(&format!("`{name}`")),
+            "docs/engine/getting-started.md does not say what {name} means"
+        );
+    }
+}

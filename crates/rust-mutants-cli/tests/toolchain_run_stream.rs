@@ -112,3 +112,38 @@ fn a_stream_and_a_display_are_two_ways_of_saying_one_thing_and_never_both() {
     let complaint = String::from_utf8_lossy(&output.stderr);
     assert!(complaint.contains("--ui"), "{complaint}");
 }
+
+#[test]
+fn the_stream_opens_before_anything_is_prepared() {
+    let fixture = Fixture::copy("fixture-simple");
+    let path = fixture.temp().join("stream.jsonl");
+    let file = std::fs::File::create(&path).expect("somewhere to stream to");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_rust-mutants"))
+        .env("NO_COLOR", "1")
+        .env("TMPDIR", fixture.temp())
+        .env("XDG_CACHE_HOME", fixture.cache())
+        .args(["run", "--json", "--offline", "--locked", "--no-coverage"])
+        .args(["--root", &fixture.root().to_string_lossy()])
+        .stdout(std::process::Stdio::from(file))
+        .spawn()
+        .expect("rust-mutants starts");
+    let opened = std::time::Instant::now();
+    let first = loop {
+        let text = std::fs::read_to_string(&path).unwrap_or_default();
+        if let Some(line) = text.lines().next() {
+            break line.to_owned();
+        }
+        assert!(
+            opened.elapsed() < std::time::Duration::from_secs(120),
+            "a consumer that hears nothing cannot tell a slow run from a hung one"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    };
+    let line: serde_json::Value = serde_json::from_str(&first).expect("the first line is JSON");
+    assert_eq!(
+        line.get("type").and_then(serde_json::Value::as_str),
+        Some("run-start"),
+        "{first}"
+    );
+    let _finished = child.wait().expect("rust-mutants finishes");
+}

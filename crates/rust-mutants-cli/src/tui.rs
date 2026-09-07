@@ -245,7 +245,9 @@ impl Browser {
 
     /// Takes the identity of the mutant the reader is on, to hand back when they leave.
     pub fn yank(&mut self) {
-        self.yanked = self.current().map(|mutant| mutant.id.clone());
+        if let Some(mutant) = self.current() {
+            self.yanked = Some(mutant.id.clone());
+        }
     }
 }
 

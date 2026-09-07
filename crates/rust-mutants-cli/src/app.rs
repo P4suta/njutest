@@ -239,6 +239,19 @@ fn workspace_command(
     outcome
 }
 
+/// Whether this command writes the run as a stream, which opens before anything is prepared.
+const fn streaming(command: &cli::Command) -> bool {
+    matches!(
+        command,
+        cli::Command::Run {
+            json: true,
+            dry_run: false,
+            mutant: None,
+            ..
+        }
+    )
+}
+
 /// Whether this command has a progress display that wants the phases as they end.
 const fn watching(command: &cli::Command) -> bool {
     matches!(
@@ -316,6 +329,14 @@ fn measured(
             Ok(0)
         }
         _ => {
+            if streaming(command) {
+                crate::stream::started(
+                    stdout,
+                    id,
+                    &root_name(settings),
+                    report::selection_document(&options),
+                );
+            }
             let session = workspace.prepare(&options, cancel)?;
             let code = prepared(
                 command,
@@ -642,13 +663,11 @@ fn whole(
         session,
         &Watched {
             options: &options,
-            selection: &selection,
             settings,
             phases,
             json,
             ui,
             paints: environment.paints,
-            id,
         },
         cancel,
         stdout,
@@ -699,13 +718,11 @@ fn concluded(
 /// Everything the run itself needs beyond the session, so a caller chooses one display and hands it over.
 struct Watched<'a> {
     options: &'a run::Options<'a>,
-    selection: &'a rust_mutants::report::catalog::SelectionDocument,
     settings: &'a Settings,
     phases: &'a std::sync::mpsc::Receiver<rust_mutants::trace::Event>,
     json: bool,
     ui: crate::ui::Ui,
     paints: bool,
-    id: &'a str,
 }
 
 /// The run, watched by whichever display the command line asked for.
@@ -717,11 +734,6 @@ fn measured_run(
 ) -> Result<run::Run, CliError> {
     if watched.json {
         let mut writer = crate::stream::Writer::new(stdout, session);
-        writer.started(
-            watched.id,
-            &root_name(watched.settings),
-            watched.selection.clone(),
-        );
         writer.phases(watched.phases);
         return Ok(run::run(session, watched.options, cancel, &mut writer)?);
     }
