@@ -333,3 +333,106 @@ const INSTRUMENT: &str = "-Cinstrument-coverage";
 pub fn directory(target_dir: &Path) -> PathBuf {
     target_dir.join("coverage")
 }
+
+/// A measurement an earlier run of the same tree already made.
+///
+/// What a coverage measurement establishes is a function of three things and
+/// nothing else: the sources every unit compiled, the flags and dependencies
+/// the manifests chose, and the toolchain that compiled it. None of them
+/// changes because a mutation was written, so a tree measured yesterday and
+/// unchanged today has already been measured — and the measurement is the most
+/// expensive thing a run does, because instrumenting for coverage changes the
+/// fingerprint of every crate and rebuilds the whole graph.
+///
+/// Remembering it is therefore the largest single piece of work a run can
+/// remove, and the claim it rests on is the one the outcome store already
+/// rests on: nothing that could change the answer changed.
+///
+/// Nothing here ever fails a run. A measurement that cannot be read is one the
+/// run makes again, which is what it would have done anyway.
+pub mod remembered {
+    use std::path::{Path, PathBuf};
+
+    use super::Reached;
+
+    /// The directory remembered measurements live in, below the caller's cache directory.
+    pub const LAYOUT: &str = "rust-mutants/measurements-v1";
+
+    /// Bumped when what a measurement holds changes, so one written before stops answering.
+    pub const ABI: u32 = 1;
+
+    /// Everything a measurement is a function of.
+    #[derive(Debug, Clone, Copy)]
+    pub struct Of<'a> {
+        /// The digest of the pristine sources every unit of the build compiled.
+        pub closure: &'a str,
+        /// The digest of the manifests, the lock file, and the cargo configuration.
+        pub manifests: &'a str,
+        /// The toolchain that compiled it.
+        pub toolchain: &'a str,
+        /// The cargo arguments the tree was compiled with.
+        pub build: &'a [String],
+    }
+
+    /// Where measurements of one tree are remembered, and under what name.
+    #[derive(Debug, Clone)]
+    pub struct Remembering {
+        /// The directory to read and write under.
+        pub directory: PathBuf,
+        /// Everything the measurement is a function of, folded into one name.
+        pub key: String,
+    }
+
+    impl Remembering {
+        /// The name one measurement is filed under.
+        #[must_use]
+        pub fn of(directory: &Path, measured: &Of<'_>) -> Self {
+            let Of {
+                closure,
+                manifests,
+                toolchain,
+                build,
+            } = measured;
+            let mut text = format!("{LAYOUT}\0{ABI}\0{closure}\0{manifests}\0{toolchain}");
+            for argument in *build {
+                text.push('\0');
+                text.push_str(argument);
+            }
+            Self {
+                directory: directory.to_path_buf(),
+                key: crate::id::digest(text.as_bytes()),
+            }
+        }
+
+        /// The file the measurement sits in.
+        #[must_use]
+        pub fn path(&self) -> PathBuf {
+            self.directory.join(format!("{}.json", self.key))
+        }
+
+        /// What an earlier run of this exact tree measured, when one did and it still reads.
+        #[must_use]
+        pub fn read(&self) -> Option<Reached> {
+            let text = std::fs::read_to_string(self.path()).ok()?;
+            serde_json::from_str(&text).ok()
+        }
+
+        /// Remembers a measurement for the next run of this tree, and says nothing when it cannot.
+        pub fn write(&self, reached: &Reached) {
+            let Ok(text) = serde_json::to_string(reached) else {
+                return;
+            };
+            if std::fs::create_dir_all(&self.directory).is_err() {
+                return;
+            }
+            let temporary = self.directory.join(format!("{}.writing", self.key));
+            if std::fs::write(&temporary, text.as_bytes()).is_err() {
+                let _removed = std::fs::remove_file(&temporary);
+                return;
+            }
+            if std::fs::rename(&temporary, self.path()).is_err() {
+                let _removed = std::fs::remove_file(&temporary);
+            }
+        }
+    }
+}

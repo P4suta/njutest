@@ -239,6 +239,24 @@ fn workspace_command(
     outcome
 }
 
+/// Where a run may remember what measuring this tree established.
+///
+/// The measurement is a function of the tree and not of any mutation, and
+/// making it rebuilds every crate in the graph, so a tree nothing has touched
+/// since the last run is a whole build a run does not have to do. `--no-cache`
+/// asks for the work to be done again, and asking for that has to mean this
+/// too, or the flag would only half do what it says.
+fn remembered_measurements(command: &cli::Command, environment: &Environment) -> Option<PathBuf> {
+    if matches!(command, cli::Command::Run { no_cache: true, .. }) {
+        return None;
+    }
+    Some(
+        environment
+            .cache_directory
+            .join(rust_mutants::reach::remembered::LAYOUT),
+    )
+}
+
 /// Whether this command writes the run as a stream, which opens before anything is prepared.
 const fn streaming(command: &cli::Command) -> bool {
     matches!(
@@ -296,6 +314,7 @@ fn measured(
     let open = settings.open_options(scope, environment, recorder.clone())?;
     let workspace = Workspace::open(&settings.root, open.clone(), cancel)?;
     let mut options = settings.prepare_options()?;
+    options.measurements = remembered_measurements(command, environment);
     if let Some(base) = base_of(scope) {
         options.include = selected(running, base, cancel)?;
     }
@@ -2216,7 +2235,7 @@ fn cache(
     };
     let written = write!(
         text,
-        "temp        {}\ncaches      {} {}, {} bytes; {} still in use\nsnapshots   {} {}, {} bytes; {} still in use, {} preserved on purpose\noutcomes    {} records, {} bytes, at {}\nfailures    {}\n",
+        "temp        {}\ncaches      {} {}, {} bytes; {} still in use\nsnapshots   {} {}, {} bytes; {} still in use, {} preserved on purpose\noutcomes    {} records, {} bytes, at {}\nmeasurements {}\nfailures    {}\n",
         parent.display(),
         taken.removed.len(),
         caches_verb,
@@ -2230,12 +2249,35 @@ fn cache(
         records,
         bytes,
         store.root().display(),
+        measurements(environment),
         left.failures.len().saturating_add(taken.failures.len()),
     );
     debug_assert!(written.is_ok(), "writing to a String cannot fail");
     write(stdout, &text);
     write(stdout, &preserved(asked, environment)?);
     Ok(0)
+}
+
+/// What measuring trees established, which a run of an unchanged tree reads instead of measuring again.
+///
+/// A measurement is filed under everything it is a function of, so one that no
+/// longer answers is one no key names: they go stale by being unreachable
+/// rather than by being wrong, and a sweep never has to decide which.
+fn measurements(environment: &Environment) -> String {
+    let directory = environment
+        .cache_directory
+        .join(rust_mutants::reach::remembered::LAYOUT);
+    let Ok(entries) = std::fs::read_dir(&directory) else {
+        return format!("none yet, at {}", directory.display());
+    };
+    let (mut held, mut bytes) = (0_u64, 0_u64);
+    for entry in entries.flatten() {
+        if entry.path().extension().is_some_and(|one| one == "json") {
+            held = held.saturating_add(1);
+            bytes = bytes.saturating_add(entry.metadata().map_or(0, |it| it.len()));
+        }
+    }
+    format!("{held} trees, {bytes} bytes, at {}", directory.display())
 }
 
 /// The directories runs were asked to keep, listed or removed.

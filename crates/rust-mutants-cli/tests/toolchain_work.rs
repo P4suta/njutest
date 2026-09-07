@@ -139,3 +139,160 @@ fn every_removal_a_whole_run_still_answers_for_is_a_proof_a_reader_can_name() {
         );
     }
 }
+
+/// How many times a run may start cargo before somebody has to say why.
+///
+/// Every one of these is a compilation of the tree: the two `cargo metadata`
+/// calls, the check, the pristine link, the coverage build, the instrumented
+/// build, and the documented examples. A number that goes up is a whole
+/// compilation nobody asked for.
+const CARGO_CEILING: u64 = 7;
+
+/// How many times a run started each program, read back from its own recording.
+fn programs(name: &str, extra: &[&str]) -> std::collections::BTreeMap<String, u64> {
+    let fixture = Fixture::copy(name);
+    let output = Command::new(env!("CARGO_BIN_EXE_rust-mutants"))
+        .env("NO_COLOR", "1")
+        .env("TMPDIR", fixture.temp())
+        .env("XDG_CACHE_HOME", fixture.cache())
+        .args(["run", "--tier", "all", "--offline", "--locked"])
+        .args(["--jobs", "1", "--ui", "quiet", "--trace"])
+        .args(extra)
+        .args(["--root", &fixture.root().to_string_lossy()])
+        .output()
+        .expect("rust-mutants runs");
+    assert!(
+        output.status.code().is_some_and(|code| code <= 1),
+        "{name}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let directory = std::fs::read_dir(fixture.root().join("reports/mutation"))
+        .expect("the run stored a report")
+        .flatten()
+        .map(|entry| entry.path())
+        .find(|path| path.join("trace").is_dir())
+        .expect("a recording");
+    let text = std::fs::read_to_string(directory.join("trace").join("trace.jsonl"))
+        .expect("the recording");
+    let events = rust_mutants::trace::read_events(text.as_bytes()).expect("it reads back");
+    rust_mutants::trace::summary::summarize(&events, 1).invocations
+}
+
+#[test]
+fn a_run_starts_no_more_compilers_than_the_ceiling_allows() {
+    let started = programs("fixture-simple", &[]);
+    let cargo = started.get("cargo").copied().unwrap_or_default();
+    assert!(
+        cargo <= CARGO_CEILING,
+        "a run started cargo {cargo} times and {CARGO_CEILING} is what it used to take. Each one \
+         is a compilation of the tree; if the extra one is worth it, raise the ceiling and say \
+         why: {started:?}"
+    );
+    assert!(cargo >= 2, "a run has to ask cargo something: {started:?}");
+}
+
+#[test]
+fn a_second_run_of_a_tree_nothing_changed_measures_it_again_no_harder_than_the_first() {
+    let first = programs("fixture-coverage", &[]);
+    let cargo = first.get("cargo").copied().unwrap_or_default();
+    assert!(
+        cargo <= CARGO_CEILING.saturating_add(1),
+        "measuring coverage costs one compilation more than not measuring it: {first:?}"
+    );
+}
+
+#[test]
+fn a_second_run_of_a_tree_nothing_changed_measures_nothing_again() {
+    let fixture = Fixture::copy("fixture-coverage");
+    let started = |fixture: &Fixture| -> u64 {
+        let output = Command::new(env!("CARGO_BIN_EXE_rust-mutants"))
+            .env("NO_COLOR", "1")
+            .env("TMPDIR", fixture.temp())
+            .env("XDG_CACHE_HOME", fixture.cache())
+            .args(["run", "--tier", "all", "--offline", "--locked"])
+            .args(["--jobs", "1", "--ui", "quiet", "--trace"])
+            .args(["--root", &fixture.root().to_string_lossy()])
+            .output()
+            .expect("rust-mutants runs");
+        assert!(
+            output.status.code().is_some_and(|code| code <= 1),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let directory = std::fs::read_dir(fixture.root().join("reports/mutation"))
+            .expect("the run stored a report")
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.join("trace").is_dir())
+            .max()
+            .expect("the newest recording");
+        let text = std::fs::read_to_string(directory.join("trace").join("trace.jsonl"))
+            .expect("the recording");
+        let events =
+            rust_mutants::trace::read_events(text.as_bytes()).expect("the recording reads back");
+        rust_mutants::trace::summary::summarize(&events, 1)
+            .invocations
+            .get("cargo")
+            .copied()
+            .unwrap_or_default()
+    };
+    let first = started(&fixture);
+    let again = started(&fixture);
+    assert!(
+        again < first,
+        "measuring a tree is a function of the tree, and nothing about it changed, so the second \\
+         run should not have instrumented and rebuilt the whole graph to learn the same thing: \\
+         {first} compilations then {again}"
+    );
+}
+
+#[test]
+fn a_tree_that_changed_is_measured_again_rather_than_remembered() {
+    let fixture = Fixture::copy("fixture-coverage");
+    let run = |fixture: &Fixture| -> u64 {
+        let output = Command::new(env!("CARGO_BIN_EXE_rust-mutants"))
+            .env("NO_COLOR", "1")
+            .env("TMPDIR", fixture.temp())
+            .env("XDG_CACHE_HOME", fixture.cache())
+            .args(["run", "--tier", "all", "--offline", "--locked"])
+            .args(["--jobs", "1", "--ui", "quiet", "--trace"])
+            .args(["--root", &fixture.root().to_string_lossy()])
+            .output()
+            .expect("rust-mutants runs");
+        assert!(
+            output.status.code().is_some_and(|code| code <= 1),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let directory = std::fs::read_dir(fixture.root().join("reports/mutation"))
+            .expect("the run stored a report")
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.join("trace").is_dir())
+            .max()
+            .expect("the newest recording");
+        let text = std::fs::read_to_string(directory.join("trace").join("trace.jsonl"))
+            .expect("the recording");
+        let events =
+            rust_mutants::trace::read_events(text.as_bytes()).expect("the recording reads back");
+        rust_mutants::trace::summary::summarize(&events, 1)
+            .invocations
+            .get("cargo")
+            .copied()
+            .unwrap_or_default()
+    };
+    let first = run(&fixture);
+    let remembered = run(&fixture);
+    assert!(remembered < first, "{first} then {remembered}");
+
+    let path = fixture.root().join("src/lib.rs");
+    let source = std::fs::read_to_string(&path).expect("the library");
+    std::fs::write(&path, format!("{source}\npub const CHANGED: u8 = 1;\n"))
+        .expect("the library changes");
+    let after = run(&fixture);
+    assert_eq!(
+        after, first,
+        "a measurement is only the same measurement while the tree is the same tree; this one \
+         changed and was remembered anyway"
+    );
+}

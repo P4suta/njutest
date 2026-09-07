@@ -58,6 +58,8 @@ pub struct Summary {
     pub phases: Vec<PhaseTiming>,
     /// How long every command of one program took together.
     pub programs: BTreeMap<String, u64>,
+    /// How many times each program was started, which is what a run costs regardless of the machine it ran on.
+    pub invocations: BTreeMap<String, u64>,
     /// The slowest commands, longest first.
     pub slowest: Vec<CommandTiming>,
     /// How many mutant executions ended each way.
@@ -97,8 +99,11 @@ pub fn summarize(events: &[Event], slowest: usize) -> Summary {
             }
             Payload::Exec { exec } => {
                 let command = said(&exec.argv);
-                let spent = summary.programs.entry(program_of(&exec.argv)).or_default();
+                let program = program_of(&exec.argv);
+                let spent = summary.programs.entry(program.clone()).or_default();
                 *spent = spent.saturating_add(exec.duration_ms);
+                let started = summary.invocations.entry(program).or_default();
+                *started = started.saturating_add(1);
                 commands.push(CommandTiming {
                     command,
                     duration_ms: exec.duration_ms,
@@ -156,8 +161,9 @@ pub fn render(summary: &Summary) -> String {
     for phase in &summary.phases {
         let _written = writeln!(out, "PHASE\t{}\t{}ms", phase.path, phase.duration_ms);
     }
-    for (program, duration) in &summary.programs {
-        let _written = writeln!(out, "PROGRAM\t{program}\t{duration}ms");
+    for (program, started) in &summary.invocations {
+        let duration = summary.programs.get(program).copied().unwrap_or_default();
+        let _written = writeln!(out, "PROGRAM\t{program}\t{started} started\t{duration}ms");
     }
     for command in &summary.slowest {
         let _written = writeln!(

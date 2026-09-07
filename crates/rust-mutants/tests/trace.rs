@@ -848,3 +848,28 @@ fn a_summary_renders_as_lines_a_person_reads_and_a_diff_says_what_moved() {
         "a diff says what moved, not what stayed: {moved:?}"
     );
 }
+
+#[test]
+fn a_summary_counts_how_many_times_each_program_was_started() {
+    let recorder = memory_recorder();
+    recorder.exec(exec(&["cargo", "check", "--workspace"]));
+    recorder.exec(exec(&["cargo", "test", "--no-run"]));
+    recorder.exec(exec(&["cargo", "test", "--no-run"]));
+    recorder.exec(exec(&["rustc", "--print", "sysroot"]));
+    recorder.run_end("detected", None);
+
+    let summary = summarize(&recorder.events(), 2);
+    assert_eq!(
+        summary.invocations.get("cargo").copied(),
+        Some(3),
+        "how many times a compiler was started is work; how long it took is the machine: {:?}",
+        summary.invocations
+    );
+    assert_eq!(summary.invocations.get("rustc").copied(), Some(1));
+    assert_eq!(summary.invocations.get("nothing").copied(), None);
+    let text = render(&summary);
+    assert!(
+        text.contains("cargo") && text.contains("started"),
+        "a reader watching the work fall wants the count, not only the clock: {text}"
+    );
+}

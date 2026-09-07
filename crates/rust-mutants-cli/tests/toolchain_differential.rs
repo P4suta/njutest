@@ -166,3 +166,63 @@ fn the_layers_remove_work_rather_than_only_promising_to() {
         "neither run was asked for less than the whole catalog"
     );
 }
+
+#[test]
+fn a_remembered_measurement_routes_a_run_exactly_as_a_fresh_one_would() {
+    let fixture = Fixture::copy("fixture-coverage");
+    let report = |fixture: &Fixture, extra: &[&str]| -> BTreeMap<String, String> {
+        let output = Command::new(env!("CARGO_BIN_EXE_rust-mutants"))
+            .env("NO_COLOR", "1")
+            .env("TMPDIR", fixture.temp())
+            .env("XDG_CACHE_HOME", fixture.cache())
+            .args(["run", "--tier", "all", "--offline", "--locked"])
+            .args(["--jobs", "1", "--ui", "quiet"])
+            .args(extra)
+            .args(["--root", &fixture.root().to_string_lossy()])
+            .output()
+            .expect("rust-mutants runs");
+        assert!(
+            output.status.code().is_some_and(|code| code <= 1),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let directory = std::fs::read_dir(fixture.root().join("reports/mutation"))
+            .expect("the run stored a report")
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.join("run-report-v1.json").is_file())
+            .max()
+            .expect("the newest run");
+        let text =
+            std::fs::read_to_string(directory.join("run-report-v1.json")).expect("the report");
+        let document: RunDocument = serde_json::from_str(&text).expect("the report reads back");
+        document
+            .mutants
+            .into_iter()
+            .map(|row| {
+                let route = row
+                    .route
+                    .map(|one| one.reaching.join(","))
+                    .unwrap_or_default();
+                (row.id, format!("{} {route}", row.outcome))
+            })
+            .collect()
+    };
+    let fresh = report(&fixture, &[]);
+    let cleared = Command::new(env!("CARGO_BIN_EXE_rust-mutants"))
+        .env("NO_COLOR", "1")
+        .env("TMPDIR", fixture.temp())
+        .env("XDG_CACHE_HOME", fixture.cache())
+        .args(["cache", "--clear-outcomes"])
+        .args(["--root", &fixture.root().to_string_lossy()])
+        .output()
+        .expect("rust-mutants runs");
+    assert_eq!(cleared.status.code(), Some(0), "{cleared:?}");
+    let remembered = report(&fixture, &[]);
+    assert_eq!(
+        fresh, remembered,
+        "a run that read the measurement back instead of making it again has to route every \
+         mutant exactly as the run that made it did"
+    );
+    assert!(!fresh.is_empty(), "there was something to compare");
+}

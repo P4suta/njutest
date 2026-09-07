@@ -94,6 +94,13 @@ outcome established under one compiler could be reused under another. Every
 record written before this release stops answering once, and after that a
 partial edit costs a partial cache rather than all of it.
 
+**A measurement is remembered between runs.** Coverage is a function of the
+sources, the manifests and the toolchain, and a mutation changes none of them,
+so a run of a tree nothing has touched reads back what the last run measured
+instead of instrumenting and rebuilding the whole dependency graph. That is
+the largest single piece of work this release removes. `cache` names the
+store; `--no-cache` turns it off along with the outcome store.
+
 **A build whose dep-info cannot be read remembers nothing** rather than filing
 every mutant under one name. That is slower and it is the only honest answer.
 

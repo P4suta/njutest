@@ -80,6 +80,15 @@ pub struct PrepareOptions {
     pub packages: Vec<String>,
     /// The places a reviewer configured the run to pass over, each with the reason they gave.
     pub skips: Vec<discover::SkipRule>,
+    /// Where to remember what measuring this tree established, so the next run of it measures nothing.
+    ///
+    /// A coverage measurement is a function of the sources the build compiled,
+    /// the manifests that chose its flags and dependencies, and the toolchain.
+    /// A mutation changes none of them, and instrumenting for coverage
+    /// rebuilds every crate in the graph, so a tree that has not changed is a
+    /// whole build a run does not have to do. `None` measures it again every
+    /// time.
+    pub measurements: Option<PathBuf>,
     /// Run every test target once with nothing active, and refuse to hand back a session whose instrumented baseline does not pass.
     pub verify: bool,
     /// Build and run the probe tree, which says which tests could not have noticed a return replacement however far they ran.
@@ -127,6 +136,7 @@ impl Default for PrepareOptions {
             exclude: Vec::new(),
             packages: Vec::new(),
             skips: Vec::new(),
+            measurements: None,
             verify: true,
             probe: false,
             coverage: true,
@@ -1393,6 +1403,25 @@ fn selection(options: &PrepareOptions) -> Result<Selection<'static>, EngineError
     Ok(Selection::rules(&REGISTRY, &names)?)
 }
 
+/// Refuses a tree that does not compile before anything is instrumented, and hands back the units the check compiled.
+///
+/// Two questions have to be answered before a mutation is worth writing: does
+/// every target of the workspace type-check, and do its test binaries link.
+/// They look like one question and they are not. The check is also what says
+/// which files each target compiles **outside** a test build, and a file no
+/// non-test unit compiled is one only the tests see: without that, a library
+/// whose only compilation is its own test harness has every one of its files
+/// read as test-only and nothing in it is worth mutating.
+fn gate(
+    workspace: &Workspace,
+    options: &PrepareOptions,
+    cancel: &Cancel,
+) -> Result<crate::cargo::Compiled, EngineError> {
+    let checked = pristine(workspace, options, cancel)?;
+    let _linked = links(workspace, options, cancel)?;
+    Ok(checked)
+}
+
 /// Compiles the tree as it was copied, which is both the gate a run stands on and the source of every unit's file set.
 fn pristine(
     workspace: &Workspace,
@@ -1432,7 +1461,7 @@ fn links(
     workspace: &Workspace,
     options: &PrepareOptions,
     cancel: &Cancel,
-) -> Result<(), EngineError> {
+) -> Result<crate::cargo::Compiled, EngineError> {
     let built = compile(
         &workspace.driver(cancel),
         &CompileOptions {
@@ -1447,7 +1476,7 @@ fn links(
         },
     )?;
     if built.success {
-        return Ok(());
+        return Ok(built);
     }
     Err(EngineError::from(SessionError::PristineBroken {
         first: crate::validate::first_error_of(&built.messages),
@@ -1464,17 +1493,11 @@ fn links(
 ///
 /// A build whose dep-info cannot be read yields nothing at all rather than a
 /// partial answer, and a caller with nothing to key on remembers nothing.
-fn closure_of(
-    workspace: &Workspace,
-    last_build: &[crate::cargo::Message],
-    sources: &BTreeMap<String, Vec<u8>>,
-) -> String {
+fn closure_of(workspace: &Workspace, checked: &crate::cargo::Compiled) -> String {
     let root = workspace.snapshot_root();
-    let Ok(units) = crate::cargo::units_of(last_build, root) else {
-        return String::new();
-    };
+    let units = &checked.units;
     let mut files: BTreeMap<String, String> = BTreeMap::new();
-    for unit in &units {
+    for unit in units {
         for path in &unit.sources {
             let Ok(relative) = path.strip_prefix(root) else {
                 continue;
@@ -1485,11 +1508,7 @@ fn closure_of(
             if files.contains_key(&name) {
                 continue;
             }
-            let Some(bytes) = sources
-                .get(&name)
-                .cloned()
-                .or_else(|| std::fs::read(path).ok())
-            else {
+            let Ok(bytes) = std::fs::read(path) else {
                 continue;
             };
             drop(files.insert(name, crate::id::digest(&bytes)));
@@ -1658,6 +1677,7 @@ type Layers = (
 
 fn layers(
     asking: &crate::prove::Asking<'_>,
+    remembering: Option<&crate::reach::remembered::Remembering>,
     cancel: &Cancel,
     trace: &crate::trace::Recorder,
 ) -> Result<Layers, EngineError> {
@@ -1680,6 +1700,39 @@ fn layers(
     } else {
         BTreeMap::new()
     };
+    let reached = measured(asking, remembering, cancel, trace)?;
+    Ok((probed, proofs, reached))
+}
+
+/// What measuring this tree established, made now or remembered from the last run that made it.
+///
+/// The measurement is the most expensive thing a run does: instrumenting for
+/// coverage changes the fingerprint of every crate and rebuilds the whole
+/// graph. It is also a function of the tree alone, which a mutation does not
+/// change, so a tree nothing has touched since the last run has already been
+/// measured. Reading that back is a whole build removed on the claim the
+/// outcome store already rests on: nothing that could change the answer
+/// changed.
+fn measured(
+    asking: &crate::prove::Asking<'_>,
+    remembering: Option<&crate::reach::remembered::Remembering>,
+    cancel: &Cancel,
+    trace: &crate::trace::Recorder,
+) -> Result<crate::reach::Reached, EngineError> {
+    if let Some(remembering) = remembering
+        && let Some(reached) = remembering.read()
+    {
+        let phase = trace.phase("coverage");
+        trace.note(
+            "coverage-remembered",
+            &format!(
+                "the measurement of this tree is the one an earlier run made, filed under {}",
+                remembering.key
+            ),
+        );
+        phase.end();
+        return Ok(reached);
+    }
     let reached = crate::reach::establish(
         &crate::reach::Asking {
             workspace: asking.workspace,
@@ -1688,7 +1741,40 @@ fn layers(
         cancel,
         trace,
     )?;
-    Ok((probed, proofs, reached))
+    if let Some(remembering) = remembering
+        && reached.measured()
+    {
+        remembering.write(&reached);
+    }
+    Ok(reached)
+}
+
+/// Where this run may remember what it measured, when it was given somewhere and asked to measure.
+fn remembering(
+    options: &PrepareOptions,
+    closure: &str,
+    manifests: &str,
+    workspace: &Workspace,
+) -> Option<crate::reach::remembered::Remembering> {
+    if !options.coverage || closure.is_empty() {
+        return None;
+    }
+    let directory = options.measurements.as_ref()?;
+    let toolchain = format!(
+        "{} {} {}",
+        workspace.toolchain.cargo_version().summary,
+        workspace.toolchain.rustc_version().summary,
+        workspace.toolchain.host()
+    );
+    Some(crate::reach::remembered::Remembering::of(
+        directory,
+        &crate::reach::remembered::Of {
+            closure,
+            manifests,
+            toolchain: &toolchain,
+            build: &options.build.arguments(),
+        },
+    ))
 }
 
 /// What a mutant no measured target reached amounts to: nothing ran, because nothing that ran could have noticed.
@@ -1728,10 +1814,10 @@ fn gated(
     options: &PrepareOptions,
     cancel: &Cancel,
     trace: &crate::trace::Recorder,
-) -> Result<discover::Discovery, EngineError> {
+) -> Result<Gated, EngineError> {
     let pristine_phase = trace.phase("pristine");
-    let checked = pristine(workspace, options, cancel)?;
-    links(workspace, options, cancel)?;
+    let checked = gate(workspace, options, cancel)?;
+    let closure = closure_of(workspace, &checked);
     pristine_phase.end();
     let discover_phase = trace.phase("discover");
     let discovery = discover::discover(
@@ -1750,7 +1836,13 @@ fn gated(
         trace,
     )?;
     discover_phase.end();
-    Ok(discovery)
+    Ok(Gated { discovery, closure })
+}
+
+/// What the gate established: what there is to mutate, and the digest of everything the build read.
+struct Gated {
+    discovery: discover::Discovery,
+    closure: String,
 }
 
 /// Discovers, instruments, validates, builds, and verifies.
@@ -1764,7 +1856,8 @@ pub fn prepare(
 ) -> Result<Session, EngineError> {
     let trace = workspace.trace.clone();
     let phase = trace.phase("prepare");
-    let discovery = gated(&workspace, options, cancel, &trace)?;
+    let Gated { discovery, closure } = gated(&workspace, options, cancel, &trace)?;
+    let manifests = manifests_of(&workspace);
 
     let plan_phase = trace.phase("plan");
     let (sources, placements) = plan_tree(workspace.snapshot_root(), &discovery)?;
@@ -1777,6 +1870,7 @@ pub fn prepare(
             sources: &sources,
             options,
         },
+        remembering(options, &closure, &manifests, &workspace).as_ref(),
         cancel,
         &trace,
     )?;
@@ -1802,8 +1896,6 @@ pub fn prepare(
         .collect();
     let build_phase = trace.phase("build");
     let (targets, scratch, baseline) = built(&workspace, &last_build, options, (cancel, &trace))?;
-    let closure = closure_of(&workspace, &last_build, &sources);
-    let manifests = manifests_of(&workspace);
     build_phase.end();
     phase.end();
     let indexed: Vec<(u32, &discover::Located)> = discovery

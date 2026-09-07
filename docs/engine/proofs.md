@@ -45,6 +45,32 @@ is labelled with what kind it is:
 `Work::answers_for_the_whole` is that last column, and a report says so when
 it is false.
 
+## Work a run does not have to do twice
+
+A coverage measurement is a function of three things and nothing else: the
+sources every unit compiled, the manifests that chose the flags and
+dependencies, and the toolchain. **A mutation changes none of them.** So a
+tree measured yesterday and untouched since has already been measured — and
+making the measurement is the most expensive thing a run does, because
+instrumenting for coverage changes the fingerprint of every crate and rebuilds
+the whole dependency graph.
+
+A run therefore files what it measured under a digest of exactly those three
+things, and a run of an unchanged tree reads it back instead of building
+again. `cache` says how many trees are remembered and where. `--no-cache`
+turns it off, because a flag that says "establish it again" has to mean this
+too.
+
+The claim is the one the outcome store already rests on — nothing that could
+change the answer changed — and it is checked the same way:
+`a_remembered_measurement_routes_a_run_exactly_as_a_fresh_one_would` runs a
+fixture, empties the outcome store, runs it again, and holds the two reports
+to each other on both the verdict and the route. A tree that *did* change is
+measured again, and a test says so.
+
+The same reasoning is why the outcome store is keyed on the compiled closure
+rather than on the tree: see [upgrading](upgrading.md).
+
 ## Whether the removals are honest
 
 Every layer here claims that running the pair would have established exactly
