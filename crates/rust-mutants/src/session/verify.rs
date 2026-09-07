@@ -9,7 +9,7 @@
 //! and a target this run cannot ask is named rather than read as having
 //! reached nothing.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
 use super::prepare::Building;
@@ -186,26 +186,15 @@ fn gather(
             return;
         }
     };
-    let mut gathered = crate::touch::TargetTouches {
-        loose: recorded.loose,
-        loose_bodies: recorded.loose_bodies,
+    let mut loose = recorded.loose;
+    let mut loose_bodies = recorded.loose_bodies;
+    let gathered = crate::touch::TargetTouches {
+        tests: attributed(recorded.tests, recording.ran, &mut loose),
+        bodies: attributed(recorded.bodies, recording.ran, &mut loose_bodies),
+        loose,
+        loose_bodies,
         ran: recording.ran.to_vec(),
-        ..crate::touch::TargetTouches::default()
     };
-    for (name, sites) in recorded.tests {
-        if recording.ran.iter().any(|test| test == &name) {
-            drop(gathered.tests.insert(name, sites));
-        } else {
-            gathered.loose.extend(sites);
-        }
-    }
-    for (name, bodies) in recorded.bodies {
-        if recording.ran.iter().any(|test| test == &name) {
-            drop(gathered.bodies.insert(name, bodies));
-        } else {
-            gathered.loose_bodies.extend(bodies);
-        }
-    }
     trace.touch(crate::trace::TouchRecord {
         target: recording.target.to_owned(),
         tests: u32::try_from(gathered.tests.len()).unwrap_or(u32::MAX),
@@ -215,7 +204,7 @@ fn gather(
                 .values()
                 .flatten()
                 .chain(gathered.loose.iter())
-                .collect::<std::collections::BTreeSet<&u32>>()
+                .collect::<BTreeSet<&u32>>()
                 .len(),
         )
         .unwrap_or(u32::MAX),
@@ -226,6 +215,29 @@ fn gather(
             .targets
             .insert(recording.target.to_owned(), gathered),
     );
+}
+
+/// What each test of the target reached, with everything else folded into `loose`.
+///
+/// A record names the thread that made it, and libtest names a test's thread
+/// after the test — but a thread the run does not know as one of its tests is
+/// a thread nothing can be attributed to, whatever it called itself. What it
+/// reached goes where the unattributable goes, and reaches every test of the
+/// target.
+fn attributed(
+    recorded: BTreeMap<String, BTreeSet<u32>>,
+    ran: &[String],
+    loose: &mut BTreeSet<u32>,
+) -> BTreeMap<String, BTreeSet<u32>> {
+    let mut named = BTreeMap::new();
+    for (thread, reached) in recorded {
+        if ran.iter().any(|test| test == &thread) {
+            drop(named.insert(thread, reached));
+        } else {
+            loose.extend(reached);
+        }
+    }
+    named
 }
 
 /// A target identity as one path segment, so two targets cannot name one file.
