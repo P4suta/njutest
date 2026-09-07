@@ -298,12 +298,6 @@ impl Touched {
         !self.targets.is_empty()
     }
 
-    /// Whether every target the run built was recorded, which is what makes the measurement worth remembering.
-    #[must_use]
-    pub const fn whole(&self) -> bool {
-        self.limitations.is_empty()
-    }
-
     /// Which of `target`'s tests could have noticed the mutation at `index`, or nothing when this run cannot say.
     #[must_use]
     pub fn reaching(&self, target: &str, index: u32) -> Option<Reaching> {

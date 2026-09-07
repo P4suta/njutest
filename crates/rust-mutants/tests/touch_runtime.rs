@@ -176,6 +176,23 @@ fn a_process_nothing_asked_to_record_writes_no_log_at_all() {
 }
 
 #[test]
+fn the_header_the_runtime_writes_is_the_one_the_reader_expects() {
+    let text = ran(
+        "header",
+        "    let one = std::thread::Builder::new().name(\"alpha\".to_owned())\n\
+         \x20       .spawn(|| { __rm::active(0); })\n\
+         \x20       .expect(\"spawn\");\n\
+         \x20   one.join().expect(\"join\");",
+        true,
+    );
+    assert!(
+        text.starts_with(&touch::header_line(CATALOG)),
+        "the generated runtime and the reader are two halves of one format, and this is where \
+         they are held to each other: {text}"
+    );
+}
+
+#[test]
 fn a_log_about_another_catalog_says_nothing_rather_than_something_wrong() {
     let text = format!("{} {}\nt\talpha\t0\n", touch::SCHEMA, "b".repeat(64));
     assert!(matches!(

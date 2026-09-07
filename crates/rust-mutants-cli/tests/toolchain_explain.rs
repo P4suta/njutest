@@ -5,7 +5,9 @@
 
 #![expect(
     clippy::expect_used,
-    reason = "a test reports a setup failure by panicking and asserts with panics"
+    clippy::indexing_slicing,
+    reason = "a test reports a setup failure by panicking, asserts with panics, and a document \
+              this test caused to be written is one it may index"
 )]
 
 use std::process::{Command, Output};
@@ -185,5 +187,36 @@ fn list_why_skipped_instrument_and_catalog_each_answer_about_one_thing() {
     assert!(
         refused.contains("the compiler refused nothing"),
         "and a catalog with no refusals says so rather than printing itself: {refused}"
+    );
+}
+
+#[test]
+fn explain_names_the_tests_a_route_put_the_mutation_to() {
+    let fixture = Fixture::copy("fixture-coverage");
+    let output = against(
+        &fixture,
+        &["run", "--tier", "all", "--jobs", "1", "--ui", "quiet"],
+    );
+    assert!(
+        output.status.code().is_some_and(|code| code <= 1),
+        "{output:?}"
+    );
+    let document: serde_json::Value =
+        serde_json::from_str(&mjutest_devkit::fixture::stored_report(fixture.root()))
+            .expect("the report is a document");
+    let narrowed = document["mutants"]
+        .as_array()
+        .expect("the rows")
+        .iter()
+        .find(|row| row["route"]["granularity"] == "test")
+        .expect("a mutation the guards put to some of a target's tests");
+    let short = narrowed["display_id"].as_str().expect("a short identity");
+    let said = against(&fixture, &["explain", short]);
+    assert_eq!(said.status.code(), Some(0), "{said:?}");
+    let text = String::from_utf8_lossy(&said.stdout);
+    assert!(text.contains("ROUTE     test "), "{text}");
+    assert!(
+        text.contains("TESTS     fixture-coverage/lib/fixture_coverage: tests::"),
+        "a reader asking why a mutation went where it did is asking which tests: {text}"
     );
 }

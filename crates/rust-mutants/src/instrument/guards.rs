@@ -40,8 +40,9 @@ pub(super) fn compose(
         Form::C => selector(path, alternatives, original),
         Form::E => {
             let mut composed = chain(path, alternatives, original);
-            composed.text.insert(0, '(');
-            composed.text.push(')');
+            let (open, close) = wrapping(original);
+            composed.text.insert(0, open);
+            composed.text.push(close);
             for (_, range) in &mut composed.alternatives {
                 range.start = range.start.saturating_add(1);
                 range.end = range.end.saturating_add(1);
@@ -51,6 +52,24 @@ pub(super) fn compose(
         }
         Form::S => chain(path, alternatives, original),
         Form::M => arm(path, alternatives, original),
+    }
+}
+
+/// What a value-position guard is wrapped in, which is a block wherever the site already was one.
+///
+/// Parentheses are what makes a guard one expression wherever the site was
+/// one. They are the wrong wrapper for a site that is already a block: a match
+/// arm whose body is a block needs no comma after it, and one whose body is a
+/// parenthesised expression does — so wrapping a block-bodied arm in
+/// parentheses turns a file that parsed into one that does not, at the arm
+/// *after* it. A block wrapped in a block is still a block, and is an
+/// expression everywhere the original block was one.
+fn wrapping(original: &str) -> (char, char) {
+    let trimmed = original.trim();
+    if trimmed.starts_with('{') && trimmed.ends_with('}') {
+        ('{', '}')
+    } else {
+        ('(', ')')
     }
 }
 

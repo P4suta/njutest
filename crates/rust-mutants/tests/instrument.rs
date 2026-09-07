@@ -588,3 +588,96 @@ proptest::proptest! {
         );
     }
 }
+
+#[test]
+fn a_match_arm_whose_body_is_a_block_still_parses_after_the_guard_goes_in() {
+    let text = instrument(
+        "pub fn f(parsed: Result<u8, u8>) -> u8 {\n\
+         \x20   match parsed {\n\
+         \x20       Ok(one) => one + 1,\n\
+         \x20       Ok(two) => {\n\
+         \x20           let value = two + 1;\n\
+         \x20           value\n\
+         \x20       }\n\
+         \x20       Err(other) => other,\n\
+         \x20   }\n\
+         }\n",
+    );
+    syn::parse_file(&text).unwrap_or_else(|error| {
+        panic!(
+            "an arm whose body is a block needs no comma after it, and one whose body is a \
+             parenthesised expression does: {error}\n{text}"
+        )
+    });
+    assert!(
+        text.contains("Ok(two) => {if "),
+        "so a block site keeps its braces rather than gaining parentheses: {text}"
+    );
+}
+
+#[test]
+fn every_source_of_this_repository_still_parses_once_it_is_instrumented() {
+    let root = mjutest_devkit::paths::workspace_root();
+    let mut checked = 0_u32;
+    let mut stack = vec![root.join("crates"), root.join("xtask")];
+    while let Some(directory) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&directory) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+                if entry.file_name() != "target" {
+                    stack.push(path);
+                }
+                continue;
+            }
+            if path.extension().is_none_or(|extension| extension != "rs") {
+                continue;
+            }
+            let Ok(source) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            if syn::parse_file(&source).is_err() {
+                continue;
+            }
+            let relative = path
+                .strip_prefix(&root)
+                .unwrap_or(&path)
+                .display()
+                .to_string();
+            let Some((text, _)) = instrumented(&relative, &source) else {
+                continue;
+            };
+            checked = checked.saturating_add(1);
+            if let Err(error) = syn::parse_file(&text) {
+                panic!("{relative} does not parse once instrumented: {error}");
+            }
+        }
+    }
+    assert!(
+        checked > 100,
+        "this is the widest set of real shapes the suite has, and it read {checked} files"
+    );
+}
+
+/// One file instrumented as a run would instrument it, or nothing when discovery refuses it.
+fn instrumented(path: &str, source: &str) -> Option<(String, Catalog)> {
+    let selection = Selection::tier(&REGISTRY, Tier::All);
+    let discovery = discover_file(path, source.as_bytes(), &selection).ok()?;
+    let mut builder = Builder::new();
+    for found in &discovery.candidates {
+        builder.add(found.candidate.clone()).ok()?;
+    }
+    let catalog = builder.build().ok()?;
+    let placements = plan_file(&catalog, path, &discovery.candidates).ok()?;
+    let file = instrument_file(&Instrumenting {
+        path,
+        source: source.as_bytes(),
+        placements: &placements,
+        markers: &[],
+        catalog_digest: catalog.digest(),
+    })
+    .ok()?;
+    Some((file.text, catalog))
+}
