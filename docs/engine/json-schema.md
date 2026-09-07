@@ -201,12 +201,14 @@ value its owner did not choose to publish.
 
 ## Evidence
 
-A run writes `reached-v1.json` (`schema/rust-mutants-reached-v1.json`) and
+A run writes `touched-v1.json` (`schema/rust-mutants-touched-v1.json`),
+`reached-v1.json` (`schema/rust-mutants-reached-v1.json`) and
 `catalog-v1.json` beside its report, and copies every probe log into
-`probe/`. They are the premises its proof layers rest on: the measurement
-each target left behind — empty when nothing was measured, which says so —
-the catalog with the branch bodies the compiler vouched for, and what each
-probe process recorded. `cargo xtask engine-audit` reads them and re-decides
+`probe/`. They are the premises its proof layers rest on: what each target's
+guards recorded about which of its tests reached which mutation, the
+measurement the coverage build left behind — empty when nothing was measured,
+which says so — the catalog with the branch bodies the compiler vouched for,
+and what each probe process recorded. `cargo xtask engine-audit` reads them and re-decides
 every route without the engine that produced them, which is what makes a
 report's `discharged` a proof rather than a claim.
 

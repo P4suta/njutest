@@ -130,11 +130,13 @@ pub enum Layer {
     Ledger,
     /// The work the report claims, against the routes it claims it from and the recording of what ran.
     Work,
+    /// Every route the guards decided, re-decided from what the guards recorded.
+    Touch,
 }
 
 impl Layer {
     /// Every layer, in the order they are re-decided.
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 13] = [
         Self::Identity,
         Self::Accounting,
         Self::Score,
@@ -147,6 +149,7 @@ impl Layer {
         Self::Trace,
         Self::Ledger,
         Self::Work,
+        Self::Touch,
     ];
 
     /// What to write in a report.
@@ -165,6 +168,7 @@ impl Layer {
             Self::Trace => "trace",
             Self::Ledger => "ledger",
             Self::Work => "work",
+            Self::Touch => "touch",
         }
     }
 }
@@ -286,6 +290,8 @@ pub struct Evidence<'a> {
     pub catalog: Option<&'a str>,
     /// The names of the probe logs the run kept.
     pub probe_logs: Vec<String>,
+    /// What the guards recorded, as the run kept it.
+    pub touched: Option<&'a str>,
 }
 
 /// Where one layer's re-decisions are written down.
@@ -354,6 +360,7 @@ pub fn audit(path: &str, text: &str, evidence: &Evidence<'_>) -> Result<Audit, A
     trace(&report, evidence.recorded, &mut audit);
     ledger(&report, evidence.ledger, &mut audit);
     work(&report, evidence.recorded, &mut audit);
+    touch(&report, evidence.touched, &mut audit);
     audit.remarks.sort();
     audit.remarks.dedup();
     Ok(audit)
@@ -363,6 +370,8 @@ pub fn audit(path: &str, text: &str, evidence: &Evidence<'_>) -> Result<Audit, A
 #[derive(Debug, Clone)]
 struct Row {
     index: Option<u64>,
+    granularity: String,
+    tests: BTreeMap<String, BTreeSet<String>>,
     reaching: Vec<String>,
     executed: Vec<String>,
     id: String,
@@ -1744,6 +1753,11 @@ fn phase_name(event: &Value) -> String {
 fn row(value: &Value) -> Row {
     Row {
         index: number(value, "index"),
+        granularity: value
+            .get("route")
+            .and_then(|route| string(route, "granularity"))
+            .unwrap_or_default(),
+        tests: tests_in(value),
         id: string(value, "id").unwrap_or_default(),
         display_id: string(value, "display_id").unwrap_or_default(),
         path: string(value, "path").unwrap_or_default(),
@@ -1766,6 +1780,34 @@ fn row(value: &Value) -> Row {
         executed: named_in(value, "executed"),
         source_run_id: string(value, "source_run_id"),
     }
+}
+
+/// For each target one row's route narrowed to some of its tests, exactly those tests.
+fn tests_in(value: &Value) -> BTreeMap<String, BTreeSet<String>> {
+    value
+        .get("route")
+        .and_then(|route| route.get("tests"))
+        .and_then(Value::as_object)
+        .map(|named| {
+            named
+                .iter()
+                .map(|(target, tests)| {
+                    (
+                        target.clone(),
+                        tests
+                            .as_array()
+                            .map(|entries| {
+                                entries
+                                    .iter()
+                                    .filter_map(|one| one.as_str().map(ToOwned::to_owned))
+                                    .collect()
+                            })
+                            .unwrap_or_default(),
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Every target one row's route names under `field`.
@@ -1975,6 +2017,277 @@ fn measured_every_target(report: &Report, reached: Option<&str>, notes: &mut Not
             );
         }
     }
+}
+
+/// Every route the guards decided, re-decided from what the guards recorded.
+///
+/// A route decided by the guards makes two removals, and both are checked
+/// here against the record rather than against the engine that made them. A
+/// target the route leaves out is one the record has to name and has to say
+/// reached nothing at that index: leaving out a target the record does not
+/// account for is how a kill becomes a survivor. And a target the route
+/// narrows to some of its tests has to be narrowed to exactly the tests the
+/// record names, because a test dropped from that set is a test that would
+/// have run and did not.
+fn touch(report: &Report, touched: Option<&str>, audit: &mut Audit) {
+    let mut notes = Notes::on(audit, Layer::Touch);
+    let routed = report
+        .mutants
+        .iter()
+        .filter(|row| row.granularity == "test")
+        .count();
+    let Some(record) = touched else {
+        if routed > 0 {
+            notes.violated(
+                "record",
+                format!(
+                    "{} put a mutation to some of a target's tests and the run kept no record of \
+                     what its guards reached, so which tests those should have been cannot be \
+                     re-derived",
+                    plural(routed, "route")
+                ),
+            );
+        }
+        return;
+    };
+    let Ok(document) = serde_json::from_str::<Value>(record) else {
+        notes.violated(
+            "record",
+            "what the guards recorded is not a document".to_owned(),
+        );
+        return;
+    };
+    let recorded = Recorded::of(&document);
+    if recorded.targets.is_empty() {
+        if routed > 0 {
+            notes.violated(
+                "record",
+                "the record names no target and the run narrowed by it anyway".to_owned(),
+            );
+        }
+        return;
+    }
+    accounted_for(report, &recorded, &mut notes);
+    for row in &report.mutants {
+        if row.source_run_id.is_some() || row.granularity != "test" {
+            continue;
+        }
+        let Some(index) = row.index else {
+            notes.unaudited(
+                row.label(),
+                "the row carries no catalog index, so what the guards said about it cannot be \
+                 looked up"
+                    .to_owned(),
+            );
+            continue;
+        };
+        re_decided(row, index, &recorded, &mut notes);
+    }
+}
+
+/// Whether the record accounts for every target the run built.
+fn accounted_for(report: &Report, recorded: &Recorded, notes: &mut Notes<'_>) {
+    for target in &report.targets {
+        if !recorded.targets.contains_key(target.as_str()) && !recorded.excused.contains(target) {
+            notes.violated(
+                "record",
+                format!(
+                    "the run built {target} and the record neither names it nor says why it \
+                     could not; a route that narrowed by this record narrowed by a target \
+                     nobody asked"
+                ),
+            );
+        }
+    }
+}
+
+/// One row's route, re-decided from the record alone.
+fn re_decided(row: &Row, index: u64, recorded: &Recorded, notes: &mut Notes<'_>) {
+    let removed: BTreeSet<&String> = row.discharged.iter().map(|(target, _)| target).collect();
+    for (target, touches) in &recorded.targets {
+        if removed.contains(target) {
+            continue;
+        }
+        let reaching = touches.reaching(index);
+        let named = row.reaching.iter().any(|one| one == target);
+        match (&reaching, named) {
+            (Reaching::Nothing, true) => notes.violated(
+                row.label(),
+                format!(
+                    "the route keeps {target} and the record says nothing of it reached this \
+                     mutation; a target kept for nothing is work, not a wrong answer, but the \
+                     route and the record disagree"
+                ),
+            ),
+            (Reaching::Nothing, false) | (_, true) => {}
+            (Reaching::Whole | Reaching::Tests(_), false) => notes.violated(
+                row.label(),
+                format!(
+                    "the record says {target} reached this mutation and the route left it out; \
+                     a target the tests reach and nothing runs is a kill reported as a survivor"
+                ),
+            ),
+        }
+        let asked: BTreeSet<&String> = row
+            .tests
+            .get(target)
+            .map(|named| named.iter().collect())
+            .unwrap_or_default();
+        match reaching {
+            Reaching::Tests(expected) if named => {
+                let expected: BTreeSet<&String> = expected.iter().collect();
+                if asked != expected {
+                    notes.violated(
+                        row.label(),
+                        format!(
+                            "the route puts this mutation to {} of {target} and the record says \
+                             the tests that reached it are {}",
+                            asked_for(&asked),
+                            listed(&expected)
+                        ),
+                    );
+                }
+            }
+            Reaching::Whole if !asked.is_empty() => notes.violated(
+                row.label(),
+                format!(
+                    "the route narrows {target} to {} and the record cannot attribute what \
+                     reached this mutation to any test of it",
+                    listed(&asked)
+                ),
+            ),
+            Reaching::Nothing | Reaching::Tests(_) | Reaching::Whole => {}
+        }
+    }
+}
+
+/// A set of names as a reader reads them.
+fn listed(names: &BTreeSet<&String>) -> String {
+    if names.is_empty() {
+        return "none of them".to_owned();
+    }
+    names
+        .iter()
+        .map(|name| name.as_str())
+        .collect::<Vec<&str>>()
+        .join(", ")
+}
+
+/// What a route asked one target for, where naming nothing means every test it has.
+fn asked_for(names: &BTreeSet<&String>) -> String {
+    if names.is_empty() {
+        return "every test".to_owned();
+    }
+    listed(names)
+}
+
+/// What the guards recorded, read as data with no help from the engine that wrote it.
+#[derive(Debug, Default)]
+struct Recorded {
+    targets: BTreeMap<String, Touches>,
+    excused: BTreeSet<String>,
+}
+
+impl Recorded {
+    fn of(document: &Value) -> Self {
+        let targets = document
+            .get("targets")
+            .and_then(Value::as_object)
+            .map(|named| {
+                named
+                    .iter()
+                    .map(|(target, touches)| (target.clone(), Touches::of(touches)))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let excused = document
+            .get("limitations")
+            .and_then(Value::as_array)
+            .map(|entries| {
+                entries
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .filter_map(|one| one.split_once(':').map(|(_, target)| target.to_owned()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        Self { targets, excused }
+    }
+}
+
+/// What one target's guards recorded.
+#[derive(Debug, Default)]
+struct Touches {
+    tests: BTreeMap<String, BTreeSet<u64>>,
+    loose: BTreeSet<u64>,
+    ran: usize,
+}
+
+impl Touches {
+    fn of(value: &Value) -> Self {
+        Self {
+            tests: value
+                .get("tests")
+                .and_then(Value::as_object)
+                .map(|named| {
+                    named
+                        .iter()
+                        .map(|(test, sites)| {
+                            (
+                                test.clone(),
+                                sites
+                                    .as_array()
+                                    .map(|entries| {
+                                        entries.iter().filter_map(Value::as_u64).collect()
+                                    })
+                                    .unwrap_or_default(),
+                            )
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+            loose: value
+                .get("loose")
+                .and_then(Value::as_array)
+                .map(|entries| entries.iter().filter_map(Value::as_u64).collect())
+                .unwrap_or_default(),
+            ran: value
+                .get("ran")
+                .and_then(Value::as_array)
+                .map_or(0, Vec::len),
+        }
+    }
+
+    /// Which of this target's tests reached `index`, re-derived from the record alone.
+    fn reaching(&self, index: u64) -> Reaching {
+        if self.loose.contains(&index) {
+            return Reaching::Whole;
+        }
+        let named: BTreeSet<String> = self
+            .tests
+            .iter()
+            .filter(|(_, sites)| sites.contains(&index))
+            .map(|(test, _)| test.clone())
+            .collect();
+        if named.is_empty() {
+            return Reaching::Nothing;
+        }
+        if named.len() >= self.ran {
+            return Reaching::Whole;
+        }
+        Reaching::Tests(named)
+    }
+}
+
+/// Which of a target's tests could have noticed one mutation.
+#[derive(Debug)]
+enum Reaching {
+    /// Nothing of it reached the mutation.
+    Nothing,
+    /// Exactly these tests reached it.
+    Tests(BTreeSet<String>),
+    /// It reached the mutation where nothing named a test, so every test of it reaches.
+    Whole,
 }
 
 fn proofs(report: &Report, evidence: &Evidence<'_>, audit: &mut Audit) {

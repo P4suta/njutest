@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mjutest.dev/schema/rust-mutants-touched-v1.json",
+  "title": "rust-mutants touched v1",
+  "description": "What the guards of an instrumented tree recorded on the run that verified its baseline: which of each target's tests reached which mutation, which sites were reached where nothing named a test, and which targets said nothing this run can route by. A target absent from `targets` and named in `limitations` is one every test of which reaches every mutation in it.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["targets", "limitations"],
+  "properties": {
+    "targets": {
+      "description": "Every target whose guards recorded, by identity.",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/target"
+      }
+    },
+    "limitations": {
+      "description": "Why a target the run built is not in `targets`, as `<limitation>:<target>`.",
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  },
+  "$defs": {
+    "target": {
+      "description": "What one target's guards recorded, and which of its tests ran to record it.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tests", "loose", "ran"],
+      "properties": {
+        "tests": {
+          "description": "The dense catalog indices each named test of this target reached.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "loose": {
+          "description": "The indices reached where nothing named a test, which therefore reach every test of the target.",
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "ran": {
+          "description": "Every test the baseline ran, which is what a loose site reaches.",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  }
+}

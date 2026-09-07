@@ -358,6 +358,7 @@ pub fn engine_audit(asked: &EngineRun<'_>) -> Result<engineaudit::Audit, enginea
         .ledger
         .and_then(|path| std::fs::read_to_string(path).ok());
     let reached = std::fs::read_to_string(asked.run.join("reached-v1.json")).ok();
+    let touched = std::fs::read_to_string(asked.run.join("touched-v1.json")).ok();
     let catalog = std::fs::read_to_string(asked.run.join("catalog-v1.json")).ok();
     let probe_logs = std::fs::read_dir(asked.run.join("probe"))
         .into_iter()
@@ -377,6 +378,7 @@ pub fn engine_audit(asked: &EngineRun<'_>) -> Result<engineaudit::Audit, enginea
             ledger: ledger.as_deref(),
             sites: asked.sites,
             reached: reached.as_deref(),
+            touched: touched.as_deref(),
             catalog: catalog.as_deref(),
             probe_logs,
         },

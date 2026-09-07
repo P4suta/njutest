@@ -235,10 +235,8 @@ pub enum Route {
     },
     /// The targets a measurement places at the mutation, and the ones a proof removed.
     Block {
-        /// The targets whose measured run covered the position, plus every target the measurement could not read.
-        reaching: Vec<String>,
-        /// For each target the measurement narrowed to some of its tests, exactly those tests. A target absent from this runs every test it has.
-        tests: BTreeMap<String, Vec<String>>,
+        /// The targets whose measured run covered the position, plus every target the measurement could not read, each with the tests it is asked for.
+        reaching: Vec<Reaches>,
         /// The targets a proof removed from what could have noticed the mutation.
         discharged: Vec<Discharge>,
         /// Why targets the measurement did not place are in `reaching` anyway.
@@ -285,6 +283,50 @@ impl Fallback {
             Self::OutsideBlocks => "outside-blocks",
             Self::CoverageIncomplete => "coverage-incomplete",
             Self::TouchIncomplete => "touch-incomplete",
+        }
+    }
+}
+
+/// One target a route keeps, and which of its tests it puts the mutation to.
+///
+/// The tests belong to the target rather than beside it, so a route cannot
+/// name tests of a target it does not keep, and cannot keep a target whose
+/// tests it forgot to say anything about. Both were states two parallel
+/// collections could reach and neither is a state that means anything.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Reaches {
+    /// The target.
+    pub target: String,
+    /// Which of its tests the mutation is put to.
+    pub tests: Asked,
+}
+
+/// Which of a target's tests a route puts a mutation to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Asked {
+    /// Every test the target has, because nothing narrowed it to fewer.
+    Every,
+    /// Exactly these, because the measurement named them and no others reached the mutation.
+    These(Vec<String>),
+}
+
+impl Asked {
+    /// The tests this names, or nothing when it names every test the target has.
+    #[must_use]
+    pub fn named(&self) -> &[String] {
+        match self {
+            Self::Every => &[],
+            Self::These(tests) => tests,
+        }
+    }
+
+    /// How many tests one execution of the target starts, given how many it has.
+    #[must_use]
+    pub const fn counting(&self, held: usize) -> usize {
+        match self {
+            Self::Every => held,
+            Self::These(tests) => tests.len(),
         }
     }
 }
@@ -358,7 +400,7 @@ impl Route {
                     })
             })
             .collect();
-        let mut reaching: Vec<String> = targets
+        let mut reaching: Vec<Reaches> = targets
             .iter()
             .copied()
             .filter(|target| {
@@ -366,7 +408,10 @@ impl Route {
                     || unmeasured.contains(target)
                     || also_reaching.contains(target)
             })
-            .map(str::to_owned)
+            .map(|target| Reaches {
+                target: target.to_owned(),
+                tests: Asked::Every,
+            })
             .collect();
         reaching.dedup();
         if reaching.is_empty() {
@@ -374,7 +419,6 @@ impl Route {
         }
         Self::Block {
             reaching,
-            tests: BTreeMap::new(),
             discharged: Vec::new(),
             fallback: (!unmeasured.is_empty()).then_some(Fallback::CoverageIncomplete),
         }
@@ -402,26 +446,26 @@ impl Route {
             };
         }
         let mut reaching = Vec::new();
-        let mut tests = BTreeMap::new();
         let mut incomplete = false;
         for target in targets.iter().copied() {
-            if !measurable.contains(&target) {
-                if also_reaching.contains(&target) {
-                    reaching.push(target.to_owned());
+            let asked = if measurable.contains(&target) {
+                match touched.reaching(target, index) {
+                    None => {
+                        incomplete = true;
+                        Some(Asked::Every)
+                    }
+                    Some(crate::touch::Reaching::Nothing) => None,
+                    Some(crate::touch::Reaching::Whole) => Some(Asked::Every),
+                    Some(crate::touch::Reaching::Tests(named)) => Some(Asked::These(named)),
                 }
-                continue;
-            }
-            match touched.reaching(target, index) {
-                None => {
-                    incomplete = true;
-                    reaching.push(target.to_owned());
-                }
-                Some(crate::touch::Reaching::Nothing) => {}
-                Some(crate::touch::Reaching::Whole) => reaching.push(target.to_owned()),
-                Some(crate::touch::Reaching::Tests(named)) => {
-                    reaching.push(target.to_owned());
-                    drop(tests.insert(target.to_owned(), named));
-                }
+            } else {
+                also_reaching.contains(&target).then_some(Asked::Every)
+            };
+            if let Some(tests) = asked {
+                reaching.push(Reaches {
+                    target: target.to_owned(),
+                    tests,
+                });
             }
         }
         if reaching.is_empty() {
@@ -429,7 +473,6 @@ impl Route {
         }
         Self::Block {
             reaching,
-            tests,
             discharged: Vec::new(),
             fallback: incomplete.then_some(Fallback::TouchIncomplete),
         }
@@ -438,31 +481,60 @@ impl Route {
     /// The tests of `target` this route names, or nothing when every test of it runs.
     #[must_use]
     pub fn tests_of(&self, target: &str) -> &[String] {
+        self.keeps(target).map_or(&[], |one| one.tests.named())
+    }
+
+    /// What this route keeps `target` for, or nothing when it does not keep it.
+    #[must_use]
+    pub fn keeps(&self, target: &str) -> Option<&Reaches> {
         match self {
-            Self::Block { tests, .. } => tests.get(target).map_or(&[], Vec::as_slice),
-            Self::All { .. } | Self::Discharged { .. } | Self::Unreached => &[],
+            Self::Block { reaching, .. } => reaching.iter().find(|one| one.target == target),
+            Self::All { .. } | Self::Discharged { .. } | Self::Unreached => None,
+        }
+    }
+
+    /// Every target this route keeps, each with the tests it is asked for.
+    #[must_use]
+    pub fn asked(&self) -> Vec<Reaches> {
+        match self {
+            Self::Block { reaching, .. } => reaching.clone(),
+            Self::All { reaching, .. } => reaching
+                .iter()
+                .map(|target| Reaches {
+                    target: target.clone(),
+                    tests: Asked::Every,
+                })
+                .collect(),
+            Self::Discharged { .. } | Self::Unreached => Vec::new(),
         }
     }
 
     /// For each target this route narrowed to some of its tests, exactly those tests.
     #[must_use]
-    pub const fn tests(&self) -> Option<&BTreeMap<String, Vec<String>>> {
+    pub fn tests(&self) -> BTreeMap<String, Vec<String>> {
         match self {
-            Self::Block { tests, .. } => Some(tests),
-            Self::All { .. } | Self::Discharged { .. } | Self::Unreached => None,
+            Self::Block { reaching, .. } => reaching
+                .iter()
+                .filter_map(|one| match &one.tests {
+                    Asked::Every => None,
+                    Asked::These(tests) => Some((one.target.clone(), tests.clone())),
+                })
+                .collect(),
+            Self::All { .. } | Self::Discharged { .. } | Self::Unreached => BTreeMap::new(),
         }
     }
 
     /// Every test this route would start, counted, which is the work it asks for.
     #[must_use]
     pub fn started<F: Fn(&str) -> usize>(&self, of: F) -> usize {
-        self.reaching()
-            .into_iter()
-            .map(|target| {
-                let named = self.tests_of(target).len();
-                if named == 0 { of(target) } else { named }
-            })
-            .sum()
+        match self {
+            Self::Block { reaching, .. } => reaching
+                .iter()
+                .map(|one| one.tests.counting(of(&one.target)))
+                .sum(),
+            Self::All { reaching, .. } => reaching.iter().map(|target| of(target)).sum(),
+            Self::Discharged { .. } | Self::Unreached => 0,
+        }
     }
 
     /// The granularity a route record carries: `all`, `test`, `block`, `discharged`, or `unreached`.
@@ -470,7 +542,11 @@ impl Route {
     pub fn granularity(&self) -> &'static str {
         match self {
             Self::All { .. } => "all",
-            Self::Block { tests, .. } if tests.is_empty() => "block",
+            Self::Block { reaching, .. }
+                if reaching.iter().all(|one| one.tests == Asked::Every) =>
+            {
+                "block"
+            }
             Self::Block { .. } => "test",
             Self::Discharged { .. } => "discharged",
             Self::Unreached => "unreached",
@@ -491,8 +567,9 @@ impl Route {
     #[must_use]
     pub fn reaching(&self) -> Vec<&str> {
         match self {
-            Self::All { reaching, .. } | Self::Block { reaching, .. } => {
-                reaching.iter().map(String::as_str).collect()
+            Self::All { reaching, .. } => reaching.iter().map(String::as_str).collect(),
+            Self::Block { reaching, .. } => {
+                reaching.iter().map(|one| one.target.as_str()).collect()
             }
             Self::Discharged { .. } | Self::Unreached => Vec::new(),
         }
@@ -523,7 +600,13 @@ impl Route {
                 reaching,
                 discharged,
                 ..
-            } => Some(with_discharged(reaching, discharged)),
+            } => Some(with_discharged(
+                &reaching
+                    .iter()
+                    .map(|one| one.target.clone())
+                    .collect::<Vec<String>>(),
+                discharged,
+            )),
             Self::Discharged { discharged } => Some(with_discharged(&[], discharged)),
             Self::Unreached => Some(Vec::new()),
         }
@@ -983,19 +1066,28 @@ impl Session {
         self.discharging(mutant, decided)
     }
 
+    /// What one execution a caller did not decide a route for is narrowed to.
+    ///
+    /// [`Session::judge`] decides the route once and narrows by that one; this
+    /// is for the callers that did not, and it asks for the same route rather
+    /// than for the targets alone. Deriving the targets in one place and the
+    /// tests in another is how the two come to disagree, and a disagreement
+    /// between them is a process that runs a test the route did not name or
+    /// misses one it did.
+    fn chosen(&self, request: &Request, mutant: &Mutant, asking: Asking) -> Chosen {
+        Chosen::of(request, &self.route(mutant), asking)
+    }
+
     /// The tests of `target` this execution runs, or nothing when it runs every test the target has.
     fn filtering(
         &self,
         target: &TestTarget,
-        tests: Option<&BTreeMap<String, Vec<String>>>,
+        chosen: &Chosen,
         cancel: &Cancel,
     ) -> Option<Vec<String>> {
-        let named = tests?.get(&target.id)?;
-        if named.is_empty() {
-            return None;
-        }
+        let named = chosen.tests_of(&target.id)?;
         self.usable(target, named, cancel)?;
-        Some(named.clone())
+        Some(named.to_vec())
     }
 
     /// How long the named tests of `target` take on their own with nothing active, or nothing when running them on their own is not the same question as running the target.
@@ -1065,7 +1157,6 @@ impl Session {
     fn discharging(&self, mutant: &Mutant, route: Route) -> Route {
         let Route::Block {
             reaching,
-            mut tests,
             mut discharged,
             fallback,
         } = route
@@ -1073,13 +1164,13 @@ impl Session {
             return route;
         };
         let mut kept = Vec::new();
-        for target in reaching {
-            match self.proof_against(mutant, &target) {
-                Some(proof) => {
-                    drop(tests.remove(&target));
-                    discharged.push(Discharge { target, proof });
-                }
-                None => kept.push(target),
+        for one in reaching {
+            match self.proof_against(mutant, &one.target) {
+                Some(proof) => discharged.push(Discharge {
+                    target: one.target,
+                    proof,
+                }),
+                None => kept.push(one),
             }
         }
         if kept.is_empty() && !discharged.is_empty() {
@@ -1087,7 +1178,6 @@ impl Session {
         }
         Route::Block {
             reaching: kept,
-            tests,
             discharged,
             fallback,
         }
@@ -1181,7 +1271,16 @@ impl Session {
     /// [`SessionError::UnknownMutant`], [`SessionError::UnknownTarget`], and
     /// [`SessionError::NoTargets`].
     pub fn exec(&self, request: &Request, cancel: &Cancel) -> Result<MutantResult, EngineError> {
-        self.execute(request, Running::everywhere(), cancel)
+        let mutant = self.resolve(&request.mutant)?;
+        let chosen = self.chosen(request, mutant, Asking::Anything);
+        self.execute(
+            request,
+            Running {
+                alone: false,
+                chosen: &chosen,
+            },
+            cancel,
+        )
     }
 
     /// What one mutant is, decided: executed, and when a budget expired, confirmed with the machine to itself.
@@ -1204,15 +1303,12 @@ impl Session {
     ) -> Result<Judgement, EngineError> {
         let mutant = self.resolve(&request.mutant)?;
         let route = self.route(mutant);
-        let reaching: Option<Vec<String>> = request
-            .target
-            .is_none()
-            .then(|| route.reaching().into_iter().map(str::to_owned).collect());
-        let narrowed = Narrowed {
-            only: reaching.as_deref(),
-            tests: request.target.is_none().then(|| route.tests()).flatten(),
+        let chosen = Chosen::of(request, &route, Asking::ThisRun);
+        let running = |alone: bool| Running {
+            alone,
+            chosen: &chosen,
         };
-        let first = quiet.shared(|| self.execute(request, Running::shared(narrowed), cancel))?;
+        let first = quiet.shared(|| self.execute(request, running(false), cancel))?;
         let (timeout, timeout_source) = self.timeout_for(request, &first.target);
         let judgement =
             if first.outcome != crate::outcome::Outcome::TimedOut || cancel.is_cancelled() {
@@ -1225,8 +1321,7 @@ impl Session {
                     route,
                 }
             } else {
-                let mut again =
-                    quiet.alone(|| self.execute(request, Running::alone(narrowed), cancel))?;
+                let mut again = quiet.alone(|| self.execute(request, running(true), cancel))?;
                 if again.outcome != crate::outcome::Outcome::TimedOut && !again.outcome.detected() {
                     again.outcome = crate::outcome::Outcome::Inconclusive;
                 }
@@ -1255,32 +1350,21 @@ impl Session {
         how: Running<'_>,
         cancel: &Cancel,
     ) -> Result<MutantResult, EngineError> {
-        let Running { alone, narrowed } = how;
-        let Narrowed { only, tests } = narrowed;
+        let Running { alone, chosen } = how;
         let mutant = self.resolve(&request.mutant)?;
         let targets = self.selected(request.target.as_deref())?;
-        let narrowing = only.map_or_else(
-            || {
-                request
-                    .target
-                    .is_none()
-                    .then(|| self.covering(mutant))
-                    .flatten()
-            },
-            |named| Some(named.to_vec()),
-        );
-        let targets = match narrowing {
-            Some(covering) => {
+        let targets = match chosen {
+            Chosen::Everything => targets,
+            Chosen::Narrowed { only, .. } => {
                 let routed: Vec<&TestTarget> = targets
                     .into_iter()
-                    .filter(|target| covering.iter().any(|one| one == &target.id))
+                    .filter(|target| only.iter().any(|one| one == &target.id))
                     .collect();
                 if routed.is_empty() {
                     return Ok(unreached());
                 }
                 routed
             }
-            None => targets,
         };
         let context = Context {
             base_env: &self.workspace.base_env,
@@ -1301,7 +1385,7 @@ impl Session {
                 .with_scratch(self.exec_scratch());
             if let Some(test) = &request.test {
                 exec = exec.with_test(test.clone());
-            } else if let Some(named) = self.filtering(target, tests, cancel) {
+            } else if let Some(named) = self.filtering(target, chosen, cancel) {
                 exec = exec.with_tests(named);
             }
             let result = execute::exec(&exec, &context, cancel, &self.workspace.trace);
@@ -1528,44 +1612,80 @@ pub struct Description {
 struct Running<'a> {
     /// Whether nothing else this run started was running beside it.
     alone: bool,
-    /// What the route narrowed the execution to.
-    narrowed: Narrowed<'a>,
+    /// What the route this execution rests on narrowed it to.
+    chosen: &'a Chosen,
 }
 
-/// What a route narrowed one execution to: the targets, and for each of them the tests that reached the mutation.
-#[derive(Debug, Clone, Copy, Default)]
-struct Narrowed<'a> {
-    /// The targets to run, or nothing to let the measurement's own narrowing decide.
-    only: Option<&'a [String]>,
-    /// For each target narrowed to some of its tests, exactly those tests.
-    tests: Option<&'a BTreeMap<String, Vec<String>>>,
+/// Whose evidence an execution is narrowed by.
+///
+/// [`Session::judge`] is this run reaching its own verdict, so it removes the
+/// targets its own proofs discharged. [`Session::exec`] is a caller asking
+/// what the tests say, with evidence of its own this run knows nothing about,
+/// so it keeps every target the measurement placed and removes only what the
+/// measurement itself removed. The difference is deliberate, and naming it is
+/// what keeps it from being one of them quietly becoming the other.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Asking {
+    /// What the tests say, which is the question a caller with its own evidence asks.
+    Anything,
+    /// What this run established, which is the question its own verdict answers.
+    ThisRun,
 }
 
-impl<'a> Running<'a> {
-    /// Every target the measurement placed, beside whatever else is running.
-    const fn everywhere() -> Self {
-        Self {
-            alone: false,
-            narrowed: Narrowed {
-                only: None,
-                tests: None,
+/// What one execution was narrowed to, once the route it rests on has been decided.
+///
+/// A narrowing is one thing rather than two: naming tests of a target the
+/// execution does not run, and running a target the narrowing forgot to say
+/// anything about, are both states this cannot be in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Chosen {
+    /// Nothing narrows it: every target the request selects runs every test it has.
+    Everything,
+    /// Exactly these targets, each asked for exactly the tests it is paired with.
+    Narrowed {
+        /// The targets to run.
+        only: Vec<String>,
+        /// Each target this narrowing keeps, and which of its tests the mutation is put to.
+        asked: Vec<Reaches>,
+    },
+}
+
+impl Chosen {
+    /// What `route` narrows this request to, which is nothing when the request named a target itself.
+    ///
+    /// A request that names a target is a person asking about that target, and
+    /// what a measurement said about the others is not what they asked.
+    fn of(request: &Request, route: &Route, asking: Asking) -> Self {
+        if request.target.is_some() {
+            return Self::Everything;
+        }
+        match asking {
+            Asking::Anything => route
+                .narrowing()
+                .map_or(Self::Everything, |only| Self::Narrowed {
+                    only,
+                    asked: route.asked(),
+                }),
+            Asking::ThisRun => Self::Narrowed {
+                only: route
+                    .reaching()
+                    .into_iter()
+                    .map(ToOwned::to_owned)
+                    .collect(),
+                asked: route.asked(),
             },
         }
     }
 
-    /// This much of the route, beside whatever else is running.
-    const fn shared(narrowed: Narrowed<'a>) -> Self {
-        Self {
-            alone: false,
-            narrowed,
-        }
-    }
-
-    /// This much of the route, with the machine to itself.
-    const fn alone(narrowed: Narrowed<'a>) -> Self {
-        Self {
-            alone: true,
-            narrowed,
+    /// The tests of `target` this narrowing names, or nothing when it runs every test the target has.
+    fn tests_of(&self, target: &str) -> Option<&[String]> {
+        match self {
+            Self::Everything => None,
+            Self::Narrowed { asked, .. } => asked
+                .iter()
+                .find(|one| one.target == target)
+                .map(|one| one.tests.named())
+                .filter(|named| !named.is_empty()),
         }
     }
 }
@@ -2498,8 +2618,13 @@ fn gather(
 }
 
 /// A target identity as one path segment, so two targets cannot name one file.
+///
+/// The readable part is for a person looking in the directory; the digest is
+/// what makes it an identity, because two targets whose names differ only
+/// where the readable part folds would otherwise share a log and each be read
+/// as having reached what the other did.
 fn slug(target: &str) -> String {
-    target
+    let readable: String = target
         .chars()
         .map(|letter| {
             if letter.is_ascii_alphanumeric() {
@@ -2508,7 +2633,9 @@ fn slug(target: &str) -> String {
                 '-'
             }
         })
-        .collect()
+        .collect();
+    let digest = crate::id::digest(target.as_bytes());
+    format!("{readable}-{}", digest.get(..16).unwrap_or(&digest))
 }
 
 /// Instruments the snapshot with a set of mutants left out and compiles it: the [`Compile`] seam validation drives.

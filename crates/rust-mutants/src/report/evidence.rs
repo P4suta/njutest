@@ -5,10 +5,11 @@
 //!
 //! A proof layer removes executions, and a report that says so without the
 //! evidence is a claim rather than a proof. These files are the premises: the
-//! measurement each target left behind, the catalog with the branch bodies the
-//! compiler vouched for, and the log each probe process appended to. An audit
-//! reads them, re-decides every route, and says whether the run's own answers
-//! follow — with no access to the engine that produced them.
+//! measurement each target left behind, what its guards recorded about which of
+//! its tests reached them, the catalog with the branch bodies the compiler
+//! vouched for, and the log each probe process appended to. An audit reads
+//! them, re-decides every route, and says whether the run's own answers follow
+//! — with no access to the engine that produced them.
 //!
 //! Writing them never fails a run. What could not be written is one file a
 //! reader does not have, and a run that ended because it could not write a
@@ -20,6 +21,9 @@ use crate::session::Session;
 
 /// The measurement, as a document.
 pub const REACHED: &str = "reached-v1.json";
+
+/// What the guards recorded, as a document.
+pub const TOUCHED: &str = "touched-v1.json";
 
 /// The catalog, as a document.
 pub const CATALOG: &str = "catalog-v1.json";
@@ -54,6 +58,9 @@ pub fn write(
     }
     if let Ok(text) = serde_json::to_string(session.reached()) {
         written.extend(keep(directory, REACHED, text.as_bytes()));
+    }
+    if let Ok(text) = serde_json::to_string(session.touched()) {
+        written.extend(keep(directory, TOUCHED, text.as_bytes()));
     }
     if let Ok(text) = serde_json::to_string(&super::catalog::document(session, options)) {
         written.extend(keep(directory, CATALOG, text.as_bytes()));

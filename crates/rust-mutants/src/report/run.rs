@@ -452,7 +452,7 @@ pub fn route_document(route: &crate::session::Route, executed: Vec<String>) -> R
             })
             .collect(),
         executed,
-        tests: route.tests().cloned().unwrap_or_default(),
+        tests: route.tests(),
     }
 }
 

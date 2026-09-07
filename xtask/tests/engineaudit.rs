@@ -1138,3 +1138,155 @@ fn a_measurement_that_says_it_could_not_read_a_target_has_accounted_for_it() {
         audit.remarks
     );
 }
+
+/// A run directory holding a report and the record the guards left beside it.
+fn with_record(document: &serde_json::Value, record: &serde_json::Value) -> Audit {
+    let directory = run_directory(document);
+    std::fs::write(directory.path().join("touched-v1.json"), record.to_string())
+        .expect("the record");
+    gates::engine_audit(&asked(directory.path(), None, None)).expect("a report this audit can read")
+}
+
+/// A report whose two mutants are each put to one of the target's two tests.
+fn routed_by_test() -> serde_json::Value {
+    with(serde_json::json!({
+        "mutants": [
+            {"route": {"granularity": "test", "reaching": [TARGET], "executed": [TARGET],
+                       "tests": {TARGET: ["tests::max_picks_the_larger"]}}},
+            {"route": {"granularity": "test", "reaching": [TARGET], "executed": [TARGET],
+                       "tests": {TARGET: ["tests::min_picks_the_smaller"]}}}
+        ]
+    }))
+}
+
+/// The record those routes follow from: each test reached one of the two mutations.
+fn record() -> serde_json::Value {
+    serde_json::json!({
+        "targets": {
+            TARGET: {
+                "tests": {
+                    "tests::max_picks_the_larger": [0],
+                    "tests::min_picks_the_smaller": [1]
+                },
+                "loose": [],
+                "ran": ["tests::max_picks_the_larger", "tests::min_picks_the_smaller"]
+            }
+        },
+        "limitations": []
+    })
+}
+
+#[test]
+fn a_route_the_guards_decided_is_re_decided_from_what_they_recorded() {
+    let audit = with_record(&routed_by_test(), &record());
+    assert!(
+        violations(&audit, Layer::Touch).is_empty(),
+        "{:?}",
+        violations(&audit, Layer::Touch)
+    );
+    assert!(
+        audit
+            .of(Layer::Touch)
+            .into_iter()
+            .all(|remark| remark.standing != Standing::Unaudited),
+        "the record is there, so nothing about it is unaudited: {:?}",
+        audit.of(Layer::Touch)
+    );
+}
+
+#[test]
+fn a_test_the_record_says_reached_a_mutation_and_the_route_dropped_is_a_violation() {
+    let mut document = routed_by_test();
+    document["mutants"][0]["route"]["tests"][TARGET] = serde_json::json!([]);
+    let audit = with_record(&document, &record());
+    let said = violations(&audit, Layer::Touch);
+    assert_eq!(said.len(), 1, "{said:?}");
+    assert!(
+        said[0].contains("tests::max_picks_the_larger"),
+        "the violation names the test that would not have run: {said:?}"
+    );
+}
+
+#[test]
+fn a_target_the_record_says_reached_a_mutation_and_the_route_left_out_is_a_violation() {
+    let mut document = routed_by_test();
+    document["mutants"][0]["route"]["reaching"] = serde_json::json!([]);
+    document["mutants"][0]["route"]["tests"] = serde_json::json!({});
+    let audit = with_record(&document, &record());
+    let said = violations(&audit, Layer::Touch);
+    assert_eq!(said.len(), 1, "{said:?}");
+    assert!(
+        said[0].contains("a kill reported as a survivor"),
+        "{said:?}"
+    );
+}
+
+#[test]
+fn a_target_the_route_keeps_that_the_record_says_reached_nothing_is_a_violation() {
+    let mut document = routed_by_test();
+    let other = "demo/test/parity";
+    document["targets"] = serde_json::json!([
+        {"id": TARGET, "kind": "lib", "harness": true, "tests": 2},
+        {"id": other, "kind": "test", "harness": true, "tests": 1}
+    ]);
+    document["mutants"][0]["route"]["reaching"] = serde_json::json!([TARGET, other]);
+    let mut recorded = record();
+    recorded["targets"][other] = serde_json::json!({
+        "tests": {"a_parity_test": []}, "loose": [], "ran": ["a_parity_test"]
+    });
+    let audit = with_record(&document, &recorded);
+    let said = violations(&audit, Layer::Touch);
+    assert_eq!(said.len(), 1, "{said:?}");
+    assert!(said[0].contains("kept for nothing"), "{said:?}");
+}
+
+#[test]
+fn a_target_the_run_built_that_the_record_neither_names_nor_excuses_is_a_violation() {
+    let mut document = routed_by_test();
+    document["targets"] = serde_json::json!([
+        {"id": TARGET, "kind": "lib", "harness": true, "tests": 2},
+        {"id": "demo/test/parity", "kind": "test", "harness": true, "tests": 1}
+    ]);
+    let audit = with_record(&document, &record());
+    let said = violations(&audit, Layer::Touch);
+    assert!(
+        said.iter()
+            .any(|one| one.contains("demo/test/parity") && one.contains("nobody asked")),
+        "{said:?}"
+    );
+}
+
+#[test]
+fn a_target_the_record_excuses_is_accounted_for_rather_than_unnamed() {
+    let mut document = routed_by_test();
+    document["targets"] = serde_json::json!([
+        {"id": TARGET, "kind": "lib", "harness": true, "tests": 2},
+        {"id": "demo/doc/demo", "kind": "doc", "harness": true, "tests": 1}
+    ]);
+    let mut recorded = record();
+    recorded["limitations"] = serde_json::json!(["touch-not-recorded:demo/doc/demo"]);
+    let audit = with_record(&document, &recorded);
+    assert!(
+        violations(&audit, Layer::Touch).is_empty(),
+        "{:?}",
+        violations(&audit, Layer::Touch)
+    );
+}
+
+#[test]
+fn a_run_that_narrowed_by_the_guards_and_kept_no_record_of_them_is_a_violation() {
+    let audit = audited(&routed_by_test());
+    let said = violations(&audit, Layer::Touch);
+    assert_eq!(said.len(), 1, "{said:?}");
+    assert!(said[0].contains("kept no record"), "{said:?}");
+}
+
+#[test]
+fn a_run_that_narrowed_by_nothing_the_guards_said_has_nothing_of_theirs_to_re_decide() {
+    let audit = audited(&base());
+    assert!(
+        audit.of(Layer::Touch).is_empty(),
+        "{:?}",
+        audit.of(Layer::Touch)
+    );
+}

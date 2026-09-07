@@ -187,7 +187,7 @@ pub use crate::limitation::TOUCH_NOT_RECORDED as UNRECORDED;
 pub use crate::limitation::TOUCH_LOG_UNREADABLE as UNREADABLE;
 
 /// What the guards of a whole run said, target by target.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[non_exhaustive]
 pub struct Touched {
     /// What each target's guards recorded, by target identity.
@@ -197,7 +197,7 @@ pub struct Touched {
 }
 
 /// What one target's guards recorded, and which of its tests ran to record it.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[non_exhaustive]
 pub struct TargetTouches {
     /// The mutant sites each test of this target reached.
