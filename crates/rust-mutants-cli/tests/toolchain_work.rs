@@ -143,10 +143,10 @@ fn every_removal_a_whole_run_still_answers_for_is_a_proof_a_reader_can_name() {
 /// How many times a run may start cargo before somebody has to say why.
 ///
 /// Every one of these is a compilation of the tree: the two `cargo metadata`
-/// calls, the check, the pristine link, the coverage build, the instrumented
-/// build, and the documented examples. A number that goes up is a whole
-/// compilation nobody asked for.
-const CARGO_CEILING: u64 = 7;
+/// calls, the check, the coverage build, the instrumented build, and the
+/// documented examples. A number that goes up is a whole compilation nobody
+/// asked for.
+const CARGO_CEILING: u64 = 6;
 
 /// How many times a run started each program, read back from its own recording.
 fn programs(name: &str, extra: &[&str]) -> std::collections::BTreeMap<String, u64> {

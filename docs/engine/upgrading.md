@@ -94,6 +94,14 @@ outcome established under one compiler could be reused under another. Every
 record written before this release stops answering once, and after that a
 partial edit costs a partial cache rather than all of it.
 
+**A tree that does not link is `RM4001` rather than `RM5001`.** The gate used
+to be a check of the whole workspace and then a second compilation of it to
+find out whether it links — a whole build, on every run, for a question the
+first validation round answers anyway. The round links the instrumented tree,
+and a round that fails with nothing attributable to a mutation is a round that
+compiled with nothing live. Same words from the compiler, same remedy, one
+build fewer on every run that works.
+
 **A measurement is remembered between runs.** Coverage is a function of the
 sources, the manifests and the toolchain, and a mutation changes none of them,
 so a run of a tree nothing has touched reads back what the last run measured

@@ -1405,21 +1405,26 @@ fn selection(options: &PrepareOptions) -> Result<Selection<'static>, EngineError
 
 /// Refuses a tree that does not compile before anything is instrumented, and hands back the units the check compiled.
 ///
-/// Two questions have to be answered before a mutation is worth writing: does
-/// every target of the workspace type-check, and do its test binaries link.
-/// They look like one question and they are not. The check is also what says
-/// which files each target compiles **outside** a test build, and a file no
-/// non-test unit compiled is one only the tests see: without that, a library
-/// whose only compilation is its own test harness has every one of its files
-/// read as test-only and nothing in it is worth mutating.
+/// The check is also what says which files each target compiles **outside** a
+/// test build, and a file no non-test unit compiled is one only the tests see:
+/// without that, a library whose only compilation is its own test harness has
+/// every one of its files read as test-only and nothing in it is worth
+/// mutating. So the check is not only a gate and cannot be skipped.
+///
+/// Whether the tree *links* is a second question, and it used to be a second
+/// compilation of the whole workspace on every run. It is not one any more.
+/// The first validation round links the instrumented tree, and an instrumented
+/// tree that links is one whose pristine form links too — the guards only add
+/// code. A round that fails with nothing attributable to a mutation is a round
+/// that compiles with nothing live, which is `RM4001`: the tree, in the
+/// compiler's own words. The answer is the same and the successful run does
+/// one build fewer.
 fn gate(
     workspace: &Workspace,
     options: &PrepareOptions,
     cancel: &Cancel,
 ) -> Result<crate::cargo::Compiled, EngineError> {
-    let checked = pristine(workspace, options, cancel)?;
-    let _linked = links(workspace, options, cancel)?;
-    Ok(checked)
+    pristine(workspace, options, cancel)
 }
 
 /// Compiles the tree as it was copied, which is both the gate a run stands on and the source of every unit's file set.
@@ -1448,39 +1453,6 @@ fn pristine(
             first: crate::validate::first_error_of(&checked.messages),
         }))
     }
-}
-
-/// Compiles the test binaries of the tree as it was copied, so a tree that type-checks and does not link is refused before any round.
-///
-/// A check answers "is this a program"; it does not answer "does this link".
-/// A tree that fails only at link time used to pass the gate and then fail
-/// every validation round, where the failure reads as a mutation the compiler
-/// refused and bisection goes looking for which one. It is neither, and it is
-/// the same failure `cargo test` would have given.
-fn links(
-    workspace: &Workspace,
-    options: &PrepareOptions,
-    cancel: &Cancel,
-) -> Result<crate::cargo::Compiled, EngineError> {
-    let built = compile(
-        &workspace.driver(cancel),
-        &CompileOptions {
-            kind: CompileKind::Tests,
-            packages: options.packages.clone(),
-            target_dir: Some(workspace.target_dir.clone()),
-            locked: workspace.locked,
-            offline: workspace.offline,
-            timeout: Workspace::timeout(options.build_timeout),
-            env: Vec::new(),
-            build: options.build.clone(),
-        },
-    )?;
-    if built.success {
-        return Ok(built);
-    }
-    Err(EngineError::from(SessionError::PristineBroken {
-        first: crate::validate::first_error_of(&built.messages),
-    }))
 }
 
 /// The digest of the pristine sources every unit of the build compiled.

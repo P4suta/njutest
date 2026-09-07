@@ -62,13 +62,24 @@ downstream reach the build instead of the rejection it belongs in.
 Scoping a run is the one thing a person can do to make it shorter, and until
 this was so it did not shorten the longest part of one.
 
-The gate `prepare` stands on is that check of the whole workspace and then a
-test build of the packages the run is about. A check answers "is this a
-program"; it does not answer "does this link", and a tree that fails only at
-link time used to pass the gate and then fail every round, where the failure
-reads as a mutation the compiler refused. `preview` — what `list` and
-`why-skipped` stand on — still only type-checks: it rules on nothing, so it is
-answerable for a tree that does not link.
+The gate `prepare` stands on is that check of the whole workspace, and nothing
+else. The check is not only a gate: it is also what says which files each
+target compiles **outside** a test build, and a file no non-test unit compiled
+is one only the tests see. Without it, a library whose only compilation is its
+own test harness would have every file read as test-only and nothing in it
+worth mutating.
+
+Whether the tree *links* is a second question, and it used to be a second
+compilation of the whole workspace on every run. It is not one any more: the
+first validation round links the instrumented tree, and an instrumented tree
+that links is one whose pristine form links too, because the guards only add
+code. A round that fails with nothing attributable to a mutation is a round
+that compiles with nothing live, and that is `RM4001` — the tree, in the
+compiler's own words. The answer is the same one build later, and only when
+the answer is bad.
+
+`preview` — what `list` and `why-skipped` stand on — still only type-checks:
+it rules on nothing, so it is answerable for a tree that does not link.
 
 Each round instruments every mutable file, because attribution needs each
 file's branch spans whatever it condemns, and writes back only the files whose

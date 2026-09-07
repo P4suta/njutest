@@ -628,7 +628,7 @@ fn the_app_integration_test_finds_its_binary_where_cargo_put_it() {
 }
 
 #[test]
-fn a_tree_that_checks_but_does_not_link_is_refused_before_any_round() {
+fn a_tree_that_checks_but_does_not_link_is_refused_as_a_tree_and_not_as_a_mutation() {
     let fixture = Fixture::copy("fixture-links-nowhere");
     let workspace = open(&fixture);
     let refused = workspace
@@ -637,13 +637,17 @@ fn a_tree_that_checks_but_does_not_link_is_refused_before_any_round() {
         .map(|error| error.to_string())
         .expect("a tree that does not link is not a tree a run can measure");
     assert!(
-        refused.contains("RM5001"),
-        "a check answers whether this is a program, not whether it links, and the failure of \
-         every round afterwards reads as a mutation the compiler refused: {refused}"
+        refused.contains("RM4001"),
+        "a check answers whether this is a program, not whether it links. The round that links \
+         it is what finds out, and with nothing live it can only be the tree: {refused}"
     );
     assert!(
         refused.contains("a_symbol_no_library_supplies"),
         "and the refusal is the linker's own words: {refused}"
+    );
+    assert!(
+        !refused.contains("could not be isolated"),
+        "the failure is not read as a mutation nobody could find: {refused}"
     );
 }
 
