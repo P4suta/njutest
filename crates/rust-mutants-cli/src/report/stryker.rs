@@ -108,12 +108,12 @@ pub struct Position {
 /// Projects one run report from the sources it names, with the thresholds a reader colours by.
 ///
 /// Every file the report names is here. A file this tree does not hold is
-/// [`CliError::SourceUnreadable`] rather than a file quietly left out: a
+/// [`crate::error::CliError::SourceUnreadable`] rather than a file quietly left out: a
 /// projection that lost every mutant of a file without saying so would be read
 /// as a run that had nothing to say about it.
 ///
 /// # Errors
-/// [`CliError::SourceUnreadable`] when a file the report names is not under
+/// [`crate::error::CliError::SourceUnreadable`] when a file the report names is not under
 /// `root`.
 pub fn project(
     document: &RunDocument,
