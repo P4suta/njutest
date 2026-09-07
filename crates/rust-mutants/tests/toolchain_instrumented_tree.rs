@@ -203,7 +203,11 @@ impl Tree {
         let mut spec = Spec::new([executable.as_os_str()]);
         spec.dir = Some(self.root.clone());
         let mut env: Vec<(OsString, OsString)> = std::env::vars_os()
-            .filter(|(key, _)| key != ACTIVE_ENV && key != CATALOG_ENV)
+            .filter(|(key, _)| {
+                !rust_mutants::execute::RESERVED_ENV
+                    .iter()
+                    .any(|reserved| key == std::ffi::OsStr::new(reserved))
+            })
             .collect();
         if let Some(active) = active {
             env.push((ACTIVE_ENV.into(), active.into()));
