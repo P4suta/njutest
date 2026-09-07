@@ -140,6 +140,12 @@ pub enum Command {
         /// The mutant, by identity or by any prefix that names exactly one.
         #[arg(value_name = "PREFIX")]
         mutant: String,
+        /// Prepare the tree again rather than reading what the last run stored.
+        #[arg(long)]
+        fresh: bool,
+        /// Print the `rust-mutants/explain` document rather than the lines a person reads.
+        #[arg(long)]
+        json: bool,
     },
     /// Print one file as the engine rewrites it, guards and runtime included.
     Instrument {

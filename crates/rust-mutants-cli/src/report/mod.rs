@@ -147,64 +147,79 @@ fn one_line(mutant: &Mutant) -> String {
     )
 }
 
-/// Everything known about one mutant.
+/// Everything one run established about one mutant, as the lines a person reads.
 #[must_use]
-pub fn explain(session: &Session, mutant: &Mutant, source: Option<&str>) -> String {
-    let candidate = &mutant.candidate;
-    let where_ = source.map_or_else(
-        || format!("{}:{}", candidate.path, candidate.span),
-        |source| at(&candidate.path, position_in(source, candidate.span.start)),
-    );
+pub fn explained(document: &rust_mutants::report::explain::ExplainDocument) -> String {
+    let one = &document.mutant;
     let mut text = String::new();
-    for (label, value) in [
-        ("mutant", mutant.id.clone()),
-        ("short", mutant.display_id.clone()),
-        ("index", mutant.index.to_string()),
-        (
-            "rule",
-            format!("{} ({})", candidate.rule, candidate.rule.family.name()),
-        ),
-        ("where", where_),
-        (
-            "edit",
-            format!(
-                "{:?} => {:?}",
-                String::from_utf8_lossy(&candidate.original),
-                String::from_utf8_lossy(&candidate.replacement)
-            ),
-        ),
-        ("file", candidate.source_digest.clone()),
-    ] {
+    let mut say = |label: &str, value: &str| {
         let written = writeln!(text, "{label:<9} {value}");
         debug_assert!(written.is_ok(), "writing to a String cannot fail");
+    };
+    say("MUTANT", &one.id);
+    say("SHORT", &one.display_id);
+    say(
+        "RULE",
+        &format!("{}@{} ({})", one.rule, one.rule_version, one.family),
+    );
+    say(
+        "WHERE",
+        &format!("{}:{}:{}", one.path, one.line, one.column),
+    );
+    say(
+        "EDIT",
+        &format!("{:?} => {:?}", one.original, one.replacement),
+    );
+    if let Some(run) = &document.run_id {
+        say("RUN", run);
     }
-    text.push_str(&verdict(session, mutant));
-    text
-}
-
-/// What the compiler made of one mutant, and what would run it.
-fn verdict(session: &Session, mutant: &Mutant) -> String {
-    let mut text = String::new();
-    if let Some(rejection) = session
-        .rejections()
-        .iter()
-        .find(|rejection| rejection.id == mutant.id)
-    {
-        text.push_str("verdict   refused by the compiler\n");
-        for line in rejection.diagnostic.lines() {
-            let written = writeln!(text, "          {line}");
-            debug_assert!(written.is_ok(), "writing to a String cannot fail");
+    match (&document.outcome, &document.refused) {
+        (_, Some(diagnostic)) => {
+            say("OUTCOME", "refused by the compiler");
+            for line in diagnostic.lines() {
+                say("", line);
+            }
         }
-        return text;
+        (Some(outcome), None) => {
+            say("OUTCOME", outcome);
+            if let Some(target) = &document.target {
+                say("TARGET", target);
+            }
+            if !document.killed_by.is_empty() {
+                say("KILLED BY", &document.killed_by.join(", "));
+            }
+            if let Some(milliseconds) = document.duration_ms {
+                say(
+                    "TIMING",
+                    &format!(
+                        "{milliseconds} ms{}",
+                        if document.retried { ", retried" } else { "" }
+                    ),
+                );
+            }
+        }
+        (None, None) => say("OUTCOME", "no stored run answers for it"),
     }
-    text.push_str("verdict   accepted; it compiles and can be executed\n");
-    let targets: Vec<&str> = session
-        .targets()
-        .iter()
-        .map(|target| target.id.as_str())
-        .collect();
-    let written = writeln!(text, "targets   {}", targets.join(", "));
-    debug_assert!(written.is_ok(), "writing to a String cannot fail");
+    if let Some(route) = &document.route {
+        say(
+            "ROUTE",
+            &format!(
+                "{} reaching [{}] executed [{}]",
+                route.granularity,
+                route.reaching.join(", "),
+                route.executed.join(", ")
+            ),
+        );
+    }
+    say("REPRODUCE", &document.reproduce);
+    match (&document.diff, &document.source) {
+        (Some(diff), _) => {
+            text.push('\n');
+            text.push_str(diff);
+        }
+        (None, Some(why)) => say("DIFF", &format!("none: {why}")),
+        (None, None) => {}
+    }
     text
 }
 

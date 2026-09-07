@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 
 use jiff::Timestamp;
 use rust_mutants::EngineError;
+use rust_mutants::report::explain;
 use rust_mutants::run::Expectation;
 use rust_mutants::runner::Cancel;
 use rust_mutants::session::{self, Request, Session};
@@ -58,6 +59,12 @@ pub fn dispatch(
             stdout,
             cancel,
         )),
+        cli::Command::Explain {
+            scope,
+            mutant,
+            fresh: false,
+            json,
+        } => stored_explain((scope, mutant, *json), environment, stdout),
         cli::Command::Report {
             root,
             run,
@@ -348,11 +355,8 @@ fn prepared(
             write(stdout, &text);
             Ok(0)
         }
-        cli::Command::Explain { mutant, .. } => {
-            let found = session.resolve(mutant)?.clone();
-            let source = read_source(session, &found.candidate.path);
-            write(stdout, &report::explain(session, &found, source.as_deref()));
-            Ok(0)
+        cli::Command::Explain { mutant, json, .. } => {
+            fresh_explain(prepared, mutant, *json, stdout)
         }
         cli::Command::Run {
             mutant,
@@ -776,6 +780,99 @@ fn estimate(session: &Session, filter: &run::Filter) -> String {
     );
     debug_assert!(written.is_ok(), "writing to a String cannot fail");
     text
+}
+
+/// One mutant, explained from a tree prepared for the purpose.
+fn fresh_explain(
+    prepared: &Prepared<'_>,
+    prefix: &str,
+    json: bool,
+    stdout: &mut dyn Write,
+) -> Result<u8, CliError> {
+    let session = prepared.session;
+    let catalog =
+        rust_mutants::report::catalog::document(session, &prepared.settings.prepare_options()?);
+    let source = session
+        .catalog()
+        .mutants()
+        .iter()
+        .find(|one| one.id.starts_with(prefix))
+        .and_then(|one| read_source(session, &one.candidate.path));
+    said(
+        &explain::Asked {
+            catalog: &catalog,
+            run: None,
+            prefix,
+            source: source.as_deref(),
+        },
+        json,
+        stdout,
+    )
+}
+
+/// One mutant, explained from what the last run stored rather than from a tree prepared again.
+///
+/// An explanation costs two documents to read: the catalog the run kept and
+/// the report it wrote. Nothing is copied, nothing is compiled, and nothing is
+/// instrumented, which is what makes it a thing a person runs while reading a
+/// report rather than a thing they wait for.
+fn stored_explain(
+    asked: (&cli::Scope, &str, bool),
+    environment: &Environment,
+    stdout: &mut dyn Write,
+) -> Result<u8, CliError> {
+    let (scope, prefix, json) = asked;
+    let settings = Settings::resolve(scope, environment)?;
+    let directory = settings.report_directory();
+    let report = newest(&directory)?;
+    let run = report.parent().map(Path::to_path_buf).unwrap_or_default();
+    let catalog: rust_mutants::report::catalog::CatalogDocument =
+        read_document(&run.join(rust_mutants::report::evidence::CATALOG))?;
+    let stored: run_report::RunDocument = read_document(&report)?;
+    let source = catalog
+        .mutants
+        .iter()
+        .find(|one| one.id.starts_with(prefix))
+        .and_then(|one| std::fs::read_to_string(settings.root.join(&one.path)).ok());
+    said(
+        &explain::Asked {
+            catalog: &catalog,
+            run: Some(&stored),
+            prefix,
+            source: source.as_deref(),
+        },
+        json,
+        stdout,
+    )
+}
+
+/// One stored document, or the reason it is not one this release reads.
+fn read_document<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T, CliError> {
+    let text = std::fs::read_to_string(path).map_err(|_error| CliError::ReportMissing {
+        message: format!("{} is not there to read", path.display()),
+    })?;
+    serde_json::from_str(&text).map_err(|error| CliError::ReportMissing {
+        message: format!(
+            "{} is not a document this release reads: {error}",
+            path.display()
+        ),
+    })
+}
+
+/// What an explanation says, as a document or as the lines a person reads.
+fn said(asked: &explain::Asked<'_>, json: bool, stdout: &mut dyn Write) -> Result<u8, CliError> {
+    let document = explain::explain(asked).map_err(|error| CliError::ReportMissing {
+        message: error.to_string(),
+    })?;
+    if json {
+        let text =
+            serde_json::to_string_pretty(&document).unwrap_or_else(|_error| String::from("{}"));
+        write(stdout, &text);
+        write(stdout, "\n");
+    } else {
+        write(stdout, &report::explained(&document));
+    }
+    Ok(0)
 }
 
 /// The workspace root's own name, which is what a stream calls the tree it measured.

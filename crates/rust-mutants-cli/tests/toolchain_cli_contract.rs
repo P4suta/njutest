@@ -112,7 +112,7 @@ fn explain_says_everything_known_about_one_mutant() {
         .expect("a return-default mutant")
         .to_owned();
 
-    let output = against(&fixture, &["explain", &short, "--no-verify"]);
+    let output = against(&fixture, &["explain", &short, "--fresh", "--no-verify"]);
     assert_eq!(
         output.status.code(),
         Some(0),
@@ -120,13 +120,20 @@ fn explain_says_everything_known_about_one_mutant() {
         String::from_utf8_lossy(&output.stderr)
     );
     let text = stdout(&output);
-    assert!(text.contains(&format!("short     {short}")), "{text}");
+    assert!(text.contains(&format!("SHORT     {short}")), "{text}");
     assert!(
-        text.contains("rule      return-default@1 (return-replacement)"),
+        text.contains("RULE      return-default@1 (return-replacement)"),
         "{text}"
     );
-    assert!(text.contains("verdict   accepted"), "{text}");
-    assert!(text.contains("fixture-simple/lib/fixture_simple"), "{text}");
+    assert!(
+        text.contains("OUTCOME   no stored run answers for it"),
+        "a tree prepared for the purpose says what the mutation is, not what became of it: \
+         {text}"
+    );
+    assert!(
+        text.contains("REPRODUCE rust-mutants run --mutant"),
+        "{text}"
+    );
 }
 #[test]
 fn run_exits_by_what_the_tests_said() {

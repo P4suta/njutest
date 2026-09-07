@@ -147,6 +147,21 @@ and a stream is read as it arrives.
 `--json` and `--ui` are two ways of saying one thing, so a run is asked for
 one or the other and never both.
 
+## One mutant, explained
+
+`explain <prefix>` writes `rust-mutants/explain` v1: the catalog's row for the
+mutant, what the run made of it, the route it took, the command that puts it
+back to the tests, and the mutation as a unified diff against the file. It is
+built from the two documents a run stores — the catalog it kept and the report
+it wrote — so an explanation costs no snapshot, no build and no instrumented
+tree. `--fresh` prepares the tree instead, for a mutant no stored run answers
+for.
+
+The diff is shown only when the file is the one the mutation was taken from,
+which the recorded `source_digest` settles. When it is not, `source` says why
+there is none: a diff against a file the run never saw would be a lie about
+what was measured.
+
 ## Evidence
 
 A run that measured coverage writes `reached-v1.json` and `catalog-v1.json`
