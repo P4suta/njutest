@@ -231,7 +231,7 @@ that overwrites in place.
 Preparing is not a run, so nothing observes it: the phases come from the
 recording, which a `Sink::Channel` tees to the command's own thread. A
 recording is diagnostic exhaust ([ADR
-0002](../adr/0002-trace-is-diagnostic-exhaust.md)), so a display that has
+0002](../adr/0002-trace-is-not-evidence.md)), so a display that has
 gone away costs the event and never the run.
 
 `--color auto|always|never` paints the outcome word and nothing else: what a

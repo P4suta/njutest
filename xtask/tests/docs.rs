@@ -85,3 +85,72 @@ fn every_job_ci_md_names_exists_in_the_workflow_that_would_hold_it() {
         );
     }
 }
+
+#[test]
+fn every_relative_link_in_the_documentation_resolves() {
+    let root = root();
+    let mut broken = Vec::new();
+    for page in pages(&root) {
+        let text = std::fs::read_to_string(&page).unwrap_or_default();
+        for link in links(&text) {
+            let Some(parent) = page.parent() else {
+                continue;
+            };
+            if !parent.join(&link).exists() {
+                broken.push(format!(
+                    "{} names {link}, which is not there",
+                    page.strip_prefix(&root).unwrap_or(&page).display()
+                ));
+            }
+        }
+    }
+    assert!(broken.is_empty(), "{}", broken.join("\n"));
+}
+
+/// Every Markdown page of the repository, outside what a build wrote.
+fn pages(root: &Path) -> Vec<PathBuf> {
+    let mut found: Vec<PathBuf> = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(directory) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&directory) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.starts_with('.') || name == "target" || name == "node_modules" {
+                continue;
+            }
+            if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+                stack.push(path);
+            } else if path
+                .extension()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("md"))
+            {
+                found.push(path);
+            }
+        }
+    }
+    found
+}
+
+/// Every relative link a page names, without its fragment.
+fn links(text: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    let mut rest = text;
+    while let Some(at) = rest.find("](") {
+        let tail = rest.split_at(at).1.get(2..).unwrap_or("");
+        let end = tail.find(')').unwrap_or(tail.len());
+        let link = tail.get(..end).unwrap_or("");
+        let path = link.split('#').next().unwrap_or("");
+        if !path.is_empty()
+            && !path.starts_with("http://")
+            && !path.starts_with("https://")
+            && !path.starts_with("mailto:")
+        {
+            found.push(path.to_owned());
+        }
+        rest = tail.get(end..).unwrap_or("");
+    }
+    found
+}

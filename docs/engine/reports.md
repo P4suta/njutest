@@ -61,9 +61,12 @@ can see in the view they actually read is a finding that does not exist.
 
 `--format html` writes one file that fetches nothing: no font, no stylesheet,
 no image, and one script of its own that filters, searches and sorts the
-table. Under the table it shows **every file the run measured, whole**, with
-each mutant on the line it is on and survivors coloured apart from kills. Then
-the candidates the compiler refused, and the places discovery passed over.
+table. Under the table it shows **every file that holds something to look at,
+whole**, with each mutant on the line it is on and survivors coloured apart
+from kills. A file whose every mutation the tests noticed is counted rather
+than printed — a page that shows a thousand lines nobody has to read is a page
+nobody opens — and its rows are in the table all the same. Then the candidates
+the compiler refused, and the places discovery passed over.
 
 The page shows a file only when it is the one the run measured, which the
 recorded `source_digest` settles. A file that changed since is named as

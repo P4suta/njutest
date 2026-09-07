@@ -295,3 +295,38 @@ fn a_page_shows_a_file_that_changed_since_the_run_as_changed_rather_than_as_sour
     );
     assert!(!text.contains("pub fn nothing"), "{text}");
 }
+
+#[test]
+fn a_file_the_tests_noticed_every_mutation_in_is_counted_rather_than_printed() {
+    let fixture = Fixture::copy("fixture-baseline");
+    let ran = against(
+        &fixture,
+        &[
+            "run",
+            "--offline",
+            "--locked",
+            "--ui",
+            "quiet",
+            "--jobs",
+            "1",
+        ],
+    );
+    assert!(ran.status.code().is_some_and(|code| code <= 1), "{ran:?}");
+    let report: serde_json::Value =
+        serde_json::from_str(&projected(&fixture, "json")).expect("the stored report");
+    let clean = report["mutants"]
+        .as_array()
+        .expect("the rows")
+        .iter()
+        .all(|row| row["outcome"] == "killed" || row["outcome"] == "timed_out");
+    if !clean {
+        return;
+    }
+    let text = projected(&fixture, "html");
+    assert!(
+        text.contains("The tests noticed every mutation."),
+        "a page that shows a thousand lines nobody has to read is one nobody opens: {}",
+        head(&text)
+    );
+    assert!(!text.contains("<pre class=\"source\""), "{}", head(&text));
+}

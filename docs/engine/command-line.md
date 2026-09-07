@@ -23,6 +23,9 @@ flag given on the command line wins over the file.
 | `--color auto\|always\|never` | when to colour; `NO_COLOR` and a pipe both mean never |
 | `--trace[=DIR]` | record what the command did, as JSON Lines |
 
+`rules` is the exception: the operator table is compiled into the release, so
+it reads no tree and takes none of these but `--help`.
+
 ## Choosing what to measure
 
 These narrow a run, and `list`, `catalog`, `why-skipped` and `instrument`

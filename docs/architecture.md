@@ -51,6 +51,21 @@ subprocesses behind strict JSON protocols; core contains no network client.
 The dependency direction is fixed and gated ([ADR 0012](adr/0012-one-workspace-two-products.md)):
 the runner depends on the engine, never the reverse.
 
+The engine's own pages, in the order somebody meets them:
+[getting started](engine/getting-started.md) ·
+[the command line](engine/command-line.md) ·
+[configuration](engine/configuration.md) ·
+[operators](engine/operators.md) ·
+[reports](engine/reports.md) ·
+[proofs](engine/proofs.md) ·
+[trace](engine/trace.md) ·
+[JSON documents](engine/json-schema.md) ·
+[limitations](limitations.md) ·
+[troubleshooting](engine/troubleshooting.md) ·
+[upgrading](engine/upgrading.md) ·
+[architecture](engine/architecture.md) ·
+[compared with cargo-mutants](engine/comparison-with-cargo-mutants.md)
+
 ## What is Rust-specific
 
 The thesis — [proof layers, not budgets](adr/0004-proof-layers-not-budgets.md)

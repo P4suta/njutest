@@ -147,3 +147,25 @@ fn the_stream_opens_before_anything_is_prepared() {
     );
     let _finished = child.wait().expect("rust-mutants finishes");
 }
+
+#[test]
+fn a_run_started_from_inside_the_tree_still_names_the_tree() {
+    let fixture = Fixture::copy("fixture-simple");
+    let output = Command::new(env!("CARGO_BIN_EXE_rust-mutants"))
+        .env("NO_COLOR", "1")
+        .env("TMPDIR", fixture.temp())
+        .env("XDG_CACHE_HOME", fixture.cache())
+        .current_dir(fixture.root())
+        .args(["run", "--json", "--offline", "--locked", "--no-coverage"])
+        .args(["--root", "."])
+        .output()
+        .expect("rust-mutants runs");
+    let text = String::from_utf8_lossy(&output.stdout).into_owned();
+    let first = text.lines().next().expect("the stream opens");
+    let line: serde_json::Value = serde_json::from_str(first).expect("the first line is JSON");
+    assert_eq!(
+        line.get("root_name").and_then(serde_json::Value::as_str),
+        Some("fixture-simple"),
+        "a root spelled as a dot is still a directory with a name: {first}"
+    );
+}

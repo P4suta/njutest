@@ -897,15 +897,17 @@ fn estimate(session: &Session, filter: &run::Filter) -> String {
     }
     let each = session.slowest_baseline();
     let seconds = u64::from(selected).saturating_mul(each.as_secs().max(1));
+    let targets = session.targets().len();
     let written = writeln!(
         text,
-        "\nwould run {selected} mutants against up to {} targets, about {}:{:02}:{:02} at ~{}s \
-         per target; {unreached} unreached; {left_out} unselected",
-        session.targets().len(),
+        "\nwould run {selected} {mutants} against up to {targets} {names}, about \
+         {}:{:02}:{:02} at ~{}s per target; {unreached} unreached; {left_out} unselected",
         seconds / 3600,
         seconds % 3600 / 60,
         seconds % 60,
         each.as_secs().max(1),
+        mutants = if selected == 1 { "mutant" } else { "mutants" },
+        names = if targets == 1 { "target" } else { "targets" },
     );
     debug_assert!(written.is_ok(), "writing to a String cannot fail");
     text
@@ -1065,11 +1067,14 @@ fn said(asked: &explain::Asked<'_>, json: bool, stdout: &mut dyn Write) -> Resul
 
 /// The workspace root's own name, which is what a stream calls the tree it measured.
 fn root_name(settings: &Settings) -> String {
-    settings
+    let root = settings
         .root
-        .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_default()
+        .canonicalize()
+        .unwrap_or_else(|_error| settings.root.clone());
+    root.file_name().map_or_else(
+        || root.display().to_string(),
+        |name| name.to_string_lossy().into_owned(),
+    )
 }
 
 /// Writes the report and everything an audit re-derives its proofs from, and names the report.
