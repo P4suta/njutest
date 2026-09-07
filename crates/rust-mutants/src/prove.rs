@@ -22,7 +22,7 @@ use crate::discover::Discovery;
 use crate::instrument::witness::{self, Claimed};
 use crate::runner::Cancel;
 use crate::session::PrepareOptions;
-use crate::syntax::branch::Proof;
+use crate::syntax::branch::{Marker, Proof};
 use crate::syntax::{LineIndex, Position};
 use crate::trace::Recorder;
 use crate::workspace::{SessionError, Workspace};
@@ -121,12 +121,41 @@ pub fn establish(
         return Ok(BTreeMap::new());
     };
     let refused = if checked.success {
-        BTreeSet::new()
+        Refused::default()
     } else {
         refused_by(&written, &checked.messages)
     };
+    let markers = markers_of(&claims);
+    let said = format!(
+        "{} claimed, {} refused, {} bodies the compiler would not take a marker in",
+        count(&claims),
+        refused.claims.len(),
+        refused.markers.len()
+    );
+    let proofs = vouched(&claims, sources, &Checked { refused, markers }, trace);
+    trace.note("witness", &said);
+    phase.end();
+    Ok(proofs)
+}
+
+/// What the one `cargo check` established: what it would not take, and the marker each body carries.
+struct Checked {
+    /// What the compiler would not take, by what it costs.
+    refused: Refused,
+    /// The marker each body would carry, by the file and the body it is in.
+    markers: BTreeMap<(String, crate::span::Span), Marker>,
+}
+
+/// Every claim the compiler took, with the body it names and the marker that body carries.
+fn vouched(
+    claims: &ByFile,
+    sources: &BTreeMap<String, Vec<u8>>,
+    checked: &Checked,
+    trace: &Recorder,
+) -> BTreeMap<u32, Proof> {
+    let Checked { refused, markers } = checked;
     let mut proofs = BTreeMap::new();
-    for (path, file) in &claims {
+    for (path, file) in claims {
         let Some(source) = sources.get(path) else {
             continue;
         };
@@ -141,32 +170,54 @@ pub fn establish(
                     .iter()
                     .map(|witness| witness.kind.function().to_owned())
                     .collect(),
-                checked: !refused.contains(&claimed.index),
+                checked: !refused.claims.contains(&claimed.index),
                 diagnostic: None,
             });
-            if refused.contains(&claimed.index) {
+            if refused.claims.contains(&claimed.index) {
                 continue;
             }
-            proofs.insert(
+            let _kept = proofs.insert(
                 claimed.index,
                 Proof {
                     body_start: index.position(&text, claimed.claim.body.start),
                     body_end: end_of(&index, &text, claimed.claim.body.end),
+                    marker: markers
+                        .get(&(path.clone(), claimed.claim.body))
+                        .copied()
+                        .filter(|_| !refused.markers.contains(&claimed.index)),
                 },
             );
         }
     }
-    trace.note(
-        "witness",
-        &format!("{} claimed, {} refused", count(&claims), refused.len()),
-    );
-    phase.end();
-    Ok(proofs)
+    proofs
 }
 
 /// The position one past the body's last byte. A body's end is exclusive, and a reader looking at the closing brace wants where it is rather than where the next thing starts.
 fn end_of(index: &LineIndex, text: &str, offset: u32) -> Position {
     index.position(text, offset.saturating_sub(1))
+}
+
+/// The marker each body would carry, by the file and the body it is in.
+///
+/// One body carries one marker however many claims rest on it, and it names
+/// the lowest of them: an index out of the catalog's own numbering, so the log
+/// that records it needs no second numbering to bound.
+fn markers_of(claims: &ByFile) -> BTreeMap<(String, crate::span::Span), Marker> {
+    let mut bodies: BTreeMap<(String, crate::span::Span), Marker> = BTreeMap::new();
+    for (path, file) in claims {
+        for claimed in file {
+            let marker = Marker {
+                at: claimed.claim.body.start.saturating_add(1),
+                index: claimed.index,
+                super_depth: claimed.super_depth,
+            };
+            bodies
+                .entry((path.clone(), claimed.claim.body))
+                .and_modify(|held| held.index = held.index.min(claimed.index))
+                .or_insert(marker);
+        }
+    }
+    bodies
 }
 
 fn count(claims: &ByFile) -> usize {
@@ -236,11 +287,8 @@ fn restore(root: &Path, sources: &BTreeMap<String, Vec<u8>>) -> Result<(), Engin
 }
 
 /// The claims a diagnostic landed in. A witness the compiler refused is a claim this release does not make.
-fn refused_by(
-    written: &[witness::WitnessFile],
-    messages: &[crate::cargo::Message],
-) -> BTreeSet<u32> {
-    let mut refused = BTreeSet::new();
+fn refused_by(written: &[witness::WitnessFile], messages: &[crate::cargo::Message]) -> Refused {
+    let mut refused = Refused::default();
     for message in messages {
         let crate::cargo::Message::CompilerMessage(compiler) = message else {
             continue;
@@ -258,12 +306,30 @@ fn refused_by(
             continue;
         };
         for site in &file.sites {
-            if site.span.start <= span.byte_start && span.byte_start < site.span.end {
-                refused.extend(site.claims.iter().copied());
+            if site.span.start > span.byte_start || span.byte_start >= site.span.end {
+                continue;
+            }
+            match site.placed {
+                witness::Placed::Witnesses => refused.claims.extend(site.claims.iter().copied()),
+                witness::Placed::Marker => refused.markers.extend(site.claims.iter().copied()),
             }
         }
     }
     refused
+}
+
+/// What the compiler would not take, by what it costs.
+///
+/// A diagnostic in a condition's witnesses refuses the claim, because the
+/// whole of it rests on the compiler accepting them. One in a body's marker
+/// refuses only the marker: the claim stands, with a coverage region as the
+/// one premise left to establish it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct Refused {
+    /// The mutants whose claim the compiler would not take.
+    claims: BTreeSet<u32>,
+    /// The mutants whose body the compiler would not take a marker in.
+    markers: BTreeSet<u32>,
 }
 
 /// Whether the path a diagnostic names is the file that was written.

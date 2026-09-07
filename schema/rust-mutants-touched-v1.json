@@ -5,7 +5,10 @@
   "description": "What the guards of an instrumented tree recorded on the run that verified its baseline: which of each target's tests reached which mutation, which sites were reached where nothing named a test, and which targets said nothing this run can route by. A target absent from `targets` and named in `limitations` is one every test of which reaches every mutation in it.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["targets", "limitations"],
+  "required": [
+    "targets",
+    "limitations"
+  ],
   "properties": {
     "targets": {
       "description": "Every target whose guards recorded, by identity.",
@@ -28,7 +31,13 @@
       "description": "What one target's guards recorded, and which of its tests ran to record it.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["tests", "loose", "ran"],
+      "required": [
+        "tests",
+        "bodies",
+        "loose",
+        "loose_bodies",
+        "ran"
+      ],
       "properties": {
         "tests": {
           "description": "The dense catalog indices each named test of this target reached.",
@@ -55,6 +64,25 @@
           "items": {
             "type": "string",
             "minLength": 1
+          }
+        },
+        "bodies": {
+          "description": "The branch bodies each named test of this target entered, by the index of the marker at the body's first statement.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "loose_bodies": {
+          "description": "The bodies entered where nothing named a test, which therefore were entered by every test of the target.",
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0
           }
         }
       }

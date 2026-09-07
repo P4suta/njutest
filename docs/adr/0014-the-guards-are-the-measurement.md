@@ -67,7 +67,10 @@ opinion the differential harness holds the guards to.
 
 ## Consequences
 
-- The default run makes no coverage build and needs no `llvm-profdata`.
+- The default run makes no coverage build and needs no `llvm-profdata`, and
+  that includes `branch-never-taken`: the marker at a body's first statement
+  is written into the witness tree as well, so the one `cargo check` that
+  sifts the type witnesses sifts the markers too and no build is added.
 - A mutation is put to the tests that reached it. On `fixture-coverage` the
   guards start 18 tests where the regions start 42 and a run with nothing
   removed starts 46; the process counts are 15 and 14, which is why the work
@@ -99,7 +102,7 @@ opinion the differential harness holds the guards to.
 - **Infer that a body ran from a mutant inside it having been touched.** A
   mutant inside a body is not necessarily executed when the body is entered —
   it may sit in a nested branch — so the contrapositive the proof needs does
-  not hold. A marker the instrumenter places at the body's first statement
-  would, and is the natural next step for `branch-never-taken`.
+  not hold. The marker the instrumenter writes at the body's *first statement*
+  does, which is why `branch-never-taken` rests on one rather than on that.
 - **A budget, a sample, or a list of slow targets to skip.** ADR 0004
   decision 1.

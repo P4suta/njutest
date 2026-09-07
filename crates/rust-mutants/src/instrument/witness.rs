@@ -31,13 +31,31 @@ pub const MODULE_STEM: &str = "__rmw";
 /// The line a reader will find at the end of a witnessed file.
 pub const MARKER: &str = "rust-mutants-witness-v1";
 
-/// One condition's witnesses, and every mutant whose claim rests on them.
+/// One rewrite a witnessed file carries, and every mutant whose claim rests on it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Site {
-    /// Where the witness statements landed in the rewritten text.
+    /// Where the rewrite landed in the rewritten text.
     pub span: Span,
-    /// The mutants whose claims this condition carries, ascending.
+    /// The mutants whose claims this rewrite carries, ascending.
     pub claims: Vec<u32>,
+    /// What the rewrite is, which decides what a diagnostic landing in it costs.
+    pub placed: Placed,
+}
+
+/// What one rewrite in a witnessed file is.
+///
+/// A diagnostic in a condition's witnesses refuses the claim: the whole of it
+/// rests on the compiler accepting them. One in a body's marker refuses only
+/// the marker, and the claim stands with a coverage region as its premise —
+/// a body a call cannot go into is a body a `const` context holds, not a body
+/// the claim was wrong about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Placed {
+    /// The statements a condition's witnesses became.
+    Witnesses,
+    /// The call at a body's first statement.
+    Marker,
 }
 
 /// One file with its witnesses written in.
@@ -101,6 +119,7 @@ pub fn witness_file(
         &conditions,
         &module,
     )?;
+    let placed = owners;
     let (bytes, map) = apply(source, &splices).map_err(|error| {
         InstrumentError::new(
             InstrumentErrorKind::SpliceFailed,
@@ -120,17 +139,11 @@ pub fn witness_file(
     }
     let sites = splices
         .iter()
-        .zip(owners)
-        .map(|(one, claims)| {
-            let start = map.to_output(one.span.start).0;
-            Site {
-                span: Span {
-                    start,
-                    end: start
-                        .saturating_add(u32::try_from(one.replacement.len()).unwrap_or(u32::MAX)),
-                },
-                claims,
-            }
+        .zip(placed)
+        .map(|(one, (claims, placed))| Site {
+            span: landed(&map, one),
+            claims,
+            placed,
         })
         .collect();
     if !rewritten.ends_with('\n') {
@@ -170,6 +183,9 @@ fn statements(witnesses: &[Witness], text: &str, module: &str, depth: u32) -> St
     out
 }
 
+/// What one rewrite carries: the mutants whose claims rest on it, and what it is.
+type Owned = (Vec<u32>, Placed);
+
 /// One file as it is and as text.
 #[derive(Debug, Clone, Copy)]
 struct Reading<'a> {
@@ -183,10 +199,38 @@ fn plan(
     file: Reading<'_>,
     conditions: &BTreeMap<Span, (Vec<u32>, Claim, u32)>,
     module: &str,
-) -> Result<(Vec<Splice>, Vec<Vec<u32>>), InstrumentError> {
+) -> Result<(Vec<Splice>, Vec<Owned>), InstrumentError> {
     let Reading { path, source, text } = file;
     let mut splices = Vec::new();
     let mut owners = Vec::new();
+    let mut bodies: BTreeMap<Span, (Vec<u32>, u32)> = BTreeMap::new();
+    for (indices, claim, depth) in conditions.values() {
+        let entry = bodies
+            .entry(claim.body)
+            .or_insert_with(|| (Vec::new(), *depth));
+        entry.0.extend(indices.iter().copied());
+    }
+    for (body, (indices, depth)) in &bodies {
+        let mut claims = indices.clone();
+        claims.sort_unstable();
+        claims.dedup();
+        let Some(index) = claims.first().copied() else {
+            continue;
+        };
+        let after = body.start.saturating_add(1);
+        if source.get(at(body.start)..at(after)) != Some(b"{".as_slice()) {
+            continue;
+        }
+        splices.push(Splice {
+            span: Span {
+                start: after,
+                end: after,
+            },
+            original: Vec::new(),
+            replacement: marker(module, *depth, index).into_bytes(),
+        });
+        owners.push((claims, Placed::Marker));
+    }
     for (condition, (indices, claim, depth)) in conditions {
         let original = source
             .get(at(condition.start)..at(condition.end))
@@ -209,9 +253,37 @@ fn plan(
         let mut claims = indices.clone();
         claims.sort_unstable();
         claims.dedup();
-        owners.push(claims);
+        owners.push((claims, Placed::Witnesses));
     }
     Ok((splices, owners))
+}
+
+/// Where one rewrite ended up in the rewritten text.
+///
+/// An insertion leaves nothing of the source at its offset, so the offset maps
+/// to just past what was written rather than to the start of it; a
+/// replacement maps to where its own bytes begin.
+fn landed(map: &crate::splice::OffsetMap, splice: &Splice) -> Span {
+    let written = u32::try_from(splice.replacement.len()).unwrap_or(u32::MAX);
+    let at = map.to_output(splice.span.start).0;
+    let start = if splice.span.start == splice.span.end {
+        at.saturating_sub(written)
+    } else {
+        at
+    };
+    Span {
+        start,
+        end: start.saturating_add(written),
+    }
+}
+
+/// The call written at a body's first statement, in one line.
+#[must_use]
+pub fn marker(module: &str, depth: u32, index: u32) -> String {
+    format!(
+        "{}{module}::body({index}); ",
+        "super::".repeat(usize::try_from(depth).unwrap_or(0))
+    )
 }
 
 /// One offset as an index. Every offset here came from a `u32` span of a file this process read, and a file larger than a `usize` cannot have been read at all.
@@ -252,4 +324,5 @@ const IMPLS: &str = "\
     impl<T: P + ?Sized> P for &T {}
     impl<T: P + ?Sized> P for &mut T {}
     #[inline(always)] pub(crate) fn w_ord<T: W + ?Sized>(_a: &T, _b: &T) {}
-    #[inline(always)] pub(crate) fn w_prim<T: P + ?Sized>(_x: &T) {}";
+    #[inline(always)] pub(crate) fn w_prim<T: P + ?Sized>(_x: &T) {}
+    #[inline(always)] pub(crate) fn body(_k: u32) {}";

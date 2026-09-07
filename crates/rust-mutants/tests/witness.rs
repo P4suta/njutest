@@ -11,7 +11,7 @@
     reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
 )]
 
-use rust_mutants::instrument::witness::{Claimed, MARKER, witness_file};
+use rust_mutants::instrument::witness::{Claimed, MARKER, Placed, witness_file};
 use rust_mutants::rule::{Registry, Tier};
 use rust_mutants::syntax::{Selection, discover_file};
 
@@ -80,21 +80,48 @@ pub fn f(a: i32, b: i32, c: i32) -> i32 {
     let claims = claimed(source);
     assert!(claims.len() >= 3, "{claims:?}");
     let written = witness_file("src/lib.rs", source.as_bytes(), &claims).expect("witnessed");
+    let witnessed: Vec<&rust_mutants::instrument::witness::Site> = written
+        .sites
+        .iter()
+        .filter(|site| site.placed == Placed::Witnesses)
+        .collect();
     assert_eq!(
-        written.sites.len(),
+        witnessed.len(),
         1,
         "one condition is rewritten once, however many claims rest on it"
     );
     assert_eq!(
-        written.sites[0].claims.len(),
+        witnessed[0].claims.len(),
         claims.len(),
         "and a diagnostic inside it is about all of them"
     );
-    let inside =
-        &written.text[written.sites[0].span.start as usize..written.sites[0].span.end as usize];
+    let inside = &written.text[witnessed[0].span.start as usize..witnessed[0].span.end as usize];
     assert!(inside.starts_with("({ "), "{inside}");
     assert!(inside.ends_with(" })"), "{inside}");
     assert!(inside.contains("a <= b || b >= c"), "{inside}");
+
+    let marked: Vec<&rust_mutants::instrument::witness::Site> = written
+        .sites
+        .iter()
+        .filter(|site| site.placed == Placed::Marker)
+        .collect();
+    assert_eq!(
+        marked.len(),
+        1,
+        "and the body it gates carries one marker, however many claims rest on it"
+    );
+    assert_eq!(
+        marked[0].claims.len(),
+        claims.len(),
+        "a diagnostic in the marker is about the marker of all of them"
+    );
+    let call = &written.text[marked[0].span.start as usize..marked[0].span.end as usize];
+    assert!(call.contains("::body("), "{call}");
+    assert!(
+        !written.text.contains("\n    if a <= b || b >= c { __rmw"),
+        "the marker goes after the brace, and no line moves: {}",
+        written.text
+    );
 }
 
 #[test]

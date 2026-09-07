@@ -166,6 +166,8 @@ mod {{MODULE}} {
         eager: bool,
         bits: __rm_std::vec::Vec<bool>,
         touched: __rm_std::vec::Vec<u32>,
+        entered_bits: __rm_std::vec::Vec<bool>,
+        entered: __rm_std::vec::Vec<u32>,
     }
 
     impl Seen {
@@ -177,6 +179,8 @@ mod {{MODULE}} {
             };
             let mut bits = __rm_std::vec::Vec::new();
             bits.resize(TOUCH_SPAN, false);
+            let mut entered_bits = __rm_std::vec::Vec::new();
+            entered_bits.resize(TOUCH_SPAN, false);
             Seen {
                 name: match named {
                     __rm_std::option::Option::Some(name) if !eager => name,
@@ -185,6 +189,8 @@ mod {{MODULE}} {
                 eager,
                 bits,
                 touched: __rm_std::vec::Vec::new(),
+                entered_bits,
+                entered: __rm_std::vec::Vec::new(),
             }
         }
 
@@ -200,22 +206,40 @@ mod {{MODULE}} {
             }
         }
 
-        fn flush(&mut self) {
-            if self.touched.is_empty() {
+        fn entered_body(&mut self, index: u32) {
+            let at = index.wrapping_sub(TOUCH_BASE) as usize;
+            if at >= self.entered_bits.len() || self.entered_bits[at] {
                 return;
             }
-            let mut line = __rm_std::string::String::from("{{SITES}}\t");
-            line.push_str(&self.name);
-            let mut at = 0;
-            while at < self.touched.len() {
-                line.push_str(if at == 0 { "\t" } else { "," });
-                line.push_str(&__rm_std::format!("{}", self.touched[at]));
-                at += 1;
+            self.entered_bits[at] = true;
+            self.entered.push(index);
+            if self.eager || self.entered.len() >= TOUCH_BATCH {
+                self.flush();
             }
-            line.push_str("\n");
-            self.touched.clear();
-            append(&line);
         }
+
+        fn flush(&mut self) {
+            written("{{SITES}}", &self.name, &mut self.touched);
+            written("{{BODIES}}", &self.name, &mut self.entered);
+        }
+    }
+
+    fn written(kind: &str, name: &str, indices: &mut __rm_std::vec::Vec<u32>) {
+        if indices.is_empty() {
+            return;
+        }
+        let mut line = __rm_std::string::String::from(kind);
+        line.push_str("\t");
+        line.push_str(name);
+        let mut at = 0;
+        while at < indices.len() {
+            line.push_str(if at == 0 { "\t" } else { "," });
+            line.push_str(&__rm_std::format!("{}", indices[at]));
+            at += 1;
+        }
+        line.push_str("\n");
+        indices.clear();
+        append(&line);
     }
 
     impl __rm_std::ops::Drop for Seen {
@@ -235,6 +259,25 @@ mod {{MODULE}} {
         }
         let _ = SEEN.try_with(|seen| match seen.try_borrow_mut() {
             __rm_std::result::Result::Ok(mut seen) => seen.saw(index),
+            __rm_std::result::Result::Err(_) => (),
+        });
+    }
+
+    #[inline(always)]
+    pub(crate) fn body(index: u32) {
+        if TOUCHING.load(__rm_std::sync::atomic::Ordering::Relaxed) == TOUCH_OFF {
+            return;
+        }
+        entered(index);
+    }
+
+    #[inline(never)]
+    fn entered(index: u32) {
+        if !touching() {
+            return;
+        }
+        let _ = SEEN.try_with(|seen| match seen.try_borrow_mut() {
+            __rm_std::result::Result::Ok(mut seen) => seen.entered_body(index),
             __rm_std::result::Result::Err(_) => (),
         });
     }
@@ -316,12 +359,14 @@ mod {{MODULE}} {
 /// prelude, and forbids neither an explicit link nor an explicit path. Nothing
 /// in the module is `unsafe`, so a crate that forbids unsafe code still does.
 #[must_use]
-pub fn render(
-    module: &str,
-    catalog_digest: &str,
-    placements: &[Placement],
-    newline: &str,
-) -> String {
+pub fn render(rendering: &Rendering<'_>) -> String {
+    let Rendering {
+        module,
+        catalog_digest,
+        placements,
+        markers,
+        newline,
+    } = *rendering;
     let mut ids: Vec<(&str, u32)> = placements
         .iter()
         .map(|placement| (placement.id.as_str(), placement.index))
@@ -333,7 +378,7 @@ pub fn render(
         let written = writeln!(table, "        ({id:?}, {index}),");
         debug_assert!(written.is_ok(), "writing to a String cannot fail");
     }
-    let reach = touched(placements);
+    let reach = touched(placements, markers);
 
     let text = TEMPLATE
         .replace("{{MODULE}}", module)
@@ -348,6 +393,7 @@ pub fn render(
         .replace("{{TOUCH_SCHEMA}}", crate::touch::SCHEMA)
         .replace("{{UNATTRIBUTED}}", crate::touch::UNATTRIBUTED)
         .replace("{{SITES}}", crate::touch::SITES)
+        .replace("{{BODIES}}", crate::touch::BODIES)
         .replace("{{EXIT}}", &STALE_CATALOG_EXIT.to_string())
         .replace("{{TOUCH_EXIT}}", &TOUCH_UNAVAILABLE_EXIT.to_string());
     if newline == "\n" {
@@ -357,6 +403,21 @@ pub fn render(
     }
 }
 
+/// What one file's runtime module is generated from.
+#[derive(Debug, Clone, Copy)]
+pub struct Rendering<'a> {
+    /// The module's name, which carries the file path's digest.
+    pub module: &'a str,
+    /// The catalog every guard names.
+    pub catalog_digest: &'a str,
+    /// The mutants placed in the file.
+    pub placements: &'a [Placement],
+    /// The markers the branch proofs put in it, whose indices the recording also carries.
+    pub markers: &'a [crate::syntax::branch::Marker],
+    /// The newline the file uses.
+    pub newline: &'a str,
+}
+
 /// The window of catalog indices one file's guards can report, which is what sizes the per-thread record of what it already said.
 ///
 /// A file's mutants are numbered by the catalog rather than by the file, so the
@@ -364,17 +425,15 @@ pub fn render(
 /// outside it — which the catalog's numbering does not produce — is recorded
 /// every time rather than once, and a repeated record is a line the reader
 /// unions, never a fact it loses.
-fn touched(placements: &[Placement]) -> Window {
-    let lowest = placements
-        .iter()
-        .map(|placement| placement.index)
-        .min()
-        .unwrap_or(0);
-    let highest = placements
-        .iter()
-        .map(|placement| placement.index)
-        .max()
-        .unwrap_or(0);
+fn touched(placements: &[Placement], markers: &[crate::syntax::branch::Marker]) -> Window {
+    let every = || {
+        placements
+            .iter()
+            .map(|placement| placement.index)
+            .chain(markers.iter().map(|marker| marker.index))
+    };
+    let lowest = every().min().unwrap_or(0);
+    let highest = every().max().unwrap_or(0);
     Window {
         base: lowest,
         span: usize::try_from(highest.saturating_sub(lowest))

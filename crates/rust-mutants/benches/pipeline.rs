@@ -21,7 +21,7 @@ use criterion::Criterion;
 use rust_mutants::cargo::config::configured;
 use rust_mutants::catalog::Builder;
 use rust_mutants::coverage::parse_export;
-use rust_mutants::instrument::{instrument_file, plan_file};
+use rust_mutants::instrument::{Instrumenting, instrument_file, plan_file};
 use rust_mutants::rule::Tier;
 use rust_mutants::syntax::{Selection, discover_file};
 
@@ -120,12 +120,13 @@ fn benchmarks(criterion: &mut Criterion) {
         plan_file(&catalog, "src/lib.rs", &discovery.candidates).expect("the plan is one");
     criterion.bench_function("instrument/200-function file", |bencher| {
         bencher.iter(|| {
-            instrument_file(
-                "src/lib.rs",
-                std::hint::black_box(one.as_bytes()),
-                std::hint::black_box(&placements),
-                catalog.digest(),
-            )
+            instrument_file(&Instrumenting {
+                path: "src/lib.rs",
+                source: std::hint::black_box(one.as_bytes()),
+                placements: std::hint::black_box(&placements),
+                markers: &[],
+                catalog_digest: catalog.digest(),
+            })
         });
     });
 

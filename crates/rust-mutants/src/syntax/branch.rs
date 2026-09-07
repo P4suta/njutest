@@ -72,6 +72,31 @@ pub struct Proof {
     pub body_start: crate::syntax::Position,
     /// Where its closing brace is.
     pub body_end: crate::syntax::Position,
+    /// The marker the instrumenter writes at the body's first statement, when the compiler took one there.
+    ///
+    /// The premise this proof needs is that the body did not run, and the two
+    /// ways of establishing it are a coverage region beginning inside the body
+    /// and a marker the body's own first statement calls. The marker is exact
+    /// where a region is inferred, and it needs no coverage build; a body no
+    /// marker could go into — a `const` block, a body the compiler refused the
+    /// call in — keeps the region as its only premise.
+    pub marker: Option<Marker>,
+}
+
+/// The call the instrumenter writes at a body's first statement, so entering the body is a thing the guards record.
+///
+/// It is written at the byte just past the opening brace, on that line, and
+/// names the lowest of the mutants whose claim this body carries — one index
+/// out of the catalog's own numbering, so the log that carries it needs no
+/// second one to bound.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Marker {
+    /// The byte offset the call is written at, which is just past the body's opening brace.
+    pub at: u32,
+    /// The index the call names.
+    pub index: u32,
+    /// How many `super::` segments separate the body's inline module from the file root, where the runtime lives.
+    pub super_depth: u32,
 }
 
 /// A branch proof the syntax supports, pending the compiler's word on its witnesses.

@@ -15,8 +15,8 @@ use std::path::PathBuf;
 
 use rust_mutants::catalog::{Builder, Catalog};
 use rust_mutants::instrument::{
-    ACTIVE_ENV, CATALOG_ENV, InstrumentErrorKind, MODULE_STEM, RUNTIME_MARKER, STALE_CATALOG_EXIT,
-    instrument_file, module_name, plan_file,
+    ACTIVE_ENV, CATALOG_ENV, InstrumentErrorKind, Instrumenting, MODULE_STEM, RUNTIME_MARKER,
+    STALE_CATALOG_EXIT, instrument_file, module_name, plan_file,
 };
 use rust_mutants::rule::{Registry, Tier};
 use rust_mutants::splice::count_lines;
@@ -44,12 +44,13 @@ fn instrument_with_catalog(source: &str) -> (String, Catalog) {
     }
     let catalog = builder.build().expect("catalog");
     let placements = plan_file(&catalog, "src/lib.rs", &discovery.candidates).expect("plan");
-    let file = instrument_file(
-        "src/lib.rs",
-        source.as_bytes(),
-        &placements,
-        catalog.digest(),
-    )
+    let file = instrument_file(&Instrumenting {
+        path: "src/lib.rs",
+        source: source.as_bytes(),
+        placements: &placements,
+        markers: &[],
+        catalog_digest: catalog.digest(),
+    })
     .expect("instrument");
     (file.text, catalog)
 }
@@ -194,12 +195,13 @@ fn an_untouched_file_is_returned_byte_for_byte_with_no_runtime() {
     assert!(discovery.candidates.is_empty());
     let catalog = Builder::new().build().expect("catalog");
     let placements = plan_file(&catalog, "src/lib.rs", &discovery.candidates).expect("plan");
-    let file = instrument_file(
-        "src/lib.rs",
-        source.as_bytes(),
-        &placements,
-        catalog.digest(),
-    )
+    let file = instrument_file(&Instrumenting {
+        path: "src/lib.rs",
+        source: source.as_bytes(),
+        placements: &placements,
+        markers: &[],
+        catalog_digest: catalog.digest(),
+    })
     .expect("instrument");
     assert_eq!(file.text, source);
     assert!(file.guards.is_empty());
@@ -338,7 +340,14 @@ fn a_source_that_is_not_the_one_the_candidates_came_from_is_refused() {
     let catalog = builder.build().expect("catalog");
     let placements = plan_file(&catalog, "src/lib.rs", &discovery.candidates).expect("plan");
     let other = b"pub fn f(a: i32) -> i32 { a - 1 }\n";
-    let error = instrument_file("src/lib.rs", other, &placements, catalog.digest()).unwrap_err();
+    let error = instrument_file(&Instrumenting {
+        path: "src/lib.rs",
+        source: other,
+        placements: &placements,
+        markers: &[],
+        catalog_digest: catalog.digest(),
+    })
+    .unwrap_err();
     assert_eq!(error.kind(), InstrumentErrorKind::SourceMismatch);
 }
 
@@ -403,12 +412,13 @@ fn every_alternative_reports_where_its_own_text_landed() {
     }
     let catalog = builder.build().expect("catalog");
     let placements = plan_file(&catalog, "src/lib.rs", &discovery.candidates).expect("plan");
-    let file = instrument_file(
-        "src/lib.rs",
-        source.as_bytes(),
-        &placements,
-        catalog.digest(),
-    )
+    let file = instrument_file(&Instrumenting {
+        path: "src/lib.rs",
+        source: source.as_bytes(),
+        placements: &placements,
+        markers: &[],
+        catalog_digest: catalog.digest(),
+    })
     .expect("instrument");
 
     let mut indices: Vec<u32> = file.branches.iter().map(|branch| branch.index).collect();

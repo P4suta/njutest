@@ -99,9 +99,13 @@ says the same, and `xtask/work_ceiling.txt` has two more columns.
 and `cargo xtask engine-audit` re-decides every route from it without the
 engine.
 
-**`branch-never-taken` still needs a coverage build.** Its premise is a
-coverage region, so a run that measures only with the guards does not discharge
-by it. Pass `--coverage` where that layer is worth its build.
+**`branch-never-taken` no longer needs a coverage build.** The instrumenter
+writes a marker at the first statement of every body a claim names, and the
+one `cargo check` that already sifts the type witnesses sifts the markers too.
+A target nothing of which ran the marker is discharged, and a kept target is
+asked only for the tests that entered the body. A body no marker could go
+into keeps the coverage region as its premise, which is what `--coverage` is
+still for.
 
 **Two limitations are new**, both of which run more rather than less:
 `touch-not-recorded` for a target the engine does not start itself, and

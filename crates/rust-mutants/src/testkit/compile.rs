@@ -148,7 +148,13 @@ impl Compile for ScriptedCompile {
             .filter(|placement| !condemned.contains(&placement.index))
             .cloned()
             .collect();
-        let file = instrument_file(&self.path, &self.source, &kept, self.catalog.digest())?;
+        let file = instrument_file(&crate::instrument::Instrumenting {
+            path: &self.path,
+            source: &self.source,
+            placements: &kept,
+            markers: &[],
+            catalog_digest: self.catalog.digest(),
+        })?;
         let live: BTreeSet<u32> = kept.iter().map(|placement| placement.index).collect();
         let mut messages = Vec::new();
         for index in self.attributable.intersection(&live) {

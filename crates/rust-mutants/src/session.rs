@@ -1169,12 +1169,17 @@ impl Session {
         };
         let mut kept = Vec::new();
         for one in reaching {
-            match self.proof_against(mutant, &one.target) {
-                Some(proof) => discharged.push(Discharge {
-                    target: one.target,
-                    proof,
+            let target = one.target.clone();
+            if let Some(proof) = self.proof_against(mutant, &target) {
+                discharged.push(Discharge { target, proof });
+                continue;
+            }
+            match self.narrowed(mutant, one) {
+                Some(reaches) => kept.push(reaches),
+                None => discharged.push(Discharge {
+                    target,
+                    proof: BRANCH_NEVER_TAKEN,
                 }),
-                None => kept.push(one),
             }
         }
         if kept.is_empty() && !discharged.is_empty() {
@@ -1196,14 +1201,7 @@ impl Session {
     /// targets it ran, and a mutant it never asked about is one it says
     /// nothing about.
     fn proof_against(&self, mutant: &Mutant, target: &str) -> Option<&'static str> {
-        if let Some(proof) = self.branch(mutant.index)
-            && let Some(covered) = self.reached.targets.get(target)
-            && crate::prove::discharges(
-                proof,
-                std::path::Path::new(&mutant.candidate.path),
-                &covered.iter().cloned().collect::<Vec<_>>(),
-            )
-        {
+        if self.never_took_the_branch(mutant, target) {
             return Some(BRANCH_NEVER_TAKEN);
         }
         if self.probed.asked.contains(&mutant.index)
@@ -1213,6 +1211,64 @@ impl Session {
             return Some(NEVER_INFECTED);
         }
         None
+    }
+
+    /// The same target asked for only the tests of it that entered the body the branch proof names, or nothing when none of them did.
+    ///
+    /// A target is discharged when *nothing* of it entered the body. Between
+    /// that and running every test the measurement named lies the case this
+    /// answers: some of the tests that reached the condition entered the body
+    /// and some did not, and the ones that did not cannot have noticed a
+    /// mutation which only narrows the condition — under it they still do not
+    /// enter.
+    fn narrowed(&self, mutant: &Mutant, one: Reaches) -> Option<Reaches> {
+        let Asked::These(tests) = &one.tests else {
+            return Some(one);
+        };
+        let Some(marker) = self.branch(mutant.index).and_then(|proof| proof.marker) else {
+            return Some(one);
+        };
+        let Some(touches) = self.touched.targets.get(&one.target) else {
+            return Some(one);
+        };
+        let entered: Vec<String> = tests
+            .iter()
+            .filter(|test| touches.entered_by(test, marker.index))
+            .cloned()
+            .collect();
+        if entered.is_empty() {
+            return None;
+        }
+        Some(Reaches {
+            target: one.target,
+            tests: Asked::These(entered),
+        })
+    }
+
+    /// Whether nothing of `target` ran the body the branch proof of `mutant` names.
+    ///
+    /// Two measurements can establish it and either will do. The marker the
+    /// instrumenter wrote at the body's first statement is exact: it either
+    /// ran or it did not. A coverage region beginning inside the body is the
+    /// older premise, and it is what a body no marker could go into still
+    /// rests on.
+    fn never_took_the_branch(&self, mutant: &Mutant, target: &str) -> bool {
+        let Some(proof) = self.branch(mutant.index) else {
+            return false;
+        };
+        if let Some(marker) = proof.marker
+            && let Some(touches) = self.touched.targets.get(target)
+            && !touches.entered(marker.index)
+        {
+            return true;
+        }
+        self.reached.targets.get(target).is_some_and(|covered| {
+            crate::prove::discharges(
+                proof,
+                std::path::Path::new(&mutant.candidate.path),
+                &covered.iter().cloned().collect::<Vec<_>>(),
+            )
+        })
     }
 
     /// The recording this session writes to, which is the one the workspace was opened with.
@@ -2296,6 +2352,7 @@ pub fn prepare(
         &discovery,
         &sources,
         &placements,
+        &proofs,
         options,
         cancel,
         &trace,
@@ -2360,6 +2417,7 @@ fn establish(
     discovery: &discover::Discovery,
     sources: &BTreeMap<String, Vec<u8>>,
     placements: &BTreeMap<String, Vec<Placement>>,
+    proofs: &BTreeMap<u32, crate::syntax::branch::Proof>,
     options: &PrepareOptions,
     cancel: &Cancel,
     trace: &crate::trace::Recorder,
@@ -2375,6 +2433,7 @@ fn establish(
         packages: options.packages.clone(),
         build: options.build.clone(),
         written: BTreeMap::new(),
+        markers: marked(&discovery.catalog, proofs),
     };
     let validated = validate(
         &discovery.catalog,
@@ -2589,6 +2648,7 @@ fn gather(
     };
     let mut gathered = crate::touch::TargetTouches {
         loose: recorded.loose,
+        loose_bodies: recorded.loose_bodies,
         ran: recording.ran.to_vec(),
         ..crate::touch::TargetTouches::default()
     };
@@ -2597,6 +2657,13 @@ fn gather(
             drop(gathered.tests.insert(name, sites));
         } else {
             gathered.loose.extend(sites);
+        }
+    }
+    for (name, bodies) in recorded.bodies {
+        if recording.ran.iter().any(|test| test == &name) {
+            drop(gathered.bodies.insert(name, bodies));
+        } else {
+            gathered.loose_bodies.extend(bodies);
         }
     }
     trace.touch(crate::trace::TouchRecord {
@@ -2642,6 +2709,35 @@ fn slug(target: &str) -> String {
     format!("{readable}-{}", digest.get(..16).unwrap_or(&digest))
 }
 
+/// The markers each file carries, by the file the bodies they mark are in.
+///
+/// One body carries one marker however many claims rest on it, and the proof
+/// of each of them names the same one, so what is written is the set of them
+/// rather than the list.
+fn marked(
+    catalog: &Catalog,
+    proofs: &BTreeMap<u32, crate::syntax::branch::Proof>,
+) -> BTreeMap<String, Vec<crate::syntax::branch::Marker>> {
+    let mut by_file: BTreeMap<String, std::collections::BTreeSet<crate::syntax::branch::Marker>> =
+        BTreeMap::new();
+    for (index, proof) in proofs {
+        let Some(marker) = proof.marker else {
+            continue;
+        };
+        let Some(mutant) = catalog.by_index(*index) else {
+            continue;
+        };
+        let _placed = by_file
+            .entry(mutant.candidate.path.clone())
+            .or_default()
+            .insert(marker);
+    }
+    by_file
+        .into_iter()
+        .map(|(path, markers)| (path, markers.into_iter().collect()))
+        .collect()
+}
+
 /// Instruments the snapshot with a set of mutants left out and compiles it: the [`Compile`] seam validation drives.
 struct TreeCompiler<'a> {
     workspace: &'a Workspace,
@@ -2658,6 +2754,8 @@ struct TreeCompiler<'a> {
     build: crate::cargo::BuildConfig,
     /// What each file held when this last wrote it, so a round writes only what its condemnations changed.
     written: BTreeMap<String, String>,
+    /// The markers each file's branch proofs put in it, so entering a body is a thing the guards record.
+    markers: BTreeMap<String, Vec<crate::syntax::branch::Marker>>,
 }
 
 impl Compile for TreeCompiler<'_> {
@@ -2679,7 +2777,13 @@ impl Compile for TreeCompiler<'_> {
                 .ok_or_else(|| ValidateError::AttemptFailed {
                     message: format!("{path} was never read"),
                 })?;
-            let file = instrument_file(path, source, &kept, self.catalog.digest())?;
+            let file = instrument_file(&crate::instrument::Instrumenting {
+                path,
+                source,
+                placements: &kept,
+                markers: self.markers.get(path).map_or(&[], Vec::as_slice),
+                catalog_digest: self.catalog.digest(),
+            })?;
             self.workspace.trace.instrument(InstrumentRecord {
                 path: path.clone(),
                 guards: u32::try_from(file.guards.len()).unwrap_or(u32::MAX),

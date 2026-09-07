@@ -29,6 +29,7 @@ fn block(file: &str, line: u32) -> Block {
 /// A body from line 10 to line 20 of `src/lib.rs`.
 const fn proof() -> Proof {
     Proof {
+        marker: None,
         body_start: at(10, 5),
         body_end: at(20, 5),
     }

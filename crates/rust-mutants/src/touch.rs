@@ -34,6 +34,9 @@ pub const UNATTRIBUTED: &str = "-";
 /// The first field of a record naming the mutant sites a thread reached.
 pub(crate) const SITES: &str = "t";
 
+/// The first field of a record naming the branch bodies a thread entered.
+pub(crate) const BODIES: &str = "b";
+
 /// Why a touch log said nothing.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
@@ -80,8 +83,12 @@ pub enum TouchError {
 pub struct Touches {
     /// The mutant sites each named thread reached, which is each test that ran.
     pub tests: BTreeMap<String, BTreeSet<u32>>,
+    /// The branch bodies each named thread entered, by the index of the marker at the body's first statement.
+    pub bodies: BTreeMap<String, BTreeSet<u32>>,
     /// The mutant sites reached on a thread no test answers for.
     pub loose: BTreeSet<u32>,
+    /// The branch bodies entered on a thread no test answers for.
+    pub loose_bodies: BTreeSet<u32>,
 }
 
 /// Every touch the log records, gathered by the thread that made it.
@@ -145,17 +152,18 @@ fn record(line: &str, count: u32, number: usize, touches: &mut Touches) -> Resul
             what: format!("{line:?} is not a kind, a thread, and a list of sites"),
         });
     };
-    if kind != SITES {
+    if kind != SITES && kind != BODIES {
         return Err(TouchError::Malformed {
             line: number,
             what: format!("{kind:?} is not a kind of touch this reader knows"),
         });
     }
     let reached = sites(indices, count, number)?;
-    let into = if name == UNATTRIBUTED {
-        &mut touches.loose
-    } else {
-        touches.tests.entry(name.to_owned()).or_default()
+    let into = match (kind, name == UNATTRIBUTED) {
+        (SITES, true) => &mut touches.loose,
+        (SITES, false) => touches.tests.entry(name.to_owned()).or_default(),
+        (_, true) => &mut touches.loose_bodies,
+        (_, false) => touches.bodies.entry(name.to_owned()).or_default(),
     };
     into.extend(reached);
     Ok(())
@@ -205,8 +213,14 @@ pub struct Touched {
 pub struct TargetTouches {
     /// The mutant sites each test of this target reached.
     pub tests: BTreeMap<String, BTreeSet<u32>>,
+    /// The branch bodies each test of this target entered, by the index of the marker at the body's first statement.
+    #[serde(default)]
+    pub bodies: BTreeMap<String, BTreeSet<u32>>,
     /// The sites reached where nothing named a test, which therefore reach every test of the target.
     pub loose: BTreeSet<u32>,
+    /// The bodies entered where nothing named a test, which therefore were entered by every test of the target.
+    #[serde(default)]
+    pub loose_bodies: BTreeSet<u32>,
     /// Every test the baseline ran, which is what a loose site reaches and what "all of them" counts against.
     pub ran: Vec<String>,
 }
@@ -224,6 +238,30 @@ pub enum Reaching {
 }
 
 impl TargetTouches {
+    /// Whether anything of this target entered the body `marker` names.
+    ///
+    /// A body entered where nothing named a test was entered as far as this
+    /// target is concerned: the record could not say by which of its tests, and
+    /// the answer to not knowing is that it might have been any of them.
+    #[must_use]
+    pub fn entered(&self, marker: u32) -> bool {
+        self.loose_bodies.contains(&marker)
+            || self
+                .bodies
+                .values()
+                .any(|entered| entered.contains(&marker))
+    }
+
+    /// Whether the named test of this target entered the body `marker` names.
+    #[must_use]
+    pub fn entered_by(&self, test: &str, marker: u32) -> bool {
+        self.loose_bodies.contains(&marker)
+            || self
+                .bodies
+                .get(test)
+                .is_some_and(|entered| entered.contains(&marker))
+    }
+
     /// Which of this target's tests reached `index`.
     ///
     /// A site recorded on a thread nothing names a test after is reached by

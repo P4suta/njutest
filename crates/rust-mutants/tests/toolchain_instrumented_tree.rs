@@ -22,7 +22,7 @@ use rust_mutants::cargo::{
 use rust_mutants::catalog::Catalog;
 use rust_mutants::discover::{DiscoverOptions, Input, discover};
 use rust_mutants::instrument::{
-    ACTIVE_ENV, CATALOG_ENV, STALE_CATALOG_EXIT, instrument_file, plan_file,
+    ACTIVE_ENV, CATALOG_ENV, Instrumenting, STALE_CATALOG_EXIT, instrument_file, plan_file,
 };
 use rust_mutants::rule::{Registry, Tier};
 use rust_mutants::runner::{Cancel, RunResult, Spec, run};
@@ -129,8 +129,14 @@ fn prepare(fixture: &str) -> Tree {
     for path in paths {
         let placements = plan_file(&discovery.catalog, path, &found).expect("plan");
         let source = std::fs::read(root.join(path)).expect("read");
-        let file = instrument_file(path, &source, &placements, discovery.catalog.digest())
-            .expect("instrument");
+        let file = instrument_file(&Instrumenting {
+            path,
+            source: &source,
+            placements: &placements,
+            markers: &[],
+            catalog_digest: discovery.catalog.digest(),
+        })
+        .expect("instrument");
         assert!(file.instrumented, "{path}");
         std::fs::write(root.join(path), file.text).expect("write");
     }

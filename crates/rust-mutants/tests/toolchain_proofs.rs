@@ -314,3 +314,30 @@ fn probed(fixture: &Fixture, measuring: Measuring) -> rust_mutants::session::Ses
         )
         .expect("the session prepares")
 }
+
+#[test]
+fn a_target_that_never_entered_the_body_is_discharged_without_a_coverage_build() {
+    let fixture = Fixture::copy("fixture-coverage");
+    let session = probed(
+        &fixture,
+        Measuring {
+            coverage: false,
+            touch: true,
+        },
+    );
+    let mut proofs = Vec::new();
+    for mutant in session.catalog().mutants() {
+        for one in session.route(mutant).discharged() {
+            proofs.push((one.target.clone(), one.proof));
+        }
+    }
+    assert!(
+        proofs
+            .iter()
+            .any(|(target, proof)| target == "fixture-coverage/test/upper"
+                && *proof == rust_mutants::session::BRANCH_NEVER_TAKEN),
+        "upper runs the condition of clamp and never the branch it gates, and the marker at the \
+         body's first statement says so with no coverage build at all: {proofs:?}"
+    );
+    session.close().expect("close");
+}

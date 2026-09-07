@@ -11,7 +11,7 @@
 use std::collections::BTreeSet;
 
 use rust_mutants::cargo::Message;
-use rust_mutants::instrument::instrument_file;
+use rust_mutants::instrument::{Instrumenting, instrument_file};
 use rust_mutants::rule::Tier;
 use rust_mutants::runner::Cancel;
 use rust_mutants::testkit::compile::{
@@ -53,12 +53,13 @@ const SOURCE: &str = "pub fn f(a: i32, b: i32) -> i32 {\n    let c = a + b;\n   
 #[test]
 fn an_error_inside_a_branch_belongs_to_that_mutant_and_one_outside_belongs_to_nobody() {
     let scripted = scripted(&[], &[]);
-    let file = instrument_file(
-        "src/lib.rs",
-        scripted.source(),
-        scripted.placements(),
-        scripted.catalog().digest(),
-    )
+    let file = instrument_file(&Instrumenting {
+        path: "src/lib.rs",
+        source: scripted.source(),
+        placements: scripted.placements(),
+        markers: &[],
+        catalog_digest: scripted.catalog().digest(),
+    })
     .expect("instrument");
     let branch = file.branches[2];
     let messages = vec![
@@ -88,12 +89,13 @@ fn an_error_inside_a_branch_belongs_to_that_mutant_and_one_outside_belongs_to_no
 #[test]
 fn a_warning_is_not_a_rejection() {
     let scripted = scripted(&[], &[]);
-    let file = instrument_file(
-        "src/lib.rs",
-        scripted.source(),
-        scripted.placements(),
-        scripted.catalog().digest(),
-    )
+    let file = instrument_file(&Instrumenting {
+        path: "src/lib.rs",
+        source: scripted.source(),
+        placements: scripted.placements(),
+        markers: &[],
+        catalog_digest: scripted.catalog().digest(),
+    })
     .expect("instrument");
     let branch = file.branches[0];
     let warning = diagnostic_at(
@@ -250,12 +252,13 @@ fn a_cancelled_compilation_condemns_nobody() {
 #[test]
 fn a_diagnostic_whose_primary_span_is_elsewhere_is_attributed_through_its_secondary_span() {
     let scripted = scripted(&[], &[]);
-    let file = instrument_file(
-        "src/lib.rs",
-        scripted.source(),
-        scripted.placements(),
-        scripted.catalog().digest(),
-    )
+    let file = instrument_file(&Instrumenting {
+        path: "src/lib.rs",
+        source: scripted.source(),
+        placements: scripted.placements(),
+        markers: &[],
+        catalog_digest: scripted.catalog().digest(),
+    })
     .expect("instrument");
     let branch = file.branches[1];
     let attributed = attribute(
@@ -279,12 +282,13 @@ fn a_diagnostic_whose_primary_span_is_elsewhere_is_attributed_through_its_second
 #[test]
 fn a_diagnostic_whose_edit_is_named_only_by_a_child_note_is_attributed_through_it() {
     let scripted = scripted(&[], &[]);
-    let file = instrument_file(
-        "src/lib.rs",
-        scripted.source(),
-        scripted.placements(),
-        scripted.catalog().digest(),
-    )
+    let file = instrument_file(&Instrumenting {
+        path: "src/lib.rs",
+        source: scripted.source(),
+        placements: scripted.placements(),
+        markers: &[],
+        catalog_digest: scripted.catalog().digest(),
+    })
     .expect("instrument");
     let branch = file.branches[2];
     let attributed = attribute(
@@ -303,12 +307,13 @@ fn a_diagnostic_whose_edit_is_named_only_by_a_child_note_is_attributed_through_i
 #[test]
 fn a_diagnostic_that_names_no_branch_anywhere_still_belongs_to_nobody() {
     let scripted = scripted(&[], &[]);
-    let file = instrument_file(
-        "src/lib.rs",
-        scripted.source(),
-        scripted.placements(),
-        scripted.catalog().digest(),
-    )
+    let file = instrument_file(&Instrumenting {
+        path: "src/lib.rs",
+        source: scripted.source(),
+        placements: scripted.placements(),
+        markers: &[],
+        catalog_digest: scripted.catalog().digest(),
+    })
     .expect("instrument");
     let attributed = attribute(&[file], &[diagnostic_beside("src/lib.rs", 0, 1, 999)]);
     assert!(

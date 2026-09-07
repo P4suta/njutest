@@ -132,7 +132,7 @@ impl Settings {
             verify: self.config.mutation.verify,
             coverage: self.config.mutation.coverage,
             touch: self.config.mutation.touch,
-            branch_proofs: self.config.mutation.coverage,
+            branch_proofs: self.config.mutation.coverage || self.config.mutation.touch,
             probe: self.config.mutation.probe,
             build_timeout: self.config.mutation.build_timeout,
             mutant_timeout: self.config.mutation.timeout,

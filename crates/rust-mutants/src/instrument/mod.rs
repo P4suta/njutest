@@ -22,10 +22,11 @@ use crate::flatten::flatten;
 use crate::interval::{self, Item, Node};
 use crate::span::Span;
 use crate::splice::{Splice, apply, count_lines};
+use crate::syntax::branch::Marker;
 use crate::syntax::{Form, Found, SiteHint};
 
 pub use runtime::{
-    ACTIVE_ENV, CATALOG_ENV, MODULE_STEM, RUNTIME_MARKER, STALE_CATALOG_EXIT, TOUCH_ENV,
+    ACTIVE_ENV, CATALOG_ENV, MODULE_STEM, RUNTIME_MARKER, Rendering, STALE_CATALOG_EXIT, TOUCH_ENV,
     TOUCH_UNAVAILABLE_EXIT, module_name, render,
 };
 
@@ -104,6 +105,17 @@ const fn shift(span: Span, by: u32) -> Span {
         start: span.start.saturating_add(by),
         end: span.end.saturating_add(by),
     }
+}
+
+/// What one file is rewritten with: the mutants, the shape they nest in, and the markers its branch proofs put in it.
+#[derive(Debug, Clone, Copy)]
+struct Planted<'a> {
+    /// The mutants placed in the file.
+    placements: &'a [Placement],
+    /// Which of them nest inside which, so an outer guard renders the inner ones in its own original branch.
+    forest: &'a interval::Forest<Placement>,
+    /// The markers that can be written where they are.
+    markers: &'a [Marker],
 }
 
 /// A rewritten file: its text and where every alternative landed in it.
@@ -280,16 +292,33 @@ pub fn plan_file(
     Ok(placements)
 }
 
+/// One file to instrument: its bytes, the mutants placed in it, and the markers its branch proofs put in it.
+#[derive(Debug, Clone, Copy)]
+pub struct Instrumenting<'a> {
+    /// The workspace-relative path, which names the file's own runtime module.
+    pub path: &'a str,
+    /// The pristine bytes.
+    pub source: &'a [u8],
+    /// The mutants placed in it, each behind a guard.
+    pub placements: &'a [Placement],
+    /// The markers the branch proofs put at the first statement of the bodies they name.
+    pub markers: &'a [Marker],
+    /// The catalog every guard names, which the runtime refuses to be activated under another of.
+    pub catalog_digest: &'a str,
+}
+
 /// Rewrites one file so that every placed mutant lives in it behind a guard.
 ///
 /// # Errors
 /// See [`InstrumentErrorKind`].
-pub fn instrument_file(
-    path: &str,
-    source: &[u8],
-    placements: &[Placement],
-    catalog_digest: &str,
-) -> Result<FileOutput, InstrumentError> {
+pub fn instrument_file(file: &Instrumenting<'_>) -> Result<FileOutput, InstrumentError> {
+    let Instrumenting {
+        path,
+        source,
+        placements,
+        markers,
+        catalog_digest,
+    } = *file;
     let text = std::str::from_utf8(source).map_err(|error| {
         InstrumentError::new(
             InstrumentErrorKind::SourceMismatch,
@@ -314,17 +343,26 @@ pub fn instrument_file(
     };
     file.check_placements(placements)?;
     let forest = file.forest(placements)?;
+    let markers = File::markable(markers, &forest);
 
-    let Rewritten { mut text, branches } = file.rewrite(source, placements, &forest)?;
+    let Rewritten { mut text, branches } = file.rewrite(
+        source,
+        &Planted {
+            placements,
+            forest: &forest,
+            markers: &markers,
+        },
+    )?;
     if !text.is_empty() && !text.ends_with('\n') {
         text.push('\n');
     }
-    text.push_str(&render(
-        &file.module,
+    text.push_str(&render(&Rendering {
+        module: &file.module,
         catalog_digest,
         placements,
-        file.newline(),
-    ));
+        markers: &markers,
+        newline: file.newline(),
+    }));
 
     let mut guards: Vec<Guard> = placements
         .iter()
@@ -451,12 +489,50 @@ impl File<'_> {
     }
 
     /// Applies every guard and every allow attribute to the file's bytes, and reports where each alternative landed in the result.
-    fn rewrite(
-        &self,
-        source: &[u8],
-        placements: &[Placement],
-        forest: &interval::Forest<Placement>,
-    ) -> Result<Rewritten, InstrumentError> {
+    /// The markers that can be written where they are, which is every one outside every guard's own site.
+    ///
+    /// A guard replaces its site with `if active { alternative } else {
+    /// original }`, and a marker inside that site would have to be written
+    /// into both halves rather than spliced once. A body inside a guard's site
+    /// is left unmarked instead, which costs its claim the marker and leaves
+    /// the coverage region as the premise it rests on.
+    fn markable(markers: &[Marker], forest: &interval::Forest<Placement>) -> Vec<Marker> {
+        markers
+            .iter()
+            .copied()
+            .filter(|marker| {
+                !forest
+                    .roots()
+                    .iter()
+                    .any(|root| root.span.start < marker.at && marker.at <= root.span.end)
+            })
+            .collect()
+    }
+
+    /// The call one marker becomes, in one line.
+    fn marker(&self, marker: &Marker) -> Splice {
+        Splice {
+            span: Span {
+                start: marker.at,
+                end: marker.at,
+            },
+            original: Vec::new(),
+            replacement: format!(
+                "{}{}::body({}); ",
+                "super::".repeat(usize::try_from(marker.super_depth).unwrap_or(0)),
+                self.module,
+                marker.index
+            )
+            .into_bytes(),
+        }
+    }
+
+    fn rewrite(&self, source: &[u8], planted: &Planted<'_>) -> Result<Rewritten, InstrumentError> {
+        let Planted {
+            placements,
+            forest,
+            markers,
+        } = *planted;
         let mut splices = Vec::new();
         let mut roots = Vec::new();
         for root in forest.roots() {
@@ -464,6 +540,7 @@ impl File<'_> {
             splices.push(self.splice(root.span, rendered.text.clone())?);
             roots.push((root.span, rendered));
         }
+        splices.extend(markers.iter().map(|marker| self.marker(marker)));
         splices.extend(Self::allow_splices(placements, forest.roots()));
         splices.sort_by_key(|splice| splice.span.start);
         let (rewritten, offsets) = apply(source, &splices).map_err(|error| {

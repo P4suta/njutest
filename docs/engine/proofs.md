@@ -128,8 +128,16 @@ weekly.
 | --- | --- | --- | --- |
 | guard routing | — | no test of this target reached the mutation, or only these did | the (mutant, target) pair, or every test of it the record did not name |
 | coverage routing | — | this target's measured run covered no region holding the mutation | the (mutant, target) pair |
-| `branch-never-taken` | the compiler: this mutation changes nothing outside the body the condition gates | this target's measured run covered no region beginning inside that body | the (mutant, target) pair |
+| `branch-never-taken` | the compiler: this mutation changes nothing outside the body the condition gates | nothing of this target ran the marker at that body's first statement, or its measured run covered no region beginning inside the body | the (mutant, target) pair, and the tests of a kept target that did not enter the body |
 | `never-infected` | the probe: this test ran the mutation and its value never differed | the probe log this target's own run appended to | the (mutant, target) pair |
+
+`branch-never-taken` has two premises and either will do. The instrumenter
+writes a marker at the first statement of every body a claim names — in the
+witness tree first, so the one `cargo check` that sifts the type witnesses
+sifts the markers too, and a body a call cannot go into (a `const` context,
+a body inside a guard's own site) simply carries none. The marker is exact
+where a coverage region is inferred from where regions begin, and it needs no
+coverage build. A body with no marker keeps the region as its only premise.
 
 Guard routing is the default and costs no build: the guards of the
 instrumented tree record which of a target's tests reached them on the run
@@ -151,10 +159,11 @@ The lemma is the compiler's or the probe's; the premise is always a
 measurement's. `--no-coverage --no-touch` measures nothing, so it discharges
 nothing, whatever the compiler vouched for; `--no-coverage` alone still has
 the guards, so a probe still discharges and `branch-never-taken` — whose
-premise is a coverage region — does not. A target whose profile could not be
-read, or whose guards recorded nothing this run can route by, is one the
-measurement says nothing about: it is routed to and never discharged, because
-a proof resting on its silence would rest on the measurement's failure.
+premise is a marker the guards record or a coverage region — is silent only
+where neither could be established. A target whose profile could not be read,
+or whose guards recorded nothing this run can route by, is one the measurement
+says nothing about: it is routed to and never discharged, because a proof
+resting on its silence would rest on the measurement's failure.
 
 `prove::discharges(proof, path, covered)` is the pure function of the two. A
 caller with its own coverage — `mjutest` is one — discharges with its own

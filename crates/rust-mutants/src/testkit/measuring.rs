@@ -69,13 +69,13 @@ impl Measuring {
         }
     }
 
-    /// Preparation options that measure this way, with every rule and the branch proofs the coverage build carries.
+    /// Preparation options that measure this way, with every rule and the branch proofs whichever measurement can carry.
     #[must_use]
     pub fn options(self, tier: Tier) -> PrepareOptions {
         PrepareOptions {
             tier,
             coverage: self.coverage,
-            branch_proofs: self.coverage,
+            branch_proofs: self.coverage || self.touch,
             touch: self.touch,
             ..PrepareOptions::default()
         }

@@ -11,7 +11,7 @@
 use std::collections::BTreeSet;
 use std::process::Command;
 
-use rust_mutants::instrument::{MODULE_STEM, TOUCH_ENV, render};
+use rust_mutants::instrument::{MODULE_STEM, Rendering, TOUCH_ENV, render};
 use rust_mutants::rule::Tier;
 use rust_mutants::testkit::compile::ScriptedCompile;
 use rust_mutants::touch::{self, TouchError};
@@ -28,7 +28,14 @@ fn module() -> (String, u32) {
     let placements = scripted.placements();
     let count = u32::try_from(placements.len()).expect("a small catalog");
     assert!(count >= 3, "the source yields mutants to reach: {count}");
-    (render(MODULE_STEM, CATALOG, placements, "\n"), count)
+    let rendered = render(&Rendering {
+        module: MODULE_STEM,
+        catalog_digest: CATALOG,
+        placements,
+        markers: &[],
+        newline: "\n",
+    });
+    (rendered, count)
 }
 
 /// Builds a program around the runtime, runs it, and returns what it wrote to the touch log.
@@ -121,6 +128,41 @@ fn a_touch_nothing_can_be_attributed_to_is_recorded_as_one_rather_than_dropped()
 }
 
 #[test]
+fn a_marker_records_that_control_entered_the_body_a_condition_gates() {
+    let (_, count) = module();
+    let text = ran(
+        "bodies",
+        "    let alpha = std::thread::Builder::new().name(\"alpha\".to_owned())\n\
+         \x20       .spawn(|| { __rm::active(0); __rm::body(0); __rm::body(0); })\n\
+         \x20       .expect(\"spawn\");\n\
+         \x20   alpha.join().expect(\"join\");\n\
+         \x20   let beta = std::thread::Builder::new().name(\"beta\".to_owned())\n\
+         \x20       .spawn(|| { __rm::active(0); })\n\
+         \x20       .expect(\"spawn\");\n\
+         \x20   beta.join().expect(\"join\");",
+        true,
+    );
+    let touches = touch::read(&text, CATALOG, count).expect("the log reads");
+    assert_eq!(
+        touches.tests.get("alpha"),
+        Some(&set(&[0])),
+        "both threads reached the condition"
+    );
+    assert_eq!(touches.tests.get("beta"), Some(&set(&[0])));
+    assert_eq!(
+        touches.bodies.get("alpha"),
+        Some(&set(&[0])),
+        "and one of them entered the body it gates"
+    );
+    assert_eq!(
+        touches.bodies.get("beta"),
+        None,
+        "a test that evaluated the condition and never took the branch cannot have noticed a \
+         mutation that only narrows it"
+    );
+}
+
+#[test]
 fn a_process_nothing_asked_to_record_writes_no_log_at_all() {
     let text = ran(
         "silent",
@@ -159,6 +201,15 @@ fn a_record_before_any_header_says_nothing_because_nothing_says_which_catalog_it
     assert!(matches!(
         touch::read("t\talpha\t0\n", CATALOG, 4),
         Err(TouchError::Headless { .. })
+    ));
+}
+
+#[test]
+fn a_line_of_a_kind_this_reader_does_not_know_says_nothing_at_all() {
+    let text = format!("{schema} {CATALOG}\nz\talpha\t0\n", schema = touch::SCHEMA);
+    assert!(matches!(
+        touch::read(&text, CATALOG, 4),
+        Err(TouchError::Malformed { .. })
     ));
 }
 

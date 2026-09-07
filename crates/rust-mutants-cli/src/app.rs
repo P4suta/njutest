@@ -2457,7 +2457,7 @@ fn instrumented(
     discovery: &rust_mutants::discover::Discovery,
     (path, mutant): (&str, Option<&str>),
 ) -> Result<String, CliError> {
-    use rust_mutants::instrument::{instrument_file, plan_file};
+    use rust_mutants::instrument::{Instrumenting, instrument_file, plan_file};
     use rust_mutants::workspace::SessionError;
 
     let found: Vec<rust_mutants::syntax::Found> = discovery
@@ -2472,8 +2472,14 @@ fn instrumented(
         })
     })?;
     let placements = plan_file(&discovery.catalog, path, &found).map_err(EngineError::from)?;
-    let file = instrument_file(path, &source, &placements, discovery.catalog.digest())
-        .map_err(EngineError::from)?;
+    let file = instrument_file(&Instrumenting {
+        path,
+        source: &source,
+        placements: &placements,
+        markers: &[],
+        catalog_digest: discovery.catalog.digest(),
+    })
+    .map_err(EngineError::from)?;
     let Some(prefix) = mutant else {
         return Ok(file.text);
     };

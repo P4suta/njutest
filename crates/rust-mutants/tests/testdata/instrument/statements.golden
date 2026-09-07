@@ -72,6 +72,8 @@ mod __rm {
         eager: bool,
         bits: __rm_std::vec::Vec<bool>,
         touched: __rm_std::vec::Vec<u32>,
+        entered_bits: __rm_std::vec::Vec<bool>,
+        entered: __rm_std::vec::Vec<u32>,
     }
 
     impl Seen {
@@ -83,6 +85,8 @@ mod __rm {
             };
             let mut bits = __rm_std::vec::Vec::new();
             bits.resize(TOUCH_SPAN, false);
+            let mut entered_bits = __rm_std::vec::Vec::new();
+            entered_bits.resize(TOUCH_SPAN, false);
             Seen {
                 name: match named {
                     __rm_std::option::Option::Some(name) if !eager => name,
@@ -91,6 +95,8 @@ mod __rm {
                 eager,
                 bits,
                 touched: __rm_std::vec::Vec::new(),
+                entered_bits,
+                entered: __rm_std::vec::Vec::new(),
             }
         }
 
@@ -106,22 +112,40 @@ mod __rm {
             }
         }
 
-        fn flush(&mut self) {
-            if self.touched.is_empty() {
+        fn entered_body(&mut self, index: u32) {
+            let at = index.wrapping_sub(TOUCH_BASE) as usize;
+            if at >= self.entered_bits.len() || self.entered_bits[at] {
                 return;
             }
-            let mut line = __rm_std::string::String::from("t\t");
-            line.push_str(&self.name);
-            let mut at = 0;
-            while at < self.touched.len() {
-                line.push_str(if at == 0 { "\t" } else { "," });
-                line.push_str(&__rm_std::format!("{}", self.touched[at]));
-                at += 1;
+            self.entered_bits[at] = true;
+            self.entered.push(index);
+            if self.eager || self.entered.len() >= TOUCH_BATCH {
+                self.flush();
             }
-            line.push_str("\n");
-            self.touched.clear();
-            append(&line);
         }
+
+        fn flush(&mut self) {
+            written("t", &self.name, &mut self.touched);
+            written("b", &self.name, &mut self.entered);
+        }
+    }
+
+    fn written(kind: &str, name: &str, indices: &mut __rm_std::vec::Vec<u32>) {
+        if indices.is_empty() {
+            return;
+        }
+        let mut line = __rm_std::string::String::from(kind);
+        line.push_str("\t");
+        line.push_str(name);
+        let mut at = 0;
+        while at < indices.len() {
+            line.push_str(if at == 0 { "\t" } else { "," });
+            line.push_str(&__rm_std::format!("{}", indices[at]));
+            at += 1;
+        }
+        line.push_str("\n");
+        indices.clear();
+        append(&line);
     }
 
     impl __rm_std::ops::Drop for Seen {
@@ -141,6 +165,25 @@ mod __rm {
         }
         let _ = SEEN.try_with(|seen| match seen.try_borrow_mut() {
             __rm_std::result::Result::Ok(mut seen) => seen.saw(index),
+            __rm_std::result::Result::Err(_) => (),
+        });
+    }
+
+    #[inline(always)]
+    pub(crate) fn body(index: u32) {
+        if TOUCHING.load(__rm_std::sync::atomic::Ordering::Relaxed) == TOUCH_OFF {
+            return;
+        }
+        entered(index);
+    }
+
+    #[inline(never)]
+    fn entered(index: u32) {
+        if !touching() {
+            return;
+        }
+        let _ = SEEN.try_with(|seen| match seen.try_borrow_mut() {
+            __rm_std::result::Result::Ok(mut seen) => seen.entered_body(index),
             __rm_std::result::Result::Err(_) => (),
         });
     }

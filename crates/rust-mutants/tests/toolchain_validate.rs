@@ -19,7 +19,7 @@ use rust_mutants::cargo::{
     compile,
 };
 use rust_mutants::catalog::Catalog;
-use rust_mutants::instrument::{Placement, instrument_file, plan_file};
+use rust_mutants::instrument::{Instrumenting, Placement, instrument_file, plan_file};
 use rust_mutants::rule::Tier;
 use rust_mutants::runner::Cancel;
 use rust_mutants::syntax::Selection;
@@ -48,8 +48,14 @@ impl Compile for CargoScripted {
                 .cloned()
                 .collect();
             let source = &self.sources[path];
-            let file = instrument_file(path, source, &kept, self.catalog.digest())
-                .map_err(ValidateError::from)?;
+            let file = instrument_file(&Instrumenting {
+                path,
+                source,
+                placements: &kept,
+                markers: &[],
+                catalog_digest: self.catalog.digest(),
+            })
+            .map_err(ValidateError::from)?;
             std::fs::write(self.root.join(path), &file.text).map_err(|error| {
                 ValidateError::AttemptFailed {
                     message: format!("cannot write {path}: {error}"),
