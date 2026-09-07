@@ -108,6 +108,14 @@ pub struct Build {
     pub profile: String,
     /// How many compilation jobs cargo may run at once. Zero lets cargo choose.
     pub jobs: u32,
+    /// Write debug information into what a run builds.
+    ///
+    /// Off, because a run reads what a test harness printed and never a
+    /// backtrace, and the debug information is most of what a build writes:
+    /// six gigabytes against one for this repository's own engine, every byte
+    /// of it generated, linked, and thrown away with the temporary directory.
+    /// Turn it on to attach a debugger to a snapshot `--keep-temp` preserved.
+    pub debug: bool,
 }
 
 impl Build {
@@ -122,6 +130,7 @@ impl Build {
             target: named(&self.target),
             profile: named(&self.profile),
             jobs: (self.jobs > 0).then_some(self.jobs),
+            debug: self.debug,
         }
     }
 }
@@ -814,6 +823,7 @@ version = 1
 # target = \"\"                     # target triple; empty = the host
 # profile = \"\"                    # cargo profile; empty = each command's default
 # jobs = 0                        # cargo compilation jobs; 0 = cargo decides
+# debug = false                   # write debug information; off, because nothing here reads a backtrace
 
 [mutation]
 # tier = \"{tier}\"            # {tiers}

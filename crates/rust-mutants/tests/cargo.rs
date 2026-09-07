@@ -326,6 +326,7 @@ fn compile_arguments_spell_every_build_option_once() {
             target: Some("x86_64-unknown-linux-gnu".to_owned()),
             profile: Some("release".to_owned()),
             jobs: Some(3),
+            debug: false,
         },
         ..CompileOptions::default()
     };
@@ -356,7 +357,7 @@ fn compile_arguments_spell_every_build_option_once() {
 }
 
 #[test]
-fn a_build_configured_with_nothing_adds_nothing_to_the_command() {
+fn a_build_configured_with_nothing_asks_for_nothing_but_the_bytes_nobody_reads() {
     let bare = compile_arguments(&CompileOptions::default());
     assert_eq!(
         bare,
@@ -364,7 +365,11 @@ fn a_build_configured_with_nothing_adds_nothing_to_the_command() {
             "check",
             "--workspace",
             "--all-targets",
-            "--message-format=json"
+            "--message-format=json",
+            "--config",
+            "profile.dev.debug=0",
+            "--config",
+            "profile.test.debug=0"
         ]
     );
 }
@@ -385,5 +390,54 @@ fn all_features_and_a_named_feature_are_both_spelled_because_cargo_accepts_both(
         args.iter().filter(|arg| *arg == "--features").count(),
         1,
         "every feature the run asked for is one argument, not one argument each"
+    );
+}
+
+#[test]
+fn a_build_writes_no_debug_information_unless_it_is_asked_to() {
+    use rust_mutants::cargo::{BuildConfig, CompileKind, CompileOptions, compile_arguments};
+    let plain = compile_arguments(&CompileOptions {
+        kind: CompileKind::Tests,
+        ..CompileOptions::default()
+    });
+    assert!(
+        plain
+            .windows(2)
+            .any(|pair| pair == ["--config", "profile.test.debug=0"]),
+        "the engine reads what a test harness printed and never a backtrace, so the debug \
+         information a build writes is bytes nobody reads: {plain:?}"
+    );
+    assert!(
+        plain
+            .windows(2)
+            .any(|pair| pair == ["--config", "profile.dev.debug=0"]),
+        "and a check compiles with the dev profile: {plain:?}"
+    );
+
+    let asked = compile_arguments(&CompileOptions {
+        kind: CompileKind::Tests,
+        build: BuildConfig {
+            debug: true,
+            ..BuildConfig::default()
+        },
+        ..CompileOptions::default()
+    });
+    assert!(
+        !asked.iter().any(|one| one.starts_with("profile.")),
+        "somebody who wants a debugger on a kept snapshot says so, and then nothing overrides \
+         the profile they wrote: {asked:?}"
+    );
+
+    let named = compile_arguments(&CompileOptions {
+        kind: CompileKind::Tests,
+        build: BuildConfig {
+            profile: Some("bench".to_owned()),
+            ..BuildConfig::default()
+        },
+        ..CompileOptions::default()
+    });
+    assert!(
+        !named.iter().any(|one| one.starts_with("profile.")),
+        "a profile somebody named is one they meant, and this engine does not edit it: {named:?}"
     );
 }

@@ -81,6 +81,17 @@ pub struct BuildConfig {
     pub profile: Option<String>,
     /// How many compilation jobs cargo may run at once. `None` lets cargo choose.
     pub jobs: Option<u32>,
+    /// Whether the compiler writes debug information into what it builds.
+    ///
+    /// A run reads what a test harness printed and never a backtrace, so the
+    /// debug information a build writes is bytes nobody reads — and on a real
+    /// workspace it is most of what a build writes: six gigabytes against one
+    /// for this repository's own engine. Every byte of it is generated,
+    /// linked, and written to a temporary directory that is thrown away.
+    ///
+    /// Somebody who wants a debugger on a kept snapshot asks for it, and then
+    /// nothing here overrides the profile they wrote.
+    pub debug: bool,
 }
 
 impl BuildConfig {
@@ -115,6 +126,21 @@ impl BuildConfig {
             args.push(jobs.to_string());
         }
         args
+    }
+
+    /// What tells cargo to write no debug information, when nothing asked for any.
+    ///
+    /// Only the two profiles this engine drives are named. A profile somebody
+    /// chose with `--profile` is one they meant, and editing it would be this
+    /// engine deciding something about a build it was told how to make.
+    pub(crate) fn without_debug_information(&self) -> Vec<String> {
+        if self.debug || self.profile.is_some() {
+            return Vec::new();
+        }
+        ["profile.dev.debug=0", "profile.test.debug=0"]
+            .into_iter()
+            .flat_map(|setting| ["--config".to_owned(), setting.to_owned()])
+            .collect()
     }
 }
 
@@ -155,6 +181,7 @@ pub fn compile_arguments(options: &CompileOptions) -> Vec<String> {
         args.push(target_dir.to_string_lossy().into_owned());
     }
     args.extend(options.build.arguments());
+    args.extend(options.build.without_debug_information());
     args
 }
 

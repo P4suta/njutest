@@ -321,6 +321,7 @@ jobs = 2
             target: Some("wasm32-unknown-unknown".to_owned()),
             profile: Some("release".to_owned()),
             jobs: Some(2),
+            debug: false,
         },
         "an empty name and a zero are what nobody said, not what somebody asked for"
     );

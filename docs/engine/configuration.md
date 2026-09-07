@@ -31,6 +31,7 @@ no_default_features = false    # leave the default features off
 target = ""                    # target triple; empty = the host
 profile = ""                   # cargo profile; empty = each command's default
 jobs = 0                       # cargo compilation jobs; 0 = cargo decides
+debug = false                  # write debug information; off, because nothing here reads a backtrace
 
 [mutation]
 tier = "balanced"              # balanced | strong | all
