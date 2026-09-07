@@ -77,6 +77,14 @@ opinion the differential harness holds the guards to.
   guards start 18 tests where the regions start 42 and a run with nothing
   removed starts 46; the process counts are 15 and 14, which is why the work
   ledger counts both.
+- On this repository's own engine — 5,680 mutants against 67 test targets —
+  preparing takes 490 s (one pristine build, one `cargo check` for the
+  witnesses and the markers, one instrumented build with its validation
+  rounds, and the one run of every target that is both the baseline and the
+  measurement). It removes 87.6% of the processes and **93.6% of the tests**:
+  197,949 of 3,106,960. 4,802 of the 5,680 routes are at test granularity and
+  878 at target granularity. Of the record itself, 182,816 (test, site) pairs
+  were attributed and 756 were touches nothing could be attributed to.
 - The guards are more precise than the regions, not only cheaper. Every
   fixture fate that moved when this landed moved from `survived` to
   `unreached`: `fixture-families` never calls `conditions`, and the coverage
