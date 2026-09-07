@@ -45,6 +45,9 @@ pub enum Command {
         /// Which workspace to read.
         #[command(flatten)]
         scope: Scope,
+        /// Only the candidates in this file, as a workspace-relative path.
+        #[arg(long, value_name = "PATH")]
+        file: Option<String>,
     },
     /// Ask the compiler, for every mutant, whether it renders it identically to the code it mutates.
     Equivalence {
@@ -63,6 +66,9 @@ pub enum Command {
         /// Print the catalog as one JSON document.
         #[arg(long)]
         json: bool,
+        /// Say only what the compiler refused, with its own words.
+        #[arg(long, conflicts_with = "json")]
+        rejections: bool,
     },
     /// Run the mutants and report what the tests noticed. Every accepted mutant unless one is named.
     Run {
@@ -155,12 +161,21 @@ pub enum Command {
         /// The file, as a workspace-relative path.
         #[arg(long, value_name = "PATH")]
         file: String,
+        /// Print only the guard this mutant lives behind, by identity or a prefix of one.
+        #[arg(long, value_name = "PREFIX")]
+        mutant: Option<String>,
     },
     /// Tally why places were passed over.
     WhySkipped {
         /// Which workspace to read.
         #[command(flatten)]
         scope: Scope,
+        /// Say every place in this file rather than tallying the whole tree.
+        #[arg(long, value_name = "PATH")]
+        file: Option<String>,
+        /// With `--file`, only the places on this line.
+        #[arg(long, value_name = "N", requires = "file")]
+        line: Option<u32>,
     },
     /// Write a `.rust-mutants.toml` whose every value is already the default.
     Init {
@@ -369,13 +384,13 @@ impl Command {
     #[must_use]
     pub const fn scope(&self) -> Option<&Scope> {
         match self {
-            Self::List { scope }
+            Self::List { scope, .. }
             | Self::Equivalence { scope, .. }
             | Self::Catalog { scope, .. }
             | Self::Run { scope, .. }
             | Self::Explain { scope, .. }
             | Self::Instrument { scope, .. }
-            | Self::WhySkipped { scope } => Some(scope),
+            | Self::WhySkipped { scope, .. } => Some(scope),
             Self::Init { .. }
             | Self::Doctor { .. }
             | Self::Merge { .. }

@@ -114,3 +114,76 @@ fn a_prefix_that_names_more_than_one_says_what_it_could_have_meant() {
     let complaint = String::from_utf8_lossy(&output.stderr);
     assert!(complaint.contains("11 mutants"), "{complaint}");
 }
+
+#[test]
+fn list_why_skipped_instrument_and_catalog_each_answer_about_one_thing() {
+    let fixture = Fixture::copy("fixture-simple");
+    let listed = String::from_utf8_lossy(
+        &against(&fixture, &["list", "--tier", "all", "--file", "src/lib.rs"]).stdout,
+    )
+    .into_owned();
+    assert!(
+        listed.lines().all(|line| line.contains("src/lib.rs")),
+        "a file names its own candidates: {listed}"
+    );
+
+    let places = String::from_utf8_lossy(
+        &against(
+            &fixture,
+            &[
+                "why-skipped",
+                "--tier",
+                "all",
+                "--file",
+                "src/lib.rs",
+                "--line",
+                "11",
+            ],
+        )
+        .stdout,
+    )
+    .into_owned();
+    assert!(
+        places.lines().all(|line| line.starts_with("11:")),
+        "and one line its own places: {places}"
+    );
+    assert!(places.contains("gt-to-ge"), "{places}");
+
+    let short = listed
+        .lines()
+        .find(|line| line.contains("gt-to-ge"))
+        .and_then(|line| line.split_whitespace().next())
+        .expect("a gt-to-ge mutant")
+        .to_owned();
+    let guard = String::from_utf8_lossy(
+        &against(
+            &fixture,
+            &[
+                "instrument",
+                "--tier",
+                "all",
+                "--file",
+                "src/lib.rs",
+                "--mutant",
+                &short,
+            ],
+        )
+        .stdout,
+    )
+    .into_owned();
+    assert!(guard.contains("FORM      C"), "{guard}");
+    assert!(guard.contains("::active("), "{guard}");
+
+    let refused = String::from_utf8_lossy(
+        &against(
+            &fixture,
+            &["catalog", "--tier", "all", "--rejections", "--no-verify"],
+        )
+        .stdout,
+    )
+    .into_owned();
+    assert!(
+        refused.contains("the compiler refused nothing"),
+        "and a catalog with no refusals says so rather than printing itself: {refused}"
+    );
+}

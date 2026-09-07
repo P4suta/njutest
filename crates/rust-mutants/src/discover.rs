@@ -104,6 +104,23 @@ pub struct SkipClaim {
     pub matched: bool,
 }
 
+/// One decision the walk took, and the file it took it in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Decided {
+    /// The workspace-relative path with forward slashes.
+    pub path: String,
+    /// Where the place is.
+    pub position: crate::syntax::Position,
+    /// The rule, or the reason's name for a place that is not a rule's.
+    pub rule: String,
+    /// The guard form of a candidate.
+    pub form: Option<crate::syntax::Form>,
+    /// The reason of a skip.
+    pub skip: Option<SkipReason>,
+    /// What the walk has to say about the decision beyond its reason.
+    pub note: Option<String>,
+}
+
 /// Everything discovery found.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Discovery {
@@ -115,6 +132,8 @@ pub struct Discovery {
     pub skips: Vec<Skip>,
     /// Every `rust-mutants: skip` marker of a file the run measures, in (path, line) order. A marker in a file the run passed over is a marker about nothing this run decided.
     pub claims: Vec<SkipClaim>,
+    /// Every decision the walk took, in (path, offset) order, for a reader asking about one place rather than about a tally.
+    pub decisions: Vec<Decided>,
     /// The catalog of the candidates.
     pub catalog: Catalog,
 }
@@ -226,6 +245,7 @@ pub fn discover(
     let mut candidates = Vec::new();
     let mut skips = Vec::new();
     let mut claims: Vec<SkipClaim> = Vec::new();
+    let mut decisions: Vec<Decided> = Vec::new();
     let mut configured = vec![false; options.skips.len()];
     let mut builder = Builder::new();
     for (path, package) in &assigner.generated {
@@ -264,6 +284,14 @@ pub fn discover(
         trace.discover_file(record(&discovery, &report));
         if role.is_none() {
             claimed(path, &discovery.annotations, trace, &mut claims);
+            decisions.extend(discovery.decisions.iter().map(|one| Decided {
+                path: path.clone(),
+                position: one.position,
+                rule: one.rule.clone(),
+                form: one.form,
+                skip: one.skip,
+                note: one.note.clone(),
+            }));
             for found in discovery.candidates {
                 builder.add(found.candidate.clone())?;
                 candidates.push(Located {
@@ -284,6 +312,7 @@ pub fn discover(
         candidates,
         skips,
         claims,
+        decisions,
         catalog,
     })
 }

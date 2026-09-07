@@ -312,12 +312,18 @@ fn previewed(
     discovery: &rust_mutants::discover::Discovery,
 ) -> Result<String, CliError> {
     match command {
-        cli::Command::List { .. } => Ok(report::list(
+        cli::Command::List { file, .. } => Ok(report::list(
             discovery,
             &read_sources(workspace.snapshot_root(), discovery),
+            file.as_deref(),
         )),
-        cli::Command::WhySkipped { .. } => Ok(report::why_skipped(&discovery.skips)),
-        cli::Command::Instrument { file, .. } => instrumented(workspace, discovery, file),
+        cli::Command::WhySkipped { file, line, .. } => Ok(file.as_ref().map_or_else(
+            || report::why_skipped(&discovery.skips),
+            |path| report::decisions(discovery, path, *line),
+        )),
+        cli::Command::Instrument { file, mutant, .. } => {
+            instrumented(workspace, discovery, (file, mutant.as_deref()))
+        }
         _ => Ok(String::new()),
     }
 }
@@ -346,9 +352,13 @@ fn prepared(
         session, settings, ..
     } = *prepared;
     match command {
-        cli::Command::Catalog { json, .. } => {
+        cli::Command::Catalog {
+            json, rejections, ..
+        } => {
             let text = if *json {
                 json_line(&report::document(session, &settings.prepare_options()?))
+            } else if *rejections {
+                report::rejections(session)
             } else {
                 report::catalog(session)
             };
@@ -1276,7 +1286,7 @@ fn cache(gc: bool, environment: &Environment, stdout: &mut dyn Write) -> Result<
 fn instrumented(
     workspace: &Workspace,
     discovery: &rust_mutants::discover::Discovery,
-    path: &str,
+    (path, mutant): (&str, Option<&str>),
 ) -> Result<String, CliError> {
     use rust_mutants::instrument::{instrument_file, plan_file};
     use rust_mutants::workspace::SessionError;
@@ -1295,7 +1305,40 @@ fn instrumented(
     let placements = plan_file(&discovery.catalog, path, &found).map_err(EngineError::from)?;
     let file = instrument_file(path, &source, &placements, discovery.catalog.digest())
         .map_err(EngineError::from)?;
-    Ok(file.text)
+    let Some(prefix) = mutant else {
+        return Ok(file.text);
+    };
+    let Some(guard) = file
+        .guards
+        .iter()
+        .find(|guard| guard.id.starts_with(prefix))
+    else {
+        return Ok(format!("no mutant of {path} answers to {prefix:?}\n"));
+    };
+    let landed = file
+        .branches
+        .iter()
+        .find(|branch| branch.index == guard.index)
+        .and_then(|branch| line_around(&file.text, branch.span.start));
+    Ok(format!(
+        "MUTANT    {}\nFORM      {}\nSITE      {}\n\n{}\n",
+        guard.id,
+        guard.form,
+        guard.site,
+        landed.unwrap_or_else(|| String::from("the guard left no branch in the rewrite"))
+    ))
+}
+
+/// The whole line of `text` that `offset` sits on, which is what a reader of one guard wants.
+fn line_around(text: &str, offset: u32) -> Option<String> {
+    let at = usize::try_from(offset).ok()?;
+    let before = text.get(..at)?;
+    let from = before
+        .rfind('\n')
+        .map_or(0, |newline| newline.saturating_add(1));
+    let rest = text.get(at..)?;
+    let to = at.saturating_add(rest.find('\n').unwrap_or(rest.len()));
+    text.get(from..to).map(ToOwned::to_owned)
 }
 
 fn json_line<T: serde::Serialize>(value: &T) -> String {

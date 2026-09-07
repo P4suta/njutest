@@ -38,10 +38,17 @@ pub fn position_in(source: &str, offset: u32) -> Position {
 
 /// One line per candidate: what it is, where it is, and what it does.
 #[must_use]
-pub fn list(discovery: &Discovery, sources: &BTreeMap<String, String>) -> String {
+pub fn list(
+    discovery: &Discovery,
+    sources: &BTreeMap<String, String>,
+    file: Option<&str>,
+) -> String {
     let mut text = String::new();
     for located in &discovery.candidates {
         let candidate = &located.found.candidate;
+        if file.is_some_and(|wanted| candidate.path != wanted) {
+            continue;
+        }
         let mutant = discovery
             .catalog
             .by_id(&candidate.id().unwrap_or_default())
@@ -87,6 +94,81 @@ pub fn why_skipped(skips: &[Skip]) -> String {
     }
     if text.is_empty() {
         text.push_str("nothing was passed over\n");
+    }
+    text
+}
+
+/// Every decision the walk took in one file, in source order.
+///
+/// The tally says how much each reason hid; this says what each place was, so
+/// a reader asking "why is there no mutant here" is answered about the place
+/// rather than about the file.
+#[must_use]
+pub fn decisions(discovery: &Discovery, file: &str, line: Option<u32>) -> String {
+    let mut text = String::new();
+    let Some(report) = discovery.files.iter().find(|one| one.path == file) else {
+        let written = writeln!(text, "{file} is not a file this run reads");
+        debug_assert!(written.is_ok(), "writing to a String cannot fail");
+        return text;
+    };
+    if let Some(reason) = report.whole_file {
+        let written = writeln!(
+            text,
+            "{file} was passed over whole: {}\n          {}",
+            reason.name(),
+            reason.explanation()
+        );
+        debug_assert!(written.is_ok(), "writing to a String cannot fail");
+        return text;
+    }
+    for decision in &discovery.decisions {
+        if decision.path != file {
+            continue;
+        }
+        if line.is_some_and(|wanted| decision.position.line != wanted) {
+            continue;
+        }
+        let what = match (decision.form, decision.skip) {
+            (Some(form), _) => form.letter().to_owned(),
+            (None, Some(reason)) => reason.name().to_owned(),
+            (None, None) => String::from("-"),
+        };
+        let note = decision
+            .note
+            .as_ref()
+            .map(|note| format!("  {note:?}"))
+            .unwrap_or_default();
+        let written = writeln!(
+            text,
+            "{}:{}  {:<26}  {what}{note}",
+            decision.position.line, decision.position.byte_column, decision.rule
+        );
+        debug_assert!(written.is_ok(), "writing to a String cannot fail");
+    }
+    if text.is_empty() {
+        let written = writeln!(text, "no rule targets anything there");
+        debug_assert!(written.is_ok(), "writing to a String cannot fail");
+    }
+    text
+}
+
+/// What the compiler refused, with its own words.
+#[must_use]
+pub fn rejections(session: &Session) -> String {
+    let mut text = String::new();
+    for rejection in session.rejections() {
+        let written = writeln!(
+            text,
+            "{} {}  {}\n          {}",
+            rejection.id.get(..20).unwrap_or(&rejection.id),
+            rejection.rule,
+            rejection.path,
+            rejection.diagnostic.lines().next().unwrap_or_default()
+        );
+        debug_assert!(written.is_ok(), "writing to a String cannot fail");
+    }
+    if text.is_empty() {
+        text.push_str("the compiler refused nothing\n");
     }
     text
 }
