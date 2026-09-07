@@ -552,6 +552,14 @@ impl Session {
         self.packages.get(&index).map(String::as_str)
     }
 
+    /// The packages this session was told to measure, which is where a reader looks for a test to write.
+    fn packages(&self) -> Vec<String> {
+        let mut named: Vec<String> = self.packages.values().cloned().collect();
+        named.sort_unstable();
+        named.dedup();
+        named
+    }
+
     /// The item a mutant sits in, as a reader writes it.
     #[must_use]
     pub fn item_of(&self, index: u32) -> Option<&str> {
@@ -1031,8 +1039,11 @@ impl Session {
                 silent = Some(result);
             }
         }
-        last.or(silent)
-            .ok_or_else(|| EngineError::from(SessionError::NoTargets))
+        last.or(silent).ok_or_else(|| {
+            EngineError::from(SessionError::NoTargets {
+                packages: self.packages(),
+            })
+        })
     }
 
     /// Runs one target with no mutant active: the original control.
@@ -1086,8 +1097,11 @@ impl Session {
                 silent = Some(result);
             }
         }
-        last.or(silent)
-            .ok_or_else(|| EngineError::from(SessionError::NoTargets))
+        last.or(silent).ok_or_else(|| {
+            EngineError::from(SessionError::NoTargets {
+                packages: self.packages(),
+            })
+        })
     }
 
     /// Every way the snapshot stopped matching the tree that was instrumented: what a test wrote into the tree every later mutant is measured against.
@@ -1113,7 +1127,9 @@ impl Session {
     /// The targets a request names, or every target.
     fn selected(&self, name: Option<&str>) -> Result<Vec<&TestTarget>, EngineError> {
         if self.targets.is_empty() {
-            return Err(EngineError::from(SessionError::NoTargets));
+            return Err(EngineError::from(SessionError::NoTargets {
+                packages: self.packages(),
+            }));
         }
         let Some(name) = name else {
             let answering: Vec<&TestTarget> = self
@@ -1127,7 +1143,9 @@ impl Session {
                 })
                 .collect();
             if answering.is_empty() {
-                return Err(EngineError::from(SessionError::NoTargets));
+                return Err(EngineError::from(SessionError::NoTargets {
+                    packages: self.packages(),
+                }));
             }
             return Ok(answering);
         };
@@ -1139,6 +1157,7 @@ impl Session {
         if matching.is_empty() {
             return Err(EngineError::from(SessionError::UnknownTarget {
                 name: name.to_owned(),
+                available: self.targets.iter().map(|one| one.id.clone()).collect(),
             }));
         }
         Ok(matching)
@@ -1425,7 +1444,9 @@ fn built(
         Some(&workspace.target_dir),
     );
     if targets.is_empty() {
-        return Err(EngineError::from(SessionError::NoTargets));
+        return Err(EngineError::from(SessionError::NoTargets {
+            packages: options.packages.clone(),
+        }));
     }
     let members: Vec<&crate::cargo::Package> = workspace
         .metadata
@@ -1467,7 +1488,9 @@ fn built(
         details,
     });
     if targets.is_empty() {
-        return Err(EngineError::from(SessionError::NoTargets));
+        return Err(EngineError::from(SessionError::NoTargets {
+            packages: options.packages.clone(),
+        }));
     }
     let scratch = workspace.target_dir.join("scratch");
     std::fs::create_dir_all(&scratch).map_err(|source| SessionError::WriteFailed {

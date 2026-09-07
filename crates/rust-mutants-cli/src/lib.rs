@@ -125,12 +125,25 @@ where
     match dispatched {
         Ok(code) => code,
         Err(error) if cancel.is_cancelled() => {
-            let _written = writeln!(stderr, "rust-mutants: {error}");
+            complain(stderr, &error);
             EXIT_INTERRUPTED
         }
         Err(error) => {
-            let _written = writeln!(stderr, "rust-mutants: {error}");
+            complain(stderr, &error);
             EXIT_USAGE
         }
+    }
+}
+
+/// What went wrong, and what to do about it when the code carries one.
+///
+/// A remedy is the next step rather than an explanation: a flag to pass, a
+/// component to install, a variable to unset. Where the message already names
+/// the file and the line there is nothing a remedy could add, and none is
+/// printed.
+fn complain(stderr: &mut dyn Write, error: &error::CliError) {
+    let _written = writeln!(stderr, "rust-mutants: {error}");
+    if let Some(remedy) = error.code().remedy {
+        let _written = writeln!(stderr, "          try: {remedy}");
     }
 }

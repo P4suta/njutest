@@ -142,14 +142,28 @@ pub enum SessionError {
         message: String,
     },
     /// The named target is not one this session built.
-    #[error("{}: no test target is named {name:?}", error::SESSION_UNKNOWN_TARGET.code)]
+    #[error(
+        "{}: no test target is named {name:?}; this session built {}",
+        error::SESSION_UNKNOWN_TARGET.code,
+        if available.is_empty() { String::from("none") } else { available.join(", ") }
+    )]
     UnknownTarget {
         /// The name that was asked for.
         name: String,
+        /// The targets there are, which is what a reader has to choose between.
+        available: Vec<String>,
     },
     /// The workspace has no test target at all, so nothing can be measured.
-    #[error("{}: the workspace builds no test target, so no mutant can be measured", error::SESSION_NO_TARGETS.code)]
-    NoTargets,
+    #[error(
+        "{}: the workspace builds no test target, so no mutant can be measured; {} {} selected",
+        error::SESSION_NO_TARGETS.code,
+        if packages.is_empty() { String::from("every package was") } else { packages.join(", ") },
+        if packages.len() == 1 { "was" } else { "were" }
+    )]
+    NoTargets {
+        /// The packages the run was about, which is where a reader looks for a test to write.
+        packages: Vec<String>,
+    },
     /// The instrumented tree could not be written.
     #[error("{}: cannot write {path} into the snapshot: {source}", error::SESSION_WRITE_FAILED.code)]
     WriteFailed {
@@ -170,7 +184,7 @@ impl SessionError {
             Self::VerifyFailed { .. } => error::SESSION_VERIFY_FAILED,
             Self::UnknownMutant { .. } => error::SESSION_UNKNOWN_MUTANT,
             Self::UnknownTarget { .. } => error::SESSION_UNKNOWN_TARGET,
-            Self::NoTargets => error::SESSION_NO_TARGETS,
+            Self::NoTargets { .. } => error::SESSION_NO_TARGETS,
             Self::WriteFailed { .. } => error::SESSION_WRITE_FAILED,
             Self::ReachesOutside { .. } => error::WORKSPACE_REACHES_OUTSIDE,
             Self::RootIsNotTheWorkspace { .. } => error::ROOT_IS_NOT_THE_WORKSPACE,

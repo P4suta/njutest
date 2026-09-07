@@ -25,73 +25,75 @@ first digit names an area:
 
 ## rust-mutants
 
-| Code | Meaning |
-| --- | --- |
-| `RM0001` | The caller cancelled the operation before it completed. |
-| `RM0002` | A configuration file that could not be read. |
-| `RM0003` | A configuration file that is not the document this version understands: an unknown key, a malformed value, a duration that is not a duration. |
-| `RM0004` | A configuration that parses but says something a run cannot honour: an expectation without a reason, a harness flag the engine owns, a report directory outside the workspace. |
-| `RM0005` | A configuration whose `version` is not one this release understands. |
-| `RM0006` | A process environment that already selects a mutant or names a catalog, so nothing a test process said would be about this run. |
-| `RM0007` | A stored run report or recording that is not there or cannot be read. |
-| `RM0008` | A file a command would write that is already there, and `--force` was not given. |
-| `RM0009` | A report or configuration file that could not be written. |
-| `RM0010` | A change set git could not be asked for: the tree is not a repository, or it does not know the revision. A run that could not see what changed never reads as a run that saw nothing change. |
-| `RM1001` | Snapshot options that cannot be honoured, such as a report directory that is absolute or climbs out of the source root. |
-| `RM1002` | A source root that is relative, cannot be read, or is not a directory. |
-| `RM1003` | An operating system failure while reading a tree: a directory that cannot be listed, an entry that cannot be stat'ed. |
-| `RM1004` | A symbolic link inside the source tree. Links are refused rather than followed or skipped; add an exclude pattern. |
-| `RM1005` | A Windows reparse point (junction or mount point) inside the source tree. |
-| `RM1006` | A file that is neither a directory nor a regular file: a device, a socket, a named pipe. |
-| `RM1007` | A file name that cannot survive the round trip through a slash-separated relative path, such as one containing a backslash. |
-| `RM1008` | The snapshot directory could not be created or claimed. |
-| `RM1009` | A failure while copying the tree into the snapshot. |
-| `RM1010` | A cleanup refused because the recorded directory does not look like a snapshot directory. The guard between a bug and a user's source tree. |
-| `RM1011` | A snapshot directory that survived every removal attempt, usually a file still locked by a test binary on Windows. |
-| `RM1012` | The cargo or rustc executable could not be found: an explicit path that is not a file, or a bare name absent from the search path. |
-| `RM1013` | A `-vV` banner lacks its `release:` or `host:` line, so the toolchain cannot be named. |
-| `RM1014` | A cargo command could not start, timed out, or exited unsuccessfully; cargo's own words follow. |
-| `RM1015` | `cargo metadata` printed something that is not its document. |
-| `RM1016` | A `--message-format=json` line is not a message. |
-| `RM1017` | The workspace reads code from a path outside itself, which the copy a run measures does not hold. Allow the directory with `--allow-outside`, or vendor it inside the tree. |
-| `RM1018` | `--root` names a member of a workspace rather than the workspace. A run measures a copy of what it was given, and a member on its own is not a buildable tree. |
-| `RM2001` | A dep-info file has no rule to read. |
-| `RM2002` | An artifact's dep-info file could not be read, so the files its unit compiled are unknown. |
-| `RM2003` | A source file a unit compiled could not be read. |
-| `RM2004` | A source file the compiler accepted does not parse as Rust for the engine's parser, which may lag the compiler; the file and position are named. |
-| `RM2005` | A unit compiled a file outside the workspace root, which the snapshot does not hold. |
-| `RM2006` | The candidates could not be assembled into a catalog: a display-id collision or an incoherent candidate. |
-| `RM2007` | A selected package is not a workspace member. |
-| `RM2008` | A `rust-mutants: skip` marker names no reason; a skip nobody explained is one nobody can review. |
-| `RM2009` | A `rust-mutants:` marker names a directive this release does not know, which is a typo or a newer release's word. |
-| `RM3001` | A candidate is not in the catalog being instrumented, which means the two were computed from different trees. |
-| `RM3002` | The source is not the one the candidates were discovered from. |
-| `RM3003` | Two rewrite sites partially overlap, which a syntax tree cannot produce: an engine bug rather than a fact about the program. |
-| `RM3004` | An alternative could not be folded onto one line. |
-| `RM3005` | The guards could not be applied to the file. |
-| `RM3006` | A guard would have moved a line, breaking the invariant every position depends on. |
-| `RM3007` | A mutant index collides with the runtime's sentinel values. |
-| `RM4001` | The tree does not compile before any mutant is live, so nothing about the failure is the mutants' doing. |
-| `RM4002` | The mutants a compilation failure came from could not be isolated. |
-| `RM4003` | An instrumented compilation could not be attempted at all: the tree could not be written, or the toolchain could not be reached. |
-| `RM5001` | The workspace does not compile before anything is instrumented. |
-| `RM5002` | A target fails with nothing active, so no outcome under a mutation would be about the mutation. The run type-checks the pristine tree rather than running it, so this says what it observed and not that the tree was passing before. |
-| `RM5003` | No mutant of the catalog answers to the identity or prefix given, or several do. |
-| `RM5004` | No test target of the session answers to the name given. |
-| `RM5005` | The workspace builds no test target, so no mutant can be measured. |
-| `RM5006` | The instrumented tree could not be written. |
-| `RM6001` | A coverage export could not be read. |
-| `RM6002` | The LLVM tools the toolchain ships are not installed (`rustup component add llvm-tools`). |
-| `RM6003` | `llvm-profdata` or `llvm-cov` failed. |
-| `RM6004` | A test process wrote no coverage profile at all: the build was not instrumented, or the process did not exit normally. |
-| `RM9001` | A rule name the canonical registry does not know. |
-| `RM9002` | A pattern the caller gave is not a pattern. |
-| `RM9003` | A duration the caller gave is not a duration: an empty text, a number without a unit, a unit without a number, an unknown unit, or a number no duration can hold. |
+| Code | Meaning | Remedy |
+| --- | --- | --- |
+| `RM0001` | The caller cancelled the operation before it completed. | — |
+| `RM0002` | A configuration file that could not be read. | — |
+| `RM0003` | A configuration file that is not the document this version understands: an unknown key, a malformed value, a duration that is not a duration. | — |
+| `RM0004` | A configuration that parses but says something a run cannot honour: an expectation without a reason, a harness flag the engine owns, a report directory outside the workspace. | — |
+| `RM0005` | A configuration whose `version` is not one this release understands. | — |
+| `RM0006` | A process environment that already selects a mutant or names a catalog, so nothing a test process said would be about this run. | unset the RUST_MUTANTS_ variable the message names and run again |
+| `RM0007` | A stored run report or recording that is not there or cannot be read. | — |
+| `RM0008` | A file a command would write that is already there, and `--force` was not given. | — |
+| `RM0009` | A report or configuration file that could not be written. | — |
+| `RM0010` | A change set git could not be asked for: the tree is not a repository, or it does not know the revision. A run that could not see what changed never reads as a run that saw nothing change. | run inside a git working tree, or name what to measure with --include |
+| `RM0011` | The reports given are not the parts of one catalog: a different tree, a different catalog, or two parts that hold the same mutant. | merge the parts of one run: the same tree, the same catalog, and one report per --shard |
+| `RM0012` | A source file a report names cannot be read from the root given, so the mutation cannot be shown as a change. | pass --root at the tree the run measured, or check the file out again |
+| `RM1001` | Snapshot options that cannot be honoured, such as a report directory that is absolute or climbs out of the source root. | — |
+| `RM1002` | A source root that is relative, cannot be read, or is not a directory. | — |
+| `RM1003` | An operating system failure while reading a tree: a directory that cannot be listed, an entry that cannot be stat'ed. | — |
+| `RM1004` | A symbolic link inside the source tree. Links are refused rather than followed or skipped; add an exclude pattern. | — |
+| `RM1005` | A Windows reparse point (junction or mount point) inside the source tree. | — |
+| `RM1006` | A file that is neither a directory nor a regular file: a device, a socket, a named pipe. | — |
+| `RM1007` | A file name that cannot survive the round trip through a slash-separated relative path, such as one containing a backslash. | — |
+| `RM1008` | The snapshot directory could not be created or claimed. | — |
+| `RM1009` | A failure while copying the tree into the snapshot. | — |
+| `RM1010` | A cleanup refused because the recorded directory does not look like a snapshot directory. The guard between a bug and a user's source tree. | — |
+| `RM1011` | A snapshot directory that survived every removal attempt, usually a file still locked by a test binary on Windows. | — |
+| `RM1012` | The cargo or rustc executable could not be found: an explicit path that is not a file, or a bare name absent from the search path. | — |
+| `RM1013` | A `-vV` banner lacks its `release:` or `host:` line, so the toolchain cannot be named. | — |
+| `RM1014` | A cargo command could not start, timed out, or exited unsuccessfully; cargo's own words follow. | — |
+| `RM1015` | `cargo metadata` printed something that is not its document. | — |
+| `RM1016` | A `--message-format=json` line is not a message. | — |
+| `RM1017` | The workspace reads code from a path outside itself, which the copy a run measures does not hold. Allow the directory with `--allow-outside`, or vendor it inside the tree. | --allow-outside DIR copies that directory beside the tree, or [project] allow_outside does |
+| `RM1018` | `--root` names a member of a workspace rather than the workspace. A run measures a copy of what it was given, and a member on its own is not a buildable tree. | run with --root at the workspace root the message names, and --package to narrow it |
+| `RM2001` | A dep-info file has no rule to read. | — |
+| `RM2002` | An artifact's dep-info file could not be read, so the files its unit compiled are unknown. | — |
+| `RM2003` | A source file a unit compiled could not be read. | — |
+| `RM2004` | A source file the compiler accepted does not parse as Rust for the engine's parser, which may lag the compiler; the file and position are named. | — |
+| `RM2005` | A unit compiled a file outside the workspace root, which the snapshot does not hold. | — |
+| `RM2006` | The candidates could not be assembled into a catalog: a display-id collision or an incoherent candidate. | — |
+| `RM2007` | A selected package is not a workspace member. | — |
+| `RM2008` | A `rust-mutants: skip` marker names no reason; a skip nobody explained is one nobody can review. | write the marker as `rust-mutants: skip <why this place is not worth measuring>` |
+| `RM2009` | A `rust-mutants:` marker names a directive this release does not know, which is a typo or a newer release's word. | `skip` is the only directive this release knows |
+| `RM3001` | A candidate is not in the catalog being instrumented, which means the two were computed from different trees. | — |
+| `RM3002` | The source is not the one the candidates were discovered from. | — |
+| `RM3003` | Two rewrite sites partially overlap, which a syntax tree cannot produce: an engine bug rather than a fact about the program. | — |
+| `RM3004` | An alternative could not be folded onto one line. | — |
+| `RM3005` | The guards could not be applied to the file. | — |
+| `RM3006` | A guard would have moved a line, breaking the invariant every position depends on. | — |
+| `RM3007` | A mutant index collides with the runtime's sentinel values. | — |
+| `RM4001` | The tree does not compile before any mutant is live, so nothing about the failure is the mutants' doing. | make `cargo test --no-run` pass on the tree as committed, then run again |
+| `RM4002` | The mutants a compilation failure came from could not be isolated. | — |
+| `RM4003` | An instrumented compilation could not be attempted at all: the tree could not be written, or the toolchain could not be reached. | — |
+| `RM5001` | The workspace does not compile before anything is instrumented. | make `cargo test --no-run` pass on the tree as committed, then run again |
+| `RM5002` | A target fails with nothing active, so no outcome under a mutation would be about the mutation. The run type-checks the pristine tree rather than running it, so this says what it observed and not that the tree was passing before. | [execution] skip_targets leaves that target out; --no-verify makes every result a result about instrumentation |
+| `RM5003` | No mutant of the catalog answers to the identity or prefix given, or several do. | — |
+| `RM5004` | No test target of the session answers to the name given. | — |
+| `RM5005` | The workspace builds no test target, so no mutant can be measured. | — |
+| `RM5006` | The instrumented tree could not be written. | — |
+| `RM6001` | A coverage export could not be read. | — |
+| `RM6002` | The LLVM tools the toolchain ships are not installed (`rustup component add llvm-tools`). | rustup component add llvm-tools, or run with --no-coverage |
+| `RM6003` | `llvm-profdata` or `llvm-cov` failed. | — |
+| `RM6004` | A test process wrote no coverage profile at all: the build was not instrumented, or the process did not exit normally. | — |
+| `RM9001` | A rule name the canonical registry does not know. | `rust-mutants rules` lists every rule this release knows |
+| `RM9002` | A pattern the caller gave is not a pattern. | — |
+| `RM9003` | A duration the caller gave is not a duration: an empty text, a number without a unit, a unit without a number, an unknown unit, or a number no duration can hold. | write a duration as 30s, 5m, or 1h30m |
 
 ## mjutest
 
-| Code | Meaning |
-| --- | --- |
+| Code | Meaning | Remedy |
+| --- | --- | --- |
 | `MJ0001` | The caller cancelled the operation before it completed. |
 | `MJ1001` | The configuration file could not be read. |
 | `MJ1002` | The configuration file is not the document this version understands: an unknown key, a malformed value. |

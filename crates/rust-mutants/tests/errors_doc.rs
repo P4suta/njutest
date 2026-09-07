@@ -102,3 +102,34 @@ fn every_variant_reports_a_declared_code() {
         );
     }
 }
+
+#[test]
+fn every_code_documents_the_remedy_it_carries() {
+    let path = mjutest_devkit::paths::workspace_root().join("docs/errors.md");
+    let text = std::fs::read_to_string(&path).expect("docs/errors.md");
+    let documented: std::collections::BTreeMap<String, String> = text
+        .lines()
+        .filter_map(|line| {
+            let cell = line.strip_prefix("| `")?;
+            let (code, rest) = cell.split_once("` | ")?;
+            let remedy = rest.rsplit_once(" |")?.0.rsplit_once(" | ")?.1;
+            code.starts_with("RM")
+                .then(|| (code.to_owned(), remedy.trim().to_owned()))
+        })
+        .collect();
+    let mut wrong = Vec::new();
+    for code in error_codes() {
+        let said = documented.get(code.code).map_or("", String::as_str);
+        let carried = code.remedy.unwrap_or("—");
+        if said != carried {
+            wrong.push(format!(
+                "{}: table says {said:?}, code carries {carried:?}",
+                code.code
+            ));
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "the remedy a reader is told is the remedy the code carries: {wrong:?}"
+    );
+}
