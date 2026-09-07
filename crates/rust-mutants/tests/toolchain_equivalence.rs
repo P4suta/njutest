@@ -13,6 +13,7 @@ use rust_mutants::catalog::Candidate;
 use rust_mutants::equivalence::artifacts::Identity;
 use rust_mutants::equivalence::{ProveOptions, Prover};
 use rust_mutants::runner::Cancel;
+use rust_mutants::testkit::opening::opening;
 use rust_mutants::trace::Recorder;
 use rust_mutants::workspace::OpenOptions;
 
@@ -84,14 +85,7 @@ fn a_mutation_whose_tree_does_not_build_is_not_established_for_that_reason() {
     let mut prover = Prover::open(
         fixture.root(),
         &ProveOptions {
-            open: OpenOptions {
-                cargo: Some(mjutest_devkit::paths::cargo_binary()),
-                temp_directory: fixture.temp().to_path_buf(),
-                env: std::env::vars_os().collect(),
-                locked: true,
-                offline: true,
-                ..OpenOptions::default()
-            },
+            open: opening(&mjutest_devkit::paths::cargo_binary(), fixture.temp()),
             ..ProveOptions::default()
         },
         &cancel,

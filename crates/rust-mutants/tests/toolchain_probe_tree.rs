@@ -13,19 +13,13 @@ use rust_mutants::outcome::Outcome;
 use rust_mutants::rule::Tier;
 use rust_mutants::runner::Cancel;
 use rust_mutants::session::{PrepareOptions, Request, Session};
+use rust_mutants::testkit::opening::opening;
 use rust_mutants::workspace::{OpenOptions, Workspace};
 
 fn prepared(fixture: &Fixture, cancel: &Cancel) -> Session {
     Workspace::open(
         fixture.root(),
-        OpenOptions {
-            cargo: Some(mjutest_devkit::paths::cargo_binary()),
-            temp_directory: fixture.temp().to_path_buf(),
-            env: std::env::vars_os().collect(),
-            offline: true,
-            locked: true,
-            ..OpenOptions::default()
-        },
+        opening(&mjutest_devkit::paths::cargo_binary(), fixture.temp()),
         cancel,
     )
     .expect("the workspace opens")
@@ -51,13 +45,8 @@ fn a_run_about_one_package_builds_that_package_and_type_checks_them_all() {
     let session = Workspace::open(
         fixture.root(),
         OpenOptions {
-            cargo: Some(mjutest_devkit::paths::cargo_binary()),
-            temp_directory: fixture.temp().to_path_buf(),
-            env: std::env::vars_os().collect(),
-            offline: true,
-            locked: true,
             trace: trace.clone(),
-            ..OpenOptions::default()
+            ..opening(&mjutest_devkit::paths::cargo_binary(), fixture.temp())
         },
         &cancel,
     )

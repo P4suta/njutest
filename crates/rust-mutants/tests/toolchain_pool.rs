@@ -14,6 +14,7 @@ use rust_mutants::rule::Tier;
 use rust_mutants::run::{Judged, NotRunReason, Observer, Options, Quiet, Run, run};
 use rust_mutants::runner::Cancel;
 use rust_mutants::session::{PrepareOptions, Session, Timeout};
+use rust_mutants::testkit::opening::opening;
 use rust_mutants::workspace::{OpenOptions, Workspace};
 
 fn prepared(fixture: &Fixture) -> Session {
@@ -24,14 +25,7 @@ fn prepared(fixture: &Fixture) -> Session {
 fn prepared_within(fixture: &Fixture, timeout: Timeout) -> Session {
     let workspace = Workspace::open(
         fixture.root(),
-        OpenOptions {
-            cargo: Some(mjutest_devkit::paths::cargo_binary()),
-            temp_directory: fixture.temp().to_path_buf(),
-            env: std::env::vars_os().collect(),
-            locked: true,
-            offline: true,
-            ..OpenOptions::default()
-        },
+        opening(&mjutest_devkit::paths::cargo_binary(), fixture.temp()),
         &Cancel::new(),
     )
     .expect("open");
@@ -236,13 +230,8 @@ fn every_judged_mutant_leaves_one_route_record_from_the_engine() {
     let workspace = Workspace::open(
         fixture.root(),
         OpenOptions {
-            cargo: Some(mjutest_devkit::paths::cargo_binary()),
-            temp_directory: fixture.temp().to_path_buf(),
-            env: std::env::vars_os().collect(),
-            locked: true,
-            offline: true,
             trace: recorder.clone(),
-            ..OpenOptions::default()
+            ..opening(&mjutest_devkit::paths::cargo_binary(), fixture.temp())
         },
         &Cancel::new(),
     )
@@ -295,14 +284,7 @@ fn the_equivalence_layer_asks_only_about_survivors_and_writes_identical_never_eq
         root: fixture.root(),
         options: rust_mutants::equivalence::ProveOptions {
             build: rust_mutants::cargo::BuildConfig::default(),
-            open: OpenOptions {
-                cargo: Some(mjutest_devkit::paths::cargo_binary()),
-                temp_directory: fixture.temp().to_path_buf(),
-                env: std::env::vars_os().collect(),
-                locked: true,
-                offline: true,
-                ..OpenOptions::default()
-            },
+            open: opening(&mjutest_devkit::paths::cargo_binary(), fixture.temp()),
             timeout: None,
         },
     };

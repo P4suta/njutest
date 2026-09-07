@@ -17,7 +17,8 @@ use rust_mutants::rule::Tier;
 use rust_mutants::runner::Cancel;
 use rust_mutants::session::{Request, Session};
 use rust_mutants::testkit::measuring::Measuring;
-use rust_mutants::workspace::{OpenOptions, Workspace};
+use rust_mutants::testkit::opening::opening;
+use rust_mutants::workspace::Workspace;
 
 fn prepared(fixture: &Fixture, coverage: bool) -> Session {
     measuring(
@@ -34,14 +35,7 @@ fn prepared(fixture: &Fixture, coverage: bool) -> Session {
 fn measuring(fixture: &Fixture, measuring: Measuring) -> Session {
     let workspace = Workspace::open(
         fixture.root(),
-        OpenOptions {
-            cargo: Some(mjutest_devkit::paths::cargo_binary()),
-            temp_directory: fixture.temp().to_path_buf(),
-            env: std::env::vars_os().collect(),
-            locked: true,
-            offline: true,
-            ..OpenOptions::default()
-        },
+        opening(&mjutest_devkit::paths::cargo_binary(), fixture.temp()),
         &Cancel::new(),
     )
     .expect("open");
@@ -207,14 +201,7 @@ fn a_configuration_nobody_can_parse_is_cargos_own_refusal_and_names_the_file() {
     fixture.write(".cargo/config.toml", b"[build\nrustflags = ]\n");
     let opened = Workspace::open(
         fixture.root(),
-        OpenOptions {
-            cargo: Some(mjutest_devkit::paths::cargo_binary()),
-            temp_directory: fixture.temp().to_path_buf(),
-            env: std::env::vars_os().collect(),
-            locked: true,
-            offline: true,
-            ..OpenOptions::default()
-        },
+        opening(&mjutest_devkit::paths::cargo_binary(), fixture.temp()),
         &Cancel::new(),
     );
     let error = opened.expect_err("a refusal");

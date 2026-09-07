@@ -13,21 +13,15 @@ use rust_mutants::rule::Tier;
 use rust_mutants::runner::Cancel;
 use rust_mutants::session::PrepareOptions;
 use rust_mutants::testkit::measuring::Measuring;
-use rust_mutants::workspace::{OpenOptions, Workspace};
+use rust_mutants::testkit::opening::opening;
+use rust_mutants::workspace::Workspace;
 
 /// A prepared session over `fixture`, measuring coverage or not.
 fn prepared(fixture: &Fixture, coverage: bool) -> rust_mutants::session::Session {
     let cancel = Cancel::new();
     let workspace = Workspace::open(
         fixture.root(),
-        OpenOptions {
-            cargo: Some(mjutest_devkit::paths::cargo_binary()),
-            temp_directory: fixture.temp().to_path_buf(),
-            env: std::env::vars_os().collect(),
-            offline: true,
-            locked: true,
-            ..OpenOptions::default()
-        },
+        opening(&mjutest_devkit::paths::cargo_binary(), fixture.temp()),
         &cancel,
     )
     .expect("the workspace opens");
@@ -50,14 +44,7 @@ fn the_compiler_vouches_for_a_condition_of_primitives_and_refuses_the_rest() {
     let cancel = Cancel::new();
     let workspace = Workspace::open(
         fixture.root(),
-        OpenOptions {
-            cargo: Some(mjutest_devkit::paths::cargo_binary()),
-            temp_directory: fixture.temp().to_path_buf(),
-            env: std::env::vars_os().collect(),
-            offline: true,
-            locked: true,
-            ..OpenOptions::default()
-        },
+        opening(&mjutest_devkit::paths::cargo_binary(), fixture.temp()),
         &cancel,
     )
     .expect("the workspace opens");
@@ -118,14 +105,7 @@ fn a_witnessed_tree_is_put_back_before_anything_is_instrumented() {
     let cancel = Cancel::new();
     let workspace = Workspace::open(
         fixture.root(),
-        OpenOptions {
-            cargo: Some(mjutest_devkit::paths::cargo_binary()),
-            temp_directory: fixture.temp().to_path_buf(),
-            env: std::env::vars_os().collect(),
-            offline: true,
-            locked: true,
-            ..OpenOptions::default()
-        },
+        opening(&mjutest_devkit::paths::cargo_binary(), fixture.temp()),
         &cancel,
     )
     .expect("the workspace opens");
@@ -293,14 +273,7 @@ fn probed(fixture: &Fixture, measuring: Measuring) -> rust_mutants::session::Ses
     let cancel = Cancel::new();
     let workspace = Workspace::open(
         fixture.root(),
-        OpenOptions {
-            cargo: Some(mjutest_devkit::paths::cargo_binary()),
-            temp_directory: fixture.temp().to_path_buf(),
-            env: std::env::vars_os().collect(),
-            offline: true,
-            locked: true,
-            ..OpenOptions::default()
-        },
+        opening(&mjutest_devkit::paths::cargo_binary(), fixture.temp()),
         &cancel,
     )
     .expect("the workspace opens");

@@ -17,19 +17,13 @@ use rust_mutants::outcome::Outcome;
 use rust_mutants::rule::Tier;
 use rust_mutants::runner::Cancel;
 use rust_mutants::session::{PrepareOptions, Request, Session};
+use rust_mutants::testkit::opening::opening;
 use rust_mutants::workspace::{OpenOptions, Workspace};
 
 fn open(fixture: &Fixture) -> Workspace {
     Workspace::open(
         fixture.root(),
-        OpenOptions {
-            cargo: Some(mjutest_devkit::paths::cargo_binary()),
-            temp_directory: fixture.temp().to_path_buf(),
-            env: std::env::vars_os().collect(),
-            locked: true,
-            offline: true,
-            ..OpenOptions::default()
-        },
+        opening(&mjutest_devkit::paths::cargo_binary(), fixture.temp()),
         &Cancel::new(),
     )
     .expect("open")
@@ -306,13 +300,8 @@ fn keeping_the_temporary_directories_preserves_them_and_says_which() {
     let workspace = Workspace::open(
         fixture.root(),
         OpenOptions {
-            cargo: Some(mjutest_devkit::paths::cargo_binary()),
-            temp_directory: fixture.temp().to_path_buf(),
-            env: std::env::vars_os().collect(),
-            locked: true,
-            offline: true,
             keep_temp: true,
-            ..OpenOptions::default()
+            ..opening(&mjutest_devkit::paths::cargo_binary(), fixture.temp())
         },
         &Cancel::new(),
     )
@@ -333,13 +322,8 @@ fn the_trace_says_what_every_phase_did() {
     let workspace = Workspace::open(
         fixture.root(),
         OpenOptions {
-            cargo: Some(mjutest_devkit::paths::cargo_binary()),
-            temp_directory: fixture.temp().to_path_buf(),
-            env: std::env::vars_os().collect(),
-            locked: true,
-            offline: true,
             trace: recorder.clone(),
-            ..OpenOptions::default()
+            ..opening(&mjutest_devkit::paths::cargo_binary(), fixture.temp())
         },
         &Cancel::new(),
     )
@@ -513,13 +497,8 @@ fn the_trace_of_a_probed_and_covered_run_names_every_layer() {
     let workspace = Workspace::open(
         fixture.root(),
         OpenOptions {
-            cargo: Some(mjutest_devkit::paths::cargo_binary()),
-            temp_directory: fixture.temp().to_path_buf(),
-            env: std::env::vars_os().collect(),
-            locked: true,
-            offline: true,
             trace: recorder.clone(),
-            ..OpenOptions::default()
+            ..opening(&mjutest_devkit::paths::cargo_binary(), fixture.temp())
         },
         &Cancel::new(),
     )
