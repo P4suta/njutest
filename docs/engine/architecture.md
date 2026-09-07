@@ -233,8 +233,14 @@ costs one line on standard error and never the command.
 
 ### What a run says while it happens
 
-`--ui plain` writes one line per phase as preparing finishes it, one line per
-mutant as the run judges it, and the tally every ten and at the end.
+`--ui plain` writes one line per phase **as preparing reaches it**, one line
+per mutant as the run judges it, and the tally every ten and at the end.
+Preparing is most of a long run — the snapshot, the check, the measurement,
+the instrumented build — so the work runs on a thread of its own and the
+calling thread writes what the recorder says while it waits. A reader shown
+nothing until preparing is over cannot tell a slow run from a hung one, which
+is the one thing a progress display is for. `--json` says the same thing as
+`phase-start` and `phase-end` lines, at the same moment.
 `--ui quiet` writes none of them and the summary all the same. `--ui auto`
 is what a run without the flag gets, and is `plain` until there is a renderer
 that overwrites in place.

@@ -257,3 +257,36 @@ pub fn phases(events: &Receiver<Event>) -> String {
     }
     text
 }
+
+/// How long the display waits for the next thing to say before looking again at whether there will be one.
+const LOOKING: Duration = Duration::from_millis(200);
+
+/// Writes each phase as it ends, for as long as `working` says there is work.
+///
+/// Preparing is most of a long run — the snapshot, the check, the measurement,
+/// the instrumented build — and a reader who is shown none of it until it is
+/// over cannot tell a slow run from a hung one. That is the one thing a
+/// progress display is for, so it is written as it happens rather than
+/// collected and printed afterwards.
+///
+/// Nothing here can fail the run: the display reads a channel the recorder
+/// writes to and stops when it is told the work is done, whatever it has or
+/// has not seen ([ADR 0002](../../../docs/adr/0002-trace-is-not-evidence.md)).
+pub fn watch(events: &Receiver<Event>, stream: &mut dyn Write, working: &dyn Fn() -> bool) {
+    loop {
+        match events.recv_timeout(LOOKING) {
+            Ok(event) => {
+                if let Some(line) = phase_line(&event) {
+                    let _written = stream.write_all(line.as_bytes());
+                    let _flushed = stream.flush();
+                }
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                if !working() {
+                    return;
+                }
+            }
+        }
+    }
+}

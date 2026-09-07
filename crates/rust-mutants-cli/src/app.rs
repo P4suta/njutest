@@ -257,6 +257,71 @@ fn remembered_measurements(command: &cli::Command, environment: &Environment) ->
     )
 }
 
+/// What a command says while it is preparing, if anything.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Displayed {
+    /// Nothing: the command has no display, so preparing runs on the calling thread as before.
+    Nothing,
+    /// The lines a person reads.
+    Lines,
+    /// One object per line, for a program.
+    Stream,
+}
+
+impl Displayed {
+    /// What this command says while it prepares.
+    const fn of(command: &cli::Command) -> Self {
+        if streaming(command) {
+            return Self::Stream;
+        }
+        if watching(command) {
+            return Self::Lines;
+        }
+        Self::Nothing
+    }
+}
+
+/// Prepares the tree, saying what it is doing while it does it.
+///
+/// Preparing is most of a long run and a reader who is shown none of it until
+/// it is over cannot tell a slow run from a hung one. The work runs on a
+/// thread of its own so the display can write each phase as the recorder
+/// reaches it; the display is what the calling thread does while it waits, so
+/// nothing about who owns the output stream changes.
+///
+/// A command with no display prepares on the calling thread exactly as before.
+fn preparing(
+    workspace: Workspace,
+    options: &session::PrepareOptions,
+    displayed: Displayed,
+    watching: (
+        &std::sync::mpsc::Receiver<rust_mutants::trace::Event>,
+        &mut dyn Write,
+        &Cancel,
+    ),
+) -> Result<Session, CliError> {
+    let (phases, stdout, cancel) = watching;
+    if displayed == Displayed::Nothing {
+        return Ok(workspace.prepare(options, cancel)?);
+    }
+    let prepared = std::thread::scope(|scope| {
+        let working = scope.spawn(|| workspace.prepare(options, cancel));
+        let alive = || !working.is_finished();
+        match displayed {
+            Displayed::Lines => crate::ui::watch(phases, stdout, &alive),
+            Displayed::Stream => crate::stream::watch(phases, stdout, &alive),
+            Displayed::Nothing => {}
+        }
+        working.join()
+    });
+    match prepared {
+        Ok(session) => Ok(session?),
+        Err(_panicked) => Err(CliError::ReportMissing {
+            message: "preparing the tree stopped without saying why".to_owned(),
+        }),
+    }
+}
+
 /// Whether this command writes the run as a stream, which opens before anything is prepared.
 const fn streaming(command: &cli::Command) -> bool {
     matches!(
@@ -356,7 +421,12 @@ fn measured(
                     report::selection_document(&options),
                 );
             }
-            let session = workspace.prepare(&options, cancel)?;
+            let session = preparing(
+                workspace,
+                &options,
+                Displayed::of(command),
+                (phases, stdout, cancel),
+            )?;
             let code = prepared(
                 command,
                 &Prepared {

@@ -94,6 +94,12 @@ outcome established under one compiler could be reused under another. Every
 record written before this release stops answering once, and after that a
 partial edit costs a partial cache rather than all of it.
 
+**A run says what it is preparing while it prepares it.** The phase lines used
+to be collected and printed once preparing was over, which on a real workspace
+is minutes of silence — and preparing is where a long run spends most of its
+time. They are written as each phase ends now, for `--ui plain` and for
+`--json` alike.
+
 **A run builds without debug information.** Nothing here reads a backtrace —
 a verdict comes from what the test harness printed — and the debug information
 is most of what a build writes: **6.6 GB against 1.1 GB** for this

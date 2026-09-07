@@ -50,6 +50,46 @@ pub fn started(
     );
 }
 
+/// How long the writer waits for the next line before looking again at whether there will be one.
+const LOOKING: Duration = Duration::from_millis(200);
+
+/// Writes each phase as it ends, for as long as `working` says there is work.
+///
+/// The same reason as the display a person reads: a consumer shown nothing
+/// until preparing is over cannot tell a slow run from a hung one. The
+/// difference is only what the lines look like.
+pub fn watch(events: &Receiver<Event>, stream: &mut dyn Write, working: &dyn Fn() -> bool) {
+    loop {
+        match events.recv_timeout(LOOKING) {
+            Ok(event) => {
+                if let Some(line) = phase_of(&event) {
+                    say(stream, &line);
+                }
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                if !working() {
+                    return;
+                }
+            }
+        }
+    }
+}
+
+/// One phase event as a line of the stream, when it is one.
+fn phase_of(event: &Event) -> Option<Line> {
+    match &event.payload {
+        Payload::PhaseStart { phase } => Some(Line::PhaseStart {
+            phase: phase.name.clone(),
+        }),
+        Payload::PhaseEnd { phase } => Some(Line::PhaseEnd {
+            phase: phase.name.clone(),
+            duration_ms: phase.duration_ms.unwrap_or_default(),
+        }),
+        _ => None,
+    }
+}
+
 /// The lines a run writes while it is happening.
 #[expect(
     missing_debug_implementations,

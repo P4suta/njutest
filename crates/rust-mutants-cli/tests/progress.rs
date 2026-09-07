@@ -1,0 +1,82 @@
+// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! What a run says while it is still preparing.
+//!
+//! Preparing is most of a long run — the snapshot, the check, the measurement,
+//! the instrumented build — and a reader who is shown none of it until it is
+//! over cannot tell a slow run from a hung one. These hold the display to
+//! writing each phase as it arrives rather than collecting them and printing
+//! the lot at the end.
+
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
+
+use rust_mutants::trace::{Recorder, Sink};
+
+/// A recorder whose events arrive on `receiver`, as the command line builds one for a display.
+fn watched() -> (
+    Recorder,
+    std::sync::mpsc::Receiver<rust_mutants::trace::Event>,
+) {
+    let (sender, receiver) = std::sync::mpsc::channel();
+    (
+        Recorder::wall(Sink::Channel(rust_mutants::trace::ChannelSink::new(sender))),
+        receiver,
+    )
+}
+
+#[test]
+fn a_phase_that_ended_is_written_before_the_work_that_follows_it_is_done() {
+    let (recorder, events) = watched();
+    let working = AtomicBool::new(true);
+    let mut written: Vec<u8> = Vec::new();
+    std::thread::scope(|scope| {
+        let doing = scope.spawn(|| {
+            let open = recorder.phase("open");
+            open.end();
+            let pristine = recorder.phase("pristine");
+            pristine.end();
+            // The work goes on after the phases the reader is waiting to hear about.
+            std::thread::sleep(Duration::from_millis(120));
+            working.store(false, Ordering::SeqCst);
+        });
+        rust_mutants_cli::ui::watch(&events, &mut written, &|| working.load(Ordering::SeqCst));
+        doing.join().expect("the work finishes");
+    });
+    let text = String::from_utf8(written).expect("the display writes text");
+    assert!(
+        text.lines().any(|line| line.starts_with("open")),
+        "the first phase is the first thing a reader hears: {text}"
+    );
+    assert!(
+        text.lines().any(|line| line.starts_with("pristine")),
+        "and so is the next one: {text}"
+    );
+}
+
+#[test]
+fn a_display_that_is_told_the_work_is_over_stops_looking() {
+    let (recorder, events) = watched();
+    let phase = recorder.phase("open");
+    phase.end();
+    let mut written: Vec<u8> = Vec::new();
+    rust_mutants_cli::ui::watch(&events, &mut written, &|| false);
+    let text = String::from_utf8(written).expect("the display writes text");
+    assert!(
+        text.lines().any(|line| line.starts_with("open")),
+        "what had already arrived is still written: {text}"
+    );
+}
+
+#[test]
+fn a_display_with_nothing_to_say_says_nothing_and_returns() {
+    let (recorder, events) = watched();
+    drop(recorder);
+    let mut written: Vec<u8> = Vec::new();
+    rust_mutants_cli::ui::watch(&events, &mut written, &|| true);
+    assert!(
+        written.is_empty(),
+        "a recorder that is gone leaves a display with nothing to wait for"
+    );
+}
