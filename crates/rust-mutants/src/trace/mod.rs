@@ -16,7 +16,7 @@ use sha2::{Digest as _, Sha256};
 
 pub use event::{
     AttributionRecord, BisectRecord, BuildRecord, CacheRecord, DischargeRecord, DiscoverFileRecord,
-    EVERY_TYPE, Event, EvidenceRecord, ExecRecord, IdenticalRecord, InstrumentRecord,
+    EVERY_TYPE, Event, EvidenceRecord, ExecRecord, IdenticalRecord, InstrumentRecord, KeptRecord,
     MutantExecRecord, NoteRecord, OpenRecord, Payload, PhaseRecord, ProbeExecRecord, RouteRecord,
     RunRecord, SCHEMA, SelectRecord, SiteRecord, SkipClaimRecord, SkipCount, SnapshotRecord,
     SweepRecord, TargetRecord, ValidateRoundRecord, VerifyRecord, WitnessRecord,
@@ -284,6 +284,11 @@ impl Recorder {
     /// Records one branch claim put to the compiler.
     pub fn witness(&self, record: WitnessRecord) {
         self.emit(Payload::Witness { witness: record });
+    }
+
+    /// Records one directory the run kept rather than removed.
+    pub fn kept(&self, record: KeptRecord) {
+        self.emit(Payload::Kept { kept: record });
     }
 
     /// Records one `rust-mutants: skip` marker, and whether it hid anything.

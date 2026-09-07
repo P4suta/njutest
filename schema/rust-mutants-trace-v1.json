@@ -968,6 +968,52 @@
         "timestamp",
         "elapsed_ms",
         "type",
+        "kept"
+      ],
+      "properties": {
+        "seq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "timestamp": {
+          "type": "string",
+          "minLength": 1
+        },
+        "elapsed_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "type": {
+          "const": "kept"
+        },
+        "kept": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "path",
+            "run_id"
+          ],
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "run_id": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "seq",
+        "timestamp",
+        "elapsed_ms",
+        "type",
         "route"
       ],
       "properties": {

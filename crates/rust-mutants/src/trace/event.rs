@@ -14,7 +14,7 @@ pub const SCHEMA: &str = "rust-mutants-trace-v1";
 /// understands whole, and the schema under `schema/` is held to this list by a
 /// test: a type added to one and not the other is a recording no consumer can
 /// validate.
-pub const EVERY_TYPE: [&str; 23] = [
+pub const EVERY_TYPE: [&str; 24] = [
     "run-start",
     "phase-start",
     "phase-end",
@@ -35,6 +35,7 @@ pub const EVERY_TYPE: [&str; 23] = [
     "select",
     "identical",
     "evidence",
+    "kept",
     "mutant-exec",
     "note",
     "run-end",
@@ -136,6 +137,11 @@ pub enum Payload {
         /// The record.
         claim: SkipClaimRecord,
     },
+    /// A directory the run would have removed was kept, because it was asked to keep it.
+    Kept {
+        /// The record.
+        kept: KeptRecord,
+    },
     /// How one mutant's targets were chosen, and which of them ran.
     Route {
         /// The record.
@@ -197,6 +203,7 @@ impl Payload {
             Self::Verify { .. } => "verify",
             Self::ProbeExec { .. } => "probe-exec",
             Self::SkipClaim { .. } => "skip-claim",
+            Self::Kept { .. } => "kept",
             Self::Witness { .. } => "witness",
             Self::Route { .. } => "route",
             Self::Cache { .. } => "cache",
@@ -483,6 +490,15 @@ pub struct WitnessRecord {
     /// The first line of what refused it, when one did.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub diagnostic: Option<String>,
+}
+
+/// One directory a run was asked to keep rather than remove.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KeptRecord {
+    /// The directory, as an absolute path.
+    pub path: String,
+    /// The run that kept it, which is what a reader looks it up by.
+    pub run_id: String,
 }
 
 /// One `rust-mutants: skip` marker, and whether it hid anything.

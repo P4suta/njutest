@@ -134,6 +134,9 @@ pub enum Command {
         /// Prepare and verify, then say what a run would cost, without executing a mutant.
         #[arg(long, conflicts_with_all = ["mutant", "json"])]
         dry_run: bool,
+        /// Name this run, which is what its report directory is called. Letters, digits, `.`, `_` and `-`.
+        #[arg(long, value_name = "NAME", conflicts_with = "mutant")]
+        run_id: Option<String>,
         /// Arguments for the test harness itself.
         #[arg(last = true, value_name = "ARGS")]
         args: Vec<String>,
@@ -186,6 +189,18 @@ pub enum Command {
         #[arg(long)]
         force: bool,
     },
+    /// Put one finding back to the tests, from what a stored run said about it.
+    Replay {
+        /// Which workspace to read.
+        #[command(flatten)]
+        scope: Scope,
+        /// The mutant, by identity or by any prefix that names exactly one.
+        #[arg(value_name = "PREFIX")]
+        mutant: String,
+        /// The run to read it from. The newest when none is named.
+        #[arg(long, value_name = "RUN")]
+        run: Option<String>,
+    },
     /// Say what a run would find in this environment: the toolchain, the configuration, the temporary directory.
     Doctor {
         /// The workspace root. Defaults to the working directory.
@@ -198,8 +213,14 @@ pub enum Command {
     /// Combine the reports of the parts of one catalog into the report the whole would have written.
     Merge {
         /// The reports to combine, one per part.
-        #[arg(value_name = "REPORT", required = true)]
+        #[arg(value_name = "REPORT", required_unless_present = "runs")]
         reports: Vec<PathBuf>,
+        /// The workspace root whose report directory the parts are under.
+        #[arg(long, value_name = "DIR")]
+        root: Option<PathBuf>,
+        /// The runs to combine, by name or as a glob against the report directory.
+        #[arg(long, value_name = "IDS", value_delimiter = ',')]
+        runs: Vec<String>,
         /// Write the combined report here rather than to standard output.
         #[arg(long, value_name = "FILE")]
         output: Option<PathBuf>,
@@ -230,9 +251,24 @@ pub enum Command {
     },
     /// Say what the engine left in the temporary directory, and remove what no run still owns.
     Cache {
-        /// Remove every abandoned snapshot and target directory.
+        /// The workspace root, whose report directory holds the ledger of what was kept.
+        #[arg(long, value_name = "DIR")]
+        root: Option<PathBuf>,
+        /// Remove every abandoned snapshot, and the build caches nothing owns.
         #[arg(long)]
         gc: bool,
+        /// With `--gc`, remove every build cache no live run has locked, not only the unowned ones.
+        #[arg(long, requires = "gc")]
+        all: bool,
+        /// With `--gc`, remove the directories a run was asked to keep, too.
+        #[arg(long, requires = "gc")]
+        kept: bool,
+        /// Empty the store of what earlier runs established, and say how much was in it.
+        #[arg(long, conflicts_with = "gc")]
+        clear_outcomes: bool,
+        /// Read and write the store under this directory rather than the user's cache directory.
+        #[arg(long, value_name = "DIR")]
+        cache_dir: Option<PathBuf>,
     },
 }
 
@@ -390,6 +426,7 @@ impl Command {
             | Self::Run { scope, .. }
             | Self::Explain { scope, .. }
             | Self::Instrument { scope, .. }
+            | Self::Replay { scope, .. }
             | Self::WhySkipped { scope, .. } => Some(scope),
             Self::Init { .. }
             | Self::Doctor { .. }
@@ -404,10 +441,11 @@ impl Command {
     #[must_use]
     pub const fn root(&self) -> Option<&PathBuf> {
         match self {
-            Self::Init { root, .. } | Self::Doctor { root, .. } | Self::Report { root, .. } => {
-                root.as_ref()
-            }
-            Self::Cache { .. } | Self::Merge { .. } => None,
+            Self::Init { root, .. }
+            | Self::Doctor { root, .. }
+            | Self::Report { root, .. }
+            | Self::Cache { root, .. }
+            | Self::Merge { root, .. } => root.as_ref(),
             _ => match self.scope() {
                 Some(scope) => scope.root.as_ref(),
                 None => None,

@@ -548,6 +548,10 @@ fn one_of_each_measurement(recorder: &Recorder) {
         reason: "the bound is the caller's".to_owned(),
         matched: true,
     });
+    recorder.kept(rust_mutants::trace::KeptRecord {
+        path: "/tmp/rust-mutants-snap-1".to_owned(),
+        run_id: "20260101T000000000Z".to_owned(),
+    });
     recorder.mutant_exec(rust_mutants::trace::MutantExecRecord {
         id: "b".repeat(64),
         index: 1,

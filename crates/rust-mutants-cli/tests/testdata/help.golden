@@ -18,6 +18,7 @@ Commands:
   instrument   Print one file as the engine rewrites it, guards and runtime included
   why-skipped  Tally why places were passed over
   init         Write a `.rust-mutants.toml` whose every value is already the default
+  replay       Put one finding back to the tests, from what a stored run said about it
   doctor       Say what a run would find in this environment: the toolchain, the configuration, the
                temporary directory
   merge        Combine the reports of the parts of one catalog into the report the whole would have

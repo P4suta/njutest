@@ -107,6 +107,7 @@ const fn named(command: &cli::Command) -> &'static str {
         cli::Command::List { .. } => "list",
         cli::Command::Catalog { .. } => "catalog",
         cli::Command::Explain { .. } => "explain",
+        cli::Command::Replay { .. } => "replay",
         cli::Command::Instrument { .. } => "instrument",
         cli::Command::WhySkipped { .. } => "why-skipped",
         cli::Command::Equivalence { .. } => "equivalence",

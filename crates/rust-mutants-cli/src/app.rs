@@ -82,8 +82,35 @@ pub fn dispatch(
             environment,
             stdout,
         ),
-        cli::Command::Cache { gc } => cache(*gc, environment, stdout),
-        cli::Command::Merge { reports, output } => merge(reports, output.as_deref(), stdout),
+        cli::Command::Cache {
+            root,
+            gc,
+            all,
+            kept,
+            clear_outcomes,
+            cache_dir,
+        } => cache(
+            &Sweeping {
+                root: root.as_deref(),
+                gc: *gc,
+                all: *all,
+                kept: *kept,
+                clear_outcomes: *clear_outcomes,
+                cache_dir: cache_dir.as_deref(),
+            },
+            environment,
+            stdout,
+        ),
+        cli::Command::Merge {
+            reports,
+            root,
+            runs,
+            output,
+        } => merge(
+            &parts(reports, root.as_deref(), runs, environment)?,
+            output.as_deref(),
+            stdout,
+        ),
         cli::Command::Trace { command } => trace::read(command, environment, stdout),
         _ => workspace_command(
             command,
@@ -125,7 +152,7 @@ fn workspace_command(
     };
     let settings = Settings::resolve(scope, environment)?;
     let started = Timestamp::now();
-    let id = run_id(started);
+    let id = named(command, started)?;
     let (sender, phases) = std::sync::mpsc::channel();
     let recorder = trace::recorder(
         &trace::Recording {
@@ -250,10 +277,33 @@ fn measured(
                 cancel,
                 stdout,
             );
-            session.close()?;
+            let kept = session.close()?;
+            remember(settings, id, &kept, recorder);
             code
         }
     }
+}
+
+/// Writes down what a run kept, so a later command can find it and a later sweep can leave it alone.
+///
+/// A recording never fails a run and neither does this: a ledger that could
+/// not be written costs the next `cache` its list, and nothing else.
+fn remember(
+    settings: &Settings,
+    run_id: &str,
+    kept: &[PathBuf],
+    recorder: &rust_mutants::trace::Recorder,
+) {
+    if kept.is_empty() {
+        return;
+    }
+    for path in kept {
+        recorder.kept(rust_mutants::trace::KeptRecord {
+            path: path.display().to_string(),
+            run_id: run_id.to_owned(),
+        });
+    }
+    let _written = crate::kept::Ledger::record(&settings.report_directory(), run_id, kept);
 }
 
 /// The revision a change set is computed against, when the command line asked for one at all.
@@ -367,6 +417,9 @@ fn prepared(
         }
         cli::Command::Explain { mutant, json, .. } => {
             fresh_explain(prepared, mutant, *json, stdout)
+        }
+        cli::Command::Replay { mutant, run, .. } => {
+            replay(prepared, (mutant, run.as_deref()), cancel, stdout)
         }
         cli::Command::Run {
             mutant,
@@ -792,6 +845,65 @@ fn estimate(session: &Session, filter: &run::Filter) -> String {
     text
 }
 
+/// One finding, put back to the tests exactly as the run that found it did.
+///
+/// What a replay adds over `run --mutant` is the run's own answer: the target
+/// and the test that noticed it, read out of the stored report rather than
+/// guessed at, so a replay asks the question the run asked rather than a
+/// wider one. What it establishes is whether the answer is still the same.
+fn replay(
+    prepared: &Prepared<'_>,
+    asked: (&str, Option<&str>),
+    cancel: &Cancel,
+    stdout: &mut dyn Write,
+) -> Result<u8, CliError> {
+    let (prefix, run) = asked;
+    let session = prepared.session;
+    let found = session.resolve(prefix)?.clone();
+    let stored = recorded(prepared.settings, run, &found.id);
+    let mut request = Request::new(found.display_id.clone());
+    if let Some(row) = &stored {
+        if !row.target.is_empty() {
+            request = request.with_target(row.target.clone());
+        }
+        if let Some(test) = row.killed_by.first() {
+            request = request.test(Some(test.clone()));
+        }
+    }
+    let result = session.exec(&request, cancel)?;
+    let before = stored
+        .as_ref()
+        .map_or_else(|| String::from("nothing"), |row| row.outcome.clone());
+    let now = result.outcome.name();
+    let verdict = if before == now {
+        format!("still {now}")
+    } else {
+        format!("was {before}, now {now}")
+    };
+    write(
+        stdout,
+        &format!("REPLAY    {} {verdict}\n", found.display_id),
+    );
+    write(stdout, &report::outcome(&result, &found));
+    Ok(report::exit_code(result.outcome))
+}
+
+/// What a stored run said about one mutant, when a stored run said anything.
+fn recorded(
+    settings: &Settings,
+    run: Option<&str>,
+    id: &str,
+) -> Option<run_report::RunMutantDocument> {
+    let directory = settings.report_directory();
+    let path = match run {
+        Some(named) => directory.join(named).join(run_report::FILE_NAME),
+        None => newest(&directory).ok()?,
+    };
+    let text = std::fs::read_to_string(path).ok()?;
+    let document: run_report::RunDocument = serde_json::from_str(&text).ok()?;
+    document.mutants.into_iter().find(|one| one.id == id)
+}
+
 /// One mutant, explained from a tree prepared for the purpose.
 fn fresh_explain(
     prepared: &Prepared<'_>,
@@ -940,7 +1052,34 @@ fn asking_equivalence<'a>(
         })
 }
 
-/// The name of a run: the instant it started, which sorts chronologically as a directory name.
+/// The name this run goes by, which is what its report directory is called.
+///
+/// # Errors
+/// [`CliError::InvalidValue`] for a name that is not one a directory can be.
+fn named(command: &cli::Command, now: Timestamp) -> Result<String, CliError> {
+    let cli::Command::Run {
+        run_id: Some(name), ..
+    } = command
+    else {
+        return Ok(run_id(now));
+    };
+    let shaped = !name.is_empty()
+        && name.len() <= 64
+        && name
+            .chars()
+            .all(|one| one.is_ascii_alphanumeric() || matches!(one, '.' | '_' | '-'));
+    if shaped {
+        Ok(name.clone())
+    } else {
+        Err(CliError::InvalidValue {
+            flag: "--run-id".to_owned(),
+            value: name.clone(),
+            expected: "1 to 64 of letters, digits, `.`, `_` and `-`".to_owned(),
+        })
+    }
+}
+
+/// The name a run goes by when nobody named it: the instant it started, which sorts chronologically as a directory name.
 #[must_use]
 pub fn run_id(now: Timestamp) -> String {
     now.strftime("%Y%m%dT%H%M%S%3fZ")
@@ -1241,33 +1380,85 @@ fn newest(directory: &Path) -> Result<PathBuf, CliError> {
     runs.pop().ok_or_else(missing)
 }
 
-fn cache(gc: bool, environment: &Environment, stdout: &mut dyn Write) -> Result<u8, CliError> {
+/// What a `cache` command was asked to do.
+#[derive(Debug, Clone, Copy)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each is one switch a person sets on the command line, and a switch is a bool \
+              wherever it is stored"
+)]
+struct Sweeping<'a> {
+    /// The workspace root, whose report directory holds the ledger of what was kept.
+    root: Option<&'a Path>,
+    /// Remove what is abandoned rather than only saying how much there is.
+    gc: bool,
+    /// Remove every build cache no live run has locked, not only the unowned ones.
+    all: bool,
+    /// Remove the directories a run was asked to keep, too.
+    kept: bool,
+    /// Empty the store of what earlier runs established.
+    clear_outcomes: bool,
+    /// Where the store is, when it is not under the user's cache directory.
+    cache_dir: Option<&'a Path>,
+}
+
+fn cache(
+    asked: &Sweeping<'_>,
+    environment: &Environment,
+    stdout: &mut dyn Write,
+) -> Result<u8, CliError> {
     let parent = &environment.temp_directory;
+    let store = crate::outcomes::Store::new(
+        asked
+            .cache_dir
+            .unwrap_or(environment.cache_directory.as_path()),
+    );
+    if asked.clear_outcomes {
+        let (records, bytes) = store.clear();
+        write(
+            stdout,
+            &format!(
+                "outcomes    {} removed, {bytes} bytes, from {}\n",
+                records,
+                store.root().display()
+            ),
+        );
+        return Ok(0);
+    }
     let now = Timestamp::now();
     let scratch = [snapshot::DIR_PREFIX];
     let caches = [workspace::TARGET_DIR_PREFIX];
     let nothing = |_dir: &Path| Ok(());
-    let (left, taken) = if gc {
-        (
+    let (left, taken) = match (asked.gc, asked.all) {
+        (true, true) => (
             tempowner::sweep(parent, &scratch, now),
             tempowner::reclaim(parent, &caches, now),
-        )
-    } else {
-        (
+        ),
+        (true, false) => (
+            tempowner::sweep(parent, &scratch, now),
+            tempowner::reclaim_with(parent, &caches, now, &nothing),
+        ),
+        (false, _) => (
             tempowner::sweep_with(parent, &scratch, now, &nothing),
             tempowner::reclaim_with(parent, &caches, now, &nothing),
-        )
+        ),
     };
     let left = left.map_err(|source| CliError::writing(parent, source))?;
     let taken = taken.map_err(|source| CliError::writing(parent, source))?;
+    let (records, bytes) = store.size();
     let mut text = String::new();
-    let verb = if gc { "removed" } else { "reclaimable" };
+    let verb = if asked.gc { "removed" } else { "reclaimable" };
+    let caches_verb = if asked.gc && asked.all {
+        "removed"
+    } else {
+        "reclaimable"
+    };
     let written = write!(
         text,
-        "temp        {}\ncaches      {} {}, {} bytes; {} still in use\nsnapshots   {} {}, {} bytes; {} still in use, {} preserved on purpose\nfailures    {}\n",
+        "temp        {}\ncaches      {} {}, {} bytes; {} still in use\nsnapshots   {} {}, {} bytes; {} still in use, {} preserved on purpose\noutcomes    {} records, {} bytes, at {}\nfailures    {}\n",
         parent.display(),
         taken.removed.len(),
-        verb,
+        caches_verb,
         taken.removed_bytes,
         taken.live,
         left.removed.len(),
@@ -1275,11 +1466,40 @@ fn cache(gc: bool, environment: &Environment, stdout: &mut dyn Write) -> Result<
         left.removed_bytes,
         left.live,
         left.kept,
+        records,
+        bytes,
+        store.root().display(),
         left.failures.len().saturating_add(taken.failures.len()),
     );
     debug_assert!(written.is_ok(), "writing to a String cannot fail");
     write(stdout, &text);
+    write(stdout, &preserved(asked, environment)?);
     Ok(0)
+}
+
+/// The directories runs were asked to keep, listed or removed.
+fn preserved(asked: &Sweeping<'_>, environment: &Environment) -> Result<String, CliError> {
+    let root = asked
+        .root
+        .map_or_else(|| environment.working_directory.clone(), Path::to_path_buf);
+    let directory = root.join(crate::config::DEFAULT_REPORTS_DIRECTORY);
+    if asked.kept {
+        let (removed, _empty) = crate::kept::Ledger::clear(&directory)
+            .map_err(|source| CliError::writing(&directory, source))?;
+        return Ok(format!("kept        {removed} removed\n"));
+    }
+    let ledger = crate::kept::Ledger::read(&directory);
+    let mut text = format!("kept        {}\n", ledger.kept.len());
+    for entry in &ledger.kept {
+        let written = writeln!(
+            text,
+            "            {} ({})",
+            entry.path.display(),
+            entry.run_id
+        );
+        debug_assert!(written.is_ok(), "writing to a String cannot fail");
+    }
+    Ok(text)
 }
 
 /// One file as the engine rewrites it.
@@ -1349,6 +1569,57 @@ fn json_line<T: serde::Serialize>(value: &T) -> String {
 }
 
 /// Puts the reports of the parts of one catalog back together.
+/// The reports of the parts of one catalog, named directly or found under a report directory.
+///
+/// # Errors
+/// [`CliError::ReportMissing`] when a name or a glob matches no stored run.
+fn parts(
+    reports: &[PathBuf],
+    root: Option<&Path>,
+    runs: &[String],
+    environment: &Environment,
+) -> Result<Vec<PathBuf>, CliError> {
+    if runs.is_empty() {
+        return Ok(reports.to_vec());
+    }
+    let root = root.map_or_else(|| environment.working_directory.clone(), Path::to_path_buf);
+    let directory = root.join(crate::config::DEFAULT_REPORTS_DIRECTORY);
+    let mut found: Vec<PathBuf> = reports.to_vec();
+    for named in runs {
+        let pattern = rust_mutants::glob::Pattern::compile(named).map_err(|error| {
+            CliError::InvalidValue {
+                flag: "--runs".to_owned(),
+                value: named.clone(),
+                expected: format!("a run name or a glob: {error}"),
+            }
+        })?;
+        let mut matched = Vec::new();
+        for entry in std::fs::read_dir(&directory)
+            .map_err(|_error| CliError::ReportMissing {
+                message: format!("no run is stored under {}", directory.display()),
+            })?
+            .flatten()
+        {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let report = entry.path().join(run_report::FILE_NAME);
+            if pattern.matches(&name) && report.is_file() {
+                matched.push(report);
+            }
+        }
+        if matched.is_empty() {
+            return Err(CliError::ReportMissing {
+                message: format!(
+                    "{named:?} names no stored run under {}",
+                    directory.display()
+                ),
+            });
+        }
+        matched.sort();
+        found.extend(matched);
+    }
+    Ok(found)
+}
+
 fn merge(
     reports: &[PathBuf],
     output: Option<&Path>,

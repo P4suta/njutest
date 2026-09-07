@@ -75,6 +75,7 @@ shape, and every line is checked against
 | `probe-exec` | target, outcome, infected count |
 | `witness` | per candidate: the witness placed, whether it checked, and the diagnostic that refused it |
 | `skip-claim` | per `rust-mutants: skip` marker: where it sits, the reason its author wrote, and whether it hid anything |
+| `kept` | per directory a run was asked to keep rather than remove, with the run that kept it |
 | `route` | per judged mutant: granularity, what widened it, the targets that could notice, the ones a proof discharged, the ones that ran, and the run an answer was reused from |
 | `mutant-exec` | id, index, target, outcome, exit code, duration, tests run, signal, failed tests, the budget it was given and where that came from, and whether it had the machine to itself |
 | `cache` | what an earlier run of this exact tree said about one mutant: the key, whether a record answered, and the run that established it |

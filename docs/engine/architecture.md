@@ -231,6 +231,33 @@ the exit code is the finding's, never `130`.
 mutant it would measure with the targets that could notice it, and the size
 of the job from what the verification measured. Nothing is executed.
 
+### What a run leaves, and what finds it again
+
+`--run-id NAME` names a run, which is what its report directory is called;
+without one the name is the moment it started. A name is one to sixty-four of
+letters, digits, `.`, `_` and `-`, because it is a directory.
+
+`--keep-temp` keeps the snapshot and the build cache a run would otherwise
+remove, and writes them into `kept-v1.json` under the report directory, with
+the run that kept them. `cache` lists what is there: the snapshots, the build
+caches, the outcome store with its size, and every kept directory with the run
+that kept it. `cache --gc` removes what is abandoned and leaves the build
+caches, so the next run is still fast; `--gc --all` takes them too; `--gc
+--kept` takes what was kept on purpose. `--clear-outcomes` empties the store
+and says how much was in it, and `--cache-dir` says where the store is. A
+ledger this release cannot read authorises nothing: it is read as empty, so a
+sweep never removes a directory on the strength of a document it did not
+understand.
+
+`merge --root DIR --runs a,b` finds the parts of one catalog under a report
+directory rather than being handed their paths, and a `--runs` value may be a
+glob.
+
+`replay <prefix>` puts one finding back to the tests as the run that found it
+did: the target and the test come from the stored report rather than from a
+guess, so a replay asks the question the run asked rather than a wider one,
+and says whether the answer is still the same.
+
 ## Guards
 
 Four forms. **Form C** for a position that is syntactically boolean (an
