@@ -13,6 +13,7 @@ use mjutest_devkit::fixture::Fixture;
 use rust_mutants::rule::Tier;
 use rust_mutants::runner::Cancel;
 use rust_mutants::session::{PrepareOptions, Session};
+use rust_mutants::testkit::measuring::Measuring;
 use rust_mutants::workspace::{OpenOptions, Workspace};
 
 const LIBRARY: &str = "fixture-coverage/lib/fixture_coverage";
@@ -190,4 +191,99 @@ fn routing_by_test_starts_fewer_tests_than_routing_by_target_would() {
         narrowed < whole,
         "the measurement named tests, so fewer of them start: {narrowed} against {whole}"
     );
+}
+
+/// A prepared session over `name`, with a recording a test can read back.
+fn recorded(fixture: &Fixture) -> (Session, rust_mutants::trace::Recorder) {
+    let trace = rust_mutants::testkit::trace::memory_recorder();
+    let session = Workspace::open(
+        fixture.root(),
+        OpenOptions {
+            cargo: Some(mjutest_devkit::paths::cargo_binary()),
+            temp_directory: fixture.temp().to_path_buf(),
+            env: std::env::vars_os().collect(),
+            locked: true,
+            offline: true,
+            trace: trace.clone(),
+            ..OpenOptions::default()
+        },
+        &Cancel::new(),
+    )
+    .expect("open")
+    .prepare(&Measuring::GUARDS.options(Tier::All), &Cancel::new())
+    .expect("prepare");
+    (session, trace)
+}
+
+/// Every note of `kind` the recording holds.
+fn notes(trace: &rust_mutants::trace::Recorder, kind: &str) -> Vec<String> {
+    trace
+        .events()
+        .into_iter()
+        .filter_map(|event| match event.payload {
+            rust_mutants::trace::Payload::Note { note } if note.kind == kind => Some(note.detail),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_test_that_only_passes_beside_its_neighbour_takes_its_target_off_test_routing() {
+    let fixture = Fixture::copy("fixture-order-dependent");
+    let (session, trace) = recorded(&fixture);
+    let cancel = Cancel::new();
+    for one in session.catalog().mutants() {
+        drop(
+            session
+                .judge(
+                    &rust_mutants::session::Request::new(one.display_id.clone()),
+                    &rust_mutants::run::Quiet::default(),
+                    &cancel,
+                )
+                .expect("judge"),
+        );
+    }
+    let said = notes(&trace, rust_mutants::session::TEST_ROUTING_UNSOUND);
+    assert!(
+        !said.is_empty(),
+        "a set of tests that does not answer on its own is one the run says so about: {:?}",
+        rust_mutants::testkit::trace::type_names(&trace.events())
+    );
+    assert!(
+        said.iter()
+            .any(|one| one.contains("did not pass on its own")),
+        "the note says why the set is not one to route by: {said:?}"
+    );
+    session.close().expect("close");
+}
+
+#[test]
+fn a_site_a_test_reached_on_a_thread_of_its_own_reaches_every_test_of_its_target() {
+    let fixture = Fixture::copy("fixture-threaded");
+    let session = prepared(&fixture);
+    let library = "fixture-threaded/lib/fixture_threaded";
+    let touches = session
+        .touched()
+        .targets
+        .get(library)
+        .unwrap_or_else(|| panic!("{library} was measured"));
+    assert!(
+        !touches.loose.is_empty(),
+        "a thread the test spawned has no name a test answers for: {touches:?}"
+    );
+    let spawned = mutant(&session, "gt-to-ge", 9);
+    let owned = mutant(&session, "add-to-sub", 15);
+    assert_eq!(
+        session.touched().reaching(library, spawned),
+        Some(rust_mutants::touch::Reaching::Whole),
+        "what nothing could attribute reaches every test of the target"
+    );
+    assert_eq!(
+        session.touched().reaching(library, owned),
+        Some(rust_mutants::touch::Reaching::Tests(vec![
+            "tests::the_test_itself_reaches_the_next".to_owned()
+        ])),
+        "and what the test itself reached is put to that test alone"
+    );
+    session.close().expect("close");
 }

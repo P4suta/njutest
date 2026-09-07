@@ -32,14 +32,22 @@ use std::process::Command;
 
 use mjutest_devkit::fixture::Fixture;
 use rust_mutants::report::run::{RunDocument, RunMutantDocument};
+use rust_mutants::testkit::measuring::Measuring;
 use rust_mutants::work::Work;
 
 /// The fixtures the layers have something to say about.
-const FIXTURES: [&str; 4] = [
+///
+/// The last two are the fallbacks: a target whose tests only pass beside each
+/// other, and one whose tests reach the code on threads of their own. Both are
+/// cases where the guards cannot narrow, and a fallback that got the answer
+/// wrong would show up here as a row that moved.
+const FIXTURES: [&str; 6] = [
     "fixture-simple",
     "fixture-coverage",
     "fixture-unreached",
     "fixture-probeable",
+    "fixture-order-dependent",
+    "fixture-threaded",
 ];
 
 /// What a run established about one tree, and what it cost to establish it.
@@ -47,15 +55,6 @@ struct Established {
     rows: BTreeMap<String, RunMutantDocument>,
     work: Work,
 }
-
-/// A run with nothing removed: no measurement of either kind, so every target runs every test.
-const NOTHING_REMOVED: &[&str] = &["--no-coverage", "--no-touch"];
-
-/// A run routed by what the guards recorded, with no coverage build at all.
-const BY_GUARDS: &[&str] = &["--no-coverage"];
-
-/// A run routed by the LLVM coverage build, with the guards not asked.
-const BY_COVERAGE: &[&str] = &["--coverage", "--no-touch"];
 
 fn established(name: &str, extra: &[&str]) -> Established {
     let fixture = Fixture::copy(name);
@@ -114,20 +113,24 @@ fn every_proof_that_removed_a_run_claimed_the_answer_a_whole_run_gives() {
         } else {
             &[]
         };
-        let whole = established(name, &[NOTHING_REMOVED, probe].concat());
-        for mode in [BY_GUARDS, BY_COVERAGE] {
-            let proved = established(name, &[mode, probe].concat());
+        let whole = established(name, &[Measuring::NOTHING.flags(), probe].concat());
+        for measuring in Measuring::ALL {
+            if measuring == Measuring::NOTHING {
+                continue;
+            }
+            let mode = measuring.name();
+            let proved = established(name, &[measuring.flags(), probe].concat());
             assert_eq!(
                 proved.rows.len(),
                 whole.rows.len(),
-                "{name} {mode:?}: the two runs cataloged different trees, so nothing compares"
+                "{name} by {mode}: the two runs cataloged different trees, so nothing compares"
             );
             if proved.work.tests_started < whole.work.tests_started {
                 removed_something = removed_something.saturating_add(1);
             }
             for (id, row) in &proved.rows {
                 let Some(other) = whole.rows.get(id) else {
-                    panic!("{name} {mode:?}: {id} is in the proved run and not in the whole one");
+                    panic!("{name} by {mode}: {id} is in the proved run and not in the whole one");
                 };
                 if row.outcome == "inconclusive" || other.outcome == "inconclusive" {
                     continue;
@@ -138,7 +141,7 @@ fn every_proof_that_removed_a_run_claimed_the_answer_a_whole_run_gives() {
                 assert_eq!(
                     claimed(row),
                     claimed(other),
-                    "{name} {mode:?}: {} was {} with the layer on and {} with nothing removed. A \
+                    "{name} by {mode}: {} was {} with the layer on and {} with nothing removed. A \
                      proof that removes work has to leave the answer where a whole run leaves it; \
                      this one moved it.",
                     row.display_id,
@@ -170,19 +173,23 @@ fn describe(row: &RunMutantDocument) -> String {
 
 #[test]
 fn the_layers_remove_work_rather_than_only_promising_to() {
-    let whole = established("fixture-unreached", NOTHING_REMOVED);
-    for mode in [BY_GUARDS, BY_COVERAGE] {
-        let proved = established("fixture-unreached", mode);
+    let whole = established("fixture-unreached", Measuring::NOTHING.flags());
+    for measuring in Measuring::ALL {
+        if measuring == Measuring::NOTHING {
+            continue;
+        }
+        let mode = measuring.name();
+        let proved = established("fixture-unreached", measuring.flags());
         assert!(
             proved.work.started < whole.work.started,
-            "{mode:?}: a fixture built to hold code no test reaches should start fewer processes \
-             measured than unmeasured: {} against {}",
+            "by {mode}: a fixture built to hold code no test reaches should start fewer \
+             processes measured than unmeasured: {} against {}",
             proved.work.started,
             whole.work.started
         );
         assert!(
             proved.work.answers_for_the_whole(),
-            "{mode:?}: the run was asked for less than the whole catalog"
+            "by {mode}: the run was asked for less than the whole catalog"
         );
     }
     assert!(
@@ -193,9 +200,9 @@ fn the_layers_remove_work_rather_than_only_promising_to() {
 
 #[test]
 fn the_guards_put_a_mutation_to_fewer_tests_than_routing_by_target_can() {
-    let whole = established("fixture-coverage", NOTHING_REMOVED);
-    let guards = established("fixture-coverage", BY_GUARDS);
-    let coverage = established("fixture-coverage", BY_COVERAGE);
+    let whole = established("fixture-coverage", Measuring::NOTHING.flags());
+    let guards = established("fixture-coverage", Measuring::GUARDS.flags());
+    let coverage = established("fixture-coverage", Measuring::COVERAGE.flags());
     assert!(
         guards.work.tests_started < coverage.work.tests_started,
         "a target a region places a mutation in runs every test it has; a target a guard places \

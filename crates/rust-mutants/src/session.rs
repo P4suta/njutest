@@ -1130,14 +1130,18 @@ impl Session {
         let answer = (result.outcome == crate::outcome::Outcome::Survived && ran == tests.len())
             .then_some(result.duration);
         if answer.is_none() {
+            let why = if ran == tests.len() {
+                "did not pass on its own".to_owned()
+            } else {
+                format!("named {} tests and ran {ran} of them", tests.len())
+            };
             self.workspace.trace.note(
                 TEST_ROUTING_UNSOUND,
                 &format!(
-                    "{}: {} of {} named tests ran and the set came back {}, so every test of it \
-                     runs instead",
+                    "{}: the set {} ({}), so every test of it runs instead of the ones a \
+                     measurement named",
                     target.id,
-                    ran,
-                    tests.len(),
+                    why,
                     result.outcome.name()
                 ),
             );

@@ -377,6 +377,24 @@ fn work_line(document: &run::RunDocument) -> String {
         let written = write!(line, " ({})", removed.join(" "));
         debug_assert!(written.is_ok(), "writing to a String cannot fail");
     }
+    if work.tests_whole > 0 {
+        let written = write!(
+            line,
+            "\n          tests={} of {}; {:.1}% removed",
+            work.tests_started,
+            work.tests_whole,
+            work.tests_saved() * 100.0
+        );
+        debug_assert!(written.is_ok(), "writing to a String cannot fail");
+        if work.established_tests() > 0 {
+            let written = write!(
+                line,
+                " ({} of them establishing that a filtered set answers on its own)",
+                work.established_tests()
+            );
+            debug_assert!(written.is_ok(), "writing to a String cannot fail");
+        }
+    }
     if !work.answers_for_the_whole() {
         line.push_str("\n          this run was asked for less than the whole catalog");
     }

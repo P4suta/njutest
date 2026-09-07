@@ -87,6 +87,7 @@ MUTANTS   cataloged=8 refused=0 skipped=2 executed=8
 OUTCOMES  killed=7 survived=1 timed_out=0 inconclusive=0 errored=0 not_run=0 unreached=0 discharged=0 expected=0
 SCORE     87.5%  (7 detected of 8 decided)
 WORK      started=8 of 24 pairs across 3 targets; 66.7% removed (unreached=16)
+          tests=8 of 24; 66.7% removed
 
 surviving-mutant       no test noticed e5e872bfbcb2afbbf7a1; 1 test ran and passed
 REPORT    ./reports/mutation/<run>/run-report-v1.json

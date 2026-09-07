@@ -58,6 +58,17 @@ impl Measuring {
         }
     }
 
+    /// The command line a run measuring this way is asked for, so an engine test and a command-line test name one thing one way.
+    #[must_use]
+    pub const fn flags(self) -> &'static [&'static str] {
+        match (self.coverage, self.touch) {
+            (false, false) => &["--no-coverage", "--no-touch"],
+            (false, true) => &["--no-coverage"],
+            (true, false) => &["--coverage", "--no-touch"],
+            (true, true) => &["--coverage"],
+        }
+    }
+
     /// Preparation options that measure this way, with every rule and the branch proofs the coverage build carries.
     #[must_use]
     pub fn options(self, tier: Tier) -> PrepareOptions {
