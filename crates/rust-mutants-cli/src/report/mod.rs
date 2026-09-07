@@ -351,6 +351,41 @@ pub const fn exit_code(outcome: rust_mutants::outcome::Outcome) -> u8 {
 
 /// The run as lines a person reads: the tally, the score, and every finding.
 #[must_use]
+/// What a whole run would have started, what this one started, and what removed the rest.
+///
+/// A report from before the target list was written carries no work line at
+/// all: a share of nothing is not nought per cent, and a reader shown one
+/// would read a run that measured everything as a run that measured nothing.
+fn work_line(document: &run::RunDocument) -> String {
+    let work = rust_mutants::work::Work::of(document);
+    if work.whole == 0 {
+        return String::new();
+    }
+    let removed: Vec<String> = work
+        .removed
+        .iter()
+        .map(|one| format!("{}={}", one.reason, one.pairs))
+        .collect();
+    let mut line = format!(
+        "WORK      started={} of {} pairs across {} targets; {:.1}% removed",
+        work.started,
+        work.whole,
+        work.targets,
+        work.saved() * 100.0
+    );
+    if !removed.is_empty() {
+        let written = write!(line, " ({})", removed.join(" "));
+        debug_assert!(written.is_ok(), "writing to a String cannot fail");
+    }
+    if !work.answers_for_the_whole() {
+        line.push_str("\n          this run was asked for less than the whole catalog");
+    }
+    line.push('\n');
+    line
+}
+
+/// The stored run as the lines a person reads.
+#[must_use]
 pub fn lines(document: &run::RunDocument) -> String {
     let a = &document.accounting;
     let mut text = String::new();
@@ -390,6 +425,7 @@ pub fn lines(document: &run::RunDocument) -> String {
         }
         None => text.push_str("SCORE     none; the run decided nothing\n"),
     }
+    text.push_str(&work_line(document));
     if !document.findings.is_empty() {
         text.push('\n');
         for one in &document.findings {

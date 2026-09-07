@@ -45,6 +45,9 @@ pub struct RunDocument {
     pub accounting: Accounting,
     /// The share of decided mutants the tests noticed, absent when the run decided nothing.
     pub score: Option<ScoreDocument>,
+    /// The test targets the run built, which is what every mutant could have been asked against.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub targets: Vec<TargetDocument>,
     /// One record per cataloged mutant, in catalog order.
     pub mutants: Vec<RunMutantDocument>,
     /// Every candidate the compiler refused.
@@ -236,6 +239,20 @@ pub struct Meta<'a> {
     pub finished_at: Timestamp,
 }
 
+/// Every test target the run built, as documents.
+fn target_documents(session: &Session) -> Vec<TargetDocument> {
+    session
+        .targets()
+        .iter()
+        .map(|target| TargetDocument {
+            id: target.id.clone(),
+            kind: target.kind.name().to_owned(),
+            harness: target.harness,
+            limitations: target.limitations.clone(),
+        })
+        .collect()
+}
+
 /// The run as one document.
 #[must_use]
 pub fn document(
@@ -260,6 +277,7 @@ pub fn document(
         },
         workspace: crate::report::catalog::workspace_document(session),
         selection,
+        targets: target_documents(session),
         accounting: Accounting {
             cataloged: tally.cataloged,
             refused: tally.refused,
@@ -386,6 +404,24 @@ fn mutant(one: &crate::run::Judged, catalog: Option<MutantDocument>) -> RunMutan
         unreached: one.not_run_reason == Some(crate::run::NotRunReason::Unreached),
         source_run_id: one.source_run_id.clone(),
     }
+}
+
+/// One test target a run built, and what it is beyond its name.
+///
+/// A run's work is counted in pairs of one mutant and one target, so a reader
+/// that cannot see how many targets there were cannot say what a whole run
+/// would have cost.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TargetDocument {
+    /// `package/kind/name`.
+    pub id: String,
+    /// What kind of target it is.
+    pub kind: String,
+    /// Whether it is built with the libtest harness, which decides how its silence is read.
+    pub harness: bool,
+    /// What a run could not establish about it, each named.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub limitations: Vec<String>,
 }
 
 /// One route, as a document, with the targets an execution of it actually ran.

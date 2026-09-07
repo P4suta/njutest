@@ -124,12 +124,32 @@ fn a_dry_run_says_what_it_would_cost_without_executing_a_mutant() {
     let text = said(&output);
     assert_eq!(output.status.code(), Some(0), "{text}");
     assert!(
-        text.contains("would run 11 mutants against up to"),
-        "it says the size of the job: {text}"
+        text.contains("WOULD START"),
+        "it says the size of the job in work rather than in time: {text}"
+    );
+    assert!(
+        text.contains("(11 mutants against"),
+        "it says how many mutants and how many targets: {text}"
+    );
+    assert!(
+        text.contains("REMOVED BY"),
+        "and what a proof already took off the bill: {text}"
     );
     assert!(
         text.lines().filter(|line| line.starts_with('#')).count() == 11,
         "and what each one is: {text}"
+    );
+    let roughly = text
+        .lines()
+        .position(|line| line.starts_with("ROUGHLY"))
+        .expect("a guess at the time");
+    let would = text
+        .lines()
+        .position(|line| line.starts_with("WOULD START"))
+        .expect("a count of the work");
+    assert!(
+        would < roughly,
+        "the count comes first and the guess about this machine comes last: {text}"
     );
     assert!(
         !text.contains("OUTCOMES"),

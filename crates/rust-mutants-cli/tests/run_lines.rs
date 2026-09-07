@@ -78,6 +78,7 @@ fn document() -> RunDocument {
             exclude: Vec::new(),
             packages: Vec::new(),
         },
+        targets: Vec::new(),
         accounting: Accounting {
             cataloged: 5,
             refused: 2,
@@ -185,5 +186,64 @@ fn merging_the_parts_of_a_run_earns_the_code_the_whole_would_have_earned() {
         merged.run.exit_code, 1,
         "a mutation nothing reaches is a gap in the tests, not a run that broke; the whole \
          earns what each part earned"
+    );
+}
+
+#[test]
+fn the_lines_say_how_much_of_a_whole_run_this_one_did_not_do() {
+    let mut document = document();
+    document.targets = vec![
+        rust_mutants_cli::report::run::TargetDocument {
+            id: "demo/lib/demo".to_owned(),
+            kind: "lib".to_owned(),
+            harness: true,
+            limitations: Vec::new(),
+        },
+        rust_mutants_cli::report::run::TargetDocument {
+            id: "demo/test/parity".to_owned(),
+            kind: "test".to_owned(),
+            harness: true,
+            limitations: Vec::new(),
+        },
+    ];
+    for mutant in &mut document.mutants {
+        mutant.route = Some(rust_mutants_cli::report::run::RouteDocument {
+            granularity: "block".to_owned(),
+            fallback: None,
+            reaching: vec!["demo/lib/demo".to_owned()],
+            discharged: Vec::new(),
+            executed: vec!["demo/lib/demo".to_owned()],
+        });
+    }
+    let rows = document.mutants.len();
+    let text = rust_mutants_cli::report::lines(&document);
+    assert!(
+        text.contains("WORK"),
+        "a reader who cannot see the work cannot see it fall: {text}"
+    );
+    assert!(
+        text.contains(&format!("started={rows} of {} pairs", rows * 2)),
+        "every row against both targets is what a whole run would have started, and one target \
+         each is what this one did: {text}"
+    );
+    assert!(
+        text.contains(&format!("unreached={rows}")),
+        "and coverage routing is what removed the other half: {text}"
+    );
+    assert!(text.contains("50.0% removed"), "{text}");
+    assert!(
+        !text.contains("asked for less than the whole"),
+        "nothing here was a filter: {text}"
+    );
+}
+
+#[test]
+fn a_run_that_built_no_targets_says_nothing_about_work_rather_than_dividing_by_it() {
+    let document = document();
+    let text = rust_mutants_cli::report::lines(&document);
+    assert!(
+        !text.contains("WORK"),
+        "a report from before this release has no target list, and a share of nothing is not zero \
+         per cent: {text}"
     );
 }

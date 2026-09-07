@@ -49,6 +49,7 @@ fn base() -> serde_json::Value {
         "selection": {
             "tier": "balanced", "operators": [], "include": [], "exclude": [], "packages": []
         },
+        "targets": [{ "id": TARGET, "kind": "lib", "harness": true }],
         "accounting": {
             "cataloged": 2, "refused": 1, "skipped": 0, "executed": 2,
             "killed": 1, "survived": 1, "timed_out": 0, "inconclusive": 0,
@@ -65,6 +66,7 @@ fn base() -> serde_json::Value {
                 "original": ">", "replacement": ">=",
                 "outcome": "killed", "target": TARGET, "exit_code": 101,
                 "duration_ms": 7, "tests_run": 2, "retried": false,
+                "route": {"granularity": "block", "reaching": [TARGET], "executed": [TARGET]},
                 "expected": false, "unreached": false, "source_run_id": null
             },
             {
@@ -76,6 +78,7 @@ fn base() -> serde_json::Value {
                 "original": "if a > b { a } else { b }", "replacement": "Default::default()",
                 "outcome": "survived", "target": TARGET, "exit_code": 0,
                 "duration_ms": 5, "tests_run": 2, "retried": false,
+                "route": {"granularity": "block", "reaching": [TARGET], "executed": [TARGET]},
                 "expected": true, "unreached": false, "source_run_id": null
             }
         ],
@@ -1002,5 +1005,100 @@ fn a_file_passed_over_whole_is_silent_on_the_census() {
     assert!(
         violations(&audit, Layer::Sites).is_empty(),
         "a file nothing walked has no decisions to account for: {audit}"
+    );
+}
+
+#[test]
+fn the_work_a_report_claims_is_the_work_its_recording_holds() {
+    let audit = audited_with(&base(), &recording());
+    assert!(
+        violations(&audit, Layer::Work).is_empty(),
+        "{:?}",
+        audit.remarks
+    );
+    assert!(
+        !audit
+            .remarks
+            .iter()
+            .any(|remark| remark.layer == Layer::Work && remark.standing == Standing::Unaudited),
+        "the sample names its targets and its routes, so there is nothing to leave unaudited: {:?}",
+        audit.remarks
+    );
+}
+
+#[test]
+fn a_row_that_ran_a_target_its_route_never_reached_is_a_violation() {
+    let mut document = base();
+    document["mutants"][0]["route"]["executed"] =
+        serde_json::json!([TARGET, "demo/test/elsewhere"]);
+    let audit = audited_with(&document, &recording());
+    assert!(
+        !violations(&audit, Layer::Work).is_empty(),
+        "a process started against a target nothing routed it to is work nobody asked for: {:?}",
+        audit.remarks
+    );
+}
+
+#[test]
+fn a_route_that_reaches_and_discharges_more_targets_than_the_run_built_is_a_violation() {
+    let mut document = base();
+    document["mutants"][0]["route"]["discharged"] =
+        serde_json::json!([{"target": "demo/test/elsewhere", "proof": "branch-never-taken"}]);
+    let audit = audited_with(&document, &recording());
+    assert!(
+        !violations(&audit, Layer::Work).is_empty(),
+        "one target cannot be reached once and discharged once: {:?}",
+        audit.remarks
+    );
+}
+
+#[test]
+fn a_report_that_names_no_targets_leaves_the_work_unaudited() {
+    let mut document = base();
+    document["targets"] = serde_json::json!([]);
+    let audit = audited_with(&document, &recording());
+    assert!(
+        audit
+            .remarks
+            .iter()
+            .any(|remark| remark.layer == Layer::Work && remark.standing == Standing::Unaudited),
+        "a reader who cannot see how many targets there were cannot say what a whole run \
+         would have cost: {:?}",
+        audit.remarks
+    );
+    assert!(
+        violations(&audit, Layer::Work).is_empty(),
+        "{:?}",
+        audit.remarks
+    );
+}
+
+#[test]
+fn a_report_that_claims_fewer_executions_than_the_recording_holds_is_a_violation() {
+    let mut document = base();
+    document["mutants"][1]["route"]["executed"] = serde_json::json!([]);
+    let audit = audited_with(&document, &recording());
+    assert!(
+        !violations(&audit, Layer::Work).is_empty(),
+        "the recording holds two executions and the report claims one: {:?}",
+        audit.remarks
+    );
+}
+
+#[test]
+fn an_outcome_an_earlier_run_established_is_work_this_one_did_not_do() {
+    let mut document = base();
+    document["mutants"][1]["source_run_id"] = serde_json::json!("20260901T000000000Z");
+    document["mutants"][1]["route"]["executed"] = serde_json::json!([]);
+    let mut events = recording();
+    events.retain(|event| {
+        event["type"] != "mutant-exec"
+            || event["mutant"]["id"] != serde_json::json!(short(SURVIVED))
+    });
+    let audit = audited_with(&document, &events);
+    assert!(
+        violations(&audit, Layer::Work).is_empty(),
+        "a row an earlier run answered for started nothing, and the recording agrees: {:?}",
+        audit.remarks
     );
 }

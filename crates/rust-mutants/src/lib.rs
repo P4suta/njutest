@@ -39,6 +39,7 @@ pub mod tempowner;
 pub mod testkit;
 pub mod trace;
 pub mod validate;
+pub mod work;
 pub mod workspace;
 
 pub use error::{EngineError, ErrorCode};

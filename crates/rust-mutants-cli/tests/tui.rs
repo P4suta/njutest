@@ -115,6 +115,7 @@ fn document() -> RunDocument {
             exclude: Vec::new(),
             packages: Vec::new(),
         },
+        targets: Vec::new(),
         accounting: Accounting {
             cataloged: 3,
             refused: 0,

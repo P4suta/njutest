@@ -21,9 +21,16 @@
     "findings"
   ],
   "properties": {
-    "document_type": { "const": "rust-mutants/run-report" },
-    "schema_version": { "const": 1 },
-    "tool_version": { "type": "string", "minLength": 1 },
+    "document_type": {
+      "const": "rust-mutants/run-report"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "tool_version": {
+      "type": "string",
+      "minLength": 1
+    },
     "run": {
       "type": "object",
       "additionalProperties": false,
@@ -42,19 +49,40 @@
           "minLength": 1,
           "description": "The run's identity, which is also its directory name under the report directory."
         },
-        "started_at": { "type": "string", "minLength": 1 },
-        "finished_at": { "type": "string", "minLength": 1 },
-        "duration_ms": { "type": "integer", "minimum": 0 },
-        "interrupted": { "type": "boolean" },
+        "started_at": {
+          "type": "string",
+          "minLength": 1
+        },
+        "finished_at": {
+          "type": "string",
+          "minLength": 1
+        },
+        "duration_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "interrupted": {
+          "type": "boolean"
+        },
         "exit_code": {
           "type": "integer",
-          "enum": [0, 1, 2, 130],
+          "enum": [
+            0,
+            1,
+            2,
+            130
+          ],
           "description": "0 every mutant was noticed, 1 something was not, 2 the run itself failed, 130 it was interrupted."
         },
         "shard": {
           "oneOf": [
-            { "type": "null" },
-            { "type": "string", "pattern": "^[1-9][0-9]*/[1-9][0-9]*$" }
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": "^[1-9][0-9]*/[1-9][0-9]*$"
+            }
           ],
           "description": "Which part of the catalog the run was about, written K/N, and absent for the whole of it. The parts of one tree cut the same way, so a merge of them is what the whole would have written."
         }
@@ -71,18 +99,38 @@
         "platform"
       ],
       "properties": {
-        "root_name": { "type": "string" },
-        "toolchain": { "type": "string" },
-        "workspace_digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-        "catalog_digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "root_name": {
+          "type": "string"
+        },
+        "toolchain": {
+          "type": "string"
+        },
+        "workspace_digest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "catalog_digest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
         "platform": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["os", "arch", "target"],
+          "required": [
+            "os",
+            "arch",
+            "target"
+          ],
           "properties": {
-            "os": { "type": "string" },
-            "arch": { "type": "string" },
-            "target": { "type": "string" }
+            "os": {
+              "type": "string"
+            },
+            "arch": {
+              "type": "string"
+            },
+            "target": {
+              "type": "string"
+            }
           }
         }
       }
@@ -90,14 +138,51 @@
     "selection": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["tier", "operators", "include", "exclude", "packages"],
+      "required": [
+        "tier",
+        "operators",
+        "include",
+        "exclude",
+        "packages"
+      ],
       "properties": {
-        "tier": { "enum": ["balanced", "strong", "all"] },
-        "operators": { "type": "array", "items": { "type": "string" } },
-        "include": { "type": "array", "items": { "type": "string" } },
-        "exclude": { "type": "array", "items": { "type": "string" } },
-        "packages": { "type": "array", "items": { "type": "string" } },
-        "build": { "type": "array", "items": { "type": "string" } }
+        "tier": {
+          "enum": [
+            "balanced",
+            "strong",
+            "all"
+          ]
+        },
+        "operators": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "include": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "exclude": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "packages": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "build": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
       }
     },
     "accounting": {
@@ -117,16 +202,46 @@
         "expected"
       ],
       "properties": {
-        "cataloged": { "type": "integer", "minimum": 0 },
-        "refused": { "type": "integer", "minimum": 0 },
-        "skipped": { "type": "integer", "minimum": 0 },
-        "executed": { "type": "integer", "minimum": 0 },
-        "killed": { "type": "integer", "minimum": 0 },
-        "survived": { "type": "integer", "minimum": 0 },
-        "timed_out": { "type": "integer", "minimum": 0 },
-        "inconclusive": { "type": "integer", "minimum": 0 },
-        "errored": { "type": "integer", "minimum": 0 },
-        "not_run": { "type": "integer", "minimum": 0 },
+        "cataloged": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "refused": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "skipped": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "executed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "killed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "survived": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "timed_out": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "inconclusive": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "errored": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "not_run": {
+          "type": "integer",
+          "minimum": 0
+        },
         "unreached": {
           "description": "Of the mutants that never ran, how many no measured target reaches. Absent in a report written before coverage routing existed.",
           "type": "integer",
@@ -137,21 +252,40 @@
           "type": "integer",
           "minimum": 0
         },
-        "expected": { "type": "integer", "minimum": 0 }
+        "expected": {
+          "type": "integer",
+          "minimum": 0
+        }
       }
     },
     "score": {
       "description": "Absent when the run decided nothing, which is not the same as a score of zero.",
       "oneOf": [
-        { "type": "null" },
+        {
+          "type": "null"
+        },
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["detected", "decided", "value"],
+          "required": [
+            "detected",
+            "decided",
+            "value"
+          ],
           "properties": {
-            "detected": { "type": "integer", "minimum": 0 },
-            "decided": { "type": "integer", "minimum": 1 },
-            "value": { "type": "number", "minimum": 0, "maximum": 1 }
+            "detected": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "decided": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "value": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
           }
         }
       ]
@@ -187,21 +321,59 @@
           "source_run_id"
         ],
         "properties": {
-          "index": { "type": "integer", "minimum": 0 },
-          "id": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-          "display_id": { "type": "string", "minLength": 1 },
-          "path": { "type": "string" },
-          "package": { "type": "string" },
-          "family": { "type": "string" },
-          "rule": { "type": "string" },
-          "rule_version": { "type": "integer", "minimum": 0 },
-          "line": { "type": "integer", "minimum": 0 },
-          "column": { "type": "integer", "minimum": 0 },
-          "start_byte": { "type": "integer", "minimum": 0 },
-          "end_byte": { "type": "integer", "minimum": 0 },
-          "source_digest": { "type": "string" },
-          "original": { "type": "string" },
-          "replacement": { "type": "string" },
+          "index": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "display_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "path": {
+            "type": "string"
+          },
+          "package": {
+            "type": "string"
+          },
+          "family": {
+            "type": "string"
+          },
+          "rule": {
+            "type": "string"
+          },
+          "rule_version": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "line": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "column": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "start_byte": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "end_byte": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "source_digest": {
+            "type": "string"
+          },
+          "original": {
+            "type": "string"
+          },
+          "replacement": {
+            "type": "string"
+          },
           "outcome": {
             "enum": [
               "not_run",
@@ -212,14 +384,36 @@
               "errored"
             ]
           },
-          "target": { "type": "string" },
-          "exit_code": { "type": "integer" },
-          "duration_ms": { "type": "integer", "minimum": 0 },
-          "tests_run": {
-            "oneOf": [{ "type": "null" }, { "type": "integer", "minimum": 0 }]
+          "target": {
+            "type": "string"
           },
-          "killed_by": { "type": "array", "items": { "type": "string" } },
-          "signal": { "type": "integer" },
+          "exit_code": {
+            "type": "integer"
+          },
+          "duration_ms": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "tests_run": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "integer",
+                "minimum": 0
+              }
+            ]
+          },
+          "killed_by": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "signal": {
+            "type": "integer"
+          },
           "not_run_reason": {
             "enum": [
               "unreached",
@@ -236,37 +430,76 @@
           "route": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["granularity", "reaching"],
+            "required": [
+              "granularity",
+              "reaching"
+            ],
             "properties": {
-              "granularity": { "enum": ["all", "block", "discharged", "unreached"] },
-              "fallback": { "type": "string" },
-              "reaching": { "type": "array", "items": { "type": "string" } },
+              "granularity": {
+                "enum": [
+                  "all",
+                  "block",
+                  "discharged",
+                  "unreached"
+                ]
+              },
+              "fallback": {
+                "type": "string"
+              },
+              "reaching": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
               "discharged": {
                 "type": "array",
                 "items": {
                   "type": "object",
                   "additionalProperties": false,
-                  "required": ["target", "proof"],
+                  "required": [
+                    "target",
+                    "proof"
+                  ],
                   "properties": {
-                    "target": { "type": "string" },
-                    "proof": { "type": "string" }
+                    "target": {
+                      "type": "string"
+                    },
+                    "proof": {
+                      "type": "string"
+                    }
                   }
                 }
               },
-              "executed": { "type": "array", "items": { "type": "string" } }
+              "executed": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
             }
           },
           "retried": {
             "type": "boolean",
             "description": "A timeout is believed only after a serial retry timed out again."
           },
-          "expected": { "type": "boolean" },
+          "expected": {
+            "type": "boolean"
+          },
           "unreached": {
             "description": "Whether no measured target reaches it, which is why it never ran. Absent in a report written before coverage routing existed.",
             "type": "boolean"
           },
           "source_run_id": {
-            "oneOf": [{ "type": "null" }, { "type": "string", "minLength": 1 }],
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string",
+                "minLength": 1
+              }
+            ],
             "description": "The run that established this outcome, when it was read back rather than executed."
           }
         }
@@ -277,15 +510,45 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["index", "id", "display_id", "path", "rule", "code", "diagnostic"],
+        "required": [
+          "index",
+          "id",
+          "display_id",
+          "path",
+          "rule",
+          "code",
+          "diagnostic"
+        ],
         "properties": {
-          "index": { "type": "integer", "minimum": 0 },
-          "id": { "type": "string" },
-          "display_id": { "type": "string" },
-          "path": { "type": "string" },
-          "rule": { "type": "string" },
-          "code": { "oneOf": [{ "type": "null" }, { "type": "string" }] },
-          "diagnostic": { "type": "string" },
+          "index": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "id": {
+            "type": "string"
+          },
+          "display_id": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "rule": {
+            "type": "string"
+          },
+          "code": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "diagnostic": {
+            "type": "string"
+          },
           "isolated": {
             "type": "boolean",
             "description": "Whether the compiler refused it on its own, rather than only alongside another mutant."
@@ -298,12 +561,27 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["reason", "path", "count", "explanation"],
+        "required": [
+          "reason",
+          "path",
+          "count",
+          "explanation"
+        ],
         "properties": {
-          "reason": { "type": "string" },
-          "path": { "type": "string" },
-          "count": { "type": "integer", "minimum": 0 },
-          "explanation": { "type": "string", "minLength": 1 }
+          "reason": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "explanation": {
+            "type": "string",
+            "minLength": 1
+          }
         }
       }
     },
@@ -312,28 +590,99 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["id", "reason", "outcome", "mutant", "standing", "actual", "why"],
+        "required": [
+          "id",
+          "reason",
+          "outcome",
+          "mutant",
+          "standing",
+          "actual",
+          "why"
+        ],
         "properties": {
-          "id": { "type": "string", "minLength": 1 },
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
           "locator": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["path", "item", "rule", "original"],
+            "required": [
+              "path",
+              "item",
+              "rule",
+              "original"
+            ],
             "properties": {
-              "path": { "type": "string", "minLength": 1 },
-              "item": { "type": "string" },
-              "rule": { "type": "string", "minLength": 1 },
-              "original": { "type": "string" },
-              "line": { "type": "integer", "minimum": 1 }
+              "path": {
+                "type": "string",
+                "minLength": 1
+              },
+              "item": {
+                "type": "string"
+              },
+              "rule": {
+                "type": "string",
+                "minLength": 1
+              },
+              "original": {
+                "type": "string"
+              },
+              "line": {
+                "type": "integer",
+                "minimum": 1
+              }
             },
             "description": "Where the mutation is and what it edits, when the claim named it that way rather than by identity."
           },
-          "reason": { "type": "string", "minLength": 1 },
-          "outcome": { "enum": ["killed", "survived", "timed_out"] },
-          "mutant": { "oneOf": [{ "type": "null" }, { "type": "string" }] },
-          "standing": { "enum": ["met", "stale", "unmatched"] },
-          "actual": { "oneOf": [{ "type": "null" }, { "type": "string" }] },
-          "why": { "oneOf": [{ "type": "null" }, { "type": "string" }] }
+          "reason": {
+            "type": "string",
+            "minLength": 1
+          },
+          "outcome": {
+            "enum": [
+              "killed",
+              "survived",
+              "timed_out"
+            ]
+          },
+          "mutant": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "standing": {
+            "enum": [
+              "met",
+              "stale",
+              "unmatched"
+            ]
+          },
+          "actual": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "why": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string"
+              }
+            ]
+          }
         }
       }
     },
@@ -342,7 +691,11 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["kind", "mutant", "detail"],
+        "required": [
+          "kind",
+          "mutant",
+          "detail"
+        ],
         "properties": {
           "kind": {
             "enum": [
@@ -357,8 +710,53 @@
               "unmatched-skip"
             ]
           },
-          "mutant": { "oneOf": [{ "type": "null" }, { "type": "string" }] },
-          "detail": { "type": "string", "minLength": 1 }
+          "mutant": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "detail": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "targets": {
+      "description": "The test targets the run built, which is what every mutant could have been asked against.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "kind",
+          "harness"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "kind": {
+            "type": "string",
+            "minLength": 1
+          },
+          "harness": {
+            "type": "boolean"
+          },
+          "limitations": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
         }
       }
     }

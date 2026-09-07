@@ -128,11 +128,13 @@ pub enum Layer {
     Trace,
     /// The ledger of accepted survivors, against the run that was asked to hold to it.
     Ledger,
+    /// The work the report claims, against the routes it claims it from and the recording of what ran.
+    Work,
 }
 
 impl Layer {
     /// Every layer, in the order they are re-decided.
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 12] = [
         Self::Identity,
         Self::Accounting,
         Self::Score,
@@ -144,6 +146,7 @@ impl Layer {
         Self::Sites,
         Self::Trace,
         Self::Ledger,
+        Self::Work,
     ];
 
     /// What to write in a report.
@@ -161,6 +164,7 @@ impl Layer {
             Self::Sites => "sites",
             Self::Trace => "trace",
             Self::Ledger => "ledger",
+            Self::Work => "work",
         }
     }
 }
@@ -349,6 +353,7 @@ pub fn audit(path: &str, text: &str, evidence: &Evidence<'_>) -> Result<Audit, A
     sites(evidence, &mut audit);
     trace(&report, evidence.recorded, &mut audit);
     ledger(&report, evidence.ledger, &mut audit);
+    work(&report, evidence.recorded, &mut audit);
     audit.remarks.sort();
     audit.remarks.dedup();
     Ok(audit)
@@ -358,6 +363,8 @@ pub fn audit(path: &str, text: &str, evidence: &Evidence<'_>) -> Result<Audit, A
 #[derive(Debug, Clone)]
 struct Row {
     index: Option<u64>,
+    reaching: Vec<String>,
+    executed: Vec<String>,
     id: String,
     display_id: String,
     path: String,
@@ -424,6 +431,7 @@ struct Finding {
 #[derive(Debug, Default)]
 struct Report {
     run_id: String,
+    targets: Vec<String>,
     tool_version: String,
     workspace_digest: String,
     catalog_digest: String,
@@ -444,6 +452,11 @@ impl Report {
             run_id: document
                 .get("run")
                 .and_then(|run| string(run, "id"))
+                .unwrap_or_default(),
+            targets: document
+                .get("targets")
+                .and_then(Value::as_array)
+                .map(|entries| entries.iter().filter_map(|one| string(one, "id")).collect())
                 .unwrap_or_default(),
             tool_version: string(document, "tool_version").unwrap_or_default(),
             workspace_digest: document
@@ -1539,6 +1552,109 @@ fn discharged(
 }
 
 /// The ledger of accepted survivors, against the run that was asked to hold to it.
+/// The work the report claims, against the routes it claims it from and the recording of what ran.
+///
+/// The unit is one pair of one mutant and one target. A run that asked every
+/// target about every mutant would start `mutants × targets` of them; every
+/// pair short of that is one something removed, and the report has to be able
+/// to say what. A pair the report says nothing started, and the recording says
+/// a process was started for, is a report that undercounts its own cost.
+fn work(report: &Report, recorded: Option<&str>, audit: &mut Audit) {
+    let mut notes = Notes::on(audit, Layer::Work);
+    let targets = report.targets.len();
+    if targets == 0 {
+        notes.unaudited(
+            "work",
+            "the report names no targets, so what a whole run would have started cannot be \
+             re-derived"
+                .to_owned(),
+        );
+        return;
+    }
+    let built: BTreeSet<&str> = report.targets.iter().map(String::as_str).collect();
+    let mut started: u64 = 0;
+    for row in &report.mutants {
+        pairs_of(row, &built, targets, &mut notes);
+        if row.source_run_id.is_none() {
+            started = started
+                .saturating_add(u64::try_from(row.executed.len()).unwrap_or(u64::MAX))
+                .saturating_add(u64::from(row.retried));
+        }
+    }
+    let Some(recorded) = recorded else {
+        notes.unaudited(
+            "executions",
+            "no recording was given, so what the report says it started cannot be held to what \
+             ran"
+            .to_owned(),
+        );
+        return;
+    };
+    let events = events(recorded);
+    let ran = events
+        .iter()
+        .filter(|event| string(event, "type").as_deref() == Some("mutant-exec"))
+        .count();
+    let ran = u64::try_from(ran).unwrap_or(u64::MAX);
+    if ran != started {
+        notes.violated(
+            "executions",
+            format!(
+                "the report accounts for {started} processes and the recording holds {ran}; a \
+                 report that undercounts its own work is one nobody can hold to doing less"
+            ),
+        );
+    }
+}
+
+/// Whether one row's pairs are ones the run built targets for and its own route reached.
+fn pairs_of(row: &Row, built: &BTreeSet<&str>, targets: usize, notes: &mut Notes<'_>) {
+    let reaching: BTreeSet<&str> = row.reaching.iter().map(String::as_str).collect();
+    let discharged: BTreeSet<&str> = row.discharged.iter().map(|(id, _)| id.as_str()).collect();
+    for name in row.executed.iter().map(String::as_str) {
+        if !reaching.contains(name) {
+            notes.violated(
+                row.label(),
+                format!(
+                    "a process was started against {name}, which the route this row carries never \
+                     reached; work nothing routed is work nobody asked for"
+                ),
+            );
+        }
+    }
+    for name in reaching.union(&discharged) {
+        if !built.contains(name) {
+            notes.violated(
+                row.label(),
+                format!("the route names {name}, which is not a target the run built"),
+            );
+        }
+    }
+    if !reaching.is_disjoint(&discharged) {
+        notes.violated(
+            row.label(),
+            "a target is both one the route reached and one a proof removed; it is one or the \
+             other"
+                .to_owned(),
+        );
+    }
+    if reaching.len().saturating_add(discharged.len()) > targets {
+        notes.violated(
+            row.label(),
+            format!(
+                "the route accounts for {} targets and the run built {targets}",
+                reaching.len().saturating_add(discharged.len())
+            ),
+        );
+    }
+    if row.source_run_id.is_some() && !row.executed.is_empty() {
+        notes.violated(
+            row.label(),
+            "an earlier run established this and a process was started for it anyway".to_owned(),
+        );
+    }
+}
+
 fn ledger(report: &Report, ledger: Option<&str>, audit: &mut Audit) {
     let mut notes = Notes::on(audit, Layer::Ledger);
     let Some(ledger) = ledger else {
@@ -1646,8 +1762,25 @@ fn row(value: &Value) -> Row {
         unreached: flag(value, "unreached"),
         not_run_reason: string(value, "not_run_reason"),
         discharged: discharged_in(value),
+        reaching: named_in(value, "reaching"),
+        executed: named_in(value, "executed"),
         source_run_id: string(value, "source_run_id"),
     }
+}
+
+/// Every target one row's route names under `field`.
+fn named_in(value: &Value, field: &str) -> Vec<String> {
+    value
+        .get("route")
+        .and_then(|route| route.get(field))
+        .and_then(Value::as_array)
+        .map(|entries| {
+            entries
+                .iter()
+                .filter_map(|one| one.as_str().map(ToOwned::to_owned))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Every target one row says a proof removed, with the proof that removed it.

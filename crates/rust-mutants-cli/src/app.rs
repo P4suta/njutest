@@ -861,26 +861,32 @@ fn addressed(text: &str) -> Result<(String, Option<(u32, u32)>), CliError> {
 
 /// What a run would cost, from what preparing established and before a mutant is executed.
 fn estimate(session: &Session, filter: &run::Filter) -> String {
-    let mut selected = 0u32;
-    let mut left_out = 0u32;
-    let mut unreached = 0u32;
+    let targets = u64::try_from(session.targets().len()).unwrap_or(u64::MAX);
+    let mut counted = Estimated::default();
     let mut text = String::new();
     for index in session.accepted() {
         let Some(mutant) = session.catalog().by_index(*index) else {
             continue;
         };
+        counted.cataloged = counted.cataloged.saturating_add(1);
         let at = session.position(mutant);
         let line = at.map_or(0, |one| one.line);
         if !filter.is_empty() && !filter.selects(mutant, line) {
-            left_out = left_out.saturating_add(1);
+            counted.unselected = counted.unselected.saturating_add(1);
             continue;
         }
         let route = session.route(mutant);
-        let targets = route.reaching().len();
-        if targets == 0 {
-            unreached = unreached.saturating_add(1);
+        let reaching = u64::try_from(route.reaching().len()).unwrap_or(u64::MAX);
+        let discharged = u64::try_from(route.discharged().len()).unwrap_or(u64::MAX);
+        counted.discharged = counted.discharged.saturating_add(discharged);
+        counted.unreached = counted
+            .unreached
+            .saturating_add(targets.saturating_sub(reaching).saturating_sub(discharged));
+        if reaching == 0 {
+            counted.nothing_to_ask = counted.nothing_to_ask.saturating_add(1);
         } else {
-            selected = selected.saturating_add(1);
+            counted.selected = counted.selected.saturating_add(1);
+            counted.pairs = counted.pairs.saturating_add(reaching);
         }
         let written = writeln!(
             text,
@@ -891,26 +897,70 @@ fn estimate(session: &Session, filter: &run::Filter) -> String {
             mutant.candidate.path,
             line,
             route.granularity(),
-            targets
+            reaching
         );
         debug_assert!(written.is_ok(), "writing to a String cannot fail");
     }
-    let each = session.slowest_baseline();
-    let seconds = u64::from(selected).saturating_mul(each.as_secs().max(1));
-    let targets = session.targets().len();
-    let written = writeln!(
-        text,
-        "\nwould run {selected} {mutants} against up to {targets} {names}, about \
-         {}:{:02}:{:02} at ~{}s per target; {unreached} unreached; {left_out} unselected",
-        seconds / 3600,
-        seconds % 3600 / 60,
-        seconds % 60,
-        each.as_secs().max(1),
-        mutants = if selected == 1 { "mutant" } else { "mutants" },
-        names = if targets == 1 { "target" } else { "targets" },
-    );
-    debug_assert!(written.is_ok(), "writing to a String cannot fail");
+    text.push_str(&counted.said(targets, session.slowest_baseline()));
     text
+}
+
+/// What a dry run counted, in pairs of one mutant and one target.
+#[derive(Debug, Clone, Copy, Default)]
+struct Estimated {
+    /// Every mutant the catalog holds.
+    cataloged: u64,
+    /// The mutants a filter left out.
+    unselected: u64,
+    /// The mutants with at least one target to ask.
+    selected: u64,
+    /// The mutants no target would be asked about.
+    nothing_to_ask: u64,
+    /// The pairs a run would start at most, before one target answers for the rest.
+    pairs: u64,
+    /// The pairs the measurement removed.
+    unreached: u64,
+    /// The pairs a proof removed.
+    discharged: u64,
+}
+
+impl Estimated {
+    /// The estimate, counted in work first and guessed at in time last.
+    ///
+    /// A count is the same on every machine; a duration is a guess about this
+    /// one. The count is what a person decides by, so it comes first and the
+    /// guess comes last, marked as one.
+    fn said(&self, targets: u64, each: std::time::Duration) -> String {
+        let whole = self.cataloged.saturating_mul(targets);
+        let removed = whole.saturating_sub(self.pairs);
+        let widened =
+            |count: u64| u32::try_from(count).map_or_else(|_| f64::from(u32::MAX), f64::from);
+        let share = if whole == 0 {
+            0.0
+        } else {
+            widened(removed) / widened(whole) * 100.0
+        };
+        let seconds = self.pairs.saturating_mul(each.as_secs().max(1));
+        format!(
+            "\nWOULD START  {} of {whole} pairs ({} mutants against {targets} targets); \
+             {share:.1}% removed\n\
+             REMOVED BY   unreached={} discharged={} unselected={} nothing-to-ask={}\n\
+             AT MOST      {} mutants execute; one target that answers ends the rest\n\
+             ROUGHLY      {}:{:02}:{:02} on this machine at ~{}s a target, which is a guess about \
+             the machine rather than about the work\n",
+            self.pairs,
+            self.cataloged,
+            self.unreached,
+            self.discharged,
+            self.unselected,
+            self.nothing_to_ask,
+            self.selected,
+            seconds / 3600,
+            seconds % 3600 / 60,
+            seconds % 60,
+            each.as_secs().max(1),
+        )
+    }
 }
 
 /// One finding, put back to the tests exactly as the run that found it did.
