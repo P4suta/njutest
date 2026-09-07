@@ -34,6 +34,42 @@ that lets it be seen, tested, and audited — and both are completion criteria.
 | E5 ✓ | The engine sees itself | `--trace[=DIR]` on every command, `trace summary`/`check`/`diff`, typed `verify`/`probe-exec`/`witness`/`route` records, sub-phases through `prepare`, `Session::route` as a question anyone can ask, and the byte span and source digest a reader re-mints an identity from | a scripted toolchain the tests drive instead of cargo, the suite cut into an inner loop that starts nothing and a `toolchain_` half that does, `cargo xtask engine-audit` re-deciding a run in nine layers, three committed runs it re-decides, the dogfood ledger and its weekly shard job, and one test per ledger the documentation keeps | every judged mutant leaves one route record, `engine-audit --trace` re-decides three committed runs with no violations, and `mise run test:fast` starts no cargo |
 | E6 ✓ | The contracts and the code (the engine) | a run compiles what it is told to (`[build]`, features, target, profile), it says which test noticed a mutation and what signal a process died from, a tree that reaches outside itself or does not link is refused before any round, a build script's generated code is skipped by name, a `harness = false` target answers by exiting, documented examples are a target a run can switch off, `build.rustflags` is read and put back rather than refusing the measurement, a crate that forbids what the guards allow is skipped whole, a cancelled build is a cancellation, attribution reads every span, bisection names what it isolated and what interacts, the budget is derived from what the target measured, four mutants are measured at once and delivered as they finish, coverage is on by default, a branch or a probe discharges a target that could not have noticed, and a survivor is asked whether the compiler renders it at all | `cargo::config` and `cargo::manifest` read what cargo does not report, `Session::judge`/`describe`/`source`, the driver and the report model in the engine, `Observer` and the worker pool, `prove::discharges` as a pure function, the evidence a run keeps for its own audit, the `proofs` layer that re-derives every discharge, `cache`/`select`/`identical`/`evidence` records, and eight fixtures for eight things nothing measured | `run --jobs 4 --probe` completes on the engine itself and `engine-audit --trace --ledger` re-decides it with no violations |
 | E7 ✓ | Every place says what it is for | eighteen more operators and three more families — a match arm asked what it is for, a jump swapped, a terminal `else` dropped, a literal moved by one — a return type the syntax cannot default stated rather than guessed, every branch of a returned `if` or `match` a return site of its own, and `rust-mutants: skip` and `[[mutation.skip]]` as the two ways an author says what to pass over and why | `Form::M`, the guard written where an arm had none, the census that refuses a place the walk passed over silently, the item path every candidate now carries, locator-form expectations that outlive an edit elsewhere in the file, the `skip-claim` record, the `unmatched-skip` finding, the `sites` audit layer, and `fixture-annotated` | every place a rule targets is a mutant or a skip with a reason, and a claim that hides nothing is a finding rather than a comment nobody notices |
+| E8 ✓ | The engine as a product | a run says what it is doing while it does it and streams `rust-mutants-run-stream-v1` for a program, `--fail-fast` and seven filters narrow it after the catalog, `--dry-run` prices it, `explain` and `replay` answer from what was stored, `doctor` grades thirteen checks and `diagnostics` gathers one run into one directory, `cache`/`merge --runs`/`run --run-id` name what a sharded run leaves, `rules` lists what a team can pin, and a stored run projects into markdown, JUnit, SARIF, a page that shows every survivor in place, and Stryker | the run-stream, explain, doctor, reached and diagnostics schemas, the two-way test between the command-line page and `--help`, the subcommand help golden, the README session recorded from the binary, the terminal browser's five recorded frames, and the ledger that keeps `schema/` and its page equal in both directions | a bug report is one command, every flag is on one page, and the README shows what the tool actually prints |
+
+## What E8 closed
+
+The engine could establish things and could barely say them. A run printed
+nothing until it was over, so a person watching a long one had no way to tell
+a slow phase from a hung one, and a program had nothing to read but an exit
+code. There is a line per phase and a line per mutant now, in completion
+order, and `--json` is the same run as one object per line with a reader
+shipped so a consumer does not have to write one.
+
+What a run measured, it measured whole. Narrowing meant editing the
+configuration or the command until the catalog was smaller, which changed the
+identities and threw away the cache. The filters cut after the catalog
+instead: the digest does not move, a dropped mutant is `unselected` rather
+than missing, and `--from-report --outcome survived` is the loop a person
+actually works in — fix a test, ask the same survivors again. `--dry-run`
+says what any of it would cost before paying for it.
+
+A report could be read by this engine's own readers and by Stryker's. A team
+already has a test view and a code scanning view, and a pull request already
+has a place for a summary; JUnit, SARIF and Markdown are those, with the
+mapping between six outcomes and four states written down rather than
+guessed. The page grew the part that makes a survivor worth reading: the file
+it is in, whole, with the mutation on its line — and it shows a file only when
+the recorded digest says it is the one the run measured, because showing the
+bytes that are there now would be a lie about what was established.
+
+When something went wrong there was no first step. `doctor` answered about
+four things and graded none of them; now it answers about thirteen, says
+whether each is `ok`, `warn` or `fail`, and carries the next step for every
+one that is not `ok`. `diagnostics` is the second step: one command, one
+directory, everything a reader re-decides the run from, and the names of the
+environment variables with none of their values. Both are the only commands
+that report a reserved variable instead of refusing to start under it, which
+is the one situation they exist for.
 
 ## What E7 closed
 

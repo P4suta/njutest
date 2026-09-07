@@ -143,6 +143,7 @@ fn kept_command(
             stdout,
         ),
         cli::Command::Trace { command } => trace::read(command, environment, stdout),
+        cli::Command::Rules { tier, json } => rules(tier.as_deref(), *json, stdout),
         cli::Command::Diagnostics { run, root, output } => bundle(
             &Gathering {
                 root: root.as_deref(),
@@ -1345,6 +1346,81 @@ fn doctor_document(
     checks.push(snapshots_check(&root, environment));
     checks.push(llvm_tools_check(toolchain.as_ref().ok()));
     doctor_report::DoctorDocument::of(checks)
+}
+
+/// Lists the operators this release knows.
+///
+/// # Errors
+/// [`CliError::InvalidValue`] when the tier named is not one of them.
+fn rules(tier: Option<&str>, json: bool, stdout: &mut dyn Write) -> Result<u8, CliError> {
+    use rust_mutants::rule::{Registry, Tier};
+    let registry = Registry::canonical();
+    let selected = match tier {
+        None => registry.rules().to_vec(),
+        Some(named) => {
+            let tier = Tier::parse(named).ok_or_else(|| CliError::InvalidValue {
+                flag: "--tier".to_owned(),
+                value: named.to_owned(),
+                expected: Tier::ALL.map(Tier::name).join(" | "),
+            })?;
+            registry.select_tier(tier)
+        }
+    };
+    let text = if json {
+        json_line(&serde_json::json!({
+            "document_type": "rust-mutants/rules",
+            "schema_version": 1,
+            "tool_version": rust_mutants::VERSION,
+            "rules": selected
+                .iter()
+                .map(|rule| {
+                    serde_json::json!({
+                        "name": rule.name,
+                        "family": rule.family.name(),
+                        "tier": rule.tier.name(),
+                        "version": rule.version,
+                    })
+                })
+                .collect::<Vec<_>>(),
+        }))
+    } else {
+        listed(&selected)
+    };
+    write(stdout, &text);
+    Ok(0)
+}
+
+/// The rules as the lines a person reads, in canonical table order.
+fn listed(selected: &[rust_mutants::rule::Rule]) -> String {
+    let mut text = format!(
+        "{:<20} {:<26} {:<9} {}\n",
+        "FAMILY", "RULE", "TIER", "VERSION"
+    );
+    let mut families: usize = 0;
+    let mut last = None;
+    for rule in selected {
+        if last != Some(rule.family) {
+            families = families.saturating_add(1);
+            last = Some(rule.family);
+        }
+        let written = writeln!(
+            text,
+            "{:<20} {:<26} {:<9} {}",
+            rule.family.name(),
+            rule.name,
+            rule.tier.name(),
+            rule.version
+        );
+        debug_assert!(written.is_ok(), "writing to a String cannot fail");
+    }
+    let written = writeln!(
+        text,
+        "\n{} rules in {families} families. `operators = [...]` in .rust-mutants.toml pins \
+         exactly these; a tier selects them by name.",
+        selected.len()
+    );
+    debug_assert!(written.is_ok(), "writing to a String cannot fail");
+    text
 }
 
 /// Which run to gather, and where to put it.

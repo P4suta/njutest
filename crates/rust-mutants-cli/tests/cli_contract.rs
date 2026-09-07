@@ -5,7 +5,9 @@
 
 #![expect(
     clippy::expect_used,
-    reason = "the helpers that start the binary are not themselves tests"
+    clippy::indexing_slicing,
+    reason = "the helpers that start the binary are not themselves tests, and a test reads a \
+              document as a table"
 )]
 
 use std::path::Path;
@@ -56,4 +58,147 @@ fn an_unknown_subcommand_is_a_usage_error() {
         stderr.contains("frobnicate"),
         "names the offending argument: {stderr}"
     );
+}
+
+/// Every subcommand, so a page and a golden both stay complete when one is added.
+const SUBCOMMANDS: [&str; 16] = [
+    "run",
+    "list",
+    "catalog",
+    "explain",
+    "why-skipped",
+    "instrument",
+    "replay",
+    "equivalence",
+    "rules",
+    "init",
+    "doctor",
+    "diagnostics",
+    "merge",
+    "trace",
+    "report",
+    "cache",
+];
+
+#[test]
+fn every_subcommand_has_the_recorded_help_text() {
+    let mut recorded = String::new();
+    for name in SUBCOMMANDS {
+        let output = rust_mutants(&[name, "--help"]);
+        assert_eq!(output.status.code(), Some(0), "{name} --help");
+        recorded.push_str("$ rust-mutants ");
+        recorded.push_str(name);
+        recorded.push_str(" --help\n");
+        recorded.push_str(&String::from_utf8_lossy(&output.stdout));
+        recorded.push('\n');
+    }
+    let golden = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testdata/subcommands.golden");
+    mjutest_devkit::golden::golden(&golden, recorded.as_bytes())
+        .expect("the subcommand help is the recorded one");
+}
+
+#[test]
+fn the_command_line_page_and_the_help_texts_name_the_same_flags() {
+    let page = std::fs::read_to_string(
+        mjutest_devkit::paths::workspace_root().join("docs/engine/command-line.md"),
+    )
+    .expect("the command line page");
+    let mut helped: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for name in SUBCOMMANDS.into_iter().chain(std::iter::once("")) {
+        let output = if name.is_empty() {
+            rust_mutants(&["--help"])
+        } else {
+            rust_mutants(&[name, "--help"])
+        };
+        helped.extend(flags(&String::from_utf8_lossy(&output.stdout)));
+    }
+    let missing: Vec<&String> = helped
+        .iter()
+        .filter(|flag| !page.contains(flag.as_str()))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "docs/engine/command-line.md does not name {missing:?}"
+    );
+
+    let written = flags(&page);
+    let unknown: Vec<&String> = written
+        .iter()
+        .filter(|flag| !helped.contains(*flag))
+        .collect();
+    assert!(
+        unknown.is_empty(),
+        "docs/engine/command-line.md names flags no command has: {unknown:?}"
+    );
+}
+
+/// Every long flag a text spells, as `--name`.
+fn flags(text: &str) -> std::collections::BTreeSet<String> {
+    let mut found = std::collections::BTreeSet::new();
+    let mut rest = text;
+    while let Some(at) = rest.find("--") {
+        let tail = rest.split_at(at).1.get(2..).unwrap_or("");
+        let end = tail
+            .find(|one: char| !one.is_ascii_alphanumeric() && one != '-')
+            .unwrap_or(tail.len());
+        let name = tail.get(..end).unwrap_or("");
+        if name.len() > 1 && name.starts_with(|one: char| one.is_ascii_lowercase()) {
+            found.insert(format!("--{name}"));
+        }
+        rest = tail.get(end..).unwrap_or("");
+    }
+    found
+}
+
+#[test]
+fn rules_lists_every_rule_with_its_tier_and_version_so_a_team_can_pin_operators() {
+    let output = rust_mutants(&["rules"]);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let text = String::from_utf8_lossy(&output.stdout).into_owned();
+    for rule in rust_mutants::rule::CANONICAL_TABLE {
+        assert!(
+            text.contains(rule.name),
+            "{} is a rule this release has and does not list",
+            rule.name
+        );
+    }
+    let golden = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testdata/rules.golden");
+    mjutest_devkit::golden::golden(&golden, &output.stdout)
+        .expect("the rules are the recorded set");
+}
+
+#[test]
+fn rules_answers_as_a_document_when_it_is_asked_to() {
+    let output = rust_mutants(&["rules", "--json"]);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let document: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("the answer is JSON");
+    let rules = document["rules"].as_array().expect("the rules");
+    assert_eq!(rules.len(), rust_mutants::rule::CANONICAL_RULE_COUNT);
+    for rule in rules {
+        assert!(rule["name"].as_str().is_some_and(|it| !it.is_empty()));
+        assert!(rule["family"].as_str().is_some_and(|it| !it.is_empty()));
+        assert!(rule["tier"].as_str().is_some_and(|it| !it.is_empty()));
+        assert!(rule["version"].as_u64().is_some());
+    }
+}
+
+#[test]
+fn rules_narrowed_to_a_tier_is_what_that_tier_selects() {
+    let output = rust_mutants(&["rules", "--tier", "balanced", "--json"]);
+    let document: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("the answer is JSON");
+    let named: Vec<String> = document["rules"]
+        .as_array()
+        .expect("the rules")
+        .iter()
+        .filter_map(|rule| rule["name"].as_str().map(ToOwned::to_owned))
+        .collect();
+    let selected: Vec<String> = rust_mutants::rule::Registry::canonical()
+        .select_tier(rust_mutants::rule::Tier::Balanced)
+        .into_iter()
+        .map(|rule| rule.name.to_owned())
+        .collect();
+    assert_eq!(named, selected);
+    assert!(named.len() < rust_mutants::rule::CANONICAL_RULE_COUNT);
 }

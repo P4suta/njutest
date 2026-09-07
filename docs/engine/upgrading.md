@@ -75,6 +75,70 @@ now names the target that failed with nothing active and says that
 `--no-verify` is the way past it.
 
 
+## Upgrading to E8
+
+**A run says what it is doing while it does it.** `--ui plain` writes one line
+per phase, one per mutant in completion order, and a tally; `--ui quiet` is
+the old behaviour. `auto`, which a run without the flag gets, is `plain`.
+`--color auto|always|never` decides colour, and `NO_COLOR` or a pipe both mean
+never. If you were parsing standard output, parse `--json` instead: one
+`rust-mutants-run-stream-v1` object per line, with a reader shipped as
+`rust_mutants::report::stream::read_line`.
+
+**`--fail-fast` and the filters.** `--rule`, `--family`, `--skip-rule`,
+`--skip-family`, `--file PATH[:LINE[-LINE]]`, `--id PREFIX` and
+`--from-report [RUN] --outcome survived` narrow a run after the catalog, so
+the identities and the catalog digest do not change. A mutant a filter dropped
+is `not_run` with reason `unselected`, and one `--fail-fast` never reached is
+`stopped-early`; neither is a finding. `--dry-run` prepares, verifies, and
+prints the estimate without executing a mutant.
+
+**`cache --gc` keeps the build caches.** It used to remove them. `--gc --all`
+removes every build cache no live run has locked, and `--gc --kept` removes
+what `--keep-temp` was asked to preserve. If a script relied on `--gc`
+reclaiming everything, it wants `--gc --all` now.
+
+**`doctor` answers about more, and grades what it finds.** Every check carries
+a `status` of `ok`, `warn` or `fail` and a `remedy` when there is something to
+do; `ok` on the document stays true through a warning, and the exit code
+follows it. The new checks are `git`, `targets`, `environment`, `cache`,
+`disk` and `snapshots`. A consumer reading only `ok` per check is unaffected.
+
+**`doctor` and `diagnostics` no longer refuse to start under a reserved
+variable.** Every other command still does. These two report it instead,
+because they are what a person runs to find out that `RUST_MUTANTS_ACTIVE` is
+set.
+
+**Three more report formats, and a page that shows the code.** `--format
+markdown`, `junit` and `sarif` join `lines`, `json`, `html` and `stryker`.
+The HTML page now shows every measured file whole with its mutants on their
+lines, and carries one inline script that searches, filters and sorts. A file
+the report names and `--root` does not hold is now `RM0012` rather than a file
+quietly dropped from the projection — if you generate a Stryker or HTML report
+from a checkout that does not hold the sources, pass `--root` at the tree the
+run measured.
+
+**Stryker's `killedBy` names the tests, not the binary.** It carried the test
+target's id; it now carries the tests that failed with the mutation live, and
+falls back to the target only when the harness named none. `[reports.stryker]
+high` and `low` set the thresholds that projection declares. Nothing in this
+engine reads them back.
+
+**The terminal browser has a source pane and a search.** `p` shows the file,
+`/` searches, `1`–`5` narrow, `F` shows the findings, `?` shows the keys, and
+`y` names a mutant that quitting prints on standard output. `Esc` now puts a
+pane away before it leaves.
+
+**New commands.** `rules` lists every operator with the tier and version that
+pin it, `diagnostics` gathers a run into one directory for a bug report, and
+`replay` puts a recorded kill back in front of the tests. `run --run-id NAME`
+names a run and its report directory, and `merge --runs` finds the parts by
+name or by glob.
+
+**`[reports.stryker]` is the one new configuration key.** Everything else on
+this list is a flag. `rust-mutants init` writes a skeleton that now covers
+every key the reader accepts.
+
 ## Upgrading to E7
 
 **Eighteen more operators, in three more families.** The table went from

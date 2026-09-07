@@ -67,12 +67,65 @@ rust-mutants list                  # what the rules propose, before the compiler
 rust-mutants catalog --json        # what it accepts, and every refusal in its own words
 rust-mutants run                   # every mutant, and an exit code that says what happened
 rust-mutants run --changed         # only the files that differ from HEAD
-rust-mutants run --coverage        # only against the targets that reached each mutant
 rust-mutants run --shard 1/4       # one part of the catalog, and `merge` puts them together
-rust-mutants report --format html  # one page that fetches nothing
+rust-mutants report --format html  # one page that fetches nothing, showing every survivor in place
 rust-mutants report --tui          # read it at the terminal
+rust-mutants rules                 # every operator, with the tier and version that pin it
 ```
 
+A session against one of this repository's own fixtures, recorded from the
+binary by a test so the page cannot drift from the tool:
+
+```console
+$ rust-mutants run
+
+run       <run>
+workspace <workspace digest>
+catalog   <catalog digest>
+
+MUTANTS   cataloged=8 refused=0 skipped=2 executed=8
+OUTCOMES  killed=7 survived=1 timed_out=0 inconclusive=0 errored=0 not_run=0 unreached=0 discharged=0 expected=0
+SCORE     87.5%  (7 detected of 8 decided)
+
+surviving-mutant       no test noticed e5e872bfbcb2afbbf7a1; 1 test ran and passed
+REPORT    ./reports/mutation/<run>/run-report-v1.json
+
+$ rust-mutants explain e5e8
+MUTANT    e5e872bfbcb2afbbf7a1bb35538af59465f5d53cd46b628ec028b80d7d169730
+SHORT     e5e872bfbcb2afbbf7a1
+RULE      gt-to-ge@1 (comparison)
+WHERE     src/lib.rs:11:10
+EDIT      ">" => ">="
+RUN       <run>
+OUTCOME   survived
+TARGET    fixture-simple/test/parity
+TIMING    <duration>
+ROUTE     all reaching [fixture-simple/lib/fixture_simple, fixture-simple/test/parity, fixture-simple/doc/fixture_simple] executed [fixture-simple/lib/fixture_simple, fixture-simple/test/parity, fixture-simple/doc/fixture_simple]
+REPRODUCE rust-mutants run --mutant e5e872bfbcb2afbbf7a1 --target fixture-simple/test/parity
+
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -8,7 +8,7 @@
+ 
+ /// The larger of two numbers, spelled with a comparison a mutant can flip.
+ pub fn max(a: i32, b: i32) -> i32 {
+-    if a > b { a } else { b }
++    if a >= b { a } else { b }
+ }
+ 
+ /// Whether `n` is even.
+```
+
+A survivor is a gap in the tests or a claim to write down; `explain` says
+which, `replay` puts it back, and `[[mutation.expect]]` accepts one with a
+reason. There is no threshold flag and no percentage to pass:
+[ADR 0004](docs/adr/0004-proof-layers-not-budgets.md) says why.
+
+[getting started](docs/engine/getting-started.md) is the first hour,
+[the command line](docs/engine/command-line.md) every flag,
+[reports](docs/engine/reports.md) what a run becomes for other readers, and
+[troubleshooting](docs/engine/troubleshooting.md) what to do when something
+is wrong.
 [`docs/engine/comparison-with-cargo-mutants.md`](docs/engine/comparison-with-cargo-mutants.md)
 says how it differs from the tool most Rust projects reach for, and why.
 

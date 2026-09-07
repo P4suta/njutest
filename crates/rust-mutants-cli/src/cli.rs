@@ -252,6 +252,15 @@ pub enum Command {
         #[arg(long, conflicts_with_all = ["format", "output"])]
         tui: bool,
     },
+    /// List the operators this release knows, with the tier and version that pin them.
+    Rules {
+        /// Only the rules this tier selects. Every tier when none is named.
+        #[arg(long, value_name = "TIER")]
+        tier: Option<String>,
+        /// Print the rules as a document rather than the lines a person reads.
+        #[arg(long)]
+        json: bool,
+    },
     /// Gather everything one run established into one directory, for a bug report.
     Diagnostics {
         /// The run, by its identity. Defaults to the newest.
@@ -455,6 +464,7 @@ impl Command {
             | Self::Report { .. }
             | Self::Trace { .. }
             | Self::Diagnostics { .. }
+            | Self::Rules { .. }
             | Self::Cache { .. } => None,
         }
     }

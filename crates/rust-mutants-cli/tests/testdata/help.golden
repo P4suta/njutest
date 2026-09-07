@@ -26,6 +26,7 @@ Commands:
   trace        Read a recording back: what it counted, what each phase took, and what moved between
                two of them
   report       Read back a stored run report
+  rules        List the operators this release knows, with the tier and version that pin them
   diagnostics  Gather everything one run established into one directory, for a bug report
   cache        Say what the engine left in the temporary directory, and remove what no run still
                owns
