@@ -169,13 +169,7 @@ fn measured(fixture: &Fixture) -> Output {
 
 /// How many of the run's rows an earlier run answered for.
 fn reused(fixture: &Fixture) -> usize {
-    let directory = std::fs::read_dir(fixture.root().join("reports/mutation"))
-        .expect("a stored run")
-        .flatten()
-        .map(|entry| entry.path())
-        .filter(|path| path.join("run-report-v1.json").is_file())
-        .max()
-        .expect("the newest run");
+    let directory = mjutest_devkit::fixture::newest_run(fixture.root());
     let text = std::fs::read_to_string(directory.join("run-report-v1.json")).expect("the report");
     let document: serde_json::Value = serde_json::from_str(&text).expect("the report is JSON");
     document["mutants"]

@@ -6,7 +6,6 @@
 #![expect(
     clippy::expect_used,
     clippy::indexing_slicing,
-    clippy::panic,
     reason = "the helpers that start the engine are not themselves tests, and a document this \
               test caused to be written is one it may index"
 )]
@@ -27,18 +26,8 @@ fn report(fixture: &Fixture) -> serde_json::Value {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let directory = fixture.root().join("reports/mutation");
-    let mut runs: Vec<std::path::PathBuf> = std::fs::read_dir(&directory)
-        .unwrap_or_else(|error| panic!("{}: {error}", directory.display()))
-        .flatten()
-        .map(|entry| entry.path().join("run-report-v1.json"))
-        .filter(|path| path.is_file())
-        .collect();
-    runs.sort();
-    serde_json::from_str(
-        &std::fs::read_to_string(runs.pop().expect("one stored run")).expect("the report"),
-    )
-    .expect("the report is a document")
+    serde_json::from_str(&mjutest_devkit::fixture::stored_report(fixture.root()))
+        .expect("the report is a document")
 }
 
 #[test]

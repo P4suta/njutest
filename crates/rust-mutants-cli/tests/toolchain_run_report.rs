@@ -42,31 +42,9 @@ fn count(value: usize) -> u64 {
     u64::try_from(value).unwrap_or(u64::MAX)
 }
 
-/// The directory the newest run wrote into.
-fn newest_run(fixture: &Fixture) -> PathBuf {
-    let directory = fixture.root().join("reports/mutation");
-    let pointer: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(directory.join("latest.json"))
-            .expect("a pointer to the newest run"),
-    )
-    .expect("the pointer is a document");
-    let relative = pointer["document"].as_str().expect("a document path");
-    directory
-        .join(relative)
-        .parent()
-        .expect("the run's own directory")
-        .to_path_buf()
-}
-
+/// The report the newest run stored, as a document.
 fn stored(fixture: &Fixture) -> serde_json::Value {
-    let directory = fixture.root().join("reports/mutation");
-    let pointer: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(directory.join("latest.json"))
-            .expect("a pointer to the newest run"),
-    )
-    .expect("the pointer is a document");
-    let relative = pointer["document"].as_str().expect("a document path");
-    serde_json::from_str(&std::fs::read_to_string(directory.join(relative)).expect("the report"))
+    serde_json::from_str(&mjutest_devkit::fixture::stored_report(fixture.root()))
         .expect("the report is a document")
 }
 
@@ -855,7 +833,7 @@ fn evidence_of(extra: &[&str]) -> (PathBuf, Fixture) {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let directory = newest_run(&fixture);
+    let directory = mjutest_devkit::fixture::newest_run(fixture.root());
     (directory, fixture)
 }
 

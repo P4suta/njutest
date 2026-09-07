@@ -273,3 +273,43 @@ pub fn stated_fates(name: &str) -> Fates {
         .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
     fates(&readme)
 }
+
+/// The directory of the newest stored run under `reports/mutation`, followed from the pointer a run writes.
+///
+/// A test that reads a stored run by scanning the directory and taking any
+/// entry, or the one whose name sorts highest, is a test resting on a naming
+/// convention rather than on the contract. A run writes `latest.json` saying
+/// which document is the newest; following it is what a reader would do, and
+/// it stays right when two runs land in the same second.
+///
+/// # Panics
+/// When the pointer is not there or does not name a document, which means no
+/// run stored a report under `root`.
+#[must_use]
+pub fn newest_run(root: &Path) -> PathBuf {
+    let directory = root.join("reports/mutation");
+    let pointer = directory.join("latest.json");
+    let text = std::fs::read_to_string(&pointer)
+        .unwrap_or_else(|error| panic!("{}: {error}", pointer.display()));
+    let document: serde_json::Value = serde_json::from_str(&text)
+        .unwrap_or_else(|error| panic!("{}: {error}", pointer.display()));
+    let named = document
+        .get("document")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_else(|| panic!("{} names no document: {text}", pointer.display()));
+    directory
+        .join(named)
+        .parent()
+        .unwrap_or_else(|| panic!("{named} is not inside a run's own directory"))
+        .to_path_buf()
+}
+
+/// The report the newest stored run left, as text.
+///
+/// # Panics
+/// When there is no such run, or its report cannot be read.
+#[must_use]
+pub fn stored_report(root: &Path) -> String {
+    let path = newest_run(root).join("run-report-v1.json");
+    std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display()))
+}

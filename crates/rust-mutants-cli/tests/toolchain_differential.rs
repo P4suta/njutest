@@ -73,12 +73,7 @@ fn established(name: &str, extra: &[&str]) -> Established {
         "{name} {extra:?}: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let directory = std::fs::read_dir(fixture.root().join("reports/mutation"))
-        .expect("the run stored a report")
-        .flatten()
-        .map(|entry| entry.path())
-        .find(|path| path.join("run-report-v1.json").is_file())
-        .expect("a stored run");
+    let directory = mjutest_devkit::fixture::newest_run(fixture.root());
     let text = std::fs::read_to_string(directory.join("run-report-v1.json")).expect("the report");
     let document: RunDocument = serde_json::from_str(&text).expect("the report reads back");
     Established {
@@ -255,13 +250,7 @@ fn a_remembered_measurement_routes_a_run_exactly_as_a_fresh_one_would() {
             "{}",
             String::from_utf8_lossy(&output.stderr)
         );
-        let directory = std::fs::read_dir(fixture.root().join("reports/mutation"))
-            .expect("the run stored a report")
-            .flatten()
-            .map(|entry| entry.path())
-            .filter(|path| path.join("run-report-v1.json").is_file())
-            .max()
-            .expect("the newest run");
+        let directory = mjutest_devkit::fixture::newest_run(fixture.root());
         let text =
             std::fs::read_to_string(directory.join("run-report-v1.json")).expect("the report");
         let document: RunDocument = serde_json::from_str(&text).expect("the report reads back");

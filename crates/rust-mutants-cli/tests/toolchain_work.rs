@@ -72,12 +72,7 @@ fn measured(name: &str) -> Work {
         output.status.code().is_some_and(|code| code <= 1),
         "{name}: {output:?}"
     );
-    let directory = std::fs::read_dir(fixture.root().join("reports/mutation"))
-        .expect("the run stored a report")
-        .flatten()
-        .map(|entry| entry.path())
-        .find(|path| path.join("run-report-v1.json").is_file())
-        .expect("a stored run");
+    let directory = mjutest_devkit::fixture::newest_run(fixture.root());
     let text = std::fs::read_to_string(directory.join("run-report-v1.json")).expect("the report");
     let document: rust_mutants::report::run::RunDocument =
         serde_json::from_str(&text).expect("the report reads back");
