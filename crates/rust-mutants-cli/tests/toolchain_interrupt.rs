@@ -112,7 +112,7 @@ fn a_run_that_is_interrupted_exits_130_and_leaves_no_process_and_no_snapshot_beh
         line.clear();
         let read = reader.read_line(&mut line).expect("read");
         assert!(read > 0, "the run ended before it executed a mutant");
-        if line.starts_with("[1/") {
+        if line.starts_with('[') {
             break;
         }
         assert!(Instant::now() < deadline, "the run never reached a mutant");

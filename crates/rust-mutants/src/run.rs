@@ -613,11 +613,13 @@ pub fn run<O: Observer>(
         .iter()
         .filter_map(|index| session.catalog().by_index(*index))
         .collect();
+    observer.starting(count(places.len()));
     let judged = if jobs(options.jobs) == 1 {
         serially(session, &places, options, (cancel, observer))?
     } else {
         pool::judge(session, &places, options, (cancel, observer))?
     };
+    observer.finished(started.elapsed());
     let mut judged = judged;
     if let Some(asking) = options.equivalence {
         equivalence(session, asking, &mut judged, cancel);
@@ -947,11 +949,17 @@ fn route(session: &Session, mutant: &Mutant, judged: &mut Judged) {
 /// it likes. Each has a default that does nothing, so an observer implements
 /// only what it draws.
 pub trait Observer {
+    /// The run is about to judge `total` mutants.
+    fn starting(&mut self, _total: u32) {}
+
     /// A mutant is about to be judged.
     fn started(&mut self, _mutant: &Mutant) {}
 
     /// A mutant has been judged. `completed` counts what has been delivered, of `total`.
     fn judged(&mut self, _judged: &Judged, _completed: u32, _total: u32) {}
+
+    /// Every mutant has been judged, and the run took `duration`.
+    fn finished(&mut self, _duration: Duration) {}
 }
 
 /// An observer that draws nothing, for a caller that reads the report instead.

@@ -23,7 +23,7 @@ pub use event::{
 };
 pub use reader::{Problem, ReadError, check, read_events};
 pub use sink::{
-    DirSink, FILE_NAME, MemorySink, OUTPUT_DIRECTORY_NAME, OUTPUT_FILE_LIMIT, Sink,
+    ChannelSink, DirSink, FILE_NAME, MemorySink, OUTPUT_DIRECTORY_NAME, OUTPUT_FILE_LIMIT, Sink,
     TRUNCATION_MARKER,
 };
 

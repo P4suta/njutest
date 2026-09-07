@@ -20,6 +20,9 @@ fn main() -> ExitCode {
         temp_directory: std::env::temp_dir(),
         cache_directory: Environment::cache_directory_of(&vars),
         working_directory: std::env::current_dir().unwrap_or_else(|_error| PathBuf::from(".")),
+        no_color: Environment::no_color_of(&vars),
+        stdout_is_terminal: std::io::IsTerminal::is_terminal(&std::io::stdout()),
+        paints: false,
         vars,
     };
     let cancel = Cancel::new();

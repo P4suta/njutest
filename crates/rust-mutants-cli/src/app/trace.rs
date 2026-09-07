@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use rust_mutants::runner::Cancel;
 use rust_mutants::trace::summary::{Summary, diff, render, summarize};
 use rust_mutants::trace::{
-    DirSink, Event, FILE_NAME, Problem, ReadError, Recorder, Sink, check, read_events,
+    ChannelSink, DirSink, Event, FILE_NAME, Problem, ReadError, Recorder, Sink, check, read_events,
 };
 
 use crate::error::CliError;
@@ -32,25 +32,35 @@ pub const TRACES_DIRECTORY_NAME: &str = "traces";
 /// Without `--trace` there is no recording. With it and no directory, a run
 /// records beside its report and every other command records under
 /// `<reports>/traces/<id>-<command>`, which is outside what a snapshot copies.
-pub fn recorder(wanted: &Recording<'_>, stderr: &mut dyn Write) -> Recorder {
+pub fn recorder(
+    wanted: &Recording<'_>,
+    progress: Option<std::sync::mpsc::Sender<Event>>,
+    stderr: &mut dyn Write,
+) -> Recorder {
+    let watching = progress.map(|sender| Sink::Channel(ChannelSink::new(sender)));
     let Some(asked) = wanted.scope.trace.as_deref() else {
-        return Recorder::disabled();
+        return watching.map_or_else(Recorder::disabled, Recorder::wall);
     };
     let directory = if asked.is_empty() {
         default_directory(wanted)
     } else {
         PathBuf::from(asked)
     };
-    match created(&directory) {
-        Ok(sink) => Recorder::wall(Sink::Dir(sink)),
+    let kept = match created(&directory) {
+        Ok(sink) => Some(Sink::Dir(sink)),
         Err(error) => {
             let _written = writeln!(
                 stderr,
                 "rust-mutants: not recording into {}: {error}",
                 directory.display()
             );
-            Recorder::disabled()
+            None
         }
+    };
+    match (kept, watching) {
+        (None, None) => Recorder::disabled(),
+        (Some(sink), None) | (None, Some(sink)) => Recorder::wall(sink),
+        (Some(kept), Some(watching)) => Recorder::wall(Sink::Tee(vec![kept, watching])),
     }
 }
 

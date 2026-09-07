@@ -17,6 +17,7 @@ pub use rust_mutants::outcomes;
 pub use rust_mutants::run;
 pub mod settings;
 pub mod tui;
+pub mod ui;
 
 use std::ffi::OsString;
 use std::io::Write;
@@ -28,7 +29,7 @@ use rust_mutants::runner::Cancel;
 pub const EXIT_USAGE: u8 = 2;
 
 /// Everything the command line needs from the process it runs in.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Environment {
     /// The process environment, which the engine hands to every command and test process it starts.
     pub vars: Vec<(OsString, OsString)>,
@@ -38,6 +39,12 @@ pub struct Environment {
     pub cache_directory: PathBuf,
     /// The working directory, which a command with no `--root` reads.
     pub working_directory: PathBuf,
+    /// Whether the environment asked for no colour, which `NO_COLOR` says.
+    pub no_color: bool,
+    /// Whether what the command writes goes to a terminal rather than to a file or a pipe.
+    pub stdout_is_terminal: bool,
+    /// Whether what the command writes is painted, which `--color` settles from the two above.
+    pub paints: bool,
 }
 
 /// The exit code of a run that was interrupted.
@@ -70,6 +77,13 @@ impl Environment {
             .or_else(|| value("LOCALAPPDATA"))
             .unwrap_or_else(|| PathBuf::from(".rust-mutants-cache"))
     }
+
+    /// Whether `vars` asks for no colour, which one variable being set at all says.
+    #[must_use]
+    pub fn no_color_of(vars: &[(OsString, OsString)]) -> bool {
+        vars.iter()
+            .any(|(key, value)| key == "NO_COLOR" && !value.is_empty())
+    }
 }
 
 /// Runs the command line described by `args` (program name first) and returns its exit code, writing to the two streams it was given. `cancel` is raised by whoever owns the process's signals; every command stops at the first place it can and leaves nothing behind.
@@ -91,9 +105,16 @@ where
             return usage.exit_code;
         }
     };
+    let painted = Environment {
+        paints: command.color.paints(ui::Stream {
+            no_color: environment.no_color,
+            is_terminal: environment.stdout_is_terminal,
+        }),
+        ..environment.clone()
+    };
     let dispatched = app::dispatch(
         &command.command,
-        environment,
+        &painted,
         Streams {
             out: &mut *stdout,
             err: &mut *stderr,

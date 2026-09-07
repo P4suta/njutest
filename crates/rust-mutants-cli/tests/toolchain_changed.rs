@@ -88,7 +88,10 @@ fn outcomes(said: &str) -> std::collections::BTreeMap<String, String> {
         .filter_map(|line| line.strip_prefix('['))
         .filter_map(|line| line.split_once("] "))
         .filter_map(|(_, rest)| rest.split_once(' '))
-        .map(|(id, outcome)| (id.to_owned(), outcome.trim().to_owned()))
+        .map(|(id, rest)| {
+            let outcome = rest.split_whitespace().next().unwrap_or_default();
+            (id.to_owned(), outcome.to_owned())
+        })
         .collect()
 }
 

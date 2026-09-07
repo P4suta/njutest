@@ -119,6 +119,7 @@ fn workspace_command(
     let settings = Settings::resolve(scope, environment)?;
     let started = Timestamp::now();
     let id = run_id(started);
+    let (sender, phases) = std::sync::mpsc::channel();
     let recorder = trace::recorder(
         &trace::Recording {
             scope,
@@ -126,6 +127,7 @@ fn workspace_command(
             id: &id,
             command,
         },
+        watching(command).then_some(sender),
         stderr,
     );
     let outcome = measured(
@@ -137,15 +139,27 @@ fn workspace_command(
             id: &id,
             started,
             recorder: &recorder,
+            phases: &phases,
         },
         stdout,
         cancel,
     );
     trace::ended(&recorder, &outcome, cancel);
-    if recorder.is_enabled() {
+    if scope.trace.is_some() {
         prune(&settings.report_directory(), settings.config.reports.keep);
     }
     outcome
+}
+
+/// Whether this command has a progress display that wants the phases as they end.
+const fn watching(command: &cli::Command) -> bool {
+    matches!(
+        command,
+        cli::Command::Run {
+            ui: crate::ui::Ui::Auto | crate::ui::Ui::Plain,
+            ..
+        }
+    )
 }
 
 /// Everything a workspace command needs beyond what it prints.
@@ -159,6 +173,8 @@ struct Running<'a> {
     id: &'a str,
     started: Timestamp,
     recorder: &'a rust_mutants::trace::Recorder,
+    /// What the recorder has said about the phases it has finished, for a display to write.
+    phases: &'a std::sync::mpsc::Receiver<rust_mutants::trace::Event>,
 }
 
 fn measured(
@@ -174,6 +190,7 @@ fn measured(
         id,
         started,
         recorder,
+        phases,
     } = *running;
     let open = settings.open_options(scope, environment, recorder.clone())?;
     let workspace = Workspace::open(&settings.root, open.clone(), cancel)?;
@@ -212,6 +229,7 @@ fn measured(
         }
         _ => {
             let session = workspace.prepare(&options, cancel)?;
+            write(stdout, &crate::ui::phases(phases));
             let code = prepared(
                 command,
                 &Prepared {
@@ -341,6 +359,7 @@ fn prepared(
             shard,
             no_report,
             no_cache,
+            ui,
             args,
             ..
         } => match mutant {
@@ -367,6 +386,7 @@ fn prepared(
                     shard: shard.as_deref(),
                     no_report: *no_report,
                     no_cache: *no_cache,
+                    ui: *ui,
                     environment: prepared.environment,
                     id: prepared.id,
                     started: prepared.started,
@@ -402,6 +422,8 @@ struct Whole<'a> {
     shard: Option<&'a str>,
     no_report: bool,
     no_cache: bool,
+    /// How much the run says while it is happening.
+    ui: crate::ui::Ui,
     environment: &'a Environment,
     id: &'a str,
     started: Timestamp,
@@ -420,6 +442,7 @@ fn whole(
         shard,
         no_report,
         no_cache,
+        ui,
         environment,
         id,
         started,
@@ -451,10 +474,12 @@ fn whole(
             }),
         },
         cancel,
-        &mut Progress {
+        &mut crate::ui::Display::new(
             stdout,
-            borrowed: std::marker::PhantomData,
-        },
+            resolved(ui),
+            environment.paints,
+            run::jobs(settings.config.execution.jobs),
+        ),
     )?;
     result.expectations = run::verify(session, &expectations, &mut result.judged);
     let finished = Timestamp::now();
@@ -1056,23 +1081,15 @@ fn rendered(said: &[Rendered]) -> String {
     text
 }
 
-/// The one line a plain run prints for each mutant it has judged.
-struct Progress<'a, 'b> {
-    stdout: &'a mut dyn Write,
-    /// The lifetime the stream borrows from, so an observer can hold it across a whole run.
-    borrowed: std::marker::PhantomData<&'b ()>,
-}
-
-impl run::Observer for Progress<'_, '_> {
-    fn judged(&mut self, judged: &run::Judged, completed: u32, total: u32) {
-        let mut line = String::new();
-        let written = writeln!(
-            line,
-            "[{completed}/{total}] {} {}",
-            judged.display_id,
-            judged.outcome.name()
-        );
-        debug_assert!(written.is_ok(), "writing to a String cannot fail");
-        write(self.stdout, &line);
+/// What `--ui auto` means in this environment.
+///
+/// A terminal and a log want the same lines in the same order; what a terminal
+/// gets on top is the tally rewritten in place, which a log cannot use. Both
+/// are `plain` until there is a renderer that overwrites, and `auto` is where
+/// that choice will be made.
+const fn resolved(ui: crate::ui::Ui) -> crate::ui::Ui {
+    match ui {
+        crate::ui::Ui::Auto => crate::ui::Ui::Plain,
+        other => other,
     }
 }

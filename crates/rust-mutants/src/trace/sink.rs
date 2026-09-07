@@ -9,6 +9,7 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::mpsc::Sender;
 
 use super::event::{Event, Payload};
 
@@ -32,8 +33,44 @@ pub enum Sink {
     Memory(MemorySink),
     /// A directory of JSON Lines, with the commands' output beside it.
     Dir(DirSink),
+    /// A channel a reader on another thread takes events from: how a progress display watches a run without the engine knowing there is one.
+    Channel(ChannelSink),
     /// Several at once, in order.
     Tee(Vec<Self>),
+}
+
+/// A sink that hands each event to whoever is listening on the other end.
+///
+/// A recording is diagnostic exhaust and never evidence
+/// ([ADR 0002](../../../../docs/adr/0002-trace-is-diagnostic-exhaust.md)), so
+/// a reader that has gone away costs the event and never the run.
+#[derive(Debug)]
+pub struct ChannelSink {
+    sender: Sender<Event>,
+    dropped: AtomicU64,
+    closed: AtomicBool,
+}
+
+impl ChannelSink {
+    /// A sink that sends to `sender`.
+    #[must_use]
+    pub const fn new(sender: Sender<Event>) -> Self {
+        Self {
+            sender,
+            dropped: AtomicU64::new(0),
+            closed: AtomicBool::new(false),
+        }
+    }
+
+    fn emit(&self, event: &Event) -> io::Result<()> {
+        if self.closed.load(Ordering::Relaxed) {
+            return Err(io::Error::other("the channel sink is closed"));
+        }
+        self.sender.send(event.clone()).map_err(|_gone| {
+            let _counted = self.dropped.fetch_add(1, Ordering::Relaxed);
+            io::Error::other("nobody is reading the channel any more")
+        })
+    }
 }
 
 impl Sink {
@@ -49,6 +86,7 @@ impl Sink {
                 Ok(())
             }
             Self::Dir(sink) => sink.emit(event),
+            Self::Channel(sink) => sink.emit(event),
             Self::Tee(sinks) => {
                 let mut kept = false;
                 for sink in sinks {
@@ -69,6 +107,7 @@ impl Sink {
         match self {
             Self::Memory(sink) => Some(sink.dropped()),
             Self::Dir(sink) => Some(sink.dropped()),
+            Self::Channel(sink) => Some(sink.dropped.load(Ordering::Relaxed)),
             Self::Tee(sinks) => sinks.iter().filter_map(Self::dropped).min(),
         }
     }
@@ -78,7 +117,7 @@ impl Sink {
     pub fn events(&self) -> Vec<Event> {
         match self {
             Self::Memory(sink) => sink.events(),
-            Self::Dir(_) => Vec::new(),
+            Self::Dir(_) | Self::Channel(_) => Vec::new(),
             Self::Tee(sinks) => sinks
                 .iter()
                 .map(Self::events)
@@ -93,6 +132,7 @@ impl Sink {
         match self {
             Self::Memory(sink) => sink.is_closed(),
             Self::Dir(sink) => sink.is_closed(),
+            Self::Channel(sink) => sink.closed.load(Ordering::Relaxed),
             Self::Tee(sinks) => sinks.iter().all(Self::is_closed),
         }
     }
@@ -108,6 +148,10 @@ impl Sink {
                 Ok(())
             }
             Self::Dir(sink) => sink.close(),
+            Self::Channel(sink) => {
+                sink.closed.store(true, Ordering::Relaxed);
+                Ok(())
+            }
             Self::Tee(sinks) => sinks.iter().try_for_each(Self::close),
         }
     }

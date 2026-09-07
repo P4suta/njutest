@@ -191,6 +191,25 @@ summary`, `trace check`, and `trace diff` read one back. A recording is
 diagnostic exhaust and never evidence, so a directory that cannot be created
 costs one line on standard error and never the command.
 
+### What a run says while it happens
+
+`--ui plain` writes one line per phase as preparing finishes it, one line per
+mutant as the run judges it, and the tally every ten and at the end.
+`--ui quiet` writes none of them and the summary all the same. `--ui auto`
+is what a run without the flag gets, and is `plain` until there is a renderer
+that overwrites in place.
+
+Preparing is not a run, so nothing observes it: the phases come from the
+recording, which a `Sink::Channel` tees to the command's own thread. A
+recording is diagnostic exhaust ([ADR
+0002](../adr/0002-trace-is-diagnostic-exhaust.md)), so a display that has
+gone away costs the event and never the run.
+
+`--color auto|always|never` paints the outcome word and nothing else: what a
+reader is scanning for is the one line that is not a kill, and a page of
+colours is a page nobody scans. `auto` paints a terminal that has not set
+`NO_COLOR`.
+
 ## Guards
 
 Four forms. **Form C** for a position that is syntactically boolean (an

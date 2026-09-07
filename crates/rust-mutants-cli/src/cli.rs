@@ -24,6 +24,9 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
     color = clap::ColorChoice::Never
 )]
 pub struct Cli {
+    /// Whether to paint the output. `auto` paints a terminal that has not set `NO_COLOR`.
+    #[arg(long, value_enum, value_name = "WHEN", default_value_t = crate::ui::Color::Auto, global = true)]
+    pub color: crate::ui::Color,
     /// What to do.
     #[command(subcommand)]
     pub command: Command,
@@ -79,6 +82,9 @@ pub enum Command {
         /// Execute every mutant afresh rather than reading back what an earlier run of this exact tree established.
         #[arg(long, conflicts_with = "mutant")]
         no_cache: bool,
+        /// How much the run says while it is happening.
+        #[arg(long, value_enum, value_name = "MODE", default_value_t = crate::ui::Ui::Auto)]
+        ui: crate::ui::Ui,
         /// Arguments for the test harness itself.
         #[arg(last = true, value_name = "ARGS")]
         args: Vec<String>,
