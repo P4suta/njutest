@@ -10,7 +10,7 @@
 )]
 
 use mjutest_devkit::fixture::{Fixture, copy_tree};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 fn against(fixture: &Fixture, args: &[&str]) -> Output {
@@ -843,43 +843,73 @@ fn the_parts_of_a_catalog_over_two_packages_and_two_targets_are_the_whole_of_it(
     );
 }
 
-#[test]
-fn a_coverage_run_keeps_what_the_audit_re_derives_from() {
+/// The documents a run of `fixture-coverage` leaves, measured the way `extra` asks.
+fn evidence_of(extra: &[&str]) -> (PathBuf, Fixture) {
     let fixture = Fixture::copy("fixture-coverage");
-    let output = against(&fixture, &["run", "--offline", "--locked", "--tier", "all"]);
+    let output = against(
+        &fixture,
+        &[&["run", "--offline", "--locked", "--tier", "all"], extra].concat(),
+    );
     assert!(
         output.status.code().is_some_and(|code| code < 2),
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
     let directory = newest_run(&fixture);
-    for name in ["reached-v1.json", "catalog-v1.json"] {
+    (directory, fixture)
+}
+
+fn document_at(path: &Path) -> serde_json::Value {
+    serde_json::from_str(&std::fs::read_to_string(path).expect("the document")).expect("a document")
+}
+
+#[test]
+fn a_run_keeps_what_the_audit_re_derives_its_routes_from() {
+    let (directory, _fixture) = evidence_of(&[]);
+    for name in ["touched-v1.json", "catalog-v1.json"] {
         assert!(
             directory.join(name).is_file(),
             "a proof layer removed executions, and a report that says so without the premises \
              is a claim rather than a proof: {name}"
         );
     }
-    let reached: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(directory.join("reached-v1.json")).expect("the measurement"),
-    )
-    .expect("a document");
+    let touched = document_at(&directory.join("touched-v1.json"));
     assert!(
-        reached["targets"]
+        touched["targets"]
             .as_object()
             .is_some_and(|targets| !targets.is_empty()),
-        "the measurement each target left behind is what a discharge rests on: {reached}"
+        "what each target's guards recorded is what a route rests on: {touched}"
     );
-    let catalog: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(directory.join("catalog-v1.json")).expect("the catalog"),
-    )
-    .expect("a document");
+    assert!(
+        touched["targets"]
+            .as_object()
+            .expect("the targets")
+            .values()
+            .any(|one| one["bodies"]
+                .as_object()
+                .is_some_and(|bodies| !bodies.is_empty())),
+        "and the bodies they entered are what `branch-never-taken` rests on: {touched}"
+    );
+    let catalog = document_at(&directory.join("catalog-v1.json"));
     assert!(
         catalog["mutants"]
             .as_array()
             .expect("the rows")
             .iter()
             .any(|row| row["branch"].is_object()),
-        "and the body the compiler vouched for is what says which regions matter: {catalog}"
+        "with the body the compiler vouched for: {catalog}"
+    );
+}
+
+#[test]
+fn a_coverage_run_keeps_the_measurement_its_own_discharges_rest_on() {
+    let (directory, _fixture) = evidence_of(&["--coverage"]);
+    let reached = document_at(&directory.join("reached-v1.json"));
+    assert!(
+        reached["targets"]
+            .as_object()
+            .is_some_and(|targets| !targets.is_empty()),
+        "the measurement each target left behind is what a region-based discharge rests on: \
+         {reached}"
     );
 }

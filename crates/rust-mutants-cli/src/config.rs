@@ -160,7 +160,14 @@ pub struct Mutation {
     pub build_timeout: Option<Duration>,
     /// Run every test target once with nothing active before believing anything a mutant does.
     pub verify: bool,
-    /// Measure once which target reached what, and run a mutant only against the targets that reached it.
+    /// Build once with LLVM coverage instrumentation and route by the regions it exported.
+    ///
+    /// The guards already say which of a target's tests reached each mutation,
+    /// and they say it on a run the engine was making anyway, so this is off:
+    /// instrumenting for coverage rebuilds every crate in the graph, which on
+    /// a real workspace is the largest single thing a run could do. It is kept
+    /// as an independent second opinion, and for the branch proofs of the
+    /// bodies no marker could be written into.
     pub coverage: bool,
     /// Ask the guards, on the run that verifies the baseline, which of each target's tests reached them, and put a mutation only to those tests.
     ///
@@ -317,7 +324,7 @@ impl Default for Mutation {
             timeout: Timeout::Auto,
             build_timeout: None,
             verify: true,
-            coverage: true,
+            coverage: false,
             touch: true,
             probe: false,
             equivalence: false,
@@ -837,7 +844,7 @@ version = 1
 # timeout = \"{timeout}\"                # auto = 5x the target's own baseline, never below 30s
 # build_timeout = \"\"             # empty = no bound
 # verify = true                  # run the instrumented baseline before believing a mutant
-# coverage = true                # measure reach once, then run a mutant only where it was reached
+# coverage = false               # build once with LLVM coverage and route by its regions as well
 # touch = true                   # ask the guards which tests reached them, and run only those
 # probe = false                  # ask each test what it would have noticed, and skip what it could not
 # equivalence = false            # ask the compiler whether a survivor's mutation is one it renders

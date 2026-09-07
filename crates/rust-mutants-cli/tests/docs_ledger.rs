@@ -104,8 +104,9 @@ fn the_engine_ledger_of_this_repository_is_one_the_reader_accepts() {
         "a tool that asks a project for every operator asks itself for them too"
     );
     assert!(
-        config.mutation.coverage,
-        "the shipped proof layer is asked for"
+        config.mutation.touch,
+        "the shipped proof layer is asked for: the guards, which cost the run nothing it was \
+         not already spending"
     );
 }
 

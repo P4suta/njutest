@@ -39,7 +39,8 @@ operators = []                 # exactly these rules; empty = the tier
 timeout = "auto"               # auto = 5x the target's own baseline, never below 30s
 build_timeout = ""             # empty = no bound
 verify = true                  # run the instrumented baseline first
-coverage = true                # measure reach once, then run a mutant only where it was reached
+coverage = false               # build once with LLVM coverage and route by its regions as well
+touch = true                   # ask the guards which tests reached them, and run only those
 
 [execution]
 offline = false
@@ -72,19 +73,30 @@ the file; a list given on the command line *replaces* the file's list rather
 than adding to it, so `--package a` means exactly `a`. `--no-config` reads no
 file at all and `--config FILE` reads one elsewhere.
 
-`[mutation] coverage` is on. It is the one shipped proof layer, it fails open
-— a measurement that could not be made routes every mutant to every target,
-exactly as if the layer were not there — and it is what lets a run say
-`unreached` about a mutation nothing executes instead of `survived`.
-`--no-coverage` turns it off, which measures nothing and runs everything.
+`[mutation] touch` is on and is the shipped proof layer. The guards of the
+instrumented tree record which of a target's tests reached them, on the run
+that verifies the baseline, so it costs the run nothing it was not already
+spending. It fails open — a target whose guards recorded nothing this run can
+route by keeps every test of it in every route, exactly as if the layer were
+not there — and it is what lets a run say `unreached` about a mutation nothing
+executes instead of `survived`, and what puts a mutation to the tests that
+reached it rather than to every test of every target that did. `--no-touch`
+turns it off, which measures nothing and runs everything
+([ADR 0014](../adr/0014-the-guards-are-the-measurement.md)).
 
-With coverage on, the engine also asks the compiler which mutations change
-nothing outside the branch they sit in. A target the measurement placed at the
-mutation and whose run never entered that branch is *discharged*: it cannot
-have noticed the mutation, so running it proves nothing and costs a process.
-The report says `discharged` where it would have said `survived`, and names
-the proof. A proof without a measurement removes nothing: the lemma is the
-compiler's and the premise is the coverage layer's.
+`[mutation] coverage` is off. It builds the tree once more with
+`-C instrument-coverage`, which changes the fingerprint of every crate in the
+dependency graph and is therefore the largest single thing a run could do. It
+is kept as an independent second opinion, and for the branch proofs of the
+bodies no marker could be written into: `--coverage` asks for it.
+
+The engine also asks the compiler which mutations change nothing outside the
+branch they sit in. A target nothing of which entered that branch is
+*discharged*: it cannot have noticed the mutation, so running it proves
+nothing and costs a process, and a kept target is asked only for the tests
+that did enter. The report says `discharged` where it would have said
+`survived`, and names the proof. A proof without a measurement removes
+nothing: the lemma is the compiler's and the premise is a measurement's.
 
 `[mutation] equivalence` asks, after the run, whether the compiler renders
 each survivor's mutation identically to what it mutates. It costs a tree of

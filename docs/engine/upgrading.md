@@ -87,6 +87,13 @@ nothing removed gives, and the differential harness holds every combination of
 the two measurements to it. See
 [ADR 0014](../adr/0014-the-guards-are-the-measurement.md).
 
+**`[mutation] coverage` is off.** The guards measure reach on a run the engine
+was making anyway, so the coverage build — which rebuilds every crate in the
+dependency graph, because the flags reach it through `RUSTFLAGS` — is no
+longer what a run makes to find out. Pass `--coverage` for the second opinion,
+for the branch proofs of the bodies no marker could be written into, and for
+the differential harness. A run that was passing `--no-coverage` can stop.
+
 **`RUST_MUTANTS_TOUCH` is reserved.** A run composes it for every test process
 it starts and refuses to inherit it, exactly as it does the other three. A
 process that finds it already set ends with `RM0006`.

@@ -219,7 +219,14 @@ fn a_second_run_of_a_tree_nothing_changed_measures_nothing_again() {
             .env("NO_COLOR", "1")
             .env("TMPDIR", fixture.temp())
             .env("XDG_CACHE_HOME", fixture.cache())
-            .args(["run", "--tier", "all", "--offline", "--locked"])
+            .args([
+                "run",
+                "--tier",
+                "all",
+                "--offline",
+                "--locked",
+                "--coverage",
+            ])
             .args(["--jobs", "1", "--ui", "quiet", "--trace"])
             .args(["--root", &fixture.root().to_string_lossy()])
             .output()
@@ -264,7 +271,14 @@ fn a_tree_that_changed_is_measured_again_rather_than_remembered() {
             .env("NO_COLOR", "1")
             .env("TMPDIR", fixture.temp())
             .env("XDG_CACHE_HOME", fixture.cache())
-            .args(["run", "--tier", "all", "--offline", "--locked"])
+            .args([
+                "run",
+                "--tier",
+                "all",
+                "--offline",
+                "--locked",
+                "--coverage",
+            ])
             .args(["--jobs", "1", "--ui", "quiet", "--trace"])
             .args(["--root", &fixture.root().to_string_lossy()])
             .output()
