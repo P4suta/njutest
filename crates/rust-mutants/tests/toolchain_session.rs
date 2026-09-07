@@ -39,7 +39,7 @@ fn prepare(fixture: &Fixture) -> Session {
     prepared(fixture, true)
 }
 
-/// A session that measures coverage, or one that does not and so routes every mutant everywhere.
+/// A session that measures coverage, or one that measures nothing at all and so routes every mutant everywhere.
 fn prepared(fixture: &Fixture, coverage: bool) -> Session {
     open(fixture)
         .prepare(
@@ -47,6 +47,7 @@ fn prepared(fixture: &Fixture, coverage: bool) -> Session {
                 tier: Tier::All,
                 coverage,
                 branch_proofs: coverage,
+                touch: coverage,
                 ..PrepareOptions::default()
             },
             &Cancel::new(),
@@ -171,6 +172,10 @@ fn preparing_catalogs_instruments_validates_and_builds() {
 fn a_mutant_runs_against_every_target_until_one_kills_it() {
     let fixture = Fixture::copy("fixture-simple");
     let session = prepared(&fixture, false);
+    assert!(
+        !session.touched().measured() && !session.reached().measured(),
+        "nothing narrows this run, so what it walks is every target"
+    );
     let cancel = Cancel::new();
 
     let by_rule = |rule: &str| -> String {

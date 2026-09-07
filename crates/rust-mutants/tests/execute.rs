@@ -318,6 +318,26 @@ fn the_guards_are_told_where_to_record_exactly_when_the_run_asks_them_to() {
 }
 
 #[test]
+fn a_request_naming_several_tests_passes_every_one_of_them_as_an_exact_filter() {
+    let target = target();
+    let request = ExecRequest::new(&target).with_tests(vec![
+        "tests::max_picks_the_larger".to_owned(),
+        "tests::min_picks_the_smaller".to_owned(),
+    ]);
+    assert_eq!(
+        request.argv(),
+        [
+            "/t/debug/deps/cli-abc",
+            "tests::max_picks_the_larger",
+            "tests::min_picks_the_smaller",
+            "--exact",
+        ],
+        "libtest takes every free argument as a filter and --exact applies to all of them, so \
+         one process runs exactly the tests that reached the mutation"
+    );
+}
+
+#[test]
 fn a_request_names_the_arguments_the_binary_receives() {
     let target = target();
     let request = ExecRequest::new(&target).with_test("tests::max_picks_the_larger");

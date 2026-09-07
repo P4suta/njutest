@@ -8,6 +8,13 @@
 //! mutant would start `cataloged × targets` of them; every pair short of that
 //! is one something removed, and this ledger names what.
 //!
+//! A pair is a process, and a process is not the whole of what a run does: one
+//! that runs the two tests that reached a mutation costs less than one that
+//! runs the target's two hundred. So the ledger counts **tests** as well, and
+//! that is the number the guards move. Every test a run started is in it, the
+//! ones it started to establish that a filtered set answers on its own
+//! included.
+//!
 //! Nothing here is a duration. A count is the same on a loaded machine and an
 //! idle one, on four jobs and on one, so a change that makes the engine do less
 //! work is a change a test can see and a ratchet can hold. Time is what the
@@ -82,6 +89,12 @@ pub struct Work {
     pub whole: u64,
     /// The pairs this run started a process for, a confirming retry counted again.
     pub started: u64,
+    /// Every test a run that asked every test of every target about every mutant would have started.
+    pub tests_whole: u64,
+    /// The tests this run started, the ones it started to establish a filter included.
+    pub tests_started: u64,
+    /// How many of those were started to establish that a filtered set answers on its own.
+    pub established: u64,
     /// What removed the rest, the largest first.
     pub removed: Vec<Removed>,
 }
@@ -92,10 +105,18 @@ impl Work {
     pub fn of(document: &RunDocument) -> Self {
         let targets = u32::try_from(document.targets.len()).unwrap_or(u32::MAX);
         let cataloged = u32::try_from(document.mutants.len()).unwrap_or(u32::MAX);
+        let held: BTreeMap<&str, u64> = document
+            .targets
+            .iter()
+            .map(|target| (target.id.as_str(), u64::from(target.tests.max(1))))
+            .collect();
+        let every: u64 = held.values().sum();
         let mut started: u64 = 0;
+        let mut tests_started: u64 = document.established_tests;
         let mut removed: BTreeMap<String, (Removal, u64, u32)> = BTreeMap::new();
         for mutant in &document.mutants {
             started = started.saturating_add(processes(mutant));
+            tests_started = tests_started.saturating_add(tests(mutant, &held));
             for (reason, removal, pairs) in per_mutant(mutant, u64::from(targets)) {
                 let entry = removed.entry(reason).or_insert((removal, 0, 0));
                 entry.1 = entry.1.saturating_add(pairs);
@@ -122,6 +143,9 @@ impl Work {
             cataloged,
             whole: u64::from(cataloged).saturating_mul(u64::from(targets)),
             started,
+            tests_whole: u64::from(cataloged).saturating_mul(every),
+            tests_started,
+            established: document.established_tests,
             removed,
         }
     }
@@ -146,6 +170,23 @@ impl Work {
     #[must_use]
     pub fn skipped(&self) -> u64 {
         self.removed.iter().map(|one| one.pairs).sum()
+    }
+
+    /// How many tests this run started to establish that a filtered set answers on its own.
+    #[must_use]
+    pub const fn established_tests(&self) -> u64 {
+        self.established
+    }
+
+    /// The share of the tests a whole run would have started that this one did not, between 0 and 1.
+    #[must_use]
+    pub fn tests_saved(&self) -> f64 {
+        if self.tests_whole == 0 || self.tests_started >= self.tests_whole {
+            return 0.0;
+        }
+        let widened =
+            |count: u64| u32::try_from(count).map_or_else(|_| f64::from(u32::MAX), f64::from);
+        widened(self.tests_whole.saturating_sub(self.tests_started)) / widened(self.tests_whole)
     }
 
     /// The share of a whole run this one did not do, between 0 and 1.
@@ -177,6 +218,38 @@ fn processes(mutant: &RunMutantDocument) -> u64 {
         .map_or(0, |route| route.executed.len());
     let executed = u64::try_from(executed).unwrap_or(u64::MAX);
     executed.saturating_add(u64::from(mutant.retried))
+}
+
+/// How many tests one mutant cost, which is what each target it ran was asked for.
+///
+/// A target a route narrowed to some of its tests was asked for exactly those;
+/// one it did not narrow was asked for every test that target has. A retry
+/// puts the same question to the target that answered, so it costs what that
+/// target was asked for again.
+fn tests(mutant: &RunMutantDocument, held: &BTreeMap<&str, u64>) -> u64 {
+    if mutant.source_run_id.is_some() {
+        return 0;
+    }
+    let Some(route) = mutant.route.as_ref() else {
+        return 0;
+    };
+    let asked = |target: &str| -> u64 {
+        route.tests.get(target).map_or_else(
+            || held.get(target).copied().unwrap_or(1),
+            |named| u64::try_from(named.len()).unwrap_or(u64::MAX),
+        )
+    };
+    let walked: u64 = route
+        .executed
+        .iter()
+        .map(|target| asked(target))
+        .fold(0, u64::saturating_add);
+    let again = if mutant.retried {
+        asked(&mutant.target)
+    } else {
+        0
+    };
+    walked.saturating_add(again)
 }
 
 /// What removed each of one mutant's pairs, and what kind of removal it was.

@@ -14,6 +14,13 @@
 //! found nothing noticed either. If a discharged mutant turns out to be killed
 //! when something actually runs it, the proof is wrong, and this is where that
 //! is found out rather than in somebody's report.
+//!
+//! There are two measurements now and they are checked separately, each against
+//! a run with nothing removed: the guards, which record on the baseline run
+//! which of a target's tests reached each mutation, and the LLVM coverage
+//! build, which is kept as an independent second opinion. Two layers that
+//! agree with a whole run agree with each other, and one that does not is
+//! named here.
 
 #![expect(
     clippy::expect_used,
@@ -40,6 +47,15 @@ struct Established {
     rows: BTreeMap<String, RunMutantDocument>,
     work: Work,
 }
+
+/// A run with nothing removed: no measurement of either kind, so every target runs every test.
+const NOTHING_REMOVED: &[&str] = &["--no-coverage", "--no-touch"];
+
+/// A run routed by what the guards recorded, with no coverage build at all.
+const BY_GUARDS: &[&str] = &["--no-coverage"];
+
+/// A run routed by the LLVM coverage build, with the guards not asked.
+const BY_COVERAGE: &[&str] = &["--coverage", "--no-touch"];
 
 fn established(name: &str, extra: &[&str]) -> Established {
     let fixture = Fixture::copy(name);
@@ -98,36 +114,38 @@ fn every_proof_that_removed_a_run_claimed_the_answer_a_whole_run_gives() {
         } else {
             &[]
         };
-        let proved = established(name, probe);
-        let whole = established(name, &["--no-coverage"]);
-        assert_eq!(
-            proved.rows.len(),
-            whole.rows.len(),
-            "{name}: the two runs cataloged different trees, so nothing below compares"
-        );
-        if proved.work.started < whole.work.started {
-            removed_something = removed_something.saturating_add(1);
-        }
-        for (id, row) in &proved.rows {
-            let Some(other) = whole.rows.get(id) else {
-                panic!("{name}: {id} is in the proved run and not in the whole one");
-            };
-            if row.outcome == "inconclusive" || other.outcome == "inconclusive" {
-                continue;
-            }
-            if row.outcome == "not_run" && claimed(row) != row.outcome.as_str() {
-                claims = claims.saturating_add(1);
-            }
+        let whole = established(name, &[NOTHING_REMOVED, probe].concat());
+        for mode in [BY_GUARDS, BY_COVERAGE] {
+            let proved = established(name, &[mode, probe].concat());
             assert_eq!(
-                claimed(row),
-                claimed(other),
-                "{name}: {} was {} with every layer on and {} with every layer off. A proof that \
-                 removes work has to leave the answer where a whole run leaves it; this one moved \
-                 it.",
-                row.display_id,
-                describe(row),
-                describe(other),
+                proved.rows.len(),
+                whole.rows.len(),
+                "{name} {mode:?}: the two runs cataloged different trees, so nothing compares"
             );
+            if proved.work.tests_started < whole.work.tests_started {
+                removed_something = removed_something.saturating_add(1);
+            }
+            for (id, row) in &proved.rows {
+                let Some(other) = whole.rows.get(id) else {
+                    panic!("{name} {mode:?}: {id} is in the proved run and not in the whole one");
+                };
+                if row.outcome == "inconclusive" || other.outcome == "inconclusive" {
+                    continue;
+                }
+                if row.outcome == "not_run" && claimed(row) != row.outcome.as_str() {
+                    claims = claims.saturating_add(1);
+                }
+                assert_eq!(
+                    claimed(row),
+                    claimed(other),
+                    "{name} {mode:?}: {} was {} with the layer on and {} with nothing removed. A \
+                     proof that removes work has to leave the answer where a whole run leaves it; \
+                     this one moved it.",
+                    row.display_id,
+                    describe(row),
+                    describe(other),
+                );
+            }
         }
     }
     assert!(
@@ -152,19 +170,63 @@ fn describe(row: &RunMutantDocument) -> String {
 
 #[test]
 fn the_layers_remove_work_rather_than_only_promising_to() {
-    let proved = established("fixture-unreached", &[]);
-    let whole = established("fixture-unreached", &["--no-coverage"]);
+    let whole = established("fixture-unreached", NOTHING_REMOVED);
+    for mode in [BY_GUARDS, BY_COVERAGE] {
+        let proved = established("fixture-unreached", mode);
+        assert!(
+            proved.work.started < whole.work.started,
+            "{mode:?}: a fixture built to hold code no test reaches should start fewer processes \
+             measured than unmeasured: {} against {}",
+            proved.work.started,
+            whole.work.started
+        );
+        assert!(
+            proved.work.answers_for_the_whole(),
+            "{mode:?}: the run was asked for less than the whole catalog"
+        );
+    }
     assert!(
-        proved.work.started < whole.work.started,
-        "a fixture built to hold code no test reaches should cost less measured than unmeasured: \
-         {} against {}",
-        proved.work.started,
-        whole.work.started
+        whole.work.answers_for_the_whole(),
+        "the run with nothing removed was asked for less than the whole catalog"
+    );
+}
+
+#[test]
+fn the_guards_put_a_mutation_to_fewer_tests_than_routing_by_target_can() {
+    let whole = established("fixture-coverage", NOTHING_REMOVED);
+    let guards = established("fixture-coverage", BY_GUARDS);
+    let coverage = established("fixture-coverage", BY_COVERAGE);
+    assert!(
+        guards.work.tests_started < coverage.work.tests_started,
+        "a target a region places a mutation in runs every test it has; a target a guard places \
+         it in runs the tests that reached it: {} against {}",
+        guards.work.tests_started,
+        coverage.work.tests_started
     );
     assert!(
-        proved.work.answers_for_the_whole() && whole.work.answers_for_the_whole(),
-        "neither run was asked for less than the whole catalog"
+        coverage.work.tests_started <= whole.work.tests_started,
+        "a region still removes whole targets: {} against {}",
+        coverage.work.tests_started,
+        whole.work.tests_started
     );
+    assert!(
+        guards.work.tests_started >= guards.work.established_tests(),
+        "every test started to establish a filter is in the count the filters are judged by"
+    );
+    for (id, row) in &guards.rows {
+        let other = whole.rows.get(id).expect("the same catalog");
+        if row.outcome == "inconclusive" || other.outcome == "inconclusive" {
+            continue;
+        }
+        assert_eq!(
+            claimed(row),
+            claimed(other),
+            "{}: {} by the guards and {} with nothing removed",
+            row.display_id,
+            describe(row),
+            describe(other)
+        );
+    }
 }
 
 #[test]

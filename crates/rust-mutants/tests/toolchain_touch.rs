@@ -135,3 +135,59 @@ fn a_target_the_run_could_not_record_is_named_as_unmeasured_rather_than_read_as_
         );
     }
 }
+
+#[test]
+fn a_mutant_is_routed_to_the_tests_that_reached_it_rather_than_to_the_whole_target() {
+    let fixture = Fixture::copy("fixture-coverage");
+    let session = prepared(&fixture);
+    let index = mutant(&session, "le-to-lt", 8);
+    let one = session
+        .catalog()
+        .mutants()
+        .iter()
+        .find(|one| one.index == index)
+        .expect("the mutant");
+    let route = session.route(one);
+    assert_eq!(
+        route.granularity(),
+        "test",
+        "the measurement named tests, so the route does: {route:?}"
+    );
+    assert_eq!(
+        route.tests_of(LIBRARY),
+        ["tests::clamp_returns_the_smaller"],
+        "one test of three calls clamp, and one process runs it: {route:?}"
+    );
+    assert!(
+        route.reaching().contains(&"fixture-coverage/test/upper"),
+        "upper calls clamp, so it reaches the condition: {route:?}"
+    );
+    assert!(
+        route.tests_of("fixture-coverage/test/upper").is_empty(),
+        "the one test upper has is every test it has, so it runs unfiltered: {route:?}"
+    );
+}
+
+#[test]
+fn routing_by_test_starts_fewer_tests_than_routing_by_target_would() {
+    let fixture = Fixture::copy("fixture-coverage");
+    let session = prepared(&fixture);
+    let of = |target: &str| {
+        session
+            .touched()
+            .targets
+            .get(target)
+            .map_or(1, |touches| touches.ran.len().max(1))
+    };
+    let mut narrowed = 0;
+    let mut whole = 0;
+    for one in session.catalog().mutants() {
+        let route = session.route(one);
+        narrowed += route.started(of);
+        whole += route.reaching().into_iter().map(of).sum::<usize>();
+    }
+    assert!(
+        narrowed < whole,
+        "the measurement named tests, so fewer of them start: {narrowed} against {whole}"
+    );
+}

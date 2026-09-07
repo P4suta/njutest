@@ -48,6 +48,9 @@ pub struct RunDocument {
     /// The test targets the run built, which is what every mutant could have been asked against.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub targets: Vec<TargetDocument>,
+    /// How many tests the run started to establish that a set of them answers on its own, which is work no mutation asked for and every narrowed execution rests on.
+    #[serde(default)]
+    pub established_tests: u64,
     /// One record per cataloged mutant, in catalog order.
     pub mutants: Vec<RunMutantDocument>,
     /// Every candidate the compiler refused.
@@ -248,6 +251,7 @@ fn target_documents(session: &Session) -> Vec<TargetDocument> {
             id: target.id.clone(),
             kind: target.kind.name().to_owned(),
             harness: target.harness,
+            tests: session.tests_of(&target.id),
             limitations: target.limitations.clone(),
         })
         .collect()
@@ -278,6 +282,7 @@ pub fn document(
         workspace: crate::report::catalog::workspace_document(session),
         selection,
         targets: target_documents(session),
+        established_tests: session.established_tests(),
         accounting: Accounting {
             cataloged: tally.cataloged,
             refused: tally.refused,
@@ -419,6 +424,9 @@ pub struct TargetDocument {
     pub kind: String,
     /// Whether it is built with the libtest harness, which decides how its silence is read.
     pub harness: bool,
+    /// How many tests its baseline ran, which is what asking the whole of it about one mutation costs.
+    #[serde(default)]
+    pub tests: u32,
     /// What a run could not establish about it, each named.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub limitations: Vec<String>,
@@ -444,6 +452,7 @@ pub fn route_document(route: &crate::session::Route, executed: Vec<String>) -> R
             })
             .collect(),
         executed,
+        tests: route.tests().cloned().unwrap_or_default(),
     }
 }
 
@@ -457,7 +466,7 @@ fn millis(value: std::time::Duration) -> u64 {
 /// able to answer it too: `explain` draws a route from the report alone.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RouteDocument {
-    /// `all`, `block`, `discharged`, or `unreached`.
+    /// `all`, `test`, `block`, `discharged`, or `unreached`.
     pub granularity: String,
     /// Why the route is wider than the measurement alone would make it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -470,6 +479,9 @@ pub struct RouteDocument {
     /// Every target that ran, in the order the run asked them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub executed: Vec<String>,
+    /// For each target the measurement narrowed to some of its tests, exactly those tests. A target absent from this ran every test it has.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub tests: BTreeMap<String, Vec<String>>,
 }
 
 /// One target a proof removed.

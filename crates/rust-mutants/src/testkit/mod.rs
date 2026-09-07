@@ -8,6 +8,7 @@
 //! depends on.
 
 pub mod compile;
+pub mod measuring;
 pub mod source;
 pub mod trace;
 pub mod workspace;

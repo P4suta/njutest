@@ -12,6 +12,7 @@ use mjutest_devkit::fixture::Fixture;
 use rust_mutants::rule::Tier;
 use rust_mutants::runner::Cancel;
 use rust_mutants::session::PrepareOptions;
+use rust_mutants::testkit::measuring::Measuring;
 use rust_mutants::workspace::{OpenOptions, Workspace};
 
 /// A prepared session over `fixture`, measuring coverage or not.
@@ -240,14 +241,32 @@ fn a_target_whose_probe_never_infected_the_mutant_is_discharged() {
 }
 
 #[test]
-fn probe_without_coverage_discharges_nothing() {
+fn a_probe_discharges_without_a_coverage_build_because_the_guards_are_the_measurement() {
     let fixture = Fixture::copy("fixture-probeable");
     let session = probing(&fixture, false);
+    let mut proofs = Vec::new();
+    for mutant in session.catalog().mutants() {
+        for one in session.route(mutant).discharged() {
+            proofs.push(one.proof);
+        }
+    }
+    assert!(
+        proofs.contains(&rust_mutants::session::NEVER_INFECTED),
+        "the premise a proof needs is that this target ran the mutation, and the guards say so \
+         on the run that verifies the baseline: {proofs:?}"
+    );
+    session.close().expect("close");
+}
+
+#[test]
+fn a_proof_with_nothing_measured_at_all_removes_nothing() {
+    let fixture = Fixture::copy("fixture-probeable");
+    let session = unmeasured(&fixture);
     for mutant in session.catalog().mutants() {
         assert!(
             session.route(mutant).discharged().is_empty(),
             "a proof without a measurement removes nothing: the lemma is the compiler's or the \
-             probe's, and the premise is the coverage layer's"
+             probe's, and the premise is a measurement's"
         );
     }
     session.close().expect("close");
@@ -255,6 +274,22 @@ fn probe_without_coverage_discharges_nothing() {
 
 /// A prepared session that probes, measuring coverage or not.
 fn probing(fixture: &Fixture, coverage: bool) -> rust_mutants::session::Session {
+    probed(
+        fixture,
+        if coverage {
+            Measuring::BOTH
+        } else {
+            Measuring::GUARDS
+        },
+    )
+}
+
+/// A prepared session that probes and measures nothing at all, so a proof has no premise to rest on.
+fn unmeasured(fixture: &Fixture) -> rust_mutants::session::Session {
+    probed(fixture, Measuring::NOTHING)
+}
+
+fn probed(fixture: &Fixture, measuring: Measuring) -> rust_mutants::session::Session {
     let cancel = Cancel::new();
     let workspace = Workspace::open(
         fixture.root(),
@@ -272,11 +307,8 @@ fn probing(fixture: &Fixture, coverage: bool) -> rust_mutants::session::Session 
     workspace
         .prepare(
             &PrepareOptions {
-                tier: Tier::All,
-                coverage,
-                branch_proofs: coverage,
                 probe: true,
-                ..PrepareOptions::default()
+                ..measuring.options(Tier::All)
             },
             &cancel,
         )

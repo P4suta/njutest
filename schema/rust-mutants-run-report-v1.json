@@ -438,6 +438,7 @@
               "granularity": {
                 "enum": [
                   "all",
+                  "test",
                   "block",
                   "discharged",
                   "unreached"
@@ -475,6 +476,16 @@
                 "type": "array",
                 "items": {
                   "type": "string"
+                }
+              },
+              "tests": {
+                "description": "For each target the measurement narrowed to some of its tests, exactly those tests.",
+                "type": "object",
+                "additionalProperties": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
                 }
               }
             }
@@ -756,9 +767,19 @@
               "type": "string",
               "minLength": 1
             }
+          },
+          "tests": {
+            "description": "How many tests this target's baseline ran, which is what asking the whole of it about one mutation costs.",
+            "type": "integer",
+            "minimum": 0
           }
         }
       }
+    },
+    "established_tests": {
+      "description": "How many tests the run started to establish that a set of them answers on its own.",
+      "type": "integer",
+      "minimum": 0
     }
   }
 }

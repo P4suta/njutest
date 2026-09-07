@@ -60,7 +60,8 @@ read them too, so what those preview is what a run would do.
 | `--skip-target ID` | never start this target, as `pkg/kind/name` |
 | `--test NAME`, `--target NAME` | one test, one test target |
 | `--mutant PREFIX` | one mutant |
-| `--coverage`, `--no-coverage` | measure reach once, and route by it |
+| `--coverage`, `--no-coverage` | build once with LLVM coverage instrumentation, and route by what it measured |
+| `--no-touch` | do not ask the guards which of each target's tests reached them, and so run every test of every target that could |
 | `--probe` | ask each test what it would have noticed |
 | `--equivalence` | ask the compiler whether a survivor's mutation is one it renders identically |
 | `--no-cache` | do not read back what an earlier run of this tree established |

@@ -32,8 +32,8 @@ crates/app/src/main.rs:12:16 ge-to-gt not_run
 crates/app/src/main.rs:12:19 int-decrement survived
 crates/app/src/main.rs:12:19 int-increment survived
 crates/app/src/main.rs:13:9 delete-call-statement unreached
-crates/app/src/main.rs:13:28 int-decrement survived
-crates/app/src/main.rs:13:28 int-increment survived
+crates/app/src/main.rs:13:28 int-decrement unreached
+crates/app/src/main.rs:13:28 int-increment unreached
 crates/core/src/lib.rs:10:5 return-default killed
 crates/core/src/lib.rs:10:8 negate-condition killed
 crates/core/src/lib.rs:10:10 lt-to-le survived

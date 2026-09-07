@@ -79,6 +79,7 @@ fn document() -> RunDocument {
             packages: Vec::new(),
         },
         targets: Vec::new(),
+        established_tests: 0,
         accounting: Accounting {
             cataloged: 5,
             refused: 2,
@@ -197,12 +198,14 @@ fn the_lines_say_how_much_of_a_whole_run_this_one_did_not_do() {
             id: "demo/lib/demo".to_owned(),
             kind: "lib".to_owned(),
             harness: true,
+            tests: 4,
             limitations: Vec::new(),
         },
         rust_mutants_cli::report::run::TargetDocument {
             id: "demo/test/parity".to_owned(),
             kind: "test".to_owned(),
             harness: true,
+            tests: 2,
             limitations: Vec::new(),
         },
     ];
@@ -213,6 +216,7 @@ fn the_lines_say_how_much_of_a_whole_run_this_one_did_not_do() {
             reaching: vec!["demo/lib/demo".to_owned()],
             discharged: Vec::new(),
             executed: vec!["demo/lib/demo".to_owned()],
+            tests: std::collections::BTreeMap::new(),
         });
     }
     let rows = document.mutants.len();

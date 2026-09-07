@@ -15,10 +15,23 @@ use mjutest_devkit::fixture::Fixture;
 use rust_mutants::outcome::Outcome;
 use rust_mutants::rule::Tier;
 use rust_mutants::runner::Cancel;
-use rust_mutants::session::{PrepareOptions, Request, Session};
+use rust_mutants::session::{Request, Session};
+use rust_mutants::testkit::measuring::Measuring;
 use rust_mutants::workspace::{OpenOptions, Workspace};
 
 fn prepared(fixture: &Fixture, coverage: bool) -> Session {
+    measuring(
+        fixture,
+        if coverage {
+            Measuring::BOTH
+        } else {
+            Measuring::GUARDS
+        },
+    )
+}
+
+/// A prepared session that measures by whichever of the two layers it is asked for.
+fn measuring(fixture: &Fixture, measuring: Measuring) -> Session {
     let workspace = Workspace::open(
         fixture.root(),
         OpenOptions {
@@ -33,14 +46,7 @@ fn prepared(fixture: &Fixture, coverage: bool) -> Session {
     )
     .expect("open");
     workspace
-        .prepare(
-            &PrepareOptions {
-                tier: Tier::Balanced,
-                coverage,
-                ..PrepareOptions::default()
-            },
-            &Cancel::new(),
-        )
+        .prepare(&measuring.options(Tier::Balanced), &Cancel::new())
         .expect("prepare")
 }
 
@@ -70,12 +76,31 @@ fn only<'a>(session: &'a Session, rule: &str) -> &'a rust_mutants::catalog::Muta
 }
 
 #[test]
-fn a_session_that_was_not_asked_to_measure_coverage_proves_nothing_about_reach() {
+fn a_session_that_measured_neither_way_proves_nothing_about_reach() {
     let fixture = Fixture::copy("fixture-simple");
-    let session = prepared(&fixture, false);
+    let session = measuring(&fixture, Measuring::NOTHING);
     assert!(!session.reached().measured());
+    assert!(!session.touched().measured());
     let one = mutant(&session, "gt-to-ge", 11);
     assert_eq!(session.reaches(one), None);
+    session.close().expect("close");
+}
+
+#[test]
+fn the_guards_prove_reach_with_no_coverage_build_at_all() {
+    let fixture = Fixture::copy("fixture-simple");
+    let session = measuring(&fixture, Measuring::GUARDS);
+    assert!(
+        !session.reached().measured(),
+        "no coverage build was made and none is needed"
+    );
+    assert!(session.touched().measured());
+    let one = mutant(&session, "gt-to-ge", 11);
+    assert_eq!(
+        session.reaches(one),
+        Some(true),
+        "the tests run this line, and the guards on it said so"
+    );
     session.close().expect("close");
 }
 

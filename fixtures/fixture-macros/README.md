@@ -36,7 +36,7 @@ for every candidate the compiler refused. The run is `rust-mutants run
 refuses a difference, and `UPDATE_FATES=1` rewrites the block below.
 
 ```fates
-crates/derive/src/lib.rs:11:5 return-default survived
+crates/derive/src/lib.rs:11:5 return-default unreached
 crates/derive/src/lib.rs:11:8 negate-condition unreached
 crates/derive/src/lib.rs:11:16 int-decrement unreached
 crates/derive/src/lib.rs:11:16 int-increment unreached

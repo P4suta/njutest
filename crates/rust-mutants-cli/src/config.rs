@@ -162,6 +162,11 @@ pub struct Mutation {
     pub verify: bool,
     /// Measure once which target reached what, and run a mutant only against the targets that reached it.
     pub coverage: bool,
+    /// Ask the guards, on the run that verifies the baseline, which of each target's tests reached them, and put a mutation only to those tests.
+    ///
+    /// It costs the run nothing it was not already spending. Turning it off is
+    /// how a caller asks for the answer a run with nothing removed would give.
+    pub touch: bool,
     /// Ask each test what it would have noticed, so a target that ran a mutation without its value ever differing is not run against it.
     ///
     /// It costs a second instrumented tree and one run of every test, and it
@@ -313,6 +318,7 @@ impl Default for Mutation {
             build_timeout: None,
             verify: true,
             coverage: true,
+            touch: true,
             probe: false,
             equivalence: false,
             expect: Vec::new(),
@@ -832,6 +838,7 @@ version = 1
 # build_timeout = \"\"             # empty = no bound
 # verify = true                  # run the instrumented baseline before believing a mutant
 # coverage = true                # measure reach once, then run a mutant only where it was reached
+# touch = true                   # ask the guards which tests reached them, and run only those
 # probe = false                  # ask each test what it would have noticed, and skip what it could not
 # equivalence = false            # ask the compiler whether a survivor's mutation is one it renders
 

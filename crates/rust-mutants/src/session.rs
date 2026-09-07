@@ -91,6 +91,12 @@ pub struct PrepareOptions {
     pub measurements: Option<PathBuf>,
     /// Run every test target once with nothing active, and refuse to hand back a session whose instrumented baseline does not pass.
     pub verify: bool,
+    /// Ask the guards, on that same run, which of each target's tests reached them, so a mutation is put to the tests that reached it rather than to every test of every target that did.
+    ///
+    /// It costs the run nothing it was not already spending: the baseline is
+    /// one process per target either way. Turning it off is how a caller asks
+    /// for the answer a run with nothing removed would give.
+    pub touch: bool,
     /// Build and run the probe tree, which says which tests could not have noticed a return replacement however far they ran.
     pub probe: bool,
     /// Build and run the tree once with coverage instrumentation, so a mutant is only ever run against the targets that reached it.
@@ -138,6 +144,7 @@ impl Default for PrepareOptions {
             skips: Vec::new(),
             measurements: None,
             verify: true,
+            touch: true,
             probe: false,
             coverage: true,
             branch_proofs: true,
@@ -230,6 +237,8 @@ pub enum Route {
     Block {
         /// The targets whose measured run covered the position, plus every target the measurement could not read.
         reaching: Vec<String>,
+        /// For each target the measurement narrowed to some of its tests, exactly those tests. A target absent from this runs every test it has.
+        tests: BTreeMap<String, Vec<String>>,
         /// The targets a proof removed from what could have noticed the mutation.
         discharged: Vec<Discharge>,
         /// Why targets the measurement did not place are in `reaching` anyway.
@@ -262,6 +271,8 @@ pub enum Fallback {
     OutsideBlocks,
     /// A target ran and its profile could not be read, so what it reached is unknown.
     CoverageIncomplete,
+    /// A target ran and its guards recorded nothing this run can route by, so what it reached is unknown.
+    TouchIncomplete,
 }
 
 impl Fallback {
@@ -273,6 +284,7 @@ impl Fallback {
             Self::PositionUnknown => "position-unknown",
             Self::OutsideBlocks => "outside-blocks",
             Self::CoverageIncomplete => "coverage-incomplete",
+            Self::TouchIncomplete => "touch-incomplete",
         }
     }
 }
@@ -362,17 +374,104 @@ impl Route {
         }
         Self::Block {
             reaching,
+            tests: BTreeMap::new(),
             discharged: Vec::new(),
             fallback: (!unmeasured.is_empty()).then_some(Fallback::CoverageIncomplete),
         }
     }
 
-    /// The granularity a route record carries: `all`, `block`, `discharged`, or `unreached`.
+    /// Which of each target's tests the guards put at `index`, out of `targets`.
+    ///
+    /// The guards record on the run that verifies the baseline, and libtest
+    /// names each test's thread after the test, so the answer is per test
+    /// rather than per target. A target the record does not name is one
+    /// nothing was established about and stays in the route with every test
+    /// of it; a site recorded where nothing named a test reaches every test of
+    /// its target, for the same reason. Both run more, never less.
     #[must_use]
-    pub const fn granularity(&self) -> &'static str {
+    pub fn by_touch(touched: &crate::touch::Touched, index: u32, among: &Routing<'_>) -> Self {
+        let Routing {
+            targets,
+            measurable,
+            also_reaching,
+        } = *among;
+        if !touched.measured() {
+            return Self::All {
+                reaching: targets.iter().map(|target| (*target).to_owned()).collect(),
+                fallback: Fallback::NotMeasured,
+            };
+        }
+        let mut reaching = Vec::new();
+        let mut tests = BTreeMap::new();
+        let mut incomplete = false;
+        for target in targets.iter().copied() {
+            if !measurable.contains(&target) {
+                if also_reaching.contains(&target) {
+                    reaching.push(target.to_owned());
+                }
+                continue;
+            }
+            match touched.reaching(target, index) {
+                None => {
+                    incomplete = true;
+                    reaching.push(target.to_owned());
+                }
+                Some(crate::touch::Reaching::Nothing) => {}
+                Some(crate::touch::Reaching::Whole) => reaching.push(target.to_owned()),
+                Some(crate::touch::Reaching::Tests(named)) => {
+                    reaching.push(target.to_owned());
+                    drop(tests.insert(target.to_owned(), named));
+                }
+            }
+        }
+        if reaching.is_empty() {
+            return Self::Unreached;
+        }
+        Self::Block {
+            reaching,
+            tests,
+            discharged: Vec::new(),
+            fallback: incomplete.then_some(Fallback::TouchIncomplete),
+        }
+    }
+
+    /// The tests of `target` this route names, or nothing when every test of it runs.
+    #[must_use]
+    pub fn tests_of(&self, target: &str) -> &[String] {
+        match self {
+            Self::Block { tests, .. } => tests.get(target).map_or(&[], Vec::as_slice),
+            Self::All { .. } | Self::Discharged { .. } | Self::Unreached => &[],
+        }
+    }
+
+    /// For each target this route narrowed to some of its tests, exactly those tests.
+    #[must_use]
+    pub const fn tests(&self) -> Option<&BTreeMap<String, Vec<String>>> {
+        match self {
+            Self::Block { tests, .. } => Some(tests),
+            Self::All { .. } | Self::Discharged { .. } | Self::Unreached => None,
+        }
+    }
+
+    /// Every test this route would start, counted, which is the work it asks for.
+    #[must_use]
+    pub fn started<F: Fn(&str) -> usize>(&self, of: F) -> usize {
+        self.reaching()
+            .into_iter()
+            .map(|target| {
+                let named = self.tests_of(target).len();
+                if named == 0 { of(target) } else { named }
+            })
+            .sum()
+    }
+
+    /// The granularity a route record carries: `all`, `test`, `block`, `discharged`, or `unreached`.
+    #[must_use]
+    pub fn granularity(&self) -> &'static str {
         match self {
             Self::All { .. } => "all",
-            Self::Block { .. } => "block",
+            Self::Block { tests, .. } if tests.is_empty() => "block",
+            Self::Block { .. } => "test",
             Self::Discharged { .. } => "discharged",
             Self::Unreached => "unreached",
         }
@@ -513,6 +612,10 @@ pub struct Session {
     baseline: BTreeMap<String, Duration>,
     /// Which of each target's tests reached which mutant, recorded by the guards on that same baseline run.
     touched: crate::touch::Touched,
+    /// How many tests each target's baseline ran, which is what asking the whole of it about one mutation costs.
+    ran: BTreeMap<String, u32>,
+    /// What each set of tests a route named answers on its own, so the question is put once however many mutants that set covers.
+    filtered: std::sync::Mutex<Established>,
     /// What the tree gained or lost while the proof layers ran, which is what a test wrote before anything was instrumented.
     written_by_a_test: Vec<Drift>,
     /// The digest of the pristine sources every unit of this build compiled.
@@ -740,6 +843,28 @@ impl Session {
         &self.touched
     }
 
+    /// How many tests one target's baseline ran, which is what asking the whole of it about one mutation costs.
+    #[must_use]
+    pub fn tests_of(&self, target: &str) -> u32 {
+        self.ran.get(target).copied().unwrap_or(1).max(1)
+    }
+
+    /// How many tests this session started to establish that a set of them answers on its own.
+    ///
+    /// A narrowed execution rests on the set having passed with nothing
+    /// active, and putting that question is work no mutation asked for. It is
+    /// counted here so the ledger accounts for every test the run started
+    /// rather than only the ones a mutant is charged for.
+    #[must_use]
+    pub fn established_tests(&self) -> u64 {
+        self.filtered.lock().map_or(0, |known| {
+            known
+                .keys()
+                .map(|(_, tests)| u64::try_from(tests.len()).unwrap_or(0))
+                .sum()
+        })
+    }
+
     /// Whether any measured target reached this mutant: `None` when the measurement says nothing about the place, so nothing is proved either way.
     #[must_use]
     pub fn reaches(&self, mutant: &Mutant) -> Option<bool> {
@@ -826,18 +951,26 @@ impl Session {
             .iter()
             .map(|target| target.id.as_str())
             .collect();
-        let Some(position) = self.position(mutant) else {
-            return Route::All {
-                reaching: targets.iter().map(|target| (*target).to_owned()).collect(),
-                fallback: Fallback::PositionUnknown,
-            };
-        };
         let measurable: Vec<&str> = self
             .targets
             .iter()
             .filter(|target| target.kind != TargetKind::Doc)
             .map(|target| target.id.as_str())
             .collect();
+        let among = Routing {
+            targets: &targets,
+            measurable: &measurable,
+            also_reaching: &self.documenting(mutant),
+        };
+        if self.touched.measured() {
+            return self.discharging(mutant, Route::by_touch(&self.touched, mutant.index, &among));
+        }
+        let Some(position) = self.position(mutant) else {
+            return Route::All {
+                reaching: targets.iter().map(|target| (*target).to_owned()).collect(),
+                fallback: Fallback::PositionUnknown,
+            };
+        };
         let decided = Route::decide(
             &self.reached,
             std::path::Path::new(&mutant.candidate.path),
@@ -845,13 +978,82 @@ impl Session {
                 line: position.line,
                 column: position.byte_column,
             },
-            &Routing {
-                targets: &targets,
-                measurable: &measurable,
-                also_reaching: &self.documenting(mutant),
-            },
+            &among,
         );
         self.discharging(mutant, decided)
+    }
+
+    /// The tests of `target` this execution runs, or nothing when it runs every test the target has.
+    fn filtering(
+        &self,
+        target: &TestTarget,
+        tests: Option<&BTreeMap<String, Vec<String>>>,
+        cancel: &Cancel,
+    ) -> Option<Vec<String>> {
+        let named = tests?.get(&target.id)?;
+        if named.is_empty() {
+            return None;
+        }
+        self.usable(target, named, cancel)?;
+        Some(named.clone())
+    }
+
+    /// How long the named tests of `target` take on their own with nothing active, or nothing when running them on their own is not the same question as running the target.
+    ///
+    /// A route narrows a target to the tests that reached the mutation, and a
+    /// filtered process only answers about the mutation if the same filter
+    /// passes without it. Tests share process state — a `static`, a temporary
+    /// directory, an ordering one of them relies on — and a set that only
+    /// passes beside its neighbours would report a kill that is about the
+    /// neighbours. So the set is put once, with nothing active, and remembered:
+    /// the mutants of one function are covered by one set, so the cost is one
+    /// process for all of them.
+    ///
+    /// A set that does not pass, or that runs a different number of tests than
+    /// it names, takes its target off test routing for this mutation and runs
+    /// every test of it.
+    fn usable(&self, target: &TestTarget, tests: &[String], cancel: &Cancel) -> Option<Duration> {
+        let key = (target.id.clone(), tests.to_vec());
+        if let Ok(known) = self.filtered.lock()
+            && let Some(answer) = known.get(&key)
+        {
+            return *answer;
+        }
+        let context = Context {
+            base_env: &self.workspace.base_env,
+            cargo: Some(self.workspace.toolchain.cargo()),
+            sysroot: self.workspace.toolchain.sysroot(),
+            active: None,
+            probe: None,
+            touch: None,
+            profile: None,
+        };
+        let (timeout, _source) = self.mutant_timeout.of(self.baseline(&target.id));
+        let request = ExecRequest::new(target)
+            .with_tests(tests.to_vec())
+            .with_timeout(Some(timeout))
+            .with_scratch(self.exec_scratch());
+        let result = execute::exec(&request, &context, cancel, &self.workspace.trace);
+        let ran = usize::try_from(result.tests_run.unwrap_or(0)).unwrap_or(0);
+        let answer = (result.outcome == crate::outcome::Outcome::Survived && ran == tests.len())
+            .then_some(result.duration);
+        if answer.is_none() {
+            self.workspace.trace.note(
+                TEST_ROUTING_UNSOUND,
+                &format!(
+                    "{}: {} of {} named tests ran and the set came back {}, so every test of it \
+                     runs instead",
+                    target.id,
+                    ran,
+                    tests.len(),
+                    result.outcome.name()
+                ),
+            );
+        }
+        if let Ok(mut known) = self.filtered.lock() {
+            let _remembered = known.insert(key, answer);
+        }
+        answer
     }
 
     /// The same route with every target a proof removes moved out of what could notice the mutation.
@@ -863,6 +1065,7 @@ impl Session {
     fn discharging(&self, mutant: &Mutant, route: Route) -> Route {
         let Route::Block {
             reaching,
+            mut tests,
             mut discharged,
             fallback,
         } = route
@@ -872,7 +1075,10 @@ impl Session {
         let mut kept = Vec::new();
         for target in reaching {
             match self.proof_against(mutant, &target) {
-                Some(proof) => discharged.push(Discharge { target, proof }),
+                Some(proof) => {
+                    drop(tests.remove(&target));
+                    discharged.push(Discharge { target, proof });
+                }
                 None => kept.push(target),
             }
         }
@@ -881,6 +1087,7 @@ impl Session {
         }
         Route::Block {
             reaching: kept,
+            tests,
             discharged,
             fallback,
         }
@@ -1001,34 +1208,37 @@ impl Session {
             .target
             .is_none()
             .then(|| route.reaching().into_iter().map(str::to_owned).collect());
-        let only = reaching.as_deref();
-        let first = quiet.shared(|| self.execute(request, Running::shared(only), cancel))?;
-        let (timeout, timeout_source) = self.timeout_for(request, &first.target);
-        let judgement = if first.outcome != crate::outcome::Outcome::TimedOut
-            || cancel.is_cancelled()
-        {
-            Judgement {
-                result: first.clone(),
-                attempts: vec![first],
-                retried: false,
-                timeout,
-                timeout_source,
-                route,
-            }
-        } else {
-            let mut again = quiet.alone(|| self.execute(request, Running::alone(only), cancel))?;
-            if again.outcome != crate::outcome::Outcome::TimedOut && !again.outcome.detected() {
-                again.outcome = crate::outcome::Outcome::Inconclusive;
-            }
-            Judgement {
-                result: again.clone(),
-                attempts: vec![first, again],
-                retried: true,
-                timeout,
-                timeout_source,
-                route,
-            }
+        let narrowed = Narrowed {
+            only: reaching.as_deref(),
+            tests: request.target.is_none().then(|| route.tests()).flatten(),
         };
+        let first = quiet.shared(|| self.execute(request, Running::shared(narrowed), cancel))?;
+        let (timeout, timeout_source) = self.timeout_for(request, &first.target);
+        let judgement =
+            if first.outcome != crate::outcome::Outcome::TimedOut || cancel.is_cancelled() {
+                Judgement {
+                    result: first.clone(),
+                    attempts: vec![first],
+                    retried: false,
+                    timeout,
+                    timeout_source,
+                    route,
+                }
+            } else {
+                let mut again =
+                    quiet.alone(|| self.execute(request, Running::alone(narrowed), cancel))?;
+                if again.outcome != crate::outcome::Outcome::TimedOut && !again.outcome.detected() {
+                    again.outcome = crate::outcome::Outcome::Inconclusive;
+                }
+                Judgement {
+                    result: again.clone(),
+                    attempts: vec![first, again],
+                    retried: true,
+                    timeout,
+                    timeout_source,
+                    route,
+                }
+            };
         self.workspace.trace.route(judgement.route.record(
             mutant,
             judgement.route.executed(
@@ -1045,7 +1255,8 @@ impl Session {
         how: Running<'_>,
         cancel: &Cancel,
     ) -> Result<MutantResult, EngineError> {
-        let Running { alone, only } = how;
+        let Running { alone, narrowed } = how;
+        let Narrowed { only, tests } = narrowed;
         let mutant = self.resolve(&request.mutant)?;
         let targets = self.selected(request.target.as_deref())?;
         let narrowing = only.map_or_else(
@@ -1090,6 +1301,8 @@ impl Session {
                 .with_scratch(self.exec_scratch());
             if let Some(test) = &request.test {
                 exec = exec.with_test(test.clone());
+            } else if let Some(named) = self.filtering(target, tests, cancel) {
+                exec = exec.with_tests(named);
             }
             let result = execute::exec(&exec, &context, cancel, &self.workspace.trace);
             self.workspace.trace.mutant_exec(MutantExecRecord {
@@ -1315,8 +1528,17 @@ pub struct Description {
 struct Running<'a> {
     /// Whether nothing else this run started was running beside it.
     alone: bool,
-    /// The targets to run, or nothing to let the coverage narrowing decide.
+    /// What the route narrowed the execution to.
+    narrowed: Narrowed<'a>,
+}
+
+/// What a route narrowed one execution to: the targets, and for each of them the tests that reached the mutation.
+#[derive(Debug, Clone, Copy, Default)]
+struct Narrowed<'a> {
+    /// The targets to run, or nothing to let the measurement's own narrowing decide.
     only: Option<&'a [String]>,
+    /// For each target narrowed to some of its tests, exactly those tests.
+    tests: Option<&'a BTreeMap<String, Vec<String>>>,
 }
 
 impl<'a> Running<'a> {
@@ -1324,20 +1546,35 @@ impl<'a> Running<'a> {
     const fn everywhere() -> Self {
         Self {
             alone: false,
-            only: None,
+            narrowed: Narrowed {
+                only: None,
+                tests: None,
+            },
         }
     }
 
-    /// These targets, beside whatever else is running.
-    const fn shared(only: Option<&'a [String]>) -> Self {
-        Self { alone: false, only }
+    /// This much of the route, beside whatever else is running.
+    const fn shared(narrowed: Narrowed<'a>) -> Self {
+        Self {
+            alone: false,
+            narrowed,
+        }
     }
 
-    /// These targets, with the machine to itself.
-    const fn alone(only: Option<&'a [String]>) -> Self {
-        Self { alone: true, only }
+    /// This much of the route, with the machine to itself.
+    const fn alone(narrowed: Narrowed<'a>) -> Self {
+        Self {
+            alone: true,
+            narrowed,
+        }
     }
 }
+
+/// What a run notes when a set of tests does not answer on its own, so the whole target ran instead.
+pub const TEST_ROUTING_UNSOUND: &str = "test-routing-unsound";
+
+/// What each set of tests a route named answers on its own: how long it took with nothing active, or nothing when running it on its own is not the same question as running its target.
+type Established = BTreeMap<(String, Vec<String>), Option<Duration>>;
 
 /// What one mutant's judgement is made of: what stands, every attempt it took, and the budget each was given.
 #[derive(Debug, Clone)]
@@ -1601,6 +1838,8 @@ struct Building<'a> {
     trace: &'a crate::trace::Recorder,
     /// The catalog every guard of the tree was generated from, which is what a record must be about.
     catalog: &'a Catalog,
+    /// Whether the guards are asked what they reached on the run that verifies the baseline.
+    asked: bool,
 }
 
 fn built(
@@ -1955,6 +2194,7 @@ pub fn prepare(
             cancel,
             trace: &trace,
             catalog: &discovery.catalog,
+            asked: options.touch,
         },
     )?;
     build_phase.end();
@@ -1974,7 +2214,9 @@ pub fn prepare(
         targets,
         scratch,
         baseline: verified.baseline,
+        ran: verified.ran,
         touched: verified.touched,
+        filtered: std::sync::Mutex::new(BTreeMap::new()),
         written_by_a_test,
         closure,
         manifests,
@@ -2077,7 +2319,10 @@ fn verify(
     building: &Building<'_>,
 ) -> Result<Verified, EngineError> {
     let Building {
-        cancel, catalog, ..
+        cancel,
+        catalog,
+        asked,
+        ..
     } = *building;
     let phase = workspace.trace.phase("verify");
     let logs = scratch.join("touch");
@@ -2087,7 +2332,8 @@ fn verify(
     })?;
     let mut verified = Verified::default();
     for target in targets.iter_mut() {
-        let recording = recordable(target).then(|| logs.join(format!("{}.log", slug(&target.id))));
+        let recording =
+            (asked && recordable(target)).then(|| logs.join(format!("{}.log", slug(&target.id))));
         if let Some(path) = &recording {
             drop(std::fs::remove_file(path));
         }
@@ -2109,6 +2355,12 @@ fn verify(
             duration_ms: u64::try_from(result.duration.as_millis()).unwrap_or(u64::MAX),
         });
         let _kept = verified.baseline.insert(target.id.clone(), result.duration);
+        let _counted = verified.ran.insert(
+            target.id.clone(),
+            result
+                .tests_run
+                .unwrap_or_else(|| u32::try_from(result.passed_tests.len()).unwrap_or(u32::MAX)),
+        );
         if target.kind == TargetKind::Doc && result.tests_run == Some(0) {
             target
                 .limitations
@@ -2152,6 +2404,8 @@ fn verify(
 struct Verified {
     /// How long each target's own baseline took, which is what a derived timeout is a multiple of.
     baseline: BTreeMap<String, Duration>,
+    /// How many tests each target's baseline ran, which is what asking the whole of it about one mutation costs.
+    ran: BTreeMap<String, u32>,
     /// What the guards recorded on that same run.
     touched: crate::touch::Touched,
 }

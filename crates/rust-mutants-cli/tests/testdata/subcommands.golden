@@ -104,6 +104,10 @@ Options:
           Run every mutant against every target, measuring no coverage and proving nothing about
           reach
 
+      --no-touch
+          Do not ask the guards which of each target's tests reached them, and so run every test of
+          every target that could
+
       --probe
           Ask each test what it would have noticed, and never run one against a mutation it could
           not have
@@ -296,6 +300,10 @@ Options:
           Run every mutant against every target, measuring no coverage and proving nothing about
           reach
 
+      --no-touch
+          Do not ask the guards which of each target's tests reached them, and so run every test of
+          every target that could
+
       --probe
           Ask each test what it would have noticed, and never run one against a mutation it could
           not have
@@ -419,6 +427,10 @@ Options:
       --no-coverage
           Run every mutant against every target, measuring no coverage and proving nothing about
           reach
+
+      --no-touch
+          Do not ask the guards which of each target's tests reached them, and so run every test of
+          every target that could
 
       --probe
           Ask each test what it would have noticed, and never run one against a mutation it could
@@ -551,6 +563,10 @@ Options:
           Run every mutant against every target, measuring no coverage and proving nothing about
           reach
 
+      --no-touch
+          Do not ask the guards which of each target's tests reached them, and so run every test of
+          every target that could
+
       --probe
           Ask each test what it would have noticed, and never run one against a mutation it could
           not have
@@ -678,6 +694,10 @@ Options:
           Run every mutant against every target, measuring no coverage and proving nothing about
           reach
 
+      --no-touch
+          Do not ask the guards which of each target's tests reached them, and so run every test of
+          every target that could
+
       --probe
           Ask each test what it would have noticed, and never run one against a mutation it could
           not have
@@ -804,6 +824,10 @@ Options:
       --no-coverage
           Run every mutant against every target, measuring no coverage and proving nothing about
           reach
+
+      --no-touch
+          Do not ask the guards which of each target's tests reached them, and so run every test of
+          every target that could
 
       --probe
           Ask each test what it would have noticed, and never run one against a mutation it could
@@ -936,6 +960,10 @@ Options:
           Run every mutant against every target, measuring no coverage and proving nothing about
           reach
 
+      --no-touch
+          Do not ask the guards which of each target's tests reached them, and so run every test of
+          every target that could
+
       --probe
           Ask each test what it would have noticed, and never run one against a mutation it could
           not have
@@ -1059,6 +1087,10 @@ Options:
       --no-coverage
           Run every mutant against every target, measuring no coverage and proving nothing about
           reach
+
+      --no-touch
+          Do not ask the guards which of each target's tests reached them, and so run every test of
+          every target that could
 
       --probe
           Ask each test what it would have noticed, and never run one against a mutation it could

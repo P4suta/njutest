@@ -96,7 +96,7 @@ fn outcomes(said: &str) -> std::collections::BTreeMap<String, String> {
 }
 
 #[test]
-fn routing_by_coverage_loses_no_kill_and_names_the_code_no_test_runs() {
+fn routing_loses_no_kill_and_names_the_code_no_test_runs() {
     let fixture = Fixture::copy("fixture-workspace");
     let lib = fixture.root().join("crates/core/src/lib.rs");
     let mut widened = std::fs::read_to_string(&lib).expect("read");
@@ -108,6 +108,7 @@ fn routing_by_coverage_loses_no_kill_and_names_the_code_no_test_runs() {
         &[
             "run",
             "--no-coverage",
+            "--no-touch",
             "--offline",
             "--locked",
             "--no-cache",
@@ -126,7 +127,7 @@ fn routing_by_coverage_loses_no_kill_and_names_the_code_no_test_runs() {
             assert_eq!(
                 after.get(id).map(String::as_str),
                 Some("killed"),
-                "routing by coverage lost a kill: {id}"
+                "routing lost a kill: {id}"
             );
         }
     }

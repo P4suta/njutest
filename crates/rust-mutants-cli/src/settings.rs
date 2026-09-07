@@ -71,6 +71,7 @@ impl Settings {
         config.mutation.verify &= !scope.switches.no_verify;
         config.mutation.coverage |= scope.switches.coverage;
         config.mutation.coverage &= !scope.switches.no_coverage;
+        config.mutation.touch &= !scope.switches.no_touch;
         config.mutation.probe |= scope.switches.probe;
         config.mutation.equivalence |= scope.switches.equivalence;
         config.execution.doctests &= !scope.switches.no_doctests;
@@ -130,6 +131,7 @@ impl Settings {
             packages: self.config.project.packages.clone(),
             verify: self.config.mutation.verify,
             coverage: self.config.mutation.coverage,
+            touch: self.config.mutation.touch,
             branch_proofs: self.config.mutation.coverage,
             probe: self.config.mutation.probe,
             build_timeout: self.config.mutation.build_timeout,

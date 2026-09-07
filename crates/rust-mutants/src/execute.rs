@@ -580,7 +580,7 @@ fn rustlib_targets(sysroot: &Path) -> Vec<PathBuf> {
 #[derive(Debug, Clone)]
 pub struct ExecRequest<'a> {
     target: &'a TestTarget,
-    test: Option<String>,
+    tests: Vec<String>,
     args: Vec<String>,
     timeout: Option<Duration>,
     scratch: Option<PathBuf>,
@@ -592,7 +592,7 @@ impl<'a> ExecRequest<'a> {
     pub const fn new(target: &'a TestTarget) -> Self {
         Self {
             target,
-            test: None,
+            tests: Vec::new(),
             args: Vec::new(),
             timeout: None,
             scratch: None,
@@ -602,8 +602,25 @@ impl<'a> ExecRequest<'a> {
     /// Runs exactly the named test.
     #[must_use]
     pub fn with_test(mut self, test: impl Into<String>) -> Self {
-        self.test = Some(test.into());
+        self.tests = vec![test.into()];
         self
+    }
+
+    /// Runs exactly the named tests, which one process does in one go.
+    ///
+    /// Every free argument a libtest binary is given is a filter, and
+    /// `--exact` applies to all of them, so the tests a measurement named are
+    /// one process rather than one each.
+    #[must_use]
+    pub fn with_tests(mut self, tests: impl IntoIterator<Item = String>) -> Self {
+        self.tests = tests.into_iter().collect();
+        self
+    }
+
+    /// The tests this runs, or nothing when it runs every one of the target's.
+    #[must_use]
+    pub fn tests(&self) -> &[String] {
+        &self.tests
     }
 
     /// Passes further arguments to the harness.
@@ -633,7 +650,7 @@ impl<'a> ExecRequest<'a> {
         self.target
     }
 
-    /// The command line the binary receives. A named test is passed as a filter with `--exact`, so a name that is a prefix of another cannot drag it in.
+    /// The command line the binary receives. Every named test is passed as a filter with `--exact`, so a name that is a prefix of another cannot drag it in.
     #[must_use]
     pub fn argv(&self) -> Vec<OsString> {
         let mut argv = vec![self.target.executable.clone().into_os_string()];
@@ -641,11 +658,9 @@ impl<'a> ExecRequest<'a> {
             argv.extend(self.target.through.iter().cloned());
             argv.push(OsString::from("--"));
         }
-        if let Some(test) = &self.test {
-            argv.push(OsString::from(test));
-            if self.target.through.is_empty() {
-                argv.push(OsString::from("--exact"));
-            }
+        argv.extend(self.tests.iter().map(OsString::from));
+        if !self.tests.is_empty() && self.target.through.is_empty() {
+            argv.push(OsString::from("--exact"));
         }
         argv.extend(self.args.iter().map(OsString::from));
         argv
