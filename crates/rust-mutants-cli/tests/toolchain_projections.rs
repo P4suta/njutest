@@ -277,3 +277,35 @@ fn a_snapshot_an_earlier_run_left_behind_is_a_warning_that_says_what_removes_it(
     assert!(text.contains("WARN snapshots"), "{text}");
     assert!(text.contains("cache --gc"), "{text}");
 }
+
+#[test]
+fn a_project_that_moved_its_reports_is_still_told_what_a_run_kept() {
+    let fixture = Fixture::copy("fixture-simple");
+    std::fs::write(
+        fixture.root().join(".rust-mutants.toml"),
+        "[reports]\ndirectory = \"target/mutation\"\n",
+    )
+    .expect("a configuration");
+    let ran = against(
+        &fixture,
+        &[
+            "run",
+            "--offline",
+            "--locked",
+            "--ui",
+            "quiet",
+            "--keep-temp",
+        ],
+    );
+    assert!(ran.status.code().is_some_and(|code| code <= 1), "{ran:?}");
+    let asked = against(&fixture, &["doctor"]);
+    let text = stdout(&asked);
+    assert!(
+        text.contains("kept on purpose"),
+        "the ledger lives under the report directory the configuration names: {text}"
+    );
+    assert!(
+        !text.contains("0 kept on purpose"),
+        "a project that moved its reports would otherwise be told nothing was kept: {text}"
+    );
+}

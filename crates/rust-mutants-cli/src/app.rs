@@ -1316,9 +1316,13 @@ fn doctor_document(
     checks.push(workspace_check(&root, &manifest));
 
     let config_path = root.join(crate::config::FILE_NAME);
+    let mut reports = root.join(crate::config::DEFAULT_REPORTS_DIRECTORY);
     if config_path.is_file() {
         match crate::config::Config::load(&root) {
-            Ok(_read) => checks.push(noted("config", Well, &config_path.display().to_string())),
+            Ok(read) => {
+                reports = root.join(&read.reports.directory);
+                checks.push(noted("config", Well, &config_path.display().to_string()));
+            }
             Err(error) => checks.push(doctor_report::Check::new(
                 "config",
                 Fail,
@@ -1360,7 +1364,7 @@ fn doctor_document(
     checks.push(environment_check(environment));
     checks.push(cache_check(environment));
     checks.push(disk_check(&environment.temp_directory));
-    checks.push(snapshots_check(&root, environment));
+    checks.push(snapshots_check(&reports, environment));
     checks.push(llvm_tools_check(toolchain.as_ref().ok()));
     doctor_report::DoctorDocument::of(checks)
 }
@@ -1882,9 +1886,13 @@ fn cache_check(environment: &Environment) -> doctor_report::Check {
 }
 
 /// What earlier runs left in the temporary directory, and what a run kept on purpose.
-fn snapshots_check(root: &Path, environment: &Environment) -> doctor_report::Check {
+///
+/// The ledger of what was kept lives under the report directory the
+/// configuration names, not under the default one: a project that moved its
+/// reports would otherwise be told nothing was kept.
+fn snapshots_check(reports: &Path, environment: &Environment) -> doctor_report::Check {
     use doctor_report::Standing::{Ok as Well, Warn};
-    let ledger = crate::kept::Ledger::read(&root.join(crate::config::DEFAULT_REPORTS_DIRECTORY));
+    let ledger = crate::kept::Ledger::read(reports);
     let abandoned = std::fs::read_dir(&environment.temp_directory)
         .map(|entries| {
             entries
