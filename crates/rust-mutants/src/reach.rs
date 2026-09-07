@@ -65,6 +65,19 @@ impl Reached {
         !self.targets.is_empty()
     }
 
+    /// Whether it reached every target it set out to, which is what makes it worth remembering.
+    ///
+    /// A measurement names the targets it could not read. One that names any
+    /// is a measurement of some of them: sound to route by, because what it
+    /// could not read stays in every route, and wrong to keep, because a later
+    /// run would have nothing to tell it from a whole one.
+    #[must_use]
+    pub fn whole(&self) -> bool {
+        self.limitations
+            .iter()
+            .all(|limitation| !limitation.starts_with(UNMEASURED))
+    }
+
     /// The targets whose run covered `position` in `path`, in identity order, or nothing at all when the measurement never instrumented that place and so says nothing about it.
     #[must_use]
     pub fn covering(&self, path: &Path, position: Point) -> Option<Vec<&str>> {
@@ -194,6 +207,11 @@ fn measure(
 }
 
 /// Runs every target once with nothing active and reads back what each covered.
+///
+/// A measurement that stops early says which targets it never reached. A
+/// partial measurement that does not is one a route reads as "these targets
+/// ran and covered nothing", which is the difference between a mutant nobody
+/// could notice and a mutant nobody looked at.
 fn run_targets(
     reading: &Reading<'_>,
     targets: &[execute::TestTarget],
@@ -202,8 +220,15 @@ fn run_targets(
 ) -> Reached {
     let (workspace, options) = within;
     let mut reached = Reached::default();
-    for target in targets {
+    for (at, target) in targets.iter().enumerate() {
         if cancel.is_cancelled() {
+            reached.limitations.extend(
+                targets
+                    .get(at..)
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|left| format!("{UNMEASURED}:{}", left.id)),
+            );
             break;
         }
         let pattern = profile_pattern(reading.profiles, &key(target));
@@ -358,8 +383,11 @@ pub mod remembered {
     /// The directory remembered measurements live in, below the caller's cache directory.
     pub const LAYOUT: &str = "rust-mutants/measurements-v1";
 
-    /// Bumped when what a measurement holds changes, so one written before stops answering.
-    pub const ABI: u32 = 1;
+    /// Bumped when what a measurement holds changes, or when a release finds a reason not to trust one written before it.
+    ///
+    /// Two: a measurement cut short used to be remembered as if it were whole,
+    /// and a run that read one back routed away targets nobody had measured.
+    pub const ABI: u32 = 2;
 
     /// Everything a measurement is a function of.
     #[derive(Debug, Clone, Copy)]

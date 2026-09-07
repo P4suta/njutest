@@ -45,6 +45,32 @@ is labelled with what kind it is:
 `Work::answers_for_the_whole` is that last column, and a report says so when
 it is false.
 
+## What a measurement must name
+
+A measurement removes a target from a route by saying that target ran and
+covered nothing there. It can only say that about a target it **named**. A
+target absent from the measurement — its profile unreadable, its run never
+made, the measurement cut short before reaching it — is one nothing was
+established about, and it stays in every route.
+
+Being absent from a measurement is not the same as being measured and
+covering nothing, and reading the first as the second turns a kill into a
+survivor. That is the one thing this layer must never do, and it is the one
+thing it did: a run interrupted mid-measurement remembered what it had, and
+every later run of the tree routed away fifty-six targets nobody had looked
+at. Eighteen mutants the tests kill were reported as survivors.
+
+Two rules now:
+
+- **A route trusts only what the measurement names.** A target a coverage
+  build compiles and the measurement does not name is unmeasured, whatever the
+  reason. A library's documented examples are the exception, and not through a
+  gap: no coverage build instruments them, so no measurement is about them, and
+  they reach by file instead.
+- **A measurement that did not reach every target is not remembered.** It is
+  sound to route by — what it could not read stays in every route — and wrong
+  to keep, because a later run would have nothing to tell it from a whole one.
+
 ## Work a run does not have to do twice
 
 A coverage measurement is a function of three things and nothing else: the

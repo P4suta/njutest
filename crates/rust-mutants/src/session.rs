@@ -286,25 +286,46 @@ pub struct Discharge {
     pub proof: &'static str,
 }
 
+/// What a route is decided among.
+#[derive(Debug, Clone, Copy)]
+pub struct Routing<'a> {
+    /// Every target the run built.
+    pub targets: &'a [&'a str],
+    /// The targets a coverage build can measure, which is every one it compiles.
+    ///
+    /// A library's documented examples are compiled by rustdoc while cargo
+    /// runs them, so no coverage build instruments them and no measurement can
+    /// name them. They are not unmeasured targets, they are targets this
+    /// measurement is not about, and they reach by the rule in `also_reaching`.
+    pub measurable: &'a [&'a str],
+    /// The targets routed by a rule other than the measurement.
+    pub also_reaching: &'a [&'a str],
+}
+
 impl Route {
     /// Which targets a measurement puts at `position` of `path`, out of `targets`.
     ///
     /// A target that ran and whose profile could not be read is kept: what the
     /// measurement says nothing about is run rather than assumed.
+    /// A target a coverage build could have measured is measured when the
+    /// measurement **names** it, and not otherwise. One that is absent — its
+    /// profile unreadable, its run never made, the measurement cut short
+    /// before it — is one nothing was established about, and it stays in the
+    /// route. Being absent from a measurement is not the same as being
+    /// measured and covering nothing, and reading the first as the second
+    /// turns a kill into a survivor: the one thing this layer must never do.
     #[must_use]
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the five are the measurement, the place, the targets, and the targets no \
-                  measurement could have said anything about; grouping them would name a thing \
-                  that is only ever one call's arguments"
-    )]
     pub fn decide(
         reached: &crate::reach::Reached,
         path: &std::path::Path,
         position: crate::coverage::Point,
-        targets: &[&str],
-        also_reaching: &[&str],
+        among: &Routing<'_>,
     ) -> Self {
+        let Routing {
+            targets,
+            measurable,
+            also_reaching,
+        } = *among;
         let everything = |fallback: Fallback| Self::All {
             reaching: targets.iter().map(|target| (*target).to_owned()).collect(),
             fallback,
@@ -315,13 +336,14 @@ impl Route {
         let Some(covering) = reached.covering(path, position) else {
             return everything(Fallback::OutsideBlocks);
         };
-        let unmeasured: Vec<&str> = targets
+        let unmeasured: Vec<&str> = measurable
             .iter()
             .copied()
             .filter(|target| {
-                reached.limitations.iter().any(|limitation| {
-                    limitation == &format!("{}:{target}", crate::reach::UNMEASURED)
-                })
+                !reached.targets.contains_key(*target)
+                    || reached.limitations.iter().any(|limitation| {
+                        limitation == &format!("{}:{target}", crate::reach::UNMEASURED)
+                    })
             })
             .collect();
         let mut reaching: Vec<String> = targets
@@ -802,6 +824,12 @@ impl Session {
                 fallback: Fallback::PositionUnknown,
             };
         };
+        let measurable: Vec<&str> = self
+            .targets
+            .iter()
+            .filter(|target| target.kind != TargetKind::Doc)
+            .map(|target| target.id.as_str())
+            .collect();
         let decided = Route::decide(
             &self.reached,
             std::path::Path::new(&mutant.candidate.path),
@@ -809,8 +837,11 @@ impl Session {
                 line: position.line,
                 column: position.byte_column,
             },
-            &targets,
-            &self.documenting(mutant),
+            &Routing {
+                targets: &targets,
+                measurable: &measurable,
+                also_reaching: &self.documenting(mutant),
+            },
         );
         self.discharging(mutant, decided)
     }
@@ -1685,6 +1716,11 @@ fn layers(
 /// measured. Reading that back is a whole build removed on the claim the
 /// outcome store already rests on: nothing that could change the answer
 /// changed.
+///
+/// A measurement that did not reach every target is not remembered. It is a
+/// measurement of some of them — sound to route by, because what it could not
+/// read stays in every route — and remembering it would hand every later run
+/// of the tree a partial answer with nothing to tell it from a whole one.
 fn measured(
     asking: &crate::prove::Asking<'_>,
     remembering: Option<&crate::reach::remembered::Remembering>,
