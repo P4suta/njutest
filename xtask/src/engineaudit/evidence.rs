@@ -441,7 +441,8 @@ impl Touches {
     fn of(value: &Value) -> Self {
         Self {
             tests: value
-                .get("tests")
+                .get("reached")
+                .and_then(|seen| seen.get("tests"))
                 .and_then(Value::as_object)
                 .map(|named| {
                     named
@@ -461,7 +462,8 @@ impl Touches {
                 })
                 .unwrap_or_default(),
             loose: value
-                .get("loose")
+                .get("reached")
+                .and_then(|seen| seen.get("loose"))
                 .and_then(Value::as_array)
                 .map(|entries| entries.iter().filter_map(Value::as_u64).collect())
                 .unwrap_or_default(),

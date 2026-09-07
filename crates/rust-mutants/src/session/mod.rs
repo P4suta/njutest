@@ -794,7 +794,7 @@ impl Session {
         };
         let entered: Vec<String> = tests
             .iter()
-            .filter(|test| touches.entered_by(test, marker.index))
+            .filter(|test| touches.bodies.by(test, marker.index))
             .cloned()
             .collect();
         if entered.is_empty() {
@@ -819,7 +819,7 @@ impl Session {
         };
         if let Some(marker) = proof.marker
             && let Some(touches) = self.touched.targets.get(target)
-            && !touches.entered(marker.index)
+            && !touches.bodies.any(marker.index)
         {
             return true;
         }

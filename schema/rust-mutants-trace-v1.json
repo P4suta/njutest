@@ -722,14 +722,28 @@
               "items": {
                 "type": "object",
                 "additionalProperties": false,
-                "required": ["id", "kind", "harness"],
+                "required": [
+                  "id",
+                  "kind",
+                  "harness"
+                ],
                 "properties": {
-                  "id": { "type": "string", "minLength": 1 },
-                  "kind": { "type": "string", "minLength": 1 },
-                  "harness": { "type": "boolean" },
+                  "id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "kind": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "harness": {
+                    "type": "boolean"
+                  },
                   "limitations": {
                     "type": "array",
-                    "items": { "type": "string" }
+                    "items": {
+                      "type": "string"
+                    }
                   }
                 }
               }
@@ -842,6 +856,11 @@
               "minimum": 0
             },
             "loose": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "infected": {
+              "description": "How many distinct mutations anything of it saw its guard's two branches differ over.",
               "type": "integer",
               "minimum": 0
             }
@@ -1239,7 +1258,10 @@
               "minimum": 0
             },
             "timeout_source": {
-              "enum": ["configured", "derived"]
+              "enum": [
+                "configured",
+                "derived"
+              ]
             },
             "alone": {
               "type": "boolean",
@@ -1252,21 +1274,53 @@
     {
       "type": "object",
       "additionalProperties": false,
-      "required": ["seq", "timestamp", "elapsed_ms", "type", "cache"],
+      "required": [
+        "seq",
+        "timestamp",
+        "elapsed_ms",
+        "type",
+        "cache"
+      ],
       "properties": {
-        "seq": { "type": "integer", "minimum": 1 },
-        "timestamp": { "type": "string", "minLength": 1 },
-        "elapsed_ms": { "type": "integer", "minimum": 0 },
-        "type": { "const": "cache" },
+        "seq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "timestamp": {
+          "type": "string",
+          "minLength": 1
+        },
+        "elapsed_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "type": {
+          "const": "cache"
+        },
         "cache": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["mutant", "key", "hit"],
+          "required": [
+            "mutant",
+            "key",
+            "hit"
+          ],
           "properties": {
-            "mutant": { "type": "string", "minLength": 1 },
-            "key": { "type": "string", "minLength": 1 },
-            "hit": { "type": "boolean" },
-            "source_run_id": { "type": "string", "minLength": 1 }
+            "mutant": {
+              "type": "string",
+              "minLength": 1
+            },
+            "key": {
+              "type": "string",
+              "minLength": 1
+            },
+            "hit": {
+              "type": "boolean"
+            },
+            "source_run_id": {
+              "type": "string",
+              "minLength": 1
+            }
           }
         }
       }
@@ -1274,19 +1328,48 @@
     {
       "type": "object",
       "additionalProperties": false,
-      "required": ["seq", "timestamp", "elapsed_ms", "type", "select"],
+      "required": [
+        "seq",
+        "timestamp",
+        "elapsed_ms",
+        "type",
+        "select"
+      ],
       "properties": {
-        "seq": { "type": "integer", "minimum": 1 },
-        "timestamp": { "type": "string", "minLength": 1 },
-        "elapsed_ms": { "type": "integer", "minimum": 0 },
-        "type": { "const": "select" },
+        "seq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "timestamp": {
+          "type": "string",
+          "minLength": 1
+        },
+        "elapsed_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "type": {
+          "const": "select"
+        },
         "select": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["mutant", "reason"],
+          "required": [
+            "mutant",
+            "reason"
+          ],
           "properties": {
-            "mutant": { "type": "string", "minLength": 1 },
-            "reason": { "enum": ["unreached", "discharged", "interrupted"] }
+            "mutant": {
+              "type": "string",
+              "minLength": 1
+            },
+            "reason": {
+              "enum": [
+                "unreached",
+                "discharged",
+                "interrupted"
+              ]
+            }
           }
         }
       }
@@ -1294,20 +1377,51 @@
     {
       "type": "object",
       "additionalProperties": false,
-      "required": ["seq", "timestamp", "elapsed_ms", "type", "identical"],
+      "required": [
+        "seq",
+        "timestamp",
+        "elapsed_ms",
+        "type",
+        "identical"
+      ],
       "properties": {
-        "seq": { "type": "integer", "minimum": 1 },
-        "timestamp": { "type": "string", "minLength": 1 },
-        "elapsed_ms": { "type": "integer", "minimum": 0 },
-        "type": { "const": "identical" },
+        "seq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "timestamp": {
+          "type": "string",
+          "minLength": 1
+        },
+        "elapsed_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "type": {
+          "const": "identical"
+        },
         "identical": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["index", "identity"],
+          "required": [
+            "index",
+            "identity"
+          ],
           "properties": {
-            "index": { "type": "integer", "minimum": 0 },
-            "identity": { "enum": ["identical", "differs", "not-established"] },
-            "detail": { "type": "string" }
+            "index": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "identity": {
+              "enum": [
+                "identical",
+                "differs",
+                "not-established"
+              ]
+            },
+            "detail": {
+              "type": "string"
+            }
           }
         }
       }

@@ -59,12 +59,7 @@ fn reaching(session: &Session, target: &str, index: u32) -> Vec<String> {
         .targets
         .get(target)
         .unwrap_or_else(|| panic!("{target} was measured"));
-    touches
-        .tests
-        .iter()
-        .filter(|(_, sites)| sites.contains(&index))
-        .map(|(name, _)| name.clone())
-        .collect()
+    touches.reached.who(index)
 }
 
 #[test]
@@ -88,9 +83,9 @@ fn the_verify_run_measures_which_test_reached_each_mutant_without_a_coverage_bui
         "every test the baseline ran is what a site nothing was attributed to reaches"
     );
     assert!(
-        touches.loose.is_empty(),
+        touches.reached.loose.is_empty(),
         "every guard of this fixture is reached on the test's own thread: {:?}",
-        touches.loose
+        touches.reached.loose
     );
 }
 
@@ -257,7 +252,7 @@ fn a_site_a_test_reached_on_a_thread_of_its_own_reaches_every_test_of_its_target
         .get(library)
         .unwrap_or_else(|| panic!("{library} was measured"));
     assert!(
-        !touches.loose.is_empty(),
+        !touches.reached.loose.is_empty(),
         "a thread the test spawned has no name a test answers for: {touches:?}"
     );
     let spawned = mutant(&session, "gt-to-ge", 9);

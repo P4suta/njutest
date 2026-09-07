@@ -481,6 +481,9 @@ pub struct TouchRecord {
     pub sites: u32,
     /// How many of those were reached where nothing named a test, and so reach every test of the target.
     pub loose: u32,
+    /// How many distinct mutations anything of it saw its guard's two branches differ over, which is what could have noticed them.
+    #[serde(default)]
+    pub infected: u32,
 }
 
 /// One target run against the probe tree.

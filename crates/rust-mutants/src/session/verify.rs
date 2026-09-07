@@ -192,35 +192,47 @@ fn gather(
             return;
         }
     };
-    let mut loose = recorded.loose;
-    let mut loose_bodies = recorded.loose_bodies;
     let gathered = crate::touch::TargetTouches {
-        tests: attributed(recorded.tests, recording.ran, &mut loose),
-        bodies: attributed(recorded.bodies, recording.ran, &mut loose_bodies),
-        loose,
-        loose_bodies,
+        reached: attributed(recorded.reached, recording.ran),
+        bodies: attributed(recorded.bodies, recording.ran),
+        infected: attributed(recorded.infected, recording.ran),
         ran: recording.ran.to_vec(),
     };
     trace.touch(crate::trace::TouchRecord {
         target: recording.target.to_owned(),
-        tests: u32::try_from(gathered.tests.len()).unwrap_or(u32::MAX),
-        sites: u32::try_from(
+        tests: counted(gathered.reached.tests.len()),
+        sites: counted(
             gathered
+                .reached
                 .tests
                 .values()
                 .flatten()
-                .chain(gathered.loose.iter())
+                .chain(gathered.reached.loose.iter())
                 .collect::<BTreeSet<&u32>>()
                 .len(),
-        )
-        .unwrap_or(u32::MAX),
-        loose: u32::try_from(gathered.loose.len()).unwrap_or(u32::MAX),
+        ),
+        loose: counted(gathered.reached.loose.len()),
+        infected: counted(
+            gathered
+                .infected
+                .tests
+                .values()
+                .flatten()
+                .chain(gathered.infected.loose.iter())
+                .collect::<BTreeSet<&u32>>()
+                .len(),
+        ),
     });
     drop(
         touched
             .targets
             .insert(recording.target.to_owned(), gathered),
     );
+}
+
+/// A count as the wire carries it.
+fn counted(many: usize) -> u32 {
+    u32::try_from(many).unwrap_or(u32::MAX)
 }
 
 /// What each test of the target reached, with everything else folded into `loose`.
@@ -230,20 +242,19 @@ fn gather(
 /// a thread nothing can be attributed to, whatever it called itself. What it
 /// reached goes where the unattributable goes, and reaches every test of the
 /// target.
-fn attributed(
-    recorded: BTreeMap<String, BTreeSet<u32>>,
-    ran: &[String],
-    loose: &mut BTreeSet<u32>,
-) -> BTreeMap<String, BTreeSet<u32>> {
-    let mut named = BTreeMap::new();
-    for (thread, reached) in recorded {
+fn attributed(recorded: crate::touch::Seen, ran: &[String]) -> crate::touch::Seen {
+    let mut held = crate::touch::Seen {
+        loose: recorded.loose,
+        ..crate::touch::Seen::default()
+    };
+    for (thread, reported) in recorded.tests {
         if ran.iter().any(|test| test == &thread) {
-            drop(named.insert(thread, reached));
+            drop(held.tests.insert(thread, reported));
         } else {
-            loose.extend(reached);
+            held.loose.extend(reported);
         }
     }
-    named
+    held
 }
 
 /// A target identity as one path segment, so two targets cannot name one file.

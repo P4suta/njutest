@@ -37,6 +37,9 @@ pub(crate) const SITES: &str = "t";
 /// The first field of a record naming the branch bodies a thread entered.
 pub(crate) const BODIES: &str = "b";
 
+/// The first field of a record naming the mutations a thread saw its guard's two branches differ over.
+pub(crate) const INFECTED: &str = "i";
+
 /// Why a touch log said nothing.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
@@ -77,18 +80,62 @@ pub enum TouchError {
     },
 }
 
+/// One kind of thing the guards report, by the thread that reported it.
+///
+/// Every kind is the same shape: what each thread a test answers for reported,
+/// and what was reported where nothing names a test. The second is not a
+/// smaller version of the first — it is a report about every test of the
+/// target at once, because the record could not say which one, and not
+/// knowing is answered by running more.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[non_exhaustive]
+pub struct Seen {
+    /// What each named thread reported.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub tests: BTreeMap<String, BTreeSet<u32>>,
+    /// What was reported on a thread no test answers for.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub loose: BTreeSet<u32>,
+}
+
+impl Seen {
+    /// Whether anything of this target reported `index`.
+    #[must_use]
+    pub fn any(&self, index: u32) -> bool {
+        self.loose.contains(&index) || self.tests.values().any(|held| held.contains(&index))
+    }
+
+    /// Whether the named test reported `index`, where a report nothing could attribute is one every test made.
+    #[must_use]
+    pub fn by(&self, test: &str, index: u32) -> bool {
+        self.loose.contains(&index)
+            || self
+                .tests
+                .get(test)
+                .is_some_and(|held| held.contains(&index))
+    }
+
+    /// The named tests that reported `index`, in name order.
+    #[must_use]
+    pub fn who(&self, index: u32) -> Vec<String> {
+        self.tests
+            .iter()
+            .filter(|(_, held)| held.contains(&index))
+            .map(|(name, _)| name.clone())
+            .collect()
+    }
+}
+
 /// What one test process's guards said about which of its threads reached them.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct Touches {
-    /// The mutant sites each named thread reached, which is each test that ran.
-    pub tests: BTreeMap<String, BTreeSet<u32>>,
-    /// The branch bodies each named thread entered, by the index of the marker at the body's first statement.
-    pub bodies: BTreeMap<String, BTreeSet<u32>>,
-    /// The mutant sites reached on a thread no test answers for.
-    pub loose: BTreeSet<u32>,
-    /// The branch bodies entered on a thread no test answers for.
-    pub loose_bodies: BTreeSet<u32>,
+    /// The mutant sites each thread reached.
+    pub reached: Seen,
+    /// The branch bodies each thread entered, by the index of the marker at the body's first statement.
+    pub bodies: Seen,
+    /// The mutations each thread saw its guard's two branches differ over.
+    pub infected: Seen,
 }
 
 /// Every touch the log records, gathered by the thread that made it.
@@ -152,20 +199,24 @@ fn record(line: &str, count: u32, number: usize, touches: &mut Touches) -> Resul
             what: format!("{line:?} is not a kind, a thread, and a list of sites"),
         });
     };
-    if kind != SITES && kind != BODIES {
-        return Err(TouchError::Malformed {
-            line: number,
-            what: format!("{kind:?} is not a kind of touch this reader knows"),
-        });
-    }
-    let reached = sites(indices, count, number)?;
-    let into = match (kind, name == UNATTRIBUTED) {
-        (SITES, true) => &mut touches.loose,
-        (SITES, false) => touches.tests.entry(name.to_owned()).or_default(),
-        (_, true) => &mut touches.loose_bodies,
-        (_, false) => touches.bodies.entry(name.to_owned()).or_default(),
+    let seen = match kind {
+        SITES => &mut touches.reached,
+        BODIES => &mut touches.bodies,
+        INFECTED => &mut touches.infected,
+        _ => {
+            return Err(TouchError::Malformed {
+                line: number,
+                what: format!("{kind:?} is not a kind of touch this reader knows"),
+            });
+        }
     };
-    into.extend(reached);
+    let reported = sites(indices, count, number)?;
+    let into = if name == UNATTRIBUTED {
+        &mut seen.loose
+    } else {
+        seen.tests.entry(name.to_owned()).or_default()
+    };
+    into.extend(reported);
     Ok(())
 }
 
@@ -212,16 +263,15 @@ pub struct Touched {
 #[non_exhaustive]
 pub struct TargetTouches {
     /// The mutant sites each test of this target reached.
-    pub tests: BTreeMap<String, BTreeSet<u32>>,
+    #[serde(default)]
+    pub reached: Seen,
     /// The branch bodies each test of this target entered, by the index of the marker at the body's first statement.
     #[serde(default)]
-    pub bodies: BTreeMap<String, BTreeSet<u32>>,
-    /// The sites reached where nothing named a test, which therefore reach every test of the target.
-    pub loose: BTreeSet<u32>,
-    /// The bodies entered where nothing named a test, which therefore were entered by every test of the target.
+    pub bodies: Seen,
+    /// The mutations each test of this target saw its guard's two branches differ over.
     #[serde(default)]
-    pub loose_bodies: BTreeSet<u32>,
-    /// Every test the baseline ran, which is what a loose site reaches and what "all of them" counts against.
+    pub infected: Seen,
+    /// Every test the baseline ran, which is what a report nothing could attribute is about and what "all of them" counts against.
     pub ran: Vec<String>,
 }
 
@@ -238,30 +288,6 @@ pub enum Reaching {
 }
 
 impl TargetTouches {
-    /// Whether anything of this target entered the body `marker` names.
-    ///
-    /// A body entered where nothing named a test was entered as far as this
-    /// target is concerned: the record could not say by which of its tests, and
-    /// the answer to not knowing is that it might have been any of them.
-    #[must_use]
-    pub fn entered(&self, marker: u32) -> bool {
-        self.loose_bodies.contains(&marker)
-            || self
-                .bodies
-                .values()
-                .any(|entered| entered.contains(&marker))
-    }
-
-    /// Whether the named test of this target entered the body `marker` names.
-    #[must_use]
-    pub fn entered_by(&self, test: &str, marker: u32) -> bool {
-        self.loose_bodies.contains(&marker)
-            || self
-                .bodies
-                .get(test)
-                .is_some_and(|entered| entered.contains(&marker))
-    }
-
     /// Which of this target's tests reached `index`.
     ///
     /// A site recorded on a thread nothing names a test after is reached by
@@ -272,15 +298,10 @@ impl TargetTouches {
     /// nothing was attributed to is the whole target as well.
     #[must_use]
     pub fn reaching(&self, index: u32) -> Reaching {
-        if self.loose.contains(&index) {
+        if self.reached.loose.contains(&index) {
             return Reaching::Whole;
         }
-        let named: Vec<String> = self
-            .tests
-            .iter()
-            .filter(|(_, sites)| sites.contains(&index))
-            .map(|(name, _)| name.clone())
-            .collect();
+        let named = self.reached.who(index);
         if named.is_empty() {
             return Reaching::Nothing;
         }

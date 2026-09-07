@@ -98,10 +98,10 @@ fn a_guard_records_the_thread_that_reached_it_and_libtest_names_that_thread_afte
         true,
     );
     let touches = touch::read(&text, CATALOG, count).expect("the log reads");
-    assert_eq!(touches.tests.get("alpha"), Some(&set(&[0, 1])));
-    assert_eq!(touches.tests.get("beta"), Some(&set(&[1])));
+    assert_eq!(touches.reached.tests.get("alpha"), Some(&set(&[0, 1])));
+    assert_eq!(touches.reached.tests.get("beta"), Some(&set(&[1])));
     assert!(
-        touches.loose.is_empty(),
+        touches.reached.loose.is_empty(),
         "every touch was on a named thread: {touches:?}"
     );
 }
@@ -117,11 +117,11 @@ fn a_touch_nothing_can_be_attributed_to_is_recorded_as_one_rather_than_dropped()
     );
     let touches = touch::read(&text, CATALOG, count).expect("the log reads");
     assert!(
-        touches.tests.is_empty(),
+        touches.reached.tests.is_empty(),
         "neither the main thread nor an unnamed one is a test: {touches:?}"
     );
     assert_eq!(
-        touches.loose,
+        touches.reached.loose,
         set(&[0, 2]),
         "a site a run cannot attribute has to reach every test of its target"
     );
@@ -144,21 +144,54 @@ fn a_marker_records_that_control_entered_the_body_a_condition_gates() {
     );
     let touches = touch::read(&text, CATALOG, count).expect("the log reads");
     assert_eq!(
-        touches.tests.get("alpha"),
+        touches.reached.tests.get("alpha"),
         Some(&set(&[0])),
         "both threads reached the condition"
     );
-    assert_eq!(touches.tests.get("beta"), Some(&set(&[0])));
+    assert_eq!(touches.reached.tests.get("beta"), Some(&set(&[0])));
     assert_eq!(
-        touches.bodies.get("alpha"),
+        touches.bodies.tests.get("alpha"),
         Some(&set(&[0])),
         "and one of them entered the body it gates"
     );
     assert_eq!(
-        touches.bodies.get("beta"),
+        touches.bodies.tests.get("beta"),
         None,
         "a test that evaluated the condition and never took the branch cannot have noticed a \
          mutation that only narrows it"
+    );
+}
+
+#[test]
+fn a_guard_records_the_test_that_saw_its_two_branches_differ() {
+    let (_, count) = module();
+    let text = ran(
+        "differed",
+        "    let alpha = std::thread::Builder::new().name(\"alpha\".to_owned())\n\
+         \x20       .spawn(|| { __rm::differed(0); __rm::differed(0); })\n\
+         \x20       .expect(\"spawn\");\n\
+         \x20   alpha.join().expect(\"join\");\n\
+         \x20   let beta = std::thread::Builder::new().name(\"beta\".to_owned())\n\
+         \x20       .spawn(|| { __rm::active(0); })\n\
+         \x20       .expect(\"spawn\");\n\
+         \x20   beta.join().expect(\"join\");",
+        true,
+    );
+    let touches = touch::read(&text, CATALOG, count).expect("the log reads");
+    assert_eq!(
+        touches.infected.tests.get("alpha"),
+        Some(&set(&[0])),
+        "the test that saw the two branches differ is the one that could have noticed"
+    );
+    assert_eq!(
+        touches.infected.tests.get("beta"),
+        None,
+        "a test that ran the site and never saw it differ cannot have noticed the mutation"
+    );
+    assert_eq!(
+        touches.reached.tests.get("beta"),
+        Some(&set(&[0])),
+        "though it did reach it"
     );
 }
 
@@ -285,7 +318,7 @@ fn the_same_thread_named_twice_is_one_test_that_reached_both_lines_worth_of_site
     );
     let touches = touch::read(&text, CATALOG, 4).expect("the log reads");
     assert_eq!(
-        touches.tests.get("alpha"),
+        touches.reached.tests.get("alpha"),
         Some(&set(&[0, 1, 2])),
         "a thread that reached more sites than one line holds is still one test"
     );

@@ -175,6 +175,8 @@ mod {{MODULE}} {
         touched: __rm_std::vec::Vec<u32>,
         entered_bits: __rm_std::vec::Vec<bool>,
         entered: __rm_std::vec::Vec<u32>,
+        differed_bits: __rm_std::vec::Vec<bool>,
+        differed: __rm_std::vec::Vec<u32>,
     }
 
     impl Seen {
@@ -188,6 +190,8 @@ mod {{MODULE}} {
             bits.resize(TOUCH_SPAN, false);
             let mut entered_bits = __rm_std::vec::Vec::new();
             entered_bits.resize(TOUCH_SPAN, false);
+            let mut differed_bits = __rm_std::vec::Vec::new();
+            differed_bits.resize(TOUCH_SPAN, false);
             Seen {
                 name: match named {
                     __rm_std::option::Option::Some(name) if !eager => name,
@@ -198,6 +202,8 @@ mod {{MODULE}} {
                 touched: __rm_std::vec::Vec::new(),
                 entered_bits,
                 entered: __rm_std::vec::Vec::new(),
+                differed_bits,
+                differed: __rm_std::vec::Vec::new(),
             }
         }
 
@@ -225,9 +231,22 @@ mod {{MODULE}} {
             }
         }
 
+        fn saw_a_difference(&mut self, index: u32) {
+            let at = index.wrapping_sub(TOUCH_BASE) as usize;
+            if at >= self.differed_bits.len() || self.differed_bits[at] {
+                return;
+            }
+            self.differed_bits[at] = true;
+            self.differed.push(index);
+            if self.eager || self.differed.len() >= TOUCH_BATCH {
+                self.flush();
+            }
+        }
+
         fn flush(&mut self) {
             written("{{SITES}}", &self.name, &mut self.touched);
             written("{{BODIES}}", &self.name, &mut self.entered);
+            written("{{INFECTED}}", &self.name, &mut self.differed);
         }
     }
 
@@ -276,6 +295,30 @@ mod {{MODULE}} {
             return;
         }
         entered(index);
+    }
+
+    #[inline(always)]
+    pub(crate) fn differed(index: u32) {
+        if TOUCHING.load(__rm_std::sync::atomic::Ordering::Relaxed) == TOUCH_OFF {
+            return;
+        }
+        difference(index);
+    }
+
+    #[inline(never)]
+    fn difference(index: u32) {
+        if !touching() {
+            return;
+        }
+        let _ = SEEN.try_with(|seen| match seen.try_borrow_mut() {
+            __rm_std::result::Result::Ok(mut seen) => seen.saw_a_difference(index),
+            __rm_std::result::Result::Err(_) => (),
+        });
+    }
+
+    #[inline(always)]
+    pub(crate) fn recording() -> bool {
+        TOUCHING.load(__rm_std::sync::atomic::Ordering::Relaxed) != TOUCH_OFF
     }
 
     #[inline(never)]
@@ -406,6 +449,7 @@ pub fn render(rendering: &Rendering<'_>) -> String {
         .replace("{{UNATTRIBUTED}}", crate::touch::UNATTRIBUTED)
         .replace("{{SITES}}", crate::touch::SITES)
         .replace("{{BODIES}}", crate::touch::BODIES)
+        .replace("{{INFECTED}}", crate::touch::INFECTED)
         .replace("{{EXIT}}", &STALE_CATALOG_EXIT.to_string())
         .replace("{{TOUCH_EXIT}}", &TOUCH_UNAVAILABLE_EXIT.to_string());
     if newline == "\n" {

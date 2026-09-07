@@ -535,6 +535,7 @@ fn one_of_each_measurement(recorder: &Recorder) {
         tests: 3,
         sites: 7,
         loose: 1,
+        infected: 2,
     });
     recorder.probe_exec(ProbeExecRecord {
         target: "demo/lib/demo".to_owned(),

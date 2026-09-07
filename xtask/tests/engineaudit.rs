@@ -1164,11 +1164,13 @@ fn record() -> serde_json::Value {
     serde_json::json!({
         "targets": {
             TARGET: {
-                "tests": {
-                    "tests::max_picks_the_larger": [0],
-                    "tests::min_picks_the_smaller": [1]
+                "reached": {
+                    "tests": {
+                        "tests::max_picks_the_larger": [0],
+                        "tests::min_picks_the_smaller": [1]
+                    },
+                    "loose": []
                 },
-                "loose": [],
                 "ran": ["tests::max_picks_the_larger", "tests::min_picks_the_smaller"]
             }
         },
@@ -1232,7 +1234,8 @@ fn a_target_the_route_keeps_that_the_record_says_reached_nothing_is_a_violation(
     document["mutants"][0]["route"]["reaching"] = serde_json::json!([TARGET, other]);
     let mut recorded = record();
     recorded["targets"][other] = serde_json::json!({
-        "tests": {"a_parity_test": []}, "loose": [], "ran": ["a_parity_test"]
+        "reached": {"tests": {"a_parity_test": []}, "loose": []},
+        "ran": ["a_parity_test"]
     });
     let audit = with_record(&document, &recorded);
     let said = violations(&audit, Layer::Touch);
