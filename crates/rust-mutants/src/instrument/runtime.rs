@@ -45,9 +45,9 @@ pub const TOUCH_ENV: &str = "RUST_MUTANTS_TOUCH";
 /// The exit status of a test process asked to record what its guards saw that could not.
 ///
 /// Silence is what licenses a run to skip a test, so a process that cannot
-/// write ends rather than leaving one. The session reads this code as "measure
-/// this target again with nothing to record", which routes every test of it at
-/// every mutant of it.
+/// write ends rather than leaving one. The session reads this code as "run this
+/// target again with nothing to record", and the target it says it about keeps
+/// every test of it in every route.
 pub const TOUCH_UNAVAILABLE_EXIT: i32 = 96;
 
 /// The name the generated module takes when the file does not already spell

@@ -185,6 +185,8 @@ type Built = (Vec<TestTarget>, PathBuf, Verified);
 /// What the run doing the building is: what stops it, what it records to, and the catalog its guards name.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct Building<'a> {
+    /// The workspace being prepared, whose toolchain starts every process and whose recording every phase writes to.
+    pub(super) workspace: &'a Workspace,
     /// What the run is stopped by.
     pub(super) cancel: &'a Cancel,
     /// What it records to.
@@ -518,6 +520,7 @@ pub fn prepare(
         &last_build,
         options,
         &Building {
+            workspace: &workspace,
             cancel,
             trace: &trace,
             catalog: &discovery.catalog,

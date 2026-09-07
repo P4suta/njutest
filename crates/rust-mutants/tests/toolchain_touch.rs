@@ -276,3 +276,63 @@ fn a_site_a_test_reached_on_a_thread_of_its_own_reaches_every_test_of_its_target
     );
     session.close().expect("close");
 }
+
+#[cfg(unix)]
+#[test]
+fn a_process_that_cannot_record_costs_its_target_the_measurement_and_not_the_run() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let fixture = Fixture::copy("fixture-coverage");
+    let trace = rust_mutants::testkit::trace::memory_recorder();
+    let workspace = Workspace::open(
+        fixture.root(),
+        OpenOptions {
+            trace: trace.clone(),
+            ..opening(&mjutest_devkit::paths::cargo_binary(), fixture.temp())
+        },
+        &Cancel::new(),
+    )
+    .expect("open");
+    let logs = workspace.target_dir().join("scratch/touch");
+    std::fs::create_dir_all(&logs).expect("the directory the records go in");
+    std::fs::set_permissions(&logs, std::fs::Permissions::from_mode(0o555))
+        .expect("a directory nothing may write in");
+
+    let session = workspace
+        .prepare(&Measuring::GUARDS.options(Tier::All), &Cancel::new())
+        .expect("a record that cannot be written is not a run that failed");
+    let touched = session.touched();
+    let said = notes(&trace, rust_mutants::touch::UNRECORDED);
+    assert!(
+        said.iter().any(|one| one.contains("run again")),
+        "a process that could not write is run again with nothing to record, and the run says \
+         so: {said:?}"
+    );
+    assert!(
+        !touched.measured(),
+        "no target could record, so nothing was measured: {touched:?}"
+    );
+    assert!(
+        session.targets().iter().all(|target| touched
+            .limitations
+            .iter()
+            .any(|one| one.ends_with(target.id.as_str()))),
+        "and every one of them says why: {touched:?}"
+    );
+    let one = session
+        .catalog()
+        .mutants()
+        .first()
+        .expect("the fixture has mutants");
+    let route = session.route(one);
+    assert_eq!(
+        route.reaching().len(),
+        session.targets().len(),
+        "a measurement nothing could make routes every mutant everywhere: {route:?}"
+    );
+    drop(std::fs::set_permissions(
+        &logs,
+        std::fs::Permissions::from_mode(0o755),
+    ));
+    session.close().expect("close");
+}

@@ -15,7 +15,7 @@ use std::time::Duration;
 use super::prepare::Building;
 use crate::EngineError;
 use crate::catalog::Catalog;
-use crate::execute::{self, Context, ExecRequest, TargetKind, TestTarget};
+use crate::execute::{self, Context, ExecRequest, MutantResult, TargetKind, TestTarget};
 use crate::workspace::{SessionError, Workspace};
 
 /// Runs every target once with nothing active. A tree whose instrumented baseline fails is one whose every later result would be about the instrumentation rather than about a mutant.
@@ -25,12 +25,7 @@ pub(super) fn verify(
     scratch: &std::path::Path,
     building: &Building<'_>,
 ) -> Result<Verified, EngineError> {
-    let Building {
-        cancel,
-        catalog,
-        asked,
-        ..
-    } = *building;
+    let Building { catalog, asked, .. } = *building;
     let phase = workspace.trace.phase("verify");
     let logs = scratch.join("touch");
     std::fs::create_dir_all(&logs).map_err(|source| SessionError::WriteFailed {
@@ -41,20 +36,21 @@ pub(super) fn verify(
     for target in targets.iter_mut() {
         let recording =
             (asked && recordable(target)).then(|| logs.join(format!("{}.log", slug(&target.id))));
-        if let Some(path) = &recording {
-            drop(std::fs::remove_file(path));
-        }
-        let context = Context {
-            base_env: &workspace.base_env,
-            cargo: Some(workspace.toolchain.cargo()),
-            sysroot: workspace.toolchain.sysroot(),
-            active: None,
-            probe: None,
-            touch: recording.as_deref(),
-            profile: None,
+        let mut result = ran(target, scratch, recording.as_deref(), building);
+        let recording = if result.exit_code == crate::instrument::TOUCH_UNAVAILABLE_EXIT {
+            workspace.trace.note(
+                crate::touch::UNRECORDED,
+                &format!(
+                    "{}: the process could not write what its guards reached, so it is run \
+                     again with nothing to record and every test of it stays in every route",
+                    target.id
+                ),
+            );
+            result = ran(target, scratch, None, building);
+            None
+        } else {
+            recording
         };
-        let request = ExecRequest::new(target).with_scratch(scratch);
-        let result = execute::exec(&request, &context, cancel, &workspace.trace);
         workspace.trace.verify(crate::trace::VerifyRecord {
             target: target.id.clone(),
             outcome: result.outcome.name().to_owned(),
@@ -72,15 +68,6 @@ pub(super) fn verify(
             target
                 .limitations
                 .push(crate::limitation::DOCTESTS_NONE.to_owned());
-        }
-        if result.exit_code == crate::instrument::TOUCH_UNAVAILABLE_EXIT {
-            verified
-                .touched
-                .limited(crate::touch::UNRECORDED, &target.id);
-            return Err(EngineError::from(SessionError::VerifyFailed {
-                target: target.id.clone(),
-                output: String::from_utf8_lossy(&result.output).into_owned(),
-            }));
         }
         if !matches!(
             result.outcome,
@@ -104,6 +91,35 @@ pub(super) fn verify(
     }
     phase.end();
     Ok(verified)
+}
+
+/// One target run with nothing active, recording into `log` when it was asked to.
+///
+/// The log is removed first: the directory outlives a run, and a record two
+/// runs both appended to would say the older one's touches were this one's.
+fn ran(
+    target: &TestTarget,
+    scratch: &std::path::Path,
+    log: Option<&std::path::Path>,
+    building: &Building<'_>,
+) -> MutantResult {
+    let Building {
+        cancel, workspace, ..
+    } = *building;
+    if let Some(path) = log {
+        drop(std::fs::remove_file(path));
+    }
+    let context = Context {
+        base_env: &workspace.base_env,
+        cargo: Some(workspace.toolchain.cargo()),
+        sysroot: workspace.toolchain.sysroot(),
+        active: None,
+        probe: None,
+        touch: log,
+        profile: None,
+    };
+    let request = ExecRequest::new(target).with_scratch(scratch);
+    execute::exec(&request, &context, cancel, &workspace.trace)
 }
 
 /// What the one run of every target with nothing activated established.
