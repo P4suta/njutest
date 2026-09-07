@@ -174,10 +174,15 @@ not share, and `exec` is the question "what do the tests say", asked by a
 caller with its own evidence.
 
 `report --format` writes a stored run for somebody else: `json` is the
-document verbatim, `html` one page that fetches nothing, and `stryker` the
-mutation testing report every Stryker reader understands, with columns in
-UTF-16 as that schema counts them. `report --tui` reads it at the terminal
-instead.
+document verbatim, `markdown` the summary a person puts in a pull request,
+`junit` one test case per mutant for a CI server's test view, `sarif` one
+result per finding for a code scanning view, `html` one page that fetches
+nothing and shows every measured file whole with its mutants on their lines,
+and `stryker` the mutation testing report every Stryker reader understands,
+with columns in UTF-16 as that schema counts them. A file the report names and
+the root does not hold is `RM0012` rather than a file quietly left out.
+`report --tui` reads it at the terminal instead. What each projection is and
+who reads it is in [reports](reports.md).
 
 `doctor` answers about this environment rather than about any code: one check
 per thing a run needs — `cargo`, `rustc`, `host`, `workspace`, `config`,

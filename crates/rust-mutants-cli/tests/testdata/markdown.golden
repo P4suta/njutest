@@ -1,0 +1,30 @@
+# Mutation report — fixture-simple <run>
+
+**87.5%** — 7 detected of 8 decided
+
+| what | how many |
+| --- | --- |
+| cataloged | 8 |
+| killed | 7 |
+| survived | 1 |
+| timed out | 0 |
+| inconclusive | 0 |
+| errored | 0 |
+| not run | 0 |
+| unreached | 0 |
+| discharged | 0 |
+| expected | 0 |
+| refused | 0 |
+| skipped | 2 |
+
+## Findings
+
+- **surviving-mutant** — no test noticed e5e872bfbcb2afbbf7a1; 1 test ran and passed
+
+## Survivors (1)
+
+| where | rule | change | id |
+| --- | --- | --- | --- |
+| `src/lib.rs:11:10` | `gt-to-ge` | `>` → `>=` | `e5e872bfbcb2afbbf7a1` |
+
+Each of these is a gap in the tests or a claim to write down: `rust-mutants explain <id>` says what it is, and `[[mutation.expect]]` accepts one with a reason.

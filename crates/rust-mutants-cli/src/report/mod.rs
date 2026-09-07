@@ -5,6 +5,10 @@
 
 pub mod doctor;
 pub mod html;
+pub mod junit;
+pub mod markdown;
+pub mod sarif;
+pub mod sources;
 
 pub use rust_mutants::report::catalog::{
     CatalogDocument, MutantDocument, PlatformDocument, RejectionDocument, SelectionDocument,

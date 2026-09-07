@@ -51,7 +51,18 @@ test_binary_args = []          # --test-threads, --include-ignored, --nocapture,
 [reports]
 directory = "reports/mutation" # workspace-relative
 keep = 20                      # run directories kept
+
+[reports.stryker]
+high = 80                      # at or above this, a Stryker reader shows green
+low = 60                       # below this, it shows red
 ```
+
+`[reports.stryker]` is read by nobody but a Stryker reader. **Nothing in this
+engine decides anything by a percentage** — a threshold is not a claim anybody
+can check, and the gate is an expectation with a reason
+([ADR 0004](../adr/0004-proof-layers-not-budgets.md)). The two numbers are
+carried into the projection because that schema requires them, and `low` above
+`high` is refused rather than passed on.
 
 ## Flags win
 

@@ -298,6 +298,12 @@ pub enum Format {
     Html,
     /// The mutation testing report every Stryker reader understands.
     Stryker,
+    /// The JUnit XML a continuous integration server already reads.
+    Junit,
+    /// The findings as SARIF 2.1.0, for a code scanning view.
+    Sarif,
+    /// The summary a person puts in a pull request.
+    Markdown,
 }
 
 /// What a command reads, and how much of it. Every value here also has a key in `.rust-mutants.toml`; a flag given on the command line wins.

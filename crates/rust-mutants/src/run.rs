@@ -451,8 +451,16 @@ fn detail(kind: FindingKind, one: &Judged) -> String {
         FindingKind::SurvivingMutant => format!(
             "no test noticed {}; {} ran and passed",
             one.display_id,
-            one.tests_run
-                .map_or_else(|| "the target".to_owned(), |count| format!("{count} tests"))
+            one.tests_run.map_or_else(
+                || "the target".to_owned(),
+                |count| {
+                    if count == 1 {
+                        "1 test".to_owned()
+                    } else {
+                        format!("{count} tests")
+                    }
+                }
+            )
         ),
         FindingKind::InconclusiveMutant if one.retried => format!(
             "{} timed out once and did not do so again, so the run cannot say what the tests \

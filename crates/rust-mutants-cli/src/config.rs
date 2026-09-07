@@ -358,6 +358,9 @@ pub struct Reports {
     pub directory: PathBuf,
     /// How many run directories are kept.
     pub keep: u32,
+    /// What the Stryker projection declares, which only its readers use.
+    #[serde(default)]
+    pub stryker: Stryker,
 }
 
 impl Default for Reports {
@@ -365,7 +368,24 @@ impl Default for Reports {
         Self {
             directory: PathBuf::from(DEFAULT_REPORTS_DIRECTORY),
             keep: DEFAULT_REPORTS_KEEP,
+            stryker: Stryker::default(),
         }
+    }
+}
+
+/// The thresholds a Stryker reader colours by. Nothing in this engine decides anything by them: a verdict is a claim a reader can check, and a percentage is not.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct Stryker {
+    /// At or above this, a reader shows green.
+    pub high: u32,
+    /// Below this, a reader shows red.
+    pub low: u32,
+}
+
+impl Default for Stryker {
+    fn default() -> Self {
+        Self { high: 80, low: 60 }
     }
 }
 
@@ -659,6 +679,19 @@ impl Config {
                 directory.display()
             )));
         }
+        let Stryker { high, low } = self.reports.stryker;
+        if high > 100 || low > 100 {
+            return Err(invalid(format!(
+                "the Stryker thresholds are percentages; {high} and {low} are not both between \
+                 0 and 100"
+            )));
+        }
+        if low > high {
+            return Err(invalid(format!(
+                "the Stryker thresholds read low {low} above high {high}; a reader shows green at \
+                 or above high and red below low"
+            )));
+        }
         Ok(())
     }
 }
@@ -829,7 +862,15 @@ version = 1
 [reports]
 # directory = \"{directory}\"   # workspace-relative
 # keep = {keep}                       # run directories kept
+
+# What a Stryker reader colours by. Nothing here decides anything: a threshold
+# is not a claim anybody can check, and the gate is an expectation with a reason.
+# [reports.stryker]
+# high = {high}                       # at or above this, a reader shows green
+# low = {low}                        # below this, a reader shows red
 ",
+        high = Stryker::default().high,
+        low = Stryker::default().low,
         tier = Tier::Balanced.name(),
         tiers = Tier::ALL.map(Tier::name).join(" | "),
         timeout = AUTO,

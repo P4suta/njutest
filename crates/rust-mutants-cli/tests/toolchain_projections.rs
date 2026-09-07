@@ -103,12 +103,21 @@ fn a_page_needs_nothing_from_the_network_to_be_read() {
     let text = stdout(&page);
     assert!(text.starts_with("<!doctype html>"), "{text}");
     assert!(text.contains("</html>"), "{text}");
-    for outside in ["http://", "https://", "<script", "src=", "@import"] {
+    for outside in ["http://", "https://", "src=", "@import", "<link", "<iframe"] {
         assert!(
             !text.contains(outside),
             "a page that fetches {outside} is not one that opens offline"
         );
     }
+    assert_eq!(
+        text.matches("<script").count(),
+        1,
+        "the page carries one script of its own, and it is the only one"
+    );
+    assert!(
+        text.contains("<script>"),
+        "a script with an attribute is a script that could name a source: {text}"
+    );
 }
 
 #[test]

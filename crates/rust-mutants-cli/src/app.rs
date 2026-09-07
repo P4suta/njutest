@@ -1925,8 +1925,18 @@ fn report_back(
     }
     let projected = match format {
         cli::Format::Lines | cli::Format::Json => report::lines(&document),
-        cli::Format::Html => html::document(&document),
-        cli::Format::Stryker => json_line(&stryker::project(&document, &root)),
+        cli::Format::Junit => report::junit::document(&document),
+        cli::Format::Sarif => json_line(&report::sarif::log(&document)),
+        cli::Format::Markdown => report::markdown::document(&document),
+        cli::Format::Html => html::document(&document, &report::sources::read(&document, &root)?),
+        cli::Format::Stryker => {
+            let sources = report::sources::read(&document, &root)?;
+            let thresholds = stryker::Thresholds {
+                high: config.reports.stryker.high,
+                low: config.reports.stryker.low,
+            };
+            json_line(&stryker::project(&document, &root, thresholds, &sources)?)
+        }
     };
     written(&projected, output, stdout)?;
     Ok(document.run.exit_code)

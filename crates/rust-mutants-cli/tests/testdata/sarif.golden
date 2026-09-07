@@ -1,0 +1,53 @@
+{
+  "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/main/sarif-2.1/schema/sarif-schema-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "rust-mutants",
+          "version": "<version>",
+          "informationUri": "https://github.com/mjutest/mjutest",
+          "rules": [
+            {
+              "id": "gt-to-ge",
+              "name": "comparison",
+              "shortDescription": {
+                "text": "gt-to-ge: the comparison family asks what the tests say when this changes"
+              }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "gt-to-ge",
+          "level": "warning",
+          "message": {
+            "text": "surviving-mutant: no test noticed e5e872bfbcb2afbbf7a1; 1 test ran and passed"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/lib.rs"
+                },
+                "region": {
+                  "startLine": 11,
+                  "startColumn": 10,
+                  "endColumn": 11,
+                  "snippet": {
+                    "text": ">"
+                  }
+                }
+              }
+            }
+          ],
+          "partialFingerprints": {
+            "rustMutantsMutantId/v1": "e5e872bfbcb2afbbf7a1bb35538af59465f5d53cd46b628ec028b80d7d169730"
+          }
+        }
+      ]
+    }
+  ]
+}

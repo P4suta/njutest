@@ -79,6 +79,18 @@ pub enum CliError {
         /// What it takes.
         expected: String,
     },
+    /// A source file the report names cannot be read from the root given.
+    #[error(
+        "{}: {path} is not under {}, so the mutation cannot be shown as a change",
+        error::SOURCE_UNREADABLE.code,
+        root.display()
+    )]
+    SourceUnreadable {
+        /// The workspace-relative path the report names.
+        path: String,
+        /// The tree it was looked for under.
+        root: PathBuf,
+    },
     /// A file the command had to write could not be written.
     #[error("{}: writing {}: {source}", error::WRITE_FAILED.code, path.display())]
     WriteFailed {
@@ -108,6 +120,7 @@ impl CliError {
             Self::FileExists { .. } => error::FILE_EXISTS,
             Self::Shard { .. } | Self::InvalidValue { .. } => error::CONFIG_INVALID,
             Self::ChangeSetUnavailable { .. } => error::CHANGE_SET_UNAVAILABLE,
+            Self::SourceUnreadable { .. } => error::SOURCE_UNREADABLE,
             Self::WriteFailed { .. } => error::WRITE_FAILED,
         }
     }

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="rust-mutants" tests="8" failures="1" errors="0" skipped="0" time="0.000">
+  <testsuite name="src/lib.rs" tests="8" failures="1" errors="0" skipped="0" time="0.000">
+    <testcase name="return-default at src/lib.rs:11:5 [eb47ae4b793863f96b45]" classname="src/lib.rs" time="0.000"/>
+    <testcase name="negate-condition at src/lib.rs:11:8 [49d208bb5955b1d1ff56]" classname="src/lib.rs" time="0.000"/>
+    <testcase name="gt-to-ge at src/lib.rs:11:10 [e5e872bfbcb2afbbf7a1]" classname="src/lib.rs" time="0.000">
+      <failure message="survived" type="surviving-mutant">the tests did not notice that `&gt;` became `&gt;=` at src/lib.rs:11:10</failure>
+    </testcase>
+    <testcase name="return-default at src/lib.rs:11:16 [955eecf95d1a68d480e9]" classname="src/lib.rs" time="0.000"/>
+    <testcase name="return-default at src/lib.rs:11:27 [8bb88b4cc754de15d8e5]" classname="src/lib.rs" time="0.000"/>
+    <testcase name="return-true at src/lib.rs:16:5 [4429103b651e1fbffc10]" classname="src/lib.rs" time="0.000"/>
+    <testcase name="rem-to-mul at src/lib.rs:16:7 [76b4012f7501ae112d23]" classname="src/lib.rs" time="0.000"/>
+    <testcase name="eq-to-neq at src/lib.rs:16:11 [fc1c0afed18fe3bdd9df]" classname="src/lib.rs" time="0.000"/>
+  </testsuite>
+</testsuites>
