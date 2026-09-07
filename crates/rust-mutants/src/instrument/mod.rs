@@ -492,10 +492,13 @@ impl File<'_> {
     /// The markers that can be written where they are, which is every one outside every guard's own site.
     ///
     /// A guard replaces its site with `if active { alternative } else {
-    /// original }`, and a marker inside that site would have to be written
-    /// into both halves rather than spliced once. A body inside a guard's site
-    /// is left unmarked instead, which costs its claim the marker and leaves
-    /// the coverage region as the premise it rests on.
+    /// original }`, and a marker strictly inside that site would have to be
+    /// written into both halves rather than spliced once. A body inside a
+    /// guard's site is left unmarked instead, which costs its claim the marker
+    /// and leaves the coverage region as the premise it rests on. A marker at
+    /// a site's own first byte is not inside it: the splice is an insertion,
+    /// it sorts before the replacement, and what it writes lands where the
+    /// body's first statement was about to be.
     fn markable(markers: &[Marker], forest: &interval::Forest<Placement>) -> Vec<Marker> {
         markers
             .iter()
@@ -504,7 +507,7 @@ impl File<'_> {
                 !forest
                     .roots()
                     .iter()
-                    .any(|root| root.span.start < marker.at && marker.at <= root.span.end)
+                    .any(|root| root.span.start < marker.at && marker.at < root.span.end)
             })
             .collect()
     }
