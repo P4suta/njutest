@@ -23,6 +23,9 @@ use super::run::{RunDocument, RunMutantDocument};
 /// The version of the format this answers to.
 pub const VERSION: &str = "2.1.0";
 
+/// Where a reader of a result can read about what produced it.
+pub const INFORMATION: &str = env!("CARGO_PKG_REPOSITORY");
+
 /// The schema the version names.
 pub const SCHEMA: &str = "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/main/sarif-2.1/schema/sarif-schema-2.1.0.json";
 
@@ -191,7 +194,7 @@ pub fn log(document: &RunDocument) -> Log {
                 driver: Driver {
                     name: "rust-mutants".to_owned(),
                     version: document.tool_version.clone(),
-                    information_uri: "https://github.com/mjutest/mjutest".to_owned(),
+                    information_uri: INFORMATION.to_owned(),
                     rules: rules.into_values().collect(),
                 },
             },

@@ -7,7 +7,7 @@
         "driver": {
           "name": "rust-mutants",
           "version": "<version>",
-          "informationUri": "https://github.com/mjutest/mjutest",
+          "informationUri": "https://github.com/P4suta/mjutest",
           "rules": [
             {
               "id": "gt-to-ge",

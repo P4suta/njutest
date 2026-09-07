@@ -205,3 +205,23 @@ fn every_reason_a_mutant_did_not_run_is_one_the_schema_and_the_pages_name() {
         );
     }
 }
+
+#[test]
+fn the_url_a_sarif_result_sends_a_reader_to_is_this_project() {
+    let manifest = std::fs::read_to_string(
+        mjutest_devkit::paths::workspace_root().join("crates/rust-mutants-cli/Cargo.toml"),
+    )
+    .unwrap_or_else(|error| panic!("the manifest: {error}"));
+    assert!(
+        manifest.contains("repository.workspace = true") || manifest.contains("repository ="),
+        "the crate takes its repository from somewhere: {manifest}"
+    );
+    let workspace =
+        std::fs::read_to_string(mjutest_devkit::paths::workspace_root().join("Cargo.toml"))
+            .unwrap_or_else(|error| panic!("the workspace manifest: {error}"));
+    assert!(
+        workspace.contains(rust_mutants_cli::report::sarif::INFORMATION),
+        "a URL invented for a report is one nobody can follow: {}",
+        rust_mutants_cli::report::sarif::INFORMATION
+    );
+}
