@@ -5,7 +5,8 @@
 
 #![expect(
     clippy::expect_used,
-    reason = "a test reports a setup failure by panicking and asserts with panics"
+    clippy::indexing_slicing,
+    reason = "a test reports a setup failure by panicking and reads a document as a table"
 )]
 
 use std::process::{Command, Output};
@@ -157,4 +158,78 @@ fn replaying_a_recorded_outcome_asks_the_question_the_run_asked() {
         "a replay says whether the answer is still the same: {text}"
     );
     assert_eq!(output.status.code(), Some(1), "{text}");
+}
+
+/// A run of the fixture, and what it stored.
+fn measured(fixture: &Fixture) -> Output {
+    let output = against(fixture, &["run", "--offline", "--locked", "--ui", "quiet"]);
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    output
+}
+
+/// How many of the run's rows an earlier run answered for.
+fn reused(fixture: &Fixture) -> usize {
+    let directory = std::fs::read_dir(fixture.root().join("reports/mutation"))
+        .expect("a stored run")
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.join("run-report-v1.json").is_file())
+        .max()
+        .expect("the newest run");
+    let text = std::fs::read_to_string(directory.join("run-report-v1.json")).expect("the report");
+    let document: serde_json::Value = serde_json::from_str(&text).expect("the report is JSON");
+    document["mutants"]
+        .as_array()
+        .expect("the rows")
+        .iter()
+        .filter(|row| !row["source_run_id"].is_null())
+        .count()
+}
+
+#[test]
+fn an_edit_to_a_file_no_unit_compiled_leaves_every_outcome_reusable() {
+    let fixture = Fixture::copy("fixture-simple");
+    let _first = measured(&fixture);
+    let rows = reused(&fixture);
+    assert_eq!(rows, 0, "the first run had nothing to reuse");
+
+    std::fs::write(
+        fixture.root().join("NOTES.md"),
+        "A file the compiler never reads.\n",
+    )
+    .expect("a file beside the code");
+    std::fs::create_dir_all(fixture.root().join("docs")).expect("a directory");
+    std::fs::write(
+        fixture.root().join("docs/design.md"),
+        "Nothing to compile.\n",
+    )
+    .expect("another one");
+
+    let _again = measured(&fixture);
+    let warm = reused(&fixture);
+    assert!(
+        warm > 0,
+        "a file no unit compiled cannot change what a test says, so every answer still answers"
+    );
+}
+
+#[test]
+fn an_edit_to_a_file_a_target_compiled_is_an_answer_that_stops_answering() {
+    let fixture = Fixture::copy("fixture-simple");
+    let _first = measured(&fixture);
+
+    let path = fixture.root().join("src/lib.rs");
+    let source = std::fs::read_to_string(&path).expect("the library");
+    std::fs::write(
+        &path,
+        format!("{source}\n/// One more thing the tests do not call.\npub const ADDED: u8 = 1;\n"),
+    )
+    .expect("the library changes");
+
+    let _again = measured(&fixture);
+    assert_eq!(
+        reused(&fixture),
+        0,
+        "the file the tests run is the file that decides; nothing about it is remembered"
+    );
 }

@@ -758,8 +758,14 @@ fn measured_run(
 /// anything else is an answer to a different question.
 fn keyed(session: &Session, settings: &Settings, args: &[String]) -> crate::outcomes::Keyed {
     crate::outcomes::Keyed {
-        workspace: session.workspace_digest().to_owned(),
-        catalog: session.catalog().digest().to_owned(),
+        closure: session.closure().to_owned(),
+        manifests: session.manifests().to_owned(),
+        toolchain: format!(
+            "{} {} {}",
+            session.toolchain().cargo_version().summary,
+            session.toolchain().rustc_version().summary,
+            session.toolchain().host()
+        ),
         args: args.to_vec(),
         timeout: crate::config::render_timeout(settings.config.mutation.timeout),
         build: settings.config.build.config().arguments(),

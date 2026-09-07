@@ -1224,6 +1224,9 @@ fn narrowed<'m>(
 /// What an earlier run of this exact tree established about this mutant, when a record answers for it.
 fn reuse(session: &Session, mutant: &Mutant, options: &Options<'_>) -> Option<Judged> {
     let reusing = options.outcomes?;
+    if !reusing.keyed.usable() {
+        return None;
+    }
     let key = reusing.keyed.key(&mutant.id);
     let found = reusing.store.get(&key, &mutant.id);
     if session.trace().is_enabled() {
@@ -1265,6 +1268,9 @@ fn keep(mutant: &Mutant, options: &Options<'_>, judged: &Judged) {
         judged.outcome,
         Outcome::Killed | Outcome::Survived | Outcome::TimedOut
     ) {
+        return;
+    }
+    if !reusing.keyed.usable() {
         return;
     }
     reusing.store.put(

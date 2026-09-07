@@ -481,6 +481,10 @@ pub struct Session {
     baseline: BTreeMap<String, Duration>,
     /// What the tree gained or lost while the proof layers ran, which is what a test wrote before anything was instrumented.
     written_by_a_test: Vec<Drift>,
+    /// The digest of the pristine sources every unit of this build compiled.
+    closure: String,
+    /// The digest of the manifests, the lock file, and the cargo configuration the build read.
+    manifests: String,
 }
 
 impl Session {
@@ -518,6 +522,28 @@ impl Session {
     #[must_use]
     pub fn targets(&self) -> &[TestTarget] {
         &self.targets
+    }
+
+    /// The digest of the pristine sources every unit of this build compiled.
+    ///
+    /// What the tests say about a mutation can only change when something the
+    /// test binaries were built from changes. The tree's own digest is a much
+    /// larger set than that — a note beside the code, a workflow file, a crate
+    /// this run never compiled — and keying a remembered outcome on it throws
+    /// away every answer whenever any of them moves.
+    #[must_use]
+    pub fn closure(&self) -> &str {
+        &self.closure
+    }
+
+    /// The digest of the manifests, the lock file, and the cargo configuration the build read.
+    ///
+    /// These are what decide which dependencies a compilation resolves and
+    /// what flags it is given, and none of them is a source file, so the
+    /// closure of compiled sources does not cover them.
+    #[must_use]
+    pub fn manifests(&self) -> &str {
+        &self.manifests
     }
 
     /// The digest of the tree as it was instrumented.
@@ -1428,6 +1454,109 @@ fn links(
     }))
 }
 
+/// The digest of the pristine sources every unit of the build compiled.
+///
+/// The bytes hashed are the ones the file held before anything was
+/// instrumented: for a file with guards in it that is what the plan kept, and
+/// for every other file it is the snapshot's own copy, which nothing wrote to.
+/// Hashing the rewrite instead would tie the digest to the catalog, and a
+/// catalog changes whenever any mutant anywhere does.
+///
+/// A build whose dep-info cannot be read yields nothing at all rather than a
+/// partial answer, and a caller with nothing to key on remembers nothing.
+fn closure_of(
+    workspace: &Workspace,
+    last_build: &[crate::cargo::Message],
+    sources: &BTreeMap<String, Vec<u8>>,
+) -> String {
+    let root = workspace.snapshot_root();
+    let Ok(units) = crate::cargo::units_of(last_build, root) else {
+        return String::new();
+    };
+    let mut files: BTreeMap<String, String> = BTreeMap::new();
+    for unit in &units {
+        for path in &unit.sources {
+            let Ok(relative) = path.strip_prefix(root) else {
+                continue;
+            };
+            let Ok(name) = crate::id::normalize_path(&relative.to_string_lossy()) else {
+                continue;
+            };
+            if files.contains_key(&name) {
+                continue;
+            }
+            let Some(bytes) = sources
+                .get(&name)
+                .cloned()
+                .or_else(|| std::fs::read(path).ok())
+            else {
+                continue;
+            };
+            drop(files.insert(name, crate::id::digest(&bytes)));
+        }
+    }
+    if files.is_empty() {
+        return String::new();
+    }
+    folded(
+        files
+            .iter()
+            .map(|(name, digest)| (name.as_str(), digest.as_str())),
+    )
+}
+
+/// The digest of every manifest, the lock file, and the cargo configuration the build read.
+fn manifests_of(workspace: &Workspace) -> String {
+    let root = workspace.snapshot_root();
+    let mut files: BTreeMap<String, String> = BTreeMap::new();
+    let named: Vec<PathBuf> = workspace
+        .metadata
+        .packages
+        .iter()
+        .map(|package| package.manifest_path.clone())
+        .chain([
+            root.join("Cargo.toml"),
+            root.join("Cargo.lock"),
+            root.join(".cargo").join("config.toml"),
+            root.join(".cargo").join("config"),
+            root.join("rust-toolchain.toml"),
+            root.join("rust-toolchain"),
+        ])
+        .collect();
+    for path in named {
+        let Ok(relative) = path.strip_prefix(root) else {
+            continue;
+        };
+        let Ok(name) = crate::id::normalize_path(&relative.to_string_lossy()) else {
+            continue;
+        };
+        if files.contains_key(&name) {
+            continue;
+        }
+        let Ok(bytes) = std::fs::read(&path) else {
+            continue;
+        };
+        drop(files.insert(name, crate::id::digest(&bytes)));
+    }
+    folded(
+        files
+            .iter()
+            .map(|(name, digest)| (name.as_str(), digest.as_str())),
+    )
+}
+
+/// One digest over a sorted list of names and their own digests.
+fn folded<'a>(entries: impl Iterator<Item = (&'a str, &'a str)>) -> String {
+    let mut text = String::new();
+    for (name, digest) in entries {
+        text.push_str(name);
+        text.push('\0');
+        text.push_str(digest);
+        text.push('\n');
+    }
+    crate::id::digest(text.as_bytes())
+}
+
 /// The test binaries the instrumented build produced, and the directory their processes work in.
 type Built = (Vec<TestTarget>, PathBuf, BTreeMap<String, Duration>);
 
@@ -1673,6 +1802,8 @@ pub fn prepare(
         .collect();
     let build_phase = trace.phase("build");
     let (targets, scratch, baseline) = built(&workspace, &last_build, options, (cancel, &trace))?;
+    let closure = closure_of(&workspace, &last_build, &sources);
+    let manifests = manifests_of(&workspace);
     build_phase.end();
     phase.end();
     let indexed: Vec<(u32, &discover::Located)> = discovery
@@ -1707,6 +1838,8 @@ pub fn prepare(
         scratch,
         baseline,
         written_by_a_test,
+        closure,
+        manifests,
         executions: std::sync::atomic::AtomicU64::new(0),
         mutant_timeout: options.mutant_timeout,
         workspace,

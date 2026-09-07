@@ -33,8 +33,8 @@ pub const RULE_ABI: u32 = 1;
 /// Bumped when a guard changes shape, so a record about the old instrumentation stops answering.
 pub const INSTRUMENTATION_ABI: u32 = 1;
 
-/// Bumped when a record changes what it holds.
-pub const CACHE_ABI: u32 = 2;
+/// Bumped when a record changes what it holds, or when the recipe changes what a key is computed from.
+pub const CACHE_ABI: u32 = 3;
 
 /// What one earlier run established about one mutant.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -58,12 +58,22 @@ pub struct Record {
 }
 
 /// Everything a key is computed from beyond the mutant's own identity.
+///
+/// The set is the smallest one that decides the answer, not the largest one
+/// that is easy to name. A tree's digest is easy and wrong: a note beside the
+/// code, a workflow file, a crate this run never compiled all change it, and
+/// every remembered answer stops answering for a reason that could not have
+/// changed one of them. What decides is the sources the compilation actually
+/// read, the manifests that chose its dependencies and flags, the toolchain
+/// that compiled it, and what the command line told the harness.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Keyed {
-    /// The frozen digest of the tree the run was about.
-    pub workspace: String,
-    /// The digest of the catalog that tree produced.
-    pub catalog: String,
+    /// The digest of the pristine sources every unit of the build compiled.
+    pub closure: String,
+    /// The digest of the manifests, the lock file, and the cargo configuration the build read.
+    pub manifests: String,
+    /// The toolchain that compiled it, because two compilers are two programs.
+    pub toolchain: String,
     /// The arguments the command line gave the test binaries.
     pub args: Vec<String>,
     /// The budget one execution may take, as the configuration spells it: `auto`, or a duration.
@@ -73,6 +83,17 @@ pub struct Keyed {
 }
 
 impl Keyed {
+    /// Whether this names enough to remember anything by.
+    ///
+    /// A build whose dep-info could not be read leaves no closure, and a key
+    /// over nothing would file every mutant of every tree under one name. A
+    /// caller with nothing to key on remembers nothing, which is the honest
+    /// answer and costs only the executions it would have saved.
+    #[must_use]
+    pub const fn usable(&self) -> bool {
+        !self.closure.is_empty()
+    }
+
     /// The key one mutant's record is filed under.
     #[must_use]
     pub fn key(&self, mutant: &str) -> String {
@@ -82,8 +103,9 @@ impl Keyed {
             &RULE_ABI.to_string(),
             &INSTRUMENTATION_ABI.to_string(),
             &CACHE_ABI.to_string(),
-            &self.workspace,
-            &self.catalog,
+            &self.closure,
+            &self.manifests,
+            &self.toolchain,
             mutant,
             &self.timeout,
         ] {

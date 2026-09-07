@@ -75,6 +75,32 @@ now names the target that failed with nothing active and says that
 `--no-verify` is the way past it.
 
 
+## Upgrading to E9
+
+**A run says how much work it did.** The `WORK` line counts pairs — one mutant
+asked of one target, which is one test process — and says what removed the
+rest. `--dry-run` leads with the same count and ends with the duration, marked
+as the guess about your machine that it is. Nothing about the exit code or the
+report's other columns changed.
+
+**The outcome cache is keyed on what could change the answer, not on the
+tree.** It used to be keyed on the digest of the whole workspace and of the
+whole catalog, so a note beside the code, a workflow file, a crate the run
+never compiled, or one more mutant anywhere threw away every remembered
+answer. It is now keyed on the pristine sources every unit of the build
+actually compiled, the manifests and lock file that chose its dependencies and
+flags, and **the toolchain** — which the old key did not cover at all, so an
+outcome established under one compiler could be reused under another. Every
+record written before this release stops answering once, and after that a
+partial edit costs a partial cache rather than all of it.
+
+**A build whose dep-info cannot be read remembers nothing** rather than filing
+every mutant under one name. That is slower and it is the only honest answer.
+
+**The run report gains `targets`**, the list of test targets the run built. It
+is what says how many pairs a whole run would have started; without it a
+reader cannot say what was removed.
+
 ## Upgrading to E8
 
 **A run says what it is doing while it does it.** `--ui plain` writes one line

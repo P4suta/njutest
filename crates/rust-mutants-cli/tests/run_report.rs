@@ -16,8 +16,9 @@ fn options(config: &Config) -> rust_mutants::session::PrepareOptions {
 
 fn keyed(build: &Config) -> Keyed {
     Keyed {
-        workspace: "w".to_owned(),
-        catalog: "c".to_owned(),
+        closure: "w".to_owned(),
+        manifests: "m".to_owned(),
+        toolchain: "cargo 1.98.0 rustc 1.98.0 x86_64-unknown-linux-gnu".to_owned(),
         args: Vec::new(),
         timeout: "auto".to_owned(),
         build: build.build.config().arguments(),
