@@ -83,8 +83,11 @@ pub enum Command {
         #[arg(long, conflicts_with = "mutant")]
         no_cache: bool,
         /// How much the run says while it is happening.
-        #[arg(long, value_enum, value_name = "MODE", default_value_t = crate::ui::Ui::Auto)]
+        #[arg(long, value_enum, value_name = "MODE", default_value_t = crate::ui::Ui::Auto, conflicts_with = "json")]
         ui: crate::ui::Ui,
+        /// Write the run as it happens, one JSON object per line, for a program rather than a person.
+        #[arg(long)]
+        json: bool,
         /// Arguments for the test harness itself.
         #[arg(last = true, value_name = "ARGS")]
         args: Vec<String>,

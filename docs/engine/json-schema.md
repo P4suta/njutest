@@ -120,6 +120,25 @@ have noticed it was removed by a proof. An `unmatched-skip` is a
 `rust-mutants: skip` marker that hid nothing, which is a claim about code that
 has moved or gone.
 
+## The run as it happens
+
+`run --json` writes `rust-mutants-run-stream-v1`: one JSON object per line,
+flushed as the run reaches it, for a program rather than a person. The kinds
+are `run-start`, `phase-start`, `phase-end`, `mutant`, `finding`, `run-end`,
+and `error`, each carrying a `type`. A reader takes a line at a time and
+ignores a kind it does not know, which is what lets a later release say more
+without breaking a consumer that already works;
+`rust_mutants::report::stream::read_line` is that reader, shipped so a
+consumer does not have to write one.
+
+A `mutant` line is not a report row. It carries what a consumer needs the
+moment a mutant is judged — what was mutated, where, and what the tests made
+of it — and the report holds the rest, because a report is read afterwards
+and a stream is read as it arrives.
+
+`--json` and `--ui` are two ways of saying one thing, so a run is asked for
+one or the other and never both.
+
 ## Evidence
 
 A run that measured coverage writes `reached-v1.json` and `catalog-v1.json`

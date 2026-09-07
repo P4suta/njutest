@@ -11,3 +11,4 @@
 pub mod catalog;
 pub mod evidence;
 pub mod run;
+pub mod stream;

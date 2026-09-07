@@ -158,7 +158,7 @@ const fn watching(command: &cli::Command) -> bool {
         cli::Command::Run {
             ui: crate::ui::Ui::Auto | crate::ui::Ui::Plain,
             ..
-        }
+        } | cli::Command::Run { json: true, .. }
     )
 }
 
@@ -229,7 +229,6 @@ fn measured(
         }
         _ => {
             let session = workspace.prepare(&options, cancel)?;
-            write(stdout, &crate::ui::phases(phases));
             let code = prepared(
                 command,
                 &Prepared {
@@ -239,6 +238,7 @@ fn measured(
                     environment,
                     id,
                     started,
+                    phases,
                 },
                 cancel,
                 stdout,
@@ -324,6 +324,8 @@ struct Prepared<'a> {
     environment: &'a Environment,
     id: &'a str,
     started: Timestamp,
+    /// What the recorder has said about the phases it has finished, for a display to write.
+    phases: &'a std::sync::mpsc::Receiver<rust_mutants::trace::Event>,
 }
 
 /// What a command that needs a prepared session does.
@@ -360,6 +362,7 @@ fn prepared(
             no_report,
             no_cache,
             ui,
+            json,
             args,
             ..
         } => match mutant {
@@ -387,6 +390,8 @@ fn prepared(
                     no_report: *no_report,
                     no_cache: *no_cache,
                     ui: *ui,
+                    json: *json,
+                    phases: prepared.phases,
                     environment: prepared.environment,
                     id: prepared.id,
                     started: prepared.started,
@@ -424,6 +429,10 @@ struct Whole<'a> {
     no_cache: bool,
     /// How much the run says while it is happening.
     ui: crate::ui::Ui,
+    /// Whether the run is written as a stream a program reads rather than as lines a person does.
+    json: bool,
+    /// What the recorder has said about the phases it has finished, for a display to write.
+    phases: &'a std::sync::mpsc::Receiver<rust_mutants::trace::Event>,
     environment: &'a Environment,
     id: &'a str,
     started: Timestamp,
@@ -443,6 +452,8 @@ fn whole(
         no_report,
         no_cache,
         ui,
+        json,
+        phases,
         environment,
         id,
         started,
@@ -458,52 +469,129 @@ fn whole(
         build: settings.config.build.config().arguments(),
     };
     let expectations = expectations(settings);
-    let mut result = run::run(
+    let selection = report::selection_document(&settings.prepare_options()?);
+    let options = run::Options {
+        quiet: &run::Quiet::default(),
+        equivalence: asking.as_ref(),
+        jobs: settings.config.execution.jobs,
+        expectations: &expectations,
+        args,
+        shard,
+        outcomes: (!no_cache).then_some(run::Reusing {
+            store: &outcomes,
+            keyed: &keyed,
+            run_id: id,
+        }),
+    };
+    let mut result = measured_run(
         session,
-        &run::Options {
-            quiet: &run::Quiet::default(),
-            equivalence: asking.as_ref(),
-            jobs: settings.config.execution.jobs,
-            expectations: &expectations,
-            args,
-            shard,
-            outcomes: (!no_cache).then_some(run::Reusing {
-                store: &outcomes,
-                keyed: &keyed,
-                run_id: id,
-            }),
+        &Watched {
+            options: &options,
+            selection: &selection,
+            settings,
+            phases,
+            json,
+            ui,
+            paints: environment.paints,
+            id,
         },
         cancel,
-        &mut crate::ui::Display::new(
-            stdout,
-            resolved(ui),
-            environment.paints,
-            run::jobs(settings.config.execution.jobs),
-        ),
+        stdout,
     )?;
     result.expectations = run::verify(session, &expectations, &mut result.judged);
     let finished = Timestamp::now();
     let document = run_report::document(
         session,
         &result,
-        report::selection_document(&settings.prepare_options()?),
+        selection,
         &run_report::Meta {
             id,
             started_at: started,
             finished_at: finished,
         },
     );
+    let written = if no_report {
+        None
+    } else {
+        Some(stored_with_evidence(session, settings, id, &document)?)
+    };
+    concluded(session, &document, (json, written.as_deref()), stdout);
+    prune(&settings.report_directory(), settings.config.reports.keep);
+    Ok(document.run.exit_code)
+}
+
+/// What a finished run says: the stream's last lines, or the summary a person reads.
+fn concluded(
+    session: &Session,
+    document: &run_report::RunDocument,
+    (json, written): (bool, Option<&Path>),
+    stdout: &mut dyn Write,
+) {
+    if json {
+        crate::stream::Writer::new(stdout, session)
+            .ended(document, written.map(|path| path.display().to_string()));
+        return;
+    }
     write(stdout, "\n");
-    write(stdout, &report::lines(&document));
-    if !no_report {
-        let written = stored_with_evidence(session, settings, id, &document)?;
+    write(stdout, &report::lines(document));
+    if let Some(path) = written {
         let mut line = String::new();
-        let ok = writeln!(line, "REPORT    {}", written.display());
+        let ok = writeln!(line, "REPORT    {}", path.display());
         debug_assert!(ok.is_ok(), "writing to a String cannot fail");
         write(stdout, &line);
     }
-    prune(&settings.report_directory(), settings.config.reports.keep);
-    Ok(document.run.exit_code)
+}
+
+/// Everything the run itself needs beyond the session, so a caller chooses one display and hands it over.
+struct Watched<'a> {
+    options: &'a run::Options<'a>,
+    selection: &'a rust_mutants::report::catalog::SelectionDocument,
+    settings: &'a Settings,
+    phases: &'a std::sync::mpsc::Receiver<rust_mutants::trace::Event>,
+    json: bool,
+    ui: crate::ui::Ui,
+    paints: bool,
+    id: &'a str,
+}
+
+/// The run, watched by whichever display the command line asked for.
+fn measured_run(
+    session: &Session,
+    watched: &Watched<'_>,
+    cancel: &Cancel,
+    stdout: &mut dyn Write,
+) -> Result<run::Run, CliError> {
+    if watched.json {
+        let mut writer = crate::stream::Writer::new(stdout, session);
+        writer.started(
+            watched.id,
+            &root_name(watched.settings),
+            watched.selection.clone(),
+        );
+        writer.phases(watched.phases);
+        return Ok(run::run(session, watched.options, cancel, &mut writer)?);
+    }
+    write(stdout, &crate::ui::phases(watched.phases));
+    Ok(run::run(
+        session,
+        watched.options,
+        cancel,
+        &mut crate::ui::Display::new(
+            stdout,
+            resolved(watched.ui),
+            watched.paints,
+            run::jobs(watched.settings.config.execution.jobs),
+        ),
+    )?)
+}
+
+/// The workspace root's own name, which is what a stream calls the tree it measured.
+fn root_name(settings: &Settings) -> String {
+    settings
+        .root
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default()
 }
 
 /// Writes the report and everything an audit re-derives its proofs from, and names the report.

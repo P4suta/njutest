@@ -16,6 +16,7 @@ pub use rust_mutants::outcomes;
 /// Driving a session, as the engine does it.
 pub use rust_mutants::run;
 pub mod settings;
+pub mod stream;
 pub mod tui;
 pub mod ui;
 
