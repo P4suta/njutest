@@ -19,7 +19,7 @@ pub use event::{
     EVERY_TYPE, Event, EvidenceRecord, ExecRecord, IdenticalRecord, InstrumentRecord, KeptRecord,
     MutantExecRecord, NoteRecord, OpenRecord, Payload, PhaseRecord, ProbeExecRecord, RouteRecord,
     RunRecord, SCHEMA, SelectRecord, SiteRecord, SkipClaimRecord, SkipCount, SnapshotRecord,
-    SweepRecord, TargetRecord, ValidateRoundRecord, VerifyRecord, WitnessRecord,
+    SweepRecord, TargetRecord, TouchRecord, ValidateRoundRecord, VerifyRecord, WitnessRecord,
 };
 pub use reader::{Problem, ReadError, check, read_events};
 pub use sink::{
@@ -274,6 +274,11 @@ impl Recorder {
     /// Records one target run with nothing active.
     pub fn verify(&self, record: VerifyRecord) {
         self.emit(Payload::Verify { verify: record });
+    }
+
+    /// Records what one target's guards said they reached.
+    pub fn touch(&self, record: TouchRecord) {
+        self.emit(Payload::Touch { touch: record });
     }
 
     /// Records one target run against the probe tree.

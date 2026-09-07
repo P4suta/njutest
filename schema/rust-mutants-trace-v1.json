@@ -801,6 +801,62 @@
         "timestamp",
         "elapsed_ms",
         "type",
+        "touch"
+      ],
+      "properties": {
+        "seq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "timestamp": {
+          "type": "string",
+          "minLength": 1
+        },
+        "elapsed_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "type": {
+          "const": "touch"
+        },
+        "touch": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "target",
+            "tests",
+            "sites",
+            "loose"
+          ],
+          "properties": {
+            "target": {
+              "type": "string",
+              "minLength": 1
+            },
+            "tests": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "sites": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "loose": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "seq",
+        "timestamp",
+        "elapsed_ms",
+        "type",
         "probe"
       ],
       "properties": {

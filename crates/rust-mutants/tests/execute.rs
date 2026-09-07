@@ -213,6 +213,7 @@ fn the_environment_is_the_base_plus_cargos_own_plus_the_activation() {
             sysroot: None,
             active: Some(("abc", "digest")),
             probe: None,
+            touch: None,
             profile: None,
         },
         &target(),
@@ -252,7 +253,22 @@ fn the_environment_is_the_base_plus_cargos_own_plus_the_activation() {
         sorted.len(),
         "no name appears twice: {names:?}"
     );
+}
 
+#[test]
+fn a_baseline_inherits_none_of_the_variables_a_run_composes_for_itself() {
+    let base = vec![
+        (OsString::from("PATH"), OsString::from("/usr/bin")),
+        (
+            OsString::from("RUST_MUTANTS_ACTIVE"),
+            OsString::from("stale"),
+        ),
+        (
+            OsString::from("RUST_MUTANTS_TOUCH"),
+            OsString::from("/somebody/elses/log"),
+        ),
+        (OsString::from("TMPDIR"), OsString::from("/tmp")),
+    ];
     let baseline = environment(
         &Context {
             base_env: &base,
@@ -260,6 +276,7 @@ fn the_environment_is_the_base_plus_cargos_own_plus_the_activation() {
             sysroot: None,
             active: None,
             probe: None,
+            touch: None,
             profile: None,
         },
         &target(),
@@ -271,9 +288,33 @@ fn the_environment_is_the_base_plus_cargos_own_plus_the_activation() {
         .collect();
     assert!(
         !names.iter().any(|name| name.starts_with("RUST_MUTANTS_")),
-        "{names:?}"
+        "a touch log an outer run owns is one this run would append its own answers to: {names:?}"
     );
     assert!(names.iter().any(|name| name == "TMPDIR"), "{names:?}");
+}
+
+#[test]
+fn the_guards_are_told_where_to_record_exactly_when_the_run_asks_them_to() {
+    let log = Path::new("/scratch/touch/demo.log");
+    let asked = environment(
+        &Context {
+            base_env: &[],
+            cargo: None,
+            sysroot: None,
+            active: None,
+            probe: None,
+            touch: Some(log),
+            profile: None,
+        },
+        &target(),
+        None,
+    );
+    assert!(
+        asked
+            .iter()
+            .any(|(name, value)| name == "RUST_MUTANTS_TOUCH" && value == log.as_os_str()),
+        "{asked:?}"
+    );
 }
 
 #[test]
@@ -321,6 +362,7 @@ fn a_test_process_learns_which_cargo_built_it() {
             sysroot: None,
             active: None,
             probe: None,
+            touch: None,
             profile: None,
         },
         &target,
@@ -344,6 +386,7 @@ fn a_test_process_learns_which_cargo_built_it() {
             sysroot: None,
             active: None,
             probe: None,
+            touch: None,
             profile: None,
         },
         &target,
@@ -428,6 +471,7 @@ fn an_inherited_coverage_profile_path_never_reaches_a_test_process() {
             sysroot: None,
             active: Some(("abc", "digest")),
             probe: None,
+            touch: None,
             profile: None,
         },
         &target(),
@@ -465,6 +509,7 @@ fn the_profile_path_a_coverage_pass_composes_is_the_one_it_gets() {
             sysroot: None,
             active: None,
             probe: None,
+            touch: None,
             profile: Some(mine),
         },
         &target(),

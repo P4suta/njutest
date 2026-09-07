@@ -42,12 +42,20 @@ pub const DOCTESTS_ROUTED_BY_FILE: &str = "doctests-routed-by-file";
 /// The library has no documented examples, so its documentation target answers nothing and no mutation is routed to it.
 pub const DOCTESTS_NONE: &str = "doctests-none";
 
+/// The target's guards were not asked what they reached, or were asked and said nothing, so every test of it reaches every mutation in it.
+pub const TOUCH_NOT_RECORDED: &str = "touch-not-recorded";
+
+/// The target's guards recorded what they reached and the record did not read back, so nothing of it is believed.
+pub const TOUCH_LOG_UNREADABLE: &str = "touch-log-unreadable";
+
 /// Every limitation, in the order a reader meets them.
-pub const ALL: [&str; 11] = [
+pub const ALL: [&str; 13] = [
     CUSTOM_HARNESS,
     TARGET_SKIPPED_BY_CONFIGURATION,
     DOCTESTS_ROUTED_BY_FILE,
     DOCTESTS_NONE,
+    TOUCH_NOT_RECORDED,
+    TOUCH_LOG_UNREADABLE,
     COVERAGE_BUILD_FAILED,
     COVERAGE_TOOLS_MISSING,
     COVERAGE_NOT_MEASURED,

@@ -503,6 +503,9 @@ pub fn environment(
     if let Some(probe) = context.probe {
         env.insert(OsString::from(PROBE_ENV), probe.as_os_str().to_owned());
     }
+    if let Some(touch) = context.touch {
+        env.insert(OsString::from(TOUCH_ENV), touch.as_os_str().to_owned());
+    }
     match (context.profile, scratch) {
         (Some(profile), _) => {
             env.insert(
@@ -662,6 +665,8 @@ pub struct Context<'a> {
     pub active: Option<(&'a str, &'a str)>,
     /// Where a probe process appends what it infected. `None` runs a process that records nothing.
     pub probe: Option<&'a Path>,
+    /// Where the guards append which of the process's threads reached them. `None` runs a process whose guards record nothing.
+    pub touch: Option<&'a Path>,
     /// Where a coverage-instrumented process writes what it executed. `None` runs a process that measures nothing.
     pub profile: Option<&'a Path>,
 }

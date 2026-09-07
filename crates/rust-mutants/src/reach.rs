@@ -238,6 +238,7 @@ fn run_targets(
             sysroot: workspace.toolchain.sysroot(),
             active: None,
             probe: None,
+            touch: None,
             profile: Some(&pattern),
         };
         let request = ExecRequest::new(target)

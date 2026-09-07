@@ -179,3 +179,98 @@ fn sites(indices: &str, count: u32, line: usize) -> Result<BTreeSet<u32>, TouchE
 pub fn header_line(catalog: &str) -> String {
     format!("{SCHEMA} {catalog}\n")
 }
+
+/// A target whose guards said nothing this run can route by, so every test of it reaches every mutation in it.
+pub use crate::limitation::TOUCH_NOT_RECORDED as UNRECORDED;
+
+/// A target whose record did not read back, so nothing of it is believed.
+pub use crate::limitation::TOUCH_LOG_UNREADABLE as UNREADABLE;
+
+/// What the guards of a whole run said, target by target.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct Touched {
+    /// What each target's guards recorded, by target identity.
+    pub targets: BTreeMap<String, TargetTouches>,
+    /// Why a target the run built is not in `targets`, as `<limitation>:<target>`.
+    pub limitations: Vec<String>,
+}
+
+/// What one target's guards recorded, and which of its tests ran to record it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct TargetTouches {
+    /// The mutant sites each test of this target reached.
+    pub tests: BTreeMap<String, BTreeSet<u32>>,
+    /// The sites reached where nothing named a test, which therefore reach every test of the target.
+    pub loose: BTreeSet<u32>,
+    /// Every test the baseline ran, which is what a loose site reaches and what "all of them" counts against.
+    pub ran: Vec<String>,
+}
+
+/// Which of a target's tests could have noticed one mutation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Reaching {
+    /// Nothing of this target reached the site, so running it would establish nothing.
+    Nothing,
+    /// Exactly these tests reached it.
+    Tests(Vec<String>),
+    /// The site was reached where nothing could be attributed, so every test of the target reaches it.
+    Whole,
+}
+
+impl TargetTouches {
+    /// Which of this target's tests reached `index`.
+    ///
+    /// A site recorded on a thread nothing names a test after is reached by
+    /// every test of the target: the measurement could not say which one, and
+    /// the answer to that is to run more rather than fewer. A target that ran
+    /// tests this reader never saw named — a harness of its own, an output
+    /// this engine does not parse — has an empty `ran`, and then a site
+    /// nothing was attributed to is the whole target as well.
+    #[must_use]
+    pub fn reaching(&self, index: u32) -> Reaching {
+        if self.loose.contains(&index) {
+            return Reaching::Whole;
+        }
+        let named: Vec<String> = self
+            .tests
+            .iter()
+            .filter(|(_, sites)| sites.contains(&index))
+            .map(|(name, _)| name.clone())
+            .collect();
+        if named.is_empty() {
+            return Reaching::Nothing;
+        }
+        if named.len() >= self.ran.len() {
+            return Reaching::Whole;
+        }
+        Reaching::Tests(named)
+    }
+}
+
+impl Touched {
+    /// Whether anything at all was recorded, which is what makes routing by the guards possible.
+    #[must_use]
+    pub fn measured(&self) -> bool {
+        !self.targets.is_empty()
+    }
+
+    /// Whether every target the run built was recorded, which is what makes the measurement worth remembering.
+    #[must_use]
+    pub const fn whole(&self) -> bool {
+        self.limitations.is_empty()
+    }
+
+    /// Which of `target`'s tests could have noticed the mutation at `index`, or nothing when this run cannot say.
+    #[must_use]
+    pub fn reaching(&self, target: &str, index: u32) -> Option<Reaching> {
+        Some(self.targets.get(target)?.reaching(index))
+    }
+
+    /// Records that `target` said nothing this run can route by, and why.
+    pub fn limited(&mut self, limitation: &str, target: &str) {
+        self.limitations.push(format!("{limitation}:{target}"));
+    }
+}

@@ -511,6 +511,8 @@ pub struct Session {
     probed: crate::probe::tree::Probed,
     /// How long each target's own baseline took, which is what a derived timeout is a multiple of. Empty when nothing was verified.
     baseline: BTreeMap<String, Duration>,
+    /// Which of each target's tests reached which mutant, recorded by the guards on that same baseline run.
+    touched: crate::touch::Touched,
     /// What the tree gained or lost while the proof layers ran, which is what a test wrote before anything was instrumented.
     written_by_a_test: Vec<Drift>,
     /// The digest of the pristine sources every unit of this build compiled.
@@ -730,6 +732,12 @@ impl Session {
     #[must_use]
     pub const fn reached(&self) -> &crate::reach::Reached {
         &self.reached
+    }
+
+    /// What the guards recorded on the baseline run: which of each target's tests reached which mutant.
+    #[must_use]
+    pub const fn touched(&self) -> &crate::touch::Touched {
+        &self.touched
     }
 
     /// Whether any measured target reached this mutant: `None` when the measurement says nothing about the place, so nothing is proved either way.
@@ -1069,6 +1077,7 @@ impl Session {
             sysroot: self.workspace.toolchain.sysroot(),
             active: Some((mutant.id.as_str(), self.catalog.digest())),
             probe: None,
+            touch: None,
             profile: None,
         };
         let mut last = None;
@@ -1125,6 +1134,7 @@ impl Session {
             sysroot: self.workspace.toolchain.sysroot(),
             active: None,
             probe: None,
+            touch: None,
             profile: None,
         };
         let mut last = None;
@@ -1579,16 +1589,27 @@ fn folded<'a>(entries: impl Iterator<Item = (&'a str, &'a str)>) -> String {
     crate::id::digest(text.as_bytes())
 }
 
-/// The test binaries the instrumented build produced, and the directory their processes work in.
-type Built = (Vec<TestTarget>, PathBuf, BTreeMap<String, Duration>);
+/// The test binaries the instrumented build produced, the directory their processes work in, and what running them once established.
+type Built = (Vec<TestTarget>, PathBuf, Verified);
+
+/// What the run doing the building is: what stops it, what it records to, and the catalog its guards name.
+#[derive(Debug, Clone, Copy)]
+struct Building<'a> {
+    /// What the run is stopped by.
+    cancel: &'a Cancel,
+    /// What it records to.
+    trace: &'a crate::trace::Recorder,
+    /// The catalog every guard of the tree was generated from, which is what a record must be about.
+    catalog: &'a Catalog,
+}
 
 fn built(
     workspace: &Workspace,
     last_build: &[crate::cargo::Message],
     options: &PrepareOptions,
-    watching: (&Cancel, &crate::trace::Recorder),
+    building: &Building<'_>,
 ) -> Result<Built, EngineError> {
-    let (cancel, trace) = watching;
+    let Building { trace, .. } = *building;
     let mut targets = execute::targets_of(
         last_build,
         &workspace.metadata.packages,
@@ -1648,12 +1669,12 @@ fn built(
         path: scratch.display().to_string(),
         source,
     })?;
-    let baseline = if options.verify {
-        verify(workspace, &mut targets, &scratch, cancel)?
+    let verified = if options.verify {
+        verify(workspace, &mut targets, &scratch, building)?
     } else {
-        BTreeMap::new()
+        Verified::default()
     };
-    Ok((targets, scratch, baseline))
+    Ok((targets, scratch, verified))
 }
 
 /// What cargo is told before the documentation examples' own arguments, so that running them reuses the build this session already made.
@@ -1755,6 +1776,29 @@ fn measured(
         remembering.write(&reached);
     }
     Ok(reached)
+}
+
+/// Which package and which item each mutant belongs to, which is what a report names it by.
+fn attributed(discovery: &discover::Discovery) -> (BTreeMap<u32, String>, BTreeMap<u32, String>) {
+    let indexed: Vec<(u32, &discover::Located)> = discovery
+        .candidates
+        .iter()
+        .filter_map(|located| {
+            let id = located.found.candidate.id().ok()?;
+            let mutant = discovery.catalog.by_id(&id)?;
+            Some((mutant.index, located))
+        })
+        .collect();
+    (
+        indexed
+            .iter()
+            .map(|(index, located)| (*index, located.package.clone()))
+            .collect(),
+        indexed
+            .iter()
+            .map(|(index, located)| (*index, located.found.item.clone()))
+            .collect(),
+    )
 }
 
 /// Where this run may remember what it measured, when it was given somewhere and asked to measure.
@@ -1903,26 +1947,19 @@ pub fn prepare(
         .filter(|drift| !sources.contains_key(drift.rel_path()))
         .collect();
     let build_phase = trace.phase("build");
-    let (targets, scratch, baseline) = built(&workspace, &last_build, options, (cancel, &trace))?;
+    let (targets, scratch, verified) = built(
+        &workspace,
+        &last_build,
+        options,
+        &Building {
+            cancel,
+            trace: &trace,
+            catalog: &discovery.catalog,
+        },
+    )?;
     build_phase.end();
     phase.end();
-    let indexed: Vec<(u32, &discover::Located)> = discovery
-        .candidates
-        .iter()
-        .filter_map(|located| {
-            let id = located.found.candidate.id().ok()?;
-            let mutant = discovery.catalog.by_id(&id)?;
-            Some((mutant.index, located))
-        })
-        .collect();
-    let packages = indexed
-        .iter()
-        .map(|(index, located)| (*index, located.package.clone()))
-        .collect();
-    let items = indexed
-        .iter()
-        .map(|(index, located)| (*index, located.found.item.clone()))
-        .collect();
+    let (packages, items) = attributed(&discovery);
     Ok(Session {
         catalog: discovery.catalog,
         skips: discovery.skips,
@@ -1936,7 +1973,8 @@ pub fn prepare(
         validated,
         targets,
         scratch,
-        baseline,
+        baseline: verified.baseline,
+        touched: verified.touched,
         written_by_a_test,
         closure,
         manifests,
@@ -2036,19 +2074,32 @@ fn verify(
     workspace: &Workspace,
     targets: &mut [TestTarget],
     scratch: &std::path::Path,
-    cancel: &Cancel,
-) -> Result<BTreeMap<String, Duration>, EngineError> {
+    building: &Building<'_>,
+) -> Result<Verified, EngineError> {
+    let Building {
+        cancel, catalog, ..
+    } = *building;
     let phase = workspace.trace.phase("verify");
-    let context = Context {
-        base_env: &workspace.base_env,
-        cargo: Some(workspace.toolchain.cargo()),
-        sysroot: workspace.toolchain.sysroot(),
-        active: None,
-        probe: None,
-        profile: None,
-    };
-    let mut baseline = BTreeMap::new();
+    let logs = scratch.join("touch");
+    std::fs::create_dir_all(&logs).map_err(|source| SessionError::WriteFailed {
+        path: logs.display().to_string(),
+        source,
+    })?;
+    let mut verified = Verified::default();
     for target in targets.iter_mut() {
+        let recording = recordable(target).then(|| logs.join(format!("{}.log", slug(&target.id))));
+        if let Some(path) = &recording {
+            drop(std::fs::remove_file(path));
+        }
+        let context = Context {
+            base_env: &workspace.base_env,
+            cargo: Some(workspace.toolchain.cargo()),
+            sysroot: workspace.toolchain.sysroot(),
+            active: None,
+            probe: None,
+            touch: recording.as_deref(),
+            profile: None,
+        };
         let request = ExecRequest::new(target).with_scratch(scratch);
         let result = execute::exec(&request, &context, cancel, &workspace.trace);
         workspace.trace.verify(crate::trace::VerifyRecord {
@@ -2057,11 +2108,20 @@ fn verify(
             tests_run: result.tests_run,
             duration_ms: u64::try_from(result.duration.as_millis()).unwrap_or(u64::MAX),
         });
-        let _kept = baseline.insert(target.id.clone(), result.duration);
+        let _kept = verified.baseline.insert(target.id.clone(), result.duration);
         if target.kind == TargetKind::Doc && result.tests_run == Some(0) {
             target
                 .limitations
                 .push(crate::limitation::DOCTESTS_NONE.to_owned());
+        }
+        if result.exit_code == crate::instrument::TOUCH_UNAVAILABLE_EXIT {
+            verified
+                .touched
+                .limited(crate::touch::UNRECORDED, &target.id);
+            return Err(EngineError::from(SessionError::VerifyFailed {
+                target: target.id.clone(),
+                output: String::from_utf8_lossy(&result.output).into_owned(),
+            }));
         }
         if !matches!(
             result.outcome,
@@ -2072,9 +2132,129 @@ fn verify(
                 output: String::from_utf8_lossy(&result.output).into_owned(),
             }));
         }
+        gather(
+            &mut verified.touched,
+            &Recording {
+                target: &target.id,
+                log: recording.as_deref(),
+                catalog,
+                ran: &result.passed_tests,
+            },
+            &workspace.trace,
+        );
     }
     phase.end();
-    Ok(baseline)
+    Ok(verified)
+}
+
+/// What the one run of every target with nothing activated established.
+#[derive(Debug, Default)]
+struct Verified {
+    /// How long each target's own baseline took, which is what a derived timeout is a multiple of.
+    baseline: BTreeMap<String, Duration>,
+    /// What the guards recorded on that same run.
+    touched: crate::touch::Touched,
+}
+
+/// One target's record, and what makes sense of it.
+struct Recording<'a> {
+    /// The target the record is about.
+    target: &'a str,
+    /// Where its guards were told to append, or nothing when they were not asked.
+    log: Option<&'a std::path::Path>,
+    /// The catalog the record must be about.
+    catalog: &'a Catalog,
+    /// Every test the run of it passed, which is what names a thread a touch can be attributed to.
+    ran: &'a [String],
+}
+
+/// Whether a target's guards can be asked what they reached.
+///
+/// A target the engine starts itself gets the variable and the process that
+/// reads it. One started through something else — a documented example, which
+/// rustdoc compiles and runs, or a runner the project configured — is one this
+/// engine cannot promise the variable reaches, so it is not asked rather than
+/// read as having reached nothing.
+fn recordable(target: &TestTarget) -> bool {
+    target.kind != TargetKind::Doc && target.through.is_empty()
+}
+
+/// Reads one target's record into `touched`, or says why there is nothing of it to read.
+///
+/// A target that was asked and wrote nothing reached nothing: the runtime
+/// appends the first time any guard of the process runs, so an absent file is
+/// a process whose guards never ran rather than a process that was never
+/// asked. A record naming a thread the run does not know as one of its tests
+/// is a touch nothing can be attributed to, and reaches every test of the
+/// target.
+fn gather(
+    touched: &mut crate::touch::Touched,
+    recording: &Recording<'_>,
+    trace: &crate::trace::Recorder,
+) {
+    let Some(log) = recording.log else {
+        touched.limited(crate::touch::UNRECORDED, recording.target);
+        return;
+    };
+    let text = std::fs::read_to_string(log).unwrap_or_default();
+    let count = u32::try_from(recording.catalog.mutants().len()).unwrap_or(u32::MAX);
+    let recorded = match crate::touch::read(&text, recording.catalog.digest(), count) {
+        Ok(recorded) => recorded,
+        Err(error) => {
+            trace.note(
+                crate::touch::UNREADABLE,
+                &format!("{}: {error}", recording.target),
+            );
+            touched.limited(crate::touch::UNREADABLE, recording.target);
+            return;
+        }
+    };
+    let mut gathered = crate::touch::TargetTouches {
+        loose: recorded.loose,
+        ran: recording.ran.to_vec(),
+        ..crate::touch::TargetTouches::default()
+    };
+    for (name, sites) in recorded.tests {
+        if recording.ran.iter().any(|test| test == &name) {
+            drop(gathered.tests.insert(name, sites));
+        } else {
+            gathered.loose.extend(sites);
+        }
+    }
+    trace.touch(crate::trace::TouchRecord {
+        target: recording.target.to_owned(),
+        tests: u32::try_from(gathered.tests.len()).unwrap_or(u32::MAX),
+        sites: u32::try_from(
+            gathered
+                .tests
+                .values()
+                .flatten()
+                .chain(gathered.loose.iter())
+                .collect::<std::collections::BTreeSet<&u32>>()
+                .len(),
+        )
+        .unwrap_or(u32::MAX),
+        loose: u32::try_from(gathered.loose.len()).unwrap_or(u32::MAX),
+    });
+    drop(
+        touched
+            .targets
+            .insert(recording.target.to_owned(), gathered),
+    );
+}
+
+/// A target identity as one path segment, so two targets cannot name one file.
+fn slug(target: &str) -> String {
+    target
+        .chars()
+        .map(|letter| {
+            if letter.is_ascii_alphanumeric() {
+                letter
+            } else {
+                '-'
+            }
+        })
+        .collect()
 }
 
 /// Instruments the snapshot with a set of mutants left out and compiles it: the [`Compile`] seam validation drives.

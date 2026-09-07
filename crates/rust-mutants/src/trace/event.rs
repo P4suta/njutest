@@ -14,7 +14,7 @@ pub const SCHEMA: &str = "rust-mutants-trace-v1";
 /// understands whole, and the schema under `schema/` is held to this list by a
 /// test: a type added to one and not the other is a recording no consumer can
 /// validate.
-pub const EVERY_TYPE: [&str; 24] = [
+pub const EVERY_TYPE: [&str; 25] = [
     "run-start",
     "phase-start",
     "phase-end",
@@ -27,6 +27,7 @@ pub const EVERY_TYPE: [&str; 24] = [
     "bisect",
     "build",
     "verify",
+    "touch",
     "probe-exec",
     "witness",
     "skip-claim",
@@ -122,6 +123,11 @@ pub enum Payload {
         /// The record.
         verify: VerifyRecord,
     },
+    /// One target's guards said which of its tests reached them.
+    Touch {
+        /// The record.
+        touch: TouchRecord,
+    },
     /// One target was run against the probe tree, which says what it infected.
     ProbeExec {
         /// The record.
@@ -201,6 +207,7 @@ impl Payload {
             Self::Bisect { .. } => "bisect",
             Self::Build { .. } => "build",
             Self::Verify { .. } => "verify",
+            Self::Touch { .. } => "touch",
             Self::ProbeExec { .. } => "probe-exec",
             Self::SkipClaim { .. } => "skip-claim",
             Self::Kept { .. } => "kept",
@@ -461,6 +468,19 @@ pub struct VerifyRecord {
     pub tests_run: Option<u32>,
     /// How long it took, which is what a derived timeout is five times.
     pub duration_ms: u64,
+}
+
+/// What one target's guards recorded on the run that verified its baseline.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TouchRecord {
+    /// The target.
+    pub target: String,
+    /// How many of its tests reached at least one mutation.
+    pub tests: u32,
+    /// How many distinct mutations anything of it reached, which is the most mutants it can be asked about.
+    pub sites: u32,
+    /// How many of those were reached where nothing named a test, and so reach every test of the target.
+    pub loose: u32,
 }
 
 /// One target run against the probe tree.

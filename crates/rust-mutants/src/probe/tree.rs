@@ -431,6 +431,7 @@ fn build_and_run(
             sysroot: workspace.toolchain().sysroot(),
             active: None,
             probe: Some(&log_path),
+            touch: None,
             profile: None,
         };
         let (budget, _source) = options.mutant_timeout.of(None);

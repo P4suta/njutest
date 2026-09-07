@@ -97,6 +97,13 @@ below is stated fail-closed.
   needs could not be built, and `probe-log-unreadable` when a target ran and
   its infection log could not be read. Neither removes an execution: a layer
   that could not measure discharges nothing.
+- The guards measure reach on the baseline run, and a target whose guards were
+  not asked carries `touch-not-recorded`. They are not asked when the engine
+  does not start the process itself: a documented example, which rustdoc
+  compiles and runs, or a target the project configured a runner for. A record
+  that was made and did not read back carries `touch-log-unreadable`. Either
+  way the target keeps every test of it in every route, which is what a run
+  that measured nothing about it has to do.
 - A coverage export whose region ends before it starts is refused outright
   rather than read as far as it goes. Such a region describes nothing, and a
   reader that kept it would answer "this target did not reach that place" for
