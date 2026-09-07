@@ -413,7 +413,7 @@ impl Workspace {
         &self.target_dir
     }
 
-    /// Discovers, instruments, validates, and builds; see [`prepare`].
+    /// Discovers, instruments, validates, and builds; see [`prepare()`].
     ///
     /// # Errors
     /// Every failure of the phases it runs.

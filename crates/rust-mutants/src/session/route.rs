@@ -368,10 +368,10 @@ impl Route {
 
     /// The targets the coverage measurement alone places at the mutation, or nothing when it places none.
     ///
-    /// This is what [`Session::exec`] runs, and it is deliberately wider than
+    /// This is what [`super::Session::exec`] runs, and it is deliberately wider than
     /// [`Route::reaching`]: a discharge is a proof a caller may not share, and
     /// `exec` is the question "what do the tests say", asked by a caller with
-    /// its own evidence. [`Session::judge`] is the one that removes work.
+    /// its own evidence. [`super::Session::judge`] is the one that removes work.
     ///
     /// It is the one place a coverage narrowing is decided: an execution that
     /// narrowed by anything else would run fewer targets than the route says,
@@ -414,7 +414,7 @@ impl Route {
 
     /// The targets an execution of this route ran, given the target that answered and whether it detected the mutation.
     ///
-    /// [`Session::exec`] walks the routed targets in order and stops at the
+    /// [`super::Session::exec`] walks the routed targets in order and stops at the
     /// first one that detects, so what ran is the whole route when nothing
     /// detected and the prefix ending at the answer when one did. An answer
     /// this route does not hold is one target on its own, which is what
