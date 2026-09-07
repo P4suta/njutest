@@ -363,6 +363,8 @@ fn prepared(
             no_cache,
             ui,
             json,
+            fail_fast,
+            dry_run,
             args,
             ..
         } => match mutant {
@@ -387,10 +389,15 @@ fn prepared(
                     open: prepared.open,
                     args,
                     shard: shard.as_deref(),
-                    no_report: *no_report,
-                    no_cache: *no_cache,
-                    ui: *ui,
-                    json: *json,
+                    asked: Switches {
+                        no_report: *no_report,
+                        no_cache: *no_cache,
+                        ui: *ui,
+                        json: *json,
+                        fail_fast: *fail_fast,
+                        dry_run: *dry_run,
+                    },
+                    filter: filter(command, prepared.settings)?,
                     phases: prepared.phases,
                     environment: prepared.environment,
                     id: prepared.id,
@@ -425,17 +432,37 @@ struct Whole<'a> {
     open: &'a workspace::OpenOptions,
     args: &'a [String],
     shard: Option<&'a str>,
-    no_report: bool,
-    no_cache: bool,
-    /// How much the run says while it is happening.
-    ui: crate::ui::Ui,
-    /// Whether the run is written as a stream a program reads rather than as lines a person does.
-    json: bool,
+    /// The switches the command line set, which say what the run does rather than what it measures.
+    asked: Switches,
+    /// Which of the catalog's mutants this run is about.
+    filter: run::Filter,
     /// What the recorder has said about the phases it has finished, for a display to write.
     phases: &'a std::sync::mpsc::Receiver<rust_mutants::trace::Event>,
     environment: &'a Environment,
     id: &'a str,
     started: Timestamp,
+}
+
+/// The switches a run was asked for.
+#[derive(Debug, Clone, Copy)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each is one switch a person sets on the command line, and a switch is a bool \
+              wherever it is stored"
+)]
+struct Switches {
+    /// Write no run report under the report directory.
+    no_report: bool,
+    /// Execute every mutant afresh rather than reading back what an earlier run established.
+    no_cache: bool,
+    /// How much the run says while it is happening.
+    ui: crate::ui::Ui,
+    /// Whether the run is written as a stream a program reads rather than as lines a person does.
+    json: bool,
+    /// Whether the run stops at the first thing a reader has to act on.
+    fail_fast: bool,
+    /// Whether the run says what it would cost rather than paying it.
+    dry_run: bool,
 }
 
 fn whole(
@@ -449,10 +476,16 @@ fn whole(
         open,
         args,
         shard,
-        no_report,
-        no_cache,
-        ui,
-        json,
+        asked:
+            Switches {
+                no_report,
+                no_cache,
+                ui,
+                json,
+                fail_fast,
+                dry_run,
+            },
+        ref filter,
         phases,
         environment,
         id,
@@ -461,13 +494,7 @@ fn whole(
     let shard = shard.map(run::Shard::parse).transpose()?;
     let asking = asking_equivalence(settings, open);
     let outcomes = crate::outcomes::Store::new(&environment.cache_directory);
-    let keyed = crate::outcomes::Keyed {
-        workspace: session.workspace_digest().to_owned(),
-        catalog: session.catalog().digest().to_owned(),
-        args: args.to_vec(),
-        timeout: crate::config::render_timeout(settings.config.mutation.timeout),
-        build: settings.config.build.config().arguments(),
-    };
+    let keyed = keyed(session, settings, args);
     let expectations = expectations(settings);
     let selection = report::selection_document(&settings.prepare_options()?);
     let options = run::Options {
@@ -482,7 +509,14 @@ fn whole(
             keyed: &keyed,
             run_id: id,
         }),
+        filter: Some(filter),
+        fail_fast,
     };
+    if dry_run {
+        write(stdout, &crate::ui::phases(phases));
+        write(stdout, &estimate(session, filter));
+        return Ok(0);
+    }
     let mut result = measured_run(
         session,
         &Watched {
@@ -499,7 +533,6 @@ fn whole(
         stdout,
     )?;
     result.expectations = run::verify(session, &expectations, &mut result.judged);
-    let finished = Timestamp::now();
     let document = run_report::document(
         session,
         &result,
@@ -507,7 +540,7 @@ fn whole(
         &run_report::Meta {
             id,
             started_at: started,
-            finished_at: finished,
+            finished_at: Timestamp::now(),
         },
     );
     let written = if no_report {
@@ -583,6 +616,166 @@ fn measured_run(
             run::jobs(watched.settings.config.execution.jobs),
         ),
     )?)
+}
+
+/// Everything beyond a mutant's own identity that a stored outcome is keyed on.
+///
+/// A record answers for a mutant only when the tree, the catalog, the harness
+/// arguments, the budget and the build are the ones it was established under:
+/// anything else is an answer to a different question.
+fn keyed(session: &Session, settings: &Settings, args: &[String]) -> crate::outcomes::Keyed {
+    crate::outcomes::Keyed {
+        workspace: session.workspace_digest().to_owned(),
+        catalog: session.catalog().digest().to_owned(),
+        args: args.to_vec(),
+        timeout: crate::config::render_timeout(settings.config.mutation.timeout),
+        build: settings.config.build.config().arguments(),
+    }
+}
+
+/// Which of the catalog's mutants a run was asked for, from the flags that narrow it.
+///
+/// # Errors
+/// A `--file` whose lines are not a range.
+fn filter(command: &cli::Command, settings: &Settings) -> Result<run::Filter, CliError> {
+    let cli::Command::Run {
+        rules,
+        families,
+        skip_rules,
+        skip_families,
+        files,
+        ids,
+        from_report,
+        outcome,
+        ..
+    } = command
+    else {
+        return Ok(run::Filter::default());
+    };
+    let mut ids = ids.clone();
+    if let Some(named) = from_report {
+        ids.extend(stored_outcomes(settings, named, outcome)?);
+    }
+    Ok(run::Filter {
+        rules: rules.clone(),
+        families: families.clone(),
+        skip_rules: skip_rules.clone(),
+        skip_families: skip_families.clone(),
+        files: files
+            .iter()
+            .map(|one| addressed(one))
+            .collect::<Result<Vec<_>, _>>()?,
+        ids,
+    })
+}
+
+/// The mutants a stored run left with `outcome`, by identity.
+///
+/// A run named by nothing is the newest one under the report directory. What
+/// a report names and this catalog no longer holds selects nothing, which is
+/// what an identity minted from a file's digest does when the file changes;
+/// the run reports the rest as unselected rather than pretending otherwise.
+///
+/// # Errors
+/// [`CliError::ReportMissing`] when there is no such run to read.
+fn stored_outcomes(
+    settings: &Settings,
+    named: &str,
+    outcome: &str,
+) -> Result<Vec<String>, CliError> {
+    let directory = settings.report_directory();
+    let path = if named.is_empty() {
+        newest(&directory)?
+    } else {
+        directory.join(named).join(run_report::FILE_NAME)
+    };
+    let text = std::fs::read_to_string(&path).map_err(|_error| CliError::ReportMissing {
+        message: format!("{} is not a stored run", path.display()),
+    })?;
+    let document: run_report::RunDocument =
+        serde_json::from_str(&text).map_err(|_error| CliError::ReportMissing {
+            message: format!("{} is not a run report", path.display()),
+        })?;
+    Ok(document
+        .mutants
+        .into_iter()
+        .filter(|one| one.outcome == outcome)
+        .map(|one| one.id)
+        .collect())
+}
+
+/// One `--file` value: a path, and the lines of it the run is about.
+///
+/// # Errors
+/// [`CliError::InvalidValue`] for lines that are not a range.
+fn addressed(text: &str) -> Result<(String, Option<(u32, u32)>), CliError> {
+    let Some((path, lines)) = text.rsplit_once(':') else {
+        return Ok((text.to_owned(), None));
+    };
+    let refuse = || CliError::InvalidValue {
+        flag: "--file".to_owned(),
+        value: text.to_owned(),
+        expected: "PATH, PATH:LINE, or PATH:FROM-TO".to_owned(),
+    };
+    let (from, to) = lines.split_once('-').unwrap_or((lines, lines));
+    let from: u32 = from.parse().map_err(|_error| refuse())?;
+    let to: u32 = to.parse().map_err(|_error| refuse())?;
+    if from == 0 || to < from {
+        return Err(refuse());
+    }
+    Ok((path.to_owned(), Some((from, to))))
+}
+
+/// What a run would cost, from what preparing established and before a mutant is executed.
+fn estimate(session: &Session, filter: &run::Filter) -> String {
+    let mut selected = 0u32;
+    let mut left_out = 0u32;
+    let mut unreached = 0u32;
+    let mut text = String::new();
+    for index in session.accepted() {
+        let Some(mutant) = session.catalog().by_index(*index) else {
+            continue;
+        };
+        let at = session.position(mutant);
+        let line = at.map_or(0, |one| one.line);
+        if !filter.is_empty() && !filter.selects(mutant, line) {
+            left_out = left_out.saturating_add(1);
+            continue;
+        }
+        let route = session.route(mutant);
+        let targets = route.reaching().len();
+        if targets == 0 {
+            unreached = unreached.saturating_add(1);
+        } else {
+            selected = selected.saturating_add(1);
+        }
+        let written = writeln!(
+            text,
+            "#{:<5} {}  {:<22} {}:{}  {}  {} targets",
+            mutant.index,
+            mutant.display_id,
+            mutant.candidate.rule.name,
+            mutant.candidate.path,
+            line,
+            route.granularity(),
+            targets
+        );
+        debug_assert!(written.is_ok(), "writing to a String cannot fail");
+    }
+    let each = session.slowest_baseline();
+    let seconds = u64::from(selected).saturating_mul(each.as_secs().max(1));
+    let written = writeln!(
+        text,
+        "\nwould run {selected} mutants against up to {} targets, about {}:{:02}:{:02} at ~{}s \
+         per target; {unreached} unreached; {left_out} unselected",
+        session.targets().len(),
+        seconds / 3600,
+        seconds % 3600 / 60,
+        seconds % 60,
+        each.as_secs().max(1),
+    );
+    debug_assert!(written.is_ok(), "writing to a String cannot fail");
+    text
 }
 
 /// The workspace root's own name, which is what a stream calls the tree it measured.

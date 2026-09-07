@@ -120,6 +120,14 @@ have noticed it was removed by a proof. An `unmatched-skip` is a
 `rust-mutants: skip` marker that hid nothing, which is a claim about code that
 has moved or gone.
 
+A mutant's `not_run_reason` says which of five things left it unexecuted:
+`unreached` and `discharged` are proofs and are findings, `interrupted` is a
+run that was killed, and `unselected` and `stopped-early` are the run doing
+what it was asked to — a filter took the mutant out, or `--fail-fast` stopped
+before reaching it. Neither of the last two is a finding, and both keep their
+row, so a report of a narrowed run still accounts for the whole catalog it was
+cut from.
+
 ## The run as it happens
 
 `run --json` writes `rust-mutants-run-stream-v1`: one JSON object per line,

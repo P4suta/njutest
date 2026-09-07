@@ -730,6 +730,16 @@ impl Session {
         self.baseline.get(target).copied()
     }
 
+    /// The longest a target's own baseline took, which is what an estimate of a run's cost rests on.
+    #[must_use]
+    pub fn slowest_baseline(&self) -> Duration {
+        self.baseline
+            .values()
+            .copied()
+            .max()
+            .unwrap_or(Duration::from_secs(1))
+    }
+
     /// Which targets could notice this mutation, and what the answer rests on.
     ///
     /// It is a question, not an instruction: [`Session::exec`] narrows to the

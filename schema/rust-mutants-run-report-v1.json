@@ -220,7 +220,15 @@
           },
           "killed_by": { "type": "array", "items": { "type": "string" } },
           "signal": { "type": "integer" },
-          "not_run_reason": { "enum": ["unreached", "discharged", "interrupted"] },
+          "not_run_reason": {
+            "enum": [
+              "unreached",
+              "discharged",
+              "interrupted",
+              "unselected",
+              "stopped-early"
+            ]
+          },
           "identical": {
             "type": "boolean",
             "description": "Whether the compiler renders the mutation identically to what it mutates. Never a claim that the mutation is equivalent."

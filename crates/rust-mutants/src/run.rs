@@ -372,6 +372,14 @@ impl Run {
                 Outcome::NotRun if one.not_run_reason == Some(NotRunReason::Discharged) => {
                     FindingKind::DischargedMutant
                 }
+                Outcome::NotRun
+                    if matches!(
+                        one.not_run_reason,
+                        Some(NotRunReason::Unselected | NotRunReason::StoppedEarly)
+                    ) =>
+                {
+                    continue;
+                }
                 Outcome::NotRun if self.interrupted => continue,
                 Outcome::NotRun => FindingKind::NotRunMutant,
                 Outcome::Killed | Outcome::TimedOut => continue,
@@ -508,6 +516,80 @@ pub struct Options<'a> {
     pub shard: Option<Shard>,
     /// Where what earlier runs of this exact tree established is kept, and this run's own name. `None` establishes everything afresh.
     pub outcomes: Option<Reusing<'a>>,
+    /// Which of the catalog's mutants this run is about. `None` is every one the shard holds.
+    pub filter: Option<&'a Filter>,
+    /// Stop at the first finding rather than measuring the rest.
+    pub fail_fast: bool,
+}
+
+/// Which of a catalog's mutants a run is about.
+///
+/// A filter narrows what a run measures and changes nothing about the
+/// catalog: the digest is the catalog's, a stored outcome is still the same
+/// tree's, and what a filter took out is reported as a mutant nobody selected
+/// rather than left out of the accounting. A run that measured half a catalog
+/// says so.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Filter {
+    /// Rules by name. Empty selects every rule.
+    pub rules: Vec<String>,
+    /// Families by name. Empty selects every family.
+    pub families: Vec<String>,
+    /// Rules never to select.
+    pub skip_rules: Vec<String>,
+    /// Families never to select.
+    pub skip_families: Vec<String>,
+    /// Paths, each with the lines of it the filter is about. Empty selects every file.
+    pub files: Vec<(String, Option<(u32, u32)>)>,
+    /// Identities, or prefixes of them. Empty selects every mutant.
+    pub ids: Vec<String>,
+}
+
+impl Filter {
+    /// Whether the filter says anything at all.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.rules.is_empty()
+            && self.families.is_empty()
+            && self.skip_rules.is_empty()
+            && self.skip_families.is_empty()
+            && self.files.is_empty()
+            && self.ids.is_empty()
+    }
+
+    /// Whether this run is about `mutant`, which sits at `line`.
+    #[must_use]
+    pub fn selects(&self, mutant: &Mutant, line: u32) -> bool {
+        let rule = mutant.candidate.rule.name;
+        let family = mutant.candidate.rule.family.name();
+        if self.skip_rules.iter().any(|one| one == rule) {
+            return false;
+        }
+        if self.skip_families.iter().any(|one| one == family) {
+            return false;
+        }
+        if !self.rules.is_empty() && !self.rules.iter().any(|one| one == rule) {
+            return false;
+        }
+        if !self.families.is_empty() && !self.families.iter().any(|one| one == family) {
+            return false;
+        }
+        if !self.ids.is_empty()
+            && !self
+                .ids
+                .iter()
+                .any(|prefix| mutant.id.starts_with(prefix.as_str()))
+        {
+            return false;
+        }
+        if self.files.is_empty() {
+            return true;
+        }
+        self.files.iter().any(|(path, lines)| {
+            mutant.candidate.path == *path
+                && lines.is_none_or(|(from, to)| (from..=to).contains(&line))
+        })
+    }
 }
 
 /// Where a run reads and writes what is established about individual mutants.
@@ -613,6 +695,7 @@ pub fn run<O: Observer>(
         .iter()
         .filter_map(|index| session.catalog().by_index(*index))
         .collect();
+    let (places, unselected) = narrowed(session, places, options.filter);
     observer.starting(count(places.len()));
     let judged = if jobs(options.jobs) == 1 {
         serially(session, &places, options, (cancel, observer))?
@@ -621,6 +704,8 @@ pub fn run<O: Observer>(
     };
     observer.finished(started.elapsed());
     let mut judged = judged;
+    judged.extend(unselected);
+    judged.sort_by_key(|one| one.index);
     if let Some(asking) = options.equivalence {
         equivalence(session, asking, &mut judged, cancel);
     }
@@ -770,7 +855,12 @@ fn serially<O: Observer>(
     let (cancel, observer) = watching;
     let total = count(places.len());
     let mut judged = Vec::with_capacity(places.len());
+    let mut stopped = false;
     for (position, mutant) in places.iter().enumerate() {
+        if stopped {
+            judged.push(unexecuted(mutant, NotRunReason::StoppedEarly));
+            continue;
+        }
         if cancel.is_cancelled() {
             judged.push(unexecuted(mutant, NotRunReason::Interrupted));
             continue;
@@ -779,6 +869,7 @@ fn serially<O: Observer>(
         let mut one = one_mutant(session, mutant, options, cancel)?;
         route(session, mutant, &mut one);
         observer.judged(&one, count(position).saturating_add(1), total);
+        stopped = options.fail_fast && stops(&one);
         judged.push(one);
     }
     Ok(judged)
@@ -838,6 +929,8 @@ mod pool {
         let mut done: Vec<Option<Judged>> = (0..places.len()).map(|_| None).collect();
         let mut failure: Option<EngineError> = None;
         let mut completed: u32 = 0;
+        let mut stopped = false;
+        let stop = std::sync::atomic::AtomicBool::new(false);
         let next = AtomicUsize::new(0);
         let (sender, receiver) = mpsc::channel::<Delivery>();
 
@@ -845,13 +938,14 @@ mod pool {
             for _worker in 0..super::jobs(options.jobs) {
                 let sender = sender.clone();
                 let next = &next;
+                let stop = &stop;
                 let _handle = scope.spawn(move || {
                     loop {
                         let at = next.fetch_add(1, Ordering::SeqCst);
                         let Some(mutant) = places.get(at) else {
                             return;
                         };
-                        if cancel.is_cancelled() {
+                        if cancel.is_cancelled() || stop.load(Ordering::SeqCst) {
                             return;
                         }
                         if sender.send(Delivery::Started(at)).is_err() {
@@ -881,8 +975,12 @@ mod pool {
                     Delivery::Judged(at, one) => {
                         completed = completed.saturating_add(1);
                         observer.judged(&one, completed, total);
+                        stopped |= options.fail_fast && super::stops(&one);
                         if let Some(place) = done.get_mut(at) {
                             *place = Some(*one);
+                        }
+                        if stopped {
+                            stop.store(true, Ordering::SeqCst);
                         }
                     }
                     Delivery::Failed(error) => {
@@ -898,12 +996,15 @@ mod pool {
         if let Some(error) = failure {
             return Err(error);
         }
+        let unreached = if stopped {
+            NotRunReason::StoppedEarly
+        } else {
+            NotRunReason::Interrupted
+        };
         Ok(places
             .iter()
             .zip(done)
-            .map(|(mutant, one)| {
-                one.unwrap_or_else(|| unexecuted(mutant, NotRunReason::Interrupted))
-            })
+            .map(|(mutant, one)| one.unwrap_or_else(|| unexecuted(mutant, unreached)))
             .collect())
     }
 }
@@ -978,6 +1079,10 @@ pub enum NotRunReason {
     Discharged,
     /// The run was interrupted before it got there.
     Interrupted,
+    /// A filter took it out of what this run was asked to measure.
+    Unselected,
+    /// The run stopped at the first finding, as it was asked to.
+    StoppedEarly,
 }
 
 impl NotRunReason {
@@ -988,6 +1093,8 @@ impl NotRunReason {
             Self::Unreached => "unreached",
             Self::Discharged => "discharged",
             Self::Interrupted => "interrupted",
+            Self::Unselected => "unselected",
+            Self::StoppedEarly => "stopped-early",
         }
     }
 }
@@ -1040,6 +1147,55 @@ fn not_run_because(outcome: Outcome, route: &crate::session::Route) -> Option<No
         crate::session::Route::Discharged { .. } => Some(NotRunReason::Discharged),
         _ => Some(NotRunReason::Interrupted),
     }
+}
+
+/// Whether this outcome is the one a run asked to stop at the first finding stops at.
+///
+/// A run stops at the first thing a reader has to act on, which is what a
+/// finding is: a mutation nothing noticed, one nothing could decide, one
+/// nothing reached. It does not stop at a kill, which is the run working.
+const fn stops(one: &Judged) -> bool {
+    match one.outcome {
+        Outcome::Killed | Outcome::TimedOut => false,
+        Outcome::Survived => !one.expected,
+        Outcome::NotRun => matches!(
+            one.not_run_reason,
+            Some(NotRunReason::Unreached | NotRunReason::Discharged)
+        ),
+        _ => true,
+    }
+}
+
+/// What a filter leaves of a catalog, and what it took out.
+///
+/// What a filter took out is a mutant nobody selected, not a mutant nobody
+/// cataloged: it keeps its row and its reason, so a report of a narrowed run
+/// still accounts for the whole of the catalog it was cut from.
+fn narrowed<'m>(
+    session: &Session,
+    places: Vec<&'m Mutant>,
+    filter: Option<&Filter>,
+) -> (Vec<&'m Mutant>, Vec<Judged>) {
+    let Some(filter) = filter.filter(|one| !one.is_empty()) else {
+        return (places, Vec::new());
+    };
+    let mut selected = Vec::with_capacity(places.len());
+    let mut left = Vec::new();
+    for mutant in places {
+        let line = session.position(mutant).map_or(0, |at| at.line);
+        if filter.selects(mutant, line) {
+            selected.push(mutant);
+        } else {
+            if session.trace().is_enabled() {
+                session.trace().select(crate::trace::SelectRecord {
+                    mutant: mutant.display_id.clone(),
+                    reason: NotRunReason::Unselected.name().to_owned(),
+                });
+            }
+            left.push(unexecuted(mutant, NotRunReason::Unselected));
+        }
+    }
+    (selected, left)
 }
 
 /// What an earlier run of this exact tree established about this mutant, when a record answers for it.

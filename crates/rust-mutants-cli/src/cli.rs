@@ -34,6 +34,11 @@ pub struct Cli {
 
 /// The subcommands.
 #[derive(Debug, Clone, Subcommand)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "the variants are the command line's own shape, and boxing one would put a \
+              heap indirection between the parser and the flags a person typed"
+)]
 pub enum Command {
     /// List the candidates the rules propose, before the compiler has ruled.
     List {
@@ -88,6 +93,41 @@ pub enum Command {
         /// Write the run as it happens, one JSON object per line, for a program rather than a person.
         #[arg(long)]
         json: bool,
+        /// Stop at the first thing a reader has to act on rather than measuring the rest.
+        #[arg(long, conflicts_with = "mutant")]
+        fail_fast: bool,
+        /// Measure only mutants of this rule. Repeatable.
+        #[arg(long = "rule", value_name = "NAME")]
+        rules: Vec<String>,
+        /// Measure only mutants of this family. Repeatable.
+        #[arg(long = "family", value_name = "NAME")]
+        families: Vec<String>,
+        /// Never measure mutants of this rule. Repeatable.
+        #[arg(long = "skip-rule", value_name = "NAME")]
+        skip_rules: Vec<String>,
+        /// Never measure mutants of this family. Repeatable.
+        #[arg(long = "skip-family", value_name = "NAME")]
+        skip_families: Vec<String>,
+        /// Measure only mutants in this file, and optionally only these lines, as `PATH[:FROM[-TO]]`. Repeatable.
+        #[arg(long = "file", value_name = "PATH")]
+        files: Vec<String>,
+        /// Measure only mutants whose identity starts with this. Repeatable.
+        #[arg(long = "id", value_name = "PREFIX")]
+        ids: Vec<String>,
+        /// Measure only the mutants a stored run left with this outcome. The newest run when no directory is named.
+        #[arg(long, value_name = "RUN", num_args = 0..=1, default_missing_value = "")]
+        from_report: Option<String>,
+        /// With `--from-report`, the outcome to take from it.
+        #[arg(
+            long,
+            value_name = "OUTCOME",
+            default_value = "survived",
+            requires = "from_report"
+        )]
+        outcome: String,
+        /// Prepare and verify, then say what a run would cost, without executing a mutant.
+        #[arg(long, conflicts_with_all = ["mutant", "json"])]
+        dry_run: bool,
         /// Arguments for the test harness itself.
         #[arg(last = true, value_name = "ARGS")]
         args: Vec<String>,

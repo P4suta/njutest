@@ -210,6 +210,27 @@ reader is scanning for is the one line that is not a kill, and a page of
 colours is a page nobody scans. `auto` paints a terminal that has not set
 `NO_COLOR`.
 
+### Narrowing a run
+
+`--rule`, `--family`, `--skip-rule`, `--skip-family`, `--file PATH[:FROM-TO]`
+and `--id PREFIX` say which of the catalog's mutants a run is about, and
+`--from-report [RUN] --outcome survived` says the ones a stored run left that
+way. A filter changes nothing about the catalog: the digest is the catalog's,
+a stored outcome is still the same tree's, and what a filter took out keeps
+its row with `unselected` as its reason, so a report of a narrowed run still
+accounts for the whole of the catalog it was cut from. A mutant nobody
+selected is not a finding.
+
+`--fail-fast` stops at the first thing a reader has to act on — a mutation
+nothing noticed, one nothing could decide, one nothing reached — and not at a
+kill, which is the run working. What it did not reach is `stopped-early`,
+which is the run doing what it was asked to rather than a run that was killed:
+the exit code is the finding's, never `130`.
+
+`--dry-run` prepares, verifies, and then says what a run would cost: every
+mutant it would measure with the targets that could notice it, and the size
+of the job from what the verification measured. Nothing is executed.
+
 ## Guards
 
 Four forms. **Form C** for a position that is syntactically boolean (an
