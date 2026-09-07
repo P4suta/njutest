@@ -181,7 +181,10 @@ nothing and shows every measured file whole with its mutants on their lines,
 and `stryker` the mutation testing report every Stryker reader understands,
 with columns in UTF-16 as that schema counts them. A file the report names and
 the root does not hold is `RM0012` rather than a file quietly left out.
-`report --tui` reads it at the terminal instead. What each projection is and
+`report --tui` reads it at the terminal instead: the rows on the left, and on
+the right the mutant, the file it is in, the findings, or the keys; `/`
+searches, `1`–`5` narrow, and `y` names a mutant that quitting prints on
+standard output, so a person can pick one and hand it to the next command. What each projection is and
 who reads it is in [reports](reports.md).
 
 `doctor` answers about this environment rather than about any code: one check

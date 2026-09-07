@@ -1,0 +1,20 @@
+┌ run ─────────────────────────────────────────────────────────────────────────┐
+│20260905T000000000Z  ·  demo                                                  │
+│66.7%  (2 detected of 3 decided)  ·  killed 2 survived 1 not run 0            │
+└──────────────────────────────────────────────────────────────────────────────┘
+┌ mutants: all (3) ────────────────┐┌ keys ────────────────────────────────────┐
+│killed     00000000000000000001 gt││j / ↓     next mutant                     │
+│survived   00000000000000000002 eq││k / ↑     previous mutant                 │
+│killed     00000000000000000003 ad││PgDn/PgUp a page at a time                │
+│                                  ││Home/End  the first, the last             │
+│                                  ││/         search path, rule, id           │
+│                                  ││f         cycle the outcome filter        │
+│                                  ││1 - 5     all, survived, killed, not run, │
+│                                  ││r         the mutant                      │
+│                                  ││p         the source it is in             │
+│                                  ││F         the findings                    │
+│                                  ││?         these keys                      │
+│                                  ││y         take the identity away with you │
+│                                  ││q / Esc   quit                            │
+└──────────────────────────────────┘└──────────────────────────────────────────┘
+ j/k move · / search · f filter · p source · ? keys · q quit

@@ -77,5 +77,29 @@ them — nothing in this engine reads them back.
 
 ## Reading it at the terminal
 
-`report --tui` browses the stored run instead of writing it: the rows, the
-findings, and the source of the file each mutation is in.
+`report --tui` browses the stored run instead of writing it. The rows are on
+the left; on the right is whichever of the mutant, the file it is in, the
+findings, or the keys you asked for.
+
+| Key | What it does |
+| --- | --- |
+| `j` `k`, `↓` `↑` | the next mutant, the previous one |
+| `PgDn` `PgUp`, `Home` `End` | a page at a time, the first, the last |
+| `/` | search the path, rule, family, identity and outcome |
+| `f` | cycle the outcome filter |
+| `1`–`5` | all, survived, killed, not run, errored |
+| `r` `p` `F` `?` | the mutant, its source, the findings, these keys |
+| `y` | take the identity away with you |
+| `q`, `Esc` | put the pane away, then quit |
+
+`y` names the mutant you were on, and quitting prints that identity on
+standard output, so `rust-mutants report --tui` in a command substitution
+hands the next command a mutant a person chose:
+
+```console
+$ rust-mutants explain "$(rust-mutants report --tui)"
+```
+
+The source pane shows the file the run measured, which the recorded digest
+settles. A file that changed since says so rather than showing what it holds
+now.

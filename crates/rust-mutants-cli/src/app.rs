@@ -1920,7 +1920,12 @@ fn report_back(
         })?;
     if tui {
         let code = document.run.exit_code;
-        crate::tui::browse(document).map_err(|error| CliError::writing(&path, error))?;
+        let sources = report::sources::read(&document, &root).unwrap_or_default();
+        let taken = crate::tui::browse(document, sources)
+            .map_err(|error| CliError::writing(&path, error))?;
+        if let Some(id) = taken {
+            write(stdout, &format!("{id}\n"));
+        }
         return Ok(code);
     }
     let projected = match format {
