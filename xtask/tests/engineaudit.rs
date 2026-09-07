@@ -205,6 +205,7 @@ const fn asked<'a>(
         trace,
         shards: &[],
         ledger,
+        sites: true,
     }
 }
 
@@ -381,6 +382,7 @@ fn the_parts_of_one_catalog_recount_to_the_whole() {
         trace: None,
         shards: &[path],
         ledger: None,
+        sites: false,
     })
     .expect("a report this audit can read");
     let found = violations(&audit, Layer::Merge);
@@ -941,5 +943,64 @@ fn the_discharged_column_equals_the_records() {
             .iter()
             .any(|said| said.contains("3 mutants were discharged")),
         "{audit}"
+    );
+}
+
+#[test]
+fn a_file_whose_walk_decided_less_than_it_saw_is_a_violation() {
+    let mut events = recording();
+    events.insert(
+        1,
+        serde_json::json!({
+            "seq": 0,
+            "timestamp": "2026-01-01T00:00:01Z",
+            "elapsed_ms": 1,
+            "type": "discover-file",
+            "discover": {
+                "path": "src/lib.rs",
+                "candidates": 2,
+                "sites": [{ "line": 1, "column": 1, "rule": "gt-to-ge", "form": "C" }],
+                "skips": []
+            }
+        }),
+    );
+    for (at, event) in events.iter_mut().enumerate() {
+        event["seq"] = serde_json::json!(at.saturating_add(1));
+    }
+    let audit = audited_with(&base(), &events);
+    assert!(
+        violations(&audit, Layer::Sites)
+            .iter()
+            .any(|remark| remark.contains("passed over without saying so")),
+        "a place the walk saw and said nothing about is the one thing a reader cannot ask the \
+         engine to explain: {audit}"
+    );
+}
+
+#[test]
+fn a_file_passed_over_whole_is_silent_on_the_census() {
+    let mut events = recording();
+    events.insert(
+        1,
+        serde_json::json!({
+            "seq": 0,
+            "timestamp": "2026-01-01T00:00:01Z",
+            "elapsed_ms": 1,
+            "type": "discover-file",
+            "discover": {
+                "path": "src/testutil.rs",
+                "candidates": 0,
+                "sites": [],
+                "skips": [{ "reason": "test-only-file", "count": 4 }]
+            }
+        }),
+    );
+    for (at, event) in events.iter_mut().enumerate() {
+        event["seq"] = serde_json::json!(at.saturating_add(1));
+    }
+    let audit = audited_with(&base(), &events);
+    assert!(
+        violations(&audit, Layer::Sites).is_empty(),
+        "a file nothing walked has no decisions to account for: {audit}"
     );
 }

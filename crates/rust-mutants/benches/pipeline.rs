@@ -42,6 +42,33 @@ fn source(functions: usize) -> String {
 }
 
 /// A coverage export naming `functions` functions with four regions each.
+/// A match of `arms` arms, half of them guarded, ending in a bare wildcard.
+fn arms(count: usize) -> String {
+    let mut text =
+        String::from("//! A generated match.\n\npub fn pick(n: i32) -> i32 {\n    match n {\n");
+    for index in 0..count {
+        let _written = if index % 2 == 0 {
+            writeln!(text, "        {index} => {index},")
+        } else {
+            writeln!(text, "        {index} if n > {index} => {index},")
+        };
+    }
+    text.push_str("        _ => -1,\n    }\n}\n");
+    text
+}
+
+/// A file of `lines` lines, a third of them `rust-mutants: skip` markers.
+fn annotated(lines: usize) -> String {
+    let mut text = String::from("//! A generated module.\n\n");
+    for index in 0..lines.saturating_div(4) {
+        let _written = writeln!(
+            text,
+            "// rust-mutants: skip generated {index}\npub fn f{index}(a: i32, b: i32) -> i32 {{\n    a + b\n}}"
+        );
+    }
+    text
+}
+
 fn export(functions: usize) -> String {
     let mut regions = String::new();
     for index in 0..functions {
@@ -124,6 +151,22 @@ fn benchmarks(criterion: &mut Criterion) {
 
     let nest = nested(10);
     let deepest = nest.path().join("d0/d1/d2/d3/d4/d5/d6/d7/d8/d9");
+    let arms = arms(500);
+    criterion.bench_function("instrument/a match of 500 arms", |bencher| {
+        bencher.iter(|| {
+            let found =
+                discover_file("src/lib.rs", arms.as_bytes(), &selection).expect("the file walks");
+            std::hint::black_box(found.candidates.len());
+        });
+    });
+    let commented = annotated(2000);
+    criterion.bench_function("annotate/a 2000-line file of markers", |bencher| {
+        bencher.iter(|| {
+            let found = discover_file("src/lib.rs", commented.as_bytes(), &selection)
+                .expect("the file walks");
+            std::hint::black_box(found.annotations.len());
+        });
+    });
     criterion.bench_function("cargo_config/configured over 10 nested dirs", |bencher| {
         bencher.iter(|| configured(std::hint::black_box(&deepest), None));
     });

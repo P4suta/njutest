@@ -183,7 +183,7 @@ if [ -z "${run}" ] || [ ! -f "${run}run-report-v1.json" ]; then
 fi
 echo "re-deciding ${run} from its own recording"
 ./target/release/rust-mutants trace check --dir "${run}trace"
-./target/release/xtask engine-audit "${run%/}" --trace "${run}trace" --ledger .rust-mutants.toml
+./target/release/xtask engine-audit "${run%/}" --trace "${run}trace" --sites --ledger .rust-mutants.toml
 """
 
 [tasks."engine-audit"]

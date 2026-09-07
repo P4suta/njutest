@@ -87,7 +87,14 @@ fn the_engine_ledger_names_what_it_measures_and_asks_for_every_proof_layer() {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../.rust-mutants.toml"),
     )
     .expect("the engine's own ledger");
-    assert!(ledger.contains("packages = [\"rust-mutants\"]"), "{ledger}");
+    assert!(
+        ledger.contains("packages = [\"rust-mutants\", \"rust-mutants-cli\", \"xtask\"]"),
+        "{ledger}"
+    );
+    assert!(
+        ledger.contains("tier = \"all\""),
+        "a tool that asks a project for every operator asks itself for them too: {ledger}"
+    );
     assert!(
         !ledger.contains("coverage"),
         "coverage routing is the default now, and a ledger that asks for a default says \

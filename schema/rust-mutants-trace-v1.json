@@ -436,12 +436,16 @@
                     "enum": [
                       "C",
                       "E",
-                      "S"
+                      "S",
+                      "M"
                     ]
                   },
                   "skip": {
                     "type": "string",
                     "minLength": 1
+                  },
+                  "note": {
+                    "type": "string"
                   }
                 }
               }

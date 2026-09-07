@@ -63,6 +63,9 @@ enum Gate {
         /// The configuration file whose accepted survivors the run is held to.
         #[arg(long, value_name = "FILE")]
         ledger: Option<std::path::PathBuf>,
+        /// Re-derive the census of the walk's own decisions from the recording.
+        #[arg(long)]
+        sites: bool,
     },
     /// What changed between two stored assurance reports.
     ReportDiff {
@@ -113,6 +116,7 @@ where
             trace,
             shards,
             ledger,
+            sites,
         } => {
             return audit_engine(
                 &gates::EngineRun {
@@ -120,6 +124,7 @@ where
                     trace: trace.as_deref(),
                     shards: &shards,
                     ledger: ledger.as_deref(),
+                    sites,
                 },
                 stdout,
                 stderr,

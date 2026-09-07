@@ -122,6 +122,8 @@ pub enum Layer {
     Merge,
     /// The discharges the run claimed, against the evidence it kept for them.
     Proofs,
+    /// Every place a rule targets, against the decision the walk took about it.
+    Sites,
     /// The recording, against the report it is supposed to be the exhaust of.
     Trace,
     /// The ledger of accepted survivors, against the run that was asked to hold to it.
@@ -130,7 +132,7 @@ pub enum Layer {
 
 impl Layer {
     /// Every layer, in the order they are re-decided.
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::Identity,
         Self::Accounting,
         Self::Score,
@@ -139,6 +141,7 @@ impl Layer {
         Self::Exit,
         Self::Merge,
         Self::Proofs,
+        Self::Sites,
         Self::Trace,
         Self::Ledger,
     ];
@@ -155,6 +158,7 @@ impl Layer {
             Self::Exit => "exit",
             Self::Merge => "merge",
             Self::Proofs => "proofs",
+            Self::Sites => "sites",
             Self::Trace => "trace",
             Self::Ledger => "ledger",
         }
@@ -270,6 +274,8 @@ pub struct Evidence<'a> {
     pub shards: Vec<(String, &'a str)>,
     /// The ledger of accepted survivors, as the configuration file holds it.
     pub ledger: Option<&'a str>,
+    /// Whether the census of the walk's own decisions is re-derived.
+    pub sites: bool,
     /// What the coverage layer measured, as the run kept it.
     pub reached: Option<&'a str>,
     /// The catalog the run kept, which holds the body each branch proof names.
@@ -340,6 +346,7 @@ pub fn audit(path: &str, text: &str, evidence: &Evidence<'_>) -> Result<Audit, A
     exit(&report, &mut audit);
     merge(&report, evidence, &mut audit);
     proofs(&report, evidence, &mut audit);
+    sites(evidence, &mut audit);
     trace(&report, evidence.recorded, &mut audit);
     ledger(&report, evidence.ledger, &mut audit);
     audit.remarks.sort();
@@ -956,6 +963,72 @@ fn exit(report: &Report, audit: &mut Audit) {
                 "the run exited {recorded} and what it found earns {derived}; a script that \
                  acts on the code acts on the wrong thing"
             ),
+        );
+    }
+}
+
+/// Every place a rule targets, against the decision the walk took about it.
+///
+/// A file the run may mutate has one decision per place: a candidate with its
+/// guard form, or a skip with its reason. A file passed over whole has none of
+/// either and one tally saying how much it hid. Anything else is a place the
+/// walk saw and said nothing about, which is the one thing a reader cannot ask
+/// the engine to explain.
+fn sites(evidence: &Evidence<'_>, audit: &mut Audit) {
+    let mut notes = Notes::on(audit, Layer::Sites);
+    if !evidence.sites {
+        return;
+    }
+    let Some(recorded) = evidence.recorded else {
+        notes.unaudited(
+            "recording",
+            "the run kept no recording, so the places the walk saw cannot be counted".to_owned(),
+        );
+        return;
+    };
+    let mut seen = 0usize;
+    for event in events(recorded) {
+        if string(&event, "type").unwrap_or_default() != "discover-file" {
+            continue;
+        }
+        let Some(record) = event.get("discover") else {
+            continue;
+        };
+        seen = seen.saturating_add(1);
+        let path = string(record, "path").unwrap_or_default();
+        let candidates = number(record, "candidates").unwrap_or_default();
+        let places = record
+            .get("sites")
+            .and_then(Value::as_array)
+            .map_or(0, Vec::len);
+        let tallies = record
+            .get("skips")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let hidden: u64 = tallies
+            .iter()
+            .filter_map(|skip| number(skip, "count"))
+            .sum();
+        if places == 0 && candidates == 0 && tallies.len() == 1 {
+            continue;
+        }
+        let decided = u64::try_from(places).unwrap_or(u64::MAX);
+        if decided != candidates.saturating_add(hidden) {
+            notes.violated(
+                &path,
+                format!(
+                    "the walk of {path} took {decided} decisions and the file holds \
+                     {candidates} candidates and {hidden} skipped places; a place with \
+                     neither is one it passed over without saying so"
+                ),
+            );
+        }
+    }
+    if seen == 0 {
+        notes.unaudited(
+            "recording",
+            "the recording names no file the walk went through".to_owned(),
         );
     }
 }

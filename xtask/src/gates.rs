@@ -321,6 +321,8 @@ pub struct EngineRun<'a> {
     pub shards: &'a [PathBuf],
     /// The configuration file whose accepted survivors the run is held to.
     pub ledger: Option<&'a Path>,
+    /// Whether the census of the walk's own decisions is re-derived.
+    pub sites: bool,
 }
 
 /// Re-decides one completed engine run from its own report, recording, and ledger.
@@ -373,6 +375,7 @@ pub fn engine_audit(asked: &EngineRun<'_>) -> Result<engineaudit::Audit, enginea
                 .map(|(name, text)| (name.clone(), text.as_str()))
                 .collect(),
             ledger: ledger.as_deref(),
+            sites: asked.sites,
             reached: reached.as_deref(),
             catalog: catalog.as_deref(),
             probe_logs,

@@ -343,6 +343,9 @@ pub struct SiteRecord {
     /// Why the site was passed over, when it was.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub skip: Option<String>,
+    /// What the walk has to say about the decision beyond its reason: the text of a marker, or the shape a rule declined to edit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 /// How many sites one reason passed over.

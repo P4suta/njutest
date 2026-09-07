@@ -111,7 +111,7 @@ jobs:
             [ -f "$run/run-report-v1.json" ] || continue
             echo "== $run"
             ./target/release/xtask engine-audit "$run" \
-              --trace "$run/trace" --ledger .rust-mutants.toml || status=1
+              --trace "$run/trace" --sites --ledger .rust-mutants.toml || status=1
           done
           exit "$status"
       - name: Say what moved since the last complete run

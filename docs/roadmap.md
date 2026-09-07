@@ -33,6 +33,39 @@ that lets it be seen, tested, and audited — and both are completion criteria.
 | M11 ✓ | The Rust-shaped gaps | fifty-one operators, mutation inside the assertion macros, the files `include!` pastes in, `#![no_std]` crates, a proc-macro crate's own tests, mutations routed to a library's documentation | six fixtures with fate tables, the rule-order guard, the skip reasons that are now emitted rather than named, a target cargo runs rather than the engine | every limitation the docs list is one a report carries |
 | E5 ✓ | The engine sees itself | `--trace[=DIR]` on every command, `trace summary`/`check`/`diff`, typed `verify`/`probe-exec`/`witness`/`route` records, sub-phases through `prepare`, `Session::route` as a question anyone can ask, and the byte span and source digest a reader re-mints an identity from | a scripted toolchain the tests drive instead of cargo, the suite cut into an inner loop that starts nothing and a `toolchain_` half that does, `cargo xtask engine-audit` re-deciding a run in nine layers, three committed runs it re-decides, the dogfood ledger and its weekly shard job, and one test per ledger the documentation keeps | every judged mutant leaves one route record, `engine-audit --trace` re-decides three committed runs with no violations, and `mise run test:fast` starts no cargo |
 | E6 ✓ | The contracts and the code (the engine) | a run compiles what it is told to (`[build]`, features, target, profile), it says which test noticed a mutation and what signal a process died from, a tree that reaches outside itself or does not link is refused before any round, a build script's generated code is skipped by name, a `harness = false` target answers by exiting, documented examples are a target a run can switch off, `build.rustflags` is read and put back rather than refusing the measurement, a crate that forbids what the guards allow is skipped whole, a cancelled build is a cancellation, attribution reads every span, bisection names what it isolated and what interacts, the budget is derived from what the target measured, four mutants are measured at once and delivered as they finish, coverage is on by default, a branch or a probe discharges a target that could not have noticed, and a survivor is asked whether the compiler renders it at all | `cargo::config` and `cargo::manifest` read what cargo does not report, `Session::judge`/`describe`/`source`, the driver and the report model in the engine, `Observer` and the worker pool, `prove::discharges` as a pure function, the evidence a run keeps for its own audit, the `proofs` layer that re-derives every discharge, `cache`/`select`/`identical`/`evidence` records, and eight fixtures for eight things nothing measured | `run --jobs 4 --probe` completes on the engine itself and `engine-audit --trace --ledger` re-decides it with no violations |
+| E7 ✓ | Every place says what it is for | eighteen more operators and three more families — a match arm asked what it is for, a jump swapped, a terminal `else` dropped, a literal moved by one — a return type the syntax cannot default stated rather than guessed, every branch of a returned `if` or `match` a return site of its own, and `rust-mutants: skip` and `[[mutation.skip]]` as the two ways an author says what to pass over and why | `Form::M`, the guard written where an arm had none, the census that refuses a place the walk passed over silently, the item path every candidate now carries, locator-form expectations that outlive an edit elsewhere in the file, the `skip-claim` record, the `unmatched-skip` finding, the `sites` audit layer, and `fixture-annotated` | every place a rule targets is a mutant or a skip with a reason, and a claim that hides nothing is a finding rather than a comment nobody notices |
+
+## What E7 closed
+
+The walk had places it passed over in silence. A `const fn` body was counted
+as a `const-context`, a condition that binds with `let` and a range with no
+end were counted as nothing at all, and a return type the syntax cannot
+default produced a candidate the compiler would refuse — a refusal that reads
+as a fact about the program rather than a decision the tool made. Each is a
+reason now, and `crates/rust-mutants/tests/census.rs` is what holds it: for
+every file it walks, the decisions are exactly the candidates plus the skips.
+`cargo xtask engine-audit --sites` re-derives the same count from a real run's
+recording.
+
+The operator table grew from fifty-one rules in twelve families to sixty-nine
+in fifteen. A `match` had no operator of its own, though two questions about
+one are worth asking: does anything notice when an arm stops matching, and
+does anything notice when its guard stops narrowing it. An arm without a guard
+has nothing to replace, so Form M writes one — the only guard shape that adds
+syntax rather than replacing it. A function returns from every branch of a
+returned `if` or `match`, and only the whole expression was a site, so a suite
+that noticed the whole could notice nothing about one branch and the run said
+it was fine.
+
+A reviewer who had decided a place was not worth measuring had nowhere to
+write it down. `// rust-mutants: skip <reason>` is where, and
+`[[mutation.skip]]` is the same decision from the configuration file. Both
+require the reason, because a skip nobody explained is one nobody can review,
+and both report a claim that hides nothing rather than letting it quietly stop
+meaning anything when the code under it moves. An expectation can now name its
+mutant by where it is rather than by an identity minted from the whole file's
+digest, so a claim survives an edit anywhere else in the file and the run says
+where the code went.
 
 ## What E6 closed
 

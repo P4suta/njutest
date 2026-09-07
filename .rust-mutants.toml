@@ -12,10 +12,10 @@
 version = 1
 
 [project]
-packages = ["rust-mutants"]
+packages = ["rust-mutants", "rust-mutants-cli", "xtask"]
 
 [mutation]
-tier = "balanced"
+tier = "all"
 probe = true
 
 [execution]

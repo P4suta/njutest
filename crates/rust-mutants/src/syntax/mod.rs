@@ -332,6 +332,7 @@ impl FileDiscovery {
                     rule: decision.rule.clone(),
                     form: decision.form.map(|form| form.letter().to_owned()),
                     skip: decision.skip.map(|reason| reason.name().to_owned()),
+                    note: decision.note.clone(),
                 })
                 .collect(),
             skips: self

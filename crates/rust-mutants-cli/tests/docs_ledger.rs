@@ -90,8 +90,18 @@ fn the_engine_ledger_of_this_repository_is_one_the_reader_accepts() {
     let config = parsed.expect("the ledger");
     assert_eq!(
         config.project.packages,
-        vec!["rust-mutants".to_owned()],
-        "the ledger measures the engine"
+        vec![
+            "rust-mutants".to_owned(),
+            "rust-mutants-cli".to_owned(),
+            "xtask".to_owned(),
+        ],
+        "the ledger measures the engine, the command line it ships behind, and the audit that \
+         re-decides its runs"
+    );
+    assert_eq!(
+        config.mutation.tier,
+        rust_mutants::rule::Tier::All,
+        "a tool that asks a project for every operator asks itself for them too"
     );
     assert!(
         config.mutation.coverage,

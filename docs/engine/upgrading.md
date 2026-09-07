@@ -75,6 +75,50 @@ now names the target that failed with nothing active and says that
 `--no-verify` is the way past it.
 
 
+## Upgrading to E7
+
+**Eighteen more operators, in three more families.** The table went from
+fifty-one rules in twelve families to sixty-nine in fifteen. `balanced` gained
+`negate-bool-method`, `return-err-default`, `match-arm` and `control-flow`;
+`strong` gained eight iterator and slice swaps; `all` gained
+`delete-else-branch` and the `literal` family. A run of the same tree will
+find survivors it did not find before — that is what the operators are for —
+and `[mutation] operators = [...]` pins exactly the rules you had if you want
+the old set back. The catalog digest changed, so stored outcomes are cold once.
+
+**A return type the syntax cannot default no longer produces a candidate the
+compiler refuses.** `-> impl Trait`, `-> &mut T`, a raw pointer, a function
+type, a type a macro writes, a generic parameter nothing bound to `Default`,
+and `Box`/`Rc`/`Arc` around a trait object are stated as
+`unstated-return-type` instead. Mutants you had accepted at those places are
+gone, and their expectations will read as `unmatched` until you take them out.
+A `&str`, a `&[T]`, and the arguments of an `Option` or a `Result` that spell
+a default keep their return replacement.
+
+**Every branch of a returned `if` or `match` is a return site.** A function
+that chooses between three answers carries four return replacements now rather
+than one. The whole-expression mutant keeps the identity it had.
+
+**A method swap is guarded at the end of the chain its call is a receiver
+in.** `skip` and `take` do not produce the same type, so the two branches of a
+guard at the call have no type to be. Nothing about the mutations changes;
+where the guard sits does.
+
+**`rust-mutants: skip <reason>` in the source, and `[[mutation.skip]]` in the
+configuration.** Both hide places, both require the reason, and both report a
+claim that hid nothing as an `unmatched-skip` finding, which is a finding your
+run did not have before. A file whose markers all still match is unaffected.
+
+**An expectation can be addressed by a locator.** `path`, `item`, `rule` and
+`original`, with `line` as a hint, name a mutation by where it is rather than
+by an identity the next edit to the file will change. Existing `id` claims
+keep working; never write both forms in one entry.
+
+**Reports and recordings carry more.** An expectation row gained `locator`, a
+site record gained `note`, the trace vocabulary gained `skip-claim`, and the
+findings enum gained `unmatched-skip`. All are optional additions at schema
+version 1; a reader from this release or later accepts them.
+
 ## Upgrading to E6
 
 **A run compiles what you tell it to.** The `[build]` section and its flags —

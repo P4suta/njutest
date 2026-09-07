@@ -479,6 +479,7 @@ fn one_of_each_preparation(recorder: &Recorder) {
             rule: "le-to-lt".to_owned(),
             form: Some("C".to_owned()),
             skip: None,
+            note: None,
         }],
         skips: vec![rust_mutants::trace::SkipCount {
             reason: "macro-invocation".to_owned(),
