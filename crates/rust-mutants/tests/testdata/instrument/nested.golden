@@ -188,10 +188,15 @@ mod __rm {
         if known != TOUCH_UNKNOWN {
             return known == TOUCH_ON;
         }
-        let on = match __rm_std::env::var("RUST_MUTANTS_TOUCH") {
+        let asked = match __rm_std::env::var("RUST_MUTANTS_TOUCH") {
             __rm_std::result::Result::Ok(value) => !value.is_empty(),
             __rm_std::result::Result::Err(_) => false,
         };
+        let ours = match __rm_std::env::var("RUST_MUTANTS_CATALOG") {
+            __rm_std::result::Result::Ok(value) => value == CATALOG,
+            __rm_std::result::Result::Err(_) => false,
+        };
+        let on = asked && ours;
         TOUCHING.store(if on { TOUCH_ON } else { TOUCH_OFF }, __rm_std::sync::atomic::Ordering::Relaxed);
         on
     }

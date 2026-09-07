@@ -11,7 +11,7 @@
 use std::collections::BTreeSet;
 use std::process::Command;
 
-use rust_mutants::instrument::{MODULE_STEM, Rendering, TOUCH_ENV, render};
+use rust_mutants::instrument::{CATALOG_ENV, MODULE_STEM, Rendering, TOUCH_ENV, render};
 use rust_mutants::rule::Tier;
 use rust_mutants::testkit::compile::ScriptedCompile;
 use rust_mutants::touch::{self, TouchError};
@@ -63,7 +63,7 @@ fn ran(name: &str, body: &str, touching: bool) -> String {
     drop(std::fs::remove_file(&log));
     let mut command = Command::new(dir.join(name));
     command.env_remove("RUST_MUTANTS_ACTIVE");
-    command.env_remove("RUST_MUTANTS_CATALOG");
+    command.env(CATALOG_ENV, CATALOG);
     if touching {
         command.env(TOUCH_ENV, &log);
     } else {
@@ -159,6 +159,53 @@ fn a_marker_records_that_control_entered_the_body_a_condition_gates() {
         None,
         "a test that evaluated the condition and never took the branch cannot have noticed a \
          mutation that only narrows it"
+    );
+}
+
+#[test]
+fn a_process_built_from_another_catalog_writes_nothing_into_this_run_s_record() {
+    let (module, _) = module();
+    let dir = mjutest_devkit::paths::workspace_root()
+        .join("target/touch-runtime")
+        .join(format!("{}-foreign", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("a place to build");
+    let source = dir.join("foreign.rs");
+    std::fs::write(
+        &source,
+        format!("{module}\nfn main() {{ __rm::active(0); __rm::body(0); }}\n"),
+    )
+    .expect("write");
+    let built = Command::new("rustc")
+        .args(["--edition", "2024", "--crate-type", "bin"])
+        .arg("--out-dir")
+        .arg(&dir)
+        .arg(&source)
+        .output()
+        .expect("rustc runs");
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let log = dir.join("foreign.touch");
+    drop(std::fs::remove_file(&log));
+    let output = Command::new(dir.join("foreign"))
+        .env_remove("RUST_MUTANTS_ACTIVE")
+        .env(TOUCH_ENV, &log)
+        .env(CATALOG_ENV, "b".repeat(64))
+        .output()
+        .expect("the program runs");
+    assert!(
+        output.status.success(),
+        "a binary of another catalog is not this run's to refuse, only its record to stay out \
+         of: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !log.exists(),
+        "a record is about one catalog, and a process built from another writing into it is what \
+         makes the whole of it unreadable: {:?}",
+        std::fs::read_to_string(&log)
     );
 }
 

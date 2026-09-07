@@ -227,6 +227,12 @@ each of them runs more rather than less:
 - a target the engine does not start itself — a documented example, one the
   project configured a runner for — is not asked (`touch-not-recorded`), and
   every test of it stays in every route;
+- a record that does not read back is refused whole (`touch-log-unreadable`),
+  because lines from several processes are interleaved in it and reading the
+  part that parsed would be a smaller wrong answer. A process records only
+  into a record about the catalog it was built from, so a project whose own
+  tests build and run instrumented trees — this engine's do — does not poison
+  the record of the run that started them;
 - a site reached on a thread nothing can name a test after — the main thread,
   a benchmark, one a test spawned — reaches **every** test of its target,
   because the record could not say which one;

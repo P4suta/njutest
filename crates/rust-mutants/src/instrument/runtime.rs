@@ -40,6 +40,13 @@ pub const CATALOG_ENV: &str = "RUST_MUTANTS_CATALOG";
 pub const STALE_CATALOG_EXIT: i32 = 97;
 
 /// Names the file the guards append to, saying which of the process's threads reached them.
+///
+/// A record is about one catalog, and a process records into it only when
+/// [`CATALOG_ENV`] names the catalog that process was built from. A project
+/// whose own tests build and run instrumented trees of their own — this
+/// engine's do — would otherwise have those children append to the record of
+/// the run that started them, and a record with two catalogs in it is one the
+/// reader refuses whole.
 pub const TOUCH_ENV: &str = "RUST_MUTANTS_TOUCH";
 
 /// The exit status of a test process asked to record what its guards saw that could not.
@@ -287,10 +294,15 @@ mod {{MODULE}} {
         if known != TOUCH_UNKNOWN {
             return known == TOUCH_ON;
         }
-        let on = match __rm_std::env::var("{{TOUCH_ENV}}") {
+        let asked = match __rm_std::env::var("{{TOUCH_ENV}}") {
             __rm_std::result::Result::Ok(value) => !value.is_empty(),
             __rm_std::result::Result::Err(_) => false,
         };
+        let ours = match __rm_std::env::var("{{CATALOG_ENV}}") {
+            __rm_std::result::Result::Ok(value) => value == CATALOG,
+            __rm_std::result::Result::Err(_) => false,
+        };
+        let on = asked && ours;
         TOUCHING.store(if on { TOUCH_ON } else { TOUCH_OFF }, __rm_std::sync::atomic::Ordering::Relaxed);
         on
     }

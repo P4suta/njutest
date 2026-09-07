@@ -504,7 +504,8 @@ pub fn environment(
         env.insert(OsString::from(PROBE_ENV), probe.as_os_str().to_owned());
     }
     if let Some(touch) = context.touch {
-        env.insert(OsString::from(TOUCH_ENV), touch.as_os_str().to_owned());
+        env.insert(OsString::from(TOUCH_ENV), touch.log.as_os_str().to_owned());
+        env.insert(OsString::from(CATALOG_ENV), OsString::from(touch.catalog));
     }
     match (context.profile, scratch) {
         (Some(profile), _) => {
@@ -680,10 +681,24 @@ pub struct Context<'a> {
     pub active: Option<(&'a str, &'a str)>,
     /// Where a probe process appends what it infected. `None` runs a process that records nothing.
     pub probe: Option<&'a Path>,
-    /// Where the guards append which of the process's threads reached them. `None` runs a process whose guards record nothing.
-    pub touch: Option<&'a Path>,
+    /// Where the guards append which of the process's threads reached them, and the catalog the record is about. `None` runs a process whose guards record nothing.
+    pub touch: Option<Touching<'a>>,
     /// Where a coverage-instrumented process writes what it executed. `None` runs a process that measures nothing.
     pub profile: Option<&'a Path>,
+}
+
+/// Where the guards of one process append what they reached, and the catalog the record is about.
+///
+/// The catalog travels with the path because a record is about one catalog. A
+/// process built from another — a project whose own tests build and run
+/// instrumented trees, as this engine's do — records nothing rather than
+/// appending to somebody else's record and making the whole of it unreadable.
+#[derive(Debug, Clone, Copy)]
+pub struct Touching<'a> {
+    /// The file to append to.
+    pub log: &'a Path,
+    /// The catalog every guard that may write to it was generated from.
+    pub catalog: &'a str,
 }
 
 /// What one mutant execution established.

@@ -104,7 +104,10 @@ fn ran(
     building: &Building<'_>,
 ) -> MutantResult {
     let Building {
-        cancel, workspace, ..
+        cancel,
+        workspace,
+        catalog,
+        ..
     } = *building;
     if let Some(path) = log {
         drop(std::fs::remove_file(path));
@@ -115,7 +118,10 @@ fn ran(
         sysroot: workspace.toolchain.sysroot(),
         active: None,
         probe: None,
-        touch: log,
+        touch: log.map(|log| execute::Touching {
+            log,
+            catalog: catalog.digest(),
+        }),
         profile: None,
     };
     let request = ExecRequest::new(target).with_scratch(scratch);

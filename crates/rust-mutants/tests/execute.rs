@@ -303,7 +303,10 @@ fn the_guards_are_told_where_to_record_exactly_when_the_run_asks_them_to() {
             sysroot: None,
             active: None,
             probe: None,
-            touch: Some(log),
+            touch: Some(rust_mutants::execute::Touching {
+                log,
+                catalog: "digest",
+            }),
             profile: None,
         },
         &target(),
@@ -314,6 +317,13 @@ fn the_guards_are_told_where_to_record_exactly_when_the_run_asks_them_to() {
             .iter()
             .any(|(name, value)| name == "RUST_MUTANTS_TOUCH" && value == log.as_os_str()),
         "{asked:?}"
+    );
+    assert!(
+        asked
+            .iter()
+            .any(|(name, value)| name == "RUST_MUTANTS_CATALOG" && value == "digest"),
+        "a record is about one catalog, and a process records into it only when it was built \
+         from that one: {asked:?}"
     );
 }
 

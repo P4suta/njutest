@@ -36,7 +36,9 @@ every guard the instrumented tree carries.
 
 The guards report what they reached, on that run.
 
-`RUST_MUTANTS_TOUCH` names a log. When it is set, `active(index)` records the
+`RUST_MUTANTS_TOUCH` names a log and `RUST_MUTANTS_CATALOG` says which catalog
+it is about; a process records only when the catalog it was built from is that
+one. When both agree, `active(index)` records the
 index against the thread that reached it before it answers; libtest gives each
 test a thread of its own named after the test, on every platform that has
 threads and at every concurrency level (`library/test/src/lib.rs`,
