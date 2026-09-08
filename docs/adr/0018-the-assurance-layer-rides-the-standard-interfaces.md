@@ -38,8 +38,24 @@ One constraint decides the rest. `nextest` runs each test in its own process;
 that is its central design choice and where its isolation comes from. The
 inner loop of a mutation run needs the opposite: many tests in one process
 under one activation, which is what makes the schemata form cheap at all.
-Handing that loop to a per-test runner multiplies process starts by the number
-of tests in every target. This is arithmetic, not preference.
+Handing that loop to a per-test runner multiplies process starts by however
+many tests a route names per pair. This workspace measures itself:
+
+```
+WORK  started=825 of 19074 pairs across 66 targets; 95.7% removed
+      tests=4064 of 172244; 97.6% removed
+```
+
+825 processes carry 4064 tests, so the factor is 4.9 here — and it is 9.0
+against the catalog before routing, because a proof that removes work removes
+whole pairs while the tests inside the pairs that remain stay where they are.
+The better the layers get, the worse the trade becomes. This is arithmetic,
+not preference.
+
+The engine is already on the standard interface for the same loop, and the
+interface is the harness rather than a runner: routing at `test` granularity
+hands one process several test names as position filters, which is libtest's
+own command line doing what it documents.
 
 ## Decision
 
