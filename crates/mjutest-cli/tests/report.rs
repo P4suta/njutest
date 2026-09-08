@@ -15,6 +15,12 @@ use mjutest_cli::report::{
 };
 
 /// A report that satisfies every invariant, for a test to break one thing in.
+/// One field of a report, and how to leave it saying nothing.
+type Blank = (&'static str, fn(&mut Report));
+
+/// One fact about git, and how to make a report claim it.
+type Claim = (&'static str, fn(&mut Git));
+
 fn sound() -> Report {
     let mut report = Report::new(
         "20260905T081500Z-abcdef",
@@ -365,4 +371,100 @@ fn a_target_record_that_says_it_failed_is_not_answered_by_an_accounting_that_say
          counts and a reader who reads the rows would come to two different answers \
          about the same run: {violations:?}"
     );
+}
+
+#[test]
+fn a_field_a_report_leaves_empty_is_named_by_the_violation_that_refuses_it() {
+    let blank: [Blank; 9] = [
+        ("schema", |report: &mut Report| report.schema.clear()),
+        ("run_id", |report: &mut Report| report.run_id.clear()),
+        ("repository.root_name", |report: &mut Report| {
+            report.repository.root_name.clear();
+        }),
+        ("repository.workspace_digest", |report: &mut Report| {
+            report.repository.workspace_digest.clear();
+        }),
+        ("repository.configuration_digest", |report: &mut Report| {
+            report.repository.configuration_digest.clear();
+        }),
+        ("repository.git.commit", |report: &mut Report| {
+            report.repository.git.commit.clear();
+        }),
+        ("repository.git.branch", |report: &mut Report| {
+            report.repository.git.branch.clear();
+        }),
+        ("toolchain.rustc", |report: &mut Report| {
+            report.toolchain.rustc.clear();
+        }),
+        ("provenance.identity", |report: &mut Report| {
+            report.provenance.identity.clear();
+        }),
+    ];
+
+    for (field, empty) in blank {
+        let mut report = sound();
+        empty(&mut report);
+        let violations = validate_for_persistence(&report);
+        assert!(
+            violations.iter().any(|violation| matches!(
+                violation,
+                Violation::EmptyRequiredValue { field: named } if named == field
+            )),
+            "a report that says nothing where {field} goes is one a reader cannot check, \
+             and a violation that does not name the field leaves them to find it: \
+             {violations:?}"
+        );
+    }
+}
+
+#[test]
+fn a_run_that_could_not_ask_git_says_so_and_claims_none_of_its_facts() {
+    let mut report = sound();
+    report.repository.git = Git::unavailable();
+    let stated = validate_for_persistence(&report);
+    assert!(
+        stated.iter().any(|violation| matches!(
+            violation,
+            Violation::MissingLimitation { name, .. } if name == "git-metadata-unavailable"
+        )),
+        "a run that could not name the commit it verified has to state that, or a reader \
+         comparing two reports has no way to know which tree either was about: {stated:?}"
+    );
+
+    let claiming: [Claim; 5] = [
+        ("repository.git.commit", |git: &mut Git| {
+            git.commit = "0123456789abcdef0123456789abcdef01234567".to_owned();
+        }),
+        ("repository.git.branch", |git: &mut Git| {
+            git.branch = "main".to_owned();
+        }),
+        ("repository.git.dirty", |git: &mut Git| {
+            git.dirty = true;
+        }),
+        ("repository.git.merge_base", |git: &mut Git| {
+            git.merge_base = Some("fedcba98".to_owned());
+        }),
+        ("repository.git.changed_files", |git: &mut Git| {
+            git.changed_files = vec!["src/lib.rs".to_owned()];
+        }),
+    ];
+
+    for (field, claim) in claiming {
+        let mut report = sound();
+        report.repository.git = Git::unavailable();
+        report.limitations = vec![Limitation::new(
+            "git-metadata-unavailable",
+            "git said nothing",
+        )];
+        claim(&mut report.repository.git);
+        let violations = validate_for_persistence(&report);
+        assert!(
+            violations.iter().any(|violation| matches!(
+                violation,
+                Violation::UnavailableWithFacts { field: named } if named == field
+            )),
+            "git was not available and {field} says otherwise; one of the two is untrue \
+             and a report may not carry both: {violations:?}"
+        );
+    }
 }
