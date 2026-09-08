@@ -15,9 +15,8 @@ use rust_mutants::EngineError;
 use rust_mutants::report::explain;
 use rust_mutants::run::Expectation;
 use rust_mutants::runner::Cancel;
-use rust_mutants::session::{self, Request, Route, Session};
+use rust_mutants::session::{self, Request, Session};
 use rust_mutants::workspace::{self, Workspace};
-use rust_mutants::{snapshot, tempowner};
 
 use crate::error::CliError;
 use crate::report::html;
@@ -28,7 +27,9 @@ use crate::{Environment, cli, report, run};
 
 mod bundle;
 mod doctor;
+mod estimate;
 mod stored;
+mod sweep;
 
 use bundle::{Gathering, bundle};
 use doctor::{Asked, doctor};
@@ -130,8 +131,8 @@ fn kept_command(
             kept,
             clear_outcomes,
             cache_dir,
-        } => cache(
-            &Sweeping {
+        } => sweep::cache(
+            &sweep::Sweeping {
                 root: root.as_deref(),
                 gc: *gc,
                 all: *all,
@@ -755,7 +756,7 @@ fn whole(
     };
     if dry_run {
         write(stdout, &crate::ui::phases(phases));
-        write(stdout, &estimate(session, filter));
+        write(stdout, &estimate::estimate(session, filter));
         return Ok(0);
     }
     let mut result = measured_run(
@@ -964,159 +965,6 @@ fn addressed(text: &str) -> Result<(String, Option<(u32, u32)>), CliError> {
         return Err(refuse());
     }
     Ok((path.to_owned(), Some((from, to))))
-}
-
-/// What a run would cost, from what preparing established and before a mutant is executed.
-fn estimate(session: &Session, filter: &run::Filter) -> String {
-    let targets = u64::try_from(session.targets().len()).unwrap_or(u64::MAX);
-    let held: u64 = session
-        .targets()
-        .iter()
-        .map(|target| u64::from(session.tests_of(&target.id)))
-        .sum();
-    let mut counted = Estimated::default();
-    let mut text = String::new();
-    for index in session.accepted() {
-        let Some(mutant) = session.catalog().by_index(*index) else {
-            continue;
-        };
-        counted.cataloged = counted.cataloged.saturating_add(1);
-        let at = session.position(mutant);
-        let line = at.map_or(0, |one| one.line);
-        if !filter.is_empty() && !filter.selects(mutant, line) {
-            counted.unselected = counted.unselected.saturating_add(1);
-            continue;
-        }
-        let route = session.route(mutant);
-        let reaching = u64::try_from(route.reaching().len()).unwrap_or(u64::MAX);
-        let discharged = u64::try_from(route.discharged().len()).unwrap_or(u64::MAX);
-        counted.discharged = counted.discharged.saturating_add(discharged);
-        counted.unreached = counted
-            .unreached
-            .saturating_add(targets.saturating_sub(reaching).saturating_sub(discharged));
-        if reaching == 0 {
-            counted.nothing_to_ask = counted.nothing_to_ask.saturating_add(1);
-        } else {
-            counted.selected = counted.selected.saturating_add(1);
-            counted.pairs = counted.pairs.saturating_add(reaching);
-            counted.duration = counted.duration.saturating_add(priced(session, &route));
-            counted.tests = counted.tests.saturating_add(
-                u64::try_from(
-                    route.started(|target| usize::try_from(session.tests_of(target)).unwrap_or(1)),
-                )
-                .unwrap_or(u64::MAX),
-            );
-        }
-        counted.tests_whole = counted.tests_whole.saturating_add(held);
-        let written = writeln!(
-            text,
-            "#{:<5} {}  {:<22} {}:{}  {}  {} targets",
-            mutant.index,
-            mutant.display_id,
-            mutant.candidate.rule.name,
-            mutant.candidate.path,
-            line,
-            route.granularity(),
-            reaching
-        );
-        debug_assert!(written.is_ok(), "writing to a String cannot fail");
-    }
-    text.push_str(&counted.said(targets));
-    text
-}
-
-/// What a dry run counted, in pairs of one mutant and one target.
-#[derive(Debug, Clone, Copy, Default)]
-struct Estimated {
-    /// Every mutant the catalog holds.
-    cataloged: u64,
-    /// The mutants a filter left out.
-    unselected: u64,
-    /// The mutants with at least one target to ask.
-    selected: u64,
-    /// The mutants no target would be asked about.
-    nothing_to_ask: u64,
-    /// The pairs a run would start at most, before one target answers for the rest.
-    pairs: u64,
-    /// The pairs the measurement removed.
-    unreached: u64,
-    /// The pairs a proof removed.
-    discharged: u64,
-    /// The tests a run would start, which is what the pairs are asked for.
-    tests: u64,
-    /// The tests a run that asked every test of every target about every mutant would start.
-    tests_whole: u64,
-    /// What those tests would take on this machine, target by target.
-    duration: std::time::Duration,
-}
-
-impl Estimated {
-    /// The estimate, counted in work first and guessed at in time last.
-    ///
-    /// A count is the same on every machine; a duration is a guess about this
-    /// one. The count is what a person decides by, so it comes first and the
-    /// guess comes last, marked as one.
-    fn said(&self, targets: u64) -> String {
-        let whole = self.cataloged.saturating_mul(targets);
-        let removed = whole.saturating_sub(self.pairs);
-        let widened =
-            |count: u64| u32::try_from(count).map_or_else(|_| f64::from(u32::MAX), f64::from);
-        let share = if whole == 0 {
-            0.0
-        } else {
-            widened(removed) / widened(whole) * 100.0
-        };
-        let seconds = self
-            .duration
-            .as_secs()
-            .saturating_add(u64::from(self.duration.subsec_nanos() > 0));
-        let tests_share = if self.tests_whole == 0 {
-            0.0
-        } else {
-            widened(
-                self.tests_whole
-                    .saturating_sub(self.tests.min(self.tests_whole)),
-            ) / widened(self.tests_whole)
-                * 100.0
-        };
-        format!(
-            "\nWOULD START  {} of {whole} pairs ({} mutants against {targets} targets); \
-             {share:.1}% removed\n\
-             WHICH RUN    {} of {} tests; {tests_share:.1}% removed\n\
-             REMOVED BY   unreached={} discharged={} unselected={} nothing-to-ask={}\n\
-             AT MOST      {} mutants execute; one target that answers ends the rest\n\
-             ROUGHLY      {}:{:02}:{:02} on this machine, being each target's own baseline \
-             scaled by the tests its route names, which is a guess about the machine rather \
-             than about the work\n",
-            self.pairs,
-            self.cataloged,
-            self.tests,
-            self.tests_whole,
-            self.unreached,
-            self.discharged,
-            self.unselected,
-            self.nothing_to_ask,
-            self.selected,
-            seconds / 3600,
-            seconds % 3600 / 60,
-            seconds % 60,
-        )
-    }
-}
-
-/// What one route would take on this machine, priced from what this session timed.
-///
-/// A target this session never timed is priced at the slowest one it did,
-/// which is the guess that errs toward too long.
-fn priced(session: &Session, route: &Route) -> std::time::Duration {
-    route.costing(|target| {
-        session::Timing::new(
-            session
-                .baseline(target)
-                .unwrap_or_else(|| session.slowest_baseline()),
-            session.tests_of(target),
-        )
-    })
 }
 
 /// One finding, put back to the tests exactly as the run that found it did.
@@ -1540,151 +1388,6 @@ fn written(text: &str, output: Option<&Path>, stdout: &mut dyn Write) -> Result<
     Ok(())
 }
 
-/// What a `cache` command was asked to do.
-#[derive(Debug, Clone, Copy)]
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "each is one switch a person sets on the command line, and a switch is a bool \
-              wherever it is stored"
-)]
-struct Sweeping<'a> {
-    /// The workspace root, whose report directory holds the ledger of what was kept.
-    root: Option<&'a Path>,
-    /// Remove what is abandoned rather than only saying how much there is.
-    gc: bool,
-    /// Remove every build cache no live run has locked, not only the unowned ones.
-    all: bool,
-    /// Remove the directories a run was asked to keep, too.
-    kept: bool,
-    /// Empty the store of what earlier runs established.
-    clear_outcomes: bool,
-    /// Where the store is, when it is not under the user's cache directory.
-    cache_dir: Option<&'a Path>,
-}
-
-fn cache(
-    asked: &Sweeping<'_>,
-    environment: &Environment,
-    stdout: &mut dyn Write,
-) -> Result<u8, CliError> {
-    let parent = &environment.temp_directory;
-    let store = crate::outcomes::Store::new(
-        asked
-            .cache_dir
-            .unwrap_or(environment.cache_directory.as_path()),
-    );
-    if asked.clear_outcomes {
-        let (records, bytes) = store.clear();
-        write(
-            stdout,
-            &format!(
-                "outcomes    {} removed, {bytes} bytes, from {}\n",
-                records,
-                store.root().display()
-            ),
-        );
-        return Ok(0);
-    }
-    let now = Timestamp::now();
-    let scratch = [snapshot::DIR_PREFIX];
-    let caches = [workspace::TARGET_DIR_PREFIX];
-    let nothing = |_dir: &Path| Ok(());
-    let (left, taken) = match (asked.gc, asked.all) {
-        (true, true) => (
-            tempowner::sweep(parent, &scratch, now),
-            tempowner::reclaim(parent, &caches, now),
-        ),
-        (true, false) => (
-            tempowner::sweep(parent, &scratch, now),
-            tempowner::reclaim_with(parent, &caches, now, &nothing),
-        ),
-        (false, _) => (
-            tempowner::sweep_with(parent, &scratch, now, &nothing),
-            tempowner::reclaim_with(parent, &caches, now, &nothing),
-        ),
-    };
-    let left = left.map_err(|source| CliError::writing(parent, source))?;
-    let taken = taken.map_err(|source| CliError::writing(parent, source))?;
-    let (records, bytes) = store.size();
-    let mut text = String::new();
-    let verb = if asked.gc { "removed" } else { "reclaimable" };
-    let caches_verb = if asked.gc && asked.all {
-        "removed"
-    } else {
-        "reclaimable"
-    };
-    let written = write!(
-        text,
-        "temp        {}\ncaches      {} {}, {} bytes; {} still in use\nsnapshots   {} {}, {} bytes; {} still in use, {} preserved on purpose\noutcomes    {} records, {} bytes, at {}\nmeasurements {}\nfailures    {}\n",
-        parent.display(),
-        taken.removed.len(),
-        caches_verb,
-        taken.removed_bytes,
-        taken.live,
-        left.removed.len(),
-        verb,
-        left.removed_bytes,
-        left.live,
-        left.kept,
-        records,
-        bytes,
-        store.root().display(),
-        measurements(environment),
-        left.failures.len().saturating_add(taken.failures.len()),
-    );
-    debug_assert!(written.is_ok(), "writing to a String cannot fail");
-    write(stdout, &text);
-    write(stdout, &preserved(asked, environment)?);
-    Ok(0)
-}
-
-/// What measuring trees established, which a run of an unchanged tree reads instead of measuring again.
-///
-/// A measurement is filed under everything it is a function of, so one that no
-/// longer answers is one no key names: they go stale by being unreachable
-/// rather than by being wrong, and a sweep never has to decide which.
-fn measurements(environment: &Environment) -> String {
-    let directory = environment
-        .cache_directory
-        .join(rust_mutants::reach::remembered::LAYOUT);
-    let Ok(entries) = std::fs::read_dir(&directory) else {
-        return format!("none yet, at {}", directory.display());
-    };
-    let (mut held, mut bytes) = (0_u64, 0_u64);
-    for entry in entries.flatten() {
-        if entry.path().extension().is_some_and(|one| one == "json") {
-            held = held.saturating_add(1);
-            bytes = bytes.saturating_add(entry.metadata().map_or(0, |it| it.len()));
-        }
-    }
-    format!("{held} trees, {bytes} bytes, at {}", directory.display())
-}
-
-/// The directories runs were asked to keep, listed or removed.
-fn preserved(asked: &Sweeping<'_>, environment: &Environment) -> Result<String, CliError> {
-    let root = asked
-        .root
-        .map_or_else(|| environment.working_directory.clone(), Path::to_path_buf);
-    let directory = root.join(crate::config::DEFAULT_REPORTS_DIRECTORY);
-    if asked.kept {
-        let (removed, _empty) = crate::kept::Ledger::clear(&directory)
-            .map_err(|source| CliError::writing(&directory, source))?;
-        return Ok(format!("kept        {removed} removed\n"));
-    }
-    let ledger = crate::kept::Ledger::read(&directory);
-    let mut text = format!("kept        {}\n", ledger.kept.len());
-    for entry in &ledger.kept {
-        let written = writeln!(
-            text,
-            "            {} ({})",
-            entry.path.display(),
-            entry.run_id
-        );
-        debug_assert!(written.is_ok(), "writing to a String cannot fail");
-    }
-    Ok(text)
-}
-
 /// One file as the engine rewrites it.
 fn instrumented(
     workspace: &Workspace,
@@ -1854,7 +1557,7 @@ fn expectations(settings: &Settings) -> Vec<Expectation> {
         .collect()
 }
 
-fn write(stream: &mut dyn Write, text: &str) {
+pub(super) fn write(stream: &mut dyn Write, text: &str) {
     let _written = stream
         .write_all(text.as_bytes())
         .and_then(|()| stream.flush());
