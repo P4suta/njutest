@@ -381,6 +381,23 @@ pub struct Usage {
     pub exit_code: u8,
 }
 
+/// The same arguments, less the word cargo repeats when it calls a subcommand.
+///
+/// `cargo mjutest verify` runs `cargo-mjutest mjutest verify`, so the
+/// subcommand's own name arrives twice. Dropping it is cargo's convention and
+/// not this program's: called directly, `mjutest mjutest verify` is a mistake,
+/// and saying so is more use than guessing what was meant.
+fn subcommand(mut args: Vec<OsString>) -> Vec<OsString> {
+    let called_by_cargo = args
+        .first()
+        .and_then(|name| std::path::Path::new(name).file_stem())
+        .is_some_and(|stem| stem == "cargo-mjutest");
+    if called_by_cargo && args.get(1).is_some_and(|word| word == "mjutest") {
+        let _repeated = args.remove(1);
+    }
+    args
+}
+
 /// Parses `args`, program name first. A bare invocation is the help text, as it is in goatest.
 ///
 /// # Errors
@@ -389,7 +406,7 @@ pub fn parse<I>(args: I) -> Result<Request, Usage>
 where
     I: IntoIterator<Item = OsString>,
 {
-    let mut args: Vec<OsString> = args.into_iter().collect();
+    let mut args: Vec<OsString> = subcommand(args.into_iter().collect());
     if args.len() <= 1 {
         args.push(OsString::from("--help"));
     }

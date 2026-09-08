@@ -48,7 +48,7 @@ jobs:
             exit 1
           fi
           cargo build --locked --release --workspace
-          for binary in mjutest rust-mutants; do
+          for binary in mjutest cargo-mjutest rust-mutants; do
             said="$("target/release/${binary}" --version)"
             case "${said}" in
               *"${version}"*) ;;

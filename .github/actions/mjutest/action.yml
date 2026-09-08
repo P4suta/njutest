@@ -1,0 +1,89 @@
+# SPDX-FileCopyrightText: 2026 mjutest contributors
+# SPDX-License-Identifier: MIT OR Apache-2.0
+name: mjutest
+description: Run mjutest against this repository and hand its findings to code scanning.
+
+inputs:
+  version:
+    description: 'The mjutest release to install, without the leading v. Defaults to the latest.'
+    required: false
+    default: ""
+  args:
+    description: 'Arguments for `mjutest verify`, e.g. "--package core --offline".'
+    required: false
+    default: ""
+  upload-sarif:
+    description: 'Upload the SARIF projection to code scanning. Needs `security-events: write`.'
+    required: false
+    default: "true"
+  working-directory:
+    description: 'The workspace to verify. The checkout root by default.'
+    required: false
+    default: "."
+
+outputs:
+  verdict:
+    description: 'What the run concluded: ASSURED, CHANGE_ASSURED, SCOPE_ASSURED, DEFECT, INSUFFICIENT, PARTIAL, or ERROR.'
+    value: ${{ steps.verify.outputs.verdict }}
+  report:
+    description: 'The path of the report the run wrote.'
+    value: ${{ steps.verify.outputs.report }}
+
+runs:
+  using: composite
+  steps:
+    - uses: taiki-e/install-action@daa3c1f1f9e335f32fb3b07458d5b2767e3849a5 # v2
+      with:
+        tool: cargo-binstall
+    - name: Install mjutest
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        if [ -n "${VERSION}" ]; then
+          cargo binstall --no-confirm --locked "mjutest@${VERSION}"
+        else
+          cargo binstall --no-confirm --locked mjutest
+        fi
+    # A verdict is not a failure of the step: a DEFECT is what the run is for,
+    # and swallowing the exit code here would hide it. The status is kept and
+    # re-raised after the findings have been uploaded, so a person reads them
+    # in code scanning rather than in a log.
+    - name: Verify
+      id: verify
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        ARGS: ${{ inputs.args }}
+      run: |
+        set -uo pipefail
+        # shellcheck disable=SC2086
+        mjutest verify ${ARGS} | tee mjutest-verify.out
+        status=${PIPESTATUS[0]}
+        verdict=$(awk -F'\t' '$1 == "VERDICT" { print $2 }' mjutest-verify.out)
+        index="reports/latest-any.json"
+        if [ -f "${index}" ]; then
+          directory=$(jq -r .directory "${index}")
+          {
+            echo "report=${directory}/mjutest-assurance-report-v1.json"
+            echo "sarif=${directory}/mjutest-assurance-report-v1.sarif"
+          } >> "${GITHUB_OUTPUT}"
+        fi
+        {
+          echo "verdict=${verdict}"
+          echo "status=${status}"
+        } >> "${GITHUB_OUTPUT}"
+        rm -f mjutest-verify.out
+        exit 0
+    - name: Upload the findings to code scanning
+      if: inputs.upload-sarif == 'true' && steps.verify.outputs.sarif != ''
+      uses: github/codeql-action/upload-sarif@4e94bd11f71e507f7f87df81788dff88d1dacbfb # v3
+      with:
+        sarif_file: ${{ inputs.working-directory }}/${{ steps.verify.outputs.sarif }}
+        category: mjutest
+    - name: Exit with what the run concluded
+      shell: bash
+      env:
+        STATUS: ${{ steps.verify.outputs.status }}
+      run: exit "${STATUS}"

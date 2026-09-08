@@ -226,3 +226,39 @@ fn init_force_replaces_what_is_there() {
         mjutest_cli::config::skeleton()
     );
 }
+
+#[test]
+fn cargo_mjutest_drops_the_word_cargo_gave_it_and_reads_the_rest() {
+    let asked = mjutest_cli::cli::parse(
+        ["cargo-mjutest", "mjutest", "verify", "--offline"]
+            .into_iter()
+            .map(std::ffi::OsString::from),
+    )
+    .expect("cargo calls its subcommands with their own name in argv[1]");
+    let direct = mjutest_cli::cli::parse(
+        ["mjutest", "verify", "--offline"]
+            .into_iter()
+            .map(std::ffi::OsString::from),
+    )
+    .expect("and a person calls it without");
+
+    assert_eq!(
+        format!("{asked:?}"),
+        format!("{direct:?}"),
+        "`cargo mjutest verify` and `mjutest verify` are one command asked for two ways"
+    );
+}
+
+#[test]
+fn a_binary_that_is_not_a_cargo_subcommand_keeps_every_argument_it_was_given() {
+    let refused = mjutest_cli::cli::parse(
+        ["mjutest", "mjutest", "verify"]
+            .into_iter()
+            .map(std::ffi::OsString::from),
+    );
+    assert!(
+        refused.is_err(),
+        "dropping a repeated word is cargo's convention and not this program's: called \
+         directly, `mjutest mjutest verify` is a mistake and is said to be one"
+    );
+}

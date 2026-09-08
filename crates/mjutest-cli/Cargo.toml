@@ -22,6 +22,19 @@ path = "src/main.rs"
 # The binary is one function; its documentation is the library's.
 doc = false
 
+[[bin]]
+name = "cargo-mjutest"
+path = "src/bin/cargo-mjutest/main.rs"
+# The same program under the name cargo looks for; its documentation is the library's.
+doc = false
+
+[package.metadata.binstall]
+# The archive `release.yml` builds, so `cargo binstall mjutest` finds what the
+# release published rather than compiling the workspace again.
+pkg-url = "{ repo }/releases/download/v{ version }/mjutest-{ version }-{ target }.tar.gz"
+pkg-fmt = "tgz"
+bin-dir = "mjutest-{ version }-{ target }/{ bin }{ binary-ext }"
+
 [features]
 # Test support (fixture builders, scripted fakes) that a sibling crate's tests
 # may enable. Never enabled by a production dependency: `xtask devgates`.

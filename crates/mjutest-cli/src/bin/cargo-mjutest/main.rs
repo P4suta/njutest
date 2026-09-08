@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mjutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! The `mjutest` binary: a composition root, and one of the two places that read the process's arguments, streams, environment, and signals.
+//! The `cargo-mjutest` binary: the same program under the name cargo looks for, so `cargo mjutest` is `mjutest`.
 
 #![forbid(unsafe_code)]
 

@@ -163,3 +163,39 @@ job's limit; the cache is not.
 **Narrow the pull-request leg.** `--changed` on a pull request measures only
 what differs, which is usually the difference between two minutes and two
 hours. Keep the whole catalog for the weekly run.
+
+## Using it from another repository
+
+`.github/actions/mjutest` is a composite action that installs a published
+release, verifies the workspace, and hands the findings to code scanning. It is
+what a project that is not this one runs.
+
+```yaml
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  assure:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: <owner>/mjutest/.github/actions/mjutest@v0.1.0
+        with:
+          args: --locked
+```
+
+`version` pins the release, `args` is what follows `mjutest verify`,
+`working-directory` picks a workspace inside the checkout, and `upload-sarif`
+turns the code-scanning step off for a repository that has no
+`security-events: write`. The action's outputs are `verdict` and `report`.
+
+The step ends with the verdict's own exit code, so a `DEFECT` fails the job —
+**after** the findings have been uploaded. A run that swallowed the status to
+upload first, or uploaded nothing because the status was non-zero, would leave
+a person reading a log instead of the findings themselves.
+
+`cargo binstall mjutest` is what installs it, from the archive `release.yml`
+publishes, so the action does not compile this workspace inside somebody
+else's job. `cargo mjutest verify` works too, wherever the binary is on the
+path: the same program answers to the name cargo looks for.
