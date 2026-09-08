@@ -9,7 +9,7 @@
 //! `mjutest accept` a reviewer would type; applying it is that command's job,
 //! because a run is read-only and `fix --apply` is the one thing that writes.
 
-use std::io::{BufRead, Write};
+use std::io::{BufRead, Read as _, Write};
 use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
@@ -145,6 +145,12 @@ pub fn framed(message: &Value) -> String {
 /// A header this reader does not know is skipped rather than refused: the
 /// protocol allows more of them, and a server that stopped at the first one it
 /// had not heard of would stop at a client doing nothing wrong.
+///
+/// The length a client declares bounds the read and is not trusted for the
+/// allocation: a body that arrives shorter than its header said is not the
+/// message the client framed, even when the bytes that did arrive happen to
+/// parse, and a header naming a length nobody is going to send is not a reason
+/// to reserve it.
 pub fn message(input: &mut dyn BufRead) -> Option<Value> {
     let mut length = None;
     let mut header = String::new();
@@ -158,12 +164,15 @@ pub fn message(input: &mut dyn BufRead) -> Option<Value> {
             break;
         }
         if let Some(said) = line.strip_prefix("Content-Length:") {
-            length = said.trim().parse::<usize>().ok();
+            length = said.trim().parse::<u64>().ok();
         }
     }
-    let mut body = vec![0u8; length?];
-    input.read_exact(&mut body).ok()?;
-    serde_json::from_slice(&body).ok()
+    let mut arriving = input.take(length?);
+    let mut body = Vec::new();
+    let _read = arriving.read_to_end(&mut body).ok()?;
+    (arriving.limit() == 0)
+        .then(|| serde_json::from_slice(&body).ok())
+        .flatten()
 }
 
 /// Serves the protocol over `input` and `output` until the client asks it to stop.
