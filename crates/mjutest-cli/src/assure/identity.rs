@@ -85,7 +85,12 @@ pub struct Machine<'a> {
 ///
 /// # Errors
 /// Returns what could not be read about the tree.
-pub fn inputs(asked: &Asked<'_>, mode: Mode, test_args: &[String]) -> Result<Inputs, ScanError> {
+pub fn inputs(
+    asked: &Asked<'_>,
+    mode: Mode,
+    test_args: &[String],
+    shard: Option<String>,
+) -> Result<Inputs, ScanError> {
     let Asked {
         root,
         config,
@@ -106,6 +111,7 @@ pub fn inputs(asked: &Asked<'_>, mode: Mode, test_args: &[String]) -> Result<Inp
         configuration: config.digest(),
         test_args: test_args.to_vec(),
         mode,
+        shard,
     })
 }
 
@@ -113,7 +119,12 @@ pub fn inputs(asked: &Asked<'_>, mode: Mode, test_args: &[String]) -> Result<Inp
 ///
 /// # Errors
 /// Returns what could not be read about the tree.
-pub fn of(asked: &Asked<'_>, mode: Mode, common: Common) -> Result<Evidence, ScanError> {
+pub fn of(
+    asked: &Asked<'_>,
+    mode: Mode,
+    common: Common,
+    shard: Option<String>,
+) -> Result<Evidence, ScanError> {
     let exclude = compiled(asked.config);
     let scanned = scan(asked.root, &exclude, asked.elsewhere)?;
     let dependencies = dependencies_of(asked.root)?;
@@ -128,6 +139,7 @@ pub fn of(asked: &Asked<'_>, mode: Mode, common: Common) -> Result<Evidence, Sca
         configuration: asked.config.digest(),
         test_args: common.test_args.clone(),
         mode,
+        shard,
     };
     Ok(Evidence {
         identity: identity(&read),

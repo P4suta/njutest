@@ -36,6 +36,8 @@ pub enum Verdict {
     /// The evidence does not support a claim either way.
     #[default]
     Insufficient,
+    /// This run judged one part of a catalog and found nothing in it. A part assures nothing on its own, and `mjutest merge` is what carries the verdict.
+    Partial,
     /// The run could not establish anything.
     Error,
 }
@@ -54,7 +56,9 @@ impl Verdict {
     #[must_use]
     pub const fn exit_code(self) -> u8 {
         match self {
-            Self::Assured | Self::ChangeAssured | Self::ScopeAssured => crate::cli::EXIT_ASSURED,
+            Self::Assured | Self::ChangeAssured | Self::ScopeAssured | Self::Partial => {
+                crate::cli::EXIT_ASSURED
+            }
             Self::Defect => crate::cli::EXIT_DEFECT,
             Self::Insufficient => crate::cli::EXIT_INSUFFICIENT,
             Self::Error => crate::cli::EXIT_ERROR,
@@ -228,6 +232,9 @@ pub struct Scope {
     pub resolved_packages: Vec<String>,
     /// The patterns that removed files from the scope.
     pub excluded: Vec<String>,
+    /// Which part of the catalog this run judged, as `K/N`, or nothing when it judged every one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shard: Option<String>,
 }
 
 /// How many targets there were and what became of them.

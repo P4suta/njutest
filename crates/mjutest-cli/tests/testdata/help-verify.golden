@@ -51,5 +51,9 @@ Options:
       --changed-from <REV>
           The revision to compare against. Implies --changed
 
+      --shard <K/N>
+          Judge only one part of the catalog, as `K/N`. Every part measures the whole baseline;
+          `mjutest merge` combines what they judged
+
   -h, --help
           Print help (see a summary with '-h')

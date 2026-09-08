@@ -46,9 +46,10 @@
         "SCOPE_ASSURED",
         "DEFECT",
         "INSUFFICIENT",
+        "PARTIAL",
         "ERROR"
       ],
-      "description": "What the run concluded. The three assurances differ only in scope; INSUFFICIENT is what a run says when the evidence supports no claim either way."
+      "description": "What the run concluded. The three assurances differ only in scope; INSUFFICIENT is what a run says when the evidence supports no claim either way; PARTIAL is what one part of a sharded catalog says, because a part assures nothing on its own."
     },
     "tool": {
       "type": "object",

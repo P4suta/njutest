@@ -130,6 +130,23 @@ struct Establishing<'a> {
     watch: Watch<'a>,
 }
 
+/// Which part of the catalog the command line asked for, refused before anything is built.
+///
+/// A part that is not a part of anything is a mistake in a CI matrix, and the
+/// cheapest place to find out is before the first build rather than after the
+/// baseline.
+///
+/// # Errors
+/// What is wrong with the text, as a reader would want it said.
+fn part_of(arguments: &Verify) -> Result<Option<rust_mutants::run::Shard>, String> {
+    arguments
+        .shard
+        .as_deref()
+        .map(rust_mutants::run::Shard::parse)
+        .transpose()
+        .map_err(|error| error.to_string())
+}
+
 /// Runs the verification, writes what it concluded, and stores it for the next run of the same inputs.
 fn establish(establishing: &Establishing<'_>, streams: Streams<'_>) -> u8 {
     let Establishing {
@@ -148,6 +165,13 @@ fn establish(establishing: &Establishing<'_>, streams: Streams<'_>) -> u8 {
         out: stdout,
         err: stderr,
     } = streams;
+    let shard = match part_of(arguments) {
+        Ok(shard) => shard,
+        Err(said) => {
+            super::diagnose(stderr, &said);
+            return EXIT_ERROR;
+        }
+    };
     let request = Request {
         root: root.to_path_buf(),
         config: establishing.config.clone(),
@@ -165,6 +189,7 @@ fn establish(establishing: &Establishing<'_>, streams: Streams<'_>) -> u8 {
         changed: establishing.changed.clone(),
         checkpoints: (!arguments.no_cache).then(|| store.root().join(CHECKPOINTS)),
         evidence_store: (!arguments.no_cache).then(|| store.root().to_path_buf()),
+        shard,
     };
     let result = {
         let mut notes = ui::Notes::of(arguments.ui, stderr);
@@ -305,9 +330,14 @@ fn evidence_of(
     let common = crate::evidence::key::Common {
         toolchain: machine.toolchain.to_owned(),
         platform: machine.platform.to_owned(),
-        environment: identity::inputs(&asked, mode.clone(), &arguments.test_args)
-            .map(|read| read.environment)
-            .unwrap_or_default(),
+        environment: identity::inputs(
+            &asked,
+            mode.clone(),
+            &arguments.test_args,
+            arguments.shard.clone(),
+        )
+        .map(|read| read.environment)
+        .unwrap_or_default(),
         contract: format!("{:?}", config.contract).to_lowercase(),
         test_args: arguments.test_args.clone(),
         features: config.execution.features.clone(),
@@ -318,7 +348,7 @@ fn evidence_of(
         ],
         corpus: String::new(),
     };
-    identity::of(&asked, mode, common).unwrap_or_default()
+    identity::of(&asked, mode, common, arguments.shard.clone()).unwrap_or_default()
 }
 
 /// The store of earlier answers, bounded the way the configuration says.

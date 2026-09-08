@@ -342,6 +342,8 @@ pub struct MutationOptions {
     pub jobs: u32,
     /// Whether a resource only one test may hold at a time forces the run to measure one mutation at a time.
     pub exclusive: bool,
+    /// Which part of the catalog to judge. `None` judges every one of them.
+    pub shard: Option<rust_mutants::run::Shard>,
 }
 
 /// Where a run reads and writes what is established about individual mutants.
@@ -449,7 +451,11 @@ pub fn run_resuming(
         .iter()
         .map(|rejection| (rejection.id.as_str(), rejection.diagnostic.as_str()))
         .collect();
-    let mutants: Vec<&Mutant> = catalog.mutants().iter().collect();
+    let mutants: Vec<&Mutant> = catalog
+        .mutants()
+        .iter()
+        .filter(|mutant| options.shard.is_none_or(|shard| shard.holds(mutant.index)))
+        .collect();
     let total = u64::try_from(mutants.len()).unwrap_or(u64::MAX);
     let controls = Controls::default();
     let judging = Judging {

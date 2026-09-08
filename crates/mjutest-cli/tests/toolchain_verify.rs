@@ -10,6 +10,7 @@
     reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
 )]
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
@@ -427,8 +428,8 @@ fn a_run_leaves_nothing_in_the_tree_it_verified_but_its_own_reports() {
 }
 
 /// Every file under `root`, as slash-separated relative paths.
-fn listing(root: &Path) -> std::collections::BTreeSet<String> {
-    let mut found = std::collections::BTreeSet::new();
+fn listing(root: &Path) -> BTreeSet<String> {
+    let mut found = BTreeSet::new();
     let mut pending = vec![(root.to_path_buf(), String::new())];
     while let Some((directory, prefix)) = pending.pop() {
         let Ok(entries) = std::fs::read_dir(&directory) else {
@@ -912,5 +913,87 @@ fn a_mutation_the_compiler_renders_identically_is_not_a_gap_in_the_tests() {
         !findings.is_empty(),
         "the mutation of `halved` keeps its finding: nothing calls it, the linker drops it, \
          and identical artifacts then say the code is untested: {findings:?}"
+    );
+}
+
+/// Every mutant the latest run judged, by identity.
+fn judged(fixture: &Fixture) -> BTreeSet<String> {
+    document(fixture)["mutants"]
+        .as_array()
+        .expect("mutants")
+        .iter()
+        .filter_map(|one| one["id"].as_str().map(ToOwned::to_owned))
+        .collect()
+}
+
+#[test]
+fn two_parts_of_one_catalog_judge_every_mutant_between_them_and_none_twice() {
+    let fixture = fixture("fixture-assured");
+    assert_eq!(verify(&fixture, &[]).status.code(), Some(0));
+    let whole = judged(&fixture);
+    assert!(whole.len() >= 2, "a catalog worth splitting: {whole:?}");
+
+    let first = verify(&fixture, &["--shard", "1/2"]);
+    assert_eq!(
+        first.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    let one = judged(&fixture);
+
+    let second = verify(&fixture, &["--shard", "2/2"]);
+    assert_eq!(
+        second.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&second.stderr)
+    );
+    let two = judged(&fixture);
+
+    assert!(
+        one.is_disjoint(&two),
+        "a mutant belongs to one part, so no execution is paid for twice: {:?}",
+        one.intersection(&two).collect::<Vec<&String>>()
+    );
+    assert_eq!(
+        one.union(&two).cloned().collect::<BTreeSet<String>>(),
+        whole,
+        "and between them the parts judge every mutant the whole would: dividing the \
+         work is not a budget only if none of it goes missing"
+    );
+    assert!(!one.is_empty() && !two.is_empty(), "{one:?} {two:?}");
+}
+
+#[test]
+fn a_part_of_a_catalog_does_not_claim_what_the_whole_would() {
+    let fixture = fixture("fixture-assured");
+    assert_eq!(verify(&fixture, &[]).status.code(), Some(0));
+    assert_eq!(document(&fixture)["verdict"], "ASSURED");
+
+    assert_eq!(verify(&fixture, &["--shard", "1/2"]).status.code(), Some(0));
+    let part = document(&fixture);
+    assert_eq!(
+        part["verdict"], "PARTIAL",
+        "a run that judged half a catalog has assured nothing: the mutations it did not \
+         judge are not mutations nothing noticed, they are mutations nobody put to a \
+         test: {part}"
+    );
+    assert_eq!(
+        part["scope"]["shard"], "1/2",
+        "and it says which part it was: {part}"
+    );
+}
+
+#[test]
+fn a_part_that_is_not_a_part_of_anything_is_refused_before_anything_is_built() {
+    let fixture = fixture("fixture-assured");
+    let output = verify(&fixture, &["--shard", "3/2"]);
+    assert_eq!(output.status.code(), Some(3));
+    let said = String::from_utf8_lossy(&output.stderr);
+    assert!(said.contains("K runs from 1 to N"), "{said}");
+    assert!(
+        !fixture.root.join("reports").exists(),
+        "a refusal before the first build writes no report"
     );
 }

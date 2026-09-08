@@ -9,7 +9,7 @@ use sha2::{Digest as _, Sha256};
 use crate::config::Contract;
 
 /// The domain hashed first for a run's identity. The recipe version is in the name: a future recipe becomes `mjutest-evidence-v2` so a v1 identity can never be mistaken for a v2 one.
-pub const EVIDENCE_DOMAIN: &str = "mjutest-evidence-v1";
+pub const EVIDENCE_DOMAIN: &str = "mjutest-evidence-v2";
 
 /// A digest built from named fields. Every field is length-prefixed and preceded by its own name, so no two different lists of values can produce the same number.
 #[derive(Debug)]
@@ -134,6 +134,13 @@ pub struct Inputs {
     pub test_args: Vec<String>,
     /// How much of the workspace the run looked at.
     pub mode: Mode,
+    /// Which part of the catalog the run judged, as `K/N`, or nothing when it judged every one.
+    ///
+    /// `mode` says how much of the tree was read; this says how much of the
+    /// catalog was put to a test, which is a different axis. Without it a run
+    /// that judged half a catalog and one that judged all of it have one
+    /// identity, and the first is handed the second's answer.
+    pub shard: Option<String>,
 }
 
 /// The run's identity: the number a later run compares its own against before believing anything an earlier one recorded.
@@ -159,7 +166,8 @@ pub fn identity(inputs: &Inputs) -> String {
         .field("configuration", &inputs.configuration)
         .list("test-args", &inputs.test_args)
         .field("mode", inputs.mode.name())
-        .list("mode-detail", inputs.mode.detail());
+        .list("mode-detail", inputs.mode.detail())
+        .field("shard", inputs.shard.as_deref().unwrap_or_default());
     fields.finish()
 }
 

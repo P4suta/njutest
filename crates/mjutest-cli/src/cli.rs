@@ -185,6 +185,9 @@ pub struct Verify {
     /// The revision to compare against. Implies --changed.
     #[arg(long, value_name = "REV")]
     pub changed_from: Option<String>,
+    /// Judge only one part of the catalog, as `K/N`. Every part measures the whole baseline; `mjutest merge` combines what they judged.
+    #[arg(long, value_name = "K/N")]
+    pub shard: Option<String>,
     /// Arguments for the test binaries. Only the flags mjutest does not own are allowed: --test-threads, --include-ignored, --nocapture, --show-output.
     #[arg(last = true, value_name = "TEST ARGS")]
     pub test_args: Vec<String>,

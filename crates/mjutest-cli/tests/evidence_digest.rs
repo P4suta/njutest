@@ -26,6 +26,7 @@ fn inputs() -> Inputs {
         configuration: "d".repeat(64),
         test_args: vec!["--nocapture".to_owned()],
         mode: Mode::Full,
+        shard: None,
     }
 }
 
@@ -206,4 +207,26 @@ fn a_scoped_mode_reads_its_packages_in_a_fixed_order() {
         identity(&other),
         "the order two packages were named in is not a fact about the run"
     );
+}
+
+#[test]
+fn a_run_that_judged_one_part_of_a_catalog_is_not_the_run_that_judged_all_of_it() {
+    let whole = identity(&inputs());
+    let half = identity(&Inputs {
+        shard: Some("1/2".to_owned()),
+        ..inputs()
+    });
+    let other_half = identity(&Inputs {
+        shard: Some("2/2".to_owned()),
+        ..inputs()
+    });
+
+    assert_ne!(
+        whole, half,
+        "a run that judged half a catalog did not establish what a run that judged all \
+         of it established, and an identity that says they are the same hands a part's \
+         answer back as the whole's"
+    );
+    assert_ne!(half, other_half, "and one part is not the other");
+    assert_eq!(EVIDENCE_DOMAIN, "mjutest-evidence-v2");
 }

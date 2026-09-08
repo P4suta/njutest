@@ -77,6 +77,7 @@ fn populated() -> Report {
             requested_packages: vec!["core".to_owned()],
             resolved_packages: vec!["core".to_owned()],
             excluded: vec!["**/generated/**".to_owned()],
+            shard: None,
         },
         timing: Timing {
             started: "2026-09-05T08:15:00Z".to_owned(),

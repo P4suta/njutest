@@ -62,6 +62,14 @@ pub struct Request {
     pub checkpoints: Option<PathBuf>,
     /// Where what earlier runs established about individual mutants is kept. `None` establishes everything afresh.
     pub evidence_store: Option<PathBuf>,
+    /// Which part of the catalog this run judges. `None` judges every one of them.
+    ///
+    /// A part still measures the whole baseline, because a mutation cannot be
+    /// judged against tests that were not run. What it divides is the judging,
+    /// and every mutant belongs to exactly one part, so no execution is paid
+    /// for twice and none goes missing. That is why this is not a budget:
+    /// nothing is sampled, and `mjutest merge` is what carries a verdict.
+    pub shard: Option<rust_mutants::run::Shard>,
 }
 
 /// What one run produced.
@@ -610,6 +618,7 @@ fn identity(request: &Request) -> Report {
         UNAVAILABLE.clone_into(&mut report.repository.workspace_digest);
     }
     report.scope.requested_packages = requested(request);
+    report.scope.shard = request.shard.map(|shard| shard.to_string());
     report
         .scope
         .excluded
@@ -928,6 +937,7 @@ fn run_mutation(
             evidence: evidence_of(mutating),
             jobs: mutating.request.config.execution.jobs,
             exclusive: alone(&mutating.request.config),
+            shard: mutating.request.shard,
         },
         &mut mutation::Resume {
             state: mutating.restore,
@@ -1242,6 +1252,13 @@ fn absorb(report: &mut Report, baseline: &baseline::Baseline) {
 }
 
 /// What the observations support.
+///
+/// A run given a part of the catalog assures nothing on its own, however
+/// clean the part is: the mutations it did not judge are not mutations
+/// nothing noticed, they are mutations nobody put to a test. It says
+/// `PARTIAL`, and `mjutest merge` is what carries the verdict. A finding is
+/// still a finding — a defect found in one part is a defect — so this reads
+/// only where nothing was found.
 fn verdict(report: &Report) -> Verdict {
     if report
         .findings
@@ -1257,6 +1274,9 @@ fn verdict(report: &Report) -> Verdict {
     let asked = report.accounting.mutants.executed > 0;
     if !observed || !asked {
         return Verdict::Insufficient;
+    }
+    if report.scope.shard.is_some() {
+        return Verdict::Partial;
     }
     match report.run_kind {
         RunKind::Full => Verdict::Assured,
