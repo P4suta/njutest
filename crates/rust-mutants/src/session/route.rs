@@ -122,6 +122,24 @@ impl Asked {
     }
 }
 
+/// What one target costs a route: how long its own baseline took, and how many tests that was the cost of.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct Timing {
+    /// How long the target's own baseline took, with nothing active.
+    pub baseline: std::time::Duration,
+    /// How many tests it ran, which is what that duration is the cost of.
+    pub tests: u32,
+}
+
+impl Timing {
+    /// One target's baseline and the tests it was the cost of.
+    #[must_use]
+    pub const fn new(baseline: std::time::Duration, tests: u32) -> Self {
+        Self { baseline, tests }
+    }
+}
+
 /// One target a proof removed from what could have noticed a mutation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Discharge {
@@ -326,6 +344,33 @@ impl Route {
             Self::All { reaching, .. } => reaching.iter().map(|target| of(target)).sum(),
             Self::Discharged { .. } | Self::Unreached => 0,
         }
+    }
+
+    /// What this route would take, as the share of each target's own baseline the tests it names come to.
+    ///
+    /// A pair is a process, and what a process takes is what its tests take. A
+    /// route that puts a mutation to two tests of a target with two hundred
+    /// takes a hundredth of that target's baseline, not the whole of it — and
+    /// not the whole of the slowest target the build happened to produce,
+    /// which is all an estimate that knows one number can reach for. A target
+    /// the caller cannot time is priced at whatever it hands back, which is
+    /// the guess that errs toward too long.
+    #[must_use]
+    pub fn costing<F: Fn(&str) -> Timing>(&self, of: F) -> std::time::Duration {
+        self.reaching()
+            .iter()
+            .map(|target| {
+                let timing = of(target);
+                let all = timing.tests.max(1);
+                let named = u32::try_from(self.tests_of(target).len()).unwrap_or(all);
+                let asked = if named == 0 { all } else { named.min(all) };
+                timing
+                    .baseline
+                    .checked_div(all)
+                    .unwrap_or_default()
+                    .saturating_mul(asked)
+            })
+            .sum()
     }
 
     /// The granularity a route record carries: `all`, `test`, `block`, `discharged`, or `unreached`.

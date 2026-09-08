@@ -15,7 +15,7 @@ use rust_mutants::EngineError;
 use rust_mutants::report::explain;
 use rust_mutants::run::Expectation;
 use rust_mutants::runner::Cancel;
-use rust_mutants::session::{self, Request, Session};
+use rust_mutants::session::{self, Request, Route, Session};
 use rust_mutants::workspace::{self, Workspace};
 use rust_mutants::{snapshot, tempowner};
 
@@ -999,6 +999,7 @@ fn estimate(session: &Session, filter: &run::Filter) -> String {
         } else {
             counted.selected = counted.selected.saturating_add(1);
             counted.pairs = counted.pairs.saturating_add(reaching);
+            counted.duration = counted.duration.saturating_add(priced(session, &route));
             counted.tests = counted.tests.saturating_add(
                 u64::try_from(
                     route.started(|target| usize::try_from(session.tests_of(target)).unwrap_or(1)),
@@ -1020,7 +1021,7 @@ fn estimate(session: &Session, filter: &run::Filter) -> String {
         );
         debug_assert!(written.is_ok(), "writing to a String cannot fail");
     }
-    text.push_str(&counted.said(targets, session.slowest_baseline()));
+    text.push_str(&counted.said(targets));
     text
 }
 
@@ -1045,6 +1046,8 @@ struct Estimated {
     tests: u64,
     /// The tests a run that asked every test of every target about every mutant would start.
     tests_whole: u64,
+    /// What those tests would take on this machine, target by target.
+    duration: std::time::Duration,
 }
 
 impl Estimated {
@@ -1053,7 +1056,7 @@ impl Estimated {
     /// A count is the same on every machine; a duration is a guess about this
     /// one. The count is what a person decides by, so it comes first and the
     /// guess comes last, marked as one.
-    fn said(&self, targets: u64, each: std::time::Duration) -> String {
+    fn said(&self, targets: u64) -> String {
         let whole = self.cataloged.saturating_mul(targets);
         let removed = whole.saturating_sub(self.pairs);
         let widened =
@@ -1063,7 +1066,10 @@ impl Estimated {
         } else {
             widened(removed) / widened(whole) * 100.0
         };
-        let seconds = self.pairs.saturating_mul(each.as_secs().max(1));
+        let seconds = self
+            .duration
+            .as_secs()
+            .saturating_add(u64::from(self.duration.subsec_nanos() > 0));
         let tests_share = if self.tests_whole == 0 {
             0.0
         } else {
@@ -1079,8 +1085,9 @@ impl Estimated {
              WHICH RUN    {} of {} tests; {tests_share:.1}% removed\n\
              REMOVED BY   unreached={} discharged={} unselected={} nothing-to-ask={}\n\
              AT MOST      {} mutants execute; one target that answers ends the rest\n\
-             ROUGHLY      {}:{:02}:{:02} on this machine at ~{}s a target, which is a guess about \
-             the machine rather than about the work\n",
+             ROUGHLY      {}:{:02}:{:02} on this machine, being each target's own baseline \
+             scaled by the tests its route names, which is a guess about the machine rather \
+             than about the work\n",
             self.pairs,
             self.cataloged,
             self.tests,
@@ -1093,9 +1100,23 @@ impl Estimated {
             seconds / 3600,
             seconds % 3600 / 60,
             seconds % 60,
-            each.as_secs().max(1),
         )
     }
+}
+
+/// What one route would take on this machine, priced from what this session timed.
+///
+/// A target this session never timed is priced at the slowest one it did,
+/// which is the guess that errs toward too long.
+fn priced(session: &Session, route: &Route) -> std::time::Duration {
+    route.costing(|target| {
+        session::Timing::new(
+            session
+                .baseline(target)
+                .unwrap_or_else(|| session.slowest_baseline()),
+            session.tests_of(target),
+        )
+    })
 }
 
 /// One finding, put back to the tests exactly as the run that found it did.

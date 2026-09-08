@@ -333,3 +333,41 @@ fn a_process_that_cannot_record_costs_its_target_the_measurement_and_not_the_run
     ));
     session.close().expect("close");
 }
+
+#[test]
+fn what_a_route_would_take_is_the_tests_it_names_and_not_the_target_they_are_in() {
+    let fixture = Fixture::copy("fixture-coverage");
+    let session = prepared(&fixture);
+    let timing = |target: &str| {
+        rust_mutants::session::Timing::new(
+            session
+                .baseline(target)
+                .unwrap_or_else(|| session.slowest_baseline()),
+            session.tests_of(target),
+        )
+    };
+    let whole = |target: &str| {
+        rust_mutants::session::Timing::new(
+            session
+                .baseline(target)
+                .unwrap_or_else(|| session.slowest_baseline()),
+            1,
+        )
+    };
+    let mut narrowed = std::time::Duration::ZERO;
+    let mut every = std::time::Duration::ZERO;
+    for one in session.catalog().mutants() {
+        let route = session.route(one);
+        narrowed = narrowed.saturating_add(route.costing(timing));
+        every = every.saturating_add(route.costing(whole));
+    }
+    assert!(
+        narrowed < every,
+        "a route that names some of a target's tests costs that share of its baseline, not the \
+         whole of it: {narrowed:?} against {every:?}"
+    );
+    assert!(
+        every > std::time::Duration::ZERO,
+        "the fixture was timed at all: {every:?}"
+    );
+}

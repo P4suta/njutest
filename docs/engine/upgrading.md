@@ -50,6 +50,14 @@ and granted every claim. `prove::refusal` is the rule, and a failure it cannot
 account for costs the run every proof. Runs made before this release could
 have discharged a mutant on a check that never happened.
 
+**`--dry-run` prices a route by the tests it names.** The guess at the end
+of a dry run multiplied every pair by the *slowest* target's whole baseline,
+which since test-granularity routing is off by however many tests a route
+leaves out — on this repository's own engine, by two orders of magnitude. It
+is now each target's own baseline scaled by the share of its tests the route
+names. The counts above it did not change and are still what a person decides
+by; only the guess got closer.
+
 **A guard between `==` and `!=` no longer records anything.** The two part on
 every evaluation, so the record could only say that they did. Such a mutation
 gets no witness statement and no comparison call, which is one less thing in

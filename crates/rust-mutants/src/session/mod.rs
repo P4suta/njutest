@@ -12,7 +12,7 @@ use prepare::{pristine, selection};
 use verify::{Verified, verify};
 
 pub use route::{
-    Asked, BRANCH_NEVER_TAKEN, Discharge, Fallback, NEVER_INFECTED, Reaches, Route, Routing,
+    Asked, BRANCH_NEVER_TAKEN, Discharge, Fallback, NEVER_INFECTED, Reaches, Route, Routing, Timing,
 };
 
 use std::collections::BTreeMap;
