@@ -18,10 +18,19 @@ committed = "1.1.11"
 "cargo:cargo-audit" = "0.22.2"
 "cargo:cargo-mutants" = "27.1.0"
 "cargo:cargo-fuzz" = "0.13.2"
+mdbook = "0.5.4"
 
 [tasks.bootstrap]
 description = "Fetch the locked dependency graph and install the git hooks"
 run = ["cargo fetch --locked", "lefthook install"]
+
+[tasks.book]
+description = "Build the documentation as a book, into target/book"
+run = "mdbook build docs"
+
+[tasks."book:serve"]
+description = "Build the book and reload it in a browser as the pages change"
+run = "mdbook serve docs"
 
 [tasks.doctor]
 description = "Report which development tools are present and whether their versions match the pins"

@@ -41,11 +41,16 @@ on the verify step and upload `.mjutest/trace/` with the reports.
 
 | Workflow | Jobs | When |
 | --- | --- | --- |
-| `ci.yml` | the three-OS test matrix, lint (fmt, clippy, rustdoc, the `cargo xtask` gates, typos, taplo, actionlint, committed), cargo-deny, cargo-audit, the coverage ratchet, and `ci-success` which gathers them | every push and pull request |
+| `ci.yml` | the three-OS test matrix, lint (fmt, clippy, rustdoc, the `cargo xtask` gates, typos, taplo, actionlint, committed), cargo-deny, cargo-audit, the coverage ratchet, the `book` build, and `ci-success` which gathers them | every push and pull request |
 | `mutation.yml` | `cargo-mutants` over each package | weekly, and on request |
 | `dogfood.yml` | `shard` runs the engine over its own catalog in four parts, and `audit` puts the parts back together, checks each recording, and re-decides every part against the ledger | weekly, and on request |
 | `fuzz.yml` | every fuzz target for a fixed time | weekly, and on an engine pull request |
 | `release-please.yml`, `release.yml` | the release train | on `main`, and on a tag |
+
+The `book` job builds `docs/` with mdbook, which refuses a summary that names
+a page the repository does not hold; `cargo test -p xtask --test docs` refuses
+the other direction, a page the summary does not name. A page that neither
+side notices is one a reader of the book cannot reach.
 
 The required checks are the ones `ci-success` gathers. `mutation.yml` and
 `dogfood.yml` are the two independent measurements of how strong this suite

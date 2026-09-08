@@ -49,7 +49,7 @@ for tool in cargo-nextest cargo-deny cargo-llvm-cov cargo-audit cargo-mutants ca
 done
 
 echo "repository tools"
-for tool in mise lefthook committed typos taplo actionlint git; do
+for tool in mise lefthook committed typos taplo actionlint mdbook git; do
     if command -v "$tool" >/dev/null 2>&1; then
         ok "$tool"
     else

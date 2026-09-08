@@ -236,3 +236,26 @@ fn every_page_a_file_of_this_repository_links_to_is_one_it_holds() {
         dangling.join("\n")
     );
 }
+
+#[test]
+fn every_page_the_documentation_holds_is_one_the_book_summary_reaches() {
+    let root = root();
+    let summary = read("docs/SUMMARY.md");
+    let held = linked(&summary);
+    let missing: Vec<String> = pages(&root.join("docs"))
+        .into_iter()
+        .filter_map(|page| {
+            let relative = page.strip_prefix(root.join("docs")).ok()?;
+            let name = relative.to_string_lossy().replace('\\', "/");
+            (name != "SUMMARY.md" && !held.contains(&name)).then_some(name)
+        })
+        .collect();
+
+    assert!(
+        missing.is_empty(),
+        "mdbook builds what the summary names and quietly leaves out what it does not, \
+         so a page missing from it is one the book has no way to reach and nobody \
+         notices is gone:\n{}",
+        missing.join("\n")
+    );
+}

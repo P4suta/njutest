@@ -216,6 +216,20 @@ change and say nothing until the weekly job. `mise run fuzz:check` — part of
 toolchain the workspace uses, which is the cheapest thing that would have
 noticed.
 
+### The documentation
+
+`docs/` is an mdbook: `mise run book` builds it into `target/book`, and
+`mise run book:serve` reloads it as the pages change. Nothing is written for
+the book — the pages are the ones this repository already keeps, and
+`docs/SUMMARY.md` is the order to read them in.
+
+Two gates hold the summary and the pages to each other, one in each direction.
+mdbook is configured with `create-missing = false`, so a summary that names a
+page nobody holds fails the build; `xtask/tests/docs.rs` refuses a page the
+summary does not name. Without the second one a new page is simply absent from
+the book, which nobody notices, because a book that is missing a chapter looks
+exactly like a book that never had it.
+
 ### Coverage
 
 The `coverage` job in `ci.yml` runs the suite once under `cargo llvm-cov` and

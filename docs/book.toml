@@ -1,0 +1,26 @@
+# SPDX-FileCopyrightText: 2026 mjutest contributors
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# The documentation as a book. The pages are the ones this repository already
+# keeps and reviews; nothing here rewrites them, and a page that is not in
+# `SUMMARY.md` is one a reader of the book cannot reach, which is why the
+# summary is a gate rather than a convenience.
+#
+# The book is built into `target/`, outside the source it is built from: a
+# build directory under `docs/` would be a directory of generated pages inside
+# the directory of written ones, and the next build would read its own output.
+
+[book]
+title = "mjutest"
+description = "An audit-oriented assurance runner for Rust, and the mutation engine underneath it"
+authors = ["mjutest contributors"]
+language = "en"
+src = "."
+
+[build]
+build-dir = "../target/book"
+create-missing = false
+
+[output.html]
+git-repository-url = "https://github.com/yasunobu/mjutest"
+edit-url-template = "https://github.com/yasunobu/mjutest/edit/main/docs/{path}"

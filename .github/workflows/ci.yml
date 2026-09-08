@@ -215,10 +215,26 @@ jobs:
       - name: What a release would say it is made of
         run: cargo xtask sbom --output "${RUNNER_TEMP}/mjutest.cdx.json"
 
+  book:
+    name: book
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: install mdbook
+        run: |
+          curl -fsSL https://github.com/rust-lang/mdBook/releases/download/v0.5.4/mdbook-v0.5.4-x86_64-unknown-linux-gnu.tar.gz \
+            | tar -xz -C "$RUNNER_TEMP" mdbook
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+      - name: build the book, which refuses a summary naming a page nobody holds
+        run: mdbook build docs
+
   ci-success:
     name: ci-success
     if: always()
-    needs: [test, lint, deny, audit, coverage, package-install]
+    needs: [test, lint, deny, audit, coverage, package-install, book]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
