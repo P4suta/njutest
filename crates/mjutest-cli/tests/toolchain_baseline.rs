@@ -13,7 +13,7 @@ use mjutest_cli::assure::baseline::{
     Baseline, Measured, RAN_NOTHING, Reporting, observe, refused, status_of,
 };
 use mjutest_cli::report::TargetStatus;
-use mjutest_cli::trace::Recorder;
+use mjutest_cli::trace::{Clock, MemorySink, Payload, Recorder, Sink, StartRecord};
 use mjutest_cli::watch::Watch;
 use mjutest_devkit::fixture::Fixture;
 use rust_mutants::runner::Cancel;
@@ -328,4 +328,88 @@ fn a_workspace_that_does_not_compile_is_a_finding_and_not_an_error() {
         "every other refusal is about this run rather than about the tree, and turning \
          one into a finding would report a broken run as a broken workspace"
     );
+}
+
+/// A recorder over a memory sink, which is what a test reads back.
+fn recording() -> Recorder {
+    Recorder::new(
+        Sink::Memory(MemorySink::unbounded()),
+        Clock::stepping(
+            jiff::Timestamp::from_second(1_800_000_000).expect("in range"),
+            std::time::Duration::from_secs(1),
+        ),
+        StartRecord::of(
+            "20260908T000000Z-000001",
+            mjutest_cli::report::RunKind::Full,
+            mjutest_cli::config::Contract::StandardV1,
+        ),
+    )
+}
+
+#[test]
+fn reading_the_baseline_is_a_phase_that_says_where_it_is() {
+    let fixture = Fixture::copy("fixture-simple");
+    let session = prepared(&fixture);
+    let cancel = Cancel::new();
+    let trace = recording();
+
+    let baseline = observe(
+        &session,
+        Reporting {
+            notes: &mut mjutest_cli::ui::Notes::Silent,
+            watch: Watch::new(&cancel, &trace),
+        },
+    );
+
+    let events = trace.events();
+    let phases: Vec<&str> = events
+        .iter()
+        .filter_map(|event| match &event.payload {
+            Payload::PhaseStart { phase } | Payload::PhaseEnd { phase } => {
+                Some(phase.name.as_str())
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        phases,
+        vec!["baseline-measure", "baseline-measure"],
+        "a phase that starts and does not end leaves a reader waiting for a duration \
+         that never comes: {events:?}"
+    );
+
+    let progress: Vec<(String, Option<u64>, Option<u64>)> = events
+        .iter()
+        .filter_map(|event| match &event.payload {
+            Payload::Progress { progress } => {
+                Some((progress.message.clone(), progress.done, progress.total))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        progress.len(),
+        baseline.targets.len(),
+        "one line per target the baseline carries: {progress:?}"
+    );
+    let total = u64::try_from(baseline.targets.len()).expect("a small number");
+    for (at, (named, done, said)) in progress.iter().enumerate() {
+        let counted = u64::try_from(at).expect("a small number").saturating_add(1);
+        assert_eq!(
+            (done, said),
+            (&Some(counted), &Some(total)),
+            "progress counts from one to the number of targets there are; a count that \
+             starts elsewhere or names a different total is a reader watching the wrong \
+             number approach the wrong end: {progress:?}"
+        );
+        assert_eq!(
+            Some(named.as_str()),
+            baseline
+                .targets
+                .get(at)
+                .map(|one| one.target.name())
+                .as_deref(),
+            "and names the target it is about, in the order the rows are in"
+        );
+    }
 }

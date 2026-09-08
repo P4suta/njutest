@@ -42,3 +42,15 @@ item = "establish"
 rule = "delete-call-statement"
 original = "phase.end();"
 reason = "Phase ends its phase on Drop, so the explicit end at the tail of establish changes no recording; a_phase_guard_ends_its_phase_once_with_its_duration_and_phases_nest holds that"
+
+# The runner's own `Phase` is the same design and the same acceptance. Its
+# guard is held by `crates/mjutest-cli/tests/trace.rs`, which drops a phase
+# without calling `end` and still finds the `phase-end`. Two products reached
+# this shape separately, which is what a design being right looks like from
+# the outside.
+[[mutation.expect]]
+path = "crates/mjutest-cli/src/assure/baseline.rs"
+item = "observe"
+rule = "delete-call-statement"
+original = "phase.end();"
+reason = "the runner's Phase ends its phase on Drop, so the explicit end at the tail of observe changes no recording; a_phase_guard_ends_its_phase_once_with_its_duration_and_phases_nest holds that"
