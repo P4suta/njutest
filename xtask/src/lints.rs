@@ -20,6 +20,9 @@ pub enum Kind {
 }
 
 impl Kind {
+    /// Every kind, in the order a report lists them.
+    pub const ALL: [Self; 3] = [Self::AllowAttribute, Self::BoxedTraitObject, Self::Comment];
+
     /// What to write in a report.
     #[must_use]
     pub const fn label(self) -> &'static str {

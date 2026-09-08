@@ -155,3 +155,21 @@ fn the_engine_s_own_annotation_is_an_instruction_rather_than_an_account() {
         "a skip marker is read by the engine, and its syntax is what says so"
     );
 }
+
+#[test]
+fn the_development_page_names_every_kind_this_gate_reports() {
+    let page = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("the workspace root")
+            .join("docs/development.md"),
+    )
+    .expect("the page");
+    for kind in Kind::ALL {
+        assert!(
+            page.contains(&format!("`{}`", kind.label())),
+            "a finding says {} and docs/development.md does not say what it is",
+            kind.label()
+        );
+    }
+}

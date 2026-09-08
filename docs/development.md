@@ -44,7 +44,7 @@ write or an acceptance to record with a reason, never something to leave.
 
 | Gate | Refuses |
 | --- | --- |
-| `lints` | an `#[allow]` anywhere in the repository, tests included, a `Box<dyn Trait>`, and a comment that is not documentation, the licence header, or a `rust-mutants:` annotation the engine reads |
+| `lints` | `allow-attribute`: an `#[allow]` anywhere in the repository, tests included. `boxed-trait-object`: a `Box<dyn Trait>`. `comment`: a comment that is not documentation, the licence header, or a `rust-mutants:` annotation the engine reads |
 | `devgates` | a seam the ledger `xtask/seam_allowlist.txt` does not name, and a ledger line the tree no longer has: `static mut`, a `static` with interior mutability, `thread_local!`, `#[cfg(test)]` outside a `mod tests`, a read of the process environment or an exit outside `main.rs`, an import of test support from production code ([ADR 0001](adr/0001-seam-policy.md)) |
 | `deps` | an internal dependency in the wrong direction ([ADR 0012](adr/0012-one-workspace-two-products.md)) |
 | `fixtures` | a fixture project without a `[workspace]` table, a committed `Cargo.lock`, the SPDX header, or with a dependency that is not a path inside itself |
