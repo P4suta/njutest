@@ -494,7 +494,10 @@ impl Session {
                 wanted,
                 display_ids: named(several),
             }),
-            (several, None) => Ok(several.to_vec()),
+            ([one], None) => Ok(vec![one]),
+            (several, None) => Err(LocateError::Several {
+                display_ids: named(several),
+            }),
         }
     }
 

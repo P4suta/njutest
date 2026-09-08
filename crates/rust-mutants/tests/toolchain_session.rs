@@ -897,5 +897,35 @@ fn a_claim_written_for_several_mutations_stops_holding_when_one_of_them_is_kille
         "a claim that did not hold accounts for none of them, or the ones it still covers would \
          be exempted on the strength of a test that killed another"
     );
+
+    let uncounted = rust_mutants::run::Expectation {
+        locator: expectation
+            .locator
+            .clone()
+            .map(|locator| rust_mutants::session::Locator {
+                count: None,
+                ..locator
+            }),
+        ..expectation
+    };
+    let mut again = every.clone();
+    for one in &mut again {
+        one.expected = false;
+    }
+    let unnamed = rust_mutants::run::verify(&session, std::slice::from_ref(&uncounted), &mut again);
+    assert!(
+        matches!(
+            unnamed[0].standing,
+            rust_mutants::run::Standing::Unmatched { .. }
+        ),
+        "a locator that says nothing about how many it names is a claim about one, and resolving \
+         it to one of several would exempt a mutation nobody wrote a reason for: {:?}",
+        unnamed[0].standing
+    );
+    assert!(
+        again.iter().all(|one| !one.expected),
+        "and it accounts for none of them"
+    );
+
     session.close().expect("the session closes");
 }
