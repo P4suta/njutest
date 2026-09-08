@@ -224,3 +224,85 @@ fn an_answer_the_route_does_not_hold_is_one_target_on_its_own() {
          nothing else"
     );
 }
+
+/// A route over two targets, the first narrowed to one of its tests and the second not.
+fn narrowed() -> Route {
+    let record = touched(
+        &[
+            ("demo/lib/demo", &[("one", &[1]), ("two", &[9])]),
+            ("demo/test/wide", &[("three", &[1]), ("four", &[1])]),
+        ],
+        &[],
+    );
+    let targets = ["demo/lib/demo", "demo/test/wide"];
+    Route::by_touch(
+        &record,
+        1,
+        &Routing {
+            targets: &targets,
+            measurable: &targets,
+            also_reaching: &[],
+        },
+    )
+}
+
+#[test]
+fn a_route_narrowed_to_some_tests_says_test_rather_than_block() {
+    assert_eq!(
+        narrowed().granularity(),
+        "test",
+        "a route that put the mutation to some of a target's tests and not all of them is a \
+         narrower question than the block it sits in, and a reader counting work has to see that"
+    );
+    assert_eq!(
+        narrowed()
+            .tests()
+            .get("demo/lib/demo")
+            .map(Vec::as_slice)
+            .unwrap_or_default(),
+        ["one"],
+        "and it names exactly the tests, because those are what the process is asked for"
+    );
+    assert!(
+        !narrowed().tests().contains_key("demo/test/wide"),
+        "a target it did not narrow is named nowhere here: every test of it runs, and a list \
+         of them would be a second way to say the same thing"
+    );
+}
+
+#[test]
+fn what_a_route_starts_is_the_tests_it_named_and_every_test_of_what_it_did_not_narrow() {
+    assert_eq!(
+        narrowed().started(|_target| 100),
+        101,
+        "one named test of the first target, and all hundred of the second, which is the work \
+         the route asks for rather than the work a whole run would"
+    );
+}
+
+#[test]
+fn what_a_route_costs_is_the_share_of_each_baseline_its_tests_come_to() {
+    use std::time::Duration;
+    let cost = narrowed()
+        .costing(|_target| rust_mutants::session::Timing::new(Duration::from_millis(100), 10));
+    assert_eq!(
+        cost,
+        Duration::from_millis(110),
+        "a target narrowed to one of ten tests costs a tenth of its baseline, and one that was \
+         not narrowed costs the whole of it; pricing every target at its whole baseline is what \
+         an estimate that knows one number reaches for"
+    );
+}
+
+#[test]
+fn a_target_the_caller_cannot_time_is_priced_at_what_it_handed_back() {
+    use std::time::Duration;
+    let cost = narrowed()
+        .costing(|_target| rust_mutants::session::Timing::new(Duration::from_millis(60), 0));
+    assert_eq!(
+        cost,
+        Duration::from_millis(120),
+        "a target that reports no tests is priced at its whole baseline for each of them, which \
+         is the guess that errs toward too long"
+    );
+}
