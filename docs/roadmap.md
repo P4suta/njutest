@@ -90,6 +90,17 @@ it come to twenty seconds warm. There is no large engine-side saving left to
 find; what is left is the yield of the layers, which is a different question
 and the one the numbers above are about.
 
+One candidate was measured and is not one. The witness pass checks into a
+target directory of its own, and a cold run spends sixty seconds there, which
+reads as a dependency graph built twice. It is not: measured warm on both
+products, that check costs six to nine seconds whatever the workspace, while
+the pristine check costs three seconds when nothing was edited and twelve to
+thirty-seven when something was. The dependencies in the witness directory
+are reused between runs; what the sixty seconds bought was the first build of
+a directory a fresh `TMPDIR` had just created. Sharing the directory would
+buy that once and pay for it on every run afterwards, so the separation
+stays.
+
 The runner has no saving to import either, and that is now a decision rather
 than an accident: [ADR 0018](adr/0018-the-assurance-layer-rides-the-standard-interfaces.md)
 settles that a third-party test runner is neither a dependency nor an option,

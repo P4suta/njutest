@@ -401,3 +401,96 @@ fn a_recording_never_costs_a_stored_run_its_place_and_neither_grows_forever() {
         "and so is every other command's recording: {traces:?}"
     );
 }
+
+#[test]
+fn a_mutation_a_run_leaves_out_records_why_it_was_left_out() {
+    let fixture = Fixture::copy("fixture-coverage");
+    let output = against(
+        &fixture,
+        &["run", "--trace", "--rule", "le-to-lt", "--tier", "all"],
+    );
+    let run = only_run(&reports(&fixture));
+    let events = recorded(&run.join("trace"));
+    let report: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(run.join("run-report-v1.json")).expect("the report"),
+    )
+    .expect("a report");
+    let unselected: Vec<String> = report
+        .pointer("/mutants")
+        .and_then(serde_json::Value::as_array)
+        .expect("the rows")
+        .iter()
+        .filter(|one| one["not_run_reason"] == "unselected")
+        .filter_map(|one| one["display_id"].as_str().map(str::to_owned))
+        .collect();
+    assert!(
+        !unselected.is_empty(),
+        "this run named one rule, so the rest of the catalog was left out: {}",
+        stdout(&output)
+    );
+    let otherwise: Vec<String> = report
+        .pointer("/mutants")
+        .and_then(serde_json::Value::as_array)
+        .expect("the rows")
+        .iter()
+        .filter(|one| one["outcome"] == "not_run" && one["not_run_reason"] != "unselected")
+        .filter_map(|one| one["display_id"].as_str().map(str::to_owned))
+        .collect();
+    assert!(
+        !otherwise.is_empty(),
+        "and a proof removed others, which is a second reason to say why: {}",
+        stdout(&output)
+    );
+    for named in unselected.into_iter().chain(otherwise) {
+        assert!(
+            events.iter().any(|event| {
+                event.get("type").and_then(serde_json::Value::as_str) == Some("select")
+                    && event
+                        .pointer("/select/mutant")
+                        .and_then(serde_json::Value::as_str)
+                        == Some(named.as_str())
+            }),
+            "the record is the only place a reader sees why a mutation was not put to the \
+             tests, so a run that leaves one out says so, whichever of its reasons it was: \
+             {named}"
+        );
+    }
+}
+
+#[test]
+fn a_mutation_a_run_puts_to_the_tests_leaves_the_execution_that_ran_it() {
+    let fixture = Fixture::copy("fixture-unreached");
+    let output = against(&fixture, &["run", "--trace", "--tier", "balanced"]);
+    let run = only_run(&reports(&fixture));
+    let events = recorded(&run.join("trace"));
+    let report: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(run.join("run-report-v1.json")).expect("the report"),
+    )
+    .expect("a report");
+    let executed: Vec<u64> = report
+        .pointer("/mutants")
+        .and_then(serde_json::Value::as_array)
+        .expect("the rows")
+        .iter()
+        .filter(|one| one["outcome"] != "not_run")
+        .filter_map(|one| one["index"].as_u64())
+        .collect();
+    assert!(
+        !executed.is_empty(),
+        "this run put some of them to the tests: {}",
+        stdout(&output)
+    );
+    for index in executed {
+        assert!(
+            events.iter().any(|event| {
+                event.get("type").and_then(serde_json::Value::as_str) == Some("mutant-exec")
+                    && event
+                        .pointer("/mutant/index")
+                        .and_then(serde_json::Value::as_u64)
+                        == Some(index)
+            }),
+            "a mutation that ran leaves the execution that ran it, or a recording says a run \
+             removed work it did: {index}"
+        );
+    }
+}
