@@ -136,8 +136,11 @@ below is stated fail-closed.
   primitives, `str`, `String`, and `Option` or `Vec` of one of those. A float
   is refused because `-0.0 == 0.0` holds and `-0.0` is not what the default
   writes; a type of your own is refused because its `PartialEq` may answer
-  about less than a test reads. A value the compiler refuses costs the
-  question and never the mutant, which is measured by running it.
+  about less than a test reads. The value must also *have* a `Default`, which
+  a reference usually does not: a function returning `&str` whose body borrows
+  a `String` field returns a `&String` and is refused, however much it coerces
+  at the return. A value the compiler refuses costs the question and never the
+  mutant, which is measured by running it.
 - A run refuses a tree whose instrumented baseline does not pass, and it names
   every target that failed rather than the first: a person reading the refusal
   is about to fix what it names, and a message that names one of five sends

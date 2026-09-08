@@ -369,32 +369,40 @@ fn probed(
     (splices, owners): (&mut Vec<Splice>, &mut Vec<Owned>),
 ) -> Result<(), InstrumentError> {
     let Reading { path, source, .. } = *file;
+    let mut values: BTreeMap<Span, Vec<&Probing>> = BTreeMap::new();
     for probe in probes {
-        let original = source
-            .get(at(probe.value.start)..at(probe.value.end))
-            .ok_or_else(|| {
-                InstrumentError::new(
-                    InstrumentErrorKind::SourceMismatch,
-                    path.to_owned(),
-                    format!("the value at {} is not inside the source", probe.value),
-                )
-            })?;
-        let mut replacement = format!("({{ let {BINDING} = ").into_bytes();
-        replacement.extend_from_slice(original);
-        replacement.extend_from_slice(
-            format!(
-                "; {}{module}::{}(&{BINDING}); {BINDING} }})",
+        values.entry(probe.value).or_default().push(probe);
+    }
+    for (value, asked) in values {
+        let original = source.get(at(value.start)..at(value.end)).ok_or_else(|| {
+            InstrumentError::new(
+                InstrumentErrorKind::SourceMismatch,
+                path.to_owned(),
+                format!("the value at {value} is not inside the source"),
+            )
+        })?;
+        let mut questions = String::new();
+        for probe in &asked {
+            let written = write!(
+                questions,
+                "; {}{module}::{}(&{BINDING})",
                 "super::".repeat(usize::try_from(probe.super_depth).unwrap_or(0)),
                 probe.question.witness(),
-            )
-            .as_bytes(),
-        );
+            );
+            debug_assert!(written.is_ok(), "writing to a String cannot fail");
+        }
+        let mut replacement = format!("({{ let {BINDING} = ").into_bytes();
+        replacement.extend_from_slice(original);
+        replacement.extend_from_slice(format!("{questions}; {BINDING} }})").as_bytes());
         splices.push(Splice {
-            span: probe.value,
+            span: value,
             original: original.to_vec(),
             replacement,
         });
-        owners.push((vec![probe.index], Placed::Probe));
+        owners.push((
+            asked.iter().map(|probe| probe.index).collect(),
+            Placed::Probe,
+        ));
     }
     Ok(())
 }

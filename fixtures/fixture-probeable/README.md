@@ -17,6 +17,9 @@ is checked against real executions rather than argued about.
 | `ratio` | no | `-0.0` equals `0.0` and is not what the default writes, so the compiler refuses the probe |
 | `retries` | yes | the returned name already holds what the replacement would write, so every test that reaches it is discharged `never-infected` and the mutation is resolved without one execution |
 | `tagged` | no | its equality answers about `number` while a test reads `tag`, so `Observable` is not stated for it and the compiler refuses the probe |
+| `name_of`, `items_of`, `maybe_of` | yes | the standard library's own `String`, `Vec` and `Option`: coherence lets nobody give them another `PartialEq`, so equality is the whole of what a program can tell apart. Every test leaves each at the default, so each is discharged `never-infected`, and narrowing the trait back to the primitives makes all three survive |
+| `no_name` | yes | `&str` has a `Default`, and the returned value is one |
+| `borrowed_name` | no | the returned value is a `&String`, which has no `Default` however much it coerces to `&str` at the return. The trait covers a reference to anything it covers; `Default` is what the value has to have as well |
 
 The invariant every run of this fixture must satisfy: for every mutant and
 every test, if the test killed the mutant then the probe recorded that test
@@ -62,4 +65,10 @@ src/lib.rs:52:5 return-default killed
 src/lib.rs:53:17 int-increment survived
 src/lib.rs:54:14 string-to-empty killed
 src/lib.rs:63:5 return-default not_run
+src/lib.rs:80:5 return-default not_run
+src/lib.rs:86:5 return-default not_run
+src/lib.rs:92:5 return-default not_run
+src/lib.rs:92:5 return-some-default killed
+src/lib.rs:98:5 return-default survived
+src/lib.rs:107:5 return-default not_run
 ```

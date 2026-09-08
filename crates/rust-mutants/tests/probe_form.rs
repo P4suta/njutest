@@ -100,3 +100,22 @@ fn a_call_inside_something_otherwise_inert_is_still_a_call() {
     assert!(!effect_free("self.a.b == f(c)"));
     assert!(!effect_free("&f(x)"));
 }
+
+#[test]
+fn the_standard_library_types_a_guard_may_compare_are_ones_the_syntax_reaches() {
+    for source in [
+        "self.name",
+        "self.items",
+        "self.maybe",
+        "&self.name",
+        "Some(3)",
+        "Ok(0)",
+        "None",
+    ] {
+        assert!(
+            effect_free(source),
+            "{source} is a value the syntax offers a probe for, which is what makes the \
+             trait's widening past the primitives reachable at all"
+        );
+    }
+}
