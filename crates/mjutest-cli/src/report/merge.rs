@@ -4,7 +4,7 @@
 //! Combining the parts of one catalog into the report the whole would have written.
 //!
 //! A part judged the mutants its shard held and measured the whole baseline,
-//! and it concluded [`Verdict::Partial`] because the mutations it did not
+//! and it concluded [`crate::report::Verdict::Partial`] because the mutations it did not
 //! judge are not mutations nothing noticed. This puts the parts back together
 //! and derives the verdict the whole supports.
 //!
@@ -213,19 +213,18 @@ fn counted(parts: &[Report], mutants: &[super::MutantRecord]) -> MutantAccountin
 /// different machines at once and the wall clock of the whole is not what the
 /// work cost.
 fn spanning(parts: &[Report]) -> super::Timing {
-    let mut timing = super::Timing {
-        started: String::new(),
-        finished: String::new(),
-        duration_ms: 0,
+    let said = |when: fn(&Report) -> &String| {
+        parts
+            .iter()
+            .map(when)
+            .filter(|one| !one.is_empty())
+            .cloned()
     };
-    for part in parts {
-        if timing.started.is_empty() || part.timing.started < timing.started {
-            timing.started.clone_from(&part.timing.started);
-        }
-        if part.timing.finished > timing.finished {
-            timing.finished.clone_from(&part.timing.finished);
-        }
-        timing.duration_ms = timing.duration_ms.saturating_add(part.timing.duration_ms);
+    super::Timing {
+        started: said(|part| &part.timing.started).min().unwrap_or_default(),
+        finished: said(|part| &part.timing.finished).max().unwrap_or_default(),
+        duration_ms: parts
+            .iter()
+            .fold(0, |sum, part| sum.saturating_add(part.timing.duration_ms)),
     }
-    timing
 }

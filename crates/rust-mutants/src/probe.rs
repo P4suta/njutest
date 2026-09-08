@@ -14,8 +14,9 @@
 //! value must not itself be an event — no effects, no possible panic,
 //! guaranteed to terminate — which is an allowlist over the syntax,
 //! deliberately narrow. The second is the type, which only the compiler can
-//! answer: [`crate::instrument::witness`] puts it, and
-//! [`crate::instrument::observable`] says what an answer of yes means.
+//! answer: [`crate::instrument::witness`] puts the question, and the sealed
+//! trait the witness tree and the runtime are both rendered from says what an
+//! answer of yes means.
 //!
 //! A question this release cannot state is a mutant executed the ordinary way,
 //! which costs time and never correctness.

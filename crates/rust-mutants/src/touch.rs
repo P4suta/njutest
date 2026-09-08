@@ -25,7 +25,7 @@
 //! they are the infection probe as well:
 //! [ADR 0015](../../../docs/adr/0015-the-guard-is-the-infection-probe.md).
 //!
-//! The reader is fail-closed, for the reason [`crate::probe::log`] is: a
+//! The reader is fail-closed: a
 //! truncated line or a header naming another catalog yields no facts at all,
 //! because a smaller wrong answer is what a partially-written log looks like and
 //! acting on one would skip a test that could have killed something.
