@@ -12,6 +12,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
+use super::Failing;
 use super::prepare::Building;
 use crate::EngineError;
 use crate::catalog::Catalog;
@@ -57,40 +58,73 @@ pub(super) fn verify(
             tests_run: result.tests_run,
             duration_ms: u64::try_from(result.duration.as_millis()).unwrap_or(u64::MAX),
         });
-        let _kept = verified.baseline.insert(target.id.clone(), result.duration);
-        let _counted = verified.ran.insert(
-            target.id.clone(),
-            result
+        let baseline = Baseline {
+            outcome: result.outcome,
+            duration: result.duration,
+            tests: result
                 .tests_run
                 .unwrap_or_else(|| u32::try_from(result.passed_tests.len()).unwrap_or(u32::MAX)),
-        );
+            output: if matches!(
+                result.outcome,
+                crate::outcome::Outcome::Survived | crate::outcome::Outcome::Inconclusive
+            ) {
+                String::new()
+            } else {
+                String::from_utf8_lossy(&result.output).into_owned()
+            },
+        };
+        let passed = baseline.passed();
+        let _kept = verified.targets.insert(target.id.clone(), baseline);
         if target.kind == TargetKind::Doc && result.tests_run == Some(0) {
             target
                 .limitations
                 .push(crate::limitation::DOCTESTS_NONE.to_owned());
         }
-        if !matches!(
-            result.outcome,
-            crate::outcome::Outcome::Survived | crate::outcome::Outcome::Inconclusive
-        ) {
-            return Err(EngineError::from(SessionError::VerifyFailed {
-                target: target.id.clone(),
-                output: String::from_utf8_lossy(&result.output).into_owned(),
-            }));
+        if passed {
+            gather(
+                &mut verified.touched,
+                &Recording {
+                    target: &target.id,
+                    log: recording.as_deref(),
+                    catalog,
+                    ran: &result.passed_tests,
+                },
+                &workspace.trace,
+            );
+        } else {
+            verified
+                .touched
+                .limited(crate::limitation::BASELINE_NOT_PASSING, &target.id);
         }
-        gather(
-            &mut verified.touched,
-            &Recording {
-                target: &target.id,
-                log: recording.as_deref(),
-                catalog,
-                ran: &result.passed_tests,
-            },
-            &workspace.trace,
-        );
     }
     phase.end();
+    refused(&verified, building.options.failing)?;
     Ok(verified)
+}
+
+/// Refuses a tree whose instrumented baseline does not pass, once every target has been asked.
+///
+/// The refusal comes after the loop rather than inside it because a person
+/// reading it is about to fix what it names, and a message that names the
+/// first of five failing targets sends them round the loop five times. Running
+/// the rest costs a passing tree nothing: there is nothing to run past.
+fn refused(verified: &Verified, failing: Failing) -> Result<(), EngineError> {
+    if verified.failing().is_empty() || failing == Failing::Exclude {
+        return Ok(());
+    }
+    Err(refusal(verified))
+}
+
+/// The refusal a tree earns whose instrumented baseline does not pass, naming every target of it that failed.
+pub(super) fn refusal(verified: &Verified) -> EngineError {
+    let failed = verified.failing();
+    EngineError::from(SessionError::VerifyFailed {
+        targets: failed.iter().map(|target| (*target).to_owned()).collect(),
+        output: failed
+            .first()
+            .and_then(|target| verified.targets.get(*target))
+            .map_or_else(String::new, |baseline| baseline.output.clone()),
+    })
 }
 
 /// One target run with nothing active, recording into `log` when it was asked to.
@@ -128,15 +162,61 @@ fn ran(
     execute::exec(&request, &context, cancel, &workspace.trace)
 }
 
+/// What one target's baseline came to on the run that verified it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct Baseline {
+    /// What running it with nothing active came to.
+    pub outcome: crate::outcome::Outcome,
+    /// How long it took, which is what a derived timeout is a multiple of.
+    pub duration: Duration,
+    /// How many tests it ran, which is what asking the whole of it about one mutation costs.
+    pub tests: u32,
+    /// What it printed, kept only where it did not pass, because that is the only time anybody reads it.
+    pub output: String,
+}
+
+impl Baseline {
+    /// Whether this target can be judged against.
+    ///
+    /// A suite that already fails cannot tell a mutation from what was
+    /// failing before it: every mutant put to it comes back killed, and none
+    /// of those kills is about the mutation. `Inconclusive` passes because it
+    /// is a target that ran nothing, which is a target with nothing to say
+    /// rather than one that said no.
+    #[must_use]
+    pub const fn passed(&self) -> bool {
+        matches!(
+            self.outcome,
+            crate::outcome::Outcome::Survived | crate::outcome::Outcome::Inconclusive
+        )
+    }
+}
+
 /// What the one run of every target with nothing activated established.
 #[derive(Debug, Default)]
-pub(super) struct Verified {
-    /// How long each target's own baseline took, which is what a derived timeout is a multiple of.
-    pub(super) baseline: BTreeMap<String, Duration>,
-    /// How many tests each target's baseline ran, which is what asking the whole of it about one mutation costs.
-    pub(super) ran: BTreeMap<String, u32>,
+#[non_exhaustive]
+pub struct Verified {
+    /// What each target's own baseline came to, by target identity.
+    pub targets: BTreeMap<String, Baseline>,
     /// What the guards recorded on that same run.
-    pub(super) touched: crate::touch::Touched,
+    pub touched: crate::touch::Touched,
+}
+
+impl Verified {
+    /// Every target whose baseline did not pass, in identity order.
+    ///
+    /// A run that judges against one of these reports a kill for every
+    /// mutation it puts to it, and not one of those kills is about a
+    /// mutation.
+    #[must_use]
+    pub fn failing(&self) -> Vec<&str> {
+        self.targets
+            .iter()
+            .filter(|(_, baseline)| !baseline.passed())
+            .map(|(target, _)| target.as_str())
+            .collect()
+    }
 }
 
 /// One target's record, and what makes sense of it.

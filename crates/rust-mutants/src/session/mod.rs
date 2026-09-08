@@ -9,7 +9,8 @@ mod verify;
 
 pub use prepare::{prepare, rewrite_needed};
 use prepare::{pristine, selection};
-use verify::{Verified, verify};
+use verify::verify;
+pub use verify::{Baseline, Verified};
 
 pub use route::{
     Asked, BRANCH_NEVER_TAKEN, Discharge, Fallback, NEVER_INFECTED, Reaches, Route, Routing, Timing,
@@ -68,6 +69,28 @@ fn names(item: &str, wanted: &str) -> bool {
     item == wanted || item.ends_with(&format!("::{wanted}"))
 }
 
+/// What preparing does about a target whose baseline does not pass with nothing active.
+///
+/// A suite that already fails cannot tell a mutation from what was failing
+/// before it: every mutant put to that target comes back killed, and not one
+/// of those kills is about a mutation. So neither answer here is "measure it
+/// anyway".
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Failing {
+    /// End the preparation and name the target. A person who asked for a measurement wants to hear that there was nothing to measure.
+    #[default]
+    Refuse,
+    /// Report it and leave the target out of every route, so a caller with a verdict of its own can give it.
+    ///
+    /// [`Session::verified`] then names every target and what its baseline
+    /// came to, and the record carries `baseline-not-passing` for each one
+    /// left out. What only such a target could have noticed is reported as a
+    /// mutation nothing reached, which is what the run can honestly say about
+    /// it.
+    Exclude,
+}
+
 /// Configures [`Workspace::prepare`].
 #[derive(Debug, Clone)]
 #[expect(
@@ -115,6 +138,8 @@ pub struct PrepareOptions {
     /// compiler's and the premise is the coverage layer's, and a caller with
     /// its own coverage discharges with [`crate::prove::discharges`].
     pub branch_proofs: bool,
+    /// What to do about a target whose baseline does not pass.
+    pub failing: Failing,
     /// How many validation rounds before falling back to bisection.
     pub max_rounds: u32,
     /// How long a build may take.
@@ -153,6 +178,7 @@ impl Default for PrepareOptions {
             measurements: None,
             verify: true,
             touch: true,
+            failing: Failing::Refuse,
             probe: false,
             coverage: true,
             branch_proofs: true,
@@ -247,12 +273,8 @@ pub struct Session {
     reached: crate::reach::Reached,
     /// What the probe pass established, empty when it did not run.
     probed: crate::probe::tree::Probed,
-    /// How long each target's own baseline took, which is what a derived timeout is a multiple of. Empty when nothing was verified.
-    baseline: BTreeMap<String, Duration>,
-    /// Which of each target's tests reached which mutant, recorded by the guards on that same baseline run.
-    touched: crate::touch::Touched,
-    /// How many tests each target's baseline ran, which is what asking the whole of it about one mutation costs.
-    ran: BTreeMap<String, u32>,
+    /// What the one run of every target with nothing active established, empty when nothing was verified.
+    verified: Verified,
     /// What each set of tests a route named answers on its own, so the question is put once however many mutants that set covers.
     filtered: std::sync::Mutex<Established>,
     /// How many tests this session started to establish those answers, counted as they are started rather than as they are remembered.
@@ -489,13 +511,29 @@ impl Session {
     /// What the guards recorded on the baseline run: which of each target's tests reached which mutant.
     #[must_use]
     pub const fn touched(&self) -> &crate::touch::Touched {
-        &self.touched
+        &self.verified.touched
+    }
+
+    /// What the one run of every target with nothing active established, target by target.
+    ///
+    /// A caller that reports on the tree it was handed reads this rather than
+    /// inferring it from what came back: a target that ran, what it came to,
+    /// how long it took and how many tests it has are all answers of that one
+    /// run, and a run that refused nothing still has targets in here that did
+    /// not pass.
+    #[must_use]
+    pub const fn verified(&self) -> &Verified {
+        &self.verified
     }
 
     /// How many tests one target's baseline ran, which is what asking the whole of it about one mutation costs.
     #[must_use]
     pub fn tests_of(&self, target: &str) -> u32 {
-        self.ran.get(target).copied().unwrap_or(1).max(1)
+        self.verified
+            .targets
+            .get(target)
+            .map_or(1, |baseline| baseline.tests)
+            .max(1)
     }
 
     /// How many tests this session started to establish that a set of them answers on its own.
@@ -571,15 +609,33 @@ impl Session {
     /// answer on the other.
     #[must_use]
     pub fn baseline(&self, target: &str) -> Option<Duration> {
-        self.baseline.get(target).copied()
+        self.verified
+            .targets
+            .get(target)
+            .map(|baseline| baseline.duration)
+    }
+
+    /// What one target costs: how long its own baseline took, and how many tests that was the cost of.
+    ///
+    /// What an unverified target costs is a decision this engine makes, not
+    /// one a caller should have to spell for itself: two places answering the
+    /// same question is two places that can drift apart, and nothing would
+    /// notice.
+    #[must_use]
+    pub fn timing(&self, target: &str) -> Timing {
+        Timing::new(
+            self.baseline(target).unwrap_or(DEFAULT_MUTANT_TIMEOUT),
+            self.tests_of(target),
+        )
     }
 
     /// The longest a target's own baseline took, which is what an estimate of a run's cost rests on.
     #[must_use]
     pub fn slowest_baseline(&self) -> Duration {
-        self.baseline
+        self.verified
+            .targets
             .values()
-            .copied()
+            .map(|baseline| baseline.duration)
             .max()
             .unwrap_or(Duration::from_secs(1))
     }
@@ -607,8 +663,11 @@ impl Session {
             measurable: &measurable,
             also_reaching: &self.documenting(mutant),
         };
-        if self.touched.measured() {
-            return self.discharging(mutant, Route::by_touch(&self.touched, mutant.index, &among));
+        if self.verified.touched.measured() {
+            return self.discharging(
+                mutant,
+                Route::by_touch(&self.verified.touched, mutant.index, &among),
+            );
         }
         let Some(position) = self.position(mutant) else {
             return Route::All {
@@ -794,8 +853,9 @@ impl Session {
     /// one nothing is known about, and a target whose guard the tree does not
     /// compare says nothing about it either.
     fn never_differed(&self, index: u32, target: &str) -> bool {
-        self.touched.narrowing.compared.contains(&index)
+        self.verified.touched.narrowing.compared.contains(&index)
             && self
+                .verified
                 .touched
                 .targets
                 .get(target)
@@ -823,7 +883,7 @@ impl Session {
         let Asked::These(tests) = &one.tests else {
             return Narrowed::Reaching(one);
         };
-        let Some(touches) = self.touched.targets.get(&one.target) else {
+        let Some(touches) = self.verified.touched.targets.get(&one.target) else {
             return Narrowed::Reaching(one);
         };
         let entered: Vec<String> = tests
@@ -854,7 +914,8 @@ impl Session {
         touches: &crate::touch::TargetTouches,
         test: &str,
     ) -> bool {
-        self.touched
+        self.verified
+            .touched
             .narrowing
             .bodies
             .get(&index)
@@ -872,7 +933,8 @@ impl Session {
         touches: &crate::touch::TargetTouches,
         test: &str,
     ) -> bool {
-        !self.touched.narrowing.compared.contains(&index) || touches.infected.by(test, index)
+        !self.verified.touched.narrowing.compared.contains(&index)
+            || touches.infected.by(test, index)
     }
 
     /// Whether nothing of `target` ran the body the branch proof of `mutant` names.
@@ -888,8 +950,8 @@ impl Session {
         let Some(proof) = self.branch(mutant.index) else {
             return false;
         };
-        if let Some(marker) = self.touched.narrowing.bodies.get(&mutant.index)
-            && let Some(touches) = self.touched.targets.get(target)
+        if let Some(marker) = self.verified.touched.narrowing.bodies.get(&mutant.index)
+            && let Some(touches) = self.verified.touched.targets.get(target)
             && !touches.bodies.any(*marker)
         {
             return true;

@@ -77,7 +77,7 @@ first digit names an area:
 | `RM4002` | The mutants a compilation failure came from could not be isolated. | — |
 | `RM4003` | An instrumented compilation could not be attempted at all: the tree could not be written, or the toolchain could not be reached. | — |
 | `RM5001` | The workspace does not compile before anything is instrumented. | make `cargo test --no-run` pass on the tree as committed, then run again |
-| `RM5002` | A target fails with nothing active, so no outcome under a mutation would be about the mutation. The run type-checks the pristine tree rather than running it, so this says what it observed and not that the tree was passing before. | [execution] skip_targets leaves that target out; --no-verify makes every result a result about instrumentation |
+| `RM5002` | A target fails with nothing active, so no outcome under a mutation would be about the mutation. Verification does not stop at the first: every target is run and the refusal names all of them, because somebody is about to fix what it names. The run type-checks the pristine tree rather than running it, so this says what it observed and not that the tree was passing before. | [execution] skip_targets leaves that target out; --no-verify makes every result a result about instrumentation |
 | `RM5003` | No mutant of the catalog answers to the identity or prefix given, or several do. | — |
 | `RM5004` | No test target of the session answers to the name given. | — |
 | `RM5005` | The workspace builds no test target, so no mutant can be measured. | — |

@@ -269,11 +269,33 @@ fn built(building: &Building<'_>) -> Result<Built, EngineError> {
         source,
     })?;
     let verified = if options.verify {
-        verify(workspace, &mut targets, &scratch, building)?
+        let verified = verify(workspace, &mut targets, &scratch, building)?;
+        excluded(&mut targets, &verified, options);
+        verified
     } else {
         Verified::default()
     };
     Ok((targets, scratch, verified))
+}
+
+/// Leaves out every target whose own baseline did not pass, where the run asked for that rather than for a refusal.
+///
+/// A target that was already failing answers every mutation with the failure
+/// it was already giving, so a run that kept it would put a number on the
+/// report that is about the target rather than about any mutation. `verify`
+/// has already recorded why each one is gone.
+///
+/// Excluding every target there was leaves a session with nothing to run, and
+/// that session is still handed back: the caller that asked to exclude asked
+/// for the table rather than for a refusal, and the moment it most needs the
+/// table is the moment the answer is "all of them". Running it is what refuses,
+/// with the error a run of no targets earns.
+fn excluded(targets: &mut Vec<TestTarget>, verified: &Verified, options: &PrepareOptions) {
+    if options.failing == super::Failing::Refuse {
+        return;
+    }
+    let failing = verified.failing();
+    targets.retain(|target| !failing.contains(&target.id.as_str()));
 }
 
 /// What cargo is told before the documentation examples' own arguments, so that running them reuses the build this session already made.
@@ -546,11 +568,12 @@ pub fn prepare(
         validated,
         targets,
         scratch,
-        baseline: verified.baseline,
-        ran: verified.ran,
-        touched: crate::touch::Touched {
-            narrowing,
-            ..verified.touched
+        verified: Verified {
+            touched: crate::touch::Touched {
+                narrowing,
+                ..verified.touched
+            },
+            ..verified
         },
         filtered: std::sync::Mutex::new(BTreeMap::new()),
         established: std::sync::atomic::AtomicU64::new(0),

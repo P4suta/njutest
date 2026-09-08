@@ -75,3 +75,24 @@ fn without_verification_the_same_test_kills_every_mutant_it_touches() {
          verification exists to stop: {text}"
     );
 }
+
+#[test]
+fn a_refusal_names_every_target_that_failed_rather_than_the_first() {
+    let fixture = Fixture::copy("fixture-verify-fails");
+    let output = run(&fixture, &[]);
+    let said = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        said.contains("fixture-verify-fails/lib/fixture_verify_fails"),
+        "{said}"
+    );
+    assert!(
+        said.contains("fixture-verify-fails/test/beside"),
+        "the second target failed too, and a run that stopped at the first would send the \
+         reader round the loop again: {said}"
+    );
+    assert!(
+        said.contains("--skip-target fixture-verify-fails/lib/fixture_verify_fails")
+            && said.contains("--skip-target fixture-verify-fails/test/beside"),
+        "what it says to do about it covers every one of them: {said}"
+    );
+}

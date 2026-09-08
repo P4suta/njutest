@@ -112,6 +112,13 @@ below is stated fail-closed.
   many tests ran it, and the record names which mutants it can speak about so
   that its silence about the rest is never read as evidence. The probe tree,
   which `--probe` builds, is what answers for those.
+- A run refuses a tree whose instrumented baseline does not pass, and it names
+  every target that failed rather than the first: a person reading the refusal
+  is about to fix what it names, and a message that names one of five sends
+  them round the loop five times. A caller that would rather measure what it
+  can asks for the other policy, and each target left out carries
+  `baseline-not-passing` so that no score is read as being about a mutation the
+  target was never in a position to notice.
 - The guards measure reach on the baseline run, and a target whose guards were
   not asked carries `touch-not-recorded`. They are not asked when the engine
   does not start the process itself: a documented example, which rustdoc

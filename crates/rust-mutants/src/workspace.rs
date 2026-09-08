@@ -123,16 +123,25 @@ pub enum SessionError {
     },
     /// The instrumented baseline does not pass its own tests.
     #[error(
-        "{}: {target} fails with nothing active, so no outcome under a mutation would be about \
-         the mutation. Fix the test, leave the target out with --skip-target {target}, or pass \
-         --no-verify and read every result as being about the instrumentation as much as about \
-         the mutation:\n{output}",
-        error::SESSION_VERIFY_FAILED.code
+        "{}: {} fails with nothing active, so no outcome under a mutation would be about the \
+         mutation. Fix the test, leave the target out with {}, or pass --no-verify and read \
+         every result as being about the instrumentation as much as about the mutation:\n{output}",
+        error::SESSION_VERIFY_FAILED.code,
+        targets.join(", "),
+        targets
+            .iter()
+            .map(|target| format!("--skip-target {target}"))
+            .collect::<Vec<String>>()
+            .join(" ")
     )]
     VerifyFailed {
-        /// The target that failed.
-        target: String,
-        /// The tail of what it said.
+        /// Every target that failed, in identity order.
+        ///
+        /// A run does not stop at the first: somebody reading this is about to
+        /// fix what it names, and a refusal that names one of five sends them
+        /// round the loop five times.
+        targets: Vec<String>,
+        /// The tail of what the first of them said.
         output: String,
     },
     /// No prefix of the catalog matches, or several do.
