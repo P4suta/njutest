@@ -861,41 +861,187 @@ fn omitting() -> serde_json::Value {
     document
 }
 
+/// One route event, so a recording can be built out of the decisions it holds.
+fn routed(mutant: &str, granularity: &str, route: &serde_json::Value) -> serde_json::Value {
+    let mut record = serde_json::json!({
+        "mutant": mutant, "granularity": granularity, "fallback": null,
+        "reaching": [], "discharged": [], "considered": [], "reused": null
+    });
+    if let (Some(into), Some(from)) = (record.as_object_mut(), route.as_object()) {
+        for (key, value) in from {
+            let _replaced = into.insert(key.clone(), value.clone());
+        }
+    }
+    serde_json::json!({
+        "seq": 1, "timestamp": "2026-09-06T00:00:00Z", "elapsed_ms": 0,
+        "type": "route", "route": record
+    })
+}
+
+/// One execution event.
+fn executed(mutant: &str, target: &str, outcome: &str) -> serde_json::Value {
+    serde_json::json!({
+        "seq": 2, "timestamp": "2026-09-06T00:00:01Z", "elapsed_ms": 1, "type": "mutant-exec",
+        "mutant": { "mutant": mutant, "target": target, "args": [], "outcome": outcome,
+                    "duration_ms": 5 }
+    })
+}
+
+/// Every audit this test file can provoke, so a property over remarks is a property over the sentences the audit can write.
+fn provoked() -> Vec<(&'static str, Audit)> {
+    let mut all = documents();
+    all.extend(recordings());
+    all
+}
+
+/// Every audit a report alone can provoke.
+fn documents() -> Vec<(&'static str, Audit)> {
+    let unnamed = with(serde_json::json!({
+        "mutants": [{
+            "id": "c".repeat(64), "display_id": "cccccccccccccccccccc", "path": "src/lib.rs",
+            "position": { "line": 1, "column": 1, "character_column": 1 },
+            "rule": "r@1", "outcome": "killed", "killed_by": null, "reused": false,
+            "source_run_id": null
+        }]
+    }));
+    vec![
+        ("columns that disagree", audited_with_routes(&disagreeing())),
+        (
+            "columns that are not there",
+            audited_with_routes(&omitting()),
+        ),
+        ("a report that holds together", audited_with_routes(&base())),
+        (
+            "findings that name no survivor",
+            audited_with_routes(&with(serde_json::json!({ "findings": [] }))),
+        ),
+        ("a kill that names no target", audited(&unnamed)),
+        (
+            "an assurance that carries a finding",
+            audited(&with(serde_json::json!({ "verdict": "ASSURED" }))),
+        ),
+    ]
+}
+
+/// Every audit a report and a recording together can provoke.
+fn recordings() -> Vec<(&'static str, Audit)> {
+    vec![
+        (
+            "a route that reaches nothing and runs something",
+            audited_with(
+                &base(),
+                &[
+                    routed(
+                        KILLED,
+                        "unreached",
+                        &serde_json::json!({ "considered": [TARGET] }),
+                    ),
+                    executed(KILLED, TARGET, "killed"),
+                ],
+            ),
+        ),
+        (
+            "a route that names nobody",
+            audited_with(
+                &base(),
+                &[routed(SURVIVED, "unreached", &serde_json::json!({}))],
+            ),
+        ),
+        (
+            "a route widened to everything that ran nothing",
+            audited_with(
+                &base(),
+                &[routed(
+                    SURVIVED,
+                    "all",
+                    &serde_json::json!({ "fallback": "not-measured", "reaching": [TARGET] }),
+                )],
+            ),
+        ),
+        (
+            "a kill by a target a proof removed",
+            audited_with(
+                &base(),
+                &[
+                    routed(
+                        KILLED,
+                        "block",
+                        &serde_json::json!({
+                            "reaching": ["elsewhere"],
+                            "discharged": [{ "target": TARGET, "proof": "never-infected" }]
+                        }),
+                    ),
+                    executed(KILLED, TARGET, "killed"),
+                ],
+            ),
+        ),
+        (
+            "a kill by a target the route never named",
+            audited_with(
+                &base(),
+                &[
+                    routed(
+                        KILLED,
+                        "block",
+                        &serde_json::json!({ "reaching": ["elsewhere"] }),
+                    ),
+                    executed(KILLED, TARGET, "killed"),
+                ],
+            ),
+        ),
+        (
+            "a route held to a target that is not there",
+            audited_with(
+                &base(),
+                &[routed(
+                    SURVIVED,
+                    "unreached",
+                    &serde_json::json!({ "considered": ["a target no run of this has"] }),
+                )],
+            ),
+        ),
+        ("no recording at all", audited(&base())),
+    ]
+}
+
 #[test]
 fn every_remark_a_recording_earns_says_something_a_reader_can_act_on() {
     let mut seen = 0usize;
-    for (what, document) in [
-        ("columns that disagree", disagreeing()),
-        ("columns that are not there", omitting()),
-        ("a report that holds together", base()),
-        (
-            "findings that name no survivor",
-            with(serde_json::json!({ "findings": [] })),
-        ),
-    ] {
-        let audit = audited_with_routes(&document);
+    for (what, audit) in provoked() {
         for remark in &audit.remarks {
             seen = seen.saturating_add(1);
+            let said = remark.detail.trim();
             assert!(
                 !remark.subject.trim().is_empty(),
                 "{what}: a remark that names nothing is one a reader cannot look up: \
                  {remark:?}"
             );
             assert!(
-                remark.detail.trim().len() > 20,
+                said.len() > 20,
                 "{what}: and one that says nothing is one they cannot act on. A sentence \
                  is the whole of what an audit produces, so an empty one is the audit \
                  failing quietly: {remark:?}"
             );
             assert!(
-                remark.detail.trim() != remark.subject.trim(),
+                said != remark.subject.trim(),
                 "{what}: saying the subject back is not saying anything: {remark:?}"
+            );
+            assert!(
+                !said.contains("  "),
+                "{what}: two spaces are where a sentence was built around something that \
+                 turned out to be empty, and the reader gets the frame without the fact: \
+                 {remark:?}"
+            );
+            assert!(
+                !said.ends_with(':') && !said.ends_with(": "),
+                "{what}: a sentence that ends where its reason should start is a sentence \
+                 that promised one: {remark:?}"
             );
         }
     }
     assert!(
-        seen >= 20,
-        "the recordings between them have to reach every sentence this audit can write, \
+        seen >= 30,
+        "the recordings between them have to reach the sentences this audit can write, \
          and {seen} is too few to have done that"
     );
 }
@@ -986,6 +1132,154 @@ fn one_fact_said_twice_is_one_line() {
         1,
         "one route recorded twice is one fact, and saying it twice makes a reader look \
          for two defects: {audit}"
+    );
+}
+
+#[test]
+fn a_timeout_is_a_target_noticing_and_a_proof_may_not_have_removed_it() {
+    let audit = audited_with(
+        &base(),
+        &[
+            routed(
+                KILLED,
+                "block",
+                &serde_json::json!({
+                    "reaching": ["elsewhere"],
+                    "discharged": [{ "target": TARGET, "proof": "branch-never-taken" }]
+                }),
+            ),
+            executed(KILLED, TARGET, "timed_out"),
+        ],
+    );
+
+    assert!(
+        proven(&audit).contains(&KILLED.to_owned()),
+        "a confirmed timeout is a behaviour change the tests noticed, so a proof that \
+         removed the target it happened on removed one that found a defect: {audit}"
+    );
+}
+
+#[test]
+fn a_route_that_kept_the_killer_beside_others_removed_nothing_that_found_a_defect() {
+    let audit = audited_with(
+        &base(),
+        &[
+            routed(
+                KILLED,
+                "block",
+                &serde_json::json!({ "reaching": [TARGET, "and one more"] }),
+            ),
+            executed(KILLED, TARGET, "killed"),
+        ],
+    );
+
+    assert!(
+        proven(&audit).is_empty(),
+        "the killer is one of the targets this route kept, so the reach layer removed \
+         nothing that found anything. Asking whether *every* kept target was the killer \
+         would call a route that kept two and was killed by one of them unsound: {audit}"
+    );
+}
+
+#[test]
+fn a_route_that_kept_others_and_was_killed_by_none_of_them_is_a_violation() {
+    let audit = audited_with(
+        &base(),
+        &[
+            routed(
+                KILLED,
+                "block",
+                &serde_json::json!({ "reaching": ["elsewhere", "further away"] }),
+            ),
+            executed(KILLED, TARGET, "killed"),
+        ],
+    );
+
+    assert!(
+        proven(&audit).contains(&KILLED.to_owned()),
+        "the killer is among none of the targets this route kept, however many it kept: \
+         {audit}"
+    );
+}
+
+#[test]
+fn a_defect_that_names_one_fault_among_findings_that_are_not_faults_is_supported() {
+    let named = with(serde_json::json!({
+        "verdict": "DEFECT",
+        "findings": [
+            { "kind": "surviving-mutant", "subject": SURVIVED, "detail": "d", "position": null },
+            { "kind": "failing-test", "subject": TARGET, "detail": "it failed", "position": null }
+        ]
+    }));
+    let audit = audited(&named);
+
+    assert!(
+        !violations(&named).contains(&"verdict".to_owned()),
+        "one fault among the findings is what a DEFECT rests on; asking that *every* \
+         finding be a fault would refuse a report that names a fault and a gap: {audit}"
+    );
+}
+
+#[test]
+fn what_a_run_looked_at_decides_which_assurance_it_may_reach() {
+    for (kind, assurance) in [
+        ("full", "ASSURED"),
+        ("changed", "CHANGE_ASSURED"),
+        ("scoped", "SCOPE_ASSURED"),
+    ] {
+        let document = with(serde_json::json!({
+            "run_kind": kind, "verdict": assurance, "findings": []
+        }));
+        assert!(
+            !violations(&document).contains(&"verdict".to_owned()),
+            "a {kind} run may conclude {assurance}"
+        );
+        let wider = with(serde_json::json!({
+            "run_kind": kind, "verdict": "ASSURED", "findings": []
+        }));
+        if assurance != "ASSURED" {
+            assert!(
+                violations(&wider).contains(&"verdict".to_owned()),
+                "and a {kind} run may not conclude ASSURED, which is a claim about code \
+                 it did not look at"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_column_the_audit_could_not_check_is_counted_as_one_it_could_not_check() {
+    let mut document = base();
+    without(&mut document, "mutants", "killed");
+    let audit = audited(&document);
+
+    assert_eq!(
+        audit.unaudited(),
+        4,
+        "one column that is not there leaves the column itself, the two equations it is \
+         a side of, and the routing this recording does not carry. A count of what could \
+         not be checked is what tells a reader how much of the report the audit is \
+         silent about, and one that is always zero says it checked everything: {audit}"
+    );
+    assert!(
+        audit.to_string().contains("4 unaudited"),
+        "and the summary says it: {audit}"
+    );
+}
+
+#[test]
+fn a_field_the_recording_does_not_carry_is_absent_rather_than_fatal() {
+    let mut document = base();
+    if let Some(object) = document.as_object_mut() {
+        let _removed = object.remove("run_id");
+    }
+    let audit = audited(&document);
+
+    assert!(
+        audit.run_id.is_empty(),
+        "a document missing a field it should have is a document the audit reads what it \
+         can of; reaching into it and unwrapping would end the audit at the first thing \
+         that was not there: {audit}"
     );
 }
 
