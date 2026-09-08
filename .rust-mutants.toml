@@ -20,3 +20,19 @@ tier = "all"
 [execution]
 offline = true
 locked = true
+
+# A place the tests answer for by construction rather than by running.
+#
+# `Phase` ends its phase in `Drop`, so the explicit `end()` at the tail of a
+# function is there for a reader and not for the recording. That is the design
+# — a phase nobody can forget to close — and the invariant it rests on has a
+# test of its own: `trace.rs::a_phase_guard_ends_its_phase_once_with_its_duration_and_phases_nest`
+# drops a guard without calling `end` and still finds the `phase-end`. An
+# acceptance whose reason is an invariant is only as good as the test on that
+# invariant, so the test is named here for whoever reads this next.
+[[mutation.expect]]
+path = "crates/rust-mutants/src/prove.rs"
+item = "establish"
+rule = "delete-call-statement"
+original = "phase.end();"
+reason = "Phase ends its phase on Drop, so the explicit end at the tail of establish changes no recording; a_phase_guard_ends_its_phase_once_with_its_duration_and_phases_nest holds that"

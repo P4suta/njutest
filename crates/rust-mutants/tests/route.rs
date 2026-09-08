@@ -306,3 +306,29 @@ fn a_target_the_caller_cannot_time_is_priced_at_what_it_handed_back() {
          is the guess that errs toward too long"
     );
 }
+
+#[test]
+fn a_route_every_proof_removed_says_so_and_widens_nothing() {
+    let route = Route::Discharged {
+        discharged: vec![rust_mutants::session::Discharge {
+            target: "demo/lib/demo".to_owned(),
+            proof: rust_mutants::session::NEVER_INFECTED,
+        }],
+    };
+    assert_eq!(
+        route.granularity(),
+        "discharged",
+        "a mutation every target was proved unable to notice is not one nothing reached, and a \
+         reader deciding whether the tests have a gap there needs the two apart"
+    );
+    assert_eq!(
+        route.fallback(),
+        None,
+        "nothing widened it: a proof removed each target, and a fallback would say the \
+         measurement failed to place one"
+    );
+    assert!(
+        route.reaching().is_empty() && route.considered().is_empty(),
+        "and it keeps nobody, so there is nothing for it to name but the proofs"
+    );
+}
