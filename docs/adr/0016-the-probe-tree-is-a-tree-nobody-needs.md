@@ -28,8 +28,11 @@ an event.
 
 For that it costs a `cargo check` loop of up to `max_rounds` rounds, a build
 of the whole workspace into a target directory of its own, and a run of every
-target. Measured on this engine's own workspace, warm: **168 seconds of the
-575 a preparation takes**, and it discharged nothing at all.
+target. Measured on this engine's own workspace on a cold cache: **168
+seconds of the 575 a preparation takes**, and it discharged nothing at all.
+The same preparation on a warm cache is 99 seconds, so what the probe tree
+cost was a cold-cache cost paid once per tree — but paid every time the tree
+changed enough to matter, which for a workspace under development is often.
 
 Meanwhile a return replacement is the easiest infection question there is. The
 mutation writes a *constant* — the default, `true`, `Ok(default)`,
@@ -58,6 +61,13 @@ changed the sign of a zero no change at all. A type of your own is outside it,
 because a `PartialEq` that answers about one field while a test reads another
 would say nothing happened while a test watched the difference.
 
+Being in the trait is not enough: the value must also *have* a `Default`, and
+a reference usually does not. A function returning `&str` whose body borrows a
+`String` field returns a `&String`, which the trait covers and `Default` does
+not, so the compiler refuses it however plainly it coerces at the return. The
+trait says which equalities may be trusted; `Default` says what there is to
+compare against.
+
 The type question goes to the **witness tree**, which
 [ADR 0008](0008-compiler-validated-acceptance-and-the-type-witness-pass.md)
 already builds once, in the shape the guard will hold:
@@ -76,7 +86,9 @@ make unwriteable rather than to remember.
 
 - A default preparation makes **three builds instead of four** and runs every
   target **once instead of twice**. On this engine's own workspace that is
-  168 seconds of 575.
+  168 seconds of 575 on a cold cache; the same preparation warm is 99, of
+  which 77 are the one run of every target that is the baseline and the
+  measurement at once.
 - `never-infected` now covers return replacements without a flag, and covers
   more of them than the probe tree did: the probe tree's `Observable` named
   the primitives only, and this one adds `str`, `String`, `Option` and `Vec`.
