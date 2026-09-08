@@ -41,6 +41,7 @@ path = "crates/rust-mutants/src/prove.rs"
 item = "establish"
 rule = "delete-call-statement"
 original = "phase.end();"
+count = 3
 reason = "Phase ends its phase on Drop, so the explicit end at the tail of establish changes no recording; a_phase_guard_ends_its_phase_once_with_its_duration_and_phases_nest holds that"
 
 # The runner's own `Phase` is the same design and the same acceptance. Its
@@ -61,7 +62,7 @@ reason = "the runner's Phase ends its phase on Drop, so the explicit end at the 
 # gives. The separation is a cache-layer choice (ADR 0010), not a premise.
 [[mutation.expect]]
 path = "crates/rust-mutants/src/prove.rs"
-item = "establish"
+item = "checking"
 rule = "string-to-empty"
 original = "\"witness\""
 reason = "the directory the witness check builds into is where artifacts are kept, not what the check establishes; every answer is the same either way"
