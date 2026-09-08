@@ -165,11 +165,12 @@ fn recordable(target: &TestTarget) -> bool {
 /// Reads one target's record into `touched`, or says why there is nothing of it to read.
 ///
 /// A target that was asked and wrote nothing reached nothing: the runtime
-/// appends the first time any guard of the process runs, so an absent file is
-/// a process whose guards never ran rather than a process that was never
-/// asked. A record naming a thread the run does not know as one of its tests
-/// is a touch nothing can be attributed to, and reaches every test of the
-/// target.
+/// appends the first time any guard of the process runs, so a file that is not
+/// there is a process whose guards never ran rather than a process that was
+/// never asked. A file that is there and cannot be read is neither, and is
+/// read as neither. A record naming a thread the run does not know as one of
+/// its tests is a touch nothing can be attributed to, and reaches every test
+/// of the target.
 fn gather(
     touched: &mut crate::touch::Touched,
     recording: &Recording<'_>,
@@ -179,16 +180,25 @@ fn gather(
         touched.limited(crate::touch::UNRECORDED, recording.target);
         return;
     };
-    let text = std::fs::read_to_string(log).unwrap_or_default();
+    let unreadable = |touched: &mut crate::touch::Touched, why: &dyn std::fmt::Display| {
+        trace.note(
+            crate::touch::UNREADABLE,
+            &format!("{}: {why}", recording.target),
+        );
+        touched.limited(crate::touch::UNREADABLE, recording.target);
+    };
+    let text = match crate::limitation::appended(std::fs::read_to_string(log)) {
+        Ok(text) => text,
+        Err(error) => {
+            unreadable(touched, &error);
+            return;
+        }
+    };
     let count = u32::try_from(recording.catalog.mutants().len()).unwrap_or(u32::MAX);
     let recorded = match crate::touch::read(&text, recording.catalog.digest(), count) {
         Ok(recorded) => recorded,
         Err(error) => {
-            trace.note(
-                crate::touch::UNREADABLE,
-                &format!("{}: {error}", recording.target),
-            );
-            touched.limited(crate::touch::UNREADABLE, recording.target);
+            unreadable(touched, &error);
             return;
         }
     };

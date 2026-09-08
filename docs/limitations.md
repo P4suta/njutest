@@ -116,9 +116,13 @@ below is stated fail-closed.
   not asked carries `touch-not-recorded`. They are not asked when the engine
   does not start the process itself: a documented example, which rustdoc
   compiles and runs, or a target the project configured a runner for. A record
-  that was made and did not read back carries `touch-log-unreadable`. Either
-  way the target keeps every test of it in every route, which is what a run
-  that measured nothing about it has to do.
+  that was made and did not read back carries `touch-log-unreadable`, and so
+  does one the filesystem would not hand over: a runtime creates its log the
+  first time it has something to say, so a file that is not there is a process
+  that said nothing, and a file that is there and will not open is neither.
+  Either way the target keeps every test of it in every route, which is what a
+  run that measured nothing about it has to do. The probe's own log is read by
+  the same rule.
 - A coverage export whose region ends before it starts is refused outright
   rather than read as far as it goes. Such a region describes nothing, and a
   reader that kept it would answer "this target did not reach that place" for

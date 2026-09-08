@@ -351,3 +351,34 @@ fn a_measurement_that_could_not_read_a_target_is_not_one_to_remember() {
          to tell it from a whole one"
     );
 }
+
+#[test]
+fn a_record_that_is_not_there_is_a_process_that_wrote_nothing_and_one_that_will_not_read_is_neither()
+ {
+    use rust_mutants::limitation::appended;
+    use std::io::{Error, ErrorKind};
+
+    assert_eq!(
+        appended(Ok("t\t-\t1\n".to_owned())).ok(),
+        Some("t\t-\t1\n".to_owned()),
+        "a record that read back is the record"
+    );
+    assert_eq!(
+        appended(Err(Error::from(ErrorKind::NotFound))).ok(),
+        Some(String::new()),
+        "a runtime creates the file the first time it has something to say, so a file that is \
+         not there is a process that had nothing to say"
+    );
+    for kind in [
+        ErrorKind::PermissionDenied,
+        ErrorKind::InvalidData,
+        ErrorKind::IsADirectory,
+    ] {
+        assert!(
+            appended(Err(Error::from(kind))).is_err(),
+            "a file that is there and did not come back is not a record of nothing; reading \
+             the two as one turns every mutant of that target into one nothing could notice: \
+             {kind:?}"
+        );
+    }
+}

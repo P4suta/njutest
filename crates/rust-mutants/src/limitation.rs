@@ -64,3 +64,23 @@ pub const ALL: [&str; 13] = [
     PROBE_TREE_NOT_BUILT,
     PROBE_LOG_UNREADABLE,
 ];
+
+/// What a log a runtime appends to says, keeping the failure where the file is there and this run could not read it.
+///
+/// Both logs the engine reads back — the guards' record and the probe's — are
+/// written by a process that creates the file the first time it has something
+/// to say. A file that is not there is therefore a process that had nothing to
+/// say, and reads as the empty record. Any other failure is a file that exists
+/// and did not come back, and a record a run cannot read is not a record of
+/// nothing: reading the two as one turns every mutant of that target into one
+/// the tests could not have noticed.
+///
+/// # Errors
+/// Whatever the filesystem said, less the one answer that means the process
+/// never wrote.
+pub fn appended(read: std::io::Result<String>) -> std::io::Result<String> {
+    match read {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+        other => other,
+    }
+}

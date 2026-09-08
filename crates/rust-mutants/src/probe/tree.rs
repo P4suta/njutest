@@ -451,7 +451,12 @@ fn build_and_run(
             probed.limitations.push(UNREADABLE_LOG.to_owned());
             continue;
         }
-        let text = std::fs::read_to_string(&log_path).unwrap_or_default();
+        let read = crate::limitation::appended(std::fs::read_to_string(&log_path));
+        let Ok(text) = read else {
+            record("unreadable-log", None);
+            probed.limitations.push(UNREADABLE_LOG.to_owned());
+            continue;
+        };
         match log::read(&text, catalog, count) {
             Ok(infected) => {
                 record(
