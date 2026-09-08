@@ -9,14 +9,27 @@ const GENERIC: &str = "stated by a phase of the run";
 
 #[test]
 fn every_limitation_the_engine_can_state_has_a_sentence_of_its_own() {
+    let mut said: std::collections::BTreeMap<String, &str> = std::collections::BTreeMap::new();
     for name in rust_mutants::limitation::ALL {
+        let detail = limitation_detail(name);
         assert_ne!(
-            limitation_detail(name),
-            GENERIC,
+            detail, GENERIC,
             "{name} reaches a report with nothing a reader can act on. A layer that \
              names itself and says nothing more is not one a person can audit, which \
              is what ADR 0004 decision 4 asks of every layer"
         );
+        assert!(
+            !detail.trim().is_empty(),
+            "{name} reaches a report with an empty sentence, which is not the generic \
+             one and is less than it: a reader is told the name of something that went \
+             unmeasured and nothing whatever about it"
+        );
+        if let Some(other) = said.insert(detail.clone(), name) {
+            panic!(
+                "{name} and {other} say the same sentence, so a reader told either one \
+                 learns which name it is and not which thing happened: {detail}"
+            );
+        }
     }
 }
 
