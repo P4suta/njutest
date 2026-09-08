@@ -642,6 +642,11 @@
               "line": {
                 "type": "integer",
                 "minimum": 1
+              },
+              "count": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "How many mutations the locator names, when one reason is written for a set of them."
               }
             },
             "description": "Where the mutation is and what it edits, when the claim named it that way rather than by identity."
@@ -693,6 +698,11 @@
                 "type": "string"
               }
             ]
+          },
+          "covered": {
+            "type": "integer",
+            "minimum": 2,
+            "description": "How many mutants one claim was resolved against, when its locator stated a count. Absent when the claim names one."
           }
         }
       }

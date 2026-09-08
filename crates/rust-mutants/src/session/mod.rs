@@ -47,6 +47,17 @@ pub struct Locator {
     /// The line, as a hint that separates two mutations the rest would name together.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub line: Option<u32>,
+    /// How many mutations this names, when it names a set of them on one reason.
+    ///
+    /// Without it a locator names one mutation and naming several is an error,
+    /// because a reason written about one mutation cannot be checked against
+    /// another. With it the claim is about every one of them: the count says
+    /// how many the reason was written for, so a mutation added or removed at
+    /// the same place stops the claim rather than joining it, and the outcome
+    /// is required of each, so a claim covering three cannot go on standing
+    /// once one of them is killed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub count: Option<u32>,
 }
 
 /// Why a locator named no one mutation.
@@ -60,6 +71,14 @@ pub enum LocateError {
     #[error("{} mutations of this catalog are the one described: {}", display_ids.len(), display_ids.join(", "))]
     Several {
         /// What it could have meant.
+        display_ids: Vec<String>,
+    },
+    /// The locator names a set of a stated size, and the catalog holds another number of them.
+    #[error("this names {} mutations of the catalog and the claim is written for {wanted}: {}", display_ids.len(), display_ids.join(", "))]
+    Counted {
+        /// How many the claim was written for.
+        wanted: u32,
+        /// What the catalog holds instead.
         display_ids: Vec<String>,
     },
 }
@@ -410,6 +429,33 @@ impl Session {
     /// mutation and [`LocateError::Several`] when it holds more than one and
     /// the line does not separate them.
     pub fn locate(&self, locator: &Locator) -> Result<&Mutant, LocateError> {
+        match self.locate_all(locator)?.as_slice() {
+            [one] => Ok(one),
+            several => Err(LocateError::Several {
+                display_ids: several
+                    .iter()
+                    .map(|mutant| mutant.display_id.clone())
+                    .collect(),
+            }),
+        }
+    }
+
+    /// Every mutation of the catalog a locator names, which is one unless it states a count.
+    ///
+    /// A locator that states no count names one mutation, because a reason
+    /// written about one mutation says nothing about another that happens to
+    /// share a path, an item, a rule and the bytes it replaces. A locator that
+    /// states a count names exactly that many, and the caller has to require
+    /// its claim of every one of them: the count fixes which mutations are
+    /// spoken about, and the outcome fixes what is said.
+    ///
+    /// # Errors
+    /// Returns [`LocateError::Nothing`] when the catalog holds no such
+    /// mutation, [`LocateError::Several`] when it holds more than one and
+    /// neither the line nor a count separates them, and
+    /// [`LocateError::Counted`] when a count is stated and another number of
+    /// them is what the catalog holds.
+    pub fn locate_all(&self, locator: &Locator) -> Result<Vec<&Mutant>, LocateError> {
         let matching: Vec<&Mutant> = self
             .catalog
             .mutants()
@@ -431,15 +477,24 @@ impl Session {
                 .collect(),
             _ => matching,
         };
-        match narrowed.as_slice() {
-            [] => Err(LocateError::Nothing),
-            [one] => Ok(one),
-            several => Err(LocateError::Several {
-                display_ids: several
-                    .iter()
-                    .map(|mutant| mutant.display_id.clone())
-                    .collect(),
+        let named = |several: &[&Mutant]| -> Vec<String> {
+            several
+                .iter()
+                .map(|mutant| mutant.display_id.clone())
+                .collect()
+        };
+        match (narrowed.as_slice(), locator.count) {
+            ([], _) => Err(LocateError::Nothing),
+            (several, Some(wanted))
+                if usize::try_from(wanted).is_ok_and(|wanted| several.len() == wanted) =>
+            {
+                Ok(narrowed)
+            }
+            (several, Some(wanted)) => Err(LocateError::Counted {
+                wanted,
+                display_ids: named(several),
             }),
+            (several, None) => Ok(several.to_vec()),
         }
     }
 

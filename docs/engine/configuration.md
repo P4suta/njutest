@@ -180,6 +180,31 @@ Never both: an identity and a locator are two ways of naming one mutant and
 two chances to name different ones. A locator whose line has moved still
 holds, and the report says where the mutation is now.
 
+A locator names one mutation. Where the same reason is true of several of
+them at once — the same call written at three places in one function, say —
+`count` says how many it was written for:
+
+```toml
+[[mutation.expect]]
+path = "src/prove.rs"
+item = "establish"
+rule = "delete-call-statement"
+original = "phase.end();"
+count = 3                      # the reason is written for exactly these three
+reason = "Phase ends its phase in Drop, and a_phase_guard_ends_its_phase_once_with_its_duration_and_phases_nest holds it"
+outcome = "survived"
+```
+
+The count is what keeps that from being a licence. Without it, a locator
+that names more than one mutation is `unmatched`, because a reason written
+about one mutation says nothing about another that happens to share a path,
+an item, a rule and the bytes it replaces. With it, two things have to hold
+at once: the catalog holds exactly that many, so a mutation added or removed
+at the same place stops the claim instead of joining it, and **every one of
+them** came to the declared outcome, so a claim covering three stops holding
+the moment a test kills one of the three. What covered that one is the test,
+and the claim would otherwise go on exempting the other two on its strength.
+
 ## Configured skips
 
 ```toml

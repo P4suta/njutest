@@ -210,8 +210,11 @@ pub struct ExpectationDocument {
     pub reason: String,
     /// The outcome claimed.
     pub outcome: String,
-    /// The mutant it resolved to, when it resolved.
+    /// The mutant it resolved to, when it resolved. The one that decided the standing, when it named several.
     pub mutant: Option<String>,
+    /// How many mutants the claim was resolved against, when the locator stated a count.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub covered: Option<u32>,
     /// Whether the claim held: `met`, `stale`, or `unmatched`.
     pub standing: String,
     /// What the run established instead, when the claim was contradicted.
@@ -325,6 +328,7 @@ pub fn document(
                 reason: verified.reason.clone(),
                 outcome: verified.outcome.name().to_owned(),
                 mutant: verified.mutant.clone(),
+                covered: (verified.covered > 1).then_some(verified.covered),
                 standing: standing_name(&verified.standing).to_owned(),
                 actual: match &verified.standing {
                     Standing::Stale { actual } => Some(actual.name().to_owned()),

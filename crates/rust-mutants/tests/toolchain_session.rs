@@ -697,6 +697,7 @@ fn a_mutant_is_located_by_its_locator_and_a_moved_line_is_reported_not_guessed()
         rule: "gt-to-ge".to_owned(),
         original: ">".to_owned(),
         line: None,
+        count: None,
     };
     let found = session.locate(&locator).expect("the one mutant it names");
     assert_eq!(found.candidate.rule.name, "gt-to-ge");
@@ -736,6 +737,165 @@ fn a_mutant_is_located_by_its_locator_and_a_moved_line_is_reported_not_guessed()
     assert!(
         session.locate(&moved).is_ok(),
         "the line is a hint that separates two mutations, never the thing that identifies one"
+    );
+    session.close().expect("the session closes");
+}
+
+#[test]
+fn a_locator_that_states_a_count_names_that_many_and_refuses_any_other_number() {
+    let fixture = Fixture::copy("fixture-simple");
+    let session = prepare(&fixture);
+
+    let one = rust_mutants::session::Locator {
+        path: "src/lib.rs".to_owned(),
+        item: "max".to_owned(),
+        rule: "gt-to-ge".to_owned(),
+        original: ">".to_owned(),
+        line: None,
+        count: None,
+    };
+    assert_eq!(
+        session.locate_all(&one).map(|found| found.len()),
+        Ok(1),
+        "a locator that states no count names one mutation"
+    );
+    assert_eq!(
+        session
+            .locate_all(&rust_mutants::session::Locator {
+                count: Some(1),
+                ..one.clone()
+            })
+            .map(|found| found.len()),
+        Ok(1),
+        "a count of one is the same claim written out"
+    );
+    let Err(rust_mutants::session::LocateError::Counted {
+        wanted,
+        display_ids,
+    }) = session.locate_all(&rust_mutants::session::Locator {
+        count: Some(2),
+        ..one
+    })
+    else {
+        panic!("a claim written for two mutations is not a claim about this one");
+    };
+    assert_eq!(wanted, 2);
+    assert_eq!(
+        display_ids.len(),
+        1,
+        "the refusal says what the catalog holds instead: {display_ids:?}"
+    );
+    session.close().expect("the session closes");
+}
+
+#[test]
+fn a_claim_written_for_several_mutations_stops_holding_when_one_of_them_is_killed() {
+    let fixture = Fixture::copy("fixture-families");
+    let session = prepare(&fixture);
+
+    let mut grouped: std::collections::BTreeMap<(String, String, String, String), Vec<u32>> =
+        std::collections::BTreeMap::new();
+    for mutant in session.catalog().mutants() {
+        let Some(item) = session.item_of(mutant.index) else {
+            continue;
+        };
+        grouped
+            .entry((
+                mutant.candidate.path.clone(),
+                item.to_owned(),
+                mutant.candidate.rule.name.to_owned(),
+                String::from_utf8_lossy(&mutant.candidate.original).into_owned(),
+            ))
+            .or_default()
+            .push(mutant.index);
+    }
+    let ((path, item, rule, original), indices) = grouped
+        .into_iter()
+        .find(|(_, indices)| indices.len() > 1)
+        .expect("this fixture has a locator that names more than one mutation");
+    let locator = rust_mutants::session::Locator {
+        path,
+        item,
+        rule,
+        original,
+        line: None,
+        count: Some(u32::try_from(indices.len()).expect("a small catalog")),
+    };
+    let expectation = rust_mutants::run::Expectation {
+        id: None,
+        locator: Some(locator),
+        reason: "the reason one reviewer wrote for all of them".to_owned(),
+        outcome: Outcome::Survived,
+    };
+    let judged = |at: usize, outcome: Outcome| {
+        let mutant = session
+            .catalog()
+            .by_index(indices[at])
+            .expect("a mutant the catalog holds");
+        rust_mutants::run::Judged {
+            index: mutant.index,
+            id: mutant.id.clone(),
+            display_id: mutant.display_id.clone(),
+            outcome,
+            target: String::new(),
+            exit_code: 0,
+            duration: std::time::Duration::ZERO,
+            tests_run: None,
+            failed_tests: Vec::new(),
+            signal: None,
+            retried: false,
+            expected: false,
+            not_run_reason: None,
+            route: None,
+            measured: true,
+            identical: None,
+            source_run_id: None,
+        }
+    };
+
+    let mut every: Vec<rust_mutants::run::Judged> = (0..indices.len())
+        .map(|at| judged(at, Outcome::Survived))
+        .collect();
+    let held = rust_mutants::run::verify(&session, std::slice::from_ref(&expectation), &mut every);
+    assert!(
+        matches!(held[0].standing, rust_mutants::run::Standing::Met),
+        "every mutation the claim names came to the outcome it declared: {:?}",
+        held[0].standing
+    );
+    assert_eq!(
+        u64::from(held[0].covered),
+        u64::try_from(indices.len()).expect("a small catalog"),
+        "the claim was resolved against every mutation its locator names"
+    );
+    assert!(
+        every.iter().all(|one| one.expected),
+        "a claim that held accounts for every mutation it names"
+    );
+
+    let mut one_killed = every.clone();
+    for one in &mut one_killed {
+        one.expected = false;
+    }
+    one_killed[indices.len() - 1].outcome = Outcome::Killed;
+    let broken = rust_mutants::run::verify(
+        &session,
+        std::slice::from_ref(&expectation),
+        &mut one_killed,
+    );
+    assert!(
+        matches!(
+            broken[0].standing,
+            rust_mutants::run::Standing::Stale {
+                actual: Outcome::Killed
+            }
+        ),
+        "a test killed one of them, so the reason is not what covers it: {:?}",
+        broken[0].standing
+    );
+    assert!(
+        one_killed.iter().all(|one| !one.expected),
+        "a claim that did not hold accounts for none of them, or the ones it still covers would \
+         be exempted on the strength of a test that killed another"
     );
     session.close().expect("the session closes");
 }

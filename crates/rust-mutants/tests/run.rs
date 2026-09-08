@@ -138,6 +138,7 @@ fn a_mutant_a_reviewer_expected_to_survive_is_not_a_finding_and_a_stale_claim_is
             reason: "equivalent under the invariant".to_owned(),
             outcome: Outcome::Survived,
             mutant: Some(met.id.clone()),
+            covered: 1,
             standing: Standing::Met,
         },
         Verified {
@@ -146,6 +147,7 @@ fn a_mutant_a_reviewer_expected_to_survive_is_not_a_finding_and_a_stale_claim_is
             reason: "was equivalent last week".to_owned(),
             outcome: Outcome::Survived,
             mutant: Some(judged(2, Outcome::Killed).id),
+            covered: 1,
             standing: Standing::Stale {
                 actual: Outcome::Killed,
             },
@@ -156,6 +158,7 @@ fn a_mutant_a_reviewer_expected_to_survive_is_not_a_finding_and_a_stale_claim_is
             reason: "for a mutant that is gone".to_owned(),
             outcome: Outcome::Survived,
             mutant: None,
+            covered: 0,
             standing: Standing::Unmatched {
                 why: "no mutant answers to \"cccc\"".to_owned(),
             },

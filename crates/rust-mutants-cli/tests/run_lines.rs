@@ -113,6 +113,7 @@ fn document() -> RunDocument {
             reason: "equivalent under the invariant the type carries".to_owned(),
             outcome: "survived".to_owned(),
             mutant: Some(format!("{:064x}", 1)),
+            covered: None,
             standing: "met".to_owned(),
             actual: None,
             why: None,

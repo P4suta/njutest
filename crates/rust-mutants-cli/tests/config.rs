@@ -409,3 +409,31 @@ fn an_expectation_is_addressed_by_id_or_by_locator_and_never_both() {
         "a locator that names no rule and no original names a place, not a mutation"
     );
 }
+
+#[test]
+fn a_count_says_how_many_mutations_one_reason_was_written_for() {
+    let locator = "version = 1\n[[mutation.expect]]\npath = \"src/prove.rs\"\nitem = \"establish\"\nrule = \"delete-call-statement\"\noriginal = \"phase.end();\"\n";
+    let counted = parse(&format!(
+        "{locator}count = 3\nreason = \"Phase ends its phase in Drop, and the trace test holds it\"\n"
+    ))
+    .expect("an expectation written for three mutations");
+    assert_eq!(
+        counted.mutation.expect[0]
+            .expectation()
+            .locator
+            .expect("a locator")
+            .count,
+        Some(3)
+    );
+
+    assert_eq!(
+        kind(&format!("{locator}count = 0\nreason = \"why\"\n")),
+        ConfigErrorKind::Invalid,
+        "a claim written for no mutation is not a claim"
+    );
+    assert_eq!(
+        kind("version = 1\n[[mutation.expect]]\nid = \"abc\"\ncount = 2\nreason = \"why\"\n"),
+        ConfigErrorKind::Invalid,
+        "an identity is one mutation, so counting what it names says two different things"
+    );
+}

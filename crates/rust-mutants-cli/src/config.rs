@@ -213,6 +213,9 @@ pub struct Expect {
     /// The line, as a hint that separates two mutations the rest would name together.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub line: Option<u32>,
+    /// How many mutations the locator names, when one reason is written for a set of them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub count: Option<u32>,
     /// Why the outcome is what it is. Required.
     pub reason: String,
     /// The outcome the run must confirm.
@@ -243,6 +246,7 @@ impl Expect {
             || self.rule.is_some()
             || self.original.is_some()
             || self.line.is_some()
+            || self.count.is_some()
     }
 
     /// The outcome claimed, which is `survived` when the entry does not say.
@@ -264,6 +268,7 @@ impl Expect {
                 rule: self.rule.clone().unwrap_or_default(),
                 original: self.original.clone().unwrap_or_default(),
                 line: self.line,
+                count: self.count,
             }),
             reason: self.reason.clone(),
             outcome: self.outcome().unwrap_or(Outcome::Survived),
@@ -477,6 +482,27 @@ impl ConfigError {
     }
 }
 
+/// What a count on one expectation has to be for the claim to say something.
+fn check_count(
+    expectation: &Expect,
+    name: &str,
+    invalid: &impl Fn(String) -> ConfigError,
+) -> Result<(), ConfigError> {
+    if expectation.count == Some(0) {
+        return Err(invalid(format!(
+            "the expectation for {name:?} names no mutation; a count says how many mutations one \
+             reason was written for, and none of them is not a claim"
+        )));
+    }
+    if expectation.count.is_some() && expectation.id.is_some() {
+        return Err(invalid(format!(
+            "the expectation for {name:?} counts what an identity names; an identity is one \
+             mutation, and a count is how many a locator stands for"
+        )));
+    }
+    Ok(())
+}
+
 impl Config {
     /// Reads `.rust-mutants.toml` from `root`, or the defaults when there is none.
     ///
@@ -593,6 +619,7 @@ impl Config {
                     ));
                 }
             }
+            check_count(expectation, &name, invalid)?;
             if expectation.reason.trim().is_empty() {
                 return Err(invalid(format!(
                     "the expectation for {name:?} has a blank reason, which is a suppression \

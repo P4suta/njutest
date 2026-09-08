@@ -163,8 +163,10 @@ pub struct Verified {
     pub reason: String,
     /// The outcome claimed.
     pub outcome: Outcome,
-    /// The mutant it resolved to, when it resolved.
+    /// The mutant it resolved to, when it resolved. The one that decided the standing, when it named several.
     pub mutant: Option<String>,
+    /// How many mutants the claim was resolved against, which is one unless the locator stated a count.
+    pub covered: u32,
     /// Whether the claim held.
     pub standing: Standing,
 }
@@ -734,26 +736,62 @@ pub fn run<O: Observer>(
     })
 }
 
-/// The mutant a claim names, and where it has moved to since the claim was written.
+/// The mutants a claim names, and where the first has moved to since the claim was written.
+///
+/// An identity names one. A locator names one unless it states a count, and
+/// then it names that many: a reason written for a set of mutations is checked
+/// against every one of them, so what comes back is the set rather than a
+/// representative of it.
 fn addressed<'s>(
     session: &'s Session,
     expectation: &Expectation,
-) -> Result<(&'s Mutant, Option<Standing>), String> {
+) -> Result<(Vec<&'s Mutant>, Option<Standing>), String> {
     if let Some(id) = &expectation.id {
         return session
             .resolve(id)
-            .map(|mutant| (mutant, None))
+            .map(|mutant| (vec![mutant], None))
             .map_err(|error| error.to_string());
     }
     let Some(locator) = &expectation.locator else {
         return Err("the claim names no mutant".to_owned());
     };
-    let mutant = session.locate(locator).map_err(|error| error.to_string())?;
-    let moved = locator.line.and_then(|from| {
-        let to = session.position(mutant)?.line;
+    let mutants = session
+        .locate_all(locator)
+        .map_err(|error| error.to_string())?;
+    let moved = locator.line.zip(mutants.first()).and_then(|(from, first)| {
+        let to = session.position(first)?.line;
         (to != from).then_some(Standing::Moved { from, to })
     });
-    Ok((mutant, moved))
+    Ok((mutants, moved))
+}
+
+/// What the run says about every mutant one claim names, and which of them decided it.
+///
+/// The claim holds only when each of them came to the declared outcome. One
+/// that did not is what the standing reports, because a reason written for
+/// three mutations stops being a reason for any of them the moment one of the
+/// three is killed: what covered it then is a test, and the claim would be
+/// exempting the other two on the strength of that.
+fn standing_of(judged: &[Judged], expected: Outcome, ids: &[String]) -> (Option<String>, Standing) {
+    for id in ids {
+        let Some(one) = judged.iter().find(|one| one.id == *id) else {
+            return (
+                Some(id.clone()),
+                Standing::Unmatched {
+                    why: "the mutant is in the catalog and the run did not reach it".to_owned(),
+                },
+            );
+        };
+        if one.outcome != expected {
+            return (
+                Some(id.clone()),
+                Standing::Stale {
+                    actual: one.outcome,
+                },
+            );
+        }
+    }
+    (ids.first().cloned(), Standing::Met)
 }
 
 /// Asks the compiler whether each survivor's mutation is one it renders at all.
@@ -1328,30 +1366,25 @@ pub fn verify(
         .iter()
         .map(|expectation| {
             let resolved = addressed(session, expectation);
-            let (mutant, standing) = match resolved {
-                Err(why) => (None, Standing::Unmatched { why }),
-                Ok((mutant, moved)) => {
-                    let id = mutant.id.clone();
-                    let found = judged.iter_mut().find(|one| one.id == id);
-                    match found {
-                        None => (
-                            Some(id),
-                            Standing::Unmatched {
-                                why: "the mutant is in the catalog and the run did not reach it"
-                                    .to_owned(),
-                            },
-                        ),
-                        Some(one) if one.outcome == expectation.outcome => {
+            let (covered, mutant, standing) = match resolved {
+                Err(why) => (0, None, Standing::Unmatched { why }),
+                Ok((mutants, moved)) => {
+                    let ids: Vec<String> = mutants.iter().map(|mutant| mutant.id.clone()).collect();
+                    let (named, standing) = standing_of(judged, expectation.outcome, &ids);
+                    let standing = match standing {
+                        Standing::Met => moved.unwrap_or(Standing::Met),
+                        other => other,
+                    };
+                    if matches!(standing, Standing::Met | Standing::Moved { .. }) {
+                        for one in judged.iter_mut().filter(|one| ids.contains(&one.id)) {
                             one.expected = true;
-                            (Some(id), moved.unwrap_or(Standing::Met))
                         }
-                        Some(one) => (
-                            Some(id),
-                            Standing::Stale {
-                                actual: one.outcome,
-                            },
-                        ),
                     }
+                    (
+                        u32::try_from(ids.len()).unwrap_or(u32::MAX),
+                        named,
+                        standing,
+                    )
                 }
             };
             Verified {
@@ -1360,6 +1393,7 @@ pub fn verify(
                 reason: expectation.reason.clone(),
                 outcome: expectation.outcome,
                 mutant,
+                covered,
                 standing,
             }
         })
