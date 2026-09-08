@@ -206,11 +206,20 @@ fn unary_call<'e>(expr: &'e Expr, name: &str) -> Option<&'e Expr> {
     call.args.first()
 }
 
-/// Whether `expr` is spelled as the value `Default::default()` would produce, as far as syntax can tell: `0`, `0.0`, `false`, `""`, `()`, `None`, `[]`, `vec![]`, `Default::default()`, `T::default()`, and a zero-argument `T::new()`. A return replacement that would write the same value again is not a mutation, so these produce no candidate. The list is necessarily incomplete; what it misses is an equivalent mutant that survives, never a missed defect.
+/// Whether `expr` is spelled as the value `Default::default()` would produce, as far as syntax can tell: `0`, `0.0`, `false`, `""`, `()`, `None`, `[]`, `&[]`, `vec![]`, `Default::default()`, `T::default()`, and a zero-argument `T::new()`. A return replacement that would write the same value again is not a mutation, so these produce no candidate. The list is necessarily incomplete; what it misses is an equivalent mutant that survives, never a missed defect.
+///
+/// A borrow counts only in front of an empty array. `<&[T]>::default()` is an
+/// empty slice, so `&[]` writes what the replacement would; nothing else the
+/// standard library implements `Default` for behind a reference is spelled
+/// this way, and unwrapping every borrow would refuse mutations a test can
+/// notice.
 pub(super) fn is_default_spelling(expr: &Expr) -> bool {
     match expr {
         Expr::Paren(paren) => is_default_spelling(&paren.expr),
         Expr::Group(group) => is_default_spelling(&group.expr),
+        Expr::Reference(borrow) => {
+            matches!(borrow.expr.as_ref(), Expr::Array(array) if array.elems.is_empty())
+        }
         Expr::Lit(lit) => match &lit.lit {
             Lit::Int(int) => int.base10_digits() == "0",
             Lit::Float(float) => float

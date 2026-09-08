@@ -25,7 +25,7 @@ type-checks. Return replacements read the signature — `-> bool` offers
 `return-true`, `-> Result<..>` `return-ok-default`, `-> Option<..>` both
 `return-some-default` and `return-default`, anything else `return-default` —
 and never propose a value the code already spells (`0`, `false`, `""`, `()`,
-`None`, `Ok(())`, `Default::default()`, `T::new()`). A signature the syntax
+`None`, `[]`, `&[]`, `vec![]`, `Ok(())`, `Default::default()`, `T::new()`). A signature the syntax
 cannot say has a default is `unstated-return-type` rather than a candidate
 the compiler will refuse: an `impl Trait`, a raw pointer, a function type, a
 type a macro writes, a generic parameter nothing bound to `Default`, and a

@@ -897,3 +897,30 @@ fn every_candidate_names_the_item_it_sits_in() {
         "nothing is nameless and nothing starts with a separator: {items:?}"
     );
 }
+
+#[test]
+fn a_borrowed_empty_slice_is_already_what_the_replacement_would_write() {
+    let src = "fn s() -> &'static [i32] {\n    &[]\n}\n";
+    assert!(
+        !render(&discover(src))
+            .iter()
+            .any(|one| one.contains("return-default")),
+        "`&[]` is what `<&[T]>::default()` produces, so replacing it writes the same value \
+         again: an equivalent mutant a reader has to explain away, offered where the syntax \
+         could have refused it: {:?}",
+        render(&discover(src))
+    );
+}
+
+#[test]
+fn a_borrowed_value_that_is_not_the_default_is_still_offered() {
+    let src = "fn s() -> &'static [i32] {\n    &[1]\n}\n";
+    assert!(
+        render(&discover(src))
+            .iter()
+            .any(|one| one.contains("return-default")),
+        "a borrow of something is not a borrow of nothing, and refusing this one would drop a \
+         mutation the tests can notice: {:?}",
+        render(&discover(src))
+    );
+}
