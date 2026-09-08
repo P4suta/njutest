@@ -295,3 +295,33 @@ fn jobs_defaults_to_the_machine_capped_at_four_and_a_number_wins() {
          a person who says otherwise has said so"
     );
 }
+
+#[test]
+fn a_shard_nobody_could_have_meant_is_refused_by_the_text_it_was_given() {
+    use rust_mutants::run::{Shard, ShardError};
+
+    assert_eq!(
+        Shard::parse("2/3").map(|shard| shard.to_string()),
+        Ok("2/3".to_owned()),
+        "the shape a person writes"
+    );
+    for text in ["2", "", "two/3", "2/three", "/3", "2/", "2/3/4"] {
+        assert!(
+            matches!(Shard::parse(text), Err(ShardError::Malformed { text: said }) if said == text),
+            "a part of a run named by something that is not `K/N` is refused, and the refusal \
+             says what it was given rather than a shape nobody typed: {text:?} came to {:?}",
+            Shard::parse(text)
+        );
+    }
+    for (text, index, of) in [("0/3", 0, 3), ("4/3", 4, 3), ("1/0", 1, 0)] {
+        assert!(
+            matches!(
+                Shard::parse(text),
+                Err(ShardError::OutOfRange { index: said, of: many }) if said == index && many == of
+            ),
+            "a part outside the run it is a part of is a different refusal, and it names both \
+             numbers: {text:?} came to {:?}",
+            Shard::parse(text)
+        );
+    }
+}
