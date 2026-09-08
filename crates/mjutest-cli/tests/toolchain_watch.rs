@@ -174,7 +174,7 @@ fn a_run_with_nowhere_to_work_stops_before_it_says_it_looked() {
 
     let (mut said, mut complaints) = (Vec::new(), Vec::new());
     let code = mjutest_cli::run_from(
-        ["mjutest", "verify", "--offline", "--locked"].map(OsString::from),
+        ["mjutest", "verify", "--offline", "--locked", "--trace"].map(OsString::from),
         &environment,
         &mut said,
         &mut complaints,
@@ -196,5 +196,30 @@ fn a_run_with_nowhere_to_work_stops_before_it_says_it_looked() {
         !String::from_utf8_lossy(&said).contains("VERDICT"),
         "a run that stopped here reached no verdict, and printing one would be a claim \
          about a workspace it never opened"
+    );
+
+    let recording = std::fs::read_dir(root.path().join(".mjutest/trace"))
+        .expect("the trace directory")
+        .flatten()
+        .map(|entry| entry.path().join(mjutest_cli::trace::FILE_NAME))
+        .next()
+        .expect("one recording");
+    let events = mjutest_cli::trace::read_events(std::io::BufReader::new(
+        std::fs::File::open(&recording).expect("the stream"),
+    ))
+    .expect("the events read back");
+    let phases: Vec<&str> = events
+        .iter()
+        .filter_map(|event| match &event.payload {
+            mjutest_cli::trace::Payload::PhaseStart { phase } => Some(phase.name.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        phases.first(),
+        Some(&"open"),
+        "and the recording says where it got to. A run that stopped early is exactly \
+         when somebody reads one, and a recording whose first stage is missing leaves \
+         them no way to say how far it went: {phases:?}"
     );
 }
