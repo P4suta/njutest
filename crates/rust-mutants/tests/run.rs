@@ -356,3 +356,51 @@ fn a_proof_removing_a_mutation_and_nothing_reaching_it_are_counted_and_named_apa
          one checks the proof when they should write a test, or the other way about"
     );
 }
+
+#[test]
+fn a_claim_is_written_back_by_the_way_it_named_its_mutant() {
+    use rust_mutants::run::Expectation;
+    use rust_mutants::session::Locator;
+
+    let by_id = Expectation {
+        id: Some("b8e3f78d".to_owned()),
+        locator: None,
+        reason: "the bound is equivalent".to_owned(),
+        outcome: Outcome::Survived,
+    };
+    assert_eq!(
+        by_id.name(),
+        "b8e3f78d",
+        "a claim by identity is written back as the identity a person typed"
+    );
+
+    let by_locator = Expectation {
+        id: None,
+        locator: Some(Locator {
+            path: "src/lib.rs".to_owned(),
+            item: "clamp".to_owned(),
+            rule: "le-to-lt".to_owned(),
+            original: "<=".to_owned(),
+            line: None,
+            count: None,
+        }),
+        ..by_id.clone()
+    };
+    assert_eq!(
+        by_locator.name(),
+        "src/lib.rs clamp le-to-lt \"<=\"",
+        "and a claim by locator by all four of the things that name a mutation, because a \
+         reader matching a finding to a line of the ledger has nothing else to match on"
+    );
+
+    let named_nothing = Expectation {
+        id: None,
+        locator: None,
+        ..by_id
+    };
+    assert_eq!(
+        named_nothing.name(),
+        "",
+        "and a claim that named nothing says nothing rather than something a reader would look for"
+    );
+}
