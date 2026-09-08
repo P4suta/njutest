@@ -651,10 +651,6 @@ fn every_alternative_reports_where_its_own_text_landed() {
 
 #[test]
 fn the_allow_names_every_lint_a_guard_can_trip_rather_than_the_warning_group() {
-    // `#[allow(warnings)]` covers only lints that are still at warn level.
-    // A workspace that denies `unused` or clippy's pedantic set has taken
-    // them out of that group, and a guard's parentheses would then fail the
-    // build of every mutant at once.
     for lint in [
         "warnings",
         "unused",
@@ -666,7 +662,9 @@ fn the_allow_names_every_lint_a_guard_can_trip_rather_than_the_warning_group() {
     ] {
         assert!(
             rust_mutants::instrument::ALLOW_ATTRIBUTE.contains(lint),
-            "{lint} is not named: {}",
+            "`allow(warnings)` covers only the lints still at warn level, and a workspace that \
+             denies {lint} has taken it out of that group; a guard's own parentheses would \
+             then fail the build of every mutant at once: {}",
             rust_mutants::instrument::ALLOW_ATTRIBUTE
         );
     }

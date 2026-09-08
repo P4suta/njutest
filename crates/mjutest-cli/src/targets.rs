@@ -74,6 +74,11 @@ impl UnitKind {
     }
 
     /// The kind of an engine target, which reads the same cargo metadata.
+    ///
+    /// A kind this release does not name falls to [`Self::Bin`], which is the
+    /// shape that assumes least about what a target is: it is started and it
+    /// answers by exiting. A kind no unit of this run holds costs nothing by
+    /// being called one.
     #[must_use]
     pub const fn of(kind: rust_mutants::execute::TargetKind) -> Self {
         use rust_mutants::execute::TargetKind;
@@ -83,9 +88,6 @@ impl UnitKind {
             TargetKind::Example => Self::Example,
             TargetKind::ProcMacro => Self::ProcMacro,
             TargetKind::Doc => Self::Doc,
-            // A binary, and any kind a later engine adds: it is the shape
-            // that assumes least about what the target is, and a kind this
-            // release does not know is one no unit of this run holds.
             _ => Self::Bin,
         }
     }

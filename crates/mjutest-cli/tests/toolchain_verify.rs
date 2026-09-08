@@ -634,9 +634,6 @@ fn a_target_that_may_behave_differently_establishes_nothing_it_established_befor
         "{first}"
     );
 
-    // The tree is the same tree, so every mutant has the identity it had and
-    // every record is there. What the harness is told is not the same, so no
-    // target behaves the way the records say it did.
     let differently = verify(&fixture, &["--", "--test-threads=1"]);
     assert_eq!(
         differently.status.code(),
@@ -652,8 +649,9 @@ fn a_target_that_may_behave_differently_establishes_nothing_it_established_befor
     assert_eq!(second["provenance"]["cached"], false);
     assert_eq!(
         second["accounting"]["mutants"]["reused_killed"], 0,
-        "a target that may behave differently established nothing it established before: \
-         {second}"
+        "the tree is the tree it was, so every record is still there and every mutant still \
+         has the identity it had; what the harness is told is not the same, so no target \
+         behaves the way those records say it did: {second}"
     );
 }
 
@@ -667,8 +665,6 @@ fn what_changed_outside_a_package_does_not_make_its_own_evidence_stale() {
         .expect("a count");
     assert!(killed > 0);
 
-    // A file no package owns changes the tree and therefore the run's
-    // identity, but not what any target links.
     std::fs::write(
         fixture.root.join("NOTES.md"),
         "nothing to do with the code\n",
@@ -678,8 +674,8 @@ fn what_changed_outside_a_package_does_not_make_its_own_evidence_stale() {
     assert_eq!(verify(&fixture, &[]).status.code(), Some(0));
     let second = document(&fixture);
     assert_ne!(
-        second["provenance"]["identity"],
-        first["provenance"]["identity"]
+        second["provenance"]["identity"], first["provenance"]["identity"],
+        "a file no package owns is still part of the tree, so the run is a different run"
     );
     assert_eq!(
         second["accounting"]["mutants"]["reused_killed"], killed,

@@ -95,6 +95,10 @@ fn short_digest(path: &str) -> String {
 }
 
 /// [`module_name`] for a module of another stem, so the witness tree can have one of its own without either shadowing the other.
+///
+/// The search for a free name terminates because a file cannot spell more
+/// names than it holds identifiers, and the table of identifiers is the one
+/// every candidate of that file came from.
 #[must_use]
 pub(super) fn module_named(text: &str, stem: &str) -> String {
     let taken: BTreeSet<String> = text
@@ -108,8 +112,6 @@ pub(super) fn module_named(text: &str, stem: &str) -> String {
     if !taken.contains(stem) {
         return stem.to_owned();
     }
-    // Bounded: a file cannot spell more names than it has identifiers, and
-    // the table is what every candidate came from.
     let limit = u32::try_from(taken.len())
         .unwrap_or(u32::MAX)
         .saturating_add(1);

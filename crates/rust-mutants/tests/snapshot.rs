@@ -392,8 +392,9 @@ fn a_name_with_a_backslash_is_refused_because_it_cannot_round_trip_through_a_rel
 #[test]
 fn a_file_that_cannot_be_read_fails_the_copy_and_removes_the_partial_snapshot() {
     use std::os::unix::fs::PermissionsExt as _;
-    if rustix::process::geteuid().is_root() {
-        return; // root reads everything
+    let root_reads_everything = rustix::process::geteuid().is_root();
+    if root_reads_everything {
+        return;
     }
     let fx = fixture();
     let secret = write(&fx.source, "src/secret.rs", b"//\n");
@@ -442,7 +443,9 @@ fn an_abandoned_stable_directory_is_swept_and_the_name_reused_never_adopted() {
         b"// half-instrumented\n",
     );
     let mut owner = tempowner::claim(&dir, now()).expect("claim");
-    owner.release().expect("release"); // the previous run is gone
+    owner
+        .release()
+        .expect("the previous run releases what it owned");
     drop(owner);
 
     let snap = create(&fx.source, &options(&fx), now()).expect("create");

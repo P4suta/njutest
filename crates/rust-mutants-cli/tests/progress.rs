@@ -37,8 +37,8 @@ fn a_phase_that_ended_is_written_before_the_work_that_follows_it_is_done() {
             open.end();
             let pristine = recorder.phase("pristine");
             pristine.end();
-            // The work goes on after the phases the reader is waiting to hear about.
-            std::thread::sleep(Duration::from_millis(120));
+            let after_the_phases_a_reader_is_waiting_for = Duration::from_millis(120);
+            std::thread::sleep(after_the_phases_a_reader_is_waiting_for);
             working.store(false, Ordering::SeqCst);
         });
         rust_mutants_cli::ui::watch(&events, &mut written, &|| working.load(Ordering::SeqCst));

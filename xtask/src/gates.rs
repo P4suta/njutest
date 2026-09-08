@@ -48,7 +48,7 @@ pub fn all_sources(root: &Path) -> Vec<PathBuf> {
     files
 }
 
-/// Refuses `#[allow]` and `Box<dyn Trait>` anywhere in the repository.
+/// Refuses `#[allow]`, `Box<dyn Trait>`, and a comment that is not documentation, anywhere in the repository's own code.
 ///
 /// # Errors
 /// Every finding, one per line, or a file that could not be read or parsed.
@@ -66,7 +66,7 @@ pub fn lints(root: &Path) -> Result<String, GateFailure> {
     }
     if found.is_empty() {
         return Ok(format!(
-            "lints: {} files carry no #[allow] and no Box<dyn Trait>",
+            "lints: {} files carry no #[allow], no Box<dyn Trait>, and no comment beside the code",
             files.len()
         ));
     }

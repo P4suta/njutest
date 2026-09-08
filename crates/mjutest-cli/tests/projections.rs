@@ -90,8 +90,6 @@ fn report() -> Report {
     report
 }
 
-// --- HTML ----------------------------------------------------------------------------
-
 #[test]
 fn the_page_is_self_contained() {
     let page = html::document(&report());
@@ -127,8 +125,6 @@ fn nothing_a_test_printed_can_become_markup() {
     assert!(page.contains("&amp;"), "{page}");
     assert!(!page.contains("<left>"), "{page}");
 }
-
-// --- SARIF ---------------------------------------------------------------------------
 
 #[test]
 fn the_sarif_log_carries_every_finding_with_a_rule_and_a_place() {
@@ -179,8 +175,6 @@ fn the_sarif_run_carries_the_verdict_and_the_accounting() {
     assert_eq!(properties["accounting"]["targets"]["selected"], 3);
     assert_eq!(properties["limitations"][0]["name"], "doctests-not-routed");
 }
-
-// --- JUnit ---------------------------------------------------------------------------
 
 #[test]
 fn the_junit_document_counts_what_a_reader_of_it_expects() {
