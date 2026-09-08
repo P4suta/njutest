@@ -1,67 +1,26 @@
 // SPDX-FileCopyrightText: 2026 mjutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! The baseline: every test of the workspace, once, in its own process, under coverage instrumentation.
+//! The baseline: what the one verified run of every target observed.
+//!
+//! The engine runs every target once with nothing active before it will judge
+//! anything, and the guards it compiled in record which tests reached which
+//! mutation while it does. This phase reads that run rather than making a
+//! second one of its own. Two measurements of one thing are two chances to
+//! disagree, and the measurement a route rests on has to be the run that
+//! actually happened.
 
 use std::collections::BTreeSet;
-use std::ffi::{OsStr, OsString};
-use std::path::PathBuf;
-use std::time::Duration;
 
-use rust_mutants::cargo::{Package, Toolchain};
-use rust_mutants::execute::{Summary, parse_summary};
-use rust_mutants::runner::{Spec, run as run_process};
+use rust_mutants::execute::TestTarget;
+use rust_mutants::outcome::Outcome;
+use rust_mutants::session::Session;
 
-use crate::build::{self, BuildOptions, Cargo, Flavour, Selection};
-use crate::coverage::{Block, Tools, covered, instrumented, profile_pattern, written_profiles};
-use crate::error::RunnerError;
 use crate::report::TargetStatus;
-use crate::targets::{Target, UnitKind, WHOLE_BINARY, enumerate, target_id};
-use crate::trace::{ExecRecord, ProgressRecord};
+use crate::targets::{Target, UnitKind, WHOLE_BINARY, target_id};
+use crate::trace::ProgressRecord;
 use crate::ui::Notes;
 use crate::watch::Watch;
-
-/// The compiled workspace a phase works against: one argument, so a phase that also takes options, notes, and a watch still reads.
-#[derive(Debug, Clone, Copy)]
-pub struct Workspace<'a> {
-    /// The located toolchain.
-    pub toolchain: &'a Toolchain,
-    /// What `cargo metadata` said the workspace holds.
-    pub packages: &'a [Package],
-}
-
-/// What to measure, and where to put what measuring produces.
-#[derive(Debug, Clone)]
-pub struct BaselineOptions {
-    /// The workspace root.
-    pub root: PathBuf,
-    /// The target triple the instrumented build produced its artifacts under, which anything reusing them has to ask for.
-    pub host: String,
-    /// What to compile.
-    pub selection: Selection,
-    /// How cargo is bounded.
-    pub cargo: Cargo,
-    /// The environment every command and test process runs with.
-    pub env: Vec<(OsString, OsString)>,
-    /// The instrumented build's layer.
-    pub target_dir: PathBuf,
-    /// The scratch layer anything a test starts writes into.
-    pub scratch_build_dir: PathBuf,
-    /// Where test processes write their coverage profiles.
-    pub profiles_dir: PathBuf,
-    /// How long one target may take.
-    pub timeout: Option<Duration>,
-    /// Arguments for the test binaries, after `--`.
-    pub test_args: Vec<String>,
-    /// How many targets to measure at once. Zero takes the processors the machine offers, capped.
-    ///
-    /// A mutation's budget is derived from what the baseline measured, so the
-    /// two are measured the same way: a duration taken alone is not the one a
-    /// mutation running beside three others will take.
-    pub jobs: u32,
-    /// Whether a resource only one test may hold at a time forces the run to measure one target at a time.
-    pub exclusive: bool,
-}
 
 /// One target, and what became of it.
 #[derive(Debug, Clone)]
@@ -72,49 +31,21 @@ pub struct Measured {
     pub status: TargetStatus,
     /// How long it took.
     pub duration_ms: u64,
+    /// How many tests it ran, which is what that duration is the cost of.
+    pub tests: u32,
     /// What it said, when that matters.
     pub message: Option<String>,
-    /// The regions it reached. Empty for a target that did not run.
-    pub covered: BTreeSet<Block>,
-    /// Whether this is what an interrupted run observed rather than what this one did. A restored target carries no regions, so it keeps reaching its whole file and is never discharged.
-    pub restored: bool,
 }
 
 /// What one baseline observed.
 #[derive(Debug, Clone, Default)]
 pub struct Baseline {
-    /// Every target, in the order the build produced them.
+    /// Every target, in identity order.
     pub targets: Vec<Measured>,
-    /// Every region the build instrumented, whether or not anything reached it: the denominator routing is defined against.
-    pub instrumented: BTreeSet<Block>,
     /// What the compiler said, when the workspace did not build. Then there are no targets, and that is a finding rather than an error.
     pub failure: Option<String>,
     /// What this phase could not honour, by name.
     pub limitations: Vec<String>,
-}
-
-/// Builds the workspace instrumented, then runs each of its tests once.
-///
-/// # Errors
-/// The build's refusals, a test binary that could not be asked what it
-/// holds, and a coverage tool that failed. A test that fails is not an
-/// error: it is a [`Measured`] that failed.
-pub fn run(
-    workspace: Workspace<'_>,
-    options: &BaselineOptions,
-    notes: &mut Notes<'_>,
-    watch: Watch<'_>,
-) -> Result<Baseline, RunnerError> {
-    let mut nothing = |_measured: &Measured| {};
-    run_resuming(
-        workspace,
-        options,
-        &mut Resume {
-            state: None,
-            record: &mut nothing,
-        },
-        Reporting { notes, watch },
-    )
 }
 
 /// Where a phase says what it is doing, and what it is watched by.
@@ -129,407 +60,228 @@ pub struct Reporting<'a, 'b> {
     pub watch: Watch<'a>,
 }
 
-/// What an interrupted run already measured, and where to record what this one measures.
-#[expect(
-    missing_debug_implementations,
-    reason = "a recorder is a closure the caller owns; there is nothing to print about one"
-)]
-pub struct Resume<'a> {
-    /// The state that run left, or nothing for a run starting cold.
-    pub state: Option<&'a crate::checkpoint::State>,
-    /// Called with each target as it finishes, so the caller can save what has been established before it can be lost.
-    pub record: &'a mut dyn FnMut(&Measured),
-}
-
-/// [`run`], continuing from what an interrupted run had already measured.
+/// Reads what the session's one verified run of every target came to.
 ///
-/// A target the checkpoint names is not executed again: its terminal state is
-/// the one that run observed, and its coverage is the files it reached rather
-/// than the regions inside them, so it keeps reaching its whole file. A
-/// resumed run therefore executes at least the work a cold run would, never
-/// less.
-///
-/// # Errors
-/// See [`run`].
-pub fn run_resuming(
-    workspace: Workspace<'_>,
-    options: &BaselineOptions,
-    resume: &mut Resume<'_>,
-    reporting: Reporting<'_, '_>,
-) -> Result<Baseline, RunnerError> {
+/// A target that did not pass is a row like any other. The engine hands back
+/// the table whether or not anything in it passed, because the moment a reader
+/// most needs the table is the moment the answer is "all of them".
+#[must_use]
+pub fn observe(session: &Session, reporting: Reporting<'_, '_>) -> Baseline {
     let Reporting { notes, watch } = reporting;
     let phase = watch.trace.phase("baseline-measure");
-    let built = build::build(
-        workspace.toolchain,
-        workspace.packages,
-        &BuildOptions {
-            root: options.root.clone(),
-            selection: options.selection.clone(),
-            flavour: Flavour::Coverage,
-            target_dir: options.target_dir.clone(),
-            scratch_build_dir: options.scratch_build_dir.clone(),
-            env: options.env.clone(),
-            cargo: options.cargo,
-            timeout: options.timeout,
-        },
-        watch,
-    )?;
-    if let Some(failure) = built.failure {
-        phase.end();
-        return Ok(Baseline {
-            failure: Some(failure),
-            limitations: built.limitations,
-            ..Baseline::default()
-        });
-    }
-
-    let tools = Tools::locate(workspace.toolchain, &options.root, &watch)?;
+    let verified = session.verified();
     let mut baseline = Baseline {
-        limitations: built.limitations.clone(),
+        limitations: limitations(session),
         ..Baseline::default()
     };
-    let Selected {
-        targets: selected,
-        limitations,
-    } = select(&built, workspace.toolchain, options, watch)?;
-    baseline.limitations.extend(limitations);
-    let total = u64::try_from(selected.len()).unwrap_or(u64::MAX);
-    let answers = crate::assure::schedule::measure(
-        &selected,
-        crate::assure::schedule::workers(
-            options.jobs,
-            crate::assure::schedule::available(),
-            options.exclusive,
-        ),
-        |_at, target| {
-            establish(
-                Measuring {
-                    tools: &tools,
-                    options,
-                    state: resume.state,
-                    watch,
-                },
-                target,
-            )
-        },
-    );
-
-    for (index, answer) in answers.into_iter().enumerate() {
-        let (measured, seen) = answer?;
-        let done = u64::try_from(index).unwrap_or(u64::MAX).saturating_add(1);
+    let built = |id: &str| session.targets().iter().find(|one| one.id == id);
+    let rows: Vec<(&String, &rust_mutants::session::Baseline)> = verified
+        .targets
+        .iter()
+        .filter(|(id, _observed)| !built(id).is_some_and(unmeasurable))
+        .collect();
+    let total = u64::try_from(rows.len()).unwrap_or(u64::MAX);
+    for (done, (id, observed)) in rows.into_iter().enumerate() {
+        let built = built(id);
+        let target = built.map_or_else(|| named(id), target_of);
+        let done = u64::try_from(done).unwrap_or(u64::MAX).saturating_add(1);
         watch.trace.progress(ProgressRecord {
-            message: measured.target.name(),
+            message: target.name(),
             done: Some(done),
             total: Some(total),
         });
-        notes.progress(&measured.target.name(), done, total);
-        baseline.instrumented.extend(seen);
-        if undocumented(&measured) {
-            continue;
-        }
-        let mut measured = measured;
-        if measured.target.unit == UnitKind::Doc {
-            measured.covered = documented_files(&built, &measured.target.package);
-        }
-        if measured.target.unit == UnitKind::Doc {
-            baseline.limitations.push(DOCTESTS_LIMITATION.to_owned());
-        }
-        (resume.record)(&measured);
-        baseline.targets.push(measured);
+        notes.progress(&target.name(), done, total);
+        let (status, message) = status_of(observed.outcome, &observed.output);
+        baseline.targets.push(Measured {
+            target,
+            status,
+            duration_ms: u64::try_from(observed.duration.as_millis()).unwrap_or(u64::MAX),
+            tests: observed.tests,
+            message,
+        });
     }
     phase.end();
-    Ok(baseline)
+    baseline
 }
 
-/// What the build offers to measure.
-#[derive(Debug, Clone, Default)]
-struct Selected {
-    targets: Vec<Target>,
-    limitations: Vec<String>,
-}
-
-/// Every target the build produced, and every limitation naming what could not be measured of them one test at a time.
-fn select(
-    built: &build::Built,
-    toolchain: &Toolchain,
-    options: &BaselineOptions,
-    watch: Watch<'_>,
-) -> Result<Selected, RunnerError> {
-    let mut selected = Selected::default();
-    for unit in &built.units {
-        selected.targets.extend(enumerate(unit, watch)?);
-    }
-    if selected.targets.iter().any(Target::is_whole_binary) {
-        selected
-            .limitations
-            .push(WHOLE_BINARY_LIMITATION.to_owned());
-    }
-    if built
-        .units
-        .iter()
-        .any(|unit| unit.kind == UnitKind::ProcMacro)
-    {
-        selected.limitations.push(PROC_MACRO_LIMITATION.to_owned());
-    }
-    selected
-        .targets
-        .extend(documentation(built, toolchain, &options.root));
-    Ok(selected)
-}
-
-/// The whole of every file the package's library compiles, which is the coverage a documented example carries.
+/// The build failure a refusal to prepare carries, which is a finding rather than an error.
 ///
-/// rustdoc compiles a documentation example into a binary of its own while
-/// cargo runs it, and this run never sees that binary: there is no coverage
-/// map to read and no profile to merge. What is known is which files the
-/// library it exercises is made of, so a documented example reaches every
-/// mutation in them and narrows none of them —
-/// `doctests-routed-by-file` says so on every report where one ran.
-fn documented_files(built: &build::Built, package: &str) -> BTreeSet<Block> {
-    built
-        .library_sources
-        .get(package)
-        .into_iter()
-        .flatten()
-        .map(|file| Block {
-            file: file.clone(),
-            start: crate::coverage::Point { line: 0, column: 0 },
-            end: crate::coverage::Point {
-                line: u32::MAX,
-                column: u32::MAX,
-            },
-        })
-        .collect()
+/// A workspace that does not compile is the run's answer about the workspace,
+/// and a person reading a report that says so needs the compiler's first line
+/// rather than an exit status. Every other refusal stays an error, because
+/// every other refusal is about this run rather than about the tree.
+#[must_use]
+pub fn refused(error: &crate::error::RunnerError) -> Option<Baseline> {
+    let crate::error::RunnerError::Engine(engine) = error else {
+        return None;
+    };
+    let rust_mutants::error::EngineError::Session(
+        rust_mutants::workspace::SessionError::PristineBroken { first },
+    ) = engine
+    else {
+        return None;
+    };
+    Some(Baseline {
+        failure: Some(first.clone()),
+        ..Baseline::default()
+    })
 }
 
-/// Whether this is a library that documents no example, which the run finds out by asking cargo and which is not a target the report carries.
+/// Whether this target answers nothing and is not a row a report carries.
 ///
 /// One target per library is what the contract promises, and a library with
-/// nothing to run is not a target that ran nothing: reporting it as missing
-/// would raise a finding about documentation nobody wrote. A run that could
-/// not get an answer out of cargo at all said something else, and that stays a
-/// missing target.
-fn undocumented(measured: &Measured) -> bool {
-    measured.target.unit == UnitKind::Doc
-        && measured.status == TargetStatus::Missing
-        && measured.message.as_deref() == Some(RAN_NOTHING)
-}
-
-/// The name a run states when a library's documentation was run: rustdoc compiles each example into a binary this run never sees, so the coverage it carries is the whole of every file its library is made of.
-pub const DOCTESTS_LIMITATION: &str = "doctests-routed-by-file";
-
-/// The name a run states when a test binary brings its own harness, which makes the whole binary one target rather than one target per test.
-pub const WHOLE_BINARY_LIMITATION: &str = "custom-harness-whole-binary";
-
-/// The name a run states when a procedural macro is in scope: what the macro expands to is decided during the build and this run does not measure it.
-pub const PROC_MACRO_LIMITATION: &str = "proc-macro-expansion-not-measured";
-
-/// One target for each library the build produced: cargo compiles and runs everything that library documents, in one process.
-///
-/// The documentation of a library is a test of it, and a broken example is a
-/// failing test rather than something nobody looked at. It carries no coverage
-/// — the examples are compiled by rustdoc into binaries this run never sees —
-/// so [`DOCTESTS_LIMITATION`] says that no mutation is routed to it.
-fn documentation(
-    built: &build::Built,
-    toolchain: &Toolchain,
-    root: &std::path::Path,
-) -> Vec<Target> {
-    built
-        .units
+/// nothing documented is not a target that ran nothing: reporting it as
+/// missing would raise a finding about documentation nobody wrote.
+fn unmeasurable(target: &TestTarget) -> bool {
+    target
+        .limitations
         .iter()
-        .filter(|unit| unit.kind == UnitKind::Lib)
-        .map(|unit| Target {
-            id: target_id(&unit.package, UnitKind::Doc, &unit.name, WHOLE_BINARY),
-            package: unit.package.clone(),
-            unit: UnitKind::Doc,
-            unit_name: unit.name.clone(),
-            path: WHOLE_BINARY.to_owned(),
-            ignored: false,
-            executable: toolchain.cargo().to_path_buf(),
-            cwd: root.to_path_buf(),
-            env: built.env.clone(),
-        })
-        .collect()
+        .any(|name| name == rust_mutants::limitation::DOCTESTS_NONE)
 }
 
-/// What cargo is asked for when the target is a library's documentation, up to the `--` the caller's harness arguments follow.
-fn documentation_arguments(target: &Target, options: &BaselineOptions) -> Vec<OsString> {
-    let mut argv: Vec<OsString> = vec![
-        OsString::from("test"),
-        OsString::from("--doc"),
-        OsString::from("--target-dir"),
-        options.target_dir.clone().into_os_string(),
-        OsString::from("--target"),
-        OsString::from(&options.host),
-    ];
-    if options.cargo.locked {
-        argv.push(OsString::from("--locked"));
-    }
-    if options.cargo.offline {
-        argv.push(OsString::from("--offline"));
-    }
-    argv.push(OsString::from("--package"));
-    argv.push(OsString::from(&target.package));
-    argv.push(OsString::from("--"));
-    argv
-}
-
-/// What one target is measured with, as one argument.
-#[derive(Clone, Copy)]
-struct Measuring<'a> {
-    tools: &'a Tools,
-    options: &'a BaselineOptions,
-    state: Option<&'a crate::checkpoint::State>,
-    watch: Watch<'a>,
-}
-
-/// What one target comes to, without committing anything the baseline will carry.
+/// Every limitation this run's targets and their records state, each named once.
 ///
-/// Workers call this at the same time as one another, so it reads what the run
-/// already holds and writes only into the files its own target names. The
-/// caller commits the answers in the order the targets were enumerated.
-fn establish(
-    measuring: Measuring<'_>,
-    target: &Target,
-) -> Result<(Measured, BTreeSet<Block>), RunnerError> {
-    let Measuring {
-        tools,
-        options,
-        state,
-        watch,
-    } = measuring;
-    if let Some(saved) = state.and_then(|state| state.target(&target.id)) {
-        return Ok((
-            Measured {
-                target: target.clone(),
-                status: saved.status,
-                duration_ms: saved.duration_ms,
-                message: saved.message.clone(),
-                covered: saved.coverage(),
-                restored: true,
-            },
-            BTreeSet::new(),
-        ));
-    }
-    measure(tools, target, options, watch)
-}
-
-/// Runs one target and reads what it reached, together with every region the export said the build instrumented — which is a fact about the binary rather than about this target, and the caller unions.
-fn measure(
-    tools: &Tools,
-    target: &Target,
-    options: &BaselineOptions,
-    watch: Watch<'_>,
-) -> Result<(Measured, BTreeSet<Block>), RunnerError> {
-    let spec = command(target, options);
-    let ran = run_process(&spec, watch.cancel);
-    watch.trace.exec(ExecRecord::of(&spec, &ran));
-    let (status, message) = status_of(parse_summary(&ran.output), ran.timed_out);
-    let duration_ms = u64::try_from(ran.duration.as_millis()).unwrap_or(u64::MAX);
-
-    let mut reached = BTreeSet::new();
-    let mut seen = BTreeSet::new();
-    if status != TargetStatus::Missing && target.unit != UnitKind::Doc {
-        let profiles = written_profiles(&options.profiles_dir, &target.id)?;
-        if !profiles.is_empty() {
-            let merged = options.profiles_dir.join(format!("{}.profdata", target.id));
-            tools.merge(&profiles, &merged, &watch)?;
-            let files = relative(
-                tools.export(&merged, std::slice::from_ref(&target.executable), &watch)?,
-                &options.root,
-            );
-            reached = covered(&files);
-            seen = instrumented(&files);
+/// A target that answers nothing states nothing either. A library that
+/// documents no example is not a library whose examples were routed coarsely,
+/// and saying both would put a reader in front of a limitation about work
+/// nobody did.
+fn limitations(session: &Session) -> Vec<String> {
+    let mut named = BTreeSet::new();
+    for target in session.targets() {
+        if unmeasurable(target) {
+            continue;
         }
+        named.extend(target.limitations.iter().cloned());
     }
-    Ok((
-        Measured {
-            target: target.clone(),
-            status,
-            duration_ms,
-            message,
-            covered: reached,
-            restored: false,
-        },
-        seen,
-    ))
+    named.extend(session.verified().touched.limitations.iter().cloned());
+    if session
+        .targets()
+        .iter()
+        .any(|target| target.kind == rust_mutants::execute::TargetKind::ProcMacro)
+    {
+        let _new = named.insert(PROC_MACRO_LIMITATION.to_owned());
+    }
+    named.into_iter().collect()
 }
 
-/// The command one target runs as: exactly that test, in terse form, with whatever the caller asked the binaries for. A library's documentation is not a binary this run built, so cargo runs it.
-fn command(target: &Target, options: &BaselineOptions) -> Spec {
-    let mut argv: Vec<OsString> = vec![target.executable.as_os_str().to_owned()];
-    if target.unit == UnitKind::Doc {
-        argv.extend(documentation_arguments(target, options));
+/// The runner's name for one of the engine's targets.
+fn target_of(target: &TestTarget) -> Target {
+    let unit = UnitKind::of(target.kind);
+    Target {
+        id: target_id(&target.package, unit, &target.name, WHOLE_BINARY),
+        package: target.package.clone(),
+        unit,
+        unit_name: target.name.clone(),
+        path: WHOLE_BINARY.to_owned(),
+        ignored: false,
+        executable: target.executable.clone(),
+        cwd: target.cwd.clone(),
+        env: target.cargo_env.clone(),
     }
-    if !target.is_whole_binary() {
-        argv.push(OsString::from(&target.path));
-        argv.push(OsString::from("--exact"));
-    }
-    argv.push(OsString::from("--format"));
-    argv.push(OsString::from("terse"));
-    argv.extend(options.test_args.iter().map(OsString::from));
-
-    let mut spec = Spec::new(argv);
-    spec.dir = Some(target.cwd.clone());
-    let mut env = target.env.clone();
-    env.retain(|(key, _)| key != OsStr::new("LLVM_PROFILE_FILE"));
-    env.push((
-        OsString::from("LLVM_PROFILE_FILE"),
-        profile_pattern(&options.profiles_dir, &target.id).into_os_string(),
-    ));
-    spec.env = Some(env);
-    spec.timeout = options.timeout;
-    spec
 }
 
-/// The same regions, named the way a mutant is named: workspace-relative, forward slashes.
+/// The target one identity names, for a target the session dropped and still has a record of.
 ///
-/// `llvm-cov` reports absolute paths and the catalog reports relative ones, and routing compares them.
-fn relative(
-    files: Vec<crate::coverage::FileRegions>,
-    root: &std::path::Path,
-) -> Vec<crate::coverage::FileRegions> {
-    files
-        .into_iter()
-        .map(|mut file| {
-            if let Ok(inside) = file.path.strip_prefix(root) {
-                file.path = PathBuf::from(inside.to_string_lossy().replace('\\', "/"));
-            }
-            file
-        })
-        .collect()
+/// A target whose own tests do not pass is not one this run may judge against,
+/// so the session does not carry it, and the report has to name it anyway: it
+/// is the finding. Its identity is `package/kind/name`, which is every field a
+/// row needs; the rest is how to start it, and this one is never started.
+fn named(id: &str) -> Target {
+    let mut fields = id.splitn(3, '/');
+    let (package, kind, name) = (
+        fields.next().unwrap_or_default(),
+        fields.next().unwrap_or_default(),
+        fields.next().unwrap_or_default(),
+    );
+    let unit = UnitKind::parse(kind).unwrap_or(UnitKind::Bin);
+    Target {
+        id: target_id(package, unit, name, WHOLE_BINARY),
+        package: package.to_owned(),
+        unit,
+        unit_name: name.to_owned(),
+        path: WHOLE_BINARY.to_owned(),
+        ignored: false,
+        executable: std::path::PathBuf::new(),
+        cwd: std::path::PathBuf::new(),
+        env: Vec::new(),
+    }
 }
 
-/// What the summary line says became of a target.
+/// What one target's verified run says became of it.
+///
+/// `Survived` is a target that ran and said so, whether it said it with a
+/// summary line or by exiting: a binary with its own harness prints what it
+/// likes and answers by its status, so counting its tests is not what decides.
+///
+/// `Inconclusive` is a target that ran and executed no test — a harness that
+/// printed no summary, a library with nothing documented, or one whose every
+/// test is `#[ignore]`d. The first two are findings and the third is not, and
+/// what tells them apart is the ignored count, which does not cross this
+/// boundary yet. Until it does they are all the finding: an absence of
+/// evidence that reads as a pass is the one direction this runner does not
+/// take.
 #[must_use]
-pub fn status_of(summary: Option<Summary>, timed_out: bool) -> (TargetStatus, Option<String>) {
-    if timed_out {
-        return (
+pub fn status_of(outcome: Outcome, output: &str) -> (TargetStatus, Option<String>) {
+    match outcome {
+        Outcome::Survived => (TargetStatus::Passed, None),
+        Outcome::Killed => (
+            TargetStatus::Failed,
+            Some(failure(output).unwrap_or_else(|| "the target failed".to_owned())),
+        ),
+        Outcome::TimedOut => (
             TargetStatus::Failed,
             Some("the target ran out of time".to_owned()),
-        );
-    }
-    let Some(summary) = summary else {
-        return (
+        ),
+        Outcome::Inconclusive => (TargetStatus::Missing, Some(RAN_NOTHING.to_owned())),
+        Outcome::NotRun => (
             TargetStatus::Missing,
-            Some("the target printed no result line, so nothing was observed".to_owned()),
-        );
+            Some("the target was not run, so nothing was observed".to_owned()),
+        ),
+        _ => (
+            TargetStatus::Missing,
+            Some(failure(output).unwrap_or_else(|| {
+                "the target could not be started, so nothing was observed".to_owned()
+            })),
+        ),
+    }
+}
+
+/// The line of what a target printed that a reader would act on.
+///
+/// A target the engine starts prints its own failures and nothing else, and
+/// the first line is the answer. One cargo runs prints a build log first, and
+/// the first line of that is which crate was compiled — true, and not what
+/// somebody looking at a failing test needs. So the line that names a test as
+/// having failed wins, then the one the compiler or cargo marked as an error,
+/// and the first line of any output at all is the last resort.
+fn failure(output: &str) -> Option<String> {
+    let lines = || {
+        output
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
     };
-    if summary.failed > 0 {
-        return (
-            TargetStatus::Failed,
-            Some(format!("{} failed", summary.failed)),
-        );
-    }
-    if summary.passed > 0 {
-        return (TargetStatus::Passed, None);
-    }
-    if summary.ignored > 0 {
-        return (TargetStatus::Skipped, Some("libtest ignored it".to_owned()));
-    }
-    (TargetStatus::Missing, Some(RAN_NOTHING.to_owned()))
+    lines()
+        .find(|line| line.starts_with("test ") && line.ends_with("FAILED"))
+        .or_else(|| lines().find(|line| line.starts_with("error")))
+        .or_else(|| lines().next())
+        .map(ToOwned::to_owned)
 }
 
 /// What a target that answered and named no test of its own is recorded as having said.
 pub const RAN_NOTHING: &str = "the target ran nothing, so nothing was observed";
+
+/// The name a run states when a library's documentation was run: rustdoc compiles each example into a binary this run never sees, so the coverage it carries is the whole of every file its library is made of.
+pub const DOCTESTS_LIMITATION: &str = rust_mutants::limitation::DOCTESTS_ROUTED_BY_FILE;
+
+/// The name a run states when a test binary brings its own harness, which makes the whole binary one target rather than one target per test.
+pub const WHOLE_BINARY_LIMITATION: &str = rust_mutants::limitation::CUSTOM_HARNESS;
+
+/// The name a run states when a procedural macro is in scope: what the macro expands to is decided during the build, and this run does not measure it.
+pub const PROC_MACRO_LIMITATION: &str = "proc-macro-expansion-not-measured";
+
+/// The name a run states when a target's own tests do not pass, so no outcome against it would be about a mutation.
+pub const NOT_PASSING_LIMITATION: &str = rust_mutants::limitation::BASELINE_NOT_PASSING;
+
+/// The name a run states when a target's guards recorded nothing, so every test of it reaches every mutation in it.
+pub const UNRECORDED_LIMITATION: &str = rust_mutants::limitation::TOUCH_NOT_RECORDED;

@@ -13,9 +13,8 @@ use rust_mutants::outcome::Outcome;
 use rust_mutants::session::{Request, Session};
 
 use crate::assure::baseline::Measured;
-use crate::assure::route::{self, Route};
+use crate::assure::route::Route;
 use crate::assure::schedule;
-use crate::coverage::Block;
 use crate::evidence::store;
 use crate::report::{Finding, FindingKind, MutantAccounting, TargetStatus};
 use crate::ui::Notes;
@@ -248,30 +247,49 @@ fn answered_by(judged: &Judged, accepted: &BTreeSet<String>) -> bool {
 }
 
 /// The finding one disposition raises, if it raises one.
+/// What a survivor's finding says, which is not the same sentence when nothing ran.
+///
+/// A mutation every reaching target was discharged for survived without a
+/// single execution, and "no target noticed it" would read as a suite that
+/// looked and shrugged. What happened is that a proof said none of them could
+/// have looked, and that is the gap: the finding names the proof, because a
+/// reader who cannot tell a discharge from an oversight can act on neither.
+fn survived(judged: &Judged, route: &Route) -> String {
+    let at = format!(
+        "{} at {}:{}",
+        judged.rule,
+        judged.path,
+        judged
+            .position
+            .map_or_else(|| "?".to_owned(), |one| one.line.to_string())
+    );
+    let discharged = route.discharged();
+    if route.reaching().is_empty() && !discharged.is_empty() {
+        let mut proofs: Vec<&str> = discharged.iter().map(|one| one.proof).collect();
+        proofs.sort_unstable();
+        proofs.dedup();
+        return format!(
+            "no test could have noticed {at}: every one of the {} targets that reach it was \
+             removed without being run, by {}",
+            discharged.len(),
+            proofs.join(" and ")
+        );
+    }
+    let reaching = route.reaching().len();
+    format!(
+        "no test noticed {at}; {reaching} {} ran it and none of them noticed",
+        if reaching == 1 { "target" } else { "targets" }
+    )
+}
+
 fn finding_of(judged: &Judged) -> Option<Finding> {
     let (kind, detail) = match &judged.disposition {
-        Disposition::Survived { route } => (
-            FindingKind::SurvivingMutant,
-            format!(
-                "no test noticed {} at {}:{}; {} {} could and did not",
-                judged.rule,
-                judged.path,
-                judged
-                    .position
-                    .map_or_else(|| "?".to_owned(), |at| at.line.to_string()),
-                route.reaching().len(),
-                if route.reaching().len() == 1 {
-                    "test"
-                } else {
-                    "tests"
-                },
-            ),
-        ),
+        Disposition::Survived { route } => (FindingKind::SurvivingMutant, survived(judged, route)),
         Disposition::Unreached => (
             FindingKind::SurvivingMutant,
             format!(
-                "no measured test reaches {} at {}: the position is instrumented, every \
-                 test this run routed with carries coverage, and none of them executes it",
+                "no measured target reaches {} at {}: each of them was measured, was asked, \
+                 and answered that nothing of it executes the position",
                 judged.rule, judged.path
             ),
         ),
@@ -314,8 +332,6 @@ pub struct Subject<'a> {
 /// What to measure and how.
 #[derive(Debug, Clone)]
 pub struct MutationOptions {
-    /// The regions the coverage build described, which tells "nothing reached this" apart from "the measurement says nothing".
-    pub instrumented: BTreeSet<Block>,
     /// The mutants a reviewer accepted with a reason.
     pub accepted: BTreeSet<String>,
     /// Arguments for the test binaries.
@@ -348,6 +364,19 @@ impl Evidence {
             .iter()
             .find(|(_id, called)| called.as_str() == name)
             .map(|(id, _called)| id.as_str())
+    }
+
+    /// The identities of the targets a route names, or nothing when one of them is not a target this run's baseline saw pass.
+    ///
+    /// A route names targets the way the engine does and a record names them
+    /// by identity, and reuse is a claim about a set: a set this run can only
+    /// half resolve is one it may neither believe nor record, because the half
+    /// it resolved is a smaller claim wearing the same name.
+    fn identities(&self, names: &[&str]) -> Option<Vec<String>> {
+        names
+            .iter()
+            .map(|name| self.identity(name).map(ToOwned::to_owned))
+            .collect()
     }
 }
 
@@ -428,7 +457,6 @@ pub fn run_resuming(
         options,
         controls: &controls,
         watch,
-        infected: infections(baseline, &session.probed().infected),
         quiet: schedule::Quiet::default(),
     };
 
@@ -461,12 +489,7 @@ fn establish(
     state: Option<&crate::checkpoint::State>,
     rejected: &BTreeMap<&str, &str>,
 ) -> Result<Judged, crate::error::RunnerError> {
-    let (session, baseline, options, watch) = (
-        judging.subject.session,
-        judging.subject.baseline,
-        judging.options,
-        judging.watch,
-    );
+    let (session, options, watch) = (judging.subject.session, judging.options, judging.watch);
     let position = session.position(mutant).map(|at| crate::report::Position {
         line: at.line,
         column: at.byte_column,
@@ -483,7 +506,7 @@ fn establish(
             diagnostic: (*diagnostic).to_owned(),
         }
     } else {
-        let route = routed(mutant, position, baseline, judging);
+        let route = session.route(mutant);
         let reused = reuse(options, &route, &mutant.id);
         record_route(
             watch,
@@ -511,49 +534,6 @@ fn establish(
     })
 }
 
-/// The tests that could notice this mutant, and a note in the trace saying how they were chosen.
-fn routed(
-    mutant: &Mutant,
-    position: Option<crate::report::Position>,
-    baseline: &[Measured],
-    judging: &Judging<'_>,
-) -> Route {
-    let mut route = route::route(
-        &mutant.candidate.path,
-        position.map(|at| crate::coverage::Point {
-            line: at.line,
-            column: at.column,
-        }),
-        baseline,
-        &judging.options.instrumented,
-    );
-    let probed = judging.subject.session.probed();
-    if probed.asked.contains(&mutant.index) {
-        route = route::uninfected(route, mutant.index, &judging.infected);
-    }
-    if let Some(proof) = judging.subject.session.branch(mutant.index) {
-        route = route::discharge(
-            route,
-            &route::Proven {
-                path: &mutant.candidate.path,
-                body: route::Body {
-                    start: crate::coverage::Point {
-                        line: proof.body_start.line,
-                        column: proof.body_start.byte_column,
-                    },
-                    end: crate::coverage::Point {
-                        line: proof.body_end.line,
-                        column: proof.body_end.byte_column,
-                    },
-                },
-                baseline,
-                instrumented: &judging.options.instrumented,
-            },
-        );
-    }
-    route
-}
-
 /// Records what the probe pass measured for each target the baseline ran.
 ///
 /// A target the pass did not measure carries no facts at all, and none is not
@@ -565,9 +545,8 @@ fn record_probe(watch: Watch<'_>, session: &Session, baseline: &[Measured]) {
     if probed.asked.is_empty() {
         return;
     }
-    let infected = infections(baseline, &probed.infected);
     for measured in baseline {
-        let seen = infected.get(&measured.target.id);
+        let seen = probed.infected.get(&measured.target.name());
         watch.trace.probe_exec(crate::trace::ProbeExecRecord {
             target: measured.target.id.clone(),
             outcome: if seen.is_some() {
@@ -585,8 +564,17 @@ fn record_route(watch: Watch<'_>, mutant: &Mutant, route: &Route, reused: Option
     watch.trace.route(crate::trace::RouteRecord {
         mutant: mutant.display_id.clone(),
         granularity: route.granularity().to_owned(),
-        fallback: route.widened().map(ToOwned::to_owned),
-        reaching: route.reaching().to_vec(),
+        fallback: route.fallback().map(ToOwned::to_owned),
+        reaching: route
+            .reaching()
+            .into_iter()
+            .map(ToOwned::to_owned)
+            .collect(),
+        tests: route
+            .tests()
+            .into_iter()
+            .map(|(target, tests)| crate::trace::AskedRecord { target, tests })
+            .collect(),
         discharged: route
             .discharged()
             .iter()
@@ -595,7 +583,7 @@ fn record_route(watch: Watch<'_>, mutant: &Mutant, route: &Route, reused: Option
                 proof: one.proof.to_owned(),
             })
             .collect(),
-        file_candidates: u64::try_from(route.file_candidates()).unwrap_or(u64::MAX),
+        considered: route.considered().to_vec(),
         reused: reused.map(ToOwned::to_owned),
     });
 }
@@ -604,7 +592,7 @@ fn record_route(watch: Watch<'_>, mutant: &Mutant, route: &Route, reused: Option
 fn reuse(options: &MutationOptions, route: &Route, mutant: &str) -> Option<(Disposition, String)> {
     let evidence = options.evidence.as_ref()?;
     let record = store::read(&evidence.root, mutant).ok()??;
-    let reaching: BTreeSet<String> = answered(route, evidence).into_iter().collect();
+    let reaching: BTreeSet<String> = answered(route, evidence)?.into_iter().collect();
     record.believable(&reaching, &evidence.standing).ok()?;
     let disposition = match &record.outcome {
         store::Outcome::Killed { target, .. } => Disposition::Killed {
@@ -641,7 +629,10 @@ fn keep(options: &MutationOptions, mutant: &str, route: &Route, disposition: &Di
         }
         Disposition::Survived { .. } => {
             let mut targets = BTreeMap::new();
-            for target in answered(route, evidence) {
+            let Some(named) = answered(route, evidence) else {
+                return;
+            };
+            for target in named {
                 let Some(key) = evidence.standing.passing.get(&target) else {
                     return;
                 };
@@ -667,12 +658,8 @@ fn keep(options: &MutationOptions, mutant: &str, route: &Route, disposition: &Di
 /// target, so naming each of them with its own behaviour key says exactly that,
 /// and a target that enters or leaves the suite is then visible where one key
 /// over the package would have hidden it.
-fn answered(route: &Route, evidence: &Evidence) -> Vec<String> {
-    if matches!(route, Route::Suite { .. }) {
-        evidence.standing.passing.keys().cloned().collect()
-    } else {
-        route.reaching().to_vec()
-    }
+fn answered(route: &Route, evidence: &Evidence) -> Option<Vec<String>> {
+    evidence.identities(&route.reaching())
 }
 
 /// The disposition a checkpoint's record stands for, or nothing when this release does not inherit it.
@@ -691,7 +678,6 @@ struct Judging<'a> {
     options: &'a MutationOptions,
     controls: &'a Controls,
     watch: Watch<'a>,
-    infected: BTreeMap<String, BTreeSet<u32>>,
     quiet: schedule::Quiet,
 }
 
@@ -704,17 +690,13 @@ fn judge(
     if let Route::Discharged { .. } = route {
         return Ok(Disposition::Survived { route });
     }
-    if let Route::Suite { .. } = route {
-        let answered = against(judging, mutant, None)?;
-        return Ok(answered.unwrap_or(Disposition::Survived { route }));
-    }
     if route.reaching().is_empty() {
         return Ok(Disposition::Unreached);
     }
-    for target_id in route.reaching() {
+    for target in route.reaching() {
         let Some(measured) = baseline
             .iter()
-            .find(|measured| &measured.target.id == target_id)
+            .find(|measured| measured.target.name() == target)
         else {
             continue;
         };
@@ -911,53 +893,11 @@ pub const SUITE: &str = "package-suite";
 /// The request that runs one mutant against one test, or against every test the session prepared when no proof says which could notice it.
 #[must_use]
 pub fn request_for(mutant: &str, measured: Option<&Measured>, args: &[String]) -> Request {
-    let request = Request::new(mutant)
-        .test(
-            measured
-                .filter(|one| !one.target.is_whole_binary())
-                .map(|one| one.target.path.clone()),
-        )
-        .with_args(args.to_vec());
-    match measured.map(binary_of) {
-        Some(binary) => request.with_target(binary),
+    let request = Request::new(mutant).with_args(args.to_vec());
+    match measured {
+        Some(one) => request.with_target(one.target.name()),
         None => request,
     }
-}
-
-/// The engine's name for the binary this target is one test of: `package/kind/name`.
-fn binary_of(measured: &Measured) -> String {
-    format!(
-        "{}/{}/{}",
-        measured.target.package,
-        measured.target.unit.name(),
-        measured.target.unit_name
-    )
-}
-
-/// What the probe pass measured, keyed by the target identities this run routes with.
-///
-/// The engine probes a binary: it runs each one once with nothing active and
-/// records the mutants that binary infected. This run names one test of that
-/// binary, so the two carry different names for different things, and a lookup
-/// by the engine's name finds nothing for every target. Nothing reads as "the
-/// probe says nothing about this target", which keeps every execution — a proof
-/// layer switched on and never firing.
-///
-/// A binary that infected nothing is one whose every test infected nothing, so
-/// giving each of its tests the binary's answer discharges only what the
-/// measurement carries.
-fn infections(
-    baseline: &[Measured],
-    infected: &BTreeMap<String, BTreeSet<u32>>,
-) -> BTreeMap<String, BTreeSet<u32>> {
-    baseline
-        .iter()
-        .filter_map(|measured| {
-            infected
-                .get(&binary_of(measured))
-                .map(|seen| (measured.target.id.clone(), seen.clone()))
-        })
-        .collect()
 }
 
 /// The last line worth quoting from a capture.

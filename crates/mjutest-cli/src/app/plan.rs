@@ -7,7 +7,7 @@ use std::io::Write;
 
 use crate::build::{BuildOptions, Cargo, Flavour, Selection, build};
 use crate::cli::{EXIT_ASSURED, EXIT_ERROR, Environment, Plan as Arguments};
-use crate::targets::enumerate;
+use crate::targets::{Target, UnitKind, WHOLE_BINARY, enumerate, target_id};
 use crate::trace::Recorder;
 use crate::watch::Watch;
 
@@ -102,16 +102,42 @@ pub fn run(
     EXIT_ASSURED
 }
 
-/// Every test the built binaries hold.
+/// Every binary a run would measure, and how many tests each of them holds.
+///
+/// A run measures a binary and a route names which of its tests a mutation is
+/// put to, so a plan that listed tests would name a thing a run never reports.
+/// What a reader wants from the count is still there, one column along.
 fn selected(
     units: &[crate::targets::Unit],
     watch: Watch<'_>,
-) -> Result<Vec<crate::targets::Target>, crate::targets::TargetError> {
+) -> Result<Vec<Planned>, crate::targets::TargetError> {
     let mut selected = Vec::new();
     for unit in units {
-        selected.extend(enumerate(unit, watch)?);
+        let held = enumerate(unit, watch)?;
+        selected.push(Planned {
+            target: Target {
+                id: target_id(&unit.package, unit.kind, &unit.name, WHOLE_BINARY),
+                package: unit.package.clone(),
+                unit: unit.kind,
+                unit_name: unit.name.clone(),
+                path: WHOLE_BINARY.to_owned(),
+                ignored: false,
+                executable: unit.executable.clone(),
+                cwd: unit.cwd.clone(),
+                env: unit.env.clone(),
+            },
+            tests: held.iter().filter(|one| !one.ignored).count(),
+            ignored: held.iter().filter(|one| one.ignored).count(),
+        });
     }
     Ok(selected)
+}
+
+/// One binary a run would measure, and what it holds.
+struct Planned {
+    target: Target,
+    tests: usize,
+    ignored: usize,
 }
 
 /// Where a plan builds.
@@ -166,17 +192,21 @@ fn locate(
 }
 
 /// One target, and — when asked — what put it in scope.
-fn line(target: &crate::targets::Target, why: bool) -> String {
-    let head = format!("TARGET\t{}\t{}", target.id, target.name());
+fn line(planned: &Planned, why: bool) -> String {
+    let head = format!("TARGET\t{}\t{}", planned.target.id, planned.target.name());
     if !why {
         return head;
     }
-    let reason = if target.ignored {
-        "libtest will not run it unless asked: ignored"
-    } else if target.is_whole_binary() {
-        "one target per binary: it has a harness of its own"
+    let reason = if planned.target.unit == UnitKind::Doc {
+        "a library's documented examples, which cargo runs and rustdoc compiles".to_owned()
+    } else if planned.tests == 0 && planned.ignored == 0 {
+        "the binary answers by exiting, so it is measured whole".to_owned()
     } else {
-        "one target per test, so what each one reaches can be told apart"
+        format!(
+            "{} tests, {} of them ignored; a route names which of them a mutation is put to",
+            planned.tests.saturating_add(planned.ignored),
+            planned.ignored
+        )
     };
     format!("{head}\t{reason}")
 }

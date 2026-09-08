@@ -11,13 +11,22 @@ below is stated fail-closed.
 - A tree whose identity could not be computed reuses nothing
   (`workspace-digest-not-computed`) and is reused by nothing: a run that
   cannot say what it looked at cannot answer for another run's inputs.
-- A mutant every test routing reads carries coverage about and none of them
-  reaches is reported as surviving, with a detail that says nothing executes
-  it. Where that evidence is not there — the position is outside every
-  instrumented region, the catalog could not place it, or a target that was
-  measured for its coverage carries none — the package suite runs and settles
-  it instead. Both readings are one finding, because they are one gap in the
-  suite.
+- A mutant every measured target was asked about and none of them reaches is
+  reported as surviving, with a detail that says nothing executes it and a
+  route that names the targets that were in a position to notice and did not.
+  Where that evidence is not there — nothing was recorded at all, the position
+  is outside every instrumented region, the catalog could not place it, a
+  target that was measured carries no profile, or a target's guards recorded
+  nothing this run can route by — the route widens to every test of every
+  target instead (`not-measured`, `outside-blocks`, `position-unknown`,
+  `coverage-incomplete`, `touch-incomplete`). Both readings are one finding,
+  because they are one gap in the suite.
+- A target is a test binary, and a route names which of its tests a mutation is
+  put to. A target whose every test is `#[ignore]`d and one that printed no
+  result at all are both a target that executed nothing, and this release
+  reports both as missing: which of the two it was does not cross the boundary
+  between the engine and this runner yet, and a target nothing is known about
+  is a finding rather than a pass.
 - A test that writes into the tree while it is being measured makes every
   later mutation a measurement of what it wrote
   (`tree-written-during-measurement`). One instrumented snapshot cannot
@@ -33,8 +42,20 @@ below is stated fail-closed.
   of them. A kill one finds names the library's documentation and not the
   example, because rustdoc merges a file's examples into one compilation whose
   harness cannot be asked for one of them.
-- A `harness = false` test target is one target per binary
-  (`custom-harness-whole-binary`).
+- A `harness = false` test target says what it found by exiting rather than by
+  printing a summary, so how many of its tests ran is unknown and the whole
+  binary is measured (`custom-harness`).
+- A library that documents no example has nothing to run and is not a target
+  (`doctests-none`): a target that ran nothing would raise a finding about
+  documentation nobody wrote.
+- A target whose own tests do not pass with nothing active is dropped from the
+  ones a mutation may be put to (`baseline-not-passing`), and every one of them
+  is named. Every mutation put to such a target comes back killed and not one
+  of those kills is about a mutation. The run still reports the table, because
+  the moment a reader most needs it is the moment the answer is "all of them".
+- A target whose guards recorded nothing this run can route by keeps every test
+  of it in every route (`touch-not-recorded`), and one whose record did not
+  read back is believed about nothing (`touch-log-unreadable`).
 - Fuzz targets are found always and driven only when `[fuzz] run` says so;
   a tree that holds targets nobody asked to drive carries
   `fuzz-not-executed`. Without cargo-fuzz on a nightly toolchain, a run that

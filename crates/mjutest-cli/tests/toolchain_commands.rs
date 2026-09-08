@@ -313,9 +313,12 @@ fn plan_names_every_target_a_run_would_measure_without_measuring_one() {
         String::from_utf8_lossy(&output.stderr)
     );
     let text = stdout(&output);
-    assert!(text.contains("sign_names_both_sides_of_zero"), "{text}");
-    assert!(text.contains("doubling_is_addition_twice"), "{text}");
-    assert!(text.contains("TARGETS\t3"), "{text}");
+    assert!(
+        text.contains("fixture-baseline/lib/fixture_baseline"),
+        "a plan names the binaries a run measures, which is what a run reports: {text}"
+    );
+    assert!(text.contains("fixture-baseline/test/doubling"), "{text}");
+    assert!(text.contains("TARGETS\t2"), "{text}");
     assert!(
         !fixture.root.join("reports").exists(),
         "a plan is not a run: it writes no report"
@@ -334,6 +337,6 @@ fn plan_why_says_what_put_each_target_in_scope() {
     );
     assert!(
         text.contains("ignored"),
-        "and which targets libtest will not run: {text}"
+        "and how many of a binary's tests libtest will not run: {text}"
     );
 }

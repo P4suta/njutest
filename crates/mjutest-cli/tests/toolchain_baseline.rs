@@ -1,247 +1,143 @@
 // SPDX-FileCopyrightText: 2026 mjutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! The baseline: every test in its own process, under instrumentation, and what each one reached.
+//! The baseline: what the one verified run of every target observed.
 
 #![expect(
     clippy::expect_used,
     clippy::panic,
-    clippy::indexing_slicing,
-    reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
+    reason = "a test reports a setup failure by panicking and asserts with panics"
 )]
 
-use std::collections::BTreeSet;
-use std::ffi::OsString;
-
-use mjutest_cli::assure::baseline::{Baseline, BaselineOptions, Workspace, run, status_of};
-use mjutest_cli::build::{Cargo, Selection};
-use mjutest_cli::coverage::Block;
+use mjutest_cli::assure::baseline::{Baseline, Measured, Reporting, observe};
 use mjutest_cli::report::TargetStatus;
 use mjutest_cli::trace::Recorder;
 use mjutest_cli::watch::Watch;
-use rust_mutants::cargo::{Driver, LocateOptions, Metadata, MetadataOptions, Toolchain};
-use rust_mutants::execute::Summary;
+use mjutest_devkit::fixture::Fixture;
 use rust_mutants::runner::Cancel;
+use rust_mutants::session::{Failing, PrepareOptions, Session};
+use rust_mutants::testkit::opening::opening;
+use rust_mutants::workspace::{OpenOptions, Workspace};
 
-fn env() -> Vec<(OsString, OsString)> {
-    std::env::vars_os()
-        .filter(|(key, _)| {
-            matches!(
-                key.to_string_lossy().as_ref(),
-                "PATH" | "HOME" | "RUSTUP_HOME" | "CARGO_HOME" | "TMPDIR"
-            )
-        })
-        .collect()
-}
-
-fn measure(fixture: &str) -> (Baseline, tempfile::TempDir) {
-    let root = mjutest_devkit::paths::fixtures_dir().join(fixture);
-    let scratch = tempfile::Builder::new()
-        .prefix("mjutest-baseline-")
-        .tempdir()
-        .expect("tempdir");
-    let cancel = Cancel::new();
-    let engine_trace = rust_mutants::trace::Recorder::disabled();
-    let trace = Recorder::disabled();
-    let toolchain = Toolchain::locate(
-        &LocateOptions {
-            cargo: Some(mjutest_devkit::paths::cargo_binary()),
-            search_path: None,
-            env: Some(env()),
-        },
-        &root,
-        &cancel,
-    )
-    .expect("a toolchain");
-    let metadata = Metadata::load(
-        &Driver {
-            toolchain: &toolchain,
-            dir: &root,
-            cancel: &cancel,
-            trace: &engine_trace,
-        },
-        MetadataOptions {
-            locked: true,
+fn prepared(fixture: &Fixture) -> Session {
+    Workspace::open(
+        fixture.root(),
+        OpenOptions {
             offline: true,
+            locked: true,
+            ..opening(&mjutest_devkit::paths::cargo_binary(), fixture.temp())
         },
+        &Cancel::new(),
     )
-    .expect("metadata");
-    let profiles = scratch.path().join("profiles");
-    std::fs::create_dir_all(&profiles).expect("somewhere for the profiles");
-
-    let baseline = run(
-        Workspace {
-            toolchain: &toolchain,
-            packages: &metadata.packages,
+    .expect("open")
+    .prepare(
+        &PrepareOptions {
+            failing: Failing::Exclude,
+            ..PrepareOptions::default()
         },
-        &BaselineOptions {
-            root,
-            host: toolchain.host().to_owned(),
-            selection: Selection::default(),
-            cargo: Cargo {
-                offline: true,
-                locked: true,
-            },
-            env: env(),
-            target_dir: scratch.path().join("layer"),
-            scratch_build_dir: scratch.path().join("build"),
-            profiles_dir: profiles,
-            timeout: None,
-            test_args: Vec::new(),
-            jobs: 0,
-            exclusive: false,
-        },
-        &mut mjutest_cli::ui::Notes::Silent,
-        Watch::new(&cancel, &trace),
+        &Cancel::new(),
     )
-    .expect("the baseline runs");
-    (baseline, scratch)
+    .expect("prepare")
 }
 
-fn named(baseline: &Baseline, name: &str) -> usize {
+fn measure(fixture: &Fixture) -> Baseline {
+    let cancel = Cancel::new();
+    let trace = Recorder::disabled();
+    observe(
+        &prepared(fixture),
+        Reporting {
+            notes: &mut mjutest_cli::ui::Notes::Silent,
+            watch: Watch::new(&cancel, &trace),
+        },
+    )
+}
+
+fn named<'a>(baseline: &'a Baseline, name: &str) -> &'a Measured {
     baseline
         .targets
         .iter()
-        .position(|measured| measured.target.name().contains(name))
+        .find(|measured| measured.target.name() == name)
         .unwrap_or_else(|| {
             panic!(
-                "no target named {name}: {:?}",
+                "no target called {name}; there are {:?}",
                 baseline
                     .targets
                     .iter()
-                    .map(|measured| measured.target.name())
-                    .collect::<Vec<_>>()
+                    .map(|one| one.target.name())
+                    .collect::<Vec<String>>()
             )
         })
 }
 
 #[test]
-fn every_test_is_a_target_of_its_own_and_says_what_became_of_it() {
-    let (baseline, _scratch) = measure("fixture-baseline");
-    assert!(baseline.failure.is_none(), "{:?}", baseline.failure);
-    assert_eq!(baseline.targets.len(), 3, "the fixture's three tests");
+fn a_target_is_a_binary_and_its_row_says_how_many_tests_it_ran() {
+    let fixture = Fixture::copy("fixture-simple");
+    let baseline = measure(&fixture);
 
-    let mut states: Vec<(String, TargetStatus)> = baseline
-        .targets
-        .iter()
-        .map(|measured| (measured.target.path.clone(), measured.status))
-        .collect();
-    states.sort_by(|left, right| left.0.cmp(&right.0));
-    assert_eq!(
-        states,
-        [
-            (
-                "doubling_is_addition_twice".to_owned(),
-                TargetStatus::Passed
-            ),
-            (
-                "tests::sign_names_both_sides_of_zero".to_owned(),
-                TargetStatus::Passed
-            ),
-            (
-                "tests::zero_has_a_sign_of_its_own".to_owned(),
-                TargetStatus::Skipped
-            ),
-        ],
-        "an ignored test is skipped, never a pass nobody observed"
-    );
-}
-
-#[test]
-fn two_targets_reach_different_regions_which_is_what_routing_rests_on() {
-    let (baseline, _scratch) = measure("fixture-baseline");
-    let sign = &baseline.targets[named(&baseline, "sign_names_both_sides_of_zero")];
-    let doubling = &baseline.targets[named(&baseline, "doubling_is_addition_twice")];
-
-    assert!(!sign.covered.is_empty(), "the sign test reached something");
-    assert!(!doubling.covered.is_empty(), "so did the doubling test");
-    assert_ne!(
-        sign.covered, doubling.covered,
-        "if every target reached the same regions, routing would be worth nothing"
-    );
-
-    let both: BTreeSet<&Block> = sign.covered.intersection(&doubling.covered).collect();
-    assert!(
-        both.len() < sign.covered.len(),
-        "and neither is a subset of the other: {both:?}"
-    );
-}
-
-#[test]
-fn what_a_target_reached_is_a_part_of_what_the_build_instrumented() {
-    let (baseline, _scratch) = measure("fixture-baseline");
-    assert!(!baseline.instrumented.is_empty());
     for measured in &baseline.targets {
         assert!(
-            measured.covered.is_subset(&baseline.instrumented),
-            "{}: reached a region the build never instrumented",
+            measured.target.is_whole_binary(),
+            "{} is a row about a binary, not about one of its tests",
             measured.target.name()
         );
     }
-}
+    let mut names: Vec<String> = baseline
+        .targets
+        .iter()
+        .map(|one| one.target.name())
+        .collect();
+    names.sort();
+    names.dedup();
+    assert_eq!(
+        names.len(),
+        baseline.targets.len(),
+        "one row per binary, each named once"
+    );
 
-#[test]
-fn a_skipped_target_reached_nothing_because_it_never_ran() {
-    let (baseline, _scratch) = measure("fixture-baseline");
-    let ignored = &baseline.targets[named(&baseline, "zero_has_a_sign_of_its_own")];
-    assert_eq!(ignored.status, TargetStatus::Skipped);
+    let lib = named(&baseline, "fixture-simple/lib/fixture_simple");
+    assert_eq!(lib.status, TargetStatus::Passed);
     assert!(
-        ignored.covered.is_empty(),
-        "a test libtest did not run reached nothing"
+        lib.tests > 0,
+        "the row carries how many tests the run of it executed, which is what its \
+         duration is the cost of"
     );
 }
 
-const fn summary(passed: u32, failed: u32, ignored: u32) -> Summary {
-    Summary {
-        ok: failed == 0,
-        passed,
-        failed,
-        ignored,
-        measured: 0,
-        filtered_out: 0,
+#[test]
+fn a_target_whose_own_tests_fail_is_a_row_and_a_finding_rather_than_a_refusal() {
+    let fixture = Fixture::copy("fixture-verify-fails");
+    let baseline = measure(&fixture);
+
+    let failed: Vec<&Measured> = baseline
+        .targets
+        .iter()
+        .filter(|one| one.status == TargetStatus::Failed)
+        .collect();
+    assert!(
+        failed.len() >= 2,
+        "the table names every target that failed rather than the first: {:?}",
+        baseline
+            .targets
+            .iter()
+            .map(|one| (one.target.name(), one.status))
+            .collect::<Vec<(String, TargetStatus)>>()
+    );
+    for measured in failed {
+        assert!(
+            measured
+                .message
+                .as_ref()
+                .is_some_and(|said| !said.is_empty()),
+            "{} failed and the row says what it said",
+            measured.target.name()
+        );
     }
-}
-
-#[test]
-fn the_summary_line_decides_and_not_the_exit_code() {
-    assert_eq!(
-        status_of(Some(summary(1, 0, 0)), false).0,
-        TargetStatus::Passed
-    );
-    assert_eq!(
-        status_of(Some(summary(0, 1, 0)), false).0,
-        TargetStatus::Failed
-    );
-    assert_eq!(
-        status_of(Some(summary(0, 0, 1)), false).0,
-        TargetStatus::Skipped
-    );
-    assert_eq!(
-        status_of(Some(summary(0, 0, 0)), false).0,
-        TargetStatus::Missing,
-        "libtest exits 0 for a filter that matched nothing; a target that did not \
-         run is not a target that passed"
-    );
-    assert_eq!(
-        status_of(None, false).0,
-        TargetStatus::Missing,
-        "and no summary line at all is no observation at all"
-    );
-}
-
-#[test]
-fn a_target_that_ran_out_of_time_failed_and_says_so() {
-    let (status, message) = status_of(Some(summary(1, 0, 0)), true);
-    assert_eq!(status, TargetStatus::Failed);
     assert!(
-        message.unwrap_or_default().contains("time"),
-        "a timeout is a failure a reader can recognise"
+        baseline
+            .limitations
+            .iter()
+            .any(|name| name.starts_with(mjutest_cli::assure::baseline::NOT_PASSING_LIMITATION)),
+        "and the run states why those targets answer nothing: {:?}",
+        baseline.limitations
     );
-}
-
-#[test]
-fn a_target_that_failed_says_what_it_said() {
-    let (status, message) = status_of(Some(summary(0, 2, 0)), false);
-    assert_eq!(status, TargetStatus::Failed);
-    assert!(message.unwrap_or_default().contains('2'), "how many failed");
 }

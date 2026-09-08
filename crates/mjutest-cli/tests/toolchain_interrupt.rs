@@ -161,7 +161,7 @@ fn verify_in(root: &Path, extra: &[&str]) -> std::process::Child {
 }
 
 #[test]
-fn an_interrupted_run_leaves_scheduling_state_for_the_next_one() {
+fn an_interrupted_run_leaves_what_an_earlier_one_established_rather_than_clearing_it() {
     let dir = tempfile::Builder::new()
         .prefix("mjutest-resume-")
         .tempdir()
@@ -172,9 +172,32 @@ fn an_interrupted_run_leaves_scheduling_state_for_the_next_one() {
         &root,
     );
 
-    let mut first = verify_in(&root, &[]);
-    let pid = first.id();
-    let mut reader = BufReader::new(first.stderr.take().expect("stderr is piped"));
+    let checkpoints = mjutest_devkit::paths::cache_beside(&root)
+        .expect("a cache directory")
+        .join("mjutest/outcomes-v1/checkpoints");
+    let seeded = checkpoints.join("an-earlier-run");
+    std::fs::create_dir_all(&seeded).expect("mkdir");
+    std::fs::write(
+        seeded.join("checkpoint-v1.json"),
+        serde_json::to_string(&serde_json::json!({
+            "schema": "mjutest-assurance-checkpoint-v1",
+            "identity": "an-earlier-run",
+            "attempts": 1,
+            "targets": [],
+            "mutants": [{
+                "id": "0f7b4d7472329894e9b3",
+                "disposition": "killed",
+                "killed_by": "fixture-assured/lib/fixture_assured",
+                "duration_ms": 1,
+            }],
+        }))
+        .expect("the state renders"),
+    )
+    .expect("write");
+
+    let mut interrupted = verify_in(&root, &[]);
+    let pid = interrupted.id();
+    let mut reader = BufReader::new(interrupted.stderr.take().expect("stderr is piped"));
     let mut line = String::new();
     let deadline = Instant::now()
         .checked_add(Duration::from_secs(300))
@@ -183,34 +206,32 @@ fn an_interrupted_run_leaves_scheduling_state_for_the_next_one() {
         line.clear();
         let read = reader.read_line(&mut line).expect("read");
         assert!(read > 0, "the run ended before it measured anything");
-        if line.contains("[2/") && line.contains("fixture-assured") {
+        if line.contains("== baseline") {
             break;
         }
-        assert!(Instant::now() < deadline, "the run never measured a target");
+        assert!(Instant::now() < deadline, "the run never began measuring");
     }
     rustix::process::kill_process(
         rustix::process::Pid::from_raw(pid.try_into().expect("a pid fits")).expect("a live pid"),
         rustix::process::Signal::INT,
     )
     .expect("the signal is delivered");
-    assert_eq!(first.wait().expect("the run ends").code(), Some(130));
+    assert_eq!(interrupted.wait().expect("the run ends").code(), Some(130));
 
-    let checkpoints = mjutest_devkit::paths::cache_beside(&root)
-        .expect("a cache directory")
-        .join("mjutest/outcomes-v1/checkpoints");
     let states = written_states(&checkpoints);
-    assert_eq!(
-        states.len(),
-        1,
-        "an interrupted run leaves what it established for the next one: {states:?}"
+    assert!(
+        !states.is_empty(),
+        "a run that stopped is not a run that finished, and clearing what an earlier \
+         one established would make an interrupt cost the whole run — which is the \
+         opposite of what a checkpoint is for: {states:?}"
     );
     let state: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&states[0]).expect("the state"))
             .expect("the state is a document");
     assert_eq!(state["schema"], "mjutest-assurance-checkpoint-v1");
     assert!(
-        !state["targets"].as_array().expect("targets").is_empty(),
-        "the target it had already measured is in it: {state}"
+        !state["mutants"].as_array().expect("mutants").is_empty(),
+        "the mutants an earlier run judged are still there: {state}"
     );
 }
 

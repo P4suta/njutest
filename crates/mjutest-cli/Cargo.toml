@@ -47,6 +47,7 @@ rustix = { workspace = true }
 
 [dev-dependencies]
 rustix = { workspace = true }
+rust-mutants = { workspace = true, features = ["testkit"] }
 criterion = { workspace = true }
 jsonschema = { workspace = true }
 mjutest-devkit = { workspace = true }

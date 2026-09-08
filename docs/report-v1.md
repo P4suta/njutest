@@ -75,6 +75,19 @@ because a report must not say two things at once: an assurance is the claim
 that nothing was found, so it carries no findings, and a `DEFECT` a reader
 cannot see named is not one they can act on, so it carries at least one.
 
+A target is a test binary, and its identity is the digest of the package, the
+kind, the binary's name, and — for the shape a later release may take — the
+libtest path within it. The binary is part of it because two integration tests
+of one package can each hold a test called `works`, and an identity that left
+the binary out made those two rows one. The domain separator carries the
+recipe, so a recipe that changes says so: it reads `mjutest-target-v2`.
+
+A target's `duration_ms` is the cost of running every test it holds, once,
+with nothing active. It is not divisible by the number of tests: a target that
+takes a second for one test and a second for a hundred is two facts about
+process starts and one fact about the tests. An estimate built from it may
+decide an order and never a budget.
+
 `targets` is canonically ordered by descending duration, then ascending target
 ID. A mutant disposition may say `reused: true` with a `source_run_id`; the
 accounting carries `reused_killed` and `reused_survived`, each part of

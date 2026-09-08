@@ -16,9 +16,9 @@ use std::time::Duration;
 
 use jiff::Timestamp;
 use mjutest_cli::trace::{
-    ArtifactRecord, Clock, DirSink, DischargeRecord, Event, ExecRecord, FILE_NAME, MemorySink,
-    MutantExecRecord, Payload, ProbeExecRecord, Problem, ProgressRecord, RING_CAPACITY, Recorder,
-    RouteRecord, SCHEMA, Sink, StartRecord, check, read_events,
+    ArtifactRecord, AskedRecord, Clock, DirSink, DischargeRecord, Event, ExecRecord, FILE_NAME,
+    MemorySink, MutantExecRecord, Payload, ProbeExecRecord, Problem, ProgressRecord, RING_CAPACITY,
+    Recorder, RouteRecord, SCHEMA, Sink, StartRecord, check, read_events,
 };
 use sha2::{Digest as _, Sha256};
 
@@ -404,7 +404,11 @@ fn a_route() -> RouteRecord {
                 proof: "never-infected".to_owned(),
             },
         ],
-        file_candidates: 4,
+        tests: vec![AskedRecord {
+            target: "core/test/lib fast".to_owned(),
+            tests: vec!["adds".to_owned(), "subtracts".to_owned()],
+        }],
+        considered: Vec::new(),
         reused: None,
     }
 }

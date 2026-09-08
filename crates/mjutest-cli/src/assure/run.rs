@@ -8,10 +8,10 @@ use std::path::PathBuf;
 
 use jiff::Timestamp;
 
-use crate::assure::baseline::{self, BaselineOptions, Workspace};
+use crate::assure::baseline;
 use crate::assure::equivalence;
 use crate::assure::mutation::{self, MutationOptions, Subject};
-use crate::build::{Cargo, Selection};
+use crate::build::Cargo;
 use crate::cli::Environment;
 use crate::config::Config;
 use crate::error::RunnerError;
@@ -20,11 +20,11 @@ use crate::report::{
     Finding, FindingKind, Limitation, MutantRecord, Report, RunKind, SoundnessAccounting,
     TargetRecord, TargetStatus, Toolchain, UNAVAILABLE, Verdict,
 };
+use crate::rustflags;
 use crate::scratch::{self, Scratch};
 use crate::soundness;
 use crate::ui::Notes;
 use crate::watch::Watch;
-use crate::{build_cache, rustflags};
 use rust_mutants::cargo::Metadata;
 
 /// The limitation a run states when the tree could not be read as one number.
@@ -103,7 +103,6 @@ pub fn run(
     watch.trace.stage("soundness");
     let unsafe_packages = take_inventory(&mut report, request, &metadata);
     deepened(&mut report, request, (&toolchain, environment), watch)?;
-    let layer = layer_for(&toolchain, environment, &scratch, notes)?;
 
     let mut resources = holding(request, environment, &mut report, (notes, watch))?;
     let held = with_resources(environment, &resources);
@@ -113,44 +112,39 @@ pub fn run(
     watch.trace.stage("baseline");
     let restore = resume_state(request, &mut report);
     let mut journal = Journal::of(request, restore.as_ref());
-    let baseline = baseline::run_resuming(
-        Workspace {
-            toolchain: &toolchain,
-            packages: &metadata.packages,
-        },
-        &baseline_options(
-            &Opening {
-                request,
-                environment,
-                scratch: &scratch,
-            },
-            &report,
-            layer,
-            toolchain.host(),
-        ),
-        &mut baseline::Resume {
-            state: restore.as_ref(),
-            record: &mut |measured| journal.keep_target(measured),
-        },
-        baseline::Reporting { notes, watch },
-    )?;
-    absorb(&mut report, &baseline);
-
-    if measurable(&baseline) {
-        run_mutation(
-            &mut Mutating {
-                unsafe_packages: &unsafe_packages,
-                report: &mut report,
-                request,
-                environment,
-                baseline: &baseline,
-                metadata: &metadata,
-                restore: restore.as_ref(),
-                journal: &mut journal,
-            },
-            notes,
-            watch,
-        )?;
+    let prepared = match prepare(request, environment, watch) {
+        Ok(session) => Some(session),
+        Err(error) => {
+            let Some(refused) = baseline::refused(&error) else {
+                return Err(error);
+            };
+            absorb(&mut report, &refused);
+            None
+        }
+    };
+    if let Some(session) = prepared {
+        let baseline = baseline::observe(&session, baseline::Reporting { notes, watch });
+        absorb(&mut report, &baseline);
+        if measurable(&baseline) {
+            run_mutation(
+                &mut Mutating {
+                    unsafe_packages: &unsafe_packages,
+                    report: &mut report,
+                    request,
+                    environment,
+                    baseline: &baseline,
+                    metadata: &metadata,
+                    restore: restore.as_ref(),
+                    journal: &mut journal,
+                    session: &session,
+                },
+                notes,
+                watch,
+            )?;
+        }
+        for path in session.close()? {
+            notes.note("kept", &path.display().to_string());
+        }
     }
     afterwards(
         &mut report,
@@ -159,7 +153,7 @@ pub fn run(
     );
     released(&mut resources, &mut report);
     finish(&mut report, request.started);
-    journal.finished();
+    journal.finished(watch.cancel);
     let kept = if request.keep_temp {
         scratch.keep()
     } else {
@@ -634,44 +628,6 @@ fn count(value: usize) -> u32 {
     u32::try_from(value).unwrap_or(u32::MAX)
 }
 
-/// What the baseline is asked to build and run.
-/// Whether a resource only one test may hold at a time forces this run to measure one thing at a time.
-fn alone(config: &Config) -> bool {
-    config.resources.values().any(|resource| resource.exclusive)
-}
-
-fn baseline_options(
-    opening: &Opening<'_>,
-    report: &Report,
-    layer: PathBuf,
-    host: &str,
-) -> BaselineOptions {
-    let Opening {
-        request,
-        environment,
-        scratch,
-    } = *opening;
-    BaselineOptions {
-        root: request.root.clone(),
-        host: host.to_owned(),
-        selection: Selection {
-            packages: report.scope.resolved_packages.clone(),
-            features: request.config.execution.features.clone(),
-            all_features: request.config.execution.all_features,
-            default_features: !request.config.execution.no_default_features,
-        },
-        cargo: request.cargo,
-        env: environment.vars.clone(),
-        target_dir: layer,
-        scratch_build_dir: scratch.build_dir(),
-        profiles_dir: scratch.profiles_dir(),
-        timeout: Some(request.config.execution.timeout),
-        test_args: request.test_args.clone(),
-        jobs: request.config.execution.jobs,
-        exclusive: alone(&request.config),
-    }
-}
-
 /// What an interrupted run left for this one, or nothing. A state this release cannot continue from is a state it does not continue from: the run starts cold and says so.
 fn resume_state(request: &Request, report: &mut Report) -> Option<crate::checkpoint::State> {
     let directory = request.checkpoints.as_ref()?;
@@ -719,23 +675,6 @@ impl Journal {
         }
     }
 
-    fn keep_target(&mut self, measured: &baseline::Measured) {
-        self.state.record_target(crate::checkpoint::SavedTarget {
-            id: measured.target.id.clone(),
-            status: measured.status,
-            duration_ms: measured.duration_ms,
-            message: measured.message.clone(),
-            files: measured
-                .covered
-                .iter()
-                .map(|block| block.file.to_string_lossy().into_owned())
-                .collect::<BTreeSet<String>>()
-                .into_iter()
-                .collect(),
-        });
-        self.write();
-    }
-
     fn keep_mutant(&mut self, judged: &mutation::Judged) {
         let (disposition, by) = match &judged.disposition {
             mutation::Disposition::Killed { by } => ("killed", by.clone()),
@@ -758,7 +697,16 @@ impl Journal {
         }
     }
 
-    fn finished(&self) {
+    /// Clears what this run established, because a run that reached its end has nothing left to continue.
+    ///
+    /// A cancelled run reaches the same line. It is not finished: it stopped,
+    /// and what it established up to there is exactly what the next one may
+    /// skip. Clearing it here would make an interrupt cost the whole run,
+    /// which is the opposite of what a checkpoint is for.
+    fn finished(&self, cancel: &rust_mutants::runner::Cancel) {
+        if cancel.is_cancelled() {
+            return;
+        }
         if let Some(directory) = &self.directory {
             crate::checkpoint::clear(directory, &self.state.identity);
         }
@@ -924,25 +872,9 @@ fn locate(
     Ok((toolchain, metadata))
 }
 
-/// Where the instrumented build goes: the machine's coverage layer, or a directory inside this run's scratch when that layer cannot be used. A build cache is never a reason to fail ([ADR 0005] §7).
-fn layer_for(
-    toolchain: &rust_mutants::cargo::Toolchain,
-    environment: &Environment,
-    scratch: &Scratch,
-    notes: &mut Notes<'_>,
-) -> Result<PathBuf, RunnerError> {
-    let version = toolchain.rustc_version();
-    let cache = build_cache::BuildCache::new(
-        &environment.cache_directory.join("mjutest"),
-        version.commit_hash.as_deref().unwrap_or(&version.release),
-    );
-    match cache.prepare(build_cache::Layer::Coverage) {
-        Ok(dir) => Ok(dir),
-        Err(error) => {
-            notes.note("cache", &error.to_string());
-            Ok(scratch.round_dir("layer")?)
-        }
-    }
+/// Whether a resource only one test may hold at a time forces the run to measure one target at a time.
+fn alone(config: &Config) -> bool {
+    config.resources.values().any(|resource| resource.exclusive)
 }
 
 /// The verdict, the canonical order, and how long it all took.
@@ -966,6 +898,8 @@ struct Mutating<'a> {
     journal: &'a mut Journal,
     /// Every package the soundness inventory found `unsafe` in, which is where "the same instructions" stops meaning "the same behaviour".
     unsafe_packages: &'a BTreeSet<String>,
+    /// The prepared workspace: what built the trees, ran every target once, and decides which tests could notice a mutation.
+    session: &'a rust_mutants::session::Session,
 }
 
 fn run_mutation(
@@ -975,7 +909,7 @@ fn run_mutation(
 ) -> Result<(), RunnerError> {
     notes.phase("mutation");
     watch.trace.stage("mutation");
-    let session = prepare(mutating.request, mutating.environment, watch)?;
+    let session = mutating.session;
     let accepted: BTreeSet<String> = mutating
         .request
         .config
@@ -985,11 +919,10 @@ fn run_mutation(
         .collect();
     let mutation = mutation::run_resuming(
         Subject {
-            session: &session,
+            session,
             baseline: &mutating.baseline.targets,
         },
         &MutationOptions {
-            instrumented: mutating.baseline.instrumented.clone(),
             accepted: accepted.clone(),
             test_args: mutating.request.test_args.clone(),
             evidence: evidence_of(mutating),
@@ -1015,15 +948,12 @@ fn run_mutation(
         prove_equivalence(
             &Proving {
                 mutating,
-                session: &session,
+                session,
                 tree_written,
             },
             &mut mutation,
             (notes, watch),
         )?;
-    }
-    for path in session.close()? {
-        notes.note("kept", &path.display().to_string());
     }
     record(mutating.report, &mutation, &accepted);
     Ok(())
@@ -1092,6 +1022,14 @@ fn prove_equivalence(
     Ok(())
 }
 
+/// The prepared workspace: the trees, the one run of every target with nothing active, and what its guards recorded.
+///
+/// A target whose own tests fail is excluded rather than refused. Every
+/// mutation put to such a target comes back killed and not one of those kills
+/// is about a mutation, so it may not be judged against — but it is the
+/// finding, and a run that refused would report the finding as an error and
+/// name one target where there are five. The engine hands back the table even
+/// when the answer is "all of them", which is when a reader needs it most.
 fn prepare(
     request: &Request,
     environment: &Environment,
@@ -1119,6 +1057,7 @@ fn prepare(
             packages: request.packages.clone(),
             include: within(request.changed.as_ref()),
             verify: true,
+            failing: rust_mutants::session::Failing::Exclude,
             probe: request.config.mutation.probe,
             build_timeout: Some(request.config.execution.timeout),
             mutant_timeout: rust_mutants::session::Timeout::Fixed(request.config.execution.timeout),
@@ -1144,7 +1083,7 @@ fn evidence_of(mutating: &Mutating<'_>) -> Option<mutation::Evidence> {
     let mut standing = crate::evidence::store::Standing::default();
     let mut names = std::collections::BTreeMap::new();
     for measured in &mutating.baseline.targets {
-        if measured.status != TargetStatus::Passed || measured.restored {
+        if measured.status != TargetStatus::Passed {
             continue;
         }
         let Some(id) = package_id(mutating.metadata, &measured.target.package) else {
@@ -1217,11 +1156,40 @@ fn record(report: &mut Report, mutation: &mutation::Mutation, accepted: &BTreeSe
     }
 }
 
+/// Each limitation the baseline stated, once, beside the targets it was stated about.
+///
+/// A target-shaped limitation arrives as `<limitation>:<target>`, because
+/// which target could not be measured is what a reader acts on. The name is
+/// what the ledger in [`docs/limitations.md`](../../../../docs/limitations.md)
+/// is keyed by, so the name is what reaches the report and the targets go into
+/// the sentence: one limitation about five targets is one row, not five.
+fn about(limitations: &[String]) -> Vec<(String, Vec<String>)> {
+    let mut named: std::collections::BTreeMap<String, Vec<String>> =
+        std::collections::BTreeMap::new();
+    for limitation in limitations {
+        let (name, target) = limitation
+            .split_once(':')
+            .map_or((limitation.as_str(), None), |(head, tail)| {
+                (head, Some(tail))
+            });
+        let targets = named.entry(name.to_owned()).or_default();
+        if let Some(target) = target {
+            targets.push(target.to_owned());
+        }
+    }
+    named.into_iter().collect()
+}
+
+/// Puts what the baseline observed into the report.
 fn absorb(report: &mut Report, baseline: &baseline::Baseline) {
-    for name in &baseline.limitations {
-        report
-            .limitations
-            .push(Limitation::new(name, &limitation_detail(name)));
+    for (name, targets) in about(&baseline.limitations) {
+        let detail = limitation_detail(&name);
+        let detail = if targets.is_empty() {
+            detail
+        } else {
+            format!("{detail} ({})", targets.join(", "))
+        };
+        report.limitations.push(Limitation::new(&name, &detail));
     }
     if let Some(failure) = &baseline.failure {
         report.findings.push(Finding::new(
@@ -1349,9 +1317,21 @@ fn first_line(text: &str) -> String {
 }
 
 /// What a named limitation means, for the ones a phase reports by name.
-fn limitation_detail(name: &str) -> String {
-    match name {
-        rustflags::TARGET_RUSTFLAGS_LIMITATION => {
+///
+/// A name a target carries arrives as `<limitation>:<target>`, because which
+/// target could not be measured is what a reader acts on. The sentence is
+/// about the limitation, so the target is cut off before it is looked up.
+///
+/// [`every_limitation_the_engine_can_state_has_a_sentence`](../../tests/limitations.rs)
+/// holds this to `rust_mutants::limitation::ALL`: a layer whose name reaches a
+/// report with nothing a reader can do about it is a layer that is not really
+/// visible.
+#[must_use]
+pub fn limitation_detail(name: &str) -> String {
+    let named = name.split_once(':').map_or(name, |(head, _target)| head);
+    match named {
+        rustflags::TARGET_RUSTFLAGS_LIMITATION
+        | rust_mutants::limitation::COVERAGE_REFUSED_CONFIGURED_RUSTFLAGS => {
             "the project configures compiler flags for a target, and the instrumented build \
              does not merge them: which of them apply is cargo's decision"
         }
@@ -1360,9 +1340,13 @@ fn limitation_detail(name: &str) -> String {
              in the instrumented build"
         }
         baseline::DOCTESTS_LIMITATION => {
-            "rustdoc compiles a documented example into a binary this run never sees, so \
-             there is no coverage to read for it: it reaches every mutation in the files \
-             its library is made of and narrows none of them"
+            "rustdoc compiles a documented example into a binary this run never sees, so no \
+             measurement names it: it reaches every mutation in the files its library is \
+             made of and narrows none of them"
+        }
+        rust_mutants::limitation::DOCTESTS_NONE => {
+            "the library documents no example, so its documentation target has nothing to \
+             run and no mutation is routed to it"
         }
         baseline::PROC_MACRO_LIMITATION => {
             "a procedural macro decides what it expands to during the build, and a mutation \
@@ -1373,6 +1357,43 @@ fn limitation_detail(name: &str) -> String {
         baseline::WHOLE_BINARY_LIMITATION => {
             "a test binary brings its own harness, so it cannot be asked for one of its \
              tests and is measured whole"
+        }
+        baseline::NOT_PASSING_LIMITATION => {
+            "the target's own tests do not pass with nothing active, so every mutation put \
+             to it would come back killed and not one of those kills would be about a \
+             mutation"
+        }
+        baseline::UNRECORDED_LIMITATION => {
+            "the target's guards recorded nothing this run can route by, so every test of \
+             it reaches every mutation in it and none of them is narrowed"
+        }
+        rust_mutants::limitation::TOUCH_LOG_UNREADABLE => {
+            "the target recorded what its guards reached and the record did not read back, \
+             so nothing of it is believed and every test of it runs"
+        }
+        rust_mutants::limitation::TARGET_SKIPPED_BY_CONFIGURATION => {
+            "the configuration named this target as one never to start, so no mutation was \
+             measured against it"
+        }
+        rust_mutants::limitation::COVERAGE_BUILD_FAILED => {
+            "the tree could not be built with coverage instrumentation, so nothing narrows \
+             a route and every test of every target runs"
+        }
+        rust_mutants::limitation::COVERAGE_TOOLS_MISSING => {
+            "the LLVM tools this toolchain ships are not installed, so no profile can be \
+             read and every test of every target runs"
+        }
+        rust_mutants::limitation::COVERAGE_NOT_MEASURED => {
+            "the coverage tools ran and said nothing a route can rest on, so every test of \
+             every target runs"
+        }
+        rust_mutants::limitation::PROBE_TREE_NOT_BUILT => {
+            "the tree the infection layer needs could not be built, so nothing was asked \
+             which mutations a target infects and nothing is discharged for it"
+        }
+        rust_mutants::limitation::PROBE_LOG_UNREADABLE => {
+            "a target ran and what it infected did not read back, so nothing of it is \
+             discharged"
         }
         _ => "stated by a phase of the run",
     }

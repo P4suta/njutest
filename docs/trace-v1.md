@@ -42,9 +42,9 @@ which carries `events_emitted` and `events_dropped`.
 | `progress` | a progress note as the UI saw it |
 | `artifact` | something the run kept (`--keep-temp`) |
 | `note` | what has no shape of its own yet |
-| `mutant-exec` | one mutant execution: the mutant a person types, the target (`package-suite` where no proof said which tests could notice it), the arguments verbatim, the outcome, how long it took, and whether the machine was given to it, which a run does once when a budget expires |
+| `mutant-exec` | one mutant execution: the mutant a person types, the target it ran against, the arguments verbatim, the outcome, how long it took, and whether the machine was given to it, which a run does once when a budget expires |
 | `probe-exec` | what the probe pass measured for one target: `measured` with the count of mutants it infected, or `not-measured` with no count at all, because a target the pass never read carries no facts and none is not zero |
-| `route` | one mutant's routing decision: granularity (`block`, `discharged`, `file`, `unreached`, `suite`), what widened it — the fallback that took the whole file (`position-unknown`, `outside-blocks`) or the premise that sent the mutation to the package suite (`position-unknown`, `outside-blocks`, `coverage-incomplete`) — the reaching targets in run order, every target a proof removed beside the proof that removed it (`branch-never-taken`, `never-infected`), how many targets touched the file at all, and the run a disposition was read back from |
+| `route` | one mutant's routing decision: granularity (`all`, `block`, `test`, `discharged`, `unreached`), what widened it (`not-measured`, `position-unknown`, `outside-blocks`, `coverage-incomplete`, `touch-incomplete`), the reaching targets in run order, which tests of a target the mutation is put to where a measurement named them, every target a proof removed beside the proof that removed it (`branch-never-taken`, `never-infected`), every measured target that was asked and did not reach the mutation, and the run a disposition was read back from |
 | `run-end` | verdict, accounting, `events_emitted`, `events_dropped` |
 
 An `exec` event carries variable names and never values, and digests the

@@ -262,18 +262,34 @@ pub struct DischargeRecord {
 pub struct RouteRecord {
     /// The mutant a person types.
     pub mutant: String,
-    /// `block`, `discharged`, `file`, `unreached`, or `suite`.
+    /// `all`, `block`, `test`, `discharged`, or `unreached`.
     pub granularity: String,
-    /// What the evidence could not support, on a route the position did not decide: the fallback that took the whole file, or the premise that sent the mutation to the package suite.
+    /// What the measurement could not support, on a route it did not decide on its own. Every one of these widened the route.
     pub fallback: Option<String>,
     /// The targets to run, cheapest first.
     pub reaching: Vec<String>,
+    /// Which tests of a target the mutation is put to, for each target a measurement narrowed. A target that is not named here runs every test it has.
+    pub tests: Vec<AskedRecord>,
     /// The targets a proof removed, each beside the proof that removed it.
     pub discharged: Vec<DischargeRecord>,
-    /// How many targets touched the file at all.
-    pub file_candidates: u64,
+    /// The measured targets that were asked and did not reach the mutation.
+    ///
+    /// A layer that removes an execution names who was in a position to notice
+    /// and did not. A count cannot be checked against anything; a list can be
+    /// held to the targets the run says it measured, which is what
+    /// `xtask proofaudit` does with it.
+    pub considered: Vec<String>,
     /// The run this disposition was read back from, when it was not established here.
     pub reused: Option<String>,
+}
+
+/// Which tests of one target a route puts the mutation to.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct AskedRecord {
+    /// The target.
+    pub target: String,
+    /// The tests, by their libtest path.
+    pub tests: Vec<String>,
 }
 
 /// One mutant run against one target.

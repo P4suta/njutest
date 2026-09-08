@@ -15,8 +15,9 @@ use jiff::Timestamp;
 use sha2::{Digest as _, Sha256};
 
 pub use event::{
-    ArtifactRecord, DischargeRecord, Event, ExecRecord, MutantExecRecord, NoteRecord, Payload,
-    PhaseRecord, ProbeExecRecord, ProgressRecord, RouteRecord, RunRecord, SCHEMA, StartRecord,
+    ArtifactRecord, AskedRecord, DischargeRecord, Event, ExecRecord, MutantExecRecord, NoteRecord,
+    Payload, PhaseRecord, ProbeExecRecord, ProgressRecord, RouteRecord, RunRecord, SCHEMA,
+    StartRecord,
 };
 pub use reader::{Problem, ReadError, check, read_events};
 pub use sink::{

@@ -84,13 +84,13 @@ pub fn askable(standing: Standing<'_>) -> Result<(), Refused> {
     if standing.unsafe_packages.contains(standing.package) {
         return Err(Refused::PackageHoldsUnsafe);
     }
-    match standing.route {
-        Route::Block { reaching, .. } if !reaching.as_slice().is_empty() => Ok(()),
-        Route::Block { .. } | Route::Discharged { .. } | Route::Unreached { .. } => {
-            Err(Refused::NothingReached)
-        }
-        Route::File { .. } | Route::Suite { .. } => Err(Refused::RouteWidened),
+    if crate::assure::route::ran_the_position(standing.route) {
+        return Ok(());
     }
+    if crate::assure::route::nothing_ran(standing.route) {
+        return Err(Refused::NothingReached);
+    }
+    Err(Refused::RouteWidened)
 }
 
 /// What one pass of this layer needs: where the tree is, what to build it with, and what the run holds about the mutations it is asked about.

@@ -142,7 +142,7 @@ fn a_test_of_a_leasing_run_sees_what_the_provider_said() {
         .find(|target| {
             target["name"]
                 .as_str()
-                .is_some_and(|name| name.contains("the_resource_told_this_test_where_it_is"))
+                .is_some_and(|name| name.contains("fixture-assured/test/leased"))
         })
         .cloned()
         .unwrap_or_else(|| panic!("the leasing test ran: {output:?}"));

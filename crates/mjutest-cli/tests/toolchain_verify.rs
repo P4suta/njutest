@@ -125,9 +125,9 @@ fn the_report_is_written_where_a_reader_will_look_and_validates_against_the_sche
     assert!(problems.is_empty(), "{problems:?}");
 
     assert_eq!(report["verdict"], "INSUFFICIENT");
-    assert_eq!(report["accounting"]["targets"]["selected"], 3);
+    assert_eq!(report["accounting"]["targets"]["selected"], 2);
     assert_eq!(report["accounting"]["targets"]["passed"], 2);
-    assert_eq!(report["accounting"]["targets"]["skipped"], 1);
+    assert_eq!(report["accounting"]["targets"]["skipped"], 0);
     assert_eq!(report["findings"].as_array().expect("findings").len(), 3);
     assert_eq!(
         report["toolchain"]["target"].as_str().unwrap_or_default(),
@@ -148,7 +148,13 @@ fn the_targets_are_named_and_ordered_slowest_first() {
     verify(&fixture, &[]);
     let report = document(&fixture);
     let targets = report["targets"].as_array().expect("targets");
-    assert_eq!(targets.len(), 3);
+    assert_eq!(
+        targets.len(),
+        2,
+        "one row per test binary: the library's own tests and the integration test. \
+         A row is a binary because a run measures a binary, and which of its tests a \
+         mutation is put to is what a route says: {targets:?}"
+    );
 
     let durations: Vec<u64> = targets
         .iter()
@@ -164,7 +170,12 @@ fn the_targets_are_named_and_ordered_slowest_first() {
         .filter_map(|target| target["name"].as_str())
         .collect();
     assert!(
-        names.iter().any(|name| name.contains("sign_names")),
+        names.contains(&"fixture-baseline/lib/fixture_baseline"),
+        "a target is named the way the engine names the binary it is — package, kind, \
+         and the binary's own name: {names:?}"
+    );
+    assert!(
+        names.contains(&"fixture-baseline/test/doubling"),
         "{names:?}"
     );
 }
@@ -294,7 +305,16 @@ fn a_workspace_with_no_tests_at_all_observed_nothing_and_says_so() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("TARGETS\tselected=0"), "{stdout}");
+    assert!(
+        stdout.contains("TARGETS\tselected=1\tpassed=0"),
+        "the library's test binary exists and was run: hiding it would say the run \
+         found nothing to look at, when what it found was a binary with nothing in \
+         it: {stdout}"
+    );
+    assert!(
+        stdout.contains("FINDING\ttarget-missing"),
+        "and that it executed no test is the finding: {stdout}"
+    );
     assert!(
         stdout.ends_with("VERDICT\tINSUFFICIENT\n"),
         "a suite with nothing in it assures nothing: {stdout}"
@@ -555,7 +575,7 @@ fn a_run_about_a_change_set_it_cannot_see_refuses_rather_than_verifying_nothing(
 }
 
 #[test]
-fn a_target_a_checkpoint_names_is_not_measured_again() {
+fn a_checkpoint_never_speaks_for_a_target_this_run_measured_itself() {
     let fixture = fixture("fixture-assured");
     assert_eq!(verify(&fixture, &[]).status.code(), Some(0));
     let established = document(&fixture);
@@ -595,25 +615,30 @@ fn a_target_a_checkpoint_names_is_not_measured_again() {
     let resumed = verify(&fixture, &[]);
     assert_eq!(
         resumed.status.code(),
-        Some(1),
-        "the run took the terminal state the checkpoint carried rather than measuring it \
-         again: {}",
+        Some(0),
+        "{}",
         String::from_utf8_lossy(&resumed.stderr)
     );
     let report = document(&fixture);
     assert!(
         names(&report).contains(&"resumed-from-checkpoint".to_owned()),
-        "{report}"
+        "the run says it continued one that was interrupted: {report}"
     );
-    let restored = report["targets"]
+    let measured = report["targets"]
         .as_array()
         .expect("targets")
         .iter()
         .find(|target| target["id"] == serde_json::Value::String(id.clone()))
         .expect("the target the checkpoint named");
-    assert_eq!(restored["status"], "failed");
-    assert_eq!(restored["message"], "what the interrupted run observed");
-    assert_eq!(report["verdict"], "DEFECT");
+    assert_eq!(
+        measured["status"], "passed",
+        "a target is measured by the run that routes with it. Preparing runs every \
+         target once before anything is judged, so there is no work a restored status \
+         could save — and a status this run did not observe is one its routing does \
+         not correspond to: {measured}"
+    );
+    assert_ne!(measured["message"], "what the interrupted run observed");
+    assert_eq!(report["verdict"], "ASSURED");
 }
 
 #[test]

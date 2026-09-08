@@ -6,17 +6,20 @@
 use std::collections::BTreeSet;
 
 use mjutest_cli::assure::equivalence::{Refused, Standing, askable};
-use mjutest_cli::assure::route::{Discharge, Fallback, NEVER_INFECTED, Reaching, Route, Unsettled};
+use mjutest_cli::assure::route::{Asked, Discharge, Fallback, NEVER_INFECTED, Reaches, Route};
 
 fn block(targets: &[&str]) -> Route {
-    Reaching::new(targets.iter().map(|one| (*one).to_owned()).collect()).map_or(
-        Route::Unreached { file_candidates: 1 },
-        |reaching| Route::Block {
-            reaching,
-            file_candidates: 1,
-            discharged: Vec::new(),
-        },
-    )
+    Route::Block {
+        reaching: targets
+            .iter()
+            .map(|one| Reaches {
+                target: (*one).to_owned(),
+                tests: Asked::Every,
+            })
+            .collect(),
+        discharged: Vec::new(),
+        fallback: None,
+    }
 }
 
 const fn standing<'a>(route: &'a Route, unsafe_packages: &'a BTreeSet<String>) -> Standing<'a> {
@@ -35,7 +38,9 @@ fn a_mutation_in_code_no_test_calls_keeps_its_finding_whatever_the_compiler_did_
 
     for (route, why) in [
         (
-            Route::Unreached { file_candidates: 1 },
+            Route::Unreached {
+                considered: vec!["one".to_owned()],
+            },
             Refused::NothingReached,
         ),
         (
@@ -44,7 +49,6 @@ fn a_mutation_in_code_no_test_calls_keeps_its_finding_whatever_the_compiler_did_
                     target: "one".to_owned(),
                     proof: NEVER_INFECTED,
                 }],
-                file_candidates: 1,
             },
             Refused::NothingReached,
         ),
@@ -61,17 +65,29 @@ fn a_mutation_in_code_no_test_calls_keeps_its_finding_whatever_the_compiler_did_
 #[test]
 fn a_route_widened_past_the_position_is_not_one_this_rests_on() {
     let none = BTreeSet::new();
-    let file = Route::File {
-        reaching: Reaching::new(vec!["one".to_owned()]).expect("a target"),
+    let everything = Route::All {
+        reaching: vec!["one".to_owned()],
         fallback: Fallback::OutsideBlocks,
     };
-    assert_eq!(askable(standing(&file, &none)), Err(Refused::RouteWidened));
+    assert_eq!(
+        askable(standing(&everything, &none)),
+        Err(Refused::RouteWidened)
+    );
 
-    let suite = Route::Suite {
-        unsettled: Unsettled::CoverageIncomplete,
-        file_candidates: 0,
+    let unreadable = Route::Block {
+        reaching: vec![Reaches {
+            target: "one".to_owned(),
+            tests: Asked::Every,
+        }],
+        discharged: Vec::new(),
+        fallback: Some(Fallback::CoverageIncomplete),
     };
-    assert_eq!(askable(standing(&suite, &none)), Err(Refused::RouteWidened));
+    assert_eq!(
+        askable(standing(&unreadable, &none)),
+        Err(Refused::RouteWidened),
+        "a target is in this route because its measurement could not be read, which \
+         says what it ran the file for and not what it ran the position for"
+    );
 }
 
 #[test]
