@@ -10,13 +10,31 @@ use crate::syntax::Form;
 /// The path a guard calls the runtime through: `super::` once per inline module between the site and the file, since the runtime lives at the file's top level.
 #[must_use]
 pub(super) fn path(module: &str, super_depth: u32) -> String {
+    named(module, super_depth, "active")
+}
+
+/// The path one of the runtime's functions is called by from a site `super_depth` inline modules down.
+#[must_use]
+pub(super) fn named(module: &str, super_depth: u32, function: &str) -> String {
     let mut path = String::new();
     for _ in 0..super_depth {
         path.push_str("super::");
     }
     path.push_str(module);
-    path.push_str("::active");
+    path.push_str("::");
+    path.push_str(function);
     path
+}
+
+/// One alternative at a site: which mutant it is, what it reads, and whether the compiler vouched for comparing it with what it replaces.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct Alternative {
+    /// The mutant's dense catalog index.
+    pub(super) index: u32,
+    /// The text the guard writes when this mutant is the live one.
+    pub(super) text: String,
+    /// Whether a run may evaluate this beside the original and record whether the two ever differed.
+    pub(super) comparable: bool,
 }
 
 /// A composed guard: its text, where each alternative's own text sits in it, and where the original branch does. The offsets are relative to the start of the text.
@@ -26,18 +44,21 @@ pub(super) struct Composed {
     pub(super) alternatives: Vec<(u32, std::ops::Range<usize>)>,
     /// Where the original branch's text starts.
     pub(super) original_at: usize,
+    /// Every mutant this guard evaluates beside what it replaces, ascending. A form that cannot compare reports none, whatever it was offered.
+    pub(super) compared: Vec<u32>,
 }
 
 /// Composes one guard from its alternatives (index and text, in catalog order) and the original branch.
 #[must_use]
 pub(super) fn compose(
     form: Form,
-    path: &str,
-    alternatives: &[(u32, String)],
+    paths: &Paths<'_>,
+    alternatives: &[Alternative],
     original: &str,
 ) -> Composed {
+    let path = paths.active;
     match form {
-        Form::C => selector(path, alternatives, original),
+        Form::C => selector(paths, alternatives, original),
         Form::E => {
             let mut composed = chain(path, alternatives, original);
             let (open, close) = wrapping(original);
@@ -51,7 +72,7 @@ pub(super) fn compose(
             composed
         }
         Form::S => chain(path, alternatives, original),
-        Form::M => arm(path, alternatives, original),
+        Form::M => arm(paths, alternatives, original),
     }
 }
 
@@ -80,9 +101,9 @@ fn wrapping(original: &str) -> (char, char) {
 /// guard after it, because there is nothing at an unguarded arm to replace.
 /// The branch that keeps the arm as it was is the guard it did without:
 /// `true`.
-fn arm(path: &str, alternatives: &[(u32, String)], original: &str) -> Composed {
+fn arm(paths: &Paths<'_>, alternatives: &[Alternative], original: &str) -> Composed {
     const KEPT: &str = "true";
-    let mut composed = selector(path, alternatives, KEPT);
+    let mut composed = selector(paths, alternatives, KEPT);
     let prefix = original.len().saturating_add(" if ".len());
     composed.text.insert_str(0, " if ");
     composed.text.insert_str(0, original);
@@ -94,44 +115,71 @@ fn arm(path: &str, alternatives: &[(u32, String)], original: &str) -> Composed {
     composed
 }
 
+/// The two runtime functions a guard calls, each by the path its site reaches the module through.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct Paths<'a> {
+    /// The function that says whether this mutant is the live one.
+    pub(super) active: &'a str,
+    /// The function that records a mutant whose branch differed from what it replaces, and answers what it replaces.
+    pub(super) differing: &'a str,
+}
+
 /// Form C: a boolean selector with no block, so the site introduces no temporary scope of its own. The outer parentheses are load bearing: a nested Form C site sits inside its parent's `&&` chain, where `&&` binds tighter than the `||` this composes.
-fn selector(path: &str, alternatives: &[(u32, String)], original: &str) -> Composed {
+///
+/// A comparable alternative wraps the original branch in a call that answers
+/// what the original answers and records the mutant when the two differ. It is
+/// a call and not a block for the same reason the rest of this form is an
+/// expression: a block here would be a temporary scope the site did not have.
+fn selector(paths: &Paths<'_>, alternatives: &[Alternative], original: &str) -> Composed {
+    let path = paths.active;
     let mut text = String::from("(");
     let mut spans = Vec::with_capacity(alternatives.len());
-    for (index, alternative) in alternatives {
-        let written = write!(text, "{path}({index}) && (");
+    for one in alternatives {
+        let written = write!(text, "{path}({}) && (", one.index);
         debug_assert!(written.is_ok(), "writing to a String cannot fail");
         let start = text.len();
-        text.push_str(alternative);
-        spans.push((*index, start..text.len()));
+        text.push_str(&one.text);
+        spans.push((one.index, start..text.len()));
         text.push_str(") || ");
     }
-    for (index, _) in alternatives {
-        let written = write!(text, "!({path}({index})) && ");
+    for one in alternatives {
+        let written = write!(text, "!({path}({})) && ", one.index);
+        debug_assert!(written.is_ok(), "writing to a String cannot fail");
+    }
+    let comparable: Vec<&Alternative> = alternatives.iter().filter(|one| one.comparable).collect();
+    for one in &comparable {
+        let written = write!(text, "{}({}, ", paths.differing, one.index);
         debug_assert!(written.is_ok(), "writing to a String cannot fail");
     }
     text.push('(');
     let original_at = text.len();
     text.push_str(original);
-    text.push_str("))");
+    text.push(')');
+    for one in comparable.iter().rev() {
+        let written = write!(text, ", || ({}))", one.text);
+        debug_assert!(written.is_ok(), "writing to a String cannot fail");
+    }
+    text.push(')');
     Composed {
         text,
         alternatives: spans,
         original_at,
+        compared: comparable.iter().map(|one| one.index).collect(),
     }
 }
 
 /// Forms E and S: a branch chain. Both are the same text; only Form E is parenthesised, because it stands where a value does.
-fn chain(path: &str, alternatives: &[(u32, String)], original: &str) -> Composed {
+fn chain(path: &str, alternatives: &[Alternative], original: &str) -> Composed {
     let mut text = String::new();
     let mut spans = Vec::with_capacity(alternatives.len());
-    for (index, alternative) in alternatives {
+    for one in alternatives {
+        let (index, alternative) = (one.index, &one.text);
         text.push_str(if text.is_empty() { "if " } else { " else if " });
         let written = write!(text, "{path}({index}) {{ ");
         debug_assert!(written.is_ok(), "writing to a String cannot fail");
         let start = text.len();
         text.push_str(alternative);
-        spans.push((*index, start..text.len()));
+        spans.push((index, start..text.len()));
         text.push_str(if alternative.is_empty() { "}" } else { " }" });
     }
     if text.is_empty() {
@@ -139,6 +187,7 @@ fn chain(path: &str, alternatives: &[(u32, String)], original: &str) -> Composed
             text: original.to_owned(),
             alternatives: spans,
             original_at: 0,
+            compared: Vec::new(),
         };
     }
     text.push_str(" else { ");
@@ -149,5 +198,6 @@ fn chain(path: &str, alternatives: &[(u32, String)], original: &str) -> Composed
         text,
         alternatives: spans,
         original_at,
+        compared: Vec::new(),
     }
 }

@@ -17,6 +17,14 @@
 //! on a user type is a call, which may do anything — so each comparison and
 //! each cast leaves a [`Witness`] for the compiler to accept or refuse
 //! (ADR 0008).
+//!
+//! The same inertness answers a second question. A guard holds both readings
+//! of its site, and where the whole condition is inert an edit on one of the
+//! operator tokens the connectives reach leaves it inert — the same operands
+//! under another operator of the same class — so a run may evaluate both and
+//! record whether they ever parted. That is the infection question asked
+//! without a second tree and without a second run:
+//! [ADR 0015](../../../../docs/adr/0015-the-guard-is-the-infection-probe.md).
 
 use syn::{BinOp, Expr, UnOp};
 
@@ -99,6 +107,20 @@ pub struct Marker {
     pub super_depth: u32,
 }
 
+/// What a guard needs before it may evaluate both of its branches, pending the compiler's word on the witnesses.
+///
+/// It carries the whole condition rather than the edit's own site because the
+/// witnesses are written in front of the condition, which is the one place
+/// every operand of them is in scope; a claim about the same condition is
+/// written in front of the same bytes, so the two questions are one rewrite.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Comparable {
+    /// The whole condition, which is what makes evaluating either branch run none of the program's code.
+    pub condition: Span,
+    /// What the compiler must vouch for.
+    pub witnesses: Vec<Witness>,
+}
+
 /// A branch proof the syntax supports, pending the compiler's word on its witnesses.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Claim {
@@ -147,29 +169,54 @@ pub struct Prepared {
     pub witnesses: Vec<Witness>,
     /// The operator tokens an edit may sit on: those reached from the condition through nothing but `&&`, `||`, `!`, and parentheses. An edit anywhere else is not one this proof is about.
     pub reachable: Vec<Span>,
+    /// How many statements the body holds, which is what makes a target's silence about it mean something.
+    pub statements: usize,
 }
 
 impl Prepared {
+    /// What the compiler must vouch for before the two branches of the guard at `edit` may be compared, or nothing where the syntax does not allow comparing them.
+    ///
+    /// A guard has both branches in it: the mutation and what it replaces. If
+    /// the whole condition is inert and the edit is one of the operator tokens
+    /// the connectives reach, then the mutated condition is inert too — the
+    /// same operands, another operator of the same class — and evaluating it
+    /// beside the original runs none of the program's code. A run can then
+    /// record whether the two ever differed, which is the infection question
+    /// asked without a second tree and without a second run of anything.
+    ///
+    /// The witnesses are the condition's own: what makes it inert is what
+    /// makes evaluating it twice inert.
+    #[must_use]
+    pub fn comparable(&self, edit: Span) -> Option<Comparable> {
+        self.reachable.contains(&edit).then(|| Comparable {
+            condition: self.condition,
+            witnesses: self.witnesses.clone(),
+        })
+    }
+
     /// The claim an edit at `edit` supports, or nothing when the edit is not one this gate proves anything about.
     #[must_use]
     pub fn claim(&self, rule: &str, edit: Span) -> Option<Claim> {
-        (is_decreasing(rule) && self.reachable.contains(&edit)).then(|| Claim {
-            condition: self.condition,
-            body: self.body,
-            witnesses: self.witnesses.clone(),
+        (self.statements > 0 && is_decreasing(rule) && self.reachable.contains(&edit)).then(|| {
+            Claim {
+                condition: self.condition,
+                body: self.body,
+                witnesses: self.witnesses.clone(),
+            }
         })
     }
 }
 
-/// What `gate` offers, or nothing when the syntax supports no proof there at all.
+/// What `gate` offers, or nothing when the syntax supports nothing there at all.
 ///
 /// Nothing is offered unless the whole condition is inert as far as syntax can
-/// say and the body holds at least one statement.
+/// say and an edit can sit on one of the operator tokens its connectives
+/// reach. Whether the body it gates holds a statement is a question only
+/// [`Prepared::claim`] asks: a body that runs nothing says nothing by not
+/// running, while [`Prepared::comparable`] is about the condition alone and
+/// does not care what the body is.
 #[must_use]
 pub fn prepare(gate: Gate<'_>, spans: &Spans<'_>) -> Option<Prepared> {
-    if gate.statements == 0 {
-        return None;
-    }
     let mut witnesses = Vec::new();
     if !inert(gate.condition, spans, &mut witnesses) {
         return None;
@@ -179,6 +226,7 @@ pub fn prepare(gate: Gate<'_>, spans: &Spans<'_>) -> Option<Prepared> {
     (!reachable.is_empty()).then(|| Prepared {
         condition: (spans.expr)(gate.condition),
         body: gate.body,
+        statements: gate.statements,
         witnesses,
         reachable,
     })

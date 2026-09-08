@@ -49,10 +49,11 @@ fn a_plain_run_names_every_phase_every_mutant_and_the_tally_it_ends_with() {
     let judged: Vec<&str> = text.lines().filter(|line| line.starts_with('[')).collect();
     assert_eq!(judged.len(), 11, "one line per mutant: {text}");
     assert!(
-        judged
-            .iter()
-            .all(|line| line.contains("killed") || line.contains("survived")),
-        "each says what the tests made of it: {judged:?}"
+        judged.iter().all(|line| line.contains("killed")
+            || line.contains("survived")
+            || (line.contains("not_run") && line.contains("discharged"))),
+        "each says what the tests made of it, and one nothing ran says why nobody did: \
+         {judged:?}"
     );
     assert!(
         text.contains("killed ") && text.contains("survived ") && text.contains("elapsed "),

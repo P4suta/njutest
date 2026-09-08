@@ -8,7 +8,7 @@ use std::io::Write;
 use std::sync::mpsc::Receiver;
 use std::time::Duration;
 
-use rust_mutants::run::{Judged, Observer};
+use rust_mutants::run::{Judged, NotRunReason, Observer};
 use rust_mutants::trace::{Event, Payload};
 
 /// How much a run says while it is happening.
@@ -201,8 +201,8 @@ impl Observer for Display<'_> {
             "[{completed:>width$}/{total}] {} {painted}{padding}",
             judged.display_id,
         );
-        if !judged.target.is_empty() {
-            let written = write!(line, "  {}", judged.target);
+        if let Some(said) = beside(judged) {
+            let written = write!(line, "  {said}");
             debug_assert!(written.is_ok(), "writing to a String cannot fail");
         }
         line.push('\n');
@@ -217,6 +217,18 @@ impl Observer for Display<'_> {
         let line = self.tally.line(duration, None);
         self.say(&line);
     }
+}
+
+/// What a row says after the outcome: the target that reached the verdict, or why no target did.
+///
+/// A mutant nothing ran has no target to name, and a row that trailed off
+/// there left the reader to go and look up what happened to it. The reason it
+/// was not run is the answer, and the run already has it.
+fn beside(judged: &Judged) -> Option<&str> {
+    if !judged.target.is_empty() {
+        return Some(&judged.target);
+    }
+    judged.not_run_reason.map(NotRunReason::name)
 }
 
 /// One phase line, from the recording the engine keeps while it prepares.

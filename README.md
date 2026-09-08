@@ -83,13 +83,13 @@ run       <run>
 workspace <workspace digest>
 catalog   <catalog digest>
 
-MUTANTS   cataloged=8 refused=0 skipped=2 executed=8
-OUTCOMES  killed=7 survived=1 timed_out=0 inconclusive=0 errored=0 not_run=0 unreached=0 discharged=0 expected=0
-SCORE     87.5%  (7 detected of 8 decided)
-WORK      started=8 of 24 pairs across 3 targets; 66.7% removed (unreached=16)
-          tests=8 of 24; 66.7% removed
+MUTANTS   cataloged=8 refused=0 skipped=2 executed=7
+OUTCOMES  killed=7 survived=0 timed_out=0 inconclusive=0 errored=0 not_run=1 unreached=0 discharged=1 expected=0
+SCORE     100.0%  (7 detected of 7 decided)
+WORK      started=7 of 24 pairs across 3 targets; 70.8% removed (unreached=16 never-infected=1)
+          tests=7 of 24; 70.8% removed
 
-surviving-mutant       no test noticed e5e872bfbcb2afbbf7a1; 1 test ran and passed
+discharged-mutant      every target that could have noticed e5e872bfbcb2afbbf7a1 was removed by a proof, so no test could have: the mutation is in code the tests run and never observe
 REPORT    ./reports/mutation/<run>/run-report-v1.json
 
 $ rust-mutants explain e5e8
@@ -99,11 +99,11 @@ RULE      gt-to-ge@1 (comparison)
 WHERE     src/lib.rs:11:10
 EDIT      ">" => ">="
 RUN       <run>
-OUTCOME   survived
-TARGET    fixture-simple/lib/fixture_simple
+OUTCOME   not_run
 TIMING    <duration>
-ROUTE     block reaching [fixture-simple/lib/fixture_simple] executed [fixture-simple/lib/fixture_simple]
-REPRODUCE rust-mutants run --mutant e5e872bfbcb2afbbf7a1 --target fixture-simple/lib/fixture_simple
+ROUTE     discharged reaching [] executed []
+PROVED    fixture-simple/lib/fixture_simple: never-infected
+REPRODUCE rust-mutants run --mutant e5e872bfbcb2afbbf7a1
 
 --- a/src/lib.rs
 +++ b/src/lib.rs
@@ -118,9 +118,20 @@ REPRODUCE rust-mutants run --mutant e5e872bfbcb2afbbf7a1 --target fixture-simple
  /// Whether `n` is even.
 ```
 
-A survivor is a gap in the tests or a claim to write down; `explain` says
-which, `replay` puts it back, and `[[mutation.expect]]` accepts one with a
-reason. There is no threshold flag and no percentage to pass:
+That mutation is never run. The guards of the instrumented tree hold both
+readings of `a > b`, and on the one baseline run they never answered
+differently, so the engine reports what running it would have established
+rather than spending a process on it
+([ADR 0015](docs/adr/0015-the-guard-is-the-infection-probe.md)). It is a
+finding all the same, and the exit code is 1: a mutation the tests run and
+cannot notice is the same gap as one they run and do not notice. The score is
+over what a run *decided*, and this one was decided by a proof rather than by
+a test.
+
+A gap is a gap in the tests or a claim to write down; `explain` says which,
+`replay` puts it back to the tests — and for a discharged mutation that is
+what puts the proof itself to them — and `[[mutation.expect]]` accepts one
+with a reason. There is no threshold flag and no percentage to pass:
 [ADR 0004](docs/adr/0004-proof-layers-not-budgets.md) says why.
 
 [getting started](docs/engine/getting-started.md) is the first hour,

@@ -15,8 +15,8 @@ use rust_mutants::instrument::witness::{Claimed, MARKER, Placed, witness_file};
 use rust_mutants::rule::{Registry, Tier};
 use rust_mutants::syntax::{Selection, discover_file};
 
-/// Every claim `source` yields, ready to be witnessed.
-fn claimed(source: &str) -> Vec<Claimed> {
+/// Everything `source` puts to the compiler, numbered as a catalog would number it.
+fn asked(source: &str) -> Vec<Claimed> {
     let registry = Registry::canonical();
     let selection = Selection::tier(&registry, Tier::All);
     discover_file("src/lib.rs", source.as_bytes(), &selection)
@@ -25,12 +25,27 @@ fn claimed(source: &str) -> Vec<Claimed> {
         .into_iter()
         .enumerate()
         .filter_map(|(index, found)| {
-            found.branch.map(|claim| Claimed {
+            let (condition, body, witnesses) = match (&found.branch, &found.comparable) {
+                (Some(claim), _) => (claim.condition, Some(claim.body), claim.witnesses.clone()),
+                (None, Some(one)) => (one.condition, None, one.witnesses.clone()),
+                (None, None) => return None,
+            };
+            Some(Claimed {
                 index: u32::try_from(index).unwrap_or(0),
-                claim,
+                condition,
+                body,
+                witnesses,
                 super_depth: found.hint.super_depth,
             })
         })
+        .collect()
+}
+
+/// Every one of them that names a body, which is what a branch proof rests on.
+fn claimed(source: &str) -> Vec<Claimed> {
+    asked(source)
+        .into_iter()
+        .filter(|one| one.claim().is_some())
         .collect()
 }
 
@@ -172,4 +187,64 @@ pub fn f(a: i32, b: i32) -> i32 {
     assert!(written.text.starts_with("//! A crate."), "{}", written.text);
     assert!(written.text.contains("/// Doubles."), "{}", written.text);
     assert!(written.text.contains("return 1;"), "{}", written.text);
+}
+
+#[test]
+fn an_edit_no_branch_proof_is_about_still_has_its_condition_put_to_the_compiler() {
+    let source = "pub fn f(a: i32, b: i32) -> i32 {\n    if a < b { return 1; }\n    0\n}\n";
+    let asked = asked(source);
+    assert!(
+        asked.iter().any(|one| one.claim().is_none()),
+        "widening a comparison proves nothing about the body, and the guard still compares"
+    );
+    let written = witness_file("src/lib.rs", source.as_bytes(), &asked).expect("witnessed");
+    assert!(
+        written.text.contains("__rmw::w_ord(&(a), &(b));"),
+        "the operands are what makes evaluating either branch run none of the program: {}",
+        written.text
+    );
+}
+
+#[test]
+fn a_proof_and_a_comparison_about_one_condition_are_one_rewrite() {
+    let source = "pub fn f(a: i32, b: i32, c: i32, d: i32) -> i32 {\n    \
+                  if a <= b && c < d { return 1; }\n    0\n}\n";
+    let asked = asked(source);
+    let proofs = asked.iter().filter(|one| one.claim().is_some()).count();
+    assert!(
+        proofs > 0,
+        "`<=` narrows, so it proves something about the body"
+    );
+    assert!(
+        asked.len() > proofs,
+        "`&&` and `<` prove nothing about it and still compare: {asked:?}"
+    );
+    let written = witness_file("src/lib.rs", source.as_bytes(), &asked).expect("witnessed");
+    let witnessed = written
+        .sites
+        .iter()
+        .filter(|site| site.placed == Placed::Witnesses)
+        .count();
+    assert_eq!(
+        witnessed, 1,
+        "one condition is witnessed once however many questions rest on it: {:?}",
+        written.sites
+    );
+    let carried = written
+        .sites
+        .iter()
+        .find(|site| site.placed == Placed::Witnesses)
+        .map(|site| site.claims.len())
+        .expect("the condition was witnessed");
+    assert_eq!(carried, asked.len(), "and carries every one of them");
+    assert!(
+        written.text.contains("__rmw::w_ord(&(a), &(b));"),
+        "{}",
+        written.text
+    );
+    assert!(
+        written.text.contains("__rmw::w_ord(&(c), &(d));"),
+        "{}",
+        written.text
+    );
 }

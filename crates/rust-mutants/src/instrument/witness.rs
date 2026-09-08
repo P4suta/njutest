@@ -71,15 +71,37 @@ pub struct WitnessFile {
     pub witnessed: bool,
 }
 
-/// One claim to witness, and where the mutant that carries it sits.
+/// One thing to put to the compiler, and where the mutant that carries it sits.
+///
+/// Two questions share one rewrite. A branch proof needs the condition to be
+/// inert *and* names the body it gates; a guard that wants to compare its two
+/// branches needs only the condition to be inert. Both are the same witnesses
+/// written in front of the same condition, so a site with a body and one
+/// without are one entry here with the body optional.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Claimed {
     /// The mutant's dense catalog index.
     pub index: u32,
-    /// What it claims.
-    pub claim: Claim,
+    /// The whole condition, which is what the witnesses are written in front of.
+    pub condition: Span,
+    /// The body a branch proof about this edit names, or nothing where the edit supports no proof and only the comparison.
+    pub body: Option<Span>,
+    /// What the compiler must vouch for.
+    pub witnesses: Vec<Witness>,
     /// How many `super::` segments separate the condition's inline module from the file root.
     pub super_depth: u32,
+}
+
+impl Claimed {
+    /// The same thing as a claim, when it names a body.
+    #[must_use]
+    pub fn claim(&self) -> Option<Claim> {
+        Some(Claim {
+            condition: self.condition,
+            body: self.body?,
+            witnesses: self.witnesses.clone(),
+        })
+    }
 }
 
 /// Writes every claim's witnesses into `source`.
@@ -102,12 +124,20 @@ pub fn witness_file(
         });
     }
     let module = module_named(&text, MODULE_STEM);
-    let mut conditions: BTreeMap<Span, (Vec<u32>, Claim, u32)> = BTreeMap::new();
+    let mut conditions: BTreeMap<Span, Condition> = BTreeMap::new();
     for claimed in claims {
         let entry = conditions
-            .entry(claimed.claim.condition)
-            .or_insert_with(|| (Vec::new(), claimed.claim.clone(), claimed.super_depth));
-        entry.0.push(claimed.index);
+            .entry(claimed.condition)
+            .or_insert_with(|| Condition {
+                indices: Vec::new(),
+                bodies: BTreeMap::new(),
+                witnesses: claimed.witnesses.clone(),
+                depth: claimed.super_depth,
+            });
+        entry.indices.push(claimed.index);
+        if let Some(body) = claimed.body {
+            entry.bodies.entry(body).or_default().push(claimed.index);
+        }
     }
 
     let (splices, owners) = plan(
@@ -186,6 +216,19 @@ fn statements(witnesses: &[Witness], text: &str, module: &str, depth: u32) -> St
 /// What one rewrite carries: the mutants whose claims rest on it, and what it is.
 type Owned = (Vec<u32>, Placed);
 
+/// One condition to witness, with every mutant that rests on it and every body they name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Condition {
+    /// Every mutant whose edit sits in this condition.
+    indices: Vec<u32>,
+    /// Each body a branch proof about one of them names, with the mutants that name it.
+    bodies: BTreeMap<Span, Vec<u32>>,
+    /// What the compiler must vouch for.
+    witnesses: Vec<Witness>,
+    /// How many `super::` segments separate the condition's inline module from the file root.
+    depth: u32,
+}
+
 /// One file as it is and as text.
 #[derive(Debug, Clone, Copy)]
 struct Reading<'a> {
@@ -197,18 +240,20 @@ struct Reading<'a> {
 /// What to write where, and which claims each rewrite carries.
 fn plan(
     file: Reading<'_>,
-    conditions: &BTreeMap<Span, (Vec<u32>, Claim, u32)>,
+    conditions: &BTreeMap<Span, Condition>,
     module: &str,
 ) -> Result<(Vec<Splice>, Vec<Owned>), InstrumentError> {
     let Reading { path, source, text } = file;
     let mut splices = Vec::new();
     let mut owners = Vec::new();
     let mut bodies: BTreeMap<Span, (Vec<u32>, u32)> = BTreeMap::new();
-    for (indices, claim, depth) in conditions.values() {
-        let entry = bodies
-            .entry(claim.body)
-            .or_insert_with(|| (Vec::new(), *depth));
-        entry.0.extend(indices.iter().copied());
+    for condition in conditions.values() {
+        for (body, indices) in &condition.bodies {
+            let entry = bodies
+                .entry(*body)
+                .or_insert_with(|| (Vec::new(), condition.depth));
+            entry.0.extend(indices.iter().copied());
+        }
     }
     for (body, (indices, depth)) in &bodies {
         let mut claims = indices.clone();
@@ -231,7 +276,8 @@ fn plan(
         });
         owners.push((claims, Placed::Marker));
     }
-    for (condition, (indices, claim, depth)) in conditions {
+    for (condition, held) in conditions {
+        let (indices, depth) = (&held.indices, &held.depth);
         let original = source
             .get(at(condition.start)..at(condition.end))
             .ok_or_else(|| {
@@ -241,7 +287,7 @@ fn plan(
                     format!("the condition at {condition} is not inside the source"),
                 )
             })?;
-        let statements = statements(&claim.witnesses, text, module, *depth);
+        let statements = statements(&held.witnesses, text, module, *depth);
         let mut replacement = format!("({{ {statements}").into_bytes();
         replacement.extend_from_slice(original);
         replacement.extend_from_slice(b" })");

@@ -53,8 +53,9 @@ fn explain_reads_the_stored_run_and_says_what_it_established() {
         "MUTANT",
         "RULE      gt-to-ge@1 (comparison)",
         "WHERE     src/lib.rs:11:10",
-        "OUTCOME   survived",
-        "ROUTE",
+        "OUTCOME   not_run",
+        "ROUTE     discharged",
+        "PROVED    fixture-simple/lib/fixture_simple: never-infected",
         "REPRODUCE rust-mutants run --mutant e5e872bfbcb2afbbf7a1",
     ] {
         assert!(text.contains(said), "{said} in {text}");

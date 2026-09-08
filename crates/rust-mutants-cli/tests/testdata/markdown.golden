@@ -1,30 +1,31 @@
-# Mutation report — fixture-simple <run>
+# Mutation report — fixture-coverage <run>
 
-**87.5%** — 7 detected of 8 decided
+**90.9%** — 10 detected of 11 decided
 
 | what | how many |
 | --- | --- |
-| cataloged | 8 |
-| killed | 7 |
+| cataloged | 12 |
+| killed | 10 |
 | survived | 1 |
 | timed out | 0 |
 | inconclusive | 0 |
 | errored | 0 |
-| not run | 0 |
+| not run | 1 |
 | unreached | 0 |
-| discharged | 0 |
+| discharged | 1 |
 | expected | 0 |
 | refused | 0 |
 | skipped | 2 |
 
 ## Findings
 
-- **surviving-mutant** — no test noticed e5e872bfbcb2afbbf7a1; 1 test ran and passed
+- **discharged-mutant** — every target that could have noticed 3f9278919bdfbd21848e was removed by a proof, so no test could have: the mutation is in code the tests run and never observe
+- **surviving-mutant** — no test noticed b0e23daf0ee463afcc88; 1 test ran and passed
 
 ## Survivors (1)
 
 | where | rule | change | id |
 | --- | --- | --- | --- |
-| `src/lib.rs:11:10` | `gt-to-ge` | `>` → `>=` | `e5e872bfbcb2afbbf7a1` |
+| `src/lib.rs:16:10` | `le-to-lt` | `<=` → `<` | `b0e23daf0ee463afcc88` |
 
 Each of these is a gap in the tests or a claim to write down: `rust-mutants explain <id>` says what it is, and `[[mutation.expect]]` accepts one with a reason.

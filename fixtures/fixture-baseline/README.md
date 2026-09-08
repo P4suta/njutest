@@ -20,20 +20,25 @@ merged them into one set would hide that it does not.
 
 ## What the mutation phase finds
 
-Seven mutants, five killed and two survived — and the two are the point.
+Seven mutants, five killed and two nothing could have noticed — and the two are the point.
 
 | Mutant | Rule | Fate |
 | --- | --- | --- |
 | `src/lib.rs:8:5` | `return-default@1` | killed by `tests::sign_names_both_sides_of_zero` |
 | `src/lib.rs:8:8` | `negate-condition@1` | killed by the same test |
-| `src/lib.rs:8:10` | `gt-to-ge@1` | **survives**: only `sign(0)` tells `>` from `>=`, and the test that passes zero is the ignored one |
+| `src/lib.rs:8:10` | `gt-to-ge@1` | **discharged**: only `sign(0)` tells `>` from `>=`, so the guard's two readings never parted in the run that verified the baseline, and a run that started it would have found it survives |
 | `src/lib.rs:10:15` | `negate-condition@1` | killed by the same test |
-| `src/lib.rs:10:17` | `lt-to-le@1` | **survives**: for the same reason, on the other side of zero |
+| `src/lib.rs:10:17` | `lt-to-le@1` | **discharged**: for the same reason, on the other side of zero |
 | `src/lib.rs:19:5` | `return-default@1` | killed by `doubling::doubling_is_addition_twice` |
 | `src/lib.rs:19:7` | `mul-to-div@1` | killed by the same test |
 
-The two survivors are the gap `#[ignore]` left, and no amount of green in
-the suite would have shown it. That is what the phase is for.
+The two are the gap `#[ignore]` left, and no amount of green in the suite
+would have shown it. That is what the phase is for. Neither is *run*: the
+guards of the instrumented tree evaluated both readings of each condition on
+the baseline and never saw them part, so the run reports them as discharged
+mutations nothing could have noticed rather than as survivors it measured
+([ADR 0015](../../docs/adr/0015-the-guard-is-the-infection-probe.md)). A
+finding either way, and one fewer process.
 
 ## Fates
 
@@ -46,12 +51,12 @@ refuses a difference, and `UPDATE_FATES=1` rewrites the block below.
 ```fates
 src/lib.rs:8:5 return-default killed
 src/lib.rs:8:8 negate-condition killed
-src/lib.rs:8:10 gt-to-ge survived
+src/lib.rs:8:10 gt-to-ge not_run
 src/lib.rs:8:12 int-increment killed
 src/lib.rs:9:9 return-default killed
 src/lib.rs:9:9 string-to-empty killed
 src/lib.rs:10:15 negate-condition killed
-src/lib.rs:10:17 lt-to-le survived
+src/lib.rs:10:17 lt-to-le not_run
 src/lib.rs:10:19 int-increment survived
 src/lib.rs:11:9 return-default killed
 src/lib.rs:11:9 string-to-empty killed

@@ -58,6 +58,7 @@ fn an_error_inside_a_branch_belongs_to_that_mutant_and_one_outside_belongs_to_no
         source: scripted.source(),
         placements: scripted.placements(),
         markers: &[],
+        comparable: &BTreeSet::default(),
         catalog_digest: scripted.catalog().digest(),
     })
     .expect("instrument");
@@ -94,6 +95,7 @@ fn a_warning_is_not_a_rejection() {
         source: scripted.source(),
         placements: scripted.placements(),
         markers: &[],
+        comparable: &BTreeSet::default(),
         catalog_digest: scripted.catalog().digest(),
     })
     .expect("instrument");
@@ -257,6 +259,7 @@ fn a_diagnostic_whose_primary_span_is_elsewhere_is_attributed_through_its_second
         source: scripted.source(),
         placements: scripted.placements(),
         markers: &[],
+        comparable: &BTreeSet::default(),
         catalog_digest: scripted.catalog().digest(),
     })
     .expect("instrument");
@@ -287,6 +290,7 @@ fn a_diagnostic_whose_edit_is_named_only_by_a_child_note_is_attributed_through_i
         source: scripted.source(),
         placements: scripted.placements(),
         markers: &[],
+        comparable: &BTreeSet::default(),
         catalog_digest: scripted.catalog().digest(),
     })
     .expect("instrument");
@@ -312,6 +316,7 @@ fn a_diagnostic_that_names_no_branch_anywhere_still_belongs_to_nobody() {
         source: scripted.source(),
         placements: scripted.placements(),
         markers: &[],
+        comparable: &BTreeSet::default(),
         catalog_digest: scripted.catalog().digest(),
     })
     .expect("instrument");

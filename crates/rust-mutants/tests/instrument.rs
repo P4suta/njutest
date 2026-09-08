@@ -11,6 +11,7 @@
     reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
 )]
 
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use rust_mutants::catalog::{Builder, Catalog};
@@ -49,10 +50,28 @@ fn instrument_with_catalog(source: &str) -> (String, Catalog) {
         source: source.as_bytes(),
         placements: &placements,
         markers: &[],
+        comparable: &offered(&discovery, &catalog),
         catalog_digest: catalog.digest(),
     })
     .expect("instrument");
     (file.text, catalog)
+}
+
+/// Every mutant the syntax offers a comparison for, as a run has it once the compiler has vouched for the operands.
+///
+/// A test cannot ask the compiler, so it asks for all of them: what the
+/// goldens are about is the shape of a guard that compares, and a set the
+/// compiler pruned would only make the recorded shape depend on which
+/// operands this case happened to spell.
+fn offered(discovery: &rust_mutants::syntax::FileDiscovery, catalog: &Catalog) -> BTreeSet<u32> {
+    discovery
+        .candidates
+        .iter()
+        .filter(|found| found.comparable.is_some())
+        .filter_map(|found| found.candidate.id().ok())
+        .filter_map(|id| catalog.by_id(id.as_str()))
+        .map(|mutant| mutant.index)
+        .collect()
 }
 
 fn golden_path(name: &str) -> PathBuf {
@@ -102,7 +121,7 @@ fn a_boolean_position_takes_the_selector_form_and_a_value_position_the_expressio
         "pub fn f(a: i32, b: i32, c: i32) -> bool {\n    if a > b {\n        return true;\n    }\n    a + c > b\n}\n",
     );
     assert!(
-        text.contains("if (__rm::active(0) && (!(a > b)) || __rm::active(1) && (a >= b) || !(__rm::active(0)) && !(__rm::active(1)) && (a > b)) {"),
+        text.contains("if (__rm::active(0) && (!(a > b)) || __rm::active(1) && (a >= b) || !(__rm::active(0)) && !(__rm::active(1)) && __rm::differing(1, (a > b), || (a >= b))) {"),
         "{text}"
     );
     assert!(
@@ -112,6 +131,163 @@ fn a_boolean_position_takes_the_selector_form_and_a_value_position_the_expressio
     assert!(
         text.contains("(if __rm::active(3) { true } else if __rm::active(5) { a + c >= b } else {"),
         "{text}"
+    );
+}
+
+#[test]
+fn a_guard_the_compiler_vouched_for_answers_what_it_replaces_and_says_where_the_two_part() {
+    let source = "pub fn f(a: i32, b: i32) -> bool {\n    if a > b {\n        return true;\n    }\n    false\n}\n";
+    let selection = Selection::tier(&REGISTRY, Tier::All);
+    let discovery = discover_file("src/lib.rs", source.as_bytes(), &selection).expect("discover");
+    let mut builder = Builder::new();
+    for found in &discovery.candidates {
+        builder.add(found.candidate.clone()).expect("add");
+    }
+    let catalog = builder.build().expect("catalog");
+    let placements = plan_file(&catalog, "src/lib.rs", &discovery.candidates).expect("plan");
+    let compared = offered(&discovery, &catalog);
+    assert!(
+        !compared.is_empty(),
+        "widening `>` inside an inert condition compares"
+    );
+
+    let file = instrument_file(&Instrumenting {
+        path: "src/lib.rs",
+        source: source.as_bytes(),
+        placements: &placements,
+        markers: &[],
+        comparable: &compared,
+        catalog_digest: catalog.digest(),
+    })
+    .expect("instrument");
+    assert_eq!(
+        file.compared,
+        compared.iter().copied().collect::<Vec<u32>>(),
+        "the tree reports what it does rather than what it was offered"
+    );
+
+    let unoffered = instrument_file(&Instrumenting {
+        path: "src/lib.rs",
+        source: source.as_bytes(),
+        placements: &placements,
+        markers: &[],
+        comparable: &BTreeSet::default(),
+        catalog_digest: catalog.digest(),
+    })
+    .expect("instrument");
+    assert!(
+        unoffered.compared.is_empty(),
+        "and a tree offered nothing compares nothing"
+    );
+    assert!(
+        !unoffered.text.contains("__rm::differing"),
+        "{}",
+        unoffered.text
+    );
+}
+
+#[test]
+fn a_site_whose_form_cannot_compare_reports_no_comparison_however_it_is_offered() {
+    let source = "pub fn f(a: i32, b: i32) -> i32 {\n    let larger = if a > b { a } else { b };\n    larger + 1\n}\n";
+    let selection = Selection::tier(&REGISTRY, Tier::All);
+    let discovery = discover_file("src/lib.rs", source.as_bytes(), &selection).expect("discover");
+    let mut builder = Builder::new();
+    for found in &discovery.candidates {
+        builder.add(found.candidate.clone()).expect("add");
+    }
+    let catalog = builder.build().expect("catalog");
+    let placements = plan_file(&catalog, "src/lib.rs", &discovery.candidates).expect("plan");
+    let every: BTreeSet<u32> = placements.iter().map(|placement| placement.index).collect();
+    let file = instrument_file(&Instrumenting {
+        path: "src/lib.rs",
+        source: source.as_bytes(),
+        placements: &placements,
+        markers: &[],
+        comparable: &every,
+        catalog_digest: catalog.digest(),
+    })
+    .expect("instrument");
+    let value_sites: Vec<u32> = file
+        .guards
+        .iter()
+        .filter(|guard| guard.form != rust_mutants::syntax::Form::C)
+        .map(|guard| guard.index)
+        .collect();
+    assert!(
+        !value_sites.is_empty(),
+        "the let binding is a value position"
+    );
+    assert!(
+        value_sites
+            .iter()
+            .all(|index| !file.compared.contains(index)),
+        "a chain has nowhere to put the comparison, and says so: {:?} of {value_sites:?}",
+        file.compared
+    );
+}
+
+/// Instruments `source` with `markers` and hands back what the file became.
+fn instrumented_with_markers(
+    source: &str,
+    markers: &[rust_mutants::syntax::branch::Marker],
+) -> rust_mutants::instrument::FileOutput {
+    let selection = Selection::tier(&REGISTRY, Tier::All);
+    let discovery = discover_file("src/lib.rs", source.as_bytes(), &selection).expect("discover");
+    let mut builder = Builder::new();
+    for found in &discovery.candidates {
+        builder.add(found.candidate.clone()).expect("add");
+    }
+    let catalog = builder.build().expect("catalog");
+    let placements = plan_file(&catalog, "src/lib.rs", &discovery.candidates).expect("plan");
+    instrument_file(&Instrumenting {
+        path: "src/lib.rs",
+        source: source.as_bytes(),
+        placements: &placements,
+        markers,
+        comparable: &BTreeSet::default(),
+        catalog_digest: catalog.digest(),
+    })
+    .expect("instrument")
+}
+
+/// The marker a body starting at `opening` would carry.
+fn marker_at(source: &str, opening: &str) -> rust_mutants::syntax::branch::Marker {
+    let at = u32::try_from(source.find(opening).expect("the gated body")).expect("a small file");
+    rust_mutants::syntax::branch::Marker {
+        at: at + 1,
+        index: 0,
+        super_depth: 0,
+    }
+}
+
+#[test]
+fn a_body_a_guard_writes_twice_takes_no_marker_and_the_file_says_which_it_holds() {
+    let outside = "pub fn f(a: i32, b: i32) -> i32 {\n    if a <= b { return 1; }\n    0\n}\n";
+    let file = instrumented_with_markers(outside, &[marker_at(outside, "{ return 1; }")]);
+    assert_eq!(
+        file.marked,
+        vec![0],
+        "a body no guard site covers takes its marker: {}",
+        file.text
+    );
+    assert!(
+        file.text.contains(&format!("{}::body(0); ", file.module)),
+        "{}",
+        file.text
+    );
+
+    let inside = "pub fn f(v: &mut Vec<i32>, a: i32, b: i32) {\n    v.push(if a <= b { 1 } else { 2 });\n}\n";
+    let file = instrumented_with_markers(inside, &[marker_at(inside, "{ 1 }")]);
+    assert!(
+        file.marked.is_empty(),
+        "a guard writes its site twice and one splice cannot land in both, so the marker is \
+         dropped and the file says so: {}",
+        file.text
+    );
+    assert!(
+        !file.text.contains(&format!("{}::body(0); ", file.module)),
+        "{}",
+        file.text
     );
 }
 
@@ -200,6 +376,7 @@ fn an_untouched_file_is_returned_byte_for_byte_with_no_runtime() {
         source: source.as_bytes(),
         placements: &placements,
         markers: &[],
+        comparable: &BTreeSet::default(),
         catalog_digest: catalog.digest(),
     })
     .expect("instrument");
@@ -345,6 +522,7 @@ fn a_source_that_is_not_the_one_the_candidates_came_from_is_refused() {
         source: other,
         placements: &placements,
         markers: &[],
+        comparable: &BTreeSet::default(),
         catalog_digest: catalog.digest(),
     })
     .unwrap_err();
@@ -417,6 +595,7 @@ fn every_alternative_reports_where_its_own_text_landed() {
         source: source.as_bytes(),
         placements: &placements,
         markers: &[],
+        comparable: &BTreeSet::default(),
         catalog_digest: catalog.digest(),
     })
     .expect("instrument");
@@ -676,6 +855,7 @@ fn instrumented(path: &str, source: &str) -> Option<(String, Catalog)> {
         source: source.as_bytes(),
         placements: &placements,
         markers: &[],
+        comparable: &BTreeSet::default(),
         catalog_digest: catalog.digest(),
     })
     .ok()?;

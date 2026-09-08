@@ -32,7 +32,7 @@ refuses a difference, and `UPDATE_FATES=1` rewrites the block below.
 ```fates
 denies/src/lib.rs:8:5 return-default killed
 denies/src/lib.rs:8:8 negate-condition killed
-denies/src/lib.rs:8:10 lt-to-le survived
+denies/src/lib.rs:8:10 lt-to-le not_run
 denies/src/lib.rs:8:16 return-default killed
 denies/src/lib.rs:8:27 return-default unreached
 ```

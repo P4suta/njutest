@@ -322,7 +322,7 @@ fn re_decided(row: &Row, index: u64, recorded: &Recorded, notes: &mut Notes<'_>)
         if removed.contains(target) {
             continue;
         }
-        let reaching = touches.reaching(index);
+        let reaching = touches.reaching(index, &recorded.narrowing);
         let named = row.reaching.iter().any(|one| one == target);
         match (&reaching, named) {
             (Reaching::Nothing, true) => notes.violated(
@@ -400,6 +400,7 @@ fn asked_for(names: &BTreeSet<&String>) -> String {
 struct Recorded {
     targets: BTreeMap<String, Touches>,
     excused: BTreeSet<String>,
+    narrowing: Narrowing,
 }
 
 impl Recorded {
@@ -425,23 +426,58 @@ impl Recorded {
                     .collect()
             })
             .unwrap_or_default();
-        Self { targets, excused }
+        Self {
+            targets,
+            excused,
+            narrowing: Narrowing::of(document.get("narrowing")),
+        }
     }
 }
 
-/// What one target's guards recorded.
+/// Which of the records the tree could say anything about, which is what turns an absence into evidence.
 #[derive(Debug, Default)]
-struct Touches {
-    tests: BTreeMap<String, BTreeSet<u64>>,
-    loose: BTreeSet<u64>,
-    ran: usize,
+struct Narrowing {
+    compared: BTreeSet<u64>,
+    bodies: BTreeMap<u64, u64>,
 }
 
-impl Touches {
-    fn of(value: &Value) -> Self {
+impl Narrowing {
+    fn of(value: Option<&Value>) -> Self {
+        let Some(value) = value else {
+            return Self::default();
+        };
+        Self {
+            compared: value
+                .get("compared")
+                .and_then(Value::as_array)
+                .map(|entries| entries.iter().filter_map(Value::as_u64).collect())
+                .unwrap_or_default(),
+            bodies: value
+                .get("bodies")
+                .and_then(Value::as_object)
+                .map(|named| {
+                    named
+                        .iter()
+                        .filter_map(|(index, marker)| Some((index.parse().ok()?, marker.as_u64()?)))
+                        .collect()
+                })
+                .unwrap_or_default(),
+        }
+    }
+}
+
+/// One kind of thing the guards report, by the thread that reported it.
+#[derive(Debug, Default)]
+struct Seen {
+    tests: BTreeMap<String, BTreeSet<u64>>,
+    loose: BTreeSet<u64>,
+}
+
+impl Seen {
+    fn of(value: &Value, kind: &str) -> Self {
         Self {
             tests: value
-                .get("reached")
+                .get(kind)
                 .and_then(|seen| seen.get("tests"))
                 .and_then(Value::as_object)
                 .map(|named| {
@@ -462,11 +498,53 @@ impl Touches {
                 })
                 .unwrap_or_default(),
             loose: value
-                .get("reached")
+                .get(kind)
                 .and_then(|seen| seen.get("loose"))
                 .and_then(Value::as_array)
                 .map(|entries| entries.iter().filter_map(Value::as_u64).collect())
                 .unwrap_or_default(),
+        }
+    }
+
+    /// Whether this test reported `index`, where a report nothing could attribute is one every test made.
+    fn by(&self, test: &str, index: u64) -> bool {
+        self.loose.contains(&index)
+            || self
+                .tests
+                .get(test)
+                .is_some_and(|held| held.contains(&index))
+    }
+
+    /// Whether anything of the target reported `index`.
+    fn any(&self, index: u64) -> bool {
+        self.loose.contains(&index) || self.tests.values().any(|held| held.contains(&index))
+    }
+
+    /// The tests that reported `index`, by name.
+    fn who(&self, index: u64) -> BTreeSet<String> {
+        self.tests
+            .iter()
+            .filter(|(_, sites)| sites.contains(&index))
+            .map(|(test, _)| test.clone())
+            .collect()
+    }
+}
+
+/// What one target's guards recorded.
+#[derive(Debug, Default)]
+struct Touches {
+    reached: Seen,
+    bodies: Seen,
+    infected: Seen,
+    ran: usize,
+}
+
+impl Touches {
+    fn of(value: &Value) -> Self {
+        Self {
+            reached: Seen::of(value, "reached"),
+            bodies: Seen::of(value, "bodies"),
+            infected: Seen::of(value, "infected"),
             ran: value
                 .get("ran")
                 .and_then(Value::as_array)
@@ -474,24 +552,45 @@ impl Touches {
         }
     }
 
-    /// Which of this target's tests reached `index`, re-derived from the record alone.
-    fn reaching(&self, index: u64) -> Reaching {
-        if self.loose.contains(&index) {
+    /// Which of this target's tests could have noticed the mutation at `index`, re-derived from the record alone.
+    ///
+    /// Three records answer it and a test has to survive all three: it reached
+    /// the site, it entered the body a branch proof about the mutation names,
+    /// and it saw the guard's two readings part. The last two are absences,
+    /// and `narrowing` is what says the tree would have broken them.
+    ///
+    /// The order is the engine's, and it has to be. A target every test of
+    /// which reached the site is asked as a whole rather than through a
+    /// filter — the same tests either way, and one fewer question to
+    /// establish — and a route that asks for the whole of a target never
+    /// narrows it further. Narrowing before that check would re-derive a
+    /// smaller set than the run could have taken and call the run wrong for
+    /// not taking it.
+    fn reaching(&self, index: u64, narrowing: &Narrowing) -> Reaching {
+        if self.reached.loose.contains(&index) {
             return Reaching::Whole;
         }
-        let named: BTreeSet<String> = self
-            .tests
-            .iter()
-            .filter(|(_, sites)| sites.contains(&index))
-            .map(|(test, _)| test.clone())
-            .collect();
+        let named = self.reached.who(index);
         if named.is_empty() {
             return Reaching::Nothing;
         }
         if named.len() >= self.ran {
             return Reaching::Whole;
         }
-        Reaching::Tests(named)
+        let kept: BTreeSet<String> = named
+            .into_iter()
+            .filter(|test| {
+                narrowing
+                    .bodies
+                    .get(&index)
+                    .is_none_or(|marker| self.bodies.by(test, *marker))
+            })
+            .filter(|test| !narrowing.compared.contains(&index) || self.infected.by(test, index))
+            .collect();
+        if kept.is_empty() {
+            return Reaching::Nothing;
+        }
+        Reaching::Tests(kept)
     }
 }
 
@@ -587,6 +686,7 @@ fn selected(report: &Report, recorded: &str, notes: &mut Notes<'_>) {
 /// One discharge a report claims: which mutant, which target, and which proof.
 struct Discharged {
     mutant: String,
+    index: Option<u64>,
     target: String,
     proof: String,
 }
@@ -599,6 +699,7 @@ fn claimed(report: &Report) -> Vec<Discharged> {
         .flat_map(|row| {
             row.discharged.iter().map(|(target, proof)| Discharged {
                 mutant: row.display_id.clone(),
+                index: row.index,
                 target: target.clone(),
                 proof: proof.clone(),
             })
@@ -606,12 +707,53 @@ fn claimed(report: &Report) -> Vec<Discharged> {
         .collect()
 }
 
-/// Re-derives every `branch-never-taken` discharge from the measurement and the body the catalog names.
+/// What the guards recorded, or nothing when the run kept no record or kept one that does not read.
+fn record_of(text: Option<&str>) -> Option<Recorded> {
+    let document = serde_json::from_str::<Value>(text?).ok()?;
+    Some(Recorded::of(&document))
+}
+
+/// Whether the record says `claim`'s target entered the body its branch proof names, or nothing where the record cannot say.
+fn entered_the_body(recorded: &Recorded, claim: &Discharged) -> Option<bool> {
+    let marker = *recorded.narrowing.bodies.get(&claim.index?)?;
+    let touches = recorded.targets.get(&claim.target)?;
+    Some(touches.bodies.any(marker))
+}
+
+/// Whether the record says `claim`'s target ever saw the guard's two branches part, or nothing where the record cannot say.
+fn saw_a_difference(recorded: &Recorded, claim: &Discharged) -> Option<bool> {
+    let index = claim.index?;
+    if !recorded.narrowing.compared.contains(&index) {
+        return None;
+    }
+    let touches = recorded.targets.get(&claim.target)?;
+    Some(touches.infected.any(index))
+}
+
+/// Re-derives every `branch-never-taken` discharge from what the guards recorded, and from the coverage regions for the ones they say nothing about.
 fn branch_discharges(claims: &[Discharged], evidence: &Evidence<'_>, notes: &mut Notes<'_>) {
-    let branch: Vec<&Discharged> = claims
+    let recorded = record_of(evidence.touched);
+    let mut branch: Vec<&Discharged> = Vec::new();
+    for claim in claims
         .iter()
         .filter(|claim| claim.proof == "branch-never-taken")
-        .collect();
+    {
+        match recorded
+            .as_ref()
+            .and_then(|one| entered_the_body(one, claim))
+        {
+            Some(true) => notes.violated(
+                "branch-never-taken",
+                format!(
+                    "the guards of {} say it entered the body {} sits in, so it may have \
+                     noticed it",
+                    claim.target, claim.mutant
+                ),
+            ),
+            Some(false) => {}
+            None => branch.push(claim),
+        }
+    }
     if branch.is_empty() {
         return;
     }
@@ -619,7 +761,8 @@ fn branch_discharges(claims: &[Discharged], evidence: &Evidence<'_>, notes: &mut
         notes.unaudited(
             "branch-never-taken",
             format!(
-                "{} discharges rest on a measurement and a catalog the run did not keep",
+                "{} discharges the guards say nothing about rest on a measurement and a \
+                 catalog the run did not keep",
                 branch.len()
             ),
         );
@@ -703,21 +846,38 @@ fn ran_the_body(reached: &Value, target: &str, path: &str, body: &Value) -> bool
     })
 }
 
-/// Every `never-infected` discharge rests on a log the run kept.
+/// Re-derives every `never-infected` discharge from what the guards recorded, and asks for the probe's own log where they say nothing.
 fn infection_discharges(claims: &[Discharged], evidence: &Evidence<'_>, notes: &mut Notes<'_>) {
+    let recorded = record_of(evidence.touched);
     for claim in claims
         .iter()
         .filter(|claim| claim.proof == "never-infected")
     {
-        let wanted = format!("{}.log", claim.target.replace('/', "-"));
-        if !evidence.probe_logs.iter().any(|name| name == &wanted) {
-            notes.unaudited(
+        match recorded
+            .as_ref()
+            .and_then(|one| saw_a_difference(one, claim))
+        {
+            Some(true) => notes.violated(
                 "never-infected",
                 format!(
-                    "{} was discharged from {} by a probe whose log the run did not keep",
-                    claim.mutant, claim.target
+                    "the guards of {} say the two branches of {} answered differently there, \
+                     so it may have noticed it",
+                    claim.target, claim.mutant
                 ),
-            );
+            ),
+            Some(false) => {}
+            None => {
+                let wanted = format!("{}.log", claim.target.replace('/', "-"));
+                if !evidence.probe_logs.iter().any(|name| name == &wanted) {
+                    notes.unaudited(
+                        "never-infected",
+                        format!(
+                            "{} was discharged from {} by a probe whose log the run did not keep",
+                            claim.mutant, claim.target
+                        ),
+                    );
+                }
+            }
         }
     }
 }

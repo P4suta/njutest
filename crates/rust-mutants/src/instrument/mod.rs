@@ -122,12 +122,14 @@ struct Planted<'a> {
 struct Rewritten {
     text: String,
     branches: Vec<Branch>,
+    compared: BTreeSet<u32>,
 }
 
-/// A rendered site: its text and where each alternative sits in it.
+/// A rendered site: its text, where each alternative sits in it, and which of them the guard evaluates beside what it replaces.
 struct Rendered {
     text: String,
     branches: Vec<(u32, Span)>,
+    compared: BTreeSet<u32>,
 }
 
 /// One instrumented file.
@@ -141,6 +143,14 @@ pub struct FileOutput {
     pub guards: Vec<Guard>,
     /// Every alternative branch, in file order: where each mutant's own text landed.
     pub branches: Vec<Branch>,
+    /// Every mutant whose guard in this text evaluates its two branches and records whether they differed, ascending.
+    ///
+    /// It is what the tree does rather than what it was offered: a form that
+    /// cannot compare reports nothing here, so a run reading it back never
+    /// rests a proof on a comparison no guard makes.
+    pub compared: Vec<u32>,
+    /// Every marker this text holds the call for, ascending, which is not every marker it was given: a body inside a guard's own site takes none.
+    pub marked: Vec<u32>,
     /// The name the runtime module took, empty when none was generated.
     pub module: String,
     /// Whether anything was rewritten. A file with no mutants comes back byte for byte, without a runtime: an unused module would only be noise, and a file cargo did not have to recompile is one this run does not pay for.
@@ -303,6 +313,8 @@ pub struct Instrumenting<'a> {
     pub placements: &'a [Placement],
     /// The markers the branch proofs put at the first statement of the bodies they name.
     pub markers: &'a [Marker],
+    /// Every mutant whose guard may compare its two branches, so a run records whether they ever differed.
+    pub comparable: &'a BTreeSet<u32>,
     /// The catalog every guard names, which the runtime refuses to be activated under another of.
     pub catalog_digest: &'a str,
 }
@@ -317,6 +329,7 @@ pub fn instrument_file(file: &Instrumenting<'_>) -> Result<FileOutput, Instrumen
         source,
         placements,
         markers,
+        comparable,
         catalog_digest,
     } = *file;
     let text = std::str::from_utf8(source).map_err(|error| {
@@ -332,6 +345,8 @@ pub fn instrument_file(file: &Instrumenting<'_>) -> Result<FileOutput, Instrumen
             text: text.to_owned(),
             guards: Vec::new(),
             branches: Vec::new(),
+            compared: Vec::new(),
+            marked: Vec::new(),
             module: String::new(),
             instrumented: false,
         });
@@ -340,12 +355,17 @@ pub fn instrument_file(file: &Instrumenting<'_>) -> Result<FileOutput, Instrumen
         path,
         text,
         module: module_name(path, text),
+        comparable,
     };
     file.check_placements(placements)?;
     let forest = file.forest(placements)?;
     let markers = File::markable(markers, &forest);
 
-    let Rewritten { mut text, branches } = file.rewrite(
+    let Rewritten {
+        mut text,
+        branches,
+        compared,
+    } = file.rewrite(
         source,
         &Planted {
             placements,
@@ -379,6 +399,8 @@ pub fn instrument_file(file: &Instrumenting<'_>) -> Result<FileOutput, Instrumen
         text,
         guards,
         branches,
+        compared: compared.into_iter().collect(),
+        marked: markers.iter().map(|marker| marker.index).collect(),
         module: file.module,
         instrumented: true,
     })
@@ -389,6 +411,8 @@ struct File<'a> {
     path: &'a str,
     text: &'a str,
     module: String,
+    /// Every mutant of this file whose guard may compare its two branches.
+    comparable: &'a BTreeSet<u32>,
 }
 
 impl File<'_> {
@@ -538,9 +562,11 @@ impl File<'_> {
         } = *planted;
         let mut splices = Vec::new();
         let mut roots = Vec::new();
+        let mut compared = BTreeSet::new();
         for root in forest.roots() {
             let rendered = self.render(root)?;
             splices.push(self.splice(root.span, rendered.text.clone())?);
+            compared.extend(rendered.compared.iter().copied());
             roots.push((root.span, rendered));
         }
         splices.extend(markers.iter().map(|marker| self.marker(marker)));
@@ -570,7 +596,11 @@ impl File<'_> {
             }));
         }
         branches.sort_by_key(|branch| (branch.span.start, branch.index));
-        Ok(Rewritten { text, branches })
+        Ok(Rewritten {
+            text,
+            branches,
+            compared,
+        })
     }
 
     /// Renders one site: its alternatives, then its original branch with the sites nested inside it already rendered.
@@ -578,15 +608,17 @@ impl File<'_> {
         let Rendered {
             text: original,
             branches: nested,
+            mut compared,
         } = self.original_branch(node)?;
 
         let site = self.slice(node.span)?;
         let mut alternatives = Vec::with_capacity(node.alternatives.len());
         for placement in &node.alternatives {
-            alternatives.push((
-                placement.index,
-                self.alternative(node.span, site, placement)?,
-            ));
+            alternatives.push(guards::Alternative {
+                index: placement.index,
+                text: self.alternative(node.span, site, placement)?,
+                comparable: self.comparable.contains(&placement.index),
+            });
         }
         let form = node
             .alternatives
@@ -598,7 +630,10 @@ impl File<'_> {
             .map_or(0, |placement| placement.hint.super_depth);
         let composed = guards::compose(
             form,
-            &guards::path(&self.module, depth),
+            &guards::Paths {
+                active: &guards::path(&self.module, depth),
+                differing: &guards::named(&self.module, depth, "differing"),
+            },
             &alternatives,
             &original,
         );
@@ -630,9 +665,11 @@ impl File<'_> {
                 .iter()
                 .map(|(index, span)| (*index, shift(*span, original_at))),
         );
+        compared.extend(composed.compared);
         Ok(Rendered {
             text: composed.text,
             branches,
+            compared,
         })
     }
 
@@ -644,6 +681,7 @@ impl File<'_> {
         };
         let mut text = String::new();
         let mut branches: Vec<(u32, Span)> = Vec::new();
+        let mut compared = BTreeSet::new();
         let mut cursor = node.span.start;
         for child in &node.children {
             text.push_str(self.slice(bounds(cursor, child.span.start)?)?);
@@ -655,11 +693,16 @@ impl File<'_> {
                     .iter()
                     .map(|(index, span)| (*index, shift(*span, at))),
             );
+            compared.extend(rendered.compared);
             text.push_str(&rendered.text);
             cursor = child.span.end;
         }
         text.push_str(self.slice(bounds(cursor, node.span.end)?)?);
-        Ok(Rendered { text, branches })
+        Ok(Rendered {
+            text,
+            branches,
+            compared,
+        })
     }
 
     /// One alternative: the pristine site with exactly this edit applied, folded onto one line.

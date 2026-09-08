@@ -83,6 +83,8 @@ pub struct Found {
     pub hint: SiteHint,
     /// What a branch proof about this edit would rest on, once the compiler has vouched for its witnesses. `None` where the syntax supports no proof.
     pub branch: Option<branch::Claim>,
+    /// What the compiler must vouch for before this guard's two branches may be compared, so a run can record whether they ever differed. `None` where the syntax does not allow comparing them.
+    pub comparable: Option<branch::Comparable>,
     /// What a probe of this edit would ask, when evaluating the expression a second time is not itself an event. `None` where no probe can be stated.
     pub probe: Option<crate::probe::form::Question>,
 }

@@ -15,8 +15,15 @@
 //! it, so everything it reached has to reach every test of its target: the
 //! fallback is toward running more, never less.
 //!
+//! The guards answer a second question on the same run. Where the compiler has
+//! vouched that a condition is inert, the guard evaluates both of its readings
+//! and records every time they parted, which is the infection question with no
+//! tree and no run of its own.
+//!
 //! Why the guards rather than a coverage build:
-//! [ADR 0014](../../../docs/adr/0014-the-guards-are-the-measurement.md).
+//! [ADR 0014](../../../docs/adr/0014-the-guards-are-the-measurement.md); why
+//! they are the infection probe as well:
+//! [ADR 0015](../../../docs/adr/0015-the-guard-is-the-infection-probe.md).
 //!
 //! The reader is fail-closed, for the reason [`crate::probe::log`] is: a
 //! truncated line or a header naming another catalog yields no facts at all,
@@ -256,6 +263,27 @@ pub struct Touched {
     pub targets: BTreeMap<String, TargetTouches>,
     /// Why a target the run built is not in `targets`, as `<limitation>:<target>`.
     pub limitations: Vec<String>,
+    /// Which of the records above are facts about which mutant, without which the rest is only silence.
+    #[serde(default)]
+    pub narrowing: Narrowing,
+}
+
+/// What a reader has to know before this record narrows anything: which mutants the tree that made it could say something about.
+///
+/// Every record here is an absence saying something, and an absence says
+/// nothing unless something was recording. A guard the compiler did not vouch
+/// for evaluates one branch, so `infected` never names its mutant however
+/// often a test ran it; a body the instrumenter could not write a marker into
+/// never appears in `bodies` either. This says which mutants the tree does
+/// carry the call for, so a route rests on silence only where silence is
+/// evidence.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[non_exhaustive]
+pub struct Narrowing {
+    /// Every mutant whose guard in the tree that ran compares its two branches, so `infected` is a fact about it.
+    pub compared: BTreeSet<u32>,
+    /// The marker each mutant's branch proof rests on, where the instrumenter wrote that marker, so `bodies` is a fact about it.
+    pub bodies: BTreeMap<u32, u32>,
 }
 
 /// What one target's guards recorded, and which of its tests ran to record it.

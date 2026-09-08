@@ -3,7 +3,7 @@
 
 //! Preparing a workspace: the gate it stands on, what the proof layers establish before anything is instrumented, and the one build every accepted mutant lives in.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -195,15 +195,20 @@ pub(super) struct Building<'a> {
     pub(super) catalog: &'a Catalog,
     /// Whether the guards are asked what they reached on the run that verifies the baseline.
     pub(super) asked: bool,
+    /// The messages of the build the tree ended at, which name the test binaries to start.
+    pub(super) last_build: &'a [crate::cargo::Message],
+    /// What the run was asked to prepare.
+    pub(super) options: &'a PrepareOptions,
 }
 
-fn built(
-    workspace: &Workspace,
-    last_build: &[crate::cargo::Message],
-    options: &PrepareOptions,
-    building: &Building<'_>,
-) -> Result<Built, EngineError> {
-    let Building { trace, .. } = *building;
+fn built(building: &Building<'_>) -> Result<Built, EngineError> {
+    let Building {
+        workspace,
+        trace,
+        last_build,
+        options,
+        ..
+    } = *building;
     let mut targets = execute::targets_of(
         last_build,
         &workspace.metadata.packages,
@@ -289,7 +294,7 @@ fn documentation_arguments(workspace: &Workspace) -> Vec<std::ffi::OsString> {
 /// What the proof layers establish before anything is instrumented: which tests could not have noticed a return replacement, which branch proofs the compiler vouches for, and which targets reached what.
 type Layers = (
     crate::probe::tree::Probed,
-    BTreeMap<u32, crate::syntax::branch::Proof>,
+    crate::prove::Established,
     crate::reach::Reached,
 );
 
@@ -313,13 +318,13 @@ fn layers(
     } else {
         crate::probe::tree::Probed::default()
     };
-    let proofs = if asking.options.branch_proofs {
+    let established = if asking.options.branch_proofs {
         crate::prove::establish(asking, cancel, trace)?
     } else {
-        BTreeMap::new()
+        crate::prove::Established::default()
     };
     let reached = measured(asking, remembering, cancel, trace)?;
-    Ok((probed, proofs, reached))
+    Ok((probed, established, reached))
 }
 
 /// What measuring this tree established, made now or remembered from the last run that made it.
@@ -482,7 +487,7 @@ pub fn prepare(
     let (sources, placements) = plan_tree(workspace.snapshot_root(), &discovery)?;
     plan_phase.end();
 
-    let (probed, proofs, reached) = layers(
+    let (probed, established, reached) = layers(
         &crate::prove::Asking {
             workspace: &workspace,
             discovery: &discovery,
@@ -495,38 +500,36 @@ pub fn prepare(
     )?;
 
     let validate_phase = trace.phase("validate");
-    let (validated, last_build) = establish(
-        &workspace,
-        &discovery,
-        &sources,
-        &placements,
-        &proofs,
-        options,
+    let Instrumented {
+        validated,
+        last_build,
+        narrowing,
+    } = establish(
+        &Establishing {
+            workspace: &workspace,
+            discovery: &discovery,
+            sources: &sources,
+            placements: &placements,
+            established: &established,
+            options,
+        },
         cancel,
         &trace,
     )?;
-
     validate_phase.end();
 
     let mut workspace = workspace;
-    let absorbed = workspace.snapshot.reseal()?;
-    let written_by_a_test: Vec<Drift> = absorbed
-        .into_iter()
-        .filter(|drift| !sources.contains_key(drift.rel_path()))
-        .collect();
+    let written_by_a_test = resealed(&mut workspace, &sources)?;
     let build_phase = trace.phase("build");
-    let (targets, scratch, verified) = built(
-        &workspace,
-        &last_build,
+    let (targets, scratch, verified) = built(&Building {
+        workspace: &workspace,
+        cancel,
+        trace: &trace,
+        catalog: &discovery.catalog,
+        asked: options.touch,
+        last_build: &last_build,
         options,
-        &Building {
-            workspace: &workspace,
-            cancel,
-            trace: &trace,
-            catalog: &discovery.catalog,
-            asked: options.touch,
-        },
-    )?;
+    })?;
     build_phase.end();
     phase.end();
     let (packages, items) = attributed(&discovery);
@@ -537,7 +540,7 @@ pub fn prepare(
         sources,
         packages,
         items,
-        proofs,
+        proofs: established.proofs,
         reached,
         probed,
         validated,
@@ -545,7 +548,10 @@ pub fn prepare(
         scratch,
         baseline: verified.baseline,
         ran: verified.ran,
-        touched: verified.touched,
+        touched: crate::touch::Touched {
+            narrowing,
+            ..verified.touched
+        },
         filtered: std::sync::Mutex::new(BTreeMap::new()),
         established: std::sync::atomic::AtomicU64::new(0),
         written_by_a_test,
@@ -557,21 +563,41 @@ pub fn prepare(
     })
 }
 
+/// What instrumenting and validating the tree established, which is everything a run needs about the tree it will start.
+struct Instrumented {
+    /// Which mutants compile, and what the rounds cost.
+    validated: Validated,
+    /// The messages of the last attempt that compiled, which name the test binaries this session will run.
+    last_build: Vec<crate::cargo::Message>,
+    /// What the tree that was built can say about a mutant it never named, which is what narrowing by silence rests on.
+    narrowing: crate::touch::Narrowing,
+}
+
+/// What instrumenting the tree is done from: the snapshot to write into, the mutants to place, and what the proof layers established about them.
+#[derive(Debug, Clone, Copy)]
+struct Establishing<'a> {
+    workspace: &'a Workspace,
+    discovery: &'a discover::Discovery,
+    sources: &'a BTreeMap<String, Vec<u8>>,
+    placements: &'a BTreeMap<String, Vec<Placement>>,
+    established: &'a crate::prove::Established,
+    options: &'a PrepareOptions,
+}
+
 /// Instruments the tree and lets the compiler say which mutants are real, returning what it established and the build it ended with.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "every argument is a distinct fact of the run, and bundling them would only move the list"
-)]
 fn establish(
-    workspace: &Workspace,
-    discovery: &discover::Discovery,
-    sources: &BTreeMap<String, Vec<u8>>,
-    placements: &BTreeMap<String, Vec<Placement>>,
-    proofs: &BTreeMap<u32, crate::syntax::branch::Proof>,
-    options: &PrepareOptions,
+    asking: &Establishing<'_>,
     cancel: &Cancel,
     trace: &crate::trace::Recorder,
-) -> Result<(Validated, Vec<crate::cargo::Message>), EngineError> {
+) -> Result<Instrumented, EngineError> {
+    let Establishing {
+        workspace,
+        discovery,
+        sources,
+        placements,
+        established,
+        options,
+    } = *asking;
     let mut writer = TreeCompiler {
         workspace,
         sources,
@@ -583,7 +609,10 @@ fn establish(
         packages: options.packages.clone(),
         build: options.build.clone(),
         written: BTreeMap::new(),
-        markers: marked(&discovery.catalog, proofs),
+        markers: marked(&discovery.catalog, &established.proofs),
+        comparable: &established.comparable,
+        compared: BTreeSet::new(),
+        marked: BTreeSet::new(),
     };
     let validated = validate(
         &discovery.catalog,
@@ -596,7 +625,49 @@ fn establish(
             trace,
         },
     )?;
-    Ok((validated, writer.last_build))
+    Ok(Instrumented {
+        validated,
+        last_build: writer.last_build,
+        narrowing: crate::touch::Narrowing {
+            compared: writer.compared,
+            bodies: resting(&established.proofs, &writer.marked),
+        },
+    })
+}
+
+/// The marker each mutant's branch proof rests on, keeping only the markers the instrumenter wrote.
+///
+/// A body inside a guard's own site takes no marker: the guard writes the site
+/// twice and one splice cannot land in both. The proof survives with a
+/// coverage region as its premise, and a run that measured no coverage has
+/// none — so a mutant whose marker was dropped must not be discharged by a
+/// record that was never going to name it.
+fn resting(
+    proofs: &BTreeMap<u32, crate::syntax::branch::Proof>,
+    marked: &BTreeSet<u32>,
+) -> BTreeMap<u32, u32> {
+    proofs
+        .iter()
+        .filter_map(|(index, proof)| {
+            proof
+                .marker
+                .filter(|marker| marked.contains(&marker.index))
+                .map(|marker| (*index, marker.index))
+        })
+        .collect()
+}
+
+/// What a test wrote into the tree while the proof layers ran, which is drift about the project rather than about the run.
+fn resealed(
+    workspace: &mut Workspace,
+    sources: &BTreeMap<String, Vec<u8>>,
+) -> Result<Vec<Drift>, EngineError> {
+    Ok(workspace
+        .snapshot
+        .reseal()?
+        .into_iter()
+        .filter(|drift| !sources.contains_key(drift.rel_path()))
+        .collect())
 }
 
 /// Reads every mutable file of the snapshot and pairs its candidates with their catalog entries, which is everything instrumentation needs.
@@ -653,8 +724,7 @@ fn marked(
     catalog: &Catalog,
     proofs: &BTreeMap<u32, crate::syntax::branch::Proof>,
 ) -> BTreeMap<String, Vec<crate::syntax::branch::Marker>> {
-    let mut by_file: BTreeMap<String, std::collections::BTreeSet<crate::syntax::branch::Marker>> =
-        BTreeMap::new();
+    let mut by_file: BTreeMap<String, BTreeSet<crate::syntax::branch::Marker>> = BTreeMap::new();
     for (index, proof) in proofs {
         let Some(marker) = proof.marker else {
             continue;
@@ -691,13 +761,16 @@ struct TreeCompiler<'a> {
     written: BTreeMap<String, String>,
     /// The markers each file's branch proofs put in it, so entering a body is a thing the guards record.
     markers: BTreeMap<String, Vec<crate::syntax::branch::Marker>>,
+    /// Every mutant whose guard may compare its two branches, so a run records whether they ever differed.
+    comparable: &'a BTreeSet<u32>,
+    /// Every mutant whose guard in the tree that was last built actually does compare them, which is what a proof may rest on.
+    compared: BTreeSet<u32>,
+    /// Every marker the tree that was last built actually holds the call for.
+    marked: BTreeSet<u32>,
 }
 
 impl Compile for TreeCompiler<'_> {
-    fn attempt(
-        &mut self,
-        condemned: &std::collections::BTreeSet<u32>,
-    ) -> Result<Attempt, ValidateError> {
+    fn attempt(&mut self, condemned: &BTreeSet<u32>) -> Result<Attempt, ValidateError> {
         let mut files: Vec<FileOutput> = Vec::new();
         let mut written: u32 = 0;
         for (path, placements) in self.placements {
@@ -717,6 +790,7 @@ impl Compile for TreeCompiler<'_> {
                 source,
                 placements: &kept,
                 markers: self.markers.get(path).map_or(&[], Vec::as_slice),
+                comparable: self.comparable,
                 catalog_digest: self.catalog.digest(),
             })?;
             self.workspace.trace.instrument(InstrumentRecord {
@@ -753,6 +827,14 @@ impl Compile for TreeCompiler<'_> {
         let success = compiled.success;
         if success {
             self.last_build.clone_from(&compiled.messages);
+            self.compared = files
+                .iter()
+                .flat_map(|file| file.compared.iter().copied())
+                .collect();
+            self.marked = files
+                .iter()
+                .flat_map(|file| file.marked.iter().copied())
+                .collect();
         }
         Ok(Attempt {
             files,

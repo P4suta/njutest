@@ -851,6 +851,12 @@ fn a_summary_renders_as_lines_a_person_reads_and_a_diff_says_what_moved() {
         "{moved:?}"
     );
     assert!(
+        moved
+            .iter()
+            .any(|change| change.what == "events" && change.from < change.to),
+        "and the total each recording holds: {moved:?}"
+    );
+    assert!(
         !moved.iter().any(|change| change.from == change.to),
         "a diff says what moved, not what stayed: {moved:?}"
     );

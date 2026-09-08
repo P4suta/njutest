@@ -31,7 +31,7 @@ refuses a difference, and `UPDATE_FATES=1` rewrites the block below.
 
 ```fates --coverage
 src/lib.rs:8:8 negate-condition killed
-src/lib.rs:8:14 le-to-lt survived
+src/lib.rs:8:14 le-to-lt not_run
 src/lib.rs:9:16 return-default killed
 src/lib.rs:11:5 return-default killed
 src/lib.rs:16:8 negate-condition killed

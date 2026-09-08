@@ -1,15 +1,21 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuites name="rust-mutants" tests="8" failures="1" errors="0" skipped="0" time="0.000">
-  <testsuite name="src/lib.rs" tests="8" failures="1" errors="0" skipped="0" time="0.000">
-    <testcase name="return-default at src/lib.rs:11:5 [eb47ae4b793863f96b45]" classname="src/lib.rs" time="0.000"/>
-    <testcase name="negate-condition at src/lib.rs:11:8 [49d208bb5955b1d1ff56]" classname="src/lib.rs" time="0.000"/>
-    <testcase name="gt-to-ge at src/lib.rs:11:10 [e5e872bfbcb2afbbf7a1]" classname="src/lib.rs" time="0.000">
-      <failure message="survived" type="surviving-mutant">the tests did not notice that `&gt;` became `&gt;=` at src/lib.rs:11:10</failure>
+<testsuites name="rust-mutants" tests="12" failures="1" errors="0" skipped="1" time="0.000">
+  <testsuite name="src/lib.rs" tests="12" failures="1" errors="0" skipped="1" time="0.000">
+    <testcase name="negate-condition at src/lib.rs:8:8 [671a3d2b45ac738ac6c8]" classname="src/lib.rs" time="0.000"/>
+    <testcase name="le-to-lt at src/lib.rs:8:14 [3f9278919bdfbd21848e]" classname="src/lib.rs" time="0.000">
+      <skipped message="discharged"/>
     </testcase>
-    <testcase name="return-default at src/lib.rs:11:16 [955eecf95d1a68d480e9]" classname="src/lib.rs" time="0.000"/>
-    <testcase name="return-default at src/lib.rs:11:27 [8bb88b4cc754de15d8e5]" classname="src/lib.rs" time="0.000"/>
-    <testcase name="return-true at src/lib.rs:16:5 [4429103b651e1fbffc10]" classname="src/lib.rs" time="0.000"/>
-    <testcase name="rem-to-mul at src/lib.rs:16:7 [76b4012f7501ae112d23]" classname="src/lib.rs" time="0.000"/>
-    <testcase name="eq-to-neq at src/lib.rs:16:11 [fc1c0afed18fe3bdd9df]" classname="src/lib.rs" time="0.000"/>
+    <testcase name="return-default at src/lib.rs:9:16 [bf1f12a0d4d8f383330b]" classname="src/lib.rs" time="0.000"/>
+    <testcase name="return-default at src/lib.rs:11:5 [00a57719b9761a8dbe88]" classname="src/lib.rs" time="0.000"/>
+    <testcase name="negate-condition at src/lib.rs:16:8 [79a57c513fc8d0e04ea5]" classname="src/lib.rs" time="0.000"/>
+    <testcase name="le-to-lt at src/lib.rs:16:10 [b0e23daf0ee463afcc88]" classname="src/lib.rs" time="0.000">
+      <failure message="survived" type="surviving-mutant">the tests did not notice that `&lt;=` became `&lt;` at src/lib.rs:16:10</failure>
+    </testcase>
+    <testcase name="true-to-false at src/lib.rs:17:16 [9a6e48faa86084df6263]" classname="src/lib.rs" time="0.000"/>
+    <testcase name="false-to-true at src/lib.rs:19:5 [7ea79f356dbc71992d40]" classname="src/lib.rs" time="0.000"/>
+    <testcase name="negate-condition at src/lib.rs:28:8 [84cacd47ed6f375003a1]" classname="src/lib.rs" time="0.000"/>
+    <testcase name="le-to-lt at src/lib.rs:28:20 [ebdd05e49173fec8e763]" classname="src/lib.rs" time="0.000"/>
+    <testcase name="true-to-false at src/lib.rs:29:16 [c6279c53729bc4d39dde]" classname="src/lib.rs" time="0.000"/>
+    <testcase name="false-to-true at src/lib.rs:31:5 [9f8eac8f46ca5f222acf]" classname="src/lib.rs" time="0.000"/>
   </testsuite>
 </testsuites>

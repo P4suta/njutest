@@ -153,6 +153,7 @@ impl Compile for ScriptedCompile {
             source: &self.source,
             placements: &kept,
             markers: &[],
+            comparable: &BTreeSet::default(),
             catalog_digest: self.catalog.digest(),
         })?;
         let live: BTreeSet<u32> = kept.iter().map(|placement| placement.index).collect();

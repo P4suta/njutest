@@ -13,7 +13,7 @@
 )]
 
 use rust_mutants::rule::{Registry, Tier};
-use rust_mutants::syntax::branch::{Claim, DECREASING, WitnessKind, is_decreasing};
+use rust_mutants::syntax::branch::{Claim, Comparable, DECREASING, WitnessKind, is_decreasing};
 use rust_mutants::syntax::{Selection, discover_file};
 
 /// Every candidate of `source`, as the rule that proposed it and what it claims.
@@ -26,6 +26,17 @@ fn claims(source: &str) -> Vec<(String, Option<Claim>)> {
         .into_iter()
         .map(|found| (found.candidate.rule.name.to_owned(), found.branch))
         .collect()
+}
+
+/// What any candidate of `source` may have its two readings compared over, when one may.
+fn comparable_of(source: &str) -> Option<Comparable> {
+    let registry = Registry::canonical();
+    let selection = Selection::tier(&registry, Tier::All);
+    discover_file("src/lib.rs", source.as_bytes(), &selection)
+        .expect("the source parses")
+        .candidates
+        .into_iter()
+        .find_map(|found| found.comparable)
 }
 
 /// What the candidate proposed by `rule` claims.
@@ -137,6 +148,11 @@ fn a_body_that_runs_nothing_says_nothing_by_not_running() {
     assert!(
         claim_of(source, "le-to-lt").is_none(),
         "a target's silence about an empty body means nothing"
+    );
+    assert!(
+        comparable_of(source).is_some(),
+        "and the guard may still compare its two readings, which is about the condition and \
+         not about what the condition gates"
     );
 }
 

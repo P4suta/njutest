@@ -45,10 +45,11 @@ run already collects can sometimes establish before any mutant is built.
 2. **Every speed-up is a proof layer**: a rule that removes an execution
    because a lemma over evidence the run already holds says the execution
    could not observe the mutant. The layers are ordered by the way a mutant
-   survives — reach (no covered region contains the mutated position),
-   infection (a branch proof, or a probe that never saw the site differ), and
-   propagation, which is the next to build. A layer that cannot establish its
-   premise keeps the execution; the fallbacks are toward running more.
+   survives — reach (nothing of the target reached the site), infection (a
+   branch proof, a guard that never saw its two readings part, or a probe
+   that never saw the site differ), and propagation, which is the next to
+   build. A layer that cannot establish its premise keeps the execution; the
+   fallbacks are toward running more.
 3. **The lemma and the premise live on different sides.** rust-mutants states
    what it can prove about a mutant from the source and the compiler — the
    branch proof, the probe form — and mjutest checks the premise against its

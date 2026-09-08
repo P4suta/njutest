@@ -97,6 +97,12 @@ below is stated fail-closed.
   needs could not be built, and `probe-log-unreadable` when a target ran and
   its infection log could not be read. Neither removes an execution: a layer
   that could not measure discharges nothing.
+- A guard compares its two readings only where the compiler vouched that the
+  condition around it is inert and the guard's own form can hold the call.
+  Everywhere else `never-infected` says nothing about the mutation however
+  many tests ran it, and the record names which mutants it can speak about so
+  that its silence about the rest is never read as evidence. The probe tree,
+  which `--probe` builds, is what answers for those.
 - The guards measure reach on the baseline run, and a target whose guards were
   not asked carries `touch-not-recorded`. They are not asked when the engine
   does not start the process itself: a documented example, which rustdoc

@@ -19,7 +19,7 @@
 # --jobs 1`, with the configuration the fixture carries and nothing else.
 #
 # fixture             whole  started  tests  tests_started
-fixture-simple           33       11     33             11
-fixture-coverage         42       14     70             17
+fixture-simple           33       10     33             10
+fixture-coverage         42       13     70             16
 fixture-unreached        16        4     16              4
-fixture-baseline         51       15     51             15
+fixture-baseline         51       13     51             13

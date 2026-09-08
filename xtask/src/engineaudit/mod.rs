@@ -47,8 +47,12 @@ const TIMED_OUT: &str = "timed_out";
 const INCONCLUSIVE: &str = "inconclusive";
 const NOT_RUN: &str = "not_run";
 const UNREACHED: &str = "unreached";
+const DISCHARGED: &str = "discharged";
+const UNSELECTED: &str = "unselected";
+const STOPPED_EARLY: &str = "stopped-early";
 const SURVIVING_MUTANT: &str = "surviving-mutant";
 const UNREACHED_MUTANT: &str = "unreached-mutant";
+const DISCHARGED_MUTANT: &str = "discharged-mutant";
 const INCONCLUSIVE_MUTANT: &str = "inconclusive-mutant";
 const ERRORED_MUTANT: &str = "errored-mutant";
 const NOT_RUN_MUTANT: &str = "not-run-mutant";
@@ -411,6 +415,11 @@ impl Row {
         } else {
             &self.display_id
         }
+    }
+
+    /// Whether this row was not run for the named reason.
+    fn not_run(&self, reason: &str) -> bool {
+        self.not_run_reason.as_deref() == Some(reason)
     }
 
     const fn complete(&self) -> bool {

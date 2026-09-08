@@ -265,6 +265,14 @@ pub struct Session {
     manifests: String,
 }
 
+/// What narrowing a target's tests left: the ones that could still notice the mutation, or the proof that took the last of them away.
+enum Narrowed {
+    /// The target stays in the route, asked for these tests.
+    Reaching(Reaches),
+    /// Nothing of the target could have noticed, and this names what says so.
+    Discharged(&'static str),
+}
+
 impl Session {
     /// Everything discovery cataloged, refusals included.
     #[must_use]
@@ -736,11 +744,8 @@ impl Session {
                 continue;
             }
             match self.narrowed(mutant, one) {
-                Some(reaches) => kept.push(reaches),
-                None => discharged.push(Discharge {
-                    target,
-                    proof: BRANCH_NEVER_TAKEN,
-                }),
+                Narrowed::Reaching(reaches) => kept.push(reaches),
+                Narrowed::Discharged(proof) => discharged.push(Discharge { target, proof }),
             }
         }
         if kept.is_empty() && !discharged.is_empty() {
@@ -758,12 +763,16 @@ impl Session {
     /// Only a target the measurement actually read can be discharged by the
     /// branch proof: one whose profile could not be read is in the route
     /// because nothing is known about it, and a proof resting on its silence
-    /// would rest on the measurement's failure. The probe answers about the
-    /// targets it ran, and a mutant it never asked about is one it says
-    /// nothing about.
+    /// would rest on the measurement's failure. The guards answer about the
+    /// mutants whose two readings the tree they were in compares, and the
+    /// probe about the targets it ran; a mutant either never asked about is
+    /// one it says nothing about.
     fn proof_against(&self, mutant: &Mutant, target: &str) -> Option<&'static str> {
         if self.never_took_the_branch(mutant, target) {
             return Some(BRANCH_NEVER_TAKEN);
+        }
+        if self.never_differed(mutant.index, target) {
+            return Some(NEVER_INFECTED);
         }
         if self.probed.asked.contains(&mutant.index)
             && let Some(infected) = self.probed.infected.get(target)
@@ -774,36 +783,96 @@ impl Session {
         None
     }
 
-    /// The same target asked for only the tests of it that entered the body the branch proof names, or nothing when none of them did.
+    /// Whether every run of this target's guard answered the same on both of its branches.
     ///
-    /// A target is discharged when *nothing* of it entered the body. Between
-    /// that and running every test the measurement named lies the case this
-    /// answers: some of the tests that reached the condition entered the body
-    /// and some did not, and the ones that did not cannot have noticed a
-    /// mutation which only narrows the condition — under it they still do not
-    /// enter.
-    fn narrowed(&self, mutant: &Mutant, one: Reaches) -> Option<Reaches> {
+    /// The guard holds the mutation and what it replaces, and where the
+    /// compiler vouched that evaluating either runs none of the program's
+    /// code, the baseline evaluated both and recorded every time they parted.
+    /// A target whose record names this mutant nowhere ran a program that
+    /// answered what the unmutated one answers, wherever it looked. Only a
+    /// target the measurement read can say so: one absent from the record is
+    /// one nothing is known about, and a target whose guard the tree does not
+    /// compare says nothing about it either.
+    fn never_differed(&self, index: u32, target: &str) -> bool {
+        self.touched.narrowing.compared.contains(&index)
+            && self
+                .touched
+                .targets
+                .get(target)
+                .is_some_and(|touches| !touches.infected.any(index))
+    }
+
+    /// The same target asked for only the tests of it that could still have noticed the mutation, or nothing when none of them could.
+    ///
+    /// Two records narrow, and a test has to survive both. One that never
+    /// entered the body a branch proof names ran a condition the mutation
+    /// leaves false as well. One that ran a compared guard and never saw its
+    /// two readings part ran a program indistinguishable from the unmutated
+    /// one. A target *nothing* of which survives is discharged, and the proof
+    /// named is the record that emptied it.
+    ///
+    /// A target asked for as a whole is left alone. That is the shape a route
+    /// takes when every test of the target reached the site — the same tests
+    /// either way, and one fewer filtered set to establish — or when a touch
+    /// could not be attributed at all, which is a fact about the measurement
+    /// rather than about the tests. Narrowing the first would be sound and
+    /// narrowing the second would not, and the route does not say which it is;
+    /// what is not narrowed here is still discharged whole by
+    /// [`Self::proof_against`] when no test of the target saw anything.
+    fn narrowed(&self, mutant: &Mutant, one: Reaches) -> Narrowed {
         let Asked::These(tests) = &one.tests else {
-            return Some(one);
-        };
-        let Some(marker) = self.branch(mutant.index).and_then(|proof| proof.marker) else {
-            return Some(one);
+            return Narrowed::Reaching(one);
         };
         let Some(touches) = self.touched.targets.get(&one.target) else {
-            return Some(one);
+            return Narrowed::Reaching(one);
         };
         let entered: Vec<String> = tests
             .iter()
-            .filter(|test| touches.bodies.by(test, marker.index))
+            .filter(|test| self.entered_the_body(mutant.index, touches, test))
             .cloned()
             .collect();
         if entered.is_empty() {
-            return None;
+            return Narrowed::Discharged(BRANCH_NEVER_TAKEN);
         }
-        Some(Reaches {
+        let differed: Vec<String> = entered
+            .into_iter()
+            .filter(|test| self.saw_a_difference(mutant.index, touches, test))
+            .collect();
+        if differed.is_empty() {
+            return Narrowed::Discharged(NEVER_INFECTED);
+        }
+        Narrowed::Reaching(Reaches {
             target: one.target,
-            tests: Asked::These(entered),
+            tests: Asked::These(differed),
         })
+    }
+
+    /// Whether this test entered the body a branch proof about `mutant` names, where a mutant with no such proof and a body with no marker say nothing.
+    fn entered_the_body(
+        &self,
+        index: u32,
+        touches: &crate::touch::TargetTouches,
+        test: &str,
+    ) -> bool {
+        self.touched
+            .narrowing
+            .bodies
+            .get(&index)
+            .is_none_or(|marker| touches.bodies.by(test, *marker))
+    }
+
+    /// Whether this test saw the two branches of the guard part, where a guard the built tree does not compare says nothing.
+    ///
+    /// A test that ran a compared guard and never saw the mutation answer
+    /// anything but what it replaces ran a program indistinguishable from the
+    /// unmutated one, so there was nothing there for it to notice.
+    fn saw_a_difference(
+        &self,
+        index: u32,
+        touches: &crate::touch::TargetTouches,
+        test: &str,
+    ) -> bool {
+        !self.touched.narrowing.compared.contains(&index) || touches.infected.by(test, index)
     }
 
     /// Whether nothing of `target` ran the body the branch proof of `mutant` names.
@@ -812,14 +881,16 @@ impl Session {
     /// instrumenter wrote at the body's first statement is exact: it either
     /// ran or it did not. A coverage region beginning inside the body is the
     /// older premise, and it is what a body no marker could go into still
-    /// rests on.
+    /// rests on — the record only ever names markers the tree carries the
+    /// call for, so a body inside a guard's own site falls to the region
+    /// rather than to silence.
     fn never_took_the_branch(&self, mutant: &Mutant, target: &str) -> bool {
         let Some(proof) = self.branch(mutant.index) else {
             return false;
         };
-        if let Some(marker) = proof.marker
+        if let Some(marker) = self.touched.narrowing.bodies.get(&mutant.index)
             && let Some(touches) = self.touched.targets.get(target)
-            && !touches.bodies.any(marker.index)
+            && !touches.bodies.any(*marker)
         {
             return true;
         }

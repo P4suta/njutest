@@ -37,7 +37,22 @@ fn head(text: &str) -> &str {
 }
 
 fn measured() -> Fixture {
-    let fixture = Fixture::copy("fixture-simple");
+    ran("fixture-simple")
+}
+
+/// A run whose report holds a gap no proof can close: `earlier` compares two values the compiler will not vouch for, so nothing removes the mutation and a test has to notice it or not.
+///
+/// A report is read by somebody looking for what the tests do not cover, and a
+/// projection of one is only worth testing against a run that has some. The
+/// simple fixture has none any more: its one comparison is between two
+/// primitives, and the guards prove on the baseline that the tests could not
+/// have noticed the mutation.
+fn with_a_survivor() -> Fixture {
+    ran("fixture-coverage")
+}
+
+fn ran(name: &str) -> Fixture {
+    let fixture = Fixture::copy(name);
     let ran = against(
         &fixture,
         &[
@@ -115,7 +130,7 @@ fn golden(name: &str, text: &str) {
 
 #[test]
 fn a_junit_report_makes_a_survivor_a_failure_and_a_mutant_nothing_ran_a_skip() {
-    let fixture = measured();
+    let fixture = with_a_survivor();
     let text = projected(&fixture, "junit");
     assert!(text.starts_with("<?xml version=\"1.0\""), "{text}");
     assert!(text.contains("<testsuites"), "{text}");
@@ -162,7 +177,7 @@ fn a_finding_no_mutant_row_carries_is_a_failing_case_of_its_own() {
 
 #[test]
 fn a_sarif_report_names_every_finding_with_the_place_it_is() {
-    let fixture = measured();
+    let fixture = with_a_survivor();
     let text = projected(&fixture, "sarif");
     let document: serde_json::Value = serde_json::from_str(&text).expect("SARIF is JSON");
     assert_eq!(document["version"], "2.1.0");
@@ -206,7 +221,7 @@ fn a_sarif_report_names_every_finding_with_the_place_it_is() {
 
 #[test]
 fn a_markdown_report_is_the_summary_a_person_puts_in_a_pull_request() {
-    let fixture = measured();
+    let fixture = with_a_survivor();
     let text = projected(&fixture, "markdown");
     assert!(text.contains("# Mutation report"), "{text}");
     assert!(text.contains("| where | rule | change |"), "{text}");
@@ -252,7 +267,7 @@ fn a_source_the_report_names_and_the_root_does_not_hold_is_rm0012() {
 
 #[test]
 fn every_survivor_is_shown_inline_on_the_line_it_is_on() {
-    let fixture = measured();
+    let fixture = with_a_survivor();
     let text = projected(&fixture, "html");
     let report: serde_json::Value =
         serde_json::from_str(&projected(&fixture, "json")).expect("the stored report is JSON");

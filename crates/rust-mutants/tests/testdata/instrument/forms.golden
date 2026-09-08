@@ -5,7 +5,7 @@
 
 /// A boolean position: Form C, no block and so no temporary scope.
 #[allow(warnings, unused, unused_qualifications, unfulfilled_lint_expectations, clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery, clippy::cargo)] pub fn compare(a: i32, b: i32) -> bool {
-    if (__rm::active(0) && (!(a > b)) || __rm::active(1) && (a >= b) || !(__rm::active(0)) && !(__rm::active(1)) && (a > b)) {
+    if (__rm::active(0) && (!(a > b)) || __rm::active(1) && (a >= b) || !(__rm::active(0)) && !(__rm::active(1)) && __rm::differing(1, (a > b), || (a >= b))) {
         return (if __rm::active(2) { false } else { true });
     }
     (if __rm::active(3) { true } else if __rm::active(4) { a > b } else { a >= b })
@@ -13,7 +13,7 @@
 
 /// A value position: Form E, an if-expression whose branches unify.
 #[allow(warnings, unused, unused_qualifications, unfulfilled_lint_expectations, clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery, clippy::cargo)] pub fn pick(a: i32, b: i32) -> i32 {
-    let larger = if (__rm::active(5) && (!(a > b)) || __rm::active(6) && (a >= b) || !(__rm::active(5)) && !(__rm::active(6)) && (a > b)) { a } else { b };
+    let larger = if (__rm::active(5) && (!(a > b)) || __rm::active(6) && (a >= b) || !(__rm::active(5)) && !(__rm::active(6)) && __rm::differing(6, (a > b), || (a >= b))) { a } else { b };
     (if __rm::active(7) { Default::default() } else if __rm::active(8) { larger - 1 } else { larger + (if __rm::active(9) { 2 } else if __rm::active(10) { 0 } else { 1 }) })
 }
 
@@ -214,27 +214,22 @@ mod __rm {
     }
 
     #[inline(always)]
-    pub(crate) fn differed(index: u32) {
-        if TOUCHING.load(__rm_std::sync::atomic::Ordering::Relaxed) == TOUCH_OFF {
-            return;
+    pub(crate) fn differing<F: __rm_std::ops::FnOnce() -> bool>(index: u32, original: bool, alternative: F) -> bool {
+        if TOUCHING.load(__rm_std::sync::atomic::Ordering::Relaxed) != TOUCH_OFF
+            && touching()
+            && original != alternative()
+        {
+            difference(index);
         }
-        difference(index);
+        original
     }
 
     #[inline(never)]
     fn difference(index: u32) {
-        if !touching() {
-            return;
-        }
         let _ = SEEN.try_with(|seen| match seen.try_borrow_mut() {
             __rm_std::result::Result::Ok(mut seen) => seen.saw_a_difference(index),
             __rm_std::result::Result::Err(_) => (),
         });
-    }
-
-    #[inline(always)]
-    pub(crate) fn recording() -> bool {
-        TOUCHING.load(__rm_std::sync::atomic::Ordering::Relaxed) != TOUCH_OFF
     }
 
     #[inline(never)]

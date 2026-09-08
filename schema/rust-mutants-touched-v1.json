@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://mjutest.dev/schema/rust-mutants-touched-v1.json",
   "title": "rust-mutants touched v1",
-  "description": "What the guards of an instrumented tree recorded on the run that verified its baseline: which of each target's tests reached which mutation, which sites were reached where nothing named a test, and which targets said nothing this run can route by. A target absent from `targets` and named in `limitations` is one every test of which reaches every mutation in it.",
+  "description": "What the guards of an instrumented tree recorded on the run that verified its baseline: which of each target's tests reached which mutation, which sites were reached where nothing named a test, and which targets said nothing this run can route by. A target absent from `targets` and named in `limitations` is one every test of which reaches every mutation in it. `narrowing` says which mutants the tree could record anything about, without which an absence in `bodies` or `infected` says nothing at all.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -23,6 +23,29 @@
       "items": {
         "type": "string",
         "minLength": 1
+      }
+    },
+    "narrowing": {
+      "description": "Which of the records above are facts about which mutant. Every record here is an absence saying something, and an absence says nothing unless the tree carried the call that would have broken it.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "compared": {
+          "description": "Every mutant whose guard evaluates its two branches, by dense catalog index, so `infected` is a fact about it.",
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "bodies": {
+          "description": "The marker each mutant's branch proof rests on, by dense catalog index, keeping only the markers the instrumenter wrote; a body inside a guard's own site takes none.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
       }
     }
   },

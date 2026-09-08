@@ -129,6 +129,7 @@ weekly.
 | guard routing | — | no test of this target reached the mutation, or only these did | the (mutant, target) pair, or every test of it the record did not name |
 | coverage routing | — | this target's measured run covered no region holding the mutation | the (mutant, target) pair |
 | `branch-never-taken` | the compiler: this mutation changes nothing outside the body the condition gates | nothing of this target ran the marker at that body's first statement, or its measured run covered no region beginning inside the body | the (mutant, target) pair, and the tests of a kept target that did not enter the body |
+| `never-infected` | the guard: the mutation and what it replaces are both inert, so a run may evaluate both | nothing of this target ever saw the guard's two branches answer differently | the (mutant, target) pair, and the tests of a kept target that never saw them part |
 | `never-infected` | the probe: this test ran the mutation and its value never differed | the probe log this target's own run appended to | the (mutant, target) pair |
 
 `branch-never-taken` has two premises and either will do. The instrumenter
@@ -137,7 +138,22 @@ witness tree first, so the one `cargo check` that sifts the type witnesses
 sifts the markers too, and a body a call cannot go into (a `const` context,
 a body inside a guard's own site) simply carries none. The marker is exact
 where a coverage region is inferred from where regions begin, and it needs no
-coverage build. A body with no marker keeps the region as its only premise.
+coverage build. A body with no marker keeps the region as its only premise,
+and the record says which markers the tree carries so that a body without one
+is never mistaken for a body nothing entered.
+
+`never-infected` has two premises as well, and the guard's is free. A
+mutation on an operator the connectives of an inert condition reach —
+`a < b` inside `if a < b && c`, say — leaves the condition inert: the same
+operands, another operator of the same class, and the compiler has already
+vouched for the operands through the witness tree the branch proofs use. A
+guard there holds both readings, so the baseline evaluates both and records
+every time they part. A target whose record never names the mutant ran a
+program that answered what the unmutated one answers wherever it looked, and
+by induction ran identically. There is no second tree, no second run, and the
+question is answered per test rather than per target. The probe tree remains
+for everything the syntax cannot call inert — a return replacement, an
+arithmetic edit — and `--probe` turns it on.
 
 Guard routing is the default and costs no build: the guards of the
 instrumented tree record which of a target's tests reached them on the run
@@ -177,17 +193,20 @@ proof. Beside its report a run writes:
 
 | File | What it holds |
 | --- | --- |
-| `touched-v1.json` | which of each target's tests reached which mutation, what was reached where nothing named a test, and which targets said nothing this run can route by |
+| `touched-v1.json` | which of each target's tests reached which mutation, entered which proved body and saw which guard's two branches part; what was reached where nothing named a test; which targets said nothing this run can route by; and which mutants the tree could record anything about at all |
 | `reached-v1.json` | every region each target's measured run covered, every region the build instrumented, and what the measurement could not establish |
 | `catalog-v1.json` | every mutant, with the body of the branch the compiler vouched for |
 | `probe/<target>.log` | what each probe process appended |
 
 An `evidence` recording names each with its size and digest.
 `cargo xtask engine-audit <run>` reads them and re-decides every discharge
-without the engine: a target that covered a region inside the body it was
-discharged from is a violation, a discharge whose premises the run did not
-keep is unaudited, and a discharged pair the recording then executed is a
-violation.
+without the engine: a target whose guards say it entered the body, or saw the
+two branches part, is a violation; so is one that covered a region inside the
+body it was discharged from; a discharge whose premises the run did not keep
+is unaudited, and a discharged pair the recording then executed is a
+violation. The record's `narrowing` is what makes an absence in it evidence:
+a mutant it does not name as compared is one `infected` says nothing about,
+however often a test ran it.
 
 ## After the run
 

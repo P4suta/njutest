@@ -58,17 +58,21 @@ fn a_filtered_out_mutant_is_not_run_for_the_stated_reason_and_is_not_a_finding()
         "only what the rule names ran: {text}"
     );
     assert!(
-        text.contains("not_run=10"),
+        text.contains("not_run=11"),
         "and the rest are accounted for rather than left out: {text}"
     );
     assert!(
         !text.contains("not-run-mutant"),
         "a mutant nobody selected is not a hole in the tests: {text}"
     );
+    assert!(
+        text.contains("discharged-mutant"),
+        "a mutant nobody ran because a proof said running it establishes nothing is: {text}"
+    );
     assert_eq!(
         output.status.code(),
         Some(1),
-        "the one that ran survived: {text}"
+        "the one that was selected is a gap in the tests, proved rather than measured: {text}"
     );
 }
 
@@ -97,17 +101,20 @@ fn a_family_a_file_and_an_identity_each_narrow_the_same_way() {
 
 #[test]
 fn fail_fast_stops_at_the_first_finding_and_states_why_the_rest_did_not_run() {
-    let fixture = Fixture::copy("fixture-simple");
+    let fixture = Fixture::copy("fixture-coverage");
     let output = run(&fixture, &["--ui", "plain", "--fail-fast"]);
     let text = said(&output);
     let judged = judged(&text);
     assert!(
-        judged.iter().any(|(_, outcome)| outcome == "survived"),
-        "it stopped at something a reader has to act on: {text}"
+        judged
+            .iter()
+            .any(|(_, outcome)| outcome == "survived" || outcome == "not_run"),
+        "it stopped at something a reader has to act on — a mutation the tests did not \
+         notice, or one a proof says they could not have: {text}"
     );
     assert!(
-        judged.len() < 11,
-        "and did not measure the rest: {} of 11",
+        judged.len() < 14,
+        "and did not measure the rest: {} of 14",
         judged.len()
     );
     assert_eq!(output.status.code(), Some(1), "{text}");
@@ -159,7 +166,7 @@ fn a_dry_run_says_what_it_would_cost_without_executing_a_mutant() {
 
 #[test]
 fn from_report_reruns_what_the_last_run_left() {
-    let fixture = Fixture::copy("fixture-simple");
+    let fixture = Fixture::copy("fixture-coverage");
     let first = run(&fixture, &["--ui", "quiet"]);
     assert_eq!(first.status.code(), Some(1), "{first:?}");
     let again = run(&fixture, &["--ui", "plain", "--from-report", "--no-cache"]);
@@ -169,4 +176,24 @@ fn from_report_reruns_what_the_last_run_left() {
         1,
         "only what the last run left is measured again: {text}"
     );
+}
+
+#[test]
+fn from_report_that_names_nothing_measures_nothing_rather_than_everything() {
+    let fixture = Fixture::copy("fixture-simple");
+    let first = run(&fixture, &["--ui", "quiet"]);
+    assert_eq!(first.status.code(), Some(1), "{first:?}");
+    let again = run(&fixture, &["--ui", "plain", "--from-report", "--no-cache"]);
+    let text = said(&again);
+    assert_eq!(
+        judged(&text).len(),
+        0,
+        "a run whose survivors the last one has none of is a run with nothing to measure \
+         again, not a run of the whole catalog: {text}"
+    );
+    assert!(
+        text.contains("not_run=11"),
+        "and every mutant says why it was not measured: {text}"
+    );
+    assert_eq!(again.status.code(), Some(0), "{text}");
 }

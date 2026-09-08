@@ -11,6 +11,7 @@
 )]
 
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
@@ -134,6 +135,7 @@ fn prepare(fixture: &str) -> Tree {
             source: &source,
             placements: &placements,
             markers: &[],
+            comparable: &BTreeSet::default(),
             catalog_digest: discovery.catalog.digest(),
         })
         .expect("instrument");

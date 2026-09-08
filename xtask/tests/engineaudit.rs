@@ -1293,3 +1293,248 @@ fn a_run_that_narrowed_by_nothing_the_guards_said_has_nothing_of_theirs_to_re_de
         audit.of(Layer::Touch)
     );
 }
+
+/// A run whose guards discharged the second mutant from the target, by the proof named.
+fn discharged_by_the_guards(proof: &str) -> serde_json::Value {
+    with(serde_json::json!({
+        "accounting": { "killed": 1, "survived": 0, "not_run": 1, "executed": 1, "discharged": 1 },
+        "score": { "detected": 1, "decided": 1, "value": 1.0 },
+        "mutants": [
+            {},
+            {
+                "outcome": "not_run",
+                "target": "",
+                "not_run_reason": "discharged",
+                "expected": false,
+                "route": {
+                    "granularity": "discharged",
+                    "reaching": [],
+                    "discharged": [{ "target": TARGET, "proof": proof }],
+                    "executed": []
+                }
+            }
+        ],
+        "findings": [{ "kind": "discharged-mutant", "mutant": SURVIVED, "detail": "d" }],
+        "expectations": []
+    }))
+}
+
+/// The record those guards left: one test reached both mutations and saw only the first one's branches part.
+fn record_of_a_comparison(infected: &[u32]) -> serde_json::Value {
+    serde_json::json!({
+        "targets": { TARGET: {
+            "reached": {"tests": {"tests::max_picks_the_larger": [0, 1]}, "loose": []},
+            "infected": {"tests": {"tests::max_picks_the_larger": infected}, "loose": []},
+            "ran": ["tests::max_picks_the_larger"]
+        }},
+        "limitations": [],
+        "narrowing": { "compared": [0, 1], "bodies": {} }
+    })
+}
+
+#[test]
+fn a_never_infected_discharge_the_guards_support_needs_no_probe_log() {
+    let audit = with_record(
+        &discharged_by_the_guards("never-infected"),
+        &record_of_a_comparison(&[0]),
+    );
+    assert_eq!(
+        violations(&audit, Layer::Proofs),
+        Vec::<String>::new(),
+        "{audit}"
+    );
+    assert!(
+        !audit
+            .of(Layer::Proofs)
+            .iter()
+            .any(|remark| remark.to_string().contains("probe whose log")),
+        "the guards recorded it, so nothing is left over for the probe to answer: {audit}"
+    );
+}
+
+#[test]
+fn a_never_infected_discharge_the_guards_contradict_is_a_violation() {
+    let audit = with_record(
+        &discharged_by_the_guards("never-infected"),
+        &record_of_a_comparison(&[0, 1]),
+    );
+    assert!(
+        violations(&audit, Layer::Proofs)
+            .iter()
+            .any(|said| said.contains("answered differently")),
+        "{audit}"
+    );
+}
+
+#[test]
+fn a_never_infected_discharge_of_a_mutant_no_guard_compares_still_asks_for_the_probe() {
+    let mut record = record_of_a_comparison(&[0]);
+    record["narrowing"]["compared"] = serde_json::json!([0]);
+    let audit = with_record(&discharged_by_the_guards("never-infected"), &record);
+    assert!(
+        audit
+            .of(Layer::Proofs)
+            .iter()
+            .any(|remark| remark.standing == Standing::Unaudited
+                && remark.to_string().contains("probe whose log")),
+        "silence about a guard that never compared is not evidence: {audit}"
+    );
+}
+
+/// The record for a branch proof: the marker mutant 1 rests on, and which tests entered that body.
+fn record_of_a_body(entered: &[u32]) -> serde_json::Value {
+    serde_json::json!({
+        "targets": { TARGET: {
+            "reached": {"tests": {"tests::max_picks_the_larger": [0, 1]}, "loose": []},
+            "bodies": {"tests": {"tests::max_picks_the_larger": entered}, "loose": []},
+            "ran": ["tests::max_picks_the_larger"]
+        }},
+        "limitations": [],
+        "narrowing": { "compared": [], "bodies": { "1": 1 } }
+    })
+}
+
+#[test]
+fn a_branch_discharge_the_guards_support_needs_no_coverage_build() {
+    let audit = with_record(
+        &discharged_by_the_guards("branch-never-taken"),
+        &record_of_a_body(&[]),
+    );
+    assert_eq!(
+        violations(&audit, Layer::Proofs),
+        Vec::<String>::new(),
+        "{audit}"
+    );
+    assert!(
+        !audit
+            .of(Layer::Proofs)
+            .iter()
+            .any(|remark| remark.to_string().contains("did not keep")),
+        "the marker is exact where a region is inferred: {audit}"
+    );
+}
+
+#[test]
+fn a_branch_discharge_the_guards_contradict_is_a_violation() {
+    let audit = with_record(
+        &discharged_by_the_guards("branch-never-taken"),
+        &record_of_a_body(&[1]),
+    );
+    assert!(
+        violations(&audit, Layer::Proofs)
+            .iter()
+            .any(|said| said.contains("entered the body")),
+        "{audit}"
+    );
+}
+
+/// The same record with a third test, so a mutation two of them reached is a route through a filter rather than the whole target.
+fn record_of_three() -> serde_json::Value {
+    let mut recorded = record();
+    recorded["targets"][TARGET]["reached"]["tests"] = serde_json::json!({
+        "tests::max_picks_the_larger": [0, 1],
+        "tests::min_picks_the_smaller": [1]
+    });
+    recorded["targets"][TARGET]["infected"] = serde_json::json!({
+        "tests": { "tests::max_picks_the_larger": [0, 1] }, "loose": []
+    });
+    recorded["targets"][TARGET]["ran"] = serde_json::json!([
+        "tests::max_picks_the_larger",
+        "tests::min_picks_the_smaller",
+        "tests::is_even_is_even"
+    ]);
+    recorded["narrowing"] = serde_json::json!({ "compared": [1], "bodies": {} });
+    recorded
+}
+
+#[test]
+fn a_route_the_guards_narrowed_by_a_comparison_is_re_decided_from_it() {
+    let mut document = routed_by_test();
+    document["targets"] =
+        serde_json::json!([{ "id": TARGET, "kind": "lib", "harness": true, "tests": 3 }]);
+    document["mutants"][1]["route"]["tests"][TARGET] =
+        serde_json::json!(["tests::max_picks_the_larger"]);
+    let recorded = record_of_three();
+    let audit = with_record(&document, &recorded);
+    assert!(
+        violations(&audit, Layer::Touch).is_empty(),
+        "a test that reached the site and never saw the two readings part is one the route \
+         may leave out: {:?}",
+        violations(&audit, Layer::Touch)
+    );
+
+    document["mutants"][1]["route"]["tests"][TARGET] = serde_json::json!([
+        "tests::max_picks_the_larger",
+        "tests::min_picks_the_smaller"
+    ]);
+    let audit = with_record(&document, &recorded);
+    assert!(
+        !violations(&audit, Layer::Touch).is_empty(),
+        "and a route that keeps it anyway disagrees with the record"
+    );
+}
+
+#[test]
+fn a_target_every_test_of_which_reached_a_mutation_is_asked_whole_rather_than_narrowed() {
+    let mut document = routed_by_test();
+    document["mutants"][1]["route"]["tests"] = serde_json::json!({});
+    let mut recorded = record();
+    recorded["targets"][TARGET]["reached"]["tests"] = serde_json::json!({
+        "tests::max_picks_the_larger": [0, 1],
+        "tests::min_picks_the_smaller": [1]
+    });
+    recorded["targets"][TARGET]["infected"] = serde_json::json!({
+        "tests": { "tests::max_picks_the_larger": [1] }, "loose": []
+    });
+    recorded["narrowing"] = serde_json::json!({ "compared": [1], "bodies": {} });
+    let audit = with_record(&document, &recorded);
+    assert!(
+        violations(&audit, Layer::Touch).is_empty(),
+        "asking for the whole of a target is asking for the same tests through one fewer \
+         question, and a run that did it is not a run that dropped a test: {:?}",
+        violations(&audit, Layer::Touch)
+    );
+}
+
+#[test]
+fn a_mutant_a_proof_removed_is_a_finding_of_its_own_and_not_one_nobody_ran() {
+    let audit = with_record(
+        &discharged_by_the_guards("never-infected"),
+        &record_of_a_comparison(&[0]),
+    );
+    assert!(
+        violations(&audit, Layer::Findings).is_empty(),
+        "a run that says a proof removed it has reported what it found: {:?}",
+        violations(&audit, Layer::Findings)
+    );
+
+    let mut document = discharged_by_the_guards("never-infected");
+    document["findings"][0]["kind"] = serde_json::json!("not-run-mutant");
+    let audit = with_record(&document, &record_of_a_comparison(&[0]));
+    let said = violations(&audit, Layer::Findings);
+    assert!(
+        said.iter().any(|one| one.contains("discharged-mutant")),
+        "a proof that removed it is not the same hole as a mutant nothing ran: {said:?}"
+    );
+    assert!(
+        said.iter().any(|one| one.contains("not-run-mutant")),
+        "{said:?}"
+    );
+}
+
+#[test]
+fn a_mutant_a_filter_left_out_is_accounted_for_rather_than_reported_as_a_hole() {
+    let mut document = discharged_by_the_guards("never-infected");
+    document["accounting"]["discharged"] = serde_json::json!(0);
+    document["mutants"][1]["not_run_reason"] = serde_json::json!("unselected");
+    document["mutants"][1]["route"] = serde_json::json!({
+        "granularity": "all", "reaching": [], "executed": []
+    });
+    document["findings"] = serde_json::json!([]);
+    let audit = with_record(&document, &record_of_a_comparison(&[0]));
+    assert!(
+        violations(&audit, Layer::Findings).is_empty(),
+        "a mutant nobody selected is not a gap in the tests: {:?}",
+        violations(&audit, Layer::Findings)
+    );
+}

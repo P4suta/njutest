@@ -197,27 +197,22 @@ mod __rm {
     }
 
     #[inline(always)]
-    pub(crate) fn differed(index: u32) {
-        if TOUCHING.load(__rm_std::sync::atomic::Ordering::Relaxed) == TOUCH_OFF {
-            return;
+    pub(crate) fn differing<F: __rm_std::ops::FnOnce() -> bool>(index: u32, original: bool, alternative: F) -> bool {
+        if TOUCHING.load(__rm_std::sync::atomic::Ordering::Relaxed) != TOUCH_OFF
+            && touching()
+            && original != alternative()
+        {
+            difference(index);
         }
-        difference(index);
+        original
     }
 
     #[inline(never)]
     fn difference(index: u32) {
-        if !touching() {
-            return;
-        }
         let _ = SEEN.try_with(|seen| match seen.try_borrow_mut() {
             __rm_std::result::Result::Ok(mut seen) => seen.saw_a_difference(index),
             __rm_std::result::Result::Err(_) => (),
         });
-    }
-
-    #[inline(always)]
-    pub(crate) fn recording() -> bool {
-        TOUCHING.load(__rm_std::sync::atomic::Ordering::Relaxed) != TOUCH_OFF
     }
 
     #[inline(never)]

@@ -50,13 +50,14 @@ fn stored(fixture: &Fixture) -> serde_json::Value {
 
 #[test]
 fn a_whole_run_judges_every_mutant_scores_the_workspace_and_writes_the_report() {
-    let fixture = Fixture::copy("fixture-simple");
+    let fixture = Fixture::copy("fixture-coverage");
     let output = against(&fixture, &["run", "--offline", "--locked", "--tier", "all"]);
     let text = stdout(&output);
     assert_eq!(
         output.status.code(),
         Some(1),
-        "fixture-simple has one test and mutants it cannot notice: {text}{}",
+        "the fixture compares two values the compiler will not vouch for, so nothing \
+         removes that mutation and one test has to notice it: {text}{}",
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(text.contains("MUTANTS   cataloged="), "{text}");
@@ -91,7 +92,7 @@ fn a_whole_run_judges_every_mutant_scores_the_workspace_and_writes_the_report() 
 }
 
 #[test]
-fn the_report_names_every_mutant_scores_what_it_decided_and_reports_every_survivor() {
+fn the_report_names_every_mutant_scores_what_it_decided_and_reports_every_gap() {
     let fixture = Fixture::copy("fixture-simple");
     let output = against(&fixture, &["run", "--offline", "--locked", "--tier", "all"]);
     assert_eq!(output.status.code(), Some(1), "{}", stdout(&output));
@@ -112,8 +113,18 @@ fn the_report_names_every_mutant_scores_what_it_decided_and_reports_every_surviv
         number("killed") + number("timed_out") + number("survived")
     );
     let findings = document["findings"].as_array().expect("findings");
-    assert_eq!(count(findings.len()), number("survived"));
-    assert!(findings.iter().all(|one| one["kind"] == "surviving-mutant"));
+    assert_eq!(
+        count(findings.len()),
+        number("survived") + number("not_run"),
+        "a mutation the tests did not notice and one a proof says they could not have are \
+         the same gap, and each is reported once"
+    );
+    assert!(
+        findings.iter().all(|one| one["kind"] == "surviving-mutant"
+            || one["kind"] == "discharged-mutant"
+            || one["kind"] == "unreached-mutant"),
+        "{findings:?}"
+    );
 }
 
 #[test]
@@ -173,7 +184,7 @@ fn the_stored_report_is_read_back_by_the_report_command() {
 
 #[test]
 fn an_expectation_the_run_confirms_stops_being_a_finding_and_a_stale_one_starts() {
-    let fixture = Fixture::copy("fixture-simple");
+    let fixture = Fixture::copy("fixture-coverage");
     let first = against(&fixture, &["run", "--offline", "--locked", "--no-report"]);
     assert_eq!(first.status.code(), Some(1));
     let survivor = stdout(&first)
@@ -498,8 +509,19 @@ fn a_warm_cache_reaches_the_same_answer_without_executing_a_mutant() {
             .as_array()
             .expect("mutants")
             .iter()
+            .filter(|one| one["outcome"] != "not_run")
             .all(|one| one["source_run_id"] == first["run"]["id"]),
-        "and it read every one of them back rather than running it: {second}"
+        "and it read every answer back rather than running it again: {second}"
+    );
+    assert!(
+        second["mutants"]
+            .as_array()
+            .expect("mutants")
+            .iter()
+            .filter(|one| one["outcome"] == "not_run")
+            .all(|one| one["source_run_id"] == serde_json::Value::Null),
+        "a mutant the first run proved rather than executed left no answer to read back, and \
+         the second proves it again for nothing: {second}"
     );
 
     let afresh = against(

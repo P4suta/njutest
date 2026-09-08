@@ -317,7 +317,10 @@ fn trace_diff_between_two_runs_reports_the_moved_columns() {
         "a measured run routes by block where an unmeasured one routes to everything: {text}"
     );
     assert!(text.contains("CHANGED\tphase-start\t"), "{text}");
-    assert!(text.contains("CHANGED\tevents\t"), "{text}");
+    assert!(
+        text.contains("CHANGED\troute all\t"),
+        "and the run that measured nothing routed every mutation to every target: {text}"
+    );
 }
 
 #[test]

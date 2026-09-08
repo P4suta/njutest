@@ -192,6 +192,16 @@ Coverage regions nest: what says a body ran is a region that *begins* inside
 it, not one that contains it, and the region at the body's closing brace is
 the one the compiler emits for what follows the branch.
 
+A third layer needs no measurement of its own beyond the one already made. A
+guard holds both readings of its site, and where the compiler has vouched that
+the condition around it is inert — the same witnesses a branch proof rests on
+— the baseline evaluates both and records every time they parted. A target
+that never saw them part is discharged `never-infected`, and a kept target is
+asked only for the tests that did. It is the same run and the same log, so the
+layer is free; what the syntax cannot call inert is the probe tree's, which
+`--probe` builds. See
+[ADR 0015](../adr/0015-the-guard-is-the-infection-probe.md).
+
 `Session::judge` runs what the route reaches and `Session::exec` runs what the
 measurement placed, discharges included: a discharge is a proof a caller may
 not share, and `exec` is the question "what do the tests say", asked by a

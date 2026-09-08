@@ -15,10 +15,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use sha2::{Digest as _, Sha256};
 
 use super::{
-    Audit, DISPLAY_ID_LENGTH, ERRORED_MUTANT, ID_DOMAIN, INCONCLUSIVE, INCONCLUSIVE_MUTANT, KILLED,
-    Layer, MET, NOT_RUN, NOT_RUN_MUTANT, Notes, Report, Row, STALE, STALE_EXPECTATION, SURVIVED,
-    SURVIVING_MUTANT, TIMED_OUT, UNMATCHED, UNMATCHED_EXPECTATION, UNREACHED, UNREACHED_MUTANT,
-    count,
+    Audit, DISCHARGED, DISCHARGED_MUTANT, DISPLAY_ID_LENGTH, ERRORED_MUTANT, ID_DOMAIN,
+    INCONCLUSIVE, INCONCLUSIVE_MUTANT, KILLED, Layer, MET, NOT_RUN, NOT_RUN_MUTANT, Notes, Report,
+    Row, STALE, STALE_EXPECTATION, STOPPED_EARLY, SURVIVED, SURVIVING_MUTANT, TIMED_OUT, UNMATCHED,
+    UNMATCHED_EXPECTATION, UNREACHED, UNREACHED_MUTANT, UNSELECTED, count,
 };
 
 /// Every identity re-minted from the row that carries it.
@@ -301,17 +301,26 @@ pub(super) fn findings(report: &Report, audit: &mut Audit) {
     let raises = |kind: &str, row: &Row| match kind {
         SURVIVING_MUTANT => row.outcome == SURVIVED && !row.expected,
         UNREACHED_MUTANT => row.outcome == NOT_RUN && row.unreached,
+        DISCHARGED_MUTANT => row.outcome == NOT_RUN && row.not_run(DISCHARGED),
         INCONCLUSIVE_MUTANT => row.outcome == INCONCLUSIVE,
         ERRORED_MUTANT => !matches!(
             row.outcome.as_str(),
             SURVIVED | INCONCLUSIVE | NOT_RUN | KILLED | TIMED_OUT
         ),
-        NOT_RUN_MUTANT => row.outcome == NOT_RUN && !row.unreached && !interrupted,
+        NOT_RUN_MUTANT => {
+            row.outcome == NOT_RUN
+                && !row.unreached
+                && !row.not_run(DISCHARGED)
+                && !row.not_run(UNSELECTED)
+                && !row.not_run(STOPPED_EARLY)
+                && !interrupted
+        }
         _ => false,
     };
     for kind in [
         SURVIVING_MUTANT,
         UNREACHED_MUTANT,
+        DISCHARGED_MUTANT,
         INCONCLUSIVE_MUTANT,
         ERRORED_MUTANT,
         NOT_RUN_MUTANT,

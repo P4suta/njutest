@@ -87,7 +87,7 @@ pub fn establish(
     asking: &Asking<'_>,
     cancel: &Cancel,
     trace: &Recorder,
-) -> Result<BTreeMap<u32, Proof>, EngineError> {
+) -> Result<Established, EngineError> {
     let Asking {
         workspace,
         discovery,
@@ -96,7 +96,7 @@ pub fn establish(
     } = *asking;
     let claims = claims_of(discovery);
     if claims.is_empty() {
-        return Ok(BTreeMap::new());
+        return Ok(Established::default());
     }
     let phase = trace.phase("witness");
     let root = workspace.snapshot_root().to_path_buf();
@@ -118,7 +118,7 @@ pub fn establish(
 
     let Ok(checked) = checked else {
         phase.end();
-        return Ok(BTreeMap::new());
+        return Ok(Established::default());
     };
     let refused = if checked.success {
         Refused::default()
@@ -132,10 +132,10 @@ pub fn establish(
         refused.claims.len(),
         refused.markers.len()
     );
-    let proofs = vouched(&claims, sources, &Checked { refused, markers }, trace);
+    let established = vouched(&claims, sources, &Checked { refused, markers }, trace);
     trace.note("witness", &said);
     phase.end();
-    Ok(proofs)
+    Ok(established)
 }
 
 /// What the one `cargo check` established: what it would not take, and the marker each body carries.
@@ -152,9 +152,9 @@ fn vouched(
     sources: &BTreeMap<String, Vec<u8>>,
     checked: &Checked,
     trace: &Recorder,
-) -> BTreeMap<u32, Proof> {
+) -> Established {
     let Checked { refused, markers } = checked;
-    let mut proofs = BTreeMap::new();
+    let mut established = Established::default();
     for (path, file) in claims {
         let Some(source) = sources.get(path) else {
             continue;
@@ -165,7 +165,6 @@ fn vouched(
             trace.witness(crate::trace::WitnessRecord {
                 index: claimed.index,
                 witnesses: claimed
-                    .claim
                     .witnesses
                     .iter()
                     .map(|witness| witness.kind.function().to_owned())
@@ -176,20 +175,33 @@ fn vouched(
             if refused.claims.contains(&claimed.index) {
                 continue;
             }
-            let _kept = proofs.insert(
+            let _vouched = established.comparable.insert(claimed.index);
+            let Some(body) = claimed.body else {
+                continue;
+            };
+            let _kept = established.proofs.insert(
                 claimed.index,
                 Proof {
-                    body_start: index.position(&text, claimed.claim.body.start),
-                    body_end: end_of(&index, &text, claimed.claim.body.end),
+                    body_start: index.position(&text, body.start),
+                    body_end: end_of(&index, &text, body.end),
                     marker: markers
-                        .get(&(path.clone(), claimed.claim.body))
+                        .get(&(path.clone(), body))
                         .copied()
                         .filter(|_| !refused.markers.contains(&claimed.index)),
                 },
             );
         }
     }
-    proofs
+    established
+}
+
+/// What the one `cargo check` established about the tree.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Established {
+    /// Every mutant whose branch proof the compiler accepted, with the proof.
+    pub proofs: BTreeMap<u32, Proof>,
+    /// Every mutant whose guard may compare its two branches, because the compiler vouched for the condition being inert.
+    pub comparable: BTreeSet<u32>,
 }
 
 /// The position one past the body's last byte. A body's end is exclusive, and a reader looking at the closing brace wants where it is rather than where the next thing starts.
@@ -206,13 +218,16 @@ fn markers_of(claims: &ByFile) -> BTreeMap<(String, crate::span::Span), Marker> 
     let mut bodies: BTreeMap<(String, crate::span::Span), Marker> = BTreeMap::new();
     for (path, file) in claims {
         for claimed in file {
+            let Some(body) = claimed.body else {
+                continue;
+            };
             let marker = Marker {
-                at: claimed.claim.body.start.saturating_add(1),
+                at: body.start.saturating_add(1),
                 index: claimed.index,
                 super_depth: claimed.super_depth,
             };
             bodies
-                .entry((path.clone(), claimed.claim.body))
+                .entry((path.clone(), body))
                 .and_modify(|held| held.index = held.index.min(claimed.index))
                 .or_insert(marker);
         }
@@ -228,7 +243,7 @@ fn count(claims: &ByFile) -> usize {
 fn claims_of(discovery: &Discovery) -> ByFile {
     let mut claims: ByFile = BTreeMap::new();
     for located in &discovery.candidates {
-        let Some(claim) = located.found.branch.clone() else {
+        let Some(rests) = rests_on(&located.found) else {
             continue;
         };
         let Ok(id) = located.found.candidate.id() else {
@@ -242,11 +257,43 @@ fn claims_of(discovery: &Discovery) -> ByFile {
             .or_default()
             .push(Claimed {
                 index: mutant.index,
-                claim,
+                condition: rests.condition,
+                body: rests.body,
+                witnesses: rests.witnesses,
                 super_depth: located.found.hint.super_depth,
             });
     }
     claims
+}
+
+/// What one candidate has to put to the compiler, or nothing when it asks nothing of it.
+///
+/// A branch proof and a comparison rest on the same thing — the condition
+/// being inert — and are written in front of the same bytes. The proof asks
+/// for more: it names the body the condition gates, which a comparison has no
+/// use for. So a candidate with a proof carries the body and one with only a
+/// comparison does not, and both are one rewrite of one condition.
+fn rests_on(found: &crate::syntax::Found) -> Option<Rests> {
+    if let Some(claim) = &found.branch {
+        return Some(Rests {
+            condition: claim.condition,
+            body: Some(claim.body),
+            witnesses: claim.witnesses.clone(),
+        });
+    }
+    let comparable = found.comparable.as_ref()?;
+    Some(Rests {
+        condition: comparable.condition,
+        body: None,
+        witnesses: comparable.witnesses.clone(),
+    })
+}
+
+/// What one candidate rests on: the condition to witness, and the body a branch proof about it names.
+struct Rests {
+    condition: crate::span::Span,
+    body: Option<crate::span::Span>,
+    witnesses: Vec<crate::syntax::branch::Witness>,
 }
 
 /// Writes the witness tree over the pristine sources.

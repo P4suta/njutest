@@ -46,7 +46,7 @@ crates/derive/src/lib.rs:11:21 int-increment unreached
 crates/derive/src/lib.rs:14:9 return-default unreached
 crates/derive/src/lib.rs:20:5 return-default killed
 crates/derive/src/lib.rs:20:8 negate-condition killed
-crates/derive/src/lib.rs:20:10 gt-to-ge survived
+crates/derive/src/lib.rs:20:10 gt-to-ge not_run
 crates/derive/src/lib.rs:20:12 int-decrement survived
 crates/derive/src/lib.rs:20:12 int-increment survived
 crates/derive/src/lib.rs:20:16 int-decrement killed

@@ -299,6 +299,9 @@ pub fn explained(document: &rust_mutants::report::explain::ExplainDocument) -> S
         for (target, tests) in &route.tests {
             say("TESTS", &format!("{target}: {}", tests.join(", ")));
         }
+        for one in &route.discharged {
+            say("PROVED", &format!("{}: {}", one.target, one.proof));
+        }
     }
     say("REPRODUCE", &document.reproduce);
     match (&document.diff, &document.source) {

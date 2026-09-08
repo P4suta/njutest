@@ -168,7 +168,10 @@ fn a_guard_records_the_test_that_saw_its_two_branches_differ() {
     let text = ran(
         "differed",
         "    let alpha = std::thread::Builder::new().name(\"alpha\".to_owned())\n\
-         \x20       .spawn(|| { __rm::differed(0); __rm::differed(0); })\n\
+         \x20       .spawn(|| {\n\
+         \x20           assert!(__rm::differing(0, true, || false));\n\
+         \x20           assert!(!__rm::differing(1, false, || false));\n\
+         \x20       })\n\
          \x20       .expect(\"spawn\");\n\
          \x20   alpha.join().expect(\"join\");\n\
          \x20   let beta = std::thread::Builder::new().name(\"beta\".to_owned())\n\
@@ -193,6 +196,23 @@ fn a_guard_records_the_test_that_saw_its_two_branches_differ() {
         Some(&set(&[0])),
         "though it did reach it"
     );
+    assert_eq!(
+        touches.infected.tests.get("alpha").map(BTreeSet::len),
+        Some(1),
+        "a guard whose two branches answered the same records nothing about that mutant"
+    );
+}
+
+#[test]
+fn a_run_with_nothing_to_record_never_evaluates_the_branch_it_would_have_compared() {
+    let text = ran(
+        "uncompared",
+        "    let mut evaluated = false;\n\
+         \x20   assert!(__rm::differing(0, true, || { evaluated = true; false }));\n\
+         \x20   assert!(!evaluated, \"a run that records nothing pays nothing for the comparison\");",
+        false,
+    );
+    assert!(text.is_empty(), "and writes no record at all: {text:?}");
 }
 
 #[test]

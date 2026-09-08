@@ -549,8 +549,8 @@ pub struct Filter {
     pub skip_families: Vec<String>,
     /// Paths, each with the lines of it the filter is about. Empty selects every file.
     pub files: Vec<(String, Option<(u32, u32)>)>,
-    /// Identities, or prefixes of them. Empty selects every mutant.
-    pub ids: Vec<String>,
+    /// The identities, or prefixes of them, this run is about. `None` where nothing named any, which selects every mutant; a list that names none selects none, because a source of identities that came up empty is an answer rather than the absence of a question.
+    pub ids: Option<Vec<String>>,
 }
 
 impl Filter {
@@ -562,7 +562,7 @@ impl Filter {
             && self.skip_rules.is_empty()
             && self.skip_families.is_empty()
             && self.files.is_empty()
-            && self.ids.is_empty()
+            && self.ids.is_none()
     }
 
     /// Whether this run is about `mutant`, which sits at `line`.
@@ -582,9 +582,8 @@ impl Filter {
         if !self.families.is_empty() && !self.families.iter().any(|one| one == family) {
             return false;
         }
-        if !self.ids.is_empty()
-            && !self
-                .ids
+        if let Some(ids) = &self.ids
+            && !ids
                 .iter()
                 .any(|prefix| mutant.id.starts_with(prefix.as_str()))
         {

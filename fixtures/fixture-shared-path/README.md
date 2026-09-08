@@ -40,7 +40,7 @@ shared/util.rs:8:5 return-true killed
 shared/util.rs:8:7 le-to-lt killed
 shared/util.rs:13:5 return-default killed
 shared/util.rs:13:8 negate-condition killed
-shared/util.rs:13:10 lt-to-le survived
+shared/util.rs:13:10 lt-to-le not_run
 shared/util.rs:13:20 return-default killed
 shared/util.rs:13:35 return-default killed
 ```

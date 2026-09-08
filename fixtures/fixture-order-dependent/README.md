@@ -37,7 +37,7 @@ refuses a difference, and `UPDATE_FATES=1` rewrites the block below.
 ```fates
 src/lib.rs:21:5 return-default killed
 src/lib.rs:21:8 negate-condition killed
-src/lib.rs:21:10 gt-to-ge survived
+src/lib.rs:21:10 gt-to-ge not_run
 src/lib.rs:21:16 return-default unreached
 src/lib.rs:21:27 return-default killed
 src/lib.rs:27:5 return-default killed

@@ -5,6 +5,7 @@
 
 pub mod trace;
 
+use std::collections::BTreeSet;
 use std::fmt::Write as _;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -889,9 +890,11 @@ fn filter(command: &cli::Command, settings: &Settings) -> Result<run::Filter, Cl
     else {
         return Ok(run::Filter::default());
     };
-    let mut ids = ids.clone();
+    let mut named_ids = (!ids.is_empty()).then(|| ids.clone());
     if let Some(named) = from_report {
-        ids.extend(stored_outcomes(settings, named, outcome)?);
+        named_ids
+            .get_or_insert_with(Vec::new)
+            .extend(stored_outcomes(settings, named, outcome)?);
     }
     Ok(run::Filter {
         rules: rules.clone(),
@@ -902,7 +905,7 @@ fn filter(command: &cli::Command, settings: &Settings) -> Result<run::Filter, Cl
             .iter()
             .map(|one| addressed(one))
             .collect::<Result<Vec<_>, _>>()?,
-        ids,
+        ids: named_ids,
     })
 }
 
@@ -1121,21 +1124,44 @@ fn replay(
         }
     }
     let result = session.exec(&request, cancel)?;
-    let before = stored
-        .as_ref()
-        .map_or_else(|| String::from("nothing"), |row| row.outcome.clone());
-    let now = result.outcome.name();
-    let verdict = if before == now {
-        format!("still {now}")
-    } else {
-        format!("was {before}, now {now}")
-    };
     write(
         stdout,
-        &format!("REPLAY    {} {verdict}\n", found.display_id),
+        &format!(
+            "REPLAY    {} {}\n",
+            found.display_id,
+            verdict(stored.as_ref(), result.outcome.name())
+        ),
     );
     write(stdout, &report::outcome(&result, &found));
     Ok(report::exit_code(result.outcome))
+}
+
+/// What the replay establishes about the stored answer.
+///
+/// A mutant a proof discharged has no measured outcome to be the same as: the
+/// run said running it would establish what it already knew, and the replay is
+/// what puts that to the tests. Surviving is the proof holding, and a replay
+/// says so rather than reporting the answer as changed. Anything else is the
+/// proof contradicted, which is a fact about this engine rather than about the
+/// project's tests, and it is said in those words.
+fn verdict(stored: Option<&run_report::RunMutantDocument>, now: &str) -> String {
+    let Some(row) = stored else {
+        return format!("was nothing, now {now}");
+    };
+    let discharged = run::NotRunReason::Discharged.name();
+    let survived = rust_mutants::outcome::Outcome::Survived.name();
+    if row.not_run_reason.as_deref() == Some(discharged) {
+        return if now == survived {
+            format!("{now}, which is the proof that discharged it holding")
+        } else {
+            format!("{now}, and a proof discharged it: the proof is wrong")
+        };
+    }
+    if row.outcome == now {
+        format!("still {now}")
+    } else {
+        format!("was {}, now {now}", row.outcome)
+    }
 }
 
 /// What a stored run said about one mutant, when a stored run said anything.
@@ -1664,6 +1690,7 @@ fn instrumented(
         source: &source,
         placements: &placements,
         markers: &[],
+        comparable: &BTreeSet::default(),
         catalog_digest: discovery.catalog.digest(),
     })
     .map_err(EngineError::from)?;

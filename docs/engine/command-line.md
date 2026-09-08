@@ -62,7 +62,7 @@ read them too, so what those preview is what a run would do.
 | `--mutant PREFIX` | one mutant |
 | `--coverage`, `--no-coverage` | build once with LLVM coverage instrumentation, and route by what it measured |
 | `--no-touch` | do not ask the guards which of each target's tests reached them, and so run every test of every target that could |
-| `--probe` | ask each test what it would have noticed |
+| `--probe` | build the probe tree, which asks each test what it would have noticed at the sites a guard cannot compare on its own |
 | `--equivalence` | ask the compiler whether a survivor's mutation is one it renders identically |
 | `--no-cache` | do not read back what an earlier run of this tree established |
 | `--keep-temp` | keep the snapshot and its build cache, and record where |

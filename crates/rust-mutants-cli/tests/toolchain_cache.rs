@@ -154,6 +154,39 @@ fn replaying_a_recorded_outcome_asks_the_question_the_run_asked() {
     );
     let text = said(&output);
     assert!(
+        text.contains(
+            "REPLAY    e5e872bfbcb2afbbf7a1 survived, which is the proof that \
+                       discharged it holding"
+        ),
+        "the run proved this mutation cannot be noticed rather than running it, and the \
+         replay is what puts that proof to the tests: {text}"
+    );
+    assert_eq!(output.status.code(), Some(1), "{text}");
+}
+
+#[test]
+fn replaying_a_mutant_a_run_measured_says_whether_the_answer_is_still_the_same() {
+    let fixture = Fixture::copy("fixture-simple");
+    let _measured = against(
+        &fixture,
+        &[
+            "run",
+            "--offline",
+            "--locked",
+            "--tier",
+            "all",
+            "--no-coverage",
+            "--no-touch",
+            "--ui",
+            "quiet",
+        ],
+    );
+    let output = against(
+        &fixture,
+        &["replay", "--offline", "--locked", "--tier", "all", "e5e8"],
+    );
+    let text = said(&output);
+    assert!(
         text.contains("REPLAY    e5e872bfbcb2afbbf7a1 still survived"),
         "a replay says whether the answer is still the same: {text}"
     );

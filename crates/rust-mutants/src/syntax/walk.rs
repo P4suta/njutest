@@ -475,17 +475,16 @@ impl<'a> Walker<'a> {
             allow_at: self.frames.last().and_then(|frame| frame.allow_at),
         };
         let position = self.index.position(self.src, edit.span.start);
-        let branch = self
-            .gates
-            .last()
-            .and_then(Option::as_ref)
-            .and_then(|gate| gate.claim(rule_name, edit.span));
+        let gate = self.gates.last().and_then(Option::as_ref);
+        let branch = gate.and_then(|gate| gate.claim(rule_name, edit.span));
+        let comparable = gate.and_then(|gate| gate.comparable(edit.span));
         self.found.push(Found {
             candidate,
             position,
             item,
             hint,
             branch,
+            comparable,
             probe: edit.probe,
         });
         self.decide(edit.span.start, rule_name, Outcome::Candidate(site.form));

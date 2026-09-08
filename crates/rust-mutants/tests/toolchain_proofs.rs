@@ -160,10 +160,30 @@ fn a_target_that_never_ran_the_body_is_discharged_by_the_branch_proof() {
          mutation, and running it proves nothing and costs a process"
     );
     assert!(
-        named
-            .iter()
-            .all(|proof| *proof == rust_mutants::session::BRANCH_NEVER_TAKEN),
+        named.contains(&rust_mutants::session::BRANCH_NEVER_TAKEN),
         "{named:?}"
+    );
+    session.close().expect("close");
+}
+
+#[test]
+fn a_mutation_whose_two_branches_never_parted_is_discharged_without_a_probe_tree() {
+    let fixture = Fixture::copy("fixture-coverage");
+    let session = prepared(&fixture, false);
+    assert!(
+        session.probed().asked.is_empty(),
+        "the probe tree is not what says so here"
+    );
+    let mut named = Vec::new();
+    for mutant in session.catalog().mutants() {
+        for one in session.route(mutant).discharged() {
+            named.push(one.proof);
+        }
+    }
+    assert!(
+        named.contains(&rust_mutants::session::NEVER_INFECTED),
+        "a guard the compiler vouched for holds both branches, and a run that never saw them \
+         answer differently ran a program the mutation does not change: {named:?}"
     );
     session.close().expect("close");
 }
