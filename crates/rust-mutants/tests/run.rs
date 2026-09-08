@@ -348,13 +348,34 @@ fn a_proof_removing_a_mutation_and_nothing_reaching_it_are_counted_and_named_apa
         "each reason is counted in its own column, or a reader is told a proof removed what \
          nothing reached: {tally:?}"
     );
-    let kinds: Vec<FindingKind> = run.findings().iter().map(|one| one.kind).collect();
+    let found = run.findings();
+    let kinds: Vec<FindingKind> = found.iter().map(|one| one.kind).collect();
     assert_eq!(
         kinds,
         [FindingKind::UnreachedMutant, FindingKind::DischargedMutant],
         "and the finding says the same, in the order the rows are in: a reader told the wrong \
          one checks the proof when they should write a test, or the other way about"
     );
+    assert!(
+        found[0].detail.contains("no measured test reaches")
+            && found[0].detail.contains("never execute"),
+        "and the sentence the reader acts on says that nothing ran the code: {:?}",
+        found[0].detail
+    );
+    assert!(
+        found[1].detail.contains("removed by a proof") && found[1].detail.contains("never observe"),
+        "and that a proof removed every target that could have noticed: {:?}",
+        found[1].detail
+    );
+    for (at, one) in found.iter().enumerate() {
+        assert!(
+            one.detail
+                .contains(&format!("{:020x}", at.saturating_add(1))),
+            "and each names the mutation it is about, because a reader with a list of findings \
+             and no names has nothing to look up: {:?}",
+            one.detail
+        );
+    }
 }
 
 #[test]
