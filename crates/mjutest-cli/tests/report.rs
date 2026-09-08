@@ -318,3 +318,51 @@ fn a_run_that_looked_at_part_of_a_workspace_does_not_assure_all_of_it() {
     report.verdict = Verdict::ScopeAssured;
     assert_eq!(validate_for_persistence(&report), Vec::new());
 }
+
+#[test]
+fn one_survivor_nobody_accepted_is_one_too_many() {
+    let mut accepted = sound();
+    accepted.accounting.mutants.cataloged = 1;
+    accepted.accounting.mutants.executed = 1;
+    accepted.accounting.mutants.survived = 1;
+    accepted.accounting.mutants.accepted = 1;
+
+    let mut unaccepted = accepted.clone();
+    unaccepted.accounting.mutants.accepted = 0;
+
+    assert!(
+        !validate_for_persistence(&accepted)
+            .iter()
+            .any(|violation| matches!(violation, Violation::VerdictUnsupported { .. })),
+        "a survivor a reviewer accepted with a reason is one the run may still assure \
+         around: {:?}",
+        validate_for_persistence(&accepted)
+    );
+    assert!(
+        validate_for_persistence(&unaccepted)
+            .iter()
+            .any(|violation| matches!(violation, Violation::VerdictUnsupported { .. })),
+        "and the one after it is not: this is the boundary the whole contract turns on, \
+         so it is the count itself that has to be compared and not the count plus room \
+         for one: {:?}",
+        validate_for_persistence(&unaccepted)
+    );
+}
+
+#[test]
+fn a_target_record_that_says_it_failed_is_not_answered_by_an_accounting_that_says_none_did() {
+    let mut report = sound();
+    report.targets[2].status = TargetStatus::Failed;
+
+    let violations = validate_for_persistence(&report);
+
+    assert!(
+        violations
+            .iter()
+            .any(|violation| matches!(violation, Violation::VerdictUnsupported { .. })),
+        "the accounting adds up and the records are all there, and one of them still \
+         says it failed while the accounting says none did. A reader who trusts the \
+         counts and a reader who reads the rows would come to two different answers \
+         about the same run: {violations:?}"
+    );
+}
