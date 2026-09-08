@@ -6,6 +6,7 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
+use mjutest_cli::assure::mutation::{Disposition, inherited};
 use mjutest_cli::checkpoint::{
     CheckpointError, SCHEMA, SavedMutant, SavedTarget, State, clear, path_of, read, write,
 };
@@ -223,4 +224,73 @@ fn state_that_carries_a_disposition_a_run_cannot_inherit_is_refused() {
     .expect("write");
     let error = read(dir.path(), &identity).expect_err("a claim no run made");
     assert!(error.to_string().contains("survived"), "{error}");
+}
+
+#[test]
+fn a_resumed_run_carries_the_two_facts_a_checkpoint_may_hold_and_reads_nothing_else_as_one() {
+    let killed = SavedMutant {
+        id: "m1".to_owned(),
+        disposition: "killed".to_owned(),
+        killed_by: Some("pkg/lib/pkg one".to_owned()),
+        duration_ms: 5,
+    };
+    let expired = SavedMutant {
+        disposition: "timed_out".to_owned(),
+        ..killed.clone()
+    };
+
+    assert_eq!(
+        inherited(&killed),
+        Some(Disposition::Killed {
+            by: "pkg/lib/pkg one".to_owned()
+        }),
+        "a test noticed the mutation on this tree, and that stays true however the next \
+         run routes: re-running it would spend the time to learn what is already known"
+    );
+    assert_eq!(
+        inherited(&expired),
+        Some(Disposition::TimedOut {
+            on: "pkg/lib/pkg one".to_owned()
+        }),
+        "and a run that gave up on the clock is the same kind of fact about the same \
+         tree, which is why both are saved and nothing else is"
+    );
+
+    for disposition in [
+        "survived",
+        "unreached",
+        "errored",
+        "unconfirmed",
+        "rejected",
+    ] {
+        let other = SavedMutant {
+            disposition: disposition.to_owned(),
+            ..killed.clone()
+        };
+        assert_eq!(
+            inherited(&other),
+            None,
+            "{disposition} depends on how the run routed, and a resumed run routes at \
+             file granularity, so carrying it would make the report say a claim this \
+             run never made"
+        );
+    }
+}
+
+#[test]
+fn a_kill_a_checkpoint_cannot_attribute_is_one_a_resumed_run_judges_again() {
+    let anonymous = SavedMutant {
+        id: "m1".to_owned(),
+        disposition: "killed".to_owned(),
+        killed_by: None,
+        duration_ms: 5,
+    };
+
+    assert_eq!(
+        inherited(&anonymous),
+        None,
+        "the report a resumed run ends in has to say which test noticed each mutation, \
+         and inheriting a kill with nobody's name on it would put a killed row in it \
+         that names nobody"
+    );
 }

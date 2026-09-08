@@ -685,7 +685,15 @@ fn answered(route: &Route, evidence: &Evidence) -> Option<Vec<String>> {
 }
 
 /// The disposition a checkpoint's record stands for, or nothing when this release does not inherit it.
-fn inherited(saved: &crate::checkpoint::SavedMutant) -> Option<Disposition> {
+///
+/// A kill and a timeout are facts about this tree that stay true however the
+/// next run routes, and both name the target they happened on: a kill nobody
+/// can attribute is not one a resumed run may carry, because the report it
+/// ends in has to say which test noticed. Every other disposition depends on
+/// how the run routed and is re-derived. [`crate::checkpoint`] refuses to
+/// write or read one; this refuses to read it as anything.
+#[must_use]
+pub fn inherited(saved: &crate::checkpoint::SavedMutant) -> Option<Disposition> {
     let by = saved.killed_by.clone()?;
     match saved.disposition.as_str() {
         "killed" => Some(Disposition::Killed { by }),
