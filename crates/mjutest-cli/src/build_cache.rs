@@ -26,7 +26,7 @@ pub const MARKER_NAME: &str = "mjutest-build-cache-v1.json";
 pub enum Layer {
     /// What `cargo test --no-run` and the doctest build produce.
     Native,
-    /// The `-C instrument-coverage` build.
+    /// What an earlier release's `-C instrument-coverage` build produced. Nothing fills it now, and it is named so that a collection can still take it away.
     Coverage,
     /// What the engine builds from its instrumented snapshot.
     Mutants,

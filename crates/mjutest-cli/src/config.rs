@@ -152,8 +152,6 @@ impl Default for Execution {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Mutation {
-    /// Build and run the probe tree, which says which tests could not have noticed a return replacement however far they ran. It costs one more build and one more run of the suite, and saves every execution it discharges.
-    pub probe: bool,
     /// Ask the compiler whether it renders each surviving mutation identically to the code it mutates. It costs two builds of a tree of its own for every survivor whose premises hold, and it removes a finding only where no test could have noticed the mutation.
     pub equivalence: bool,
 }
@@ -547,7 +545,6 @@ contract = \"standard-v1\"        # \"standard-v1\" | \"deep-v1\"
 # jobs = 0                       # mutation workers; 0 = logical CPUs, capped
 
 [mutation]
-# probe = false                  # build and run the probe tree, which discharges
 # equivalence = false            # ask the compiler about every survivor
 
 [cache]

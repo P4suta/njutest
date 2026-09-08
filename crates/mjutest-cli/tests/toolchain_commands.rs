@@ -158,11 +158,7 @@ fn trace_summary_counts_the_events_and_finds_nothing_wrong_with_a_complete_recor
 #[test]
 fn trace_summary_says_how_many_executions_each_proof_removed() {
     let fixture = fixture("fixture-probeable");
-    std::fs::write(
-        fixture.root.join(".mjutest.toml"),
-        "version = 1\n\n[mutation]\nprobe = true\n",
-    )
-    .expect("a configuration");
+    std::fs::write(fixture.root.join(".mjutest.toml"), "version = 1\n").expect("a configuration");
     let verified = mjutest(&fixture, &["verify", "--offline", "--locked", "--trace"]);
     assert_eq!(
         verified.status.code(),

@@ -37,7 +37,6 @@ timeout = "10m"                 # upper bound for one executed command; Go durat
 jobs = 0                        # mutation workers; 0 = logical CPUs capped at four
 
 [mutation]
-probe = false                   # build and run the probe tree, which discharges what could not have noticed
 equivalence = false             # ask the compiler whether it renders each survivor identically
 
 [cache]

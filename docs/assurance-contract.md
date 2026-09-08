@@ -165,56 +165,67 @@ execution, and reported as a `surviving-mutant`. That no test takes the branch
 the mutation narrows is the finding — a real gap in the suite, stated for the
 cost of reading a record the baseline already wrote.
 
-### Discharging a test the probe pass shows cannot observe the mutation
+### Discharging a test that never saw the mutation make a difference
 
-A reaching set the measurement decided is narrowed a second time by what the probe
-pass measured. Write reaching for the routing decision as a whole:
+A reaching set the measurement decided is narrowed a second time by what the
+guards recorded. Write reaching for the routing decision as a whole:
 
 ```text
 reaching(m, t) = touched(m, t)
                ∧ ¬branch-discharged(m, t)
-               ∧ ¬(probed(m) ∧ measured(t) ∧ m ∉ infected(t))
+               ∧ ¬(compared(m) ∧ measured(t) ∧ m ∉ infected(t))
 ```
 
-The probe tree is the program the user wrote, with no mutant ever active. For
-each mutation the engine has a probe form of, that tree records — without
-effects of its own — whether the value the original computed at the mutated
-site ever differed from the constant the mutant would put there. The engine
-runs a test binary whole and records what that binary infected, so what the
-pass measures is a binary rather than one of its tests; a binary that never saw
-the site differ is one whose every test never saw it differ, and each of that
-binary's targets ran the original program and the mutated one through identical
-states. None of them can have observed the mutation. Such a target is
-*discharged* with reason `never-infected`. The coarseness costs discharges and
-never soundness: one test of a binary seeing the site differ keeps every test of
-that binary.
+The guard the instrumented tree carries for a mutation has two sides: the one
+the mutant takes when it is active, and the one the original takes when it is
+not. For a mutation the engine has a question for, the second side compares the
+value the original computed at the mutated site against the one the mutant
+would have put there, and records the site when the two differ. Nothing is
+built or run for this. The run that establishes the baseline is the run that
+records it, and it is the same run that records which test reached which site:
+one execution answers both questions, because the questions are about the same
+moment.
+
+The engine runs a test binary whole, so what it records is that some test of a
+binary saw the site differ and not which one; a binary that never saw it differ
+is one whose every test ran the original program and the mutated one through
+identical states, and none of them can have observed the mutation. Such a
+target is *discharged* with reason `never-infected`. The coarseness costs
+discharges and never soundness: one test of a binary seeing the site differ
+keeps every test of that binary.
 
 That the recording is a proof is the engine's obligation. A mutant does not
-evaluate the operand it replaced, so rust-mutants attaches a probe form only
-where leaving that operand unevaluated changes nothing observable — every
-operand of the statement is effect-free — where the recorded comparison is
-always reached — the replaced operand cannot panic — and where equal values
-mean equal behaviour. That last one is the narrowest. A probe reads `==` as the
-answer to whether a test could have seen the replacement, so it is stated only
-for the types whose equality is the whole of what a program can tell apart: the
-integers, `bool`, `char`, and the unit. The compiler itself refuses every other
-probe. A float is refused because `-0.0 == 0.0` holds and `-0.0` is not what
-the default writes; an equality that answers about one field while a test reads
-another is refused because the probe would otherwise say a test saw nothing
-while it watched the difference, and the discharge would remove the test that
-finds the defect. mjutest states nothing about a site the engine did not claim,
-and holds what the engine does claim to the recorded kills of every dogfood
-run through the offline `proofaudit` infection layer.
+evaluate the operand it replaced, so a question is attached only where leaving
+that operand unevaluated changes nothing observable — every operand of the
+statement is effect-free — where the recorded comparison is always reached —
+the replaced operand cannot panic — and where equal values mean equal
+behaviour. That last one is the narrowest, and it is the compiler that enforces
+it: the comparison is written against a sealed trait, and a type outside it
+does not compile. What is inside is the integers, `bool`, `char`, the unit,
+`str`, `String`, `Option<T>`, `Vec<T>`, and a reference to any of them — the
+types whose equality is the whole of what a program can tell apart. A float is
+refused because `-0.0 == 0.0` holds and `-0.0` is not what the default writes;
+an equality that answers about one field while a test reads another is refused
+because it would otherwise say a test saw nothing while it watched the
+difference, and the discharge would remove the test that finds the defect.
+
+The question is put to the compiler before it is written into the tree that has
+to build, on the pass that already asks whether each mutation is accepted. A
+site the compiler will not vouch for loses its question and keeps its mutation:
+the mutant is executed and measured like any other. mjutest states nothing
+about a site the engine did not claim, and holds what the engine does claim to
+the recorded kills of every dogfood run through the offline `proofaudit`
+infection layer.
 
 The narrowing applies only where the measurement carries it, and everything
-else is kept. A mutant the engine compiled no probe form for — `probed` is
-false — is absent from every measurement there will ever be, so its absence
-from one says nothing. A target the pass did not measure carries no facts at
-all. Both proofs may answer for targets of the same route; they are applied in
-order — branch first, then infection.
+else is kept. A mutation the instrumented tree carries no comparison for —
+`compared` is false — is absent from every measurement there will ever be, so
+its absence from one says nothing. A target the guards did not record carries
+no facts at all. Both proofs may answer for targets of the same route; they are
+applied in order — branch first, then infection.
 
-The probe narrows and never widens. The pass runs each test binary whole, so
-what it records is that some test in a binary infected the mutation and not
+The infection layer narrows and never widens. It records per binary, so what it
+holds is that some test of a binary saw the mutation make a difference and not
 which one: putting a target back on the strength of that would put every test
 of the binary back, whatever the record of each said. The case it would be for
 — a measurement silent about work the tests do — is the one a fallback already
