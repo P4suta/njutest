@@ -1458,7 +1458,7 @@ fn a_route_the_guards_narrowed_by_a_comparison_is_re_decided_from_it() {
     let audit = with_record(&document, &recorded);
     assert!(
         violations(&audit, Layer::Touch).is_empty(),
-        "a test that reached the site and never saw the two readings part is one the route \
+        "a test that reached the site and never saw the two branches part is one the route \
          may leave out: {:?}",
         violations(&audit, Layer::Touch)
     );

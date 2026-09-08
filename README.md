@@ -119,7 +119,7 @@ REPRODUCE rust-mutants run --mutant e5e872bfbcb2afbbf7a1
 ```
 
 That mutation is never run. The guards of the instrumented tree hold both
-readings of `a > b`, and on the one baseline run they never answered
+branches at `a > b`, and on the one baseline run they never answered
 differently, so the engine reports what running it would have established
 rather than spending a process on it
 ([ADR 0015](docs/adr/0015-the-guard-is-the-infection-probe.md)). It is a

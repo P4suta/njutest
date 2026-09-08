@@ -16,7 +16,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde_json::Value;
 
 use super::recording::events;
-use super::{Audit, Evidence, Layer, NOT_RUN, Notes, Report, Row, number, plural, string};
+use super::{
+    Audit, BRANCH_NEVER_TAKEN, DISCHARGED, Evidence, Layer, NEVER_INFECTED, NOT_RUN, Notes, Report,
+    Row, number, plural, string,
+};
 
 /// Every place a rule targets, against the decision the walk took about it.
 ///
@@ -437,7 +440,7 @@ impl Recorded {
 /// Which of the records the tree could say anything about, which is what turns an absence into evidence.
 #[derive(Debug, Default)]
 struct Narrowing {
-    /// Every mutant whose guard evaluates its two readings, so `infected` is about it.
+    /// Every mutant whose guard evaluates its two branches, so `infected` is about it.
     compared: BTreeSet<u64>,
     /// The marker each mutant's branch proof rests on, so `bodies` is about it.
     bodies: BTreeMap<u64, u64>,
@@ -541,7 +544,7 @@ struct Touches {
     reached: Seen,
     /// The proved bodies each test entered, by the marker at the body's first statement.
     bodies: Seen,
-    /// The mutations each test saw a guard's two readings part over.
+    /// The mutations each test saw a guard's two branches part over.
     infected: Seen,
     /// How many tests of this target the baseline ran, which is what "all of them" counts against.
     ran: usize,
@@ -564,7 +567,7 @@ impl Touches {
     ///
     /// Three records answer it and a test has to survive all three: it reached
     /// the site, it entered the body a branch proof about the mutation names,
-    /// and it saw the guard's two readings part. The last two are absences,
+    /// and it saw the guard's two branches part. The last two are absences,
     /// and `narrowing` is what says the tree would have broken them.
     ///
     /// The order is the engine's, and it has to be. A target every test of
@@ -618,16 +621,12 @@ pub(super) fn proofs(report: &Report, evidence: &Evidence<'_>, audit: &mut Audit
     let discharged = report
         .mutants
         .iter()
-        .filter(|row| row.not_run_reason.as_deref() == Some("discharged"))
+        .filter(|row| row.not_run(DISCHARGED))
         .count();
-    let counted = report
-        .columns
-        .get("discharged")
-        .copied()
-        .unwrap_or_default();
+    let counted = report.columns.get(DISCHARGED).copied().unwrap_or_default();
     if u64::try_from(discharged).unwrap_or(u64::MAX) != counted {
         notes.violated(
-            "discharged",
+            DISCHARGED,
             format!(
                 "the accounting says {counted} mutants were discharged and {discharged} rows \
                  say so"
@@ -749,11 +748,11 @@ fn branch_discharges(
     let mut branch: Vec<&Discharged> = Vec::new();
     for claim in claims
         .iter()
-        .filter(|claim| claim.proof == "branch-never-taken")
+        .filter(|claim| claim.proof == BRANCH_NEVER_TAKEN)
     {
         match recorded.and_then(|one| entered_the_body(one, claim)) {
             Some(true) => notes.violated(
-                "branch-never-taken",
+                BRANCH_NEVER_TAKEN,
                 format!(
                     "the guards of {} say it entered the body {} sits in, so it may have \
                      noticed it",
@@ -769,7 +768,7 @@ fn branch_discharges(
     }
     let (Some(reached), Some(catalog)) = (evidence.reached, evidence.catalog) else {
         notes.unaudited(
-            "branch-never-taken",
+            BRANCH_NEVER_TAKEN,
             format!(
                 "{} discharges the guards say nothing about rest on a measurement and a \
                  catalog the run did not keep",
@@ -780,14 +779,14 @@ fn branch_discharges(
     };
     let Ok(reached) = serde_json::from_str::<Value>(reached) else {
         notes.unaudited(
-            "branch-never-taken",
+            BRANCH_NEVER_TAKEN,
             "the measurement the run kept is not a document".to_owned(),
         );
         return;
     };
     let Ok(catalog) = serde_json::from_str::<Value>(catalog) else {
         notes.unaudited(
-            "branch-never-taken",
+            BRANCH_NEVER_TAKEN,
             "the catalog the run kept is not a document".to_owned(),
         );
         return;
@@ -795,14 +794,14 @@ fn branch_discharges(
     for claim in branch {
         let Some(row) = mutant_row(&catalog, &claim.mutant) else {
             notes.unaudited(
-                "branch-never-taken",
+                BRANCH_NEVER_TAKEN,
                 format!("the catalog holds no row for {}", claim.mutant),
             );
             continue;
         };
         let Some(body) = row.get("branch") else {
             notes.violated(
-                "branch-never-taken",
+                BRANCH_NEVER_TAKEN,
                 format!(
                     "{} was discharged from {} by a branch proof the catalog does not hold",
                     claim.mutant, claim.target
@@ -813,7 +812,7 @@ fn branch_discharges(
         let path = string(row, "path").unwrap_or_default();
         if ran_the_body(&reached, &claim.target, &path, body) {
             notes.violated(
-                "branch-never-taken",
+                BRANCH_NEVER_TAKEN,
                 format!(
                     "{} covered a region inside the body {} sits in, so it may have noticed it",
                     claim.target, claim.mutant
@@ -863,13 +862,10 @@ fn infection_discharges(
     evidence: &Evidence<'_>,
     notes: &mut Notes<'_>,
 ) {
-    for claim in claims
-        .iter()
-        .filter(|claim| claim.proof == "never-infected")
-    {
+    for claim in claims.iter().filter(|claim| claim.proof == NEVER_INFECTED) {
         match recorded.and_then(|one| saw_a_difference(one, claim)) {
             Some(true) => notes.violated(
-                "never-infected",
+                NEVER_INFECTED,
                 format!(
                     "the guards of {} say the two branches of {} answered differently there, \
                      so it may have noticed it",
@@ -881,7 +877,7 @@ fn infection_discharges(
                 let wanted = format!("{}.log", claim.target.replace('/', "-"));
                 if !evidence.probe_logs.iter().any(|name| name == &wanted) {
                     notes.unaudited(
-                        "never-infected",
+                        NEVER_INFECTED,
                         format!(
                             "{} was discharged from {} by a probe whose log the run did not keep",
                             claim.mutant, claim.target

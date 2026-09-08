@@ -764,7 +764,7 @@ impl Session {
     /// branch proof: one whose profile could not be read is in the route
     /// because nothing is known about it, and a proof resting on its silence
     /// would rest on the measurement's failure. The guards answer about the
-    /// mutants whose two readings the tree they were in compares, and the
+    /// mutants whose two branches the tree they were in compares, and the
     /// probe about the targets it ran; a mutant either never asked about is
     /// one it says nothing about.
     fn proof_against(&self, mutant: &Mutant, target: &str) -> Option<&'static str> {
@@ -807,7 +807,7 @@ impl Session {
     /// Two records narrow, and a test has to survive both. One that never
     /// entered the body a branch proof names ran a condition the mutation
     /// leaves false as well. One that ran a compared guard and never saw its
-    /// two readings part ran a program indistinguishable from the unmutated
+    /// two branches part ran a program indistinguishable from the unmutated
     /// one. A target *nothing* of which survives is discharged, and the proof
     /// named is the record that emptied it.
     ///

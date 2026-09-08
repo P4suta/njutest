@@ -37,7 +37,7 @@ that lets it be seen, tested, and audited — and both are completion criteria.
 | E8 ✓ | The engine as a product | a run says what it is doing while it does it and streams `rust-mutants-run-stream-v1` for a program, `--fail-fast` and seven filters narrow it after the catalog, `--dry-run` prices it, `explain` and `replay` answer from what was stored, `doctor` grades thirteen checks and `diagnostics` gathers one run into one directory, `cache`/`merge --runs`/`run --run-id` name what a sharded run leaves, `rules` lists what a team can pin, and a stored run projects into markdown, JUnit, SARIF, a page that shows every survivor in place, and Stryker | the run-stream, explain, doctor, reached and diagnostics schemas, the two-way test between the command-line page and `--help`, the subcommand help golden, the README session recorded from the binary, the terminal browser's five recorded frames, and the ledger that keeps `schema/` and its page equal in both directions | a bug report is one command, every flag is on one page, and the README shows what the tool actually prints |
 | E9 ✓ | Answering without running | a run is counted in pairs of one mutant and one target rather than in seconds, what removed each pair is named and labelled a proof, a sufficient answer, a remembered one or a narrower question, and a remembered answer is keyed on the sources the build compiled, the manifests that chose its dependencies and the toolchain that compiled it rather than on the digest of a whole tree | `rust_mutants::work::Work` derived from the stored report alone, the `work` audit layer that holds it to the recording, `xtask/work_ceiling.txt` as a ratchet that may shrink and never grow, and the differential harness that runs four fixtures with every layer on and every layer off and holds the two answers to each other | the engine does less for the same question every release, and a test says so |
 | E10 ✓ | The guards are the measurement | reach is recorded by the guards on the run that verifies the baseline, so a mutation goes to the tests that reached it and no coverage build is made | `touched-v1.json` and the audit layer that re-decides from it, `fixture-order-dependent`, `fixture-threaded`, the differential harness over every combination of the two measurements, ADR 0014 | the answer is the one a run with nothing removed gives, and the tests started fall from 46 to 18 on `fixture-coverage` |
-| E11 ✓ | The difference that never was | a guard whose condition the compiler vouched for evaluates both of its readings on the baseline and records where they parted, so `never-infected` is a default layer with no tree, no build and no run of its own | `narrowing` in `touched-v1.json` and the audit layer that re-derives both kinds of discharge from it, the instrumenter reporting which guards it actually wrote the call into, ADR 0015 | eight fixtures stop starting a process for a mutation nothing could have noticed, and the answer is still the one a run with nothing removed gives |
+| E11 ✓ | The difference that never was | a guard whose condition the compiler vouched for evaluates both of its branches on the baseline and records where they parted, so `never-infected` is a default layer with no tree, no build and no run of its own | `narrowing` in `touched-v1.json` and the audit layer that re-derives both kinds of discharge from it, the instrumenter reporting which guards it actually wrote the call into, ADR 0015 | eight fixtures stop starting a process for a mutation nothing could have noticed, and the answer is still the one a run with nothing removed gives |
 
 ## What E11 closed
 
@@ -46,13 +46,13 @@ the same thing anyway — had an answer that cost a **second instrumented
 tree**: another build of the workspace and another run of every target, which
 is why `--probe` was off by default and why the layer almost never fired.
 
-The instrumented tree already holds both readings at every site. What stopped
+The instrumented tree already holds both branches at every site. What stopped
 a run from evaluating both is that evaluating a mutation is running the
 program's code. But the witness pass of
 [ADR 0008](adr/0008-compiler-validated-acceptance-and-the-type-witness-pass.md)
 already asks the compiler exactly when it is not: a condition of primitives,
 comparisons and connectives runs none of it, and a swap of one of its
-operators leaves it that way. So a guard there evaluates both readings and
+operators leaves it that way. So a guard there evaluates both branches and
 records every time they parted, on the run that was already recording reach
 ([ADR 0015](adr/0015-the-guard-is-the-infection-probe.md)).
 

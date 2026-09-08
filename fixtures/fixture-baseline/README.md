@@ -26,7 +26,7 @@ Seven mutants, five killed and two nothing could have noticed — and the two ar
 | --- | --- | --- |
 | `src/lib.rs:8:5` | `return-default@1` | killed by `tests::sign_names_both_sides_of_zero` |
 | `src/lib.rs:8:8` | `negate-condition@1` | killed by the same test |
-| `src/lib.rs:8:10` | `gt-to-ge@1` | **discharged**: only `sign(0)` tells `>` from `>=`, so the guard's two readings never parted in the run that verified the baseline, and a run that started it would have found it survives |
+| `src/lib.rs:8:10` | `gt-to-ge@1` | **discharged**: only `sign(0)` tells `>` from `>=`, so the guard's two branches never parted in the run that verified the baseline, and a run that started it would have found it survives |
 | `src/lib.rs:10:15` | `negate-condition@1` | killed by the same test |
 | `src/lib.rs:10:17` | `lt-to-le@1` | **discharged**: for the same reason, on the other side of zero |
 | `src/lib.rs:19:5` | `return-default@1` | killed by `doubling::doubling_is_addition_twice` |
@@ -34,7 +34,7 @@ Seven mutants, five killed and two nothing could have noticed — and the two ar
 
 The two are the gap `#[ignore]` left, and no amount of green in the suite
 would have shown it. That is what the phase is for. Neither is *run*: the
-guards of the instrumented tree evaluated both readings of each condition on
+guards of the instrumented tree evaluated both branches at each condition on
 the baseline and never saw them part, so the run reports them as discharged
 mutations nothing could have noticed rather than as survivors it measured
 ([ADR 0015](../../docs/adr/0015-the-guard-is-the-infection-probe.md)). A

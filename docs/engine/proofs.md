@@ -147,7 +147,7 @@ mutation on an operator the connectives of an inert condition reach —
 `a < b` inside `if a < b && c`, say — leaves the condition inert: the same
 operands, another operator of the same class, and the compiler has already
 vouched for the operands through the witness tree the branch proofs use. A
-guard there holds both readings, so the baseline evaluates both and records
+guard there holds both branches, so the baseline evaluates both and records
 every time they part. A target whose record never names the mutant ran a
 program that answered what the unmutated one answers wherever it looked, and
 by induction ran identically. There is no second tree, no second run, and the

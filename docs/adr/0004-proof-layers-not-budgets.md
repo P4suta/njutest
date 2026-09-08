@@ -46,7 +46,7 @@ run already collects can sometimes establish before any mutant is built.
    because a lemma over evidence the run already holds says the execution
    could not observe the mutant. The layers are ordered by the way a mutant
    survives — reach (nothing of the target reached the site), infection (a
-   branch proof, a guard that never saw its two readings part, or a probe
+   branch proof, a guard that never saw its two branches part, or a probe
    that never saw the site differ), and propagation, which is the next to
    build. A layer that cannot establish its premise keeps the execution; the
    fallbacks are toward running more.

@@ -18,7 +18,7 @@
 //! each cast leaves a [`Witness`] for the compiler to accept or refuse
 //! (ADR 0008).
 //!
-//! The same inertness answers a second question. A guard holds both readings
+//! The same inertness answers a second question. A guard holds both branches
 //! of its site, and where the whole condition is inert an edit on one of the
 //! operator tokens the connectives reach leaves it inert — the same operands
 //! under another operator of the same class — so a run may evaluate both and

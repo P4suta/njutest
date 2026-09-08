@@ -12,7 +12,7 @@ needs nothing is not listed.
 ## Upgrading to E11
 
 **`never-infected` no longer needs the probe tree for a mutation inside an
-inert condition.** A guard holds both readings of its site, and where the
+inert condition.** A guard holds both branches at its site, and where the
 compiler has vouched that evaluating either runs none of the program's code —
 an operator the connectives of an `if` or `while` condition reach — the
 baseline evaluates both and records every time they parted. A target that

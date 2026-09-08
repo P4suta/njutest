@@ -206,7 +206,7 @@ A run writes `touched-v1.json` (`schema/rust-mutants-touched-v1.json`),
 `catalog-v1.json` beside its report, and copies every probe log into
 `probe/`. They are the premises its proof layers rest on: what each target's
 guards recorded about which of its tests reached which mutation, entered
-which proved body, and saw which guard's two readings part — with
+which proved body, and saw which guard's two branches part — with
 `narrowing` saying which mutants the tree could record anything about, so an
 absence in it is evidence rather than silence — the measurement the coverage
 build left behind, empty when nothing was measured, which says so, the

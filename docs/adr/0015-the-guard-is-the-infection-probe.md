@@ -27,7 +27,7 @@ run will actually use. On a workspace where preparing is already most of the
 wall clock that is not a layer a default run can afford, and `--probe` is off
 by default because of it.
 
-Meanwhile the instrumented tree already holds **both** readings at every site.
+Meanwhile the instrumented tree already holds **both** branches at every site.
 A guard is `active(i) && (mutation) || !active(i) && (original)`: the mutation
 is written there, in the file, one branch away from what it replaces. What
 stopped a run from evaluating both is that evaluating the mutation is running
@@ -45,7 +45,7 @@ tree, which the one `cargo check` of `prove::establish` already builds.
 ## Decision
 
 Where the compiler has vouched that a condition is inert, the guard evaluates
-both of its readings and records every time they parted.
+both of its branches and records every time they parted.
 
 The edit has to sit on an operator token the connectives of the condition
 reach — `<`, `<=`, `>`, `>=`, `==`, `!=`, `&&`, `||`. Every rule that fires
@@ -71,7 +71,7 @@ the layer costs **nothing** — no tree, no build, no run — and it is per test
 because libtest names each test's thread after the test.
 
 A target whose record never names the mutant is discharged `never-infected`. A
-target that is kept is asked only for the tests that did see the two readings
+target that is kept is asked only for the tests that did see the two branches
 part.
 
 What a guard may compare is decided three times over, and the run trusts the
@@ -108,12 +108,12 @@ inert: a return replacement, an arithmetic edit, a call swapped for another.
 
 ## Alternatives
 
-- **Evaluate both readings at every site.** Evaluating a mutation is running
+- **Evaluate both branches at every site.** Evaluating a mutation is running
   the program's code, and a measurement that panics, allocates, or overflows
   where the baseline did not is not a measurement of the baseline. The witness
   pass is what draws the line, and it draws it conservatively.
 - **Infer the answer from the reach record.** A test that reached a site says
-  nothing about whether the two readings agreed there; that is the whole
+  nothing about whether the two branches agreed there; that is the whole
   distinction between the reach layer and this one.
 - **Keep the probe tree and make it cheaper.** It is a second build of the
   workspace whatever it does inside. The cheapest build is the one that is not

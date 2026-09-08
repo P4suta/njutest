@@ -28,7 +28,7 @@ fn claims(source: &str) -> Vec<(String, Option<Claim>)> {
         .collect()
 }
 
-/// What any candidate of `source` may have its two readings compared over, when one may.
+/// What any candidate of `source` may have its two branches compared over, when one may.
 fn comparable_of(source: &str) -> Option<Comparable> {
     let registry = Registry::canonical();
     let selection = Selection::tier(&registry, Tier::All);
@@ -151,7 +151,7 @@ fn a_body_that_runs_nothing_says_nothing_by_not_running() {
     );
     assert!(
         comparable_of(source).is_some(),
-        "and the guard may still compare its two readings, which is about the condition and \
+        "and the guard may still compare its two branches, which is about the condition and \
          not about what the condition gates"
     );
 }

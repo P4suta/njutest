@@ -11,7 +11,7 @@ by a process the test started rather than by the test itself.
 
 | Function | Reached | Fate |
 | --- | --- | --- |
-| `decide` | through the binary | `negate-condition` and every `return` replacement are killed by `the_binary_names_both_sides_of_zero`; `gt-to-ge` is discharged, nothing having seen its two readings part |
+| `decide` | through the binary | `negate-condition` and every `return` replacement are killed by `the_binary_names_both_sides_of_zero`; `gt-to-ge` is discharged, nothing having seen its two branches part |
 
 This fixture exists because coverage is read out of the profiles a target's
 processes wrote, and a profile is only readable against the binary that wrote

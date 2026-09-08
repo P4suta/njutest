@@ -193,7 +193,7 @@ it, not one that contains it, and the region at the body's closing brace is
 the one the compiler emits for what follows the branch.
 
 A third layer needs no measurement of its own beyond the one already made. A
-guard holds both readings of its site, and where the compiler has vouched that
+guard holds both branches at its site, and where the compiler has vouched that
 the condition around it is inert — the same witnesses a branch proof rests on
 — the baseline evaluates both and records every time they parted. A target
 that never saw them part is discharged `never-infected`, and a kept target is

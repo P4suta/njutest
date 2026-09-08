@@ -97,7 +97,7 @@ below is stated fail-closed.
   needs could not be built, and `probe-log-unreadable` when a target ran and
   its infection log could not be read. Neither removes an execution: a layer
   that could not measure discharges nothing.
-- A guard compares its two readings only where the compiler vouched that the
+- A guard compares its two branches only where the compiler vouched that the
   condition around it is inert and the guard's own form can hold the call.
   Everywhere else `never-infected` says nothing about the mutation however
   many tests ran it, and the record names which mutants it can speak about so

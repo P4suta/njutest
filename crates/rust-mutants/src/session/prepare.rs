@@ -584,7 +584,7 @@ struct Establishing<'a> {
     sources: &'a BTreeMap<String, Vec<u8>>,
     /// The mutants placed in each file.
     placements: &'a BTreeMap<String, Vec<Placement>>,
-    /// What the proof layers established about them: the branch proofs, and which guards may compare their two readings.
+    /// What the proof layers established about them: the branch proofs, and which guards may compare their two branches.
     established: &'a crate::prove::Established,
     /// What the run was asked to prepare.
     options: &'a PrepareOptions,

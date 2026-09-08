@@ -16,7 +16,7 @@
 //! fallback is toward running more, never less.
 //!
 //! The guards answer a second question on the same run. Where the compiler has
-//! vouched that a condition is inert, the guard evaluates both of its readings
+//! vouched that a condition is inert, the guard evaluates both of its branches
 //! and records every time they parted, which is the infection question with no
 //! tree and no run of its own.
 //!
