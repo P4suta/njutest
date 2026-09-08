@@ -3,6 +3,11 @@
 
 //! What a branch proof and a measurement together say about one target.
 
+#![expect(
+    clippy::expect_used,
+    reason = "a test reports a setup failure by panicking"
+)]
+
 use std::path::Path;
 
 use rust_mutants::coverage::{Block, Point};
@@ -209,4 +214,60 @@ fn a_region_that_begins_exactly_where_the_body_does_is_the_body() {
          brace is the body's own and says it ran; reading that boundary the other way \
          discharges a target that took the branch"
     );
+}
+
+/// One witnessed file whose single rewrite covers `[10, 20)` and carries mutant 7.
+fn written() -> Vec<rust_mutants::instrument::witness::WitnessFile> {
+    vec![rust_mutants::instrument::witness::WitnessFile {
+        path: "src/lib.rs".to_owned(),
+        text: String::new(),
+        sites: vec![rust_mutants::instrument::witness::Site {
+            span: rust_mutants::span::Span::new(10, 20).expect("a span"),
+            claims: vec![7],
+            placed: rust_mutants::instrument::witness::Placed::Witnesses,
+        }],
+        witnessed: true,
+    }]
+}
+
+/// What `refusal` makes of one error whose primary span begins at `at`.
+fn refused_at(at: u32) -> rust_mutants::prove::Refusal {
+    rust_mutants::prove::refusal(
+        &written(),
+        &[rust_mutants::testkit::compile::diagnostic_at(
+            "src/lib.rs",
+            at,
+            at.saturating_add(1),
+            7,
+        )],
+    )
+}
+
+#[test]
+fn a_diagnostic_inside_a_rewrite_refuses_the_claim_it_carries() {
+    assert!(
+        refused_at(10).claims.contains(&7),
+        "an error on the first byte the rewrite wrote is an error in the rewrite"
+    );
+    assert!(
+        refused_at(19).claims.contains(&7),
+        "and so is one on the last"
+    );
+}
+
+#[test]
+fn a_diagnostic_outside_every_rewrite_is_one_nothing_accounts_for() {
+    for at in [9, 20] {
+        let refused = refused_at(at);
+        assert!(
+            refused.claims.is_empty(),
+            "a rewrite covers [start, end), so a byte before it or one past it is not in it, \
+             and refusing a claim on an error somewhere else costs a proof the compiler took"
+        );
+        assert!(
+            !refused.unaccounted.is_empty(),
+            "and the error is reported rather than passed over: a check that failed for a \
+             reason nothing accounts for says nothing about any claim"
+        );
+    }
 }

@@ -606,6 +606,18 @@ fn established_over(
     files: &[(&str, &str)],
     holding: &[&str],
 ) -> rust_mutants::prove::Established {
+    recorded_over(fixture, files, holding).0
+}
+
+/// [`established_over`], with the recording the pass left.
+fn recorded_over(
+    fixture: &Fixture,
+    files: &[(&str, &str)],
+    holding: &[&str],
+) -> (
+    rust_mutants::prove::Established,
+    rust_mutants::trace::Recorder,
+) {
     for (path, source) in files {
         if holding.contains(path) {
             std::fs::write(fixture.root().join(path), source).expect("the fixture's own source");
@@ -625,6 +637,9 @@ fn established_over(
             drop(sources.insert((*path).to_owned(), source.as_bytes().to_vec()));
         }
     }
+    let recorder = rust_mutants::trace::Recorder::wall(rust_mutants::trace::Sink::Memory(
+        rust_mutants::trace::MemorySink::unbounded(),
+    ));
     let established = rust_mutants::prove::establish(
         &rust_mutants::prove::Asking {
             workspace: &workspace,
@@ -637,11 +652,11 @@ fn established_over(
             },
         },
         &cancel,
-        &rust_mutants::trace::Recorder::disabled(),
+        &recorder,
     )
     .expect("the pass runs");
     workspace.close().expect("close");
-    established
+    (established, recorder)
 }
 
 #[test]
@@ -785,5 +800,61 @@ pub fn under(a: i32, b: i32, out: &mut i32) {
         u32::try_from(opening).unwrap_or(0).saturating_add(1),
         "and the call sits on the byte after the opening brace, so entering the body is what \
          records it rather than reaching the branch"
+    );
+}
+
+#[test]
+fn what_the_pass_says_it_claimed_is_every_file_added_up() {
+    let one = "\
+// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! One condition, so one claim.
+
+/// Writes one where `a` is at most `b`.
+pub fn under(a: i32, b: i32, out: &mut i32) {
+    if a <= b {
+        *out = 1;
+    }
+}
+";
+    let two = "\
+// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! Two conditions, so more than one claim, which is what tells a sum from a product.
+
+/// Writes one where both hold.
+pub fn both(a: i32, b: i32, c: i32, d: i32, out: &mut i32) {
+    if a <= b {
+        *out = 1;
+    }
+    if c <= d {
+        *out = 2;
+    }
+}
+";
+    let fixture = Fixture::copy("fixture-ignored");
+    let files = [("src/lib.rs", one), ("src/other.rs", two)];
+    let claimed = discovered_in(&files)
+        .candidates
+        .iter()
+        .filter(|found| found.found.branch.is_some() || found.found.comparable.is_some())
+        .count();
+    let (_established, recorder) = recorded_over(&fixture, &files, &["src/lib.rs"]);
+    let said = recorder
+        .events()
+        .iter()
+        .find_map(|event| match &event.payload {
+            rust_mutants::trace::Payload::Note { note } if note.kind == "witness" => {
+                Some(note.detail.clone())
+            }
+            _ => None,
+        })
+        .unwrap_or_default();
+    assert!(
+        said.starts_with(&format!("{claimed} claimed")),
+        "the tally is every file's claims added up, and a file with one claim beside a file \
+         with two is what tells adding from multiplying: {said:?} for {claimed} claims"
     );
 }
