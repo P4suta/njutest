@@ -559,6 +559,11 @@ fn one_of_each_measurement(recorder: &Recorder) {
         path: "/tmp/rust-mutants-snap-1".to_owned(),
         run_id: "20260101T000000000Z".to_owned(),
     });
+    one_of_each_execution(recorder);
+}
+
+/// The last of it: what a run says about the mutants it put to the tests.
+fn one_of_each_execution(recorder: &Recorder) {
     recorder.mutant_exec(rust_mutants::trace::MutantExecRecord {
         id: "b".repeat(64),
         index: 1,
@@ -599,6 +604,7 @@ fn one_of_each_measurement(recorder: &Recorder) {
         granularity: "block".to_owned(),
         fallback: None,
         reaching: vec!["demo/lib/demo".to_owned()],
+        considered: Vec::new(),
         discharged: Vec::new(),
         executed: vec!["demo/lib/demo".to_owned()],
         reused: None,
@@ -884,5 +890,47 @@ fn a_summary_counts_how_many_times_each_program_was_started() {
     assert!(
         text.contains("cargo") && text.contains("started"),
         "a reader watching the work fall wants the count, not only the clock: {text}"
+    );
+}
+
+#[test]
+fn the_schema_names_every_granularity_and_every_fallback_a_route_can_carry() {
+    let schema: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(
+            mjutest_devkit::paths::workspace_root().join("schema/rust-mutants-trace-v1.json"),
+        )
+        .expect("the schema file"),
+    )
+    .expect("the schema parses");
+    let route = schema["oneOf"]
+        .as_array()
+        .expect("one branch per type")
+        .iter()
+        .find(|branch| branch["properties"]["type"]["const"] == "route")
+        .expect("the route branch");
+    let named = |field: &str| -> BTreeSet<String> {
+        route["properties"]["route"]["properties"][field]["enum"]
+            .as_array()
+            .unwrap_or_else(|| panic!("route.{field} is an enum"))
+            .iter()
+            .filter_map(|one| one.as_str())
+            .map(str::to_owned)
+            .collect()
+    };
+    assert_eq!(
+        named("granularity"),
+        rust_mutants::session::Route::GRANULARITIES
+            .iter()
+            .map(|one| (*one).to_owned())
+            .collect::<BTreeSet<String>>(),
+        "a route the engine can record is one the schema accepts"
+    );
+    assert_eq!(
+        named("fallback"),
+        rust_mutants::session::Fallback::ALL
+            .iter()
+            .map(|one| one.name().to_owned())
+            .collect::<BTreeSet<String>>(),
+        "and so is every reason it can give for widening"
     );
 }

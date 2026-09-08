@@ -1174,7 +1174,7 @@ fn not_run_because(outcome: Outcome, route: &crate::session::Route) -> Option<No
         return None;
     }
     match route {
-        crate::session::Route::Unreached => Some(NotRunReason::Unreached),
+        crate::session::Route::Unreached { .. } => Some(NotRunReason::Unreached),
         crate::session::Route::Discharged { .. } => Some(NotRunReason::Discharged),
         _ => Some(NotRunReason::Interrupted),
     }

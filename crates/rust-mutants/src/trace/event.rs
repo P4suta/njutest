@@ -566,6 +566,9 @@ pub struct RouteRecord {
     /// The targets that could notice the mutation.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub reaching: Vec<String>,
+    /// The targets that were measured, asked, and did not reach the mutation.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub considered: Vec<String>,
     /// The targets a proof removed, each with the proof's name.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub discharged: Vec<DischargeRecord>,

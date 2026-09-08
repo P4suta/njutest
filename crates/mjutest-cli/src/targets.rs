@@ -15,7 +15,7 @@ use crate::error::{self, ErrorCode};
 use crate::watch::Watch;
 
 /// The domain separator hashed first for every target identity. It carries the recipe version.
-pub const TARGET_DOMAIN: &str = "mjutest-target-v1";
+pub const TARGET_DOMAIN: &str = "mjutest-target-v2";
 
 /// How much of the digest a target identity spells out.
 pub const TARGET_ID_HEX_LENGTH: usize = 16;
@@ -156,11 +156,17 @@ impl Target {
     }
 }
 
-/// The stable identity of one test.
+/// The stable identity of one test: the binary it is in, and its path inside that binary.
+///
+/// `unit_name` is what separates two binaries of one kind in one package. Two
+/// integration tests that each hold a test called `works` are two targets, and
+/// an identity that leaves the binary out makes them one — one report row, one
+/// evidence key, and a route that names either of them finding whichever the
+/// baseline listed first.
 #[must_use]
-pub fn target_id(package: &str, unit: UnitKind, path: &str) -> String {
+pub fn target_id(package: &str, unit: UnitKind, unit_name: &str, path: &str) -> String {
     let mut hasher = Sha256::new();
-    for field in [TARGET_DOMAIN, package, unit.name(), path] {
+    for field in [TARGET_DOMAIN, package, unit.name(), unit_name, path] {
         let length = u32::try_from(field.len()).unwrap_or(u32::MAX);
         hasher.update(length.to_be_bytes());
         hasher.update(field.as_bytes());
@@ -294,7 +300,7 @@ pub fn enumerate(unit: &Unit, watch: Watch<'_>) -> Result<Vec<Target>, TargetErr
         .into_iter()
         .filter(|entry| entry.kind == EntryKind::Test)
         .map(|entry| Target {
-            id: target_id(&unit.package, unit.kind, &entry.path),
+            id: target_id(&unit.package, unit.kind, &unit.name, &entry.path),
             package: unit.package.clone(),
             unit: unit.kind,
             unit_name: unit.name.clone(),
@@ -315,7 +321,7 @@ pub fn enumerate(unit: &Unit, watch: Watch<'_>) -> Result<Vec<Target>, TargetErr
 /// The one target a binary with its own harness has.
 fn whole_binary(unit: &Unit) -> Target {
     Target {
-        id: target_id(&unit.package, unit.kind, WHOLE_BINARY),
+        id: target_id(&unit.package, unit.kind, &unit.name, WHOLE_BINARY),
         package: unit.package.clone(),
         unit: unit.kind,
         unit_name: unit.name.clone(),

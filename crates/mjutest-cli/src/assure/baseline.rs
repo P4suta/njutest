@@ -340,7 +340,7 @@ fn documentation(
         .iter()
         .filter(|unit| unit.kind == UnitKind::Lib)
         .map(|unit| Target {
-            id: target_id(&unit.package, UnitKind::Doc, WHOLE_BINARY),
+            id: target_id(&unit.package, UnitKind::Doc, &unit.name, WHOLE_BINARY),
             package: unit.package.clone(),
             unit: UnitKind::Doc,
             unit_name: unit.name.clone(),

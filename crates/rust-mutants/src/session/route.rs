@@ -39,7 +39,15 @@ pub enum Route {
         discharged: Vec<Discharge>,
     },
     /// A mutation no measured target executes, which nothing needs to run to find out again.
-    Unreached,
+    Unreached {
+        /// The targets that were measured, asked, and did not reach the mutation, in the order they were offered.
+        ///
+        /// A layer that removes an execution has to name who was in a position
+        /// to notice and did not, or a reader has only the word "unreached"
+        /// and no way to check it. This is that list, and its length is what a
+        /// report counts.
+        considered: Vec<String>,
+    },
 }
 
 /// The proof that a target which never ran the body of the branch a mutation sits in cannot have noticed it.
@@ -65,6 +73,15 @@ pub enum Fallback {
 }
 
 impl Fallback {
+    /// Every reason a route widens, which is what a schema and an audit have to know in full.
+    pub const ALL: [Self; 5] = [
+        Self::NotMeasured,
+        Self::PositionUnknown,
+        Self::OutsideBlocks,
+        Self::CoverageIncomplete,
+        Self::TouchIncomplete,
+    ];
+
     /// The name a route record carries.
     #[must_use]
     pub const fn name(self) -> &'static str {
@@ -166,6 +183,10 @@ pub struct Routing<'a> {
 }
 
 impl Route {
+    /// Every name [`Route::granularity`] can answer, which is what a schema and an audit have to know in full.
+    pub const GRANULARITIES: [&'static str; 5] =
+        ["all", "block", "test", "discharged", "unreached"];
+
     /// Which targets a measurement puts at `position` of `path`, out of `targets`.
     ///
     /// A target that ran and whose profile could not be read is kept: what the
@@ -224,7 +245,12 @@ impl Route {
             .collect();
         reaching.dedup();
         if reaching.is_empty() {
-            return Self::Unreached;
+            return Self::Unreached {
+                considered: measurable
+                    .iter()
+                    .map(|target| (*target).to_owned())
+                    .collect(),
+            };
         }
         Self::Block {
             reaching,
@@ -255,6 +281,7 @@ impl Route {
             };
         }
         let mut reaching = Vec::new();
+        let mut considered = Vec::new();
         let mut incomplete = false;
         for target in targets.iter().copied() {
             let asked = if measurable.contains(&target) {
@@ -263,7 +290,10 @@ impl Route {
                         incomplete = true;
                         Some(Asked::Every)
                     }
-                    Some(crate::touch::Reaching::Nothing) => None,
+                    Some(crate::touch::Reaching::Nothing) => {
+                        considered.push(target.to_owned());
+                        None
+                    }
                     Some(crate::touch::Reaching::Whole) => Some(Asked::Every),
                     Some(crate::touch::Reaching::Tests(named)) => Some(Asked::These(named)),
                 }
@@ -278,7 +308,7 @@ impl Route {
             }
         }
         if reaching.is_empty() {
-            return Self::Unreached;
+            return Self::Unreached { considered };
         }
         Self::Block {
             reaching,
@@ -298,7 +328,7 @@ impl Route {
     pub fn keeps(&self, target: &str) -> Option<&Reaches> {
         match self {
             Self::Block { reaching, .. } => reaching.iter().find(|one| one.target == target),
-            Self::All { .. } | Self::Discharged { .. } | Self::Unreached => None,
+            Self::All { .. } | Self::Discharged { .. } | Self::Unreached { .. } => None,
         }
     }
 
@@ -314,7 +344,7 @@ impl Route {
                     tests: Asked::Every,
                 })
                 .collect(),
-            Self::Discharged { .. } | Self::Unreached => Vec::new(),
+            Self::Discharged { .. } | Self::Unreached { .. } => Vec::new(),
         }
     }
 
@@ -329,7 +359,7 @@ impl Route {
                     Asked::These(tests) => Some((one.target.clone(), tests.clone())),
                 })
                 .collect(),
-            Self::All { .. } | Self::Discharged { .. } | Self::Unreached => BTreeMap::new(),
+            Self::All { .. } | Self::Discharged { .. } | Self::Unreached { .. } => BTreeMap::new(),
         }
     }
 
@@ -342,7 +372,7 @@ impl Route {
                 .map(|one| one.tests.counting(of(&one.target)))
                 .sum(),
             Self::All { reaching, .. } => reaching.iter().map(|target| of(target)).sum(),
-            Self::Discharged { .. } | Self::Unreached => 0,
+            Self::Discharged { .. } | Self::Unreached { .. } => 0,
         }
     }
 
@@ -385,7 +415,7 @@ impl Route {
             }
             Self::Block { .. } => "test",
             Self::Discharged { .. } => "discharged",
-            Self::Unreached => "unreached",
+            Self::Unreached { .. } => "unreached",
         }
     }
 
@@ -395,7 +425,7 @@ impl Route {
         match self {
             Self::All { fallback, .. } => Some(fallback.name()),
             Self::Block { fallback, .. } => fallback.map(Fallback::name),
-            Self::Discharged { .. } | Self::Unreached => None,
+            Self::Discharged { .. } | Self::Unreached { .. } => None,
         }
     }
 
@@ -407,7 +437,7 @@ impl Route {
             Self::Block { reaching, .. } => {
                 reaching.iter().map(|one| one.target.as_str()).collect()
             }
-            Self::Discharged { .. } | Self::Unreached => Vec::new(),
+            Self::Discharged { .. } | Self::Unreached { .. } => Vec::new(),
         }
     }
 
@@ -444,7 +474,20 @@ impl Route {
                 discharged,
             )),
             Self::Discharged { discharged } => Some(with_discharged(&[], discharged)),
-            Self::Unreached => Some(Vec::new()),
+            Self::Unreached { .. } => Some(Vec::new()),
+        }
+    }
+
+    /// The targets that were measured, asked, and did not reach the mutation.
+    ///
+    /// A route that keeps nothing has to say who it asked, or "unreached" is a
+    /// word with nothing behind it. Every other route keeps what it asked, so
+    /// there is nothing here it does not already name.
+    #[must_use]
+    pub fn considered(&self) -> &[String] {
+        match self {
+            Self::Unreached { considered } => considered,
+            Self::All { .. } | Self::Block { .. } | Self::Discharged { .. } => &[],
         }
     }
 
@@ -453,7 +496,7 @@ impl Route {
     pub fn discharged(&self) -> &[Discharge] {
         match self {
             Self::Block { discharged, .. } | Self::Discharged { discharged } => discharged,
-            Self::All { .. } | Self::Unreached => &[],
+            Self::All { .. } | Self::Unreached { .. } => &[],
         }
     }
 
@@ -489,6 +532,7 @@ impl Route {
             granularity: self.granularity().to_owned(),
             fallback: self.fallback().map(str::to_owned),
             reaching: self.reaching().into_iter().map(str::to_owned).collect(),
+            considered: self.considered().to_vec(),
             discharged: self
                 .discharged()
                 .iter()

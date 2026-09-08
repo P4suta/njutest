@@ -1128,6 +1128,7 @@
               "enum": [
                 "all",
                 "block",
+                "test",
                 "discharged",
                 "unreached"
               ]
@@ -1137,8 +1138,15 @@
                 "not-measured",
                 "position-unknown",
                 "outside-blocks",
-                "coverage-incomplete"
+                "coverage-incomplete",
+                "touch-incomplete"
               ]
+            },
+            "considered": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
             },
             "reaching": {
               "type": "array",

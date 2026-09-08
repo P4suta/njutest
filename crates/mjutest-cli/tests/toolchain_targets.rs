@@ -9,7 +9,8 @@
 )]
 
 use mjutest_cli::targets::{
-    Entry, EntryKind, TARGET_DOMAIN, Unit, UnitKind, WHOLE_BINARY, enumerate, parse_list, target_id,
+    Entry, EntryKind, TARGET_DOMAIN, Target, Unit, UnitKind, WHOLE_BINARY, enumerate, parse_list,
+    target_id,
 };
 use mjutest_cli::trace::Recorder;
 use mjutest_cli::watch::Watch;
@@ -55,8 +56,8 @@ fn a_listing_that_is_not_one_yields_nothing_rather_than_a_guess() {
 
 #[test]
 fn a_test_is_named_by_its_package_its_unit_and_its_path() {
-    assert_eq!(TARGET_DOMAIN, "mjutest-target-v1");
-    let id = target_id("core", UnitKind::Lib, "tests::plain");
+    assert_eq!(TARGET_DOMAIN, "mjutest-target-v2");
+    let id = target_id("core", UnitKind::Lib, "core", "tests::plain");
     assert_eq!(id.len(), 16, "{id}");
     assert!(
         id.chars()
@@ -64,22 +65,25 @@ fn a_test_is_named_by_its_package_its_unit_and_its_path() {
     );
 
     let mut seen = std::collections::BTreeSet::new();
-    for (package, unit, path) in [
-        ("core", UnitKind::Lib, "tests::plain"),
-        ("core", UnitKind::Lib, "tests::plainx"),
-        ("core", UnitKind::Test, "tests::plain"),
-        ("corex", UnitKind::Lib, "tests::plain"),
-        ("core", UnitKind::Bin, "tests::plain"),
-        ("core", UnitKind::Example, "tests::plain"),
-        ("cor", UnitKind::Lib, "etests::plain"),
+    for (package, unit, unit_name, path) in [
+        ("core", UnitKind::Lib, "core", "tests::plain"),
+        ("core", UnitKind::Lib, "core", "tests::plainx"),
+        ("core", UnitKind::Test, "core", "tests::plain"),
+        ("corex", UnitKind::Lib, "core", "tests::plain"),
+        ("core", UnitKind::Bin, "core", "tests::plain"),
+        ("core", UnitKind::Example, "core", "tests::plain"),
+        ("cor", UnitKind::Lib, "core", "etests::plain"),
+        ("core", UnitKind::Test, "one", "tests::plain"),
+        ("core", UnitKind::Test, "two", "tests::plain"),
+        ("core", UnitKind::Test, "on", "etests::plain"),
     ] {
         assert!(
-            seen.insert(target_id(package, unit, path)),
-            "{package}/{unit:?}/{path} collides"
+            seen.insert(target_id(package, unit, unit_name, path)),
+            "{package}/{unit:?}/{unit_name} {path} collides"
         );
     }
 
-    assert_eq!(target_id("core", UnitKind::Lib, "tests::plain"), id);
+    assert_eq!(target_id("core", UnitKind::Lib, "core", "tests::plain"), id);
     for kind in UnitKind::ALL {
         assert_eq!(UnitKind::parse(kind.name()), Some(kind));
         assert!(!kind.name().is_empty());
@@ -87,10 +91,37 @@ fn a_test_is_named_by_its_package_its_unit_and_its_path() {
 }
 
 #[test]
+fn two_binaries_of_one_package_that_hold_the_same_test_are_two_targets() {
+    let of = |unit_name: &str| Target {
+        id: target_id("core", UnitKind::Test, unit_name, "works"),
+        package: "core".to_owned(),
+        unit: UnitKind::Test,
+        unit_name: unit_name.to_owned(),
+        path: "works".to_owned(),
+        ignored: false,
+        executable: std::path::PathBuf::from("/nowhere"),
+        cwd: std::path::PathBuf::from("/nowhere"),
+        env: Vec::new(),
+    };
+    let alpha = of("alpha");
+    let beta = of("beta");
+    assert_ne!(
+        alpha.name(),
+        beta.name(),
+        "a person tells the two apart by the binary they are in"
+    );
+    assert_ne!(
+        alpha.id, beta.id,
+        "and so must every record keyed by identity: a report row, an evidence \
+         key, and the lookup that decides which target a route names"
+    );
+}
+
+#[test]
 fn a_binary_with_its_own_harness_is_one_target_and_says_so() {
     assert_eq!(WHOLE_BINARY, "");
-    let id = target_id("core", UnitKind::Test, WHOLE_BINARY);
-    assert_ne!(id, target_id("core", UnitKind::Test, "anything"));
+    let id = target_id("core", UnitKind::Test, "core", WHOLE_BINARY);
+    assert_ne!(id, target_id("core", UnitKind::Test, "core", "anything"));
 }
 
 /// Builds a fixture's test binaries the way a run does, and returns the units they came from.
@@ -162,7 +193,12 @@ fn a_built_binary_names_every_test_it_holds_with_its_own_identity() {
             assert_eq!(target.id.len(), 16, "{target:?}");
             assert_eq!(
                 target.id,
-                target_id(&target.package, target.unit, &target.path),
+                target_id(
+                    &target.package,
+                    target.unit,
+                    &target.unit_name,
+                    &target.path
+                ),
                 "the identity is a function of what it names"
             );
             assert!(!target.is_whole_binary());
