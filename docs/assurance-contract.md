@@ -435,6 +435,50 @@ finding ID, non-empty reason, future RFC3339 expiry, and may carry owner and
 ticket. Every mutation marked `accepted` must reference a matching record.
 Expired acceptances are ignored.
 
+## Parts of one catalog
+
+`mjutest verify --shard K/N` divides the judging. Every part measures the whole
+baseline, because a mutation cannot be judged against tests that were not run;
+what a shard divides is which mutations are put to those tests. The rule is the
+engine's, so both products cut a catalog the same way: the dense catalog index
+modulo N, counting K from one. Two runs of the same tree therefore agree about
+which part holds which mutation without saying a word to each other, and every
+mutation belongs to exactly one part — nothing is sampled, nothing is skipped,
+and no execution is paid for twice.
+
+That is what keeps dividing the work out of
+[ADR 0004](adr/0004-proof-layers-not-budgets.md)'s way. A budget decides not to
+run something; this decides which machine runs it. The parts balance by count
+rather than by cost, so a part holding a slow mutation takes longer, and how
+long is something to measure rather than to predict.
+
+A part concludes `PARTIAL` and records its shard. It assures nothing on its own:
+the mutations it did not judge are not mutations nothing noticed, they are
+mutations nobody put to a test, and a report that called that an assurance would
+be claiming the one thing it did not look at. A finding in a part is a finding,
+so a part that found a defect says `DEFECT`.
+
+`mjutest merge <REPORT>…` writes the report the whole would have written. It
+refuses five things: no parts at all, parts that disagree about the tree, parts
+that disagree about the configuration, parts that disagree about the contract,
+and two parts that both judged one mutation — the last says they were cut with
+different values of N. The last three are this runner's and not the engine's. A
+run report is a collection of what running something said, and two collections
+add up whatever produced them; an assurance report is one claim, that a contract
+was met, and a claim assembled from a part that met it and a part that met
+something else is true of neither.
+
+The mutant rows of the whole are the union of the parts'. Its accounting is
+derived from that union rather than added up from what each part counted, so the
+whole's columns say what the whole's own records say. The exception is
+`accepted`, which is a fact about a reviewer rather than about a mutation and
+appears in no record, and is therefore summed — each mutation belongs to one
+part, so each acceptance is counted once. No score crosses a merge at all: two
+ratios over different denominators average into a number no run observed.
+
+Every run's identity carries its shard, so a part never reads back the whole's
+stored answer and a whole never reads back a part's.
+
 ## DEFECT, INSUFFICIENT, and ERROR
 
 `DEFECT` means user code violated a baseline, soundness, build, or test
