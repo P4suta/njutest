@@ -10,6 +10,7 @@ pub mod doctor;
 pub mod explain;
 pub mod fix;
 pub mod init;
+pub mod lsp;
 pub mod merge;
 pub mod plan;
 pub mod replay;
@@ -36,6 +37,7 @@ pub fn run(
         Command::Cache(arguments) => cache::run(arguments, environment, stdout, stderr),
         Command::Merge(arguments) => merge::run(arguments, stdout, stderr),
         Command::Watch(arguments) => watch::run(arguments, environment, stdout, stderr),
+        Command::Lsp(arguments) => lsp::run(arguments, environment),
         Command::Doctor(arguments) => doctor::run(*arguments, environment, stdout, stderr),
         Command::Verify(arguments) => verify::run(arguments, environment, stdout, stderr),
         Command::Plan(arguments) => plan::run(arguments, environment, stdout, stderr),

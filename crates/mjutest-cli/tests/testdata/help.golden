@@ -23,6 +23,7 @@ Commands:
   merge        Combine the reports of the parts of one catalog into the report the whole would have
                written
   watch        Verify again every time the workspace changes, until interrupted
+  lsp          Serve what the latest run found to an editor, over the language server protocol
   help         Print this message or the help of the given subcommand(s)
 
 Options:

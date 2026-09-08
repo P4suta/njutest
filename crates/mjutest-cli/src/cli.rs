@@ -130,6 +130,16 @@ pub enum Command {
     Merge(Merge),
     /// Verify again every time the workspace changes, until interrupted.
     Watch(Watch),
+    /// Serve what the latest run found to an editor, over the language server protocol.
+    Lsp(Lsp),
+}
+
+/// `mjutest lsp`.
+#[derive(Debug, Clone, clap::Args)]
+pub struct Lsp {
+    /// The workspace whose reports are served. The working directory by default.
+    #[arg(long, value_name = "DIR")]
+    pub directory: Option<PathBuf>,
 }
 
 /// `mjutest watch`.
