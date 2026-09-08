@@ -468,3 +468,89 @@ fn a_run_that_could_not_ask_git_says_so_and_claims_none_of_its_facts() {
         );
     }
 }
+
+#[test]
+fn targets_that_took_the_same_time_are_ordered_by_name_and_the_place_is_named() {
+    let mut report = sound();
+    report.targets = vec![
+        target("a1", "core/lib/core one", TargetStatus::Passed, 30),
+        target("c3", "core/test/it three", TargetStatus::Passed, 20),
+        target("b2", "core/lib/core two", TargetStatus::Passed, 20),
+    ];
+
+    let violations = validate_for_persistence(&report);
+
+    assert!(
+        violations.iter().any(|violation| matches!(
+            violation,
+            Violation::TargetsOutOfOrder { at } if *at == 2
+        )),
+        "two targets that took the same time are ordered by identity, and the pair that \
+         breaks the order is the second one here: a report that named the first would \
+         send a reader to a pair that is fine: {violations:?}"
+    );
+    report.sort_targets();
+    assert_eq!(
+        validate_for_persistence(&report),
+        Vec::<Violation>::new(),
+        "and sorting is what the audit asks for, so the two agree by construction"
+    );
+
+    let mut backwards = sound();
+    backwards.targets = vec![
+        target("a1", "core/lib/core one", TargetStatus::Passed, 10),
+        target("b2", "core/lib/core two", TargetStatus::Passed, 20),
+        target("c3", "core/test/it three", TargetStatus::Passed, 30),
+    ];
+    let counted = validate_for_persistence(&backwards)
+        .into_iter()
+        .filter(|violation| matches!(violation, Violation::TargetsOutOfOrder { .. }))
+        .count();
+    assert_eq!(
+        counted, 1,
+        "every pair of a list in the wrong order is in the wrong order, and saying so \
+         once for each would bury the one thing a reader has to do under a count of how \
+         long the list is"
+    );
+}
+
+#[test]
+fn a_report_that_says_where_its_facts_came_from_says_one_thing_about_it() {
+    let mut established = sound();
+    established.provenance.cached = false;
+    established.provenance.source_run_id = Some("20260905T081500Z-000000".to_owned());
+
+    let mut anonymous = sound();
+    anonymous.provenance.cached = true;
+    anonymous.provenance.source_run_id = None;
+
+    let mut itself = sound();
+    itself.provenance.cached = true;
+    itself.provenance.source_run_id = Some(itself.run_id.clone());
+
+    let mut nameless = sound();
+    nameless.provenance.cached = true;
+    nameless.provenance.source_run_id = Some(String::new());
+
+    for (what, report) in [
+        (
+            "a run that established its own facts and also names another",
+            &established,
+        ),
+        (
+            "a report read back from an earlier run that names no run",
+            &anonymous,
+        ),
+        ("a run that read its own answer back", &itself),
+        ("a source run with no name", &nameless),
+    ] {
+        let violations = validate_for_persistence(report);
+        assert!(
+            violations
+                .iter()
+                .any(|violation| matches!(violation, Violation::ProvenanceIncoherent { .. })),
+            "{what} is a report that cannot be checked against the run it points at, \
+             which is the whole of what provenance is for: {violations:?}"
+        );
+    }
+}
