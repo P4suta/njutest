@@ -3,11 +3,16 @@
 
 //! What each disposition makes a reader act on, and what an acceptance can answer for.
 
+#![expect(
+    clippy::indexing_slicing,
+    reason = "a phase built from one disposition raises one finding, and no finding where this reads one is the failure it is here to report"
+)]
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use mjutest_cli::assure::mutation::{Disposition, Judged, Mutation, Unconfirmed, tail};
 use mjutest_cli::assure::route::{BRANCH_NEVER_TAKEN, Discharge, NEVER_INFECTED, Reaches, Route};
-use mjutest_cli::report::FindingKind;
+use mjutest_cli::report::{FindingKind, Position};
 
 fn discharge(target: &str, proof: &'static str) -> Discharge {
     Discharge {
@@ -206,5 +211,108 @@ fn what_a_capture_is_quoted_by_is_its_last_word_and_never_nothing() {
         tail(&b"x".repeat(500)),
         "x".repeat(200),
         "and one enormous line does not become the whole of a report somebody has to read"
+    );
+}
+
+#[test]
+fn each_way_a_pair_can_fail_to_agree_says_which_one_happened() {
+    let control = phase(Disposition::Unconfirmed {
+        on: "pkg/test/lib adds_two_numbers".to_owned(),
+        why: Unconfirmed::ControlFailed {
+            detail: "assertion failed: left == right".to_owned(),
+        },
+    });
+    let again = phase(Disposition::Unconfirmed {
+        on: "pkg/test/lib adds_two_numbers".to_owned(),
+        why: Unconfirmed::DidNotReproduce,
+    });
+
+    let control = control.findings(&BTreeSet::new())[0].detail.clone();
+    let again = again.findings(&BTreeSet::new())[0].detail.clone();
+
+    assert!(
+        control.contains("the same test failed on the original code")
+            && control.contains("assertion failed: left == right"),
+        "the test was already failing, so what it said is the whole of what a reader can \
+         act on: the mutation is not the subject: {control}"
+    );
+    assert!(
+        again.contains("did not happen the second time"),
+        "and a kill that did not reproduce is the opposite finding — the test does \
+         notice it, sometimes — so the two sentences send a reader to two different \
+         places: {again}"
+    );
+    assert_ne!(
+        control, again,
+        "which is why they are not one sentence with a name attached"
+    );
+}
+
+#[test]
+fn a_finding_is_raised_where_the_mutation_it_names_is() {
+    let mut one = judged(Disposition::Unreached);
+    one.position = Some(Position {
+        line: 12,
+        column: 5,
+        character_column: 5,
+    });
+    let phase = Mutation {
+        judged: vec![one],
+        skips: BTreeMap::new(),
+    };
+
+    let findings = phase.findings(&BTreeSet::new());
+
+    assert_eq!(
+        findings[0].position.map(|at| at.line),
+        Some(12),
+        "an editor shows a finding where its mutation is, and a finding that carries no \
+         position is one a person has to go looking for with a display id and a grep"
+    );
+}
+
+#[test]
+fn a_survivor_removed_by_one_proof_twice_over_names_that_proof_once() {
+    let phase = phase(Disposition::Survived {
+        route: Route::Discharged {
+            discharged: vec![
+                discharge("pkg/test/two", NEVER_INFECTED),
+                discharge("pkg/lib/pkg", NEVER_INFECTED),
+                discharge("pkg/test/it", BRANCH_NEVER_TAKEN),
+            ],
+        },
+    });
+
+    let detail = phase.findings(&BTreeSet::new())[0].detail.clone();
+
+    assert!(
+        detail.ends_with(&format!("by {BRANCH_NEVER_TAKEN} and {NEVER_INFECTED}")),
+        "three targets were removed by two proofs, and the sentence names each proof \
+         once and in one order. `contains` would pass on a sentence that went on to \
+         name never-infected twice more, so the whole of what it says has to be the \
+         whole of what is checked: {detail}"
+    );
+}
+
+#[test]
+fn a_survivor_some_tests_ran_and_others_were_removed_from_says_the_tests_ran() {
+    let phase = phase(Disposition::Survived {
+        route: Route::Block {
+            reaching: vec![Reaches {
+                target: "pkg/lib/pkg".to_owned(),
+                tests: mjutest_cli::assure::route::Asked::Every,
+            }],
+            discharged: vec![discharge("pkg/test/it", NEVER_INFECTED)],
+            fallback: None,
+        },
+    });
+
+    let detail = phase.findings(&BTreeSet::new())[0].detail.clone();
+
+    assert!(
+        detail.contains("no test noticed") && !detail.contains("could have"),
+        "a proof removed one target and another ran the mutation anyway and passed. What \
+         a reader has to do is strengthen that target, and telling them no test could \
+         have noticed would send them to audit the proof instead: {detail}"
     );
 }
