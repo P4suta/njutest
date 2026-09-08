@@ -81,7 +81,7 @@ fn interrupted_by(signal: rustix::process::Signal, expected: i32) {
         .envs(std::env::vars_os().filter(|(key, _)| {
             matches!(
                 key.to_string_lossy().as_ref(),
-                "PATH" | "HOME" | "RUSTUP_HOME" | "CARGO_HOME" | "TMPDIR"
+                "PATH" | "HOME" | "RUSTUP_HOME" | "CARGO_HOME"
             )
         }))
         .stdout(Stdio::piped())
@@ -151,7 +151,7 @@ fn verify_in(root: &Path, extra: &[&str]) -> std::process::Child {
         .envs(std::env::vars_os().filter(|(key, _)| {
             matches!(
                 key.to_string_lossy().as_ref(),
-                "PATH" | "HOME" | "RUSTUP_HOME" | "CARGO_HOME" | "TMPDIR"
+                "PATH" | "HOME" | "RUSTUP_HOME" | "CARGO_HOME"
             )
         }))
         .stdout(Stdio::piped())

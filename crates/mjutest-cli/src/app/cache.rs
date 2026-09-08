@@ -126,6 +126,12 @@ fn build_layers(
 }
 
 /// What earlier runs left in the operating system's temporary directory. The engine sweeps its own prefixes; this reports rather than duplicating it.
+///
+/// A sweep spares a build cache whatever its age, because a cache exists to
+/// outlive the run that filled it. So the count of what a sweep took says
+/// nothing about what is on the disk, and a report that gives only that number
+/// reads as "there is nothing here" while a machine fills up with caches
+/// keyed to trees that are gone.
 fn temporary(environment: &Environment, stdout: &mut dyn Write) {
     let swept = rust_mutants::tempowner::sweep_with(
         &environment.temp_directory,
@@ -140,11 +146,13 @@ fn temporary(environment: &Environment, stdout: &mut dyn Write) {
     super::say(
         stdout,
         &format!(
-            "temp      {}: {} abandoned, {} in use, {} preserved on purpose",
+            "temp      {}: {} abandoned, {} in use, {} preserved on purpose, {} spared as \
+             a build cache",
             environment.temp_directory.display(),
             swept.removed.len(),
             swept.live,
-            swept.kept
+            swept.kept,
+            swept.cached
         ),
     );
 }

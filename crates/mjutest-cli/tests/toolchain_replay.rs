@@ -59,7 +59,7 @@ fn mjutest(fixture: &Fixture, args: &[&str]) -> Output {
         .envs(std::env::vars_os().filter(|(key, _)| {
             matches!(
                 key.to_string_lossy().as_ref(),
-                "PATH" | "HOME" | "RUSTUP_HOME" | "CARGO_HOME" | "TMPDIR"
+                "PATH" | "HOME" | "RUSTUP_HOME" | "CARGO_HOME"
             )
         }))
         .output()

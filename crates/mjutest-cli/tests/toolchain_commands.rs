@@ -59,7 +59,7 @@ fn mjutest(fixture: &Fixture, args: &[&str]) -> Output {
         .envs(std::env::vars_os().filter(|(key, _)| {
             matches!(
                 key.to_string_lossy().as_ref(),
-                "PATH" | "HOME" | "RUSTUP_HOME" | "CARGO_HOME" | "TMPDIR"
+                "PATH" | "HOME" | "RUSTUP_HOME" | "CARGO_HOME"
             )
         }))
         .output()
@@ -334,5 +334,33 @@ fn plan_why_says_what_put_each_target_in_scope() {
     assert!(
         text.contains("ignored"),
         "and how many of a binary's tests libtest will not run: {text}"
+    );
+}
+
+#[test]
+fn cache_says_how_many_directories_it_spared_rather_than_only_what_it_took() {
+    let fixture = fixture("fixture-baseline");
+    let temp = mjutest_devkit::paths::temp_beside(&fixture.root).expect("a temporary directory");
+    let spared = temp.join(format!("{}kept", rust_mutants::snapshot::DIR_PREFIX));
+    std::fs::create_dir_all(&spared).expect("the directory");
+    rust_mutants::tempowner::claim_cache(
+        &spared,
+        jiff::Timestamp::now(),
+        rust_mutants::tempowner::SCHEMA,
+    )
+    .expect("a cache of an earlier run");
+
+    let output = mjutest(&fixture, &["cache"]);
+    assert_eq!(output.status.code(), Some(0));
+    let text = stdout(&output);
+    assert!(
+        text.contains("1 spared as a build cache"),
+        "a sweep spares a build cache whatever its age, so a report that counts only \
+         what it took says nothing is there while the disk fills: {text}"
+    );
+    assert!(
+        spared.is_dir(),
+        "and it is still there: {}",
+        spared.display()
     );
 }

@@ -101,8 +101,9 @@ fn the_engine_ledger_names_what_it_measures_and_asks_for_every_proof_layer() {
          nothing: {ledger}"
     );
     assert!(
-        ledger.contains("probe = true"),
-        "the probe is the layer a run has to be told to use, and this run is what proves it \
-         removes work: {ledger}"
+        !ledger.contains("probe"),
+        "the infection layer rides on the run that establishes the baseline, so there is \
+         nothing to ask for, and a ledger that asks for a layer there is no switch for \
+         reads as a switch somebody could throw: {ledger}"
     );
 }
