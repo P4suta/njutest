@@ -87,6 +87,11 @@ fn the_engine_ledger_names_what_it_measures_and_asks_for_every_proof_layer() {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../.rust-mutants.toml"),
     )
     .expect("the engine's own ledger");
+    let settings: String = ledger
+        .lines()
+        .filter(|line| !line.trim_start().starts_with('#'))
+        .collect::<Vec<&str>>()
+        .join("\n");
     assert!(
         ledger.contains(
             "packages = [\"rust-mutants\", \"rust-mutants-cli\", \"mjutest-cli\", \"xtask\"]"
@@ -98,14 +103,14 @@ fn the_engine_ledger_names_what_it_measures_and_asks_for_every_proof_layer() {
         "a tool that asks a project for every operator asks itself for them too: {ledger}"
     );
     assert!(
-        !ledger.contains("coverage"),
+        !settings.contains("coverage"),
         "coverage routing is the default now, and a ledger that asks for a default says \
-         nothing: {ledger}"
+         nothing: {settings}"
     );
     assert!(
-        !ledger.contains("probe"),
+        !settings.contains("probe"),
         "the infection layer rides on the run that establishes the baseline, so there is \
          nothing to ask for, and a ledger that asks for a layer there is no switch for \
-         reads as a switch somebody could throw: {ledger}"
+         reads as a switch somebody could throw: {settings}"
     );
 }
