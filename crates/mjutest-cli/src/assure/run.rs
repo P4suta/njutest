@@ -237,7 +237,8 @@ fn deepened(
 }
 
 /// What a run reads before it builds anything: the tree, the identity, and the repository.
-fn opened(
+/// What the run can say before it has compiled anything, and what it already knows it cannot claim.
+pub fn opened(
     report: &mut Report,
     request: &Request,
     environment: &Environment,
@@ -730,10 +731,14 @@ impl Journal {
 }
 
 /// Where a run works and what it is about, before it has compiled anything.
-struct Opening<'a> {
-    request: &'a Request,
-    environment: &'a Environment,
-    scratch: &'a Scratch,
+#[derive(Debug)]
+pub struct Opening<'a> {
+    /// What the run was asked to do.
+    pub request: &'a Request,
+    /// The process this run is inside.
+    pub environment: &'a Environment,
+    /// Where the run works.
+    pub scratch: &'a Scratch,
 }
 
 /// What the run can say before it has compiled anything: where it works, and what the repository was.

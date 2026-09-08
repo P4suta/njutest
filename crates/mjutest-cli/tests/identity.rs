@@ -11,7 +11,7 @@
 use std::path::PathBuf;
 
 use mjutest_cli::assure::identity::Evidence;
-use mjutest_cli::assure::run::{DIGEST_LIMITATION, Request, identity};
+use mjutest_cli::assure::run::{DIGEST_LIMITATION, Request, identity, opened};
 use mjutest_cli::build::Cargo;
 use mjutest_cli::config::Config;
 use mjutest_cli::report::{RunKind, UNAVAILABLE};
@@ -157,5 +157,83 @@ fn a_workspace_at_the_root_of_a_filesystem_is_still_named() {
         UNAVAILABLE,
         "a path with no last component names no workspace, and an empty name would read \
          as one somebody forgot to record"
+    );
+}
+
+#[test]
+fn a_run_that_could_not_ask_git_says_so_before_it_compiles_anything() {
+    let root = tempfile::tempdir().expect("a directory");
+    let parent = tempfile::tempdir().expect("another directory");
+    let mut request = asked(&root.path().display().to_string());
+    request.evidence = known();
+    let scratch = mjutest_cli::scratch::Scratch::create(
+        parent.path(),
+        "20260909T000000Z-000001",
+        request.started,
+    )
+    .expect("a directory to work in");
+    let cancel = rust_mutants::runner::Cancel::new();
+    let trace = mjutest_cli::trace::Recorder::disabled();
+    let environment = mjutest_cli::cli::Environment {
+        vars: Vec::new(),
+        working_directory: root.path().to_owned(),
+        temp_directory: parent.path().to_owned(),
+        cache_directory: parent.path().to_owned(),
+        cancel: cancel.clone(),
+    };
+
+    let mut report = identity(&request);
+    opened(
+        &mut report,
+        &request,
+        &environment,
+        (&scratch, mjutest_cli::watch::Watch::new(&cancel, &trace)),
+    );
+
+    assert!(
+        !report.repository.git.available,
+        "a directory that is not a repository is one git has nothing to say about"
+    );
+    assert!(
+        report
+            .limitations
+            .iter()
+            .any(|limitation| limitation.name == mjutest_cli::git::UNAVAILABLE_LIMITATION),
+        "and the run says so here, before it compiles anything, because a report that \
+         cannot name the commit it verified is one nobody can go back to: {:?}",
+        report.limitations
+    );
+    assert!(
+        !report
+            .limitations
+            .iter()
+            .any(|limitation| limitation.name == mjutest_cli::scratch::UNCLAIMED_LIMITATION),
+        "the directory it works in was claimed, so nothing is said about a sweep taking \
+         it: {:?}",
+        report.limitations
+    );
+
+    std::fs::write(root.path().join("one.rs"), "fn f() {}\n").expect("a file to commit");
+    mjutest_devkit::repo::commit_tree(root.path());
+    let mut committed = identity(&request);
+    opened(
+        &mut committed,
+        &request,
+        &environment,
+        (&scratch, mjutest_cli::watch::Watch::new(&cancel, &trace)),
+    );
+
+    assert!(
+        committed.repository.git.available,
+        "and a directory that is a repository is one git answers about, so the report \
+         carries what it said rather than the sentinel it started with"
+    );
+    assert!(
+        !committed
+            .limitations
+            .iter()
+            .any(|limitation| limitation.name == mjutest_cli::git::UNAVAILABLE_LIMITATION),
+        "and states nothing, because there is nothing it could not do: {:?}",
+        committed.limitations
     );
 }
