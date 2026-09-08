@@ -7,6 +7,7 @@ mod annotate;
 pub mod branch;
 mod position;
 mod rules;
+mod shape;
 mod walk;
 
 use std::collections::BTreeMap;
