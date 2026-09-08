@@ -867,6 +867,12 @@ fn a_claim_written_for_several_mutations_stops_holding_when_one_of_them_is_kille
         u64::try_from(indices.len()).expect("a small catalog"),
         "the claim was resolved against every mutation its locator names"
     );
+    assert_eq!(
+        held[0].mutant.as_deref(),
+        every.first().map(|one| one.id.as_str()),
+        "a claim that held names the first of the mutations it covers, so two runs of one \
+         catalog write the same report"
+    );
     assert!(
         every.iter().all(|one| one.expected),
         "a claim that held accounts for every mutation it names"
@@ -925,6 +931,10 @@ fn a_claim_written_for_several_mutations_stops_holding_when_one_of_them_is_kille
     assert!(
         again.iter().all(|one| !one.expected),
         "and it accounts for none of them"
+    );
+    assert_eq!(
+        unnamed[0].covered, 0,
+        "a claim that named nothing was resolved against nothing"
     );
 
     session.close().expect("the session closes");

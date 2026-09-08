@@ -137,3 +137,19 @@ rule = "question-to-unwrap"
 original = "?"
 line = 204
 reason = "plan emits one rewrite per span, so the splices apply is handed never overlap and it never fails; two_claims_over_one_span_are_one_rewrite_rather_than_two holds that grouping, and this is an equivalence under it rather than an unreachable fail-open"
+
+# Which of the mutations a locator names is asked where its line has moved to.
+#
+# Only a claim that carries a line asks at all, and by then the answer is the
+# same whichever it asks: a locator with no count names one mutation, and one
+# with a count reached this line only because the line narrowed the matches to
+# the ones written on it. `toolchain_session.rs::a_locator_that_states_a_count_names_that_many_and_refuses_any_other_number`
+# holds the count, and `a_mutant_is_located_by_its_locator_and_a_moved_line_is_reported_not_guessed`
+# holds the narrowing. The call reads as the first because that is the one a
+# report names elsewhere.
+[[mutation.expect]]
+path = "crates/rust-mutants/src/run.rs"
+item = "addressed"
+rule = "first-to-last"
+original = "first"
+reason = "a locator with no count names one mutation and one with a count was narrowed by the line it carries, so the first and the last of what it names are written on the same line; a_locator_that_states_a_count_names_that_many_and_refuses_any_other_number and a_mutant_is_located_by_its_locator_and_a_moved_line_is_reported_not_guessed hold both halves"
