@@ -48,6 +48,17 @@ below is stated fail-closed.
 - A library that documents no example has nothing to run and is not a target
   (`doctests-none`): a target that ran nothing would raise a finding about
   documentation nobody wrote.
+- **A test that starts this engine cannot be measured from inside a run of it.**
+  A run composes an activation of its own and refuses to inherit one
+  (`RM0006`), which is what stops a nested process from answering about the
+  wrong catalog. A test that spawns `rust-mutants` therefore fails
+  verification under measurement, and the run refuses to judge against it. Such
+  a target is left out with `--skip-target` or `[execution] skip_targets`, and
+  `target-skipped-by-configuration` says so. What that target's tests would
+  have killed is a survivor for as long as it is left out, so a reader working
+  through survivors of a run that skipped targets has to hold that in mind: the
+  survivor may be a gap in the suite, or it may be the target that was not
+  asked.
 - A target whose own tests do not pass with nothing active is dropped from the
   ones a mutation may be put to (`baseline-not-passing`), and every one of them
   is named. Every mutation put to such a target comes back killed and not one

@@ -829,6 +829,166 @@ fn a_route_that_kept_nothing_and_ran_something_is_one_violation_and_not_two() {
     assert_eq!(audit.violations(), 1, "{audit}");
 }
 
+/// A report whose every column disagrees with the records it summarises.
+fn disagreeing() -> serde_json::Value {
+    with(serde_json::json!({
+        "accounting": {
+            "targets": { "selected": 9, "passed": 9, "failed": 9, "skipped": 9, "missing": 9 },
+            "mutants": {
+                "cataloged": 9, "rejected": 9, "executed": 9, "killed": 9, "survived": 9,
+                "timed_out": 9, "unreached": 9, "equivalent": 9, "accepted": 9,
+                "reused_killed": 9, "reused_survived": 9
+            },
+            "soundness": { "unsafe_items": 0, "packages_with_unsafe": 0, "executed": false }
+        },
+        "findings": []
+    }))
+}
+
+/// A report that leaves columns out, so each of them is unaudited rather than re-decided.
+fn omitting() -> serde_json::Value {
+    let mut document = base();
+    for (group, column) in [
+        ("mutants", "killed"),
+        ("mutants", "cataloged"),
+        ("mutants", "executed"),
+        ("mutants", "accepted"),
+        ("targets", "selected"),
+        ("targets", "passed"),
+    ] {
+        without(&mut document, group, column);
+    }
+    document
+}
+
+#[test]
+fn every_remark_a_recording_earns_says_something_a_reader_can_act_on() {
+    let mut seen = 0usize;
+    for (what, document) in [
+        ("columns that disagree", disagreeing()),
+        ("columns that are not there", omitting()),
+        ("a report that holds together", base()),
+        (
+            "findings that name no survivor",
+            with(serde_json::json!({ "findings": [] })),
+        ),
+    ] {
+        let audit = audited_with_routes(&document);
+        for remark in &audit.remarks {
+            seen = seen.saturating_add(1);
+            assert!(
+                !remark.subject.trim().is_empty(),
+                "{what}: a remark that names nothing is one a reader cannot look up: \
+                 {remark:?}"
+            );
+            assert!(
+                remark.detail.trim().len() > 20,
+                "{what}: and one that says nothing is one they cannot act on. A sentence \
+                 is the whole of what an audit produces, so an empty one is the audit \
+                 failing quietly: {remark:?}"
+            );
+            assert!(
+                remark.detail.trim() != remark.subject.trim(),
+                "{what}: saying the subject back is not saying anything: {remark:?}"
+            );
+        }
+    }
+    assert!(
+        seen >= 20,
+        "the recordings between them have to reach every sentence this audit can write, \
+         and {seen} is too few to have done that"
+    );
+}
+
+#[test]
+fn every_column_the_report_carries_is_re_decided_and_not_a_subset_of_them() {
+    let audit = audited_with_routes(&disagreeing());
+    let named: Vec<&str> = audit
+        .remarks
+        .iter()
+        .map(|remark| remark.subject.as_str())
+        .collect();
+
+    for column in [
+        "accounting.targets.selected",
+        "accounting.targets.passed",
+        "accounting.targets.failed",
+        "accounting.targets.skipped",
+        "accounting.targets.missing",
+        "accounting.mutants.cataloged",
+        "accounting.mutants.executed",
+        "accounting.mutants.killed",
+        "accounting.mutants.survived",
+        "accounting.mutants.unreached",
+        "accounting.mutants.rejected",
+        "accounting.mutants.timed_out",
+        "accounting.mutants.equivalent",
+        "accounting.mutants.reused_killed",
+        "accounting.mutants.reused_survived",
+    ] {
+        assert!(
+            named.contains(&column),
+            "{column} disagrees with the records it summarises and the audit says nothing \
+             about it; a column nothing re-decides is a number a report may say anything \
+             it likes in: {named:?}"
+        );
+    }
+}
+
+#[test]
+fn a_route_the_audit_passes_over_does_not_stop_it_looking_at_the_rest() {
+    let audit = audited_with(
+        &base(),
+        &[
+            serde_json::json!({
+                "seq": 1, "timestamp": "2026-09-06T00:00:00Z", "elapsed_ms": 0, "type": "route",
+                "route": {
+                    "mutant": "an earlier answer", "granularity": "all",
+                    "fallback": "not-measured", "reaching": [TARGET], "discharged": [],
+                    "considered": [], "reused": "an earlier run"
+                }
+            }),
+            serde_json::json!({
+                "seq": 2, "timestamp": "2026-09-06T00:00:01Z", "elapsed_ms": 1, "type": "route",
+                "route": {
+                    "mutant": SURVIVED, "granularity": "unreached", "fallback": null,
+                    "reaching": [], "discharged": [], "considered": [], "reused": null
+                }
+            }),
+        ],
+    );
+
+    assert!(
+        proven(&audit).contains(&SURVIVED.to_owned()),
+        "the route before it was read back from an earlier run and is passed over; a \
+         loop that stopped there instead of skipping it would report nothing about \
+         everything after it: {audit}"
+    );
+}
+
+#[test]
+fn one_fact_said_twice_is_one_line() {
+    let twice = serde_json::json!({
+        "seq": 1, "timestamp": "2026-09-06T00:00:00Z", "elapsed_ms": 0, "type": "route",
+        "route": {
+            "mutant": SURVIVED, "granularity": "unreached", "fallback": null,
+            "reaching": [], "discharged": [], "considered": [], "reused": null
+        }
+    });
+    let mut second = twice.clone();
+    if let Some(seq) = second.get_mut("seq") {
+        *seq = serde_json::json!(2);
+    }
+    let audit = audited_with(&base(), &[twice, second]);
+
+    assert_eq!(
+        audit.violations(),
+        1,
+        "one route recorded twice is one fact, and saying it twice makes a reader look \
+         for two defects: {audit}"
+    );
+}
+
 /// Every mutant the proof layers say a recording does not support.
 fn proven(audit: &Audit) -> Vec<String> {
     audit
