@@ -880,12 +880,20 @@ fn routed(mutant: &str, granularity: &str, route: &serde_json::Value) -> serde_j
 
 /// One execution event.
 fn executed(mutant: &str, target: &str, outcome: &str) -> serde_json::Value {
+    at(2, mutant, target, outcome)
+}
+
+/// One execution event, numbered, so a recording can hold more than one.
+fn at(seq: u64, mutant: &str, target: &str, outcome: &str) -> serde_json::Value {
     serde_json::json!({
-        "seq": 2, "timestamp": "2026-09-06T00:00:01Z", "elapsed_ms": 1, "type": "mutant-exec",
+        "seq": seq, "timestamp": "2026-09-06T00:00:01Z", "elapsed_ms": 1, "type": "mutant-exec",
         "mutant": { "mutant": mutant, "target": target, "args": [], "outcome": outcome,
                     "duration_ms": 5 }
     })
 }
+
+/// A second target this run recorded, so a route can keep one and be killed by the other.
+const OTHER: &str = "pkg/test/beside";
 
 /// Every audit this test file can provoke, so a property over remarks is a property over the sentences the audit can write.
 fn provoked() -> Vec<(&'static str, Audit)> {
@@ -1280,6 +1288,173 @@ fn a_field_the_recording_does_not_carry_is_absent_rather_than_fatal() {
         "a document missing a field it should have is a document the audit reads what it \
          can of; reaching into it and unwrapping would end the audit at the first thing \
          that was not there: {audit}"
+    );
+}
+
+#[test]
+fn an_execution_the_audit_passes_over_does_not_stop_it_looking_at_the_rest() {
+    let audit = audited_with(
+        &base(),
+        &[
+            routed(
+                KILLED,
+                "block",
+                &serde_json::json!({
+                    "reaching": ["elsewhere"],
+                    "discharged": [{ "target": TARGET, "proof": "never-infected" }]
+                }),
+            ),
+            at(2, KILLED, "something else", "survived"),
+            at(3, KILLED, TARGET, "killed"),
+        ],
+    );
+
+    assert!(
+        proven(&audit).contains(&KILLED.to_owned()),
+        "the execution before it said nothing and is passed over; a loop that stopped \
+         there would report nothing about everything after it: {audit}"
+    );
+}
+
+#[test]
+fn an_execution_by_a_target_no_proof_removed_does_not_stop_the_search_for_one_it_did() {
+    let audit = audited_with(
+        &base(),
+        &[
+            routed(
+                KILLED,
+                "block",
+                &serde_json::json!({
+                    "reaching": [OTHER],
+                    "discharged": [{ "target": TARGET, "proof": "branch-never-taken" }]
+                }),
+            ),
+            at(2, KILLED, OTHER, "killed"),
+            at(3, KILLED, TARGET, "killed"),
+        ],
+    );
+
+    assert!(
+        proven(&audit).contains(&KILLED.to_owned()),
+        "the first killer is one the route kept and no proof removed, so it is passed \
+         over; the second is one a proof removed and then killed with: {audit}"
+    );
+}
+
+#[test]
+fn an_execution_by_a_target_the_route_kept_does_not_stop_the_search_for_one_it_dropped() {
+    let audit = audited_with(
+        &base(),
+        &[
+            routed(KILLED, "block", &serde_json::json!({ "reaching": [OTHER] })),
+            at(2, KILLED, OTHER, "killed"),
+            at(3, KILLED, TARGET, "killed"),
+        ],
+    );
+
+    assert!(
+        proven(&audit).contains(&KILLED.to_owned()),
+        "the first killer is one the route kept and is passed over; the second is one \
+         the reach layer removed: {audit}"
+    );
+}
+
+#[test]
+fn an_execution_a_proof_answers_for_does_not_stop_the_search_for_one_nothing_answers_for() {
+    let audit = audited_with(
+        &base(),
+        &[
+            routed(
+                KILLED,
+                "block",
+                &serde_json::json!({
+                    "reaching": [OTHER],
+                    "discharged": [{ "target": TARGET, "proof": "never-infected" }]
+                }),
+            ),
+            at(2, KILLED, TARGET, "killed"),
+            at(3, KILLED, "a third target", "killed"),
+        ],
+    );
+
+    let said: Vec<&str> = audit
+        .remarks
+        .iter()
+        .filter(|remark| remark.standing == Standing::Violated && remark.layer == Layer::Proofs)
+        .map(|remark| remark.detail.as_str())
+        .collect();
+    assert!(
+        said.iter().any(|detail| detail.contains("a third target")),
+        "the first killer is one a proof removed, which the proof layer answers for, so \
+         the reach check passes over it; the second is one nothing named at all, and a \
+         loop that stopped at the first would never reach it: {said:?}"
+    );
+}
+
+#[test]
+fn two_kills_that_name_no_target_are_both_reported() {
+    let mut document = base();
+    if let Some(mutants) = document
+        .get_mut("mutants")
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        for mutant in mutants.iter_mut() {
+            mutant["outcome"] = serde_json::json!("killed");
+            mutant["killed_by"] = serde_json::Value::Null;
+        }
+    }
+    let audit = audited(&document);
+    let named: std::collections::BTreeSet<String> = audit
+        .remarks
+        .iter()
+        .filter(|remark| remark.standing == Standing::Violated && remark.layer == Layer::Killers)
+        .map(|remark| remark.subject.clone())
+        .collect();
+
+    assert!(
+        named.len() >= 2,
+        "a reader works through the list an audit hands them; one that stops at the \
+         first kill it cannot check sends them back for the rest: {audit}"
+    );
+}
+
+#[test]
+fn a_survivor_a_finding_names_does_not_stop_the_search_for_one_it_does_not() {
+    let mut document = with(serde_json::json!({
+        "accounting": { "mutants": { "killed": 0, "survived": 2, "executed": 2 } }
+    }));
+    if let Some(mutants) = document
+        .get_mut("mutants")
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        for mutant in mutants.iter_mut() {
+            mutant["outcome"] = serde_json::json!("survived");
+            mutant["killed_by"] = serde_json::Value::Null;
+        }
+    }
+    let named = document
+        .get("mutants")
+        .and_then(|held| held.get(0))
+        .and_then(|held| held.get("display_id"))
+        .cloned()
+        .expect("a mutant to name");
+    if let Some(findings) = document.get_mut("findings") {
+        *findings = serde_json::json!([
+            { "kind": "surviving-mutant", "subject": named, "detail": "d", "position": null }
+        ]);
+    }
+    let audit = audited(&document);
+
+    let unnamed = audit
+        .remarks
+        .iter()
+        .filter(|remark| remark.standing == Standing::Violated && remark.layer == Layer::Findings)
+        .count();
+    assert_eq!(
+        unnamed, 1,
+        "one survivor has a finding and is passed over, and the other has none; a loop \
+         that stopped at the first one it could account for would say the report is \
+         complete: {audit}"
     );
 }
 
