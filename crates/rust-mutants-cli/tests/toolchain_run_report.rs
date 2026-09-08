@@ -127,6 +127,24 @@ fn the_report_names_every_mutant_scores_what_it_decided_and_reports_every_gap() 
     );
 }
 
+/// Every error `named` reports about `document`, as a reader of the schema would see them.
+fn against_schema(named: &str, document: &serde_json::Value) -> Vec<String> {
+    let schema: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(
+            mjutest_devkit::paths::workspace_root()
+                .join("schema")
+                .join(named),
+        )
+        .expect("the schema"),
+    )
+    .expect("the schema is a document");
+    let validator = jsonschema::validator_for(&schema).expect("the schema compiles");
+    validator
+        .iter_errors(document)
+        .map(|error| format!("{}: {error}", error.instance_path()))
+        .collect()
+}
+
 #[test]
 fn the_report_validates_against_the_schema_that_is_published_with_it() {
     let fixture = Fixture::copy("fixture-simple");
@@ -136,19 +154,7 @@ fn the_report_validates_against_the_schema_that_is_published_with_it() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let document = stored(&fixture);
-    let schema: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(
-            mjutest_devkit::paths::workspace_root().join("schema/rust-mutants-run-report-v1.json"),
-        )
-        .expect("the schema"),
-    )
-    .expect("the schema is a document");
-    let validator = jsonschema::validator_for(&schema).expect("the schema compiles");
-    let errors: Vec<String> = validator
-        .iter_errors(&document)
-        .map(|error| format!("{}: {error}", error.instance_path()))
-        .collect();
+    let errors = against_schema("rust-mutants-run-report-v1.json", &stored(&fixture));
     assert!(errors.is_empty(), "{errors:#?}");
 }
 
@@ -898,6 +904,23 @@ fn a_run_keeps_what_the_audit_re_derives_its_routes_from() {
             .iter()
             .any(|row| row["branch"].is_object()),
         "with the body the compiler vouched for: {catalog}"
+    );
+
+    for (name, document) in [
+        ("rust-mutants-touched-v1.json", &touched),
+        ("rust-mutants-catalog-v1.json", &catalog),
+    ] {
+        let errors = against_schema(name, document);
+        assert!(
+            errors.is_empty(),
+            "the premises a run keeps are read by whoever audits it, and {name} is what says \
+             how: {errors:#?}"
+        );
+    }
+    assert!(
+        touched["narrowing"]["compared"].is_array(),
+        "including which mutants the tree could record anything about, without which an \
+         absence in the record says nothing: {touched}"
     );
 }
 
