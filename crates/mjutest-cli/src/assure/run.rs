@@ -1322,7 +1322,7 @@ fn first_line(text: &str) -> String {
 /// target could not be measured is what a reader acts on. The sentence is
 /// about the limitation, so the target is cut off before it is looked up.
 ///
-/// [`every_limitation_the_engine_can_state_has_a_sentence`](../../tests/limitations.rs)
+/// [`every_limitation_the_engine_can_state_has_a_sentence_of_its_own`](../../tests/limitations.rs)
 /// holds this to `rust_mutants::limitation::ALL`: a layer whose name reaches a
 /// report with nothing a reader can do about it is a layer that is not really
 /// visible.

@@ -21,7 +21,8 @@ pub use rust_mutants::session::{
 /// Named by wire name rather than by variant because the engine's set is
 /// `#[non_exhaustive]`: a name arriving here without a sentence is a layer
 /// this release cannot explain, and
-/// [`every_fallback_has_a_sentence`](../../../tests/route.rs) is what says so
+/// [`every_fallback_a_route_can_carry_has_a_sentence_of_its_own`](../../tests/route.rs)
+/// is what says so
 /// before a report does.
 #[must_use]
 pub fn detail(fallback: &str) -> &'static str {
