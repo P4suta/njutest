@@ -71,7 +71,7 @@ pub fn observe(session: &Session, reporting: Reporting<'_, '_>) -> Baseline {
     let phase = watch.trace.phase("baseline-measure");
     let verified = session.verified();
     let mut baseline = Baseline {
-        limitations: limitations(session),
+        limitations: limitations(session.targets(), &verified.touched.limitations),
         ..Baseline::default()
     };
     let built = |id: &str| session.targets().iter().find(|one| one.id == id);
@@ -132,30 +132,31 @@ pub fn refused(error: &crate::error::RunnerError) -> Option<Baseline> {
 /// One target per library is what the contract promises, and a library with
 /// nothing documented is not a target that ran nothing: reporting it as
 /// missing would raise a finding about documentation nobody wrote.
-fn unmeasurable(target: &TestTarget) -> bool {
+#[must_use]
+pub fn unmeasurable(target: &TestTarget) -> bool {
     target
         .limitations
         .iter()
         .any(|name| name == rust_mutants::limitation::DOCTESTS_NONE)
 }
 
-/// Every limitation this run's targets and their records state, each named once.
+/// Every limitation `targets` and the run's own `touched` record state, each named once.
 ///
 /// A target that answers nothing states nothing either. A library that
 /// documents no example is not a library whose examples were routed coarsely,
 /// and saying both would put a reader in front of a limitation about work
 /// nobody did.
-fn limitations(session: &Session) -> Vec<String> {
+#[must_use]
+pub fn limitations(targets: &[TestTarget], touched: &[String]) -> Vec<String> {
     let mut named = BTreeSet::new();
-    for target in session.targets() {
+    for target in targets {
         if unmeasurable(target) {
             continue;
         }
         named.extend(target.limitations.iter().cloned());
     }
-    named.extend(session.verified().touched.limitations.iter().cloned());
-    if session
-        .targets()
+    named.extend(touched.iter().cloned());
+    if targets
         .iter()
         .any(|target| target.kind == rust_mutants::execute::TargetKind::ProcMacro)
     {
@@ -165,7 +166,8 @@ fn limitations(session: &Session) -> Vec<String> {
 }
 
 /// The runner's name for one of the engine's targets.
-fn target_of(target: &TestTarget) -> Target {
+#[must_use]
+pub fn target_of(target: &TestTarget) -> Target {
     let unit = UnitKind::of(target.kind);
     Target {
         id: target_id(&target.package, unit, &target.name, WHOLE_BINARY),
@@ -186,7 +188,8 @@ fn target_of(target: &TestTarget) -> Target {
 /// so the session does not carry it, and the report has to name it anyway: it
 /// is the finding. Its identity is `package/kind/name`, which is every field a
 /// row needs; the rest is how to start it, and this one is never started.
-fn named(id: &str) -> Target {
+#[must_use]
+pub fn named(id: &str) -> Target {
     let mut fields = id.splitn(3, '/');
     let (package, kind, name) = (
         fields.next().unwrap_or_default(),
@@ -259,7 +262,8 @@ pub fn status_of(outcome: Outcome, ignored: u32, output: &str) -> (TargetStatus,
 /// somebody looking at a failing test needs. So the line that names a test as
 /// having failed wins, then the one the compiler or cargo marked as an error,
 /// and the first line of any output at all is the last resort.
-fn failure(output: &str) -> Option<String> {
+#[must_use]
+pub fn failure(output: &str) -> Option<String> {
     let lines = || {
         output
             .lines()

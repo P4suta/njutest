@@ -413,3 +413,33 @@ fn reading_the_baseline_is_a_phase_that_says_where_it_is() {
         );
     }
 }
+
+#[test]
+fn every_target_the_baseline_reads_is_one_a_person_watching_is_told_about() {
+    let fixture = Fixture::copy("fixture-simple");
+    let session = prepared(&fixture);
+    let cancel = Cancel::new();
+    let trace = recording();
+    let mut said: Vec<u8> = Vec::new();
+
+    let baseline = observe(
+        &session,
+        Reporting {
+            notes: &mut mjutest_cli::ui::Notes::Plain(&mut said),
+            watch: Watch::new(&cancel, &trace),
+        },
+    );
+
+    let told = String::from_utf8_lossy(&said).into_owned();
+    let total = baseline.targets.len();
+    for (at, measured) in baseline.targets.iter().enumerate() {
+        let step = at.saturating_add(1);
+        assert!(
+            told.contains(&format!("[{step}/{total}] {}", measured.target.name())),
+            "reading the baseline is the slowest phase of a run, and a terminal that \
+             says nothing through it is one somebody stops: each target is counted as \
+             it is read, out of the number there are. {told}"
+        );
+    }
+    assert!(total > 0, "the fixture has targets to count");
+}

@@ -6,8 +6,8 @@
 use mjutest_cli::config::Contract;
 use mjutest_cli::report::merge::{MergeError, merge};
 use mjutest_cli::report::{
-    Finding, FindingKind, Limitation, MutantRecord, Position, Report, RunKind, TargetRecord,
-    TargetStatus, Timing, Verdict,
+    CandidateRecord, Finding, FindingKind, Limitation, MutantRecord, Position, Report, RunKind,
+    TargetRecord, TargetStatus, Timing, Verdict,
 };
 
 fn part(shard: &str, mutants: &[(&str, &str)]) -> Report {
@@ -286,5 +286,72 @@ fn the_targets_of_the_whole_are_ordered_the_way_a_report_orders_them() {
         vec![900, 1],
         "slowest first, which is the order every report is read in: {:?}",
         whole.targets
+    );
+}
+
+fn offered(mutant: &str) -> CandidateRecord {
+    CandidateRecord {
+        finding: "surviving-mutant".to_owned(),
+        mutant: mutant.to_owned(),
+        kind: "patch".to_owned(),
+        path: "src/lib.rs".to_owned(),
+        digest: "c".repeat(64),
+        preimage: None,
+        stability_runs: 3,
+        kill_runs: 2,
+        accepted: true,
+        why: None,
+    }
+}
+
+#[test]
+fn what_only_the_last_part_found_is_still_what_the_whole_found() {
+    let one = part("1/2", &[("a".repeat(64).as_str(), "killed")]);
+    let mut two = part("2/2", &[("b".repeat(64).as_str(), "survived")]);
+    two.findings = vec![Finding::new(
+        FindingKind::SurvivingMutant,
+        "bbbbbbbb",
+        "nothing noticed it",
+    )];
+    two.limitations = vec![Limitation::new(
+        "custom-harness",
+        "the target brings its own harness",
+    )];
+    two.candidates = vec![offered("bbbbbbbb")];
+
+    let whole = merge(&[one, two]).expect("two parts");
+
+    assert_eq!(
+        whole.findings.len(),
+        1,
+        "a whole that carried only what its first part found would report a clean run \
+         for every gap the other parts are the ones holding: {:?}",
+        whole.findings
+    );
+    assert_eq!(whole.limitations.len(), 1, "{:?}", whole.limitations);
+    assert_eq!(whole.candidates.len(), 1, "{:?}", whole.candidates);
+    assert_eq!(
+        whole.verdict,
+        Verdict::Insufficient,
+        "and the finding one part raised is what the whole concludes from"
+    );
+}
+
+#[test]
+fn the_acceptances_of_the_whole_are_the_ones_its_parts_recorded_and_no_others() {
+    let mut one = part("1/3", &[("a".repeat(64).as_str(), "survived")]);
+    one.accounting.mutants.accepted = 1;
+    let mut two = part("2/3", &[("b".repeat(64).as_str(), "survived")]);
+    two.accounting.mutants.accepted = 2;
+    let three = part("3/3", &[("c".repeat(64).as_str(), "killed")]);
+
+    let whole = merge(&[one, two, three]).expect("three parts");
+
+    assert_eq!(
+        whole.accounting.mutants.accepted, 3,
+        "an acceptance is a fact about a reviewer, and every mutant belongs to exactly \
+         one part, so the parts add up to what a reviewer recorded and to nothing more: \
+         a whole that counted one acceptance nobody made would excuse a survivor nobody \
+         looked at"
     );
 }
