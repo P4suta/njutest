@@ -933,6 +933,13 @@ fn documents() -> Vec<(&'static str, Audit)> {
 
 /// Every audit a report and a recording together can provoke.
 fn recordings() -> Vec<(&'static str, Audit)> {
+    let mut all = routing();
+    all.extend(concluding());
+    all
+}
+
+/// Every audit a routing recording can provoke.
+fn routing() -> Vec<(&'static str, Audit)> {
     vec![
         (
             "a route that reaches nothing and runs something",
@@ -997,6 +1004,12 @@ fn recordings() -> Vec<(&'static str, Audit)> {
                 ],
             ),
         ),
+    ]
+}
+
+/// Every audit a report's own conclusions can provoke.
+fn concluding() -> Vec<(&'static str, Audit)> {
+    vec![
         (
             "a route held to a target that is not there",
             audited_with(
@@ -1009,6 +1022,52 @@ fn recordings() -> Vec<(&'static str, Audit)> {
             ),
         ),
         ("no recording at all", audited(&base())),
+        (
+            "a survivor no finding names",
+            audited(&with(serde_json::json!({ "findings": [] }))),
+        ),
+        (
+            "a disposition read back from nowhere",
+            audited(&with(serde_json::json!({
+                "mutants": [{
+                    "id": "d".repeat(64), "display_id": "dddddddddddddddddddd",
+                    "path": "src/lib.rs",
+                    "position": { "line": 1, "column": 1, "character_column": 1 },
+                    "rule": "r@1", "outcome": "killed", "killed_by": TARGET,
+                    "reused": true, "source_run_id": null
+                }]
+            }))),
+        ),
+        (
+            "a disposition read back from this run",
+            audited(&with(serde_json::json!({
+                "mutants": [{
+                    "id": "e".repeat(64), "display_id": "eeeeeeeeeeeeeeeeeeee",
+                    "path": "src/lib.rs",
+                    "position": { "line": 1, "column": 1, "character_column": 1 },
+                    "rule": "r@1", "outcome": "killed", "killed_by": TARGET,
+                    "reused": true, "source_run_id": RUN
+                }]
+            }))),
+        ),
+        (
+            "an assurance over a target that failed",
+            audited(&with(serde_json::json!({
+                "verdict": "ASSURED", "findings": [],
+                "accounting": { "targets": { "failed": 1 } }
+            }))),
+        ),
+        (
+            "an assurance over nothing observed",
+            audited(&with(serde_json::json!({
+                "verdict": "ASSURED", "findings": [],
+                "accounting": { "targets": { "passed": 0 } }
+            }))),
+        ),
+        (
+            "a defect that names nothing wrong",
+            audited(&with(serde_json::json!({ "verdict": "DEFECT" }))),
+        ),
     ]
 }
 
@@ -1041,7 +1100,7 @@ fn every_remark_a_recording_earns_says_something_a_reader_can_act_on() {
                  {remark:?}"
             );
             assert!(
-                !said.ends_with(':') && !said.ends_with(": "),
+                !said.ends_with(':') && !said.ends_with(';'),
                 "{what}: a sentence that ends where its reason should start is a sentence \
                  that promised one: {remark:?}"
             );
@@ -1238,9 +1297,14 @@ fn what_a_run_looked_at_decides_which_assurance_it_may_reach() {
         let document = with(serde_json::json!({
             "run_kind": kind, "verdict": assurance, "findings": []
         }));
+        let reached = audited(&document);
         assert!(
-            !violations(&document).contains(&"verdict".to_owned()),
-            "a {kind} run may conclude {assurance}"
+            !reached
+                .remarks
+                .iter()
+                .any(|remark| remark.subject == "verdict"),
+            "a {kind} run may conclude {assurance}, and an audit that cannot say which \
+             assurance a run kind reaches has not checked it either: {reached}"
         );
         let wider = with(serde_json::json!({
             "run_kind": kind, "verdict": "ASSURED", "findings": []
@@ -1455,6 +1519,80 @@ fn a_survivor_a_finding_names_does_not_stop_the_search_for_one_it_does_not() {
         "one survivor has a finding and is passed over, and the other has none; a loop \
          that stopped at the first one it could account for would say the report is \
          complete: {audit}"
+    );
+}
+
+/// What the audit said about the verdict of `document`, in its own words.
+fn about_the_verdict(document: &serde_json::Value) -> Vec<String> {
+    audited(document)
+        .remarks
+        .iter()
+        .filter(|remark| remark.subject == "verdict")
+        .map(|remark| remark.detail.clone())
+        .collect()
+}
+
+#[test]
+fn an_assurance_over_targets_that_did_not_run_is_a_violation_however_few_they_are() {
+    for name in ["failed", "missing"] {
+        let document = with(serde_json::json!({
+            "verdict": "ASSURED", "findings": [],
+            "accounting": { "targets": { name: 1 } }
+        }));
+        let said = about_the_verdict(&document);
+        assert!(
+            said.iter().any(|detail| detail.contains(name)),
+            "one {name} target is enough to stop an assurance, and a check that waited \
+             for two would let the first through. What it said instead: {said:?}"
+        );
+    }
+}
+
+#[test]
+fn an_assurance_over_nothing_observed_or_nothing_asked_is_a_violation() {
+    for (group, name) in [("targets", "passed"), ("mutants", "executed")] {
+        let document = with(serde_json::json!({
+            "verdict": "ASSURED", "findings": [],
+            "accounting": { group: { name: 0 } }
+        }));
+        let said = about_the_verdict(&document);
+        assert!(
+            said.iter()
+                .any(|detail| detail.contains(name) && detail.contains(group)),
+            "a run that counts no {name} {group} assures nothing, whatever else it says. \
+             What it said instead: {said:?}"
+        );
+    }
+}
+
+#[test]
+fn a_row_the_recording_names_is_the_row_the_audit_looks_it_up_by() {
+    let mut document = base();
+    let named = document
+        .get("targets")
+        .and_then(|held| held.get(0))
+        .and_then(|held| held.get("id"))
+        .and_then(serde_json::Value::as_str)
+        .map(ToOwned::to_owned)
+        .expect("a target id");
+    if let Some(mutants) = document
+        .get_mut("mutants")
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        for mutant in mutants.iter_mut() {
+            if mutant.get("outcome").and_then(serde_json::Value::as_str) == Some("killed")
+                && let Some(by) = mutant.get_mut("killed_by")
+            {
+                *by = serde_json::Value::String(named.clone());
+            }
+        }
+    }
+
+    assert_eq!(
+        violations(&document),
+        Vec::<String>::new(),
+        "a kill may name the target by its identity as well as by its name, and an audit \
+         that read no identity out of the row would say the target is not there"
     );
 }
 

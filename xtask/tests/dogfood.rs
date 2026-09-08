@@ -88,7 +88,9 @@ fn the_engine_ledger_names_what_it_measures_and_asks_for_every_proof_layer() {
     )
     .expect("the engine's own ledger");
     assert!(
-        ledger.contains("packages = [\"rust-mutants\", \"rust-mutants-cli\", \"xtask\"]"),
+        ledger.contains(
+            "packages = [\"rust-mutants\", \"rust-mutants-cli\", \"mjutest-cli\", \"xtask\"]"
+        ),
         "{ledger}"
     );
     assert!(
