@@ -632,6 +632,42 @@ fn refused() -> Vec<Report> {
 }
 
 #[test]
+fn a_report_that_says_it_was_read_back_from_a_run_that_is_not_itself_is_coherent() {
+    let mut cached = sound();
+    cached.provenance.cached = true;
+    cached.provenance.source_run_id = Some("20260905T081500Z-000000".to_owned());
+
+    assert_eq!(
+        validate_for_persistence(&cached),
+        Vec::<Violation>::new(),
+        "reusing what an earlier run of the same inputs established is the whole of what \
+         evidence is for, and an audit that refused it would make every second run write \
+         a report nobody may keep"
+    );
+}
+
+#[test]
+fn two_records_that_share_an_identity_are_not_blamed_for_being_out_of_order() {
+    let mut twice = sound();
+    twice.targets = vec![
+        target("a1", "core/lib/core one", TargetStatus::Passed, 30),
+        target("b2", "core/lib/core two", TargetStatus::Passed, 20),
+        target("b2", "core/lib/core two", TargetStatus::Passed, 20),
+    ];
+
+    let violations = validate_for_persistence(&twice);
+
+    assert!(
+        !violations
+            .iter()
+            .any(|violation| matches!(violation, Violation::TargetsOutOfOrder { .. })),
+        "the same identity twice is a report with a problem, and the problem is not the \
+         order: a diagnostic that blamed the order would send a reader to sort a list \
+         that is already sorted: {violations:?}"
+    );
+}
+
+#[test]
 fn every_refusal_is_a_finished_sentence() {
     let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     let mut kinds = 0u32;
