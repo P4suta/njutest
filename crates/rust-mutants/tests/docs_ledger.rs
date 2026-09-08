@@ -163,6 +163,7 @@ fn the_limitations_page_names_every_limitation_the_engine_can_state() {
 fn every_engine_page_says_what_it_is_the_status_of() {
     let root = mjutest_devkit::paths::workspace_root();
     let mut without = Vec::new();
+    let contents_of_the_book = std::ffi::OsStr::new("SUMMARY.md");
     for directory in ["docs", "docs/engine", "docs/adr"] {
         let Ok(entries) = std::fs::read_dir(root.join(directory)) else {
             continue;
@@ -170,6 +171,9 @@ fn every_engine_page_says_what_it_is_the_status_of() {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.extension().is_none_or(|extension| extension != "md") {
+                continue;
+            }
+            if entry.file_name() == contents_of_the_book {
                 continue;
             }
             let text = std::fs::read_to_string(&path).unwrap_or_default();
