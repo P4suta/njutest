@@ -18,6 +18,7 @@ pub mod runs;
 pub mod show;
 pub mod trace;
 pub mod verify;
+pub mod watch;
 
 use std::io::Write;
 
@@ -34,6 +35,7 @@ pub fn run(
         Command::Init(arguments) => init::run(*arguments, environment, stdout, stderr),
         Command::Cache(arguments) => cache::run(arguments, environment, stdout, stderr),
         Command::Merge(arguments) => merge::run(arguments, stdout, stderr),
+        Command::Watch(arguments) => watch::run(arguments, environment, stdout, stderr),
         Command::Doctor(arguments) => doctor::run(*arguments, environment, stdout, stderr),
         Command::Verify(arguments) => verify::run(arguments, environment, stdout, stderr),
         Command::Plan(arguments) => plan::run(arguments, environment, stdout, stderr),

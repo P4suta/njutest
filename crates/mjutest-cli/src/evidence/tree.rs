@@ -116,21 +116,41 @@ impl ScanError {
     }
 }
 
-/// Reads `root` and digests it: the files under verification into [`Scan::tree`], the fuzz corpora into [`Scan::corpus`].
+/// What one entry of a walk is, for a visitor that does not care how it was found.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Entry {
+    /// A symbolic link, and where it points. Its target is what enters a digest, never what it points at.
+    Link(String),
+    /// A file under verification.
+    File(PathBuf),
+    /// Something that is neither, which is recorded as being there and not read.
+    Irregular,
+}
+
+/// Every path under `root` that is part of what a run verifies, in no particular order.
 ///
-/// `exclude` are the configuration's own patterns. `elsewhere` are directories a run writes rather than reads that are not in [`EXCLUDED_DIRECTORIES`] — cargo's build directory, the user's cache directory — named absolutely or relative to `root`. Neither counts.
+/// The rule for what counts lives here and nowhere else, so a reader that
+/// digests the tree and a reader that only asks when it last changed agree
+/// about which files they are talking about. Two walks with two rules would
+/// eventually disagree, and then a watch would sit still through an edit to a
+/// file the digest does count.
 ///
 /// # Errors
 /// See [`ScanError`].
-pub fn scan(root: &Path, exclude: &[Pattern], elsewhere: &[&Path]) -> Result<Scan, ScanError> {
+pub fn walk<V>(
+    root: &Path,
+    exclude: &[Pattern],
+    elsewhere: &[&Path],
+    mut visit: V,
+) -> Result<(), ScanError>
+where
+    V: FnMut(&str, Entry) -> Result<(), ScanError>,
+{
     let written: Vec<String> = elsewhere
         .iter()
         .filter_map(|path| relative_to(root, path))
         .collect();
-    let mut tree: BTreeMap<String, String> = BTreeMap::new();
-    let mut corpus: BTreeMap<String, String> = BTreeMap::new();
-    let mut files = 0u32;
-    let mut bytes = 0u64;
     let mut pending = vec![(root.to_path_buf(), String::new())];
     while let Some((directory, prefix)) = pending.pop() {
         let entries = std::fs::read_dir(&directory).map_err(|source| ScanError::Unreadable {
@@ -158,8 +178,10 @@ pub fn scan(root: &Path, exclude: &[Pattern], elsewhere: &[&Path]) -> Result<Sca
                     path: path.clone(),
                     source,
                 })?;
-                let where_ = target.to_string_lossy().into_owned();
-                tree.insert(relative, format!("link:{where_}"));
+                visit(
+                    &relative,
+                    Entry::Link(target.to_string_lossy().into_owned()),
+                )?;
                 continue;
             }
             if kind.is_dir() {
@@ -170,26 +192,54 @@ pub fn scan(root: &Path, exclude: &[Pattern], elsewhere: &[&Path]) -> Result<Sca
                 continue;
             }
             if !kind.is_file() {
-                tree.insert(relative, "irregular".to_owned());
+                visit(&relative, Entry::Irregular)?;
                 continue;
             }
             if exclude.iter().any(|pattern| pattern.matches(&relative)) {
                 continue;
             }
-            let content = std::fs::read(&path).map_err(|source| ScanError::Unreadable {
-                path: path.clone(),
-                source,
-            })?;
-            let value = hex::encode(Sha256::digest(&content));
-            if relative.starts_with(CORPUS_DIRECTORY) {
-                corpus.insert(relative, value);
-                continue;
-            }
-            files = files.saturating_add(1);
-            bytes = bytes.saturating_add(u64::try_from(content.len()).unwrap_or(u64::MAX));
-            tree.insert(relative, value);
+            visit(&relative, Entry::File(path))?;
         }
     }
+    Ok(())
+}
+
+/// Reads `root` and digests it: the files under verification into [`Scan::tree`], the fuzz corpora into [`Scan::corpus`].
+///
+/// `exclude` are the configuration's own patterns. `elsewhere` are directories a run writes rather than reads that are not in [`EXCLUDED_DIRECTORIES`] — cargo's build directory, the user's cache directory — named absolutely or relative to `root`. Neither counts.
+///
+/// # Errors
+/// See [`ScanError`].
+pub fn scan(root: &Path, exclude: &[Pattern], elsewhere: &[&Path]) -> Result<Scan, ScanError> {
+    let mut tree: BTreeMap<String, String> = BTreeMap::new();
+    let mut corpus: BTreeMap<String, String> = BTreeMap::new();
+    let mut files = 0u32;
+    let mut bytes = 0u64;
+    walk(root, exclude, elsewhere, |relative, entry| {
+        match entry {
+            Entry::Link(target) => {
+                let _replaced = tree.insert(relative.to_owned(), format!("link:{target}"));
+            }
+            Entry::Irregular => {
+                let _replaced = tree.insert(relative.to_owned(), "irregular".to_owned());
+            }
+            Entry::File(path) => {
+                let content = std::fs::read(&path).map_err(|source| ScanError::Unreadable {
+                    path: path.clone(),
+                    source,
+                })?;
+                let value = hex::encode(Sha256::digest(&content));
+                if relative.starts_with(CORPUS_DIRECTORY) {
+                    let _replaced = corpus.insert(relative.to_owned(), value);
+                    return Ok(());
+                }
+                files = files.saturating_add(1);
+                bytes = bytes.saturating_add(u64::try_from(content.len()).unwrap_or(u64::MAX));
+                let _replaced = tree.insert(relative.to_owned(), value);
+            }
+        }
+        Ok(())
+    })?;
     Ok(Scan {
         tree: fold(TREE_DOMAIN, &tree),
         corpus: fold(CORPUS_DOMAIN, &corpus),

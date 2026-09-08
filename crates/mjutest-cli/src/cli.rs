@@ -128,6 +128,19 @@ pub enum Command {
     Cache(Cache),
     /// Combine the reports of the parts of one catalog into the report the whole would have written.
     Merge(Merge),
+    /// Verify again every time the workspace changes, until interrupted.
+    Watch(Watch),
+}
+
+/// `mjutest watch`.
+#[derive(Debug, Clone, clap::Args)]
+pub struct Watch {
+    /// How often to ask the workspace whether it changed. 500 by default.
+    #[arg(long, value_name = "MS")]
+    pub poll_ms: Option<u64>,
+    /// What each round verifies.
+    #[command(flatten)]
+    pub verify: Verify,
 }
 
 /// `mjutest merge`.
