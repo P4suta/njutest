@@ -124,6 +124,17 @@ fn a_watch_verifies_the_tree_as_it_stands_and_carries_that_round_s_verdict() {
         "the round never wrote a second line, so this was stopped by its own clock \
          rather than by the watch: {said}\n{complained}"
     );
+    let stages: Vec<&str> = complained
+        .lines()
+        .filter_map(|line| line.strip_prefix("== "))
+        .collect();
+    assert_eq!(
+        stages.first(),
+        Some(&"open"),
+        "the round names each stage as it starts, and this test is one that drives the \
+         runner in this process rather than starting it in another, so it is the one a \
+         measurement can attribute the rule to: {complained}"
+    );
     assert!(
         said.starts_with("watching\t"),
         "a person who starts a watch is told what it is on before it does anything: \
@@ -141,5 +152,49 @@ fn a_watch_verifies_the_tree_as_it_stands_and_carries_that_round_s_verdict() {
          refuses, so the round is an error, and a watch that reported success on it \
          would be a green terminal for a workspace nobody could measure: \
          {said}\n{complained}"
+    );
+}
+
+#[test]
+fn a_run_with_nowhere_to_work_stops_before_it_says_it_looked() {
+    let root = tempfile::Builder::new()
+        .prefix("mjutest-nowhere-")
+        .tempdir()
+        .expect("a temporary directory");
+    let occupied = root.path().join("occupied");
+    std::fs::write(&occupied, "not a directory").expect("a file where a scratch goes");
+
+    let environment = Environment {
+        cache_directory: root.path().to_owned(),
+        working_directory: root.path().to_owned(),
+        temp_directory: occupied,
+        vars: Vec::new(),
+        cancel: Cancel::new(),
+    };
+
+    let (mut said, mut complaints) = (Vec::new(), Vec::new());
+    let code = mjutest_cli::run_from(
+        ["mjutest", "verify", "--offline", "--locked"].map(OsString::from),
+        &environment,
+        &mut said,
+        &mut complaints,
+    );
+
+    let complained = String::from_utf8_lossy(&complaints);
+    assert_eq!(
+        code, EXIT_ERROR,
+        "a run with nowhere to put what it builds has not verified anything, and \
+         carrying on would put every later phase in a directory nobody owns: \
+         {complained}"
+    );
+    assert!(
+        complained.contains("occupied"),
+        "and it names the place it could not use, because that is the one thing a \
+         person can change: {complained}"
+    );
+    assert!(
+        !String::from_utf8_lossy(&said).contains("VERDICT"),
+        "a run that stopped here reached no verdict, and printing one would be a claim \
+         about a workspace it never opened"
     );
 }
