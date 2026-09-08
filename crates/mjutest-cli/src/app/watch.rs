@@ -25,6 +25,11 @@ pub const POLL: Duration = Duration::from_millis(500);
 /// 10ms against the digest's 163ms, and a watch loop pays it every half
 /// second.
 ///
+/// A file this could not ask about is left out rather than entered with a size
+/// nobody read: a file that cannot be measured stays out of every look, so it
+/// is the same in each of them, which is what a file nobody edited looks like
+/// too. Entering it as empty would be a number this never saw.
+///
 /// A write that restores a file's modification time and its length is a change
 /// this misses. It is a change the round after it will see, and a missed round
 /// is a round that did not happen rather than a claim about a tree that was
@@ -44,15 +49,10 @@ pub fn look(root: &Path, config: &Config) -> Result<Seen, ScanError> {
         .collect();
     let mut seen = Seen::new();
     walk(root, &exclude, &[], |relative, entry| {
-        if let Entry::File(path) = entry {
-            let held = std::fs::metadata(&path).ok();
-            let _replaced = seen.insert(
-                relative.to_owned(),
-                (
-                    held.as_ref().and_then(|one| one.modified().ok()),
-                    held.map_or(0, |one| one.len()),
-                ),
-            );
+        if let Entry::File(path) = entry
+            && let Ok(held) = std::fs::metadata(&path)
+        {
+            let _replaced = seen.insert(relative.to_owned(), (held.modified().ok(), held.len()));
         }
         Ok(())
     })?;
