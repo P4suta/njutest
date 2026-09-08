@@ -1073,3 +1073,75 @@ fn two_runs_of_one_catalog_write_one_report() {
         later["accounting"]
     );
 }
+
+/// Every row of a stored report that says why it was not run, with its route.
+fn unrun(document: &serde_json::Value) -> Vec<(String, String)> {
+    document["mutants"]
+        .as_array()
+        .expect("the mutants of the report")
+        .iter()
+        .filter(|one| one["outcome"] == "not_run")
+        .map(|one| {
+            (
+                one["not_run_reason"].as_str().unwrap_or("").to_owned(),
+                one["route"]["granularity"]
+                    .as_str()
+                    .unwrap_or("")
+                    .to_owned(),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn a_proof_removing_a_mutation_and_nothing_reaching_it_are_two_answers() {
+    for (name, granularity, reason, finding) in [
+        (
+            "fixture-coverage",
+            "discharged",
+            "discharged",
+            "discharged-mutant",
+        ),
+        (
+            "fixture-unreached",
+            "unreached",
+            "unreached",
+            "unreached-mutant",
+        ),
+    ] {
+        let fixture = Fixture::copy(name);
+        let output = against(&fixture, &["run", "--offline", "--locked", "--tier", "all"]);
+        let document = stored(&fixture);
+        let rows = unrun(&document);
+        let mine: Vec<&(String, String)> =
+            rows.iter().filter(|(_, was)| was == granularity).collect();
+        assert!(
+            !mine.is_empty(),
+            "{name} is the fixture whose run answers {granularity}: {rows:?} {}",
+            stdout(&output)
+        );
+        for (said, _) in &mine {
+            assert_eq!(
+                said, reason,
+                "a mutation a proof removed and one nothing reaches are two answers, and a \
+                 reader told the wrong one checks the proof when they should write a test, or \
+                 the other way about: {rows:?}"
+            );
+        }
+        assert_eq!(
+            document["accounting"][reason].as_u64(),
+            u64::try_from(mine.len()).ok(),
+            "and the column a reader counts them in is the one they answer to: {rows:?}"
+        );
+        let kinds: Vec<&str> = document["findings"]
+            .as_array()
+            .expect("the findings")
+            .iter()
+            .filter_map(|one| one["kind"].as_str())
+            .collect();
+        assert!(
+            kinds.contains(&finding),
+            "and the finding a reader acts on says the same: {kinds:?}"
+        );
+    }
+}
