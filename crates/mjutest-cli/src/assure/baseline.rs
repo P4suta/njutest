@@ -91,7 +91,7 @@ pub fn observe(session: &Session, reporting: Reporting<'_, '_>) -> Baseline {
             total: Some(total),
         });
         notes.progress(&target.name(), done, total);
-        let (status, message) = status_of(observed.outcome, &observed.output);
+        let (status, message) = status_of(observed.outcome, observed.ignored, &observed.output);
         baseline.targets.push(Measured {
             target,
             status,
@@ -213,15 +213,14 @@ fn named(id: &str) -> Target {
 /// summary line or by exiting: a binary with its own harness prints what it
 /// likes and answers by its status, so counting its tests is not what decides.
 ///
-/// `Inconclusive` is a target that ran and executed no test — a harness that
-/// printed no summary, a library with nothing documented, or one whose every
-/// test is `#[ignore]`d. The first two are findings and the third is not, and
-/// what tells them apart is the ignored count, which does not cross this
-/// boundary yet. Until it does they are all the finding: an absence of
-/// evidence that reads as a pass is the one direction this runner does not
-/// take.
+/// `Inconclusive` is a target that executed no test, and there are two of
+/// those. One whose every test libtest was told to skip has nothing to say and
+/// is `Skipped`; one that ran nothing and skipped nothing is a target nothing
+/// was learned about, and that is the finding. The ignored count is what tells
+/// them apart, and reading the second as the first would let an absence of
+/// evidence pass for a pass.
 #[must_use]
-pub fn status_of(outcome: Outcome, output: &str) -> (TargetStatus, Option<String>) {
+pub fn status_of(outcome: Outcome, ignored: u32, output: &str) -> (TargetStatus, Option<String>) {
     match outcome {
         Outcome::Survived => (TargetStatus::Passed, None),
         Outcome::Killed => (
@@ -231,6 +230,12 @@ pub fn status_of(outcome: Outcome, output: &str) -> (TargetStatus, Option<String
         Outcome::TimedOut => (
             TargetStatus::Failed,
             Some("the target ran out of time".to_owned()),
+        ),
+        Outcome::Inconclusive if ignored > 0 => (
+            TargetStatus::Skipped,
+            Some(format!(
+                "libtest was told to skip every test of it: {ignored} ignored"
+            )),
         ),
         Outcome::Inconclusive => (TargetStatus::Missing, Some(RAN_NOTHING.to_owned())),
         Outcome::NotRun => (

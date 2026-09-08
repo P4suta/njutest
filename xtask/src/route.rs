@@ -16,11 +16,19 @@
 
 use serde_json::Value;
 
-/// The granularities the engine writes.
-pub const ENGINE_GRANULARITIES: [&str; 4] = ["all", "block", "discharged", "unreached"];
+/// Every granularity a route can be decided at.
+///
+/// The two producers used to write different words for the same decisions,
+/// because each kept a rule of its own. The runner asks the engine now, so
+/// there is one vocabulary, and an audit that reads either recording asks the
+/// same question of both.
+pub const GRANULARITIES: [&str; 5] = ["all", "block", "test", "discharged", "unreached"];
 
-/// The granularities the runner writes.
-pub const RUNNER_GRANULARITIES: [&str; 5] = ["block", "discharged", "file", "unreached", "suite"];
+/// The granularities the engine writes, which are [`GRANULARITIES`].
+pub const ENGINE_GRANULARITIES: [&str; 5] = GRANULARITIES;
+
+/// The granularities the runner writes, which are [`GRANULARITIES`].
+pub const RUNNER_GRANULARITIES: [&str; 5] = GRANULARITIES;
 
 /// One target a proof removed, and the proof that removed it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,8 +56,13 @@ pub struct Route {
     pub discharged: Vec<Discharge>,
     /// The targets that ran, which only the engine records.
     pub executed: Vec<String>,
-    /// How many targets touched the file at all, which only the runner records.
-    pub file_candidates: Option<u64>,
+    /// The targets that were measured, asked, and did not reach the mutation.
+    ///
+    /// A layer that removes an execution names who was in a position to notice
+    /// and did not, or an audit has the word `unreached` and no way to check
+    /// it. This is that list, and it is what the reach layer is re-derived
+    /// from.
+    pub considered: Vec<String>,
     /// The run this disposition was read back from.
     pub reused: Option<String>,
 }
@@ -180,7 +193,7 @@ fn route(record: &Value) -> Route {
         reaching: strings(record, "reaching"),
         discharged: discharges(record),
         executed: strings(record, "executed"),
-        file_candidates: number(record, "file_candidates"),
+        considered: strings(record, "considered"),
         reused: text(record, "reused"),
     }
 }

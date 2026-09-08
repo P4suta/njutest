@@ -23,7 +23,7 @@ const REJECTED: &str = "compile-rejected";
 const TIMED_OUT: &str = "timed_out";
 const PASSED: &str = "passed";
 const SURVIVING_MUTANT: &str = "surviving-mutant";
-const SUITE: &str = "suite";
+const EVERYTHING: &str = "all";
 const EQUIVALENT: &str = "equivalent";
 
 /// Why a recording could not be re-decided at all.
@@ -328,7 +328,7 @@ pub fn audit(path: &str, text: &str, recorded: Option<&str>) -> Result<Audit, Au
     killers(&recording, &mut audit);
     findings(&recording, &mut audit);
     reuse(&recording, &mut audit);
-    proofs(recorded, &mut audit);
+    proofs(&recording, recorded, &mut audit);
     audit.remarks.sort();
     audit.remarks.dedup();
     Ok(audit)
@@ -390,7 +390,7 @@ struct FindingRow {
 /// A run recorded without `--trace` leaves nothing to re-derive from, which is
 /// said rather than passed over: fail-closed is never turning "I cannot check
 /// this" into "this is fine".
-fn proofs(recorded: Option<&str>, audit: &mut Audit) {
+fn proofs(recording: &Recording<'_>, recorded: Option<&str>, audit: &mut Audit) {
     let mut notes = Notes::on(audit, Layer::Proofs);
     let Some(recorded) = recorded else {
         notes.unaudited(
@@ -413,17 +413,6 @@ fn proofs(recorded: Option<&str>, audit: &mut Audit) {
                 .collect();
             (route.mutant.clone(), discharged)
         })
-        .collect();
-    let granularity: BTreeMap<String, String> = routing
-        .routes
-        .iter()
-        .map(|route| (route.mutant.clone(), route.granularity.clone()))
-        .collect();
-    let reused: BTreeSet<String> = routing
-        .routes
-        .iter()
-        .filter(|route| route.reused.is_some())
-        .map(|route| route.mutant.clone())
         .collect();
     let executed: BTreeSet<String> = routing
         .execs
@@ -450,13 +439,13 @@ fn proofs(recorded: Option<&str>, audit: &mut Audit) {
         );
         return;
     }
+    let known: BTreeSet<&str> = recording
+        .targets
+        .iter()
+        .map(|target| target.name.as_str())
+        .collect();
     discharges(&removed, &ran, &mut notes);
-    reach(&granularity, &reused, &executed, &mut notes);
-    notes.unaudited(
-        "reach",
-        "which regions each target executed is in the coverage profiles, and a completed          run does not keep them, so a route decided by region is held to what it ran and          not re-derived from the measurement it was decided from"
-            .to_owned(),
-    );
+    reach(&routing.routes, &known, &executed, &mut notes);
 }
 
 /// Every proof that removed a target, against the kills the recording holds: a layer that drops a target which then finds a defect is unsound.
@@ -482,33 +471,91 @@ fn discharges(
     }
 }
 
-/// The reach layer against the recording: a route that claims nothing reaches a mutation may not then run one, and a route that says the evidence does not carry that claim has to run something.
+/// The reach layer, re-derived from what the route named rather than confirmed from what it decided.
+///
+/// A route that says nothing reaches a mutation makes a claim about the code,
+/// and the claim names the targets that were measured, were asked, and
+/// answered that nothing of them executes the position. Every one of those
+/// names is checked here: against the targets the run says it has, against the
+/// targets the same route kept, and against whether anything then ran. A claim
+/// that names nobody cannot be checked at all, and a layer that cannot be
+/// checked is one [ADR 0004](../../docs/adr/0004-proof-layers-not-budgets.md)
+/// decision 5 does not ship.
 fn reach(
-    granularity: &BTreeMap<String, String>,
-    reused: &BTreeSet<String>,
+    routes: &[crate::route::Route],
+    known: &BTreeSet<&str>,
     executed: &BTreeSet<String>,
     notes: &mut Notes<'_>,
 ) {
-    for (mutant, decided) in granularity {
-        if reused.contains(mutant) {
+    for route in routes {
+        if route.reused.is_some() {
             continue;
         }
-        match (decided.as_str(), executed.contains(mutant)) {
-            (UNREACHED, true) => notes.violated(
-                mutant,
-                "the route says no measured test reaches this mutation and the recording \
-                 then runs one against it; a claim about the code that its own run \
-                 contradicts is not a claim"
-                    .to_owned(),
-            ),
-            (SUITE, false) => notes.violated(
-                mutant,
-                "the route says the evidence does not carry that nothing reaches this \
+        let ran = executed.contains(&route.mutant);
+        if route.granularity == UNREACHED {
+            if ran {
+                notes.violated(
+                    &route.mutant,
+                    "the route says no measured target reaches this mutation and the \
+                     recording then runs one against it; a claim about the code that its \
+                     own run contradicts is not a claim"
+                        .to_owned(),
+                );
+            }
+            if route.considered.is_empty() {
+                notes.violated(
+                    &route.mutant,
+                    "the route removed every execution and named no target it removed \
+                     them from; nothing reaches a place only if somebody was in a \
+                     position to notice and did not, and this says nobody was"
+                        .to_owned(),
+                );
+            }
+        }
+        if route.granularity == EVERYTHING && !ran {
+            notes.violated(
+                &route.mutant,
+                "the route says the measurement does not carry which targets reach this \
                  mutation, and the recording runs nothing against it; a premise that \
                  fails has to end in more work rather than in less"
                     .to_owned(),
-            ),
-            _ => {}
+            );
+        }
+        considered(route, known, notes);
+    }
+}
+
+/// Every target a route says was asked and did not reach, against the run that says which targets there were.
+fn considered(route: &crate::route::Route, known: &BTreeSet<&str>, notes: &mut Notes<'_>) {
+    for target in &route.considered {
+        if !known.contains(target.as_str()) {
+            notes.violated(
+                &route.mutant,
+                format!(
+                    "the route says {target} was measured and did not reach this \
+                     mutation, and the run reports no such target; a layer held to \
+                     targets that are not there is held to nothing"
+                ),
+            );
+        }
+        if route.reaching.contains(target) {
+            notes.violated(
+                &route.mutant,
+                format!(
+                    "the route both keeps {target} for this mutation and says it did not \
+                     reach it; one route cannot answer a question two ways"
+                ),
+            );
+        }
+        if route.discharges(target) {
+            notes.violated(
+                &route.mutant,
+                format!(
+                    "the route says {target} did not reach this mutation and also names \
+                     a proof that removed it; a target that reaches nothing needs no \
+                     proof, and a proof that removed it says it did reach"
+                ),
+            );
         }
     }
 }

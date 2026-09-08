@@ -17,7 +17,7 @@ const RUN: &str = "20260906T101500Z-9f1c2d";
 const EARLIER: &str = "20260905T090000Z-1a2b3c";
 const KILLED: &str = "aaaaaaaaaaaaaaaaaaaa";
 const SURVIVED: &str = "bbbbbbbbbbbbbbbbbbbb";
-const TARGET: &str = "pkg/test/lib adds_two_numbers";
+const TARGET: &str = "pkg/test/lib";
 const REPORT: &str = "mjutest-assurance-report-v1.json";
 
 fn base() -> serde_json::Value {
@@ -164,7 +164,7 @@ fn routes() -> Vec<serde_json::Value> {
             "type": "route",
             "route": {
                 "mutant": mutant, "granularity": "block", "fallback": null,
-                "reaching": ["t1"], "discharged": [], "file_candidates": 1, "reused": null
+                "reaching": ["t1"], "discharged": [], "considered": [], "reused": null
             }
         }));
         lines.push(serde_json::json!({
@@ -290,7 +290,7 @@ fn a_kill_by_a_target_a_proof_discharged_is_a_violation() {
                     "mutant": KILLED, "granularity": "block", "fallback": null,
                     "reaching": ["t1"],
                     "discharged": [{ "target": "t2", "proof": "never-infected" }],
-                    "file_candidates": 2, "reused": null
+                    "considered": [], "reused": null
                 }
             }),
             serde_json::json!({
@@ -577,7 +577,7 @@ fn the_summary_line_says_what_was_re_decided_and_what_it_found() {
     let rendered = audited_with_routes(&base()).to_string();
     assert!(
         rendered.ends_with(&format!(
-            "proofaudit: {RUN}: 2 mutants and 1 target re-decided; 0 violations, 1 unaudited"
+            "proofaudit: {RUN}: 2 mutants and 1 target re-decided; 0 violations, 0 unaudited"
         )),
         "{rendered}"
     );
@@ -590,7 +590,7 @@ fn every_violation_is_a_line_of_its_own_before_the_summary() {
     let first = lines.next().unwrap_or_default();
     assert!(first.starts_with("violation: findings: "), "{rendered}");
     assert!(first.contains(SURVIVED), "{rendered}");
-    assert!(rendered.ends_with("1 violation, 1 unaudited"), "{rendered}");
+    assert!(rendered.ends_with("1 violation, 0 unaudited"), "{rendered}");
 }
 
 #[test]
@@ -621,7 +621,7 @@ fn a_mutation_the_route_calls_unreached_and_the_recording_runs_is_a_violation() 
                 "seq": 1, "timestamp": "2026-09-06T00:00:00Z", "elapsed_ms": 0, "type": "route",
                 "route": {
                     "mutant": KILLED, "granularity": "unreached", "fallback": null,
-                    "reaching": [], "discharged": [], "file_candidates": 0, "reused": null
+                    "reaching": [], "discharged": [], "considered": [TARGET], "reused": null
                 }
             }),
             serde_json::json!({
@@ -642,14 +642,14 @@ fn a_mutation_the_route_calls_unreached_and_the_recording_runs_is_a_violation() 
 }
 
 #[test]
-fn a_mutation_the_route_sends_to_the_suite_and_the_recording_never_runs_is_a_violation() {
+fn a_mutation_the_route_widened_to_everything_and_never_ran_is_a_violation() {
     let audit = audited_with(
         &base(),
         &[serde_json::json!({
             "seq": 1, "timestamp": "2026-09-06T00:00:00Z", "elapsed_ms": 0, "type": "route",
             "route": {
-                "mutant": SURVIVED, "granularity": "suite", "fallback": "coverage-incomplete",
-                "reaching": [], "discharged": [], "file_candidates": 0, "reused": null
+                "mutant": SURVIVED, "granularity": "all", "fallback": "coverage-incomplete",
+                "reaching": ["t1"], "discharged": [], "considered": [], "reused": null
             }
         })],
     );
@@ -668,8 +668,8 @@ fn a_route_the_run_read_back_from_an_earlier_one_is_not_held_to_running_anything
         &[serde_json::json!({
             "seq": 1, "timestamp": "2026-09-06T00:00:00Z", "elapsed_ms": 0, "type": "route",
             "route": {
-                "mutant": SURVIVED, "granularity": "suite", "fallback": "outside-blocks",
-                "reaching": [], "discharged": [], "file_candidates": 0, "reused": "earlier"
+                "mutant": SURVIVED, "granularity": "all", "fallback": "outside-blocks",
+                "reaching": ["t1"], "discharged": [], "considered": [], "reused": "earlier"
             }
         })],
     );
@@ -678,6 +678,67 @@ fn a_route_the_run_read_back_from_an_earlier_one_is_not_held_to_running_anything
         proven(&audit).is_empty(),
         "an answer read back from an earlier run is an answer this run did not have to \
          establish again: {audit}"
+    );
+}
+
+#[test]
+fn a_route_that_removed_every_execution_and_named_nobody_cannot_be_audited_at_all() {
+    let audit = audited_with(
+        &base(),
+        &[serde_json::json!({
+            "seq": 1, "timestamp": "2026-09-06T00:00:00Z", "elapsed_ms": 0, "type": "route",
+            "route": {
+                "mutant": SURVIVED, "granularity": "unreached", "fallback": null,
+                "reaching": [], "discharged": [], "considered": [], "reused": null
+            }
+        })],
+    );
+
+    assert!(
+        proven(&audit).contains(&SURVIVED.to_owned()),
+        "nothing reaches a place only if somebody was in a position to notice and did \
+         not, and a route that names nobody leaves an audit the word and no way to \
+         check it: {audit}"
+    );
+}
+
+#[test]
+fn a_route_that_says_a_target_did_not_reach_a_mutation_it_also_kept_it_for_is_a_violation() {
+    let audit = audited_with(
+        &base(),
+        &[serde_json::json!({
+            "seq": 1, "timestamp": "2026-09-06T00:00:00Z", "elapsed_ms": 0, "type": "route",
+            "route": {
+                "mutant": SURVIVED, "granularity": "block", "fallback": null,
+                "reaching": [TARGET], "discharged": [], "considered": [TARGET], "reused": null
+            }
+        })],
+    );
+
+    assert!(
+        proven(&audit).contains(&SURVIVED.to_owned()),
+        "one route cannot answer one question two ways: {audit}"
+    );
+}
+
+#[test]
+fn a_route_held_to_a_target_the_run_does_not_report_is_held_to_nothing() {
+    let audit = audited_with(
+        &base(),
+        &[serde_json::json!({
+            "seq": 1, "timestamp": "2026-09-06T00:00:00Z", "elapsed_ms": 0, "type": "route",
+            "route": {
+                "mutant": SURVIVED, "granularity": "unreached", "fallback": null,
+                "reaching": [], "discharged": [],
+                "considered": ["a target no run of this workspace has"], "reused": null
+            }
+        })],
+    );
+
+    assert!(
+        proven(&audit).contains(&SURVIVED.to_owned()),
+        "a layer re-derived against targets that are not there is re-derived against \
+         nothing: {audit}"
     );
 }
 
@@ -692,22 +753,21 @@ fn proven(audit: &Audit) -> Vec<String> {
 }
 
 #[test]
-fn the_regions_a_route_was_decided_from_are_not_in_the_recording_and_the_audit_says_so() {
+fn the_reach_layer_is_re_derived_from_the_recording_rather_than_left_unaudited() {
     let audit = audited_with_routes(&base());
 
     assert!(
-        audit.remarks.iter().any(|remark| {
+        !audit.remarks.iter().any(|remark| {
             remark.layer == Layer::Proofs
                 && remark.standing == Standing::Unaudited
                 && remark.subject == "reach"
         }),
-        "the audit re-derives what it can and names what it cannot: which regions a \
-         target executed is in the coverage profiles, and a completed run does not keep \
-         them: {audit}"
+        "a route names the targets it removed every execution from, so the layer is \
+         checked against them rather than declared out of reach: {audit}"
     );
     assert_eq!(
         audit.violations(),
         0,
-        "and not being able to check something is not finding something wrong: {audit}"
+        "and a recording that holds together holds together: {audit}"
     );
 }

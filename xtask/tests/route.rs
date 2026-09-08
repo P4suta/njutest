@@ -18,9 +18,9 @@ const ENGINE: &str = r#"
 {"seq":4,"timestamp":"2026-09-06T00:00:03Z","elapsed_ms":3,"type":"route","route":{"mutant":"bbbbbbbbbbbbbbbbbbbb","index":4,"granularity":"unreached"}}
 "#;
 
-/// A recording as the runner writes it: the mutant by its short name, `file_candidates`, and no index.
+/// A recording as the runner writes it: the mutant by its short name, no index, and no list of what ran.
 const RUNNER: &str = r#"
-{"seq":1,"timestamp":"2026-09-06T00:00:00Z","elapsed_ms":0,"type":"route","route":{"mutant":"aaaaaaaaaaaaaaaaaaaa","granularity":"file","fallback":"position-unknown","reaching":["pkg/lib/pkg"],"discharged":[{"target":"pkg/test/ui","proof":"branch-never-taken"}],"file_candidates":2,"reused":null}}
+{"seq":1,"timestamp":"2026-09-06T00:00:00Z","elapsed_ms":0,"type":"route","route":{"mutant":"aaaaaaaaaaaaaaaaaaaa","granularity":"block","fallback":"touch-incomplete","reaching":["pkg/lib/pkg"],"discharged":[{"target":"pkg/test/ui","proof":"branch-never-taken"}],"considered":["pkg/test/wide"],"reused":null}}
 {"seq":2,"timestamp":"2026-09-06T00:00:01Z","elapsed_ms":1,"type":"mutant-exec","mutant":{"mutant":"aaaaaaaaaaaaaaaaaaaa","target":"pkg/lib/pkg","args":[],"outcome":"survived","duration_ms":9,"alone":true}}
 "#;
 
@@ -40,14 +40,19 @@ fn the_route_reader_accepts_both_producer_vocabularies() {
         assert_eq!(ran, vec!["pkg/lib/pkg"], "{name} names what ran");
     }
     assert!(
-        route::ENGINE_GRANULARITIES.contains(&engine.routes[0].granularity.as_str()),
+        route::GRANULARITIES.contains(&engine.routes[0].granularity.as_str()),
         "{:?}",
         engine.routes
     );
     assert!(
-        route::RUNNER_GRANULARITIES.contains(&runner.routes[0].granularity.as_str()),
+        route::GRANULARITIES.contains(&runner.routes[0].granularity.as_str()),
         "{:?}",
         runner.routes
+    );
+    assert_eq!(
+        route::ENGINE_GRANULARITIES,
+        route::RUNNER_GRANULARITIES,
+        "one rule decides a route now, so both recordings say it in one vocabulary"
     );
 }
 
@@ -58,13 +63,13 @@ fn each_producer_keeps_the_fields_only_it_records() {
     let engine_route = engine.route("aaaaaaaaaaaaaaaaaaaa").expect("the route");
     assert_eq!(engine_route.index, Some(3));
     assert_eq!(engine_route.executed, vec!["pkg/lib/pkg".to_owned()]);
-    assert_eq!(engine_route.file_candidates, None);
+    assert!(engine_route.considered.is_empty());
     assert_eq!(engine.execs[0].tests_run, Some(2));
     assert_eq!(engine.execs[0].alone, None);
 
     let runner_route = runner.route("aaaaaaaaaaaaaaaaaaaa").expect("the route");
     assert_eq!(runner_route.index, None);
-    assert_eq!(runner_route.file_candidates, Some(2));
+    assert_eq!(runner_route.considered, vec!["pkg/test/wide".to_owned()]);
     assert!(runner_route.executed.is_empty());
     assert_eq!(
         runner_route.discharged,

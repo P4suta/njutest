@@ -534,19 +534,26 @@ fn establish(
     })
 }
 
-/// Records what the probe pass measured for each target the baseline ran.
+/// Records what the infection layer measured for each target the baseline ran.
 ///
-/// A target the pass did not measure carries no facts at all, and none is not
+/// A target the layer did not measure carries no facts at all, and none is not
 /// zero: a reader who cannot tell "infected nothing" from "was never asked"
 /// cannot tell a discharge that rests on evidence from one that rests on
-/// silence.
+/// silence. `None` is the first and `Some(0)` the second, and the difference
+/// is the whole reason this event exists — the layer removes executions, and
+/// [ADR 0004](../../../../docs/adr/0004-proof-layers-not-budgets.md) decision 4
+/// ships no layer a reader cannot see.
+///
+/// The measurement rides on the run that establishes the baseline: the guards
+/// that record which test reached a site also record where its two branches
+/// differed. Nothing is asked twice, so nothing here is a second opinion.
 fn record_probe(watch: Watch<'_>, session: &Session, baseline: &[Measured]) {
-    let probed = session.probed();
-    if probed.asked.is_empty() {
+    let touched = &session.verified().touched;
+    if touched.narrowing.compared.is_empty() {
         return;
     }
     for measured in baseline {
-        let seen = probed.infected.get(&measured.target.name());
+        let seen = touched.targets.get(&measured.target.name());
         watch.trace.probe_exec(crate::trace::ProbeExecRecord {
             target: measured.target.id.clone(),
             outcome: if seen.is_some() {
@@ -554,7 +561,16 @@ fn record_probe(watch: Watch<'_>, session: &Session, baseline: &[Measured]) {
             } else {
                 "not-measured".to_owned()
             },
-            infected: seen.map(|one| u64::try_from(one.len()).unwrap_or(u64::MAX)),
+            infected: seen.map(|one| {
+                let named: BTreeSet<&u32> = one
+                    .infected
+                    .tests
+                    .values()
+                    .flatten()
+                    .chain(one.infected.loose.iter())
+                    .collect();
+                u64::try_from(named.len()).unwrap_or(u64::MAX)
+            }),
         });
     }
 }

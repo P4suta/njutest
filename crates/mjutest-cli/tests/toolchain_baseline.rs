@@ -141,3 +141,33 @@ fn a_target_whose_own_tests_fail_is_a_row_and_a_finding_rather_than_a_refusal() 
         baseline.limitations
     );
 }
+
+#[test]
+fn a_target_libtest_skipped_every_test_of_is_not_a_target_nothing_is_known_about() {
+    let fixture = Fixture::copy("fixture-ignored");
+    let baseline = measure(&fixture);
+
+    let skipped: Vec<&Measured> = baseline
+        .targets
+        .iter()
+        .filter(|one| one.status == TargetStatus::Skipped)
+        .collect();
+    assert!(
+        !skipped.is_empty(),
+        "a target whose every test carries #[ignore] ran nothing and was told to: {:?}",
+        baseline
+            .targets
+            .iter()
+            .map(|one| (one.target.name(), one.status, one.tests))
+            .collect::<Vec<(String, TargetStatus, u32)>>()
+    );
+    for measured in skipped {
+        assert_ne!(
+            measured.status,
+            TargetStatus::Missing,
+            "{} is a target with nothing to say, not one nothing was learned about, and \
+             only the second is a finding",
+            measured.target.name()
+        );
+    }
+}

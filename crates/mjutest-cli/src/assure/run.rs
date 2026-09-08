@@ -1058,7 +1058,6 @@ fn prepare(
             include: within(request.changed.as_ref()),
             verify: true,
             failing: rust_mutants::session::Failing::Exclude,
-            probe: request.config.mutation.probe,
             build_timeout: Some(request.config.execution.timeout),
             mutant_timeout: rust_mutants::session::Timeout::Fixed(request.config.execution.timeout),
             ..rust_mutants::session::PrepareOptions::default()
@@ -1386,14 +1385,6 @@ pub fn limitation_detail(name: &str) -> String {
         rust_mutants::limitation::COVERAGE_NOT_MEASURED => {
             "the coverage tools ran and said nothing a route can rest on, so every test of \
              every target runs"
-        }
-        rust_mutants::limitation::PROBE_TREE_NOT_BUILT => {
-            "the tree the infection layer needs could not be built, so nothing was asked \
-             which mutations a target infects and nothing is discharged for it"
-        }
-        rust_mutants::limitation::PROBE_LOG_UNREADABLE => {
-            "a target ran and what it infected did not read back, so nothing of it is \
-             discharged"
         }
         _ => "stated by a phase of the run",
     }

@@ -114,10 +114,6 @@ below is stated fail-closed.
   profile could not be read: that target is kept in every route rather than
   dropped, because what the measurement says nothing about is run rather than
   assumed.
-- The probe layer states `probe-tree-not-built` when the instrumented tree it
-  needs could not be built, and `probe-log-unreadable` when a target ran and
-  its infection log could not be read. Neither removes an execution: a layer
-  that could not measure discharges nothing.
 - A guard compares its two branches only where the compiler vouched that the
   condition around it is inert — every comparison in it between primitives,
   `str`, or a slice of those — and the guard's own form can hold the call. The

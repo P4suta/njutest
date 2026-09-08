@@ -65,13 +65,16 @@ the same set, and whether every disposition read back from an earlier run
 names one a reader could go and read. Given the run's recording as well, it
 holds the proof layers to what the run wrote down: no target a proof removed
 from what could notice a mutation may then be the target that killed it, a
-route that says no measured test reaches a mutation may not then run one
-against it, and a route that says the evidence does not carry that has to run
-something. Which regions each target executed is in the coverage profiles, and
-a completed run does not keep them, so the region a route was decided from is
-`unaudited` on every recording. It reads the recording as lines of JSON rather
-than through the code that wrote them, and a run recorded without `--trace`
-leaves the layers `unaudited` rather than passed. This is [ADR 0004](adr/0004-proof-layers-not-budgets.md) decision 5,
+route that says no measured target reaches a mutation may not then run one
+against it, and a route the measurement widened has to run something. The
+reach layer is re-derived rather than confirmed, because a route names the
+targets it removed every execution from: each of those names is held to the
+targets the run reports, to the targets the same route kept, and to the
+proofs that route names — and a route that removed every execution while
+naming nobody is a violation, since nothing reaches a place only if somebody
+was in a position to notice and did not. It reads the recording as lines of
+JSON rather than through the code that wrote them, and a run recorded without
+`--trace` leaves the layers `unaudited` rather than passed. This is [ADR 0004](adr/0004-proof-layers-not-budgets.md) decision 5,
 which ships a proof layer only against a re-implementation that is not asked
 whether it agrees with itself.
 
