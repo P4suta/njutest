@@ -160,13 +160,6 @@ doc = false
 bench = false
 
 [[bin]]
-name = "infection_log"
-path = "fuzz_targets/infection_log.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
 name = "touch_log"
 path = "fuzz_targets/touch_log.rs"
 test = false

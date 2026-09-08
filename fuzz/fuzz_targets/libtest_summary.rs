@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mjutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! The `test result:` line is what decides whether a target passed, so a hostile one must not panic the parser and must not read as a pass. A test that printed its own summary line is the attack, and libtest itself is the only writer a run should believe.
+//! What a target printed is read for a line to show a person, and never for the answer: only the outcome of the execution says whether the target passed. A target that prints its own `test result:` line is the attack, and a hostile line must neither panic the reader nor turn any other outcome into a pass.
 
 #![no_main]
 
@@ -9,16 +9,35 @@ use libfuzzer_sys::fuzz_target;
 use mjutest_cli::assure::baseline::status_of;
 use mjutest_cli::report::TargetStatus;
 use rust_mutants::execute::parse_summary;
+use rust_mutants::outcome::Outcome;
 
 fuzz_target!(|data: &[u8]| {
-    let summary = parse_summary(data);
-    let (status, message) = status_of(summary, false);
-
-    if status == TargetStatus::Passed {
-        let counted = summary.expect("a pass comes from a summary line");
-        assert!(counted.passed > 0);
-        assert_eq!(counted.failed, 0);
-        assert!(message.is_none());
+    let _parsed = parse_summary(data);
+    let output = String::from_utf8_lossy(data);
+    for outcome in [
+        Outcome::Survived,
+        Outcome::Killed,
+        Outcome::TimedOut,
+        Outcome::Inconclusive,
+        Outcome::NotRun,
+        Outcome::Errored,
+    ] {
+        for ignored in [0u32, 1, 4096] {
+            let (status, message) = status_of(outcome, ignored, &output);
+            assert_eq!(
+                status == TargetStatus::Passed,
+                outcome == Outcome::Survived,
+                "nothing a target prints decides that it passed: {outcome:?} read as {status:?}"
+            );
+            assert_eq!(
+                status == TargetStatus::Passed,
+                message.is_none(),
+                "a target that did not pass says why, and one that passed has nothing to say"
+            );
+            assert!(
+                status != TargetStatus::Skipped || ignored > 0,
+                "a target is skipped only when libtest was told to skip every test of it"
+            );
+        }
     }
-    assert_eq!(status_of(summary, true).0, TargetStatus::Failed);
 });
