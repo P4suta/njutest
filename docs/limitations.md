@@ -48,12 +48,16 @@ below is stated fail-closed.
 - A library that documents no example has nothing to run and is not a target
   (`doctests-none`): a target that ran nothing would raise a finding about
   documentation nobody wrote.
-- **A test that starts this engine cannot be measured from inside a run of it.**
-  A run composes an activation of its own and refuses to inherit one
-  (`RM0006`), which is what stops a nested process from answering about the
-  wrong catalog. A test that spawns `rust-mutants` therefore fails
-  verification under measurement, and the run refuses to judge against it. Such
-  a target is left out with `--skip-target` or `[execution] skip_targets`, and
+- **A test that starts this engine in a process of its own cannot be measured
+  from inside a run of it.** A run composes an activation of its own and
+  refuses to inherit one (`RM0006`), which is what stops a nested process from
+  answering about the wrong catalog. A test that *spawns* `rust-mutants`
+  therefore fails verification under measurement, and the run refuses to judge
+  against it. A test that builds a `Session` in its own process inherits
+  nothing across a process boundary and is measured like any other: the line is
+  the boundary, not the engine. Measured on this workspace, twenty-eight
+  targets fall on the far side of it and every one of them spawns the binary.
+  Such a target is left out with `--skip-target` or `[execution] skip_targets`, and
   `target-skipped-by-configuration` says so. What that target's tests would
   have killed is a survivor for as long as it is left out, so a reader working
   through survivors of a run that skipped targets has to hold that in mind: the
@@ -82,6 +86,18 @@ below is stated fail-closed.
 - A target whose guards recorded nothing this run can route by keeps every test
   of it in every route (`touch-not-recorded`), and one whose record did not
   read back is believed about nothing (`touch-log-unreadable`).
+- **A line that only runs inside a process the tests start is a line no
+  measurement reaches.** The guards write what they reached into the log a run
+  names for each test process it starts, and a process a *test* starts is not
+  one the run named: nothing composed `RUST_MUTANTS_TOUCH` for it, so what its
+  guards reached is written nowhere. What only ran there is `not_run` with
+  `unreached`, which says the measurement never asked - not that no test
+  covers it. Measured on the runner, four hundred of six hundred and thirty
+  nine mutations of its orchestration came back that way, because
+  orchestration is what runs in the child. This is the same boundary as the
+  one above seen from the other side: there, a test that spawns the engine
+  cannot be verified; here, a line that only the spawned process runs cannot
+  be reached.
 - Fuzz targets are found always and driven only when `[fuzz] run` says so;
   a tree that holds targets nobody asked to drive carries
   `fuzz-not-executed`. Without cargo-fuzz on a nightly toolchain, a run that

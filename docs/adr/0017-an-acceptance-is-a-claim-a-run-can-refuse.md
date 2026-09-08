@@ -85,6 +85,17 @@ Without the second half the count would fix the population and leave the claim
 unchecked — a claim that goes on exempting two mutations on the strength of a
 test that killed the third.
 
+**An acceptance says which of two things it is.** One kind is an equivalence
+the run agreed with: the mutation writes a value the code already writes, or
+takes a branch that is the branch below it, and a test holds the value or the
+branch. The other is a fail-open the suite cannot reach: a guard against a
+condition that reappears downstream, so the two versions hand a deterministic
+test the same answer and part only where the condition is transient. The
+second is not an equivalence and its reason may not read like one, because
+somebody later deciding whether the guard can go needs to know that the run
+never disagreed with it rather than that the run agreed with it. Only the
+first is a reason to delete anything.
+
 ## Consequences
 
 - `Locator` carries `count`, `Session::locate_all` resolves a locator to the

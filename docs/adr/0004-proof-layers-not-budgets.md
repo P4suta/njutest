@@ -75,6 +75,17 @@ run already collects can sometimes establish before any mutant is built.
   catalog, the runner gains a rule that consumes it, a trace vocabulary that
   shows it, documentation that states it, and an audit layer that checks it.
   A proof without all four is not finished.
+- **And a fifth: the sentence a person reads when the layer works, held by a
+  test of its own.** The four above establish that the proof is right; none of
+  them establishes that a reader is told it happened. That is not a
+  presentation concern. A survivor's sentence either says "write a test" or
+  says "a proof removed this, so check the proof", and a reader who gets the
+  wrong one acts on the wrong thing. Measured on both products, this is where
+  the sentences went unheld: `string-to-empty` survived on the one sentence
+  that names which proofs removed a mutation, leaving it to end mid-clause,
+  and on fourteen field names inside a refusal, leaving it to say that
+  something required was empty without saying what. A layer whose output is a
+  sentence is not tested by asserting that it spoke.
 - The layers share one blind spot: they see the coverage a test left behind.
   The limitations document names it once per layer.
 - A reader who sees mjutest go faster may ask which proof did it. The answer
