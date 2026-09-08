@@ -16,7 +16,7 @@ pub use route::{
     Asked, BRANCH_NEVER_TAKEN, Discharge, Fallback, NEVER_INFECTED, Reaches, Route, Routing, Timing,
 };
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -401,11 +401,13 @@ impl Session {
     }
 
     /// The packages this session was told to measure, which is where a reader looks for a test to write.
-    fn packages(&self) -> Vec<String> {
-        let mut named: Vec<String> = self.packages.values().cloned().collect();
-        named.sort_unstable();
-        named.dedup();
-        named
+    ///
+    /// Each is named once and they are in one order, so what a recording says
+    /// about a catalog is what the next recording of it says.
+    #[must_use]
+    pub fn packages(&self) -> Vec<String> {
+        let named: BTreeSet<&String> = self.packages.values().collect();
+        named.into_iter().cloned().collect()
     }
 
     /// The item a mutant sits in, as a reader writes it.

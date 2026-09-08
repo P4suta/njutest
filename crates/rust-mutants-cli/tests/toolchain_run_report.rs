@@ -974,3 +974,102 @@ fn a_claim_written_for_several_mutations_says_how_many_it_was_resolved_against()
          not say how wide a reason is leaves a reader to re-derive it from the catalog: {text}"
     );
 }
+
+/// The document with everything a second run of one catalog is allowed to say differently taken out.
+///
+/// What is taken out is what a run costs rather than what it establishes: when
+/// it started, how long it took, what it called itself, and how many tests it
+/// had to start to find out. Everything left is an answer about the catalog,
+/// and two runs of one catalog answer the same.
+fn timeless(mut document: serde_json::Value) -> serde_json::Value {
+    fn strip(value: &mut serde_json::Value) {
+        match value {
+            serde_json::Value::Object(fields) => {
+                fields.retain(|name, _| {
+                    ![
+                        "id",
+                        "run",
+                        "run_id",
+                        "document",
+                        "started_at",
+                        "finished_at",
+                        "duration_ms",
+                        "elapsed_ms",
+                        "established_tests",
+                        "timing",
+                        "source_run_id",
+                    ]
+                    .contains(&name.as_str())
+                });
+                for held in fields.values_mut() {
+                    strip(held);
+                }
+            }
+            serde_json::Value::Array(held) => {
+                for one in held {
+                    strip(one);
+                }
+            }
+            _ => {}
+        }
+    }
+    strip(&mut document);
+    document
+}
+
+#[test]
+fn two_runs_of_one_catalog_write_one_report() {
+    let fixture = Fixture::copy("fixture-coverage");
+    let asked = [
+        "run",
+        "--offline",
+        "--locked",
+        "--no-cache",
+        "--rule",
+        "le-to-lt",
+    ];
+    let first = against(&fixture, &asked);
+    assert_eq!(first.status.code(), Some(1), "{}", stdout(&first));
+    let earlier = timeless(stored(&fixture));
+
+    let second = against(&fixture, &asked);
+    assert_eq!(second.status.code(), Some(1), "{}", stdout(&second));
+    let later = timeless(stored(&fixture));
+
+    assert_eq!(
+        earlier, later,
+        "what a run says about a catalog is what the next run of it says, or `report-diff` \
+         between two runs answers about the order things came back in rather than about the code"
+    );
+
+    let ordered: Vec<u64> = later["mutants"]
+        .as_array()
+        .expect("the mutants of the report")
+        .iter()
+        .map(|one| one["index"].as_u64().expect("a catalog index"))
+        .collect();
+    let mut ascending = ordered.clone();
+    ascending.sort_unstable();
+    assert_eq!(
+        ordered, ascending,
+        "the rows are in catalog order rather than in the order the run happened to finish \
+         them, which is what makes the comparison above a fact rather than a coincidence of \
+         scheduling: {ordered:?}"
+    );
+    assert!(
+        ordered.len() > 1,
+        "this fixture is one with several mutants in it"
+    );
+    let unselected = later["mutants"]
+        .as_array()
+        .expect("the mutants of the report")
+        .iter()
+        .filter(|one| one["not_run_reason"] == "unselected")
+        .count();
+    assert!(
+        unselected > 0,
+        "and the run left some of them unselected, which is what puts rows in the report that \
+         the execution never ordered: {}",
+        later["accounting"]
+    );
+}

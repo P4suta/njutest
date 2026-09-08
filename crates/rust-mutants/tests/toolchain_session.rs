@@ -939,3 +939,31 @@ fn a_claim_written_for_several_mutations_stops_holding_when_one_of_them_is_kille
 
     session.close().expect("the session closes");
 }
+
+#[test]
+fn the_packages_a_session_measures_are_each_named_once_and_in_one_order() {
+    let fixture = Fixture::copy("fixture-workspace");
+    let session = prepare(&fixture);
+
+    let named = session.packages();
+    let mut once: Vec<&String> = named.iter().collect();
+    once.sort();
+    once.dedup();
+    assert_eq!(
+        once.len(),
+        named.len(),
+        "a package is where a reader looks for a test to write, and one named as many times as \
+         it holds mutants is a list nobody can read: {named:?}"
+    );
+    let mut ordered = named.clone();
+    ordered.sort();
+    assert_eq!(
+        named, ordered,
+        "and the order is the one two runs of this catalog agree on: {named:?}"
+    );
+    assert!(
+        named.len() > 1,
+        "this fixture is the one with more than one package in it: {named:?}"
+    );
+    session.close().expect("the session closes");
+}

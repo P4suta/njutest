@@ -252,3 +252,48 @@ fn a_run_that_built_no_targets_says_nothing_about_work_rather_than_dividing_by_i
          per cent: {text}"
     );
 }
+
+#[test]
+fn the_findings_of_a_whole_run_are_in_one_order_and_said_once() {
+    let finding = |kind: &str, detail: &str| FindingDocument {
+        kind: kind.to_owned(),
+        mutant: None,
+        detail: detail.to_owned(),
+    };
+    let part = |findings: Vec<FindingDocument>| {
+        let mut document = document();
+        document.mutants = Vec::new();
+        document.findings = findings;
+        document
+    };
+    let shared = finding("unmatched-expectation", "the claim verifies nothing");
+    let merged = rust_mutants_cli::report::run::merge(&[
+        part(vec![
+            finding("surviving-mutant", "b noticed nothing"),
+            shared.clone(),
+            finding("surviving-mutant", "a noticed nothing"),
+        ]),
+        part(vec![
+            shared,
+            finding("discharged-mutant", "a proof removed it"),
+        ]),
+    ])
+    .expect("one whole");
+
+    let read: Vec<(&str, &str)> = merged
+        .findings
+        .iter()
+        .map(|one| (one.kind.as_str(), one.detail.as_str()))
+        .collect();
+    assert_eq!(
+        read,
+        [
+            ("discharged-mutant", "a proof removed it"),
+            ("surviving-mutant", "a noticed nothing"),
+            ("surviving-mutant", "b noticed nothing"),
+            ("unmatched-expectation", "the claim verifies nothing"),
+        ],
+        "the whole says what the parts said in one order, whatever order the parts came back \
+         in, and says a finding both parts made once"
+    );
+}
