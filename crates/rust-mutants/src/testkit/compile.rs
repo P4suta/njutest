@@ -231,6 +231,8 @@ pub fn diagnostic_noted(path: &str, start: u32, end: u32, index: u32) -> Message
 /// When the message this composes does not parse, which is a broken testkit.
 #[must_use]
 pub fn diagnostic_at(path: &str, start: u32, end: u32, index: u32) -> Message {
+    let path = serde_json::to_string(path).unwrap_or_else(|_error| String::from(r#""""#));
+    let path = path.trim_matches('"');
     let json = format!(
         r#"{{"reason":"compiler-message","package_id":"p","manifest_path":"/w/Cargo.toml","target":{{"kind":["lib"],"crate_types":["lib"],"name":"demo","src_path":"/w/src/lib.rs","edition":"2024"}},"message":{{"message":"mutant {index} does not compile","code":{{"code":"E0999","explanation":""}},"level":"error","spans":[{{"file_name":"{path}","byte_start":{start},"byte_end":{end},"line_start":1,"line_end":1,"column_start":1,"column_end":2,"is_primary":true,"text":[],"label":null}}],"children":[],"rendered":"error[E0999]: mutant {index} does not compile\n"}}}}"#
     );

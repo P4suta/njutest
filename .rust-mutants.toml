@@ -54,3 +54,27 @@ item = "observe"
 rule = "delete-call-statement"
 original = "phase.end();"
 reason = "the runner's Phase ends its phase on Drop, so the explicit end at the tail of observe changes no recording; a_phase_guard_ends_its_phase_once_with_its_duration_and_phases_nest holds that"
+
+# The witness check writes into a directory under the one the pristine build
+# already filled. Emptying the name it joins puts it in that directory instead,
+# which changes where cargo keeps artifacts and changes no answer any run
+# gives. The separation is a cache-layer choice (ADR 0010), not a premise.
+[[mutation.expect]]
+path = "crates/rust-mutants/src/prove.rs"
+item = "establish"
+rule = "string-to-empty"
+original = "\"witness\""
+reason = "the directory the witness check builds into is where artifacts are kept, not what the check establishes; every answer is the same either way"
+
+# A route names a target once however often it was offered. The dedup that
+# makes that so is defence against a caller handing `Routing::targets` a list
+# with a repeat in it, which `Session` never does: the targets come from one
+# build and are unique by construction. Deleting it changes nothing this
+# engine can produce, and keeping it is what makes the doc on `targets` a
+# statement rather than a requirement.
+[[mutation.expect]]
+path = "crates/rust-mutants/src/session/route.rs"
+item = "Route::decide"
+rule = "delete-call-statement"
+original = "reaching.dedup();"
+reason = "Routing::targets is unique by construction, so the dedup answers a caller this engine never is; it is kept so an external caller cannot make a route name a target twice"

@@ -232,10 +232,15 @@ fn written() -> Vec<rust_mutants::instrument::witness::WitnessFile> {
 
 /// What `refusal` makes of one error whose primary span begins at `at`.
 fn refused_at(at: u32) -> rust_mutants::prove::Refusal {
+    refused_naming("src/lib.rs", at)
+}
+
+/// What `refusal` makes of one error the compiler reported against `named`.
+fn refused_naming(named: &str, at: u32) -> rust_mutants::prove::Refusal {
     rust_mutants::prove::refusal(
         &written(),
         &[rust_mutants::testkit::compile::diagnostic_at(
-            "src/lib.rs",
+            named,
             at,
             at.saturating_add(1),
             7,
@@ -270,4 +275,27 @@ fn a_diagnostic_outside_every_rewrite_is_one_nothing_accounts_for() {
              reason nothing accounts for says nothing about any claim"
         );
     }
+}
+
+#[test]
+fn the_file_a_diagnostic_names_is_read_however_the_platform_spells_a_path() {
+    assert!(
+        refused_naming("/w/crates/demo/src/lib.rs", 10)
+            .claims
+            .contains(&7),
+        "the compiler names an absolute path and the tree names a workspace-relative one, so \
+         the first is the second with something in front of it"
+    );
+    assert!(
+        refused_naming("C:\\w\\crates\\demo\\src\\lib.rs", 10)
+            .claims
+            .contains(&7),
+        "and a path a Windows toolchain spells with backslashes is the same file: a rule that \
+         compared them as written would attribute nothing there, and a claim nothing accounts \
+         for costs every claim of the tree"
+    );
+    assert!(
+        refused_naming("src/other.rs", 10).claims.is_empty(),
+        "while another file is another file, whatever separates its segments"
+    );
 }
