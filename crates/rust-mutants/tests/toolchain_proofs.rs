@@ -5,6 +5,7 @@
 
 #![expect(
     clippy::expect_used,
+    clippy::panic,
     reason = "a test reports a setup failure by panicking and asserts with panics"
 )]
 
@@ -337,27 +338,32 @@ fn a_target_that_never_entered_the_body_is_discharged_without_a_coverage_build()
 
 /// The candidates of one file, as discovery would report them, with a catalog of them.
 fn discovered(path: &str, source: &str) -> rust_mutants::discover::Discovery {
+    discovered_in(&[(path, source)])
+}
+
+/// The candidates of several files, in one catalog, as discovery would report them.
+fn discovered_in(files: &[(&str, &str)]) -> rust_mutants::discover::Discovery {
     use rust_mutants::catalog::Builder;
     use rust_mutants::rule::Registry;
     use rust_mutants::syntax::{Selection, discover_file};
 
     let registry = Registry::canonical();
     let selection = Selection::tier(&registry, Tier::All);
-    let found = discover_file(path, source.as_bytes(), &selection).expect("the source parses");
     let mut builder = Builder::new();
-    for one in &found.candidates {
-        builder.add(one.candidate.clone()).expect("add");
+    let mut candidates = Vec::new();
+    for (path, source) in files {
+        let found = discover_file(path, source.as_bytes(), &selection).expect("the source parses");
+        for one in found.candidates {
+            builder.add(one.candidate.clone()).expect("add");
+            candidates.push(rust_mutants::discover::Located {
+                found: one,
+                package: "fixture".to_owned(),
+            });
+        }
     }
     rust_mutants::discover::Discovery {
         files: Vec::new(),
-        candidates: found
-            .candidates
-            .into_iter()
-            .map(|one| rust_mutants::discover::Located {
-                found: one,
-                package: "fixture-probeable".to_owned(),
-            })
-            .collect(),
+        candidates,
         skips: Vec::new(),
         claims: Vec::new(),
         decisions: Vec::new(),
@@ -510,9 +516,15 @@ mod tests {
     );
 
     let cancel = Cancel::new();
+    let recorder = rust_mutants::trace::Recorder::wall(rust_mutants::trace::Sink::Memory(
+        rust_mutants::trace::MemorySink::unbounded(),
+    ));
     let workspace = Workspace::open(
         fixture.root(),
-        opening(&mjutest_devkit::paths::cargo_binary(), fixture.temp()),
+        rust_mutants::workspace::OpenOptions {
+            trace: recorder.clone(),
+            ..opening(&mjutest_devkit::paths::cargo_binary(), fixture.temp())
+        },
         &cancel,
     )
     .expect("the workspace opens");
@@ -530,7 +542,7 @@ mod tests {
             },
         },
         &cancel,
-        &rust_mutants::trace::Recorder::disabled(),
+        &recorder,
     )
     .expect("the pass runs");
 
@@ -539,5 +551,51 @@ mod tests {
         "a comparison the compiler vouched for is one a guard may make, whether or not a branch \
          proof rests on the same condition: {established:?}"
     );
+    said(&recorder, &established);
     workspace.close().expect("close");
+}
+
+/// What the pass left in the recording, held to being a sentence somebody can act on.
+///
+/// The note is the only place a reader learns how much of what the syntax
+/// offered the compiler took, so a note that says nothing is a layer nobody
+/// can see the yield of.
+fn said(recorder: &rust_mutants::trace::Recorder, established: &rust_mutants::prove::Established) {
+    use rust_mutants::trace::Payload;
+
+    let events = recorder.events();
+    let notes: Vec<String> = events
+        .iter()
+        .filter_map(|event| match &event.payload {
+            Payload::Note { note } if note.kind == "witness" => Some(note.detail.clone()),
+            _ => None,
+        })
+        .collect();
+    let [note] = notes.as_slice() else {
+        panic!("the pass says once what it established: {notes:?}");
+    };
+    assert!(
+        !note.contains("  ") && !note.trim_end().ends_with(':'),
+        "a sentence with a hole where a number should be shows it as two spaces or a colon          promising what never came: {note:?}"
+    );
+    assert!(
+        note.contains(&format!("{} vouched for", established.comparable.len())),
+        "and it says the number a reader would otherwise have to take on trust: {note:?}"
+    );
+    assert!(
+        events.iter().any(|event| matches!(
+            &event.payload,
+            Payload::Witness { witness } if witness.checked
+        )),
+        "a claim the compiler took is recorded as taken, per candidate, because a tally cannot          say which one"
+    );
+    let unpaired: Vec<rust_mutants::trace::Problem> = rust_mutants::trace::check(&events)
+        .into_iter()
+        .filter(|problem| !matches!(problem, rust_mutants::trace::Problem::MissingRunEnd))
+        .collect();
+    assert!(
+        unpaired.is_empty(),
+        "and the phase that began ended, whatever the run this recording is a fragment of went \
+         on to do: {unpaired:?}"
+    );
 }
