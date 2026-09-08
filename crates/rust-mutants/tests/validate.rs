@@ -8,7 +8,7 @@
     reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
 )]
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use rust_mutants::cargo::Message;
 use rust_mutants::instrument::{Instrumenting, instrument_file};
@@ -59,6 +59,7 @@ fn an_error_inside_a_branch_belongs_to_that_mutant_and_one_outside_belongs_to_no
         placements: scripted.placements(),
         markers: &[],
         comparable: &BTreeSet::default(),
+        probed: &BTreeMap::default(),
         catalog_digest: scripted.catalog().digest(),
     })
     .expect("instrument");
@@ -96,6 +97,7 @@ fn a_warning_is_not_a_rejection() {
         placements: scripted.placements(),
         markers: &[],
         comparable: &BTreeSet::default(),
+        probed: &BTreeMap::default(),
         catalog_digest: scripted.catalog().digest(),
     })
     .expect("instrument");
@@ -260,6 +262,7 @@ fn a_diagnostic_whose_primary_span_is_elsewhere_is_attributed_through_its_second
         placements: scripted.placements(),
         markers: &[],
         comparable: &BTreeSet::default(),
+        probed: &BTreeMap::default(),
         catalog_digest: scripted.catalog().digest(),
     })
     .expect("instrument");
@@ -291,6 +294,7 @@ fn a_diagnostic_whose_edit_is_named_only_by_a_child_note_is_attributed_through_i
         placements: scripted.placements(),
         markers: &[],
         comparable: &BTreeSet::default(),
+        probed: &BTreeMap::default(),
         catalog_digest: scripted.catalog().digest(),
     })
     .expect("instrument");
@@ -317,6 +321,7 @@ fn a_diagnostic_that_names_no_branch_anywhere_still_belongs_to_nobody() {
         placements: scripted.placements(),
         markers: &[],
         comparable: &BTreeSet::default(),
+        probed: &BTreeMap::default(),
         catalog_digest: scripted.catalog().digest(),
     })
     .expect("instrument");

@@ -212,6 +212,58 @@ mod __rm {
         original
     }
 
+    pub(crate) trait Observable {} impl Observable for bool {} impl Observable for char {} impl Observable for () {} impl Observable for i8 {} impl Observable for i16 {} impl Observable for i32 {} impl Observable for i64 {} impl Observable for i128 {} impl Observable for isize {} impl Observable for u8 {} impl Observable for u16 {} impl Observable for u32 {} impl Observable for u64 {} impl Observable for u128 {} impl Observable for usize {} impl Observable for str {} impl Observable for __rm_std::string::String {} impl<T: Observable> Observable for __rm_std::option::Option<T> {} impl<T: Observable> Observable for __rm_std::vec::Vec<T> {} impl<T: Observable + ?Sized> Observable for &T {}
+
+    #[inline(always)]
+    pub(crate) fn undefaulted<T: Observable + __rm_std::default::Default + __rm_std::cmp::PartialEq>(index: u32, value: T) -> T {
+        if TOUCHING.load(__rm_std::sync::atomic::Ordering::Relaxed) != TOUCH_OFF
+            && touching()
+            && value != <T as __rm_std::default::Default>::default()
+        {
+            difference(index);
+        }
+        value
+    }
+
+    #[inline(always)]
+    pub(crate) fn untrue(index: u32, value: bool) -> bool {
+        if TOUCHING.load(__rm_std::sync::atomic::Ordering::Relaxed) != TOUCH_OFF
+            && touching()
+            && !value
+        {
+            difference(index);
+        }
+        value
+    }
+
+    #[inline(always)]
+    pub(crate) fn unokdefault<T: Observable + __rm_std::default::Default + __rm_std::cmp::PartialEq, E>(index: u32, value: __rm_std::result::Result<T, E>) -> __rm_std::result::Result<T, E> {
+        if TOUCHING.load(__rm_std::sync::atomic::Ordering::Relaxed) != TOUCH_OFF && touching() {
+            let parted = match &value {
+                __rm_std::result::Result::Ok(held) => *held != <T as __rm_std::default::Default>::default(),
+                __rm_std::result::Result::Err(_) => true,
+            };
+            if parted {
+                difference(index);
+            }
+        }
+        value
+    }
+
+    #[inline(always)]
+    pub(crate) fn unsomedefault<T: Observable + __rm_std::default::Default + __rm_std::cmp::PartialEq>(index: u32, value: __rm_std::option::Option<T>) -> __rm_std::option::Option<T> {
+        if TOUCHING.load(__rm_std::sync::atomic::Ordering::Relaxed) != TOUCH_OFF && touching() {
+            let parted = match &value {
+                __rm_std::option::Option::Some(held) => *held != <T as __rm_std::default::Default>::default(),
+                __rm_std::option::Option::None => true,
+            };
+            if parted {
+                difference(index);
+            }
+        }
+        value
+    }
+
     #[inline(never)]
     fn difference(index: u32) {
         let _ = SEEN.try_with(|seen| match seen.try_borrow_mut() {

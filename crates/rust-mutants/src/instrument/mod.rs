@@ -4,6 +4,7 @@
 //! Rewriting a file so that every compilable mutant of it lives in the file at once, dormant behind a guard.
 
 mod guards;
+mod observable;
 mod runtime;
 pub mod witness;
 
@@ -13,7 +14,7 @@ pub fn module_named_for(text: &str, stem: &str) -> String {
     runtime::module_named(text, stem)
 }
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use crate::catalog::Catalog;
@@ -315,6 +316,8 @@ pub struct Instrumenting<'a> {
     pub markers: &'a [Marker],
     /// Every mutant whose guard may compare its two branches, so a run records whether they ever differed.
     pub comparable: &'a BTreeSet<u32>,
+    /// Every return replacement whose guard may ask what the value it replaces already held, with the question to ask.
+    pub probed: &'a BTreeMap<u32, crate::probe::form::Question>,
     /// The catalog every guard names, which the runtime refuses to be activated under another of.
     pub catalog_digest: &'a str,
 }
@@ -330,6 +333,7 @@ pub fn instrument_file(file: &Instrumenting<'_>) -> Result<FileOutput, Instrumen
         placements,
         markers,
         comparable,
+        probed,
         catalog_digest,
     } = *file;
     let text = std::str::from_utf8(source).map_err(|error| {
@@ -356,6 +360,7 @@ pub fn instrument_file(file: &Instrumenting<'_>) -> Result<FileOutput, Instrumen
         text,
         module: module_name(path, text),
         comparable,
+        probed,
     };
     file.check_placements(placements)?;
     let forest = file.forest(placements)?;
@@ -413,6 +418,8 @@ struct File<'a> {
     module: String,
     /// Every mutant of this file whose guard may compare its two branches.
     comparable: &'a BTreeSet<u32>,
+    /// Every return replacement of this file whose guard may ask what the value it replaces already held.
+    probed: &'a BTreeMap<u32, crate::probe::form::Question>,
 }
 
 impl File<'_> {
@@ -618,6 +625,7 @@ impl File<'_> {
                 index: placement.index,
                 text: self.alternative(node.span, site, placement)?,
                 comparable: self.comparable.contains(&placement.index),
+                probe: self.probed.get(&placement.index).copied(),
             });
         }
         let form = node
@@ -631,8 +639,8 @@ impl File<'_> {
         let composed = guards::compose(
             form,
             &guards::Paths {
-                active: &guards::path(&self.module, depth),
-                differing: &guards::named(&self.module, depth, "differing"),
+                module: &self.module,
+                depth,
             },
             &alternatives,
             &original,

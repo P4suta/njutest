@@ -49,6 +49,9 @@ pub const STALE_CATALOG_EXIT: i32 = 97;
 /// reader refuses whole.
 pub const TOUCH_ENV: &str = "RUST_MUTANTS_TOUCH";
 
+/// The trait the runtime names the types a probe may compare a value of.
+pub(super) const OBSERVABLE: &str = "Observable";
+
 /// The exit status of a test process asked to record what its guards saw that could not.
 ///
 /// Silence is what licenses a run to skip a test, so a process that cannot
@@ -310,6 +313,58 @@ mod {{MODULE}} {
         original
     }
 
+{{OBSERVABLE}}
+
+    #[inline(always)]
+    pub(crate) fn undefaulted<T: {{PROBE_BOUND}}>(index: u32, value: T) -> T {
+        if TOUCHING.load(__rm_std::sync::atomic::Ordering::Relaxed) != TOUCH_OFF
+            && touching()
+            && value != <T as __rm_std::default::Default>::default()
+        {
+            difference(index);
+        }
+        value
+    }
+
+    #[inline(always)]
+    pub(crate) fn untrue(index: u32, value: bool) -> bool {
+        if TOUCHING.load(__rm_std::sync::atomic::Ordering::Relaxed) != TOUCH_OFF
+            && touching()
+            && !value
+        {
+            difference(index);
+        }
+        value
+    }
+
+    #[inline(always)]
+    pub(crate) fn unokdefault<T: {{PROBE_BOUND}}, E>(index: u32, value: __rm_std::result::Result<T, E>) -> __rm_std::result::Result<T, E> {
+        if TOUCHING.load(__rm_std::sync::atomic::Ordering::Relaxed) != TOUCH_OFF && touching() {
+            let parted = match &value {
+                __rm_std::result::Result::Ok(held) => *held != <T as __rm_std::default::Default>::default(),
+                __rm_std::result::Result::Err(_) => true,
+            };
+            if parted {
+                difference(index);
+            }
+        }
+        value
+    }
+
+    #[inline(always)]
+    pub(crate) fn unsomedefault<T: {{PROBE_BOUND}}>(index: u32, value: __rm_std::option::Option<T>) -> __rm_std::option::Option<T> {
+        if TOUCHING.load(__rm_std::sync::atomic::Ordering::Relaxed) != TOUCH_OFF && touching() {
+            let parted = match &value {
+                __rm_std::option::Option::Some(held) => *held != <T as __rm_std::default::Default>::default(),
+                __rm_std::option::Option::None => true,
+            };
+            if parted {
+                difference(index);
+            }
+        }
+        value
+    }
+
     #[inline(never)]
     fn difference(index: u32) {
         let _ = SEEN.try_with(|seen| match seen.try_borrow_mut() {
@@ -448,7 +503,18 @@ pub fn render(rendering: &Rendering<'_>) -> String {
         .replace("{{BODIES}}", crate::touch::BODIES)
         .replace("{{INFECTED}}", crate::touch::INFECTED)
         .replace("{{EXIT}}", &STALE_CATALOG_EXIT.to_string())
-        .replace("{{TOUCH_EXIT}}", &TOUCH_UNAVAILABLE_EXIT.to_string());
+        .replace("{{TOUCH_EXIT}}", &TOUCH_UNAVAILABLE_EXIT.to_string())
+        .replace(
+            "{{OBSERVABLE}}",
+            &format!(
+                "    {}",
+                super::observable::declaration(OBSERVABLE, "__rm_std")
+            ),
+        )
+        .replace(
+            "{{PROBE_BOUND}}",
+            &super::observable::bound(OBSERVABLE, "__rm_std"),
+        );
     if newline == "\n" {
         text
     } else {

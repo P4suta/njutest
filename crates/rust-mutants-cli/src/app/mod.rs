@@ -5,7 +5,7 @@
 
 pub mod trace;
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -1415,6 +1415,7 @@ fn instrumented(
         placements: &placements,
         markers: &[],
         comparable: &BTreeSet::default(),
+        probed: &BTreeMap::default(),
         catalog_digest: discovery.catalog.digest(),
     })
     .map_err(EngineError::from)?;
@@ -1567,7 +1568,7 @@ pub(super) fn write(stream: &mut dyn Write, text: &str) {
 fn read_sources(
     root: &Path,
     discovery: &rust_mutants::discover::Discovery,
-) -> std::collections::BTreeMap<String, String> {
+) -> BTreeMap<String, String> {
     discovery
         .files
         .iter()

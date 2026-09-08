@@ -30,6 +30,48 @@ use crate::workspace::{SessionError, Workspace};
 /// What one file's claims are, in catalog order.
 type ByFile = BTreeMap<String, Vec<Claimed>>;
 
+/// What one file's probes are, in catalog order.
+type ProbesByFile = BTreeMap<String, Vec<witness::Probing>>;
+
+/// Everything one `cargo check` of the witness tree is asked, by file.
+#[derive(Debug, Clone, Default)]
+struct Questions {
+    /// The conditions a branch proof or a comparison rests on.
+    conditions: ByFile,
+    /// The returned values a probe rests on.
+    probes: ProbesByFile,
+}
+
+impl Questions {
+    /// Whether the tree is asked anything at all.
+    fn is_empty(&self) -> bool {
+        self.conditions.is_empty() && self.probes.is_empty()
+    }
+
+    /// Every file either question is asked about.
+    fn paths(&self) -> BTreeSet<&String> {
+        self.conditions.keys().chain(self.probes.keys()).collect()
+    }
+
+    /// What one file is asked.
+    fn of<'a>(&'a self, path: &str, empty: &'a Empty) -> witness::Asking<'a> {
+        witness::Asking {
+            conditions: self
+                .conditions
+                .get(path)
+                .map_or(&empty.conditions, Vec::as_slice),
+            probes: self.probes.get(path).map_or(&empty.probes, Vec::as_slice),
+        }
+    }
+}
+
+/// What a file that is asked only one of the two questions is handed for the other.
+#[derive(Debug, Default)]
+struct Empty {
+    conditions: Vec<Claimed>,
+    probes: Vec<witness::Probing>,
+}
+
 /// What the question is put about: the tree, what discovery claimed, and how the check is bounded.
 #[derive(Debug, Clone, Copy)]
 pub struct Asking<'a> {
@@ -94,13 +136,14 @@ pub fn establish(
         sources,
         options,
     } = *asking;
-    let claims = claims_of(discovery);
-    if claims.is_empty() {
+    let questions = questions_of(discovery);
+    if questions.is_empty() {
         return Ok(Established::default());
     }
+    let claims = &questions.conditions;
     let phase = trace.phase("witness");
     let root = workspace.snapshot_root().to_path_buf();
-    let written = write(&root, sources, &claims)?;
+    let written = write(&root, sources, &questions)?;
     let checked = compile(
         &workspace.driver(cancel),
         &CompileOptions {
@@ -120,10 +163,10 @@ pub fn establish(
         phase.end();
         return Ok(Established::default());
     };
-    let refused = if checked.success {
+    let mut refused = if checked.success {
         Refusal::default()
     } else {
-        refusal(&written, &checked.messages)
+        refusal(&written.files, &checked.messages)
     };
     if !checked.success && !refused.accounts_for_a_failure() {
         trace.note(
@@ -140,13 +183,15 @@ pub fn establish(
         phase.end();
         return Ok(Established::default());
     }
-    let markers = markers_of(&claims);
-    let established = vouched(&claims, sources, &Checked { refused, markers }, trace);
+    unasked(&questions, &written.unasked, &mut refused);
+    let markers = markers_of(claims);
+    let established = vouched(&questions, sources, &Checked { refused, markers }, trace);
     trace.note(
         "witness",
         &format!(
-            "{} claimed of which {} name a body, {} vouched for of which {} carry a marker",
-            count(&claims),
+            "{} claimed of which {} name a body, {} vouched for of which {} carry a marker; \
+             {} values probed of which {} vouched for",
+            count(claims),
             claims
                 .values()
                 .flatten()
@@ -158,6 +203,8 @@ pub fn establish(
                 .values()
                 .filter(|proof| proof.marker.is_some())
                 .count(),
+            questions.probes.values().map(Vec::len).sum::<usize>(),
+            established.probed.len(),
         ),
     );
     phase.end();
@@ -174,14 +221,21 @@ struct Checked {
 
 /// Every claim the compiler took, with the body it names and the marker that body carries.
 fn vouched(
-    claims: &ByFile,
+    questions: &Questions,
     sources: &BTreeMap<String, Vec<u8>>,
     checked: &Checked,
     trace: &Recorder,
 ) -> Established {
     let Checked { refused, markers } = checked;
     let mut established = Established::default();
-    for (path, file) in claims {
+    for file in questions.probes.values() {
+        for probe in file {
+            if !refused.probes.contains(&probe.index) {
+                let _vouched = established.probed.insert(probe.index, probe.question);
+            }
+        }
+    }
+    for (path, file) in &questions.conditions {
         let Some(source) = sources.get(path) else {
             continue;
         };
@@ -228,6 +282,8 @@ pub struct Established {
     pub proofs: BTreeMap<u32, Proof>,
     /// Every mutant whose guard may compare its two branches, because the compiler vouched for the condition being inert.
     pub comparable: BTreeSet<u32>,
+    /// Every return replacement whose guard may ask whether the value it replaces already holds what it would write, with the question to ask.
+    pub probed: BTreeMap<u32, crate::probe::form::Question>,
 }
 
 /// The position one past the body's last byte. A body's end is exclusive, and a reader looking at the closing brace wants where it is rather than where the next thing starts.
@@ -266,19 +322,32 @@ fn count(claims: &ByFile) -> usize {
 }
 
 /// Every claim discovery made, by the file it is in.
-fn claims_of(discovery: &Discovery) -> ByFile {
-    let mut claims: ByFile = BTreeMap::new();
+fn questions_of(discovery: &Discovery) -> Questions {
+    let mut questions = Questions::default();
     for located in &discovery.candidates {
-        let Some(rests) = rests_on(&located.found) else {
-            continue;
-        };
         let Ok(id) = located.found.candidate.id() else {
             continue;
         };
         let Some(mutant) = discovery.catalog.by_id(&id) else {
             continue;
         };
-        claims
+        if let Some(question) = located.found.probe {
+            questions
+                .probes
+                .entry(located.found.candidate.path.clone())
+                .or_default()
+                .push(witness::Probing {
+                    index: mutant.index,
+                    value: located.found.hint.site,
+                    question,
+                    super_depth: located.found.hint.super_depth,
+                });
+        }
+        let Some(rests) = rests_on(&located.found) else {
+            continue;
+        };
+        questions
+            .conditions
             .entry(located.found.candidate.path.clone())
             .or_default()
             .push(Claimed {
@@ -289,7 +358,7 @@ fn claims_of(discovery: &Discovery) -> ByFile {
                 super_depth: located.found.hint.super_depth,
             });
     }
-    claims
+    questions
 }
 
 /// What one candidate has to put to the compiler, or nothing when it asks nothing of it.
@@ -329,26 +398,45 @@ struct Rests {
 fn write(
     root: &Path,
     sources: &BTreeMap<String, Vec<u8>>,
-    claims: &ByFile,
-) -> Result<Vec<witness::WitnessFile>, EngineError> {
-    let mut written = Vec::new();
-    for (path, file) in claims {
+    questions: &Questions,
+) -> Result<Written, EngineError> {
+    let empty = Empty::default();
+    let mut written = Written::default();
+    for path in questions.paths() {
         let Some(source) = sources.get(path) else {
+            let _unasked = written.unasked.insert(path.clone());
             continue;
         };
-        let Ok(one) = witness::witness_file(path, source, file) else {
+        let Ok(one) = witness::witness_file(path, source, &questions.of(path, &empty)) else {
+            let _unasked = written.unasked.insert(path.clone());
             continue;
         };
         if !one.witnessed {
+            let _unasked = written.unasked.insert(path.clone());
             continue;
         }
         std::fs::write(root.join(path), &one.text).map_err(|source| SessionError::WriteFailed {
             path: path.clone(),
             source,
         })?;
-        written.push(one);
+        written.files.push(one);
     }
     Ok(written)
+}
+
+/// What the witness tree came to: the files it holds, and the ones it does not.
+///
+/// A file the tree could not be given is a file the compiler was never asked
+/// about, and a check that passes over it says nothing about anything in it.
+/// Reading that silence as acceptance would grant every claim and every probe
+/// of the file on a question nobody put — which is the one direction a proof
+/// layer may never fail in.
+#[derive(Debug, Default)]
+struct Written {
+    /// The files the tree holds, which the diagnostics are read against.
+    files: Vec<witness::WitnessFile>,
+    /// The files it does not, whose claims and probes are refused for that reason alone.
+    unasked: BTreeSet<String>,
 }
 
 /// Puts the pristine sources back. A tree left witnessed is one every later phase would be about the wrong program.
@@ -400,6 +488,9 @@ pub fn refusal(written: &[witness::WitnessFile], messages: &[crate::cargo::Messa
                     witness::Placed::Marker => {
                         refused.markers.extend(site.claims.iter().copied());
                     }
+                    witness::Placed::Probe => {
+                        refused.probes.extend(site.claims.iter().copied());
+                    }
                 }
                 true
             });
@@ -427,6 +518,8 @@ pub struct Refusal {
     pub claims: BTreeSet<u32>,
     /// The mutants whose body the compiler would not take a marker in.
     pub markers: BTreeSet<u32>,
+    /// The mutants whose returned value is of a type no guard may compare against what a replacement writes.
+    pub probes: BTreeSet<u32>,
     /// Every error no rewrite of the witness tree accounts for, as the file and what the compiler said.
     pub unaccounted: Vec<String>,
 }
@@ -440,7 +533,25 @@ impl Refusal {
     /// and the claims it says nothing about are claims, not proofs.
     #[must_use]
     pub fn accounts_for_a_failure(&self) -> bool {
-        self.unaccounted.is_empty() && !(self.claims.is_empty() && self.markers.is_empty())
+        self.unaccounted.is_empty()
+            && !(self.claims.is_empty() && self.markers.is_empty() && self.probes.is_empty())
+    }
+}
+
+/// Refuses every claim and every probe of a file the witness tree does not hold.
+///
+/// The compiler was asked nothing about them, and what nobody asked about is
+/// not something the compiler took.
+fn unasked(questions: &Questions, paths: &BTreeSet<String>, refused: &mut Refusal) {
+    for path in paths {
+        if let Some(file) = questions.conditions.get(path) {
+            refused
+                .claims
+                .extend(file.iter().map(|claimed| claimed.index));
+        }
+        if let Some(file) = questions.probes.get(path) {
+            refused.probes.extend(file.iter().map(|probe| probe.index));
+        }
     }
 }
 

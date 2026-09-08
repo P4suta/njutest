@@ -11,7 +11,7 @@
     reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
 )]
 
-use rust_mutants::instrument::witness::{Claimed, MARKER, Placed, witness_file};
+use rust_mutants::instrument::witness::{Asking, Claimed, MARKER, Placed, Probing, witness_file};
 use rust_mutants::rule::{Registry, Tier};
 use rust_mutants::syntax::{Selection, discover_file};
 
@@ -41,6 +41,34 @@ fn asked(source: &str) -> Vec<Claimed> {
         .collect()
 }
 
+/// Every returned value of `source` a probe would rest on, numbered as a catalog would number it.
+fn probed(source: &str) -> Vec<Probing> {
+    let registry = Registry::canonical();
+    let selection = Selection::tier(&registry, Tier::All);
+    discover_file("src/lib.rs", source.as_bytes(), &selection)
+        .expect("the source parses")
+        .candidates
+        .into_iter()
+        .enumerate()
+        .filter_map(|(index, found)| {
+            Some(Probing {
+                index: u32::try_from(index).unwrap_or(0),
+                value: found.hint.site,
+                question: found.probe?,
+                super_depth: found.hint.super_depth,
+            })
+        })
+        .collect()
+}
+
+/// What one file is asked when only its conditions are.
+const fn conditions(claims: &[Claimed]) -> Asking<'_> {
+    Asking {
+        conditions: claims,
+        probes: &[],
+    }
+}
+
 /// Every one of them that names a body, which is what a branch proof rests on.
 fn claimed(source: &str) -> Vec<Claimed> {
     asked(source)
@@ -52,7 +80,8 @@ fn claimed(source: &str) -> Vec<Claimed> {
 #[test]
 fn a_file_with_no_claim_comes_back_byte_for_byte() {
     let source = "pub fn f(a: i32) -> i32 { a + 1 }\n";
-    let written = witness_file("src/lib.rs", source.as_bytes(), &[]).expect("witnessed");
+    let written =
+        witness_file("src/lib.rs", source.as_bytes(), &conditions(&[])).expect("witnessed");
     assert_eq!(written.text, source);
     assert!(!written.witnessed);
     assert!(written.sites.is_empty());
@@ -63,7 +92,8 @@ fn the_compiler_is_asked_about_the_operands_and_the_answer_costs_no_line() {
     let source = "pub fn f(a: i32, b: i32) -> i32 {\n    if a <= b { return 1; }\n    0\n}\n";
     let claims = claimed(source);
     assert!(!claims.is_empty(), "the source yields a claim");
-    let written = witness_file("src/lib.rs", source.as_bytes(), &claims).expect("witnessed");
+    let written =
+        witness_file("src/lib.rs", source.as_bytes(), &conditions(&claims)).expect("witnessed");
     assert!(written.witnessed);
     assert!(
         written.text.contains("__rmw::w_ord(&(a), &(b));"),
@@ -94,7 +124,8 @@ pub fn f(a: i32, b: i32, c: i32) -> i32 {
 ";
     let claims = claimed(source);
     assert!(claims.len() >= 3, "{claims:?}");
-    let written = witness_file("src/lib.rs", source.as_bytes(), &claims).expect("witnessed");
+    let written =
+        witness_file("src/lib.rs", source.as_bytes(), &conditions(&claims)).expect("witnessed");
     let witnessed: Vec<&rust_mutants::instrument::witness::Site> = written
         .sites
         .iter()
@@ -143,8 +174,12 @@ pub fn f(a: i32, b: i32, c: i32) -> i32 {
 fn a_cast_asks_whether_its_operand_is_a_primitive() {
     let source =
         "pub fn f(a: i64, b: i32) -> i32 {\n    if a as i32 <= b { return 1; }\n    0\n}\n";
-    let written =
-        witness_file("src/lib.rs", source.as_bytes(), &claimed(source)).expect("witnessed");
+    let written = witness_file(
+        "src/lib.rs",
+        source.as_bytes(),
+        &conditions(&claimed(source)),
+    )
+    .expect("witnessed");
     assert!(
         written.text.contains("__rmw::w_prim(&(a));"),
         "{}",
@@ -162,8 +197,12 @@ pub mod inner {
     }
 }
 ";
-    let written =
-        witness_file("src/lib.rs", source.as_bytes(), &claimed(source)).expect("witnessed");
+    let written = witness_file(
+        "src/lib.rs",
+        source.as_bytes(),
+        &conditions(&claimed(source)),
+    )
+    .expect("witnessed");
     assert!(
         written.text.contains("super::__rmw::w_ord"),
         "the module is at the file root, and the condition is one module in: {}",
@@ -182,8 +221,12 @@ pub fn f(a: i32, b: i32) -> i32 {
     0
 }
 ";
-    let written =
-        witness_file("src/lib.rs", source.as_bytes(), &claimed(source)).expect("witnessed");
+    let written = witness_file(
+        "src/lib.rs",
+        source.as_bytes(),
+        &conditions(&claimed(source)),
+    )
+    .expect("witnessed");
     assert!(written.text.starts_with("//! A crate."), "{}", written.text);
     assert!(written.text.contains("/// Doubles."), "{}", written.text);
     assert!(written.text.contains("return 1;"), "{}", written.text);
@@ -197,7 +240,8 @@ fn an_edit_no_branch_proof_is_about_still_has_its_condition_put_to_the_compiler(
         asked.iter().any(|one| one.claim().is_none()),
         "widening a comparison proves nothing about the body, and the guard still compares"
     );
-    let written = witness_file("src/lib.rs", source.as_bytes(), &asked).expect("witnessed");
+    let written =
+        witness_file("src/lib.rs", source.as_bytes(), &conditions(&asked)).expect("witnessed");
     assert!(
         written.text.contains("__rmw::w_ord(&(a), &(b));"),
         "the operands are what makes evaluating either branch run none of the program: {}",
@@ -219,7 +263,8 @@ fn a_proof_and_a_comparison_about_one_condition_are_one_rewrite() {
         asked.len() > proofs,
         "`&&` and `<` prove nothing about it and still compare: {asked:?}"
     );
-    let written = witness_file("src/lib.rs", source.as_bytes(), &asked).expect("witnessed");
+    let written =
+        witness_file("src/lib.rs", source.as_bytes(), &conditions(&asked)).expect("witnessed");
     let witnessed = written
         .sites
         .iter()
@@ -246,5 +291,149 @@ fn a_proof_and_a_comparison_about_one_condition_are_one_rewrite() {
         written.text.contains("__rmw::w_ord(&(c), &(d));"),
         "{}",
         written.text
+    );
+}
+
+#[test]
+fn a_returned_value_is_put_to_the_compiler_through_a_binding_of_its_own() {
+    let source = "pub fn f(a: i32) -> i32 {\n    return a;\n}\n";
+    let probes = probed(source);
+    assert_eq!(
+        probes.len(),
+        1,
+        "one return replacement of this is probeable: {probes:?}"
+    );
+    let written = witness_file(
+        "src/lib.rs",
+        source.as_bytes(),
+        &Asking {
+            conditions: &[],
+            probes: &probes,
+        },
+    )
+    .expect("witnessed");
+    assert!(
+        written.text.contains("__rmw_value = a;"),
+        "the value is evaluated once and bound, which is the shape the guard will hold: {}",
+        written.text
+    );
+    assert!(
+        written.text.contains("__rmw::w_default(&__rmw_value)"),
+        "and the question is which type it is: {}",
+        written.text
+    );
+    assert_eq!(
+        written
+            .sites
+            .iter()
+            .filter(|site| site.placed == Placed::Probe)
+            .count(),
+        1,
+        "a diagnostic here costs the probe and not the mutant: {:?}",
+        written.sites
+    );
+}
+
+#[test]
+fn a_probe_of_a_type_the_trait_does_not_name_is_refused_by_the_compiler_rather_than_by_the_syntax()
+{
+    let source = "pub struct Own;\npub fn f(a: Own) -> Own {\n    return a;\n}\n";
+    let probes = probed(source);
+    assert_eq!(
+        probes.len(),
+        1,
+        "the syntax offers it: a path is effect free whatever it names"
+    );
+    let written = witness_file(
+        "src/lib.rs",
+        source.as_bytes(),
+        &Asking {
+            conditions: &[],
+            probes: &probes,
+        },
+    )
+    .expect("witnessed");
+    assert!(
+        written.text.contains("__rmw::w_default(&__rmw_value)"),
+        "so the question goes to the compiler, which is the one that can answer it: {}",
+        written.text
+    );
+}
+
+#[test]
+fn probing_a_value_costs_the_file_no_line() {
+    let source = "\
+pub fn f(a: i32) -> i32 {
+    return a;
+}
+
+pub fn g(b: bool) -> bool {
+    return b;
+}
+";
+    let written = witness_file(
+        "src/lib.rs",
+        source.as_bytes(),
+        &Asking {
+            conditions: &[],
+            probes: &probed(source),
+        },
+    )
+    .expect("witnessed");
+    let body = written
+        .text
+        .split("#[doc(hidden)]")
+        .next()
+        .unwrap_or_default();
+    assert_eq!(
+        body.lines().count(),
+        source.lines().count(),
+        "every position the catalog reports still points where it did: {body}"
+    );
+    assert!(
+        written.text.contains("__rmw::w_true(&__rmw_value)"),
+        "a bool return asks whether it is already true: {}",
+        written.text
+    );
+}
+
+#[test]
+fn a_value_written_over_several_lines_keeps_every_one_of_them() {
+    let source = "\
+pub struct Pair {
+    pub a: i32,
+    pub b: i32,
+}
+
+pub fn f() -> Pair {
+    Pair {
+        a: 1,
+        b: 2,
+    }
+}
+";
+    let probes = probed(source);
+    assert!(
+        !probes.is_empty(),
+        "a struct literal is effect free, so the syntax offers the probe"
+    );
+    let written = witness_file(
+        "src/lib.rs",
+        source.as_bytes(),
+        &Asking {
+            conditions: &[],
+            probes: &probes,
+        },
+    )
+    .expect("a witness that moved a line would be refused outright, which vouches for nothing");
+    let body = written
+        .text
+        .split("#[doc(hidden)]")
+        .next()
+        .unwrap_or_default();
+    assert_eq!(
+        body.lines().count(),
+        source.lines().count(),
+        "the value is kept verbatim and only what surrounds it is written: {body}"
     );
 }

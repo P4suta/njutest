@@ -11,7 +11,7 @@
     reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
 )]
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use rust_mutants::catalog::{Builder, Catalog};
@@ -51,6 +51,7 @@ fn instrument_with_catalog(source: &str) -> (String, Catalog) {
         placements: &placements,
         markers: &[],
         comparable: &offered(&discovery, &catalog),
+        probed: &BTreeMap::default(),
         catalog_digest: catalog.digest(),
     })
     .expect("instrument");
@@ -157,6 +158,7 @@ fn a_guard_the_compiler_vouched_for_answers_what_it_replaces_and_says_where_the_
         placements: &placements,
         markers: &[],
         comparable: &compared,
+        probed: &BTreeMap::default(),
         catalog_digest: catalog.digest(),
     })
     .expect("instrument");
@@ -172,6 +174,7 @@ fn a_guard_the_compiler_vouched_for_answers_what_it_replaces_and_says_where_the_
         placements: &placements,
         markers: &[],
         comparable: &BTreeSet::default(),
+        probed: &BTreeMap::default(),
         catalog_digest: catalog.digest(),
     })
     .expect("instrument");
@@ -204,6 +207,7 @@ fn a_site_whose_form_cannot_compare_reports_no_comparison_however_it_is_offered(
         placements: &placements,
         markers: &[],
         comparable: &every,
+        probed: &BTreeMap::default(),
         catalog_digest: catalog.digest(),
     })
     .expect("instrument");
@@ -245,6 +249,7 @@ fn instrumented_with_markers(
         placements: &placements,
         markers,
         comparable: &BTreeSet::default(),
+        probed: &BTreeMap::default(),
         catalog_digest: catalog.digest(),
     })
     .expect("instrument")
@@ -377,6 +382,7 @@ fn an_untouched_file_is_returned_byte_for_byte_with_no_runtime() {
         placements: &placements,
         markers: &[],
         comparable: &BTreeSet::default(),
+        probed: &BTreeMap::default(),
         catalog_digest: catalog.digest(),
     })
     .expect("instrument");
@@ -523,6 +529,7 @@ fn a_source_that_is_not_the_one_the_candidates_came_from_is_refused() {
         placements: &placements,
         markers: &[],
         comparable: &BTreeSet::default(),
+        probed: &BTreeMap::default(),
         catalog_digest: catalog.digest(),
     })
     .unwrap_err();
@@ -596,6 +603,7 @@ fn every_alternative_reports_where_its_own_text_landed() {
         placements: &placements,
         markers: &[],
         comparable: &BTreeSet::default(),
+        probed: &BTreeMap::default(),
         catalog_digest: catalog.digest(),
     })
     .expect("instrument");
@@ -854,8 +862,124 @@ fn instrumented(path: &str, source: &str) -> Option<(String, Catalog)> {
         placements: &placements,
         markers: &[],
         comparable: &BTreeSet::default(),
+        probed: &BTreeMap::default(),
         catalog_digest: catalog.digest(),
     })
     .ok()?;
     Some((file.text, catalog))
+}
+
+/// Every return replacement the syntax offers a probe for, as a run has it once the compiler has vouched for the type.
+fn probeable(
+    discovery: &rust_mutants::syntax::FileDiscovery,
+    catalog: &Catalog,
+) -> BTreeMap<u32, rust_mutants::probe::form::Question> {
+    discovery
+        .candidates
+        .iter()
+        .filter_map(|found| Some((found.candidate.id().ok()?, found.probe?)))
+        .filter_map(|(id, question)| Some((catalog.by_id(id.as_str())?.index, question)))
+        .collect()
+}
+
+/// One source instrumented with every probe the syntax offers written in.
+fn instrument_probing(source: &str) -> String {
+    let selection = Selection::tier(&REGISTRY, Tier::All);
+    let discovery = discover_file("src/lib.rs", source.as_bytes(), &selection).expect("discover");
+    let mut builder = Builder::new();
+    for found in &discovery.candidates {
+        builder.add(found.candidate.clone()).expect("add");
+    }
+    let catalog = builder.build().expect("catalog");
+    let placements = plan_file(&catalog, "src/lib.rs", &discovery.candidates).expect("plan");
+    let file = instrument_file(&Instrumenting {
+        path: "src/lib.rs",
+        source: source.as_bytes(),
+        placements: &placements,
+        markers: &[],
+        comparable: &offered(&discovery, &catalog),
+        probed: &probeable(&discovery, &catalog),
+        catalog_digest: catalog.digest(),
+    })
+    .expect("instrument");
+    assert!(
+        !file.compared.is_empty(),
+        "the tree reports what it wrote, and this source has a probe in it: {}",
+        file.text
+    );
+    file.text
+        .replace(&module_name("src/lib.rs", source), MODULE_STEM)
+}
+
+#[test]
+fn a_probed_return_asks_what_the_value_already_held_on_the_branch_that_keeps_it() {
+    let source = "pub fn f(a: i32) -> i32 {\n    return a;\n}\n";
+    let text = instrument_probing(source);
+    assert!(
+        text.contains("else { __rm::undefaulted(0, (a)) }"),
+        "the call takes the original branch and answers with it: {text}"
+    );
+}
+
+#[test]
+fn a_probed_bool_return_asks_whether_it_was_already_true() {
+    let source = "pub fn f(a: bool) -> bool {\n    return a;\n}\n";
+    let text = instrument_probing(source);
+    assert!(
+        text.contains("__rm::untrue("),
+        "a bool return's replacement writes `true`, so that is what it is compared against: {text}"
+    );
+}
+
+#[test]
+fn probing_a_return_keeps_the_line_the_catalog_reported() {
+    let source = "\
+pub fn f(a: i32) -> i32 {
+    return a;
+}
+
+pub fn g(b: bool) -> bool {
+    return b;
+}
+";
+    let text = instrument_probing(source);
+    let body = text.split("#[doc(hidden)]").next().unwrap_or_default();
+    assert_eq!(
+        body.lines().count(),
+        source.lines().count(),
+        "no guard may move a line: {body}"
+    );
+}
+
+#[test]
+fn a_tree_holds_the_call_for_a_probe_only_where_the_compiler_vouched_for_one() {
+    let source = "pub fn f(a: i32) -> i32 {\n    return a;\n}\n";
+    let selection = Selection::tier(&REGISTRY, Tier::All);
+    let discovery = discover_file("src/lib.rs", source.as_bytes(), &selection).expect("discover");
+    let mut builder = Builder::new();
+    for found in &discovery.candidates {
+        builder.add(found.candidate.clone()).expect("add");
+    }
+    let catalog = builder.build().expect("catalog");
+    let placements = plan_file(&catalog, "src/lib.rs", &discovery.candidates).expect("plan");
+    let file = instrument_file(&Instrumenting {
+        path: "src/lib.rs",
+        source: source.as_bytes(),
+        placements: &placements,
+        markers: &[],
+        comparable: &BTreeSet::default(),
+        probed: &BTreeMap::default(),
+        catalog_digest: catalog.digest(),
+    })
+    .expect("instrument");
+    assert!(
+        file.compared.is_empty(),
+        "nothing was vouched for, so nothing is compared: {:?}",
+        file.compared
+    );
+    let body = file.text.split("#[doc(hidden)]").next().unwrap_or_default();
+    assert!(
+        !body.contains("undefaulted"),
+        "and no guard of the tree calls it, however the runtime defines it: {body}"
+    );
 }

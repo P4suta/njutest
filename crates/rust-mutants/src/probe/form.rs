@@ -131,6 +131,28 @@ impl Question {
             Self::True => "is-true",
         }
     }
+
+    /// The runtime function a guard wraps its original branch in to answer this.
+    #[must_use]
+    pub const fn runtime(self) -> &'static str {
+        match self {
+            Self::Default => "undefaulted",
+            Self::OkDefault => "unokdefault",
+            Self::SomeDefault => "unsomedefault",
+            Self::True => "untrue",
+        }
+    }
+
+    /// The witness function that puts this question's type to the compiler.
+    #[must_use]
+    pub const fn witness(self) -> &'static str {
+        match self {
+            Self::Default => "w_default",
+            Self::OkDefault => "w_ok_default",
+            Self::SomeDefault => "w_some_default",
+            Self::True => "w_true",
+        }
+    }
 }
 
 /// Whether the literal is one a probe can be stated about at all. A float is refused outright: `-0.0 == 0.0` holds and `-0.0` is not what `Default::default()` writes, so a probe would say the mutation changed nothing when it changed the sign of a zero.

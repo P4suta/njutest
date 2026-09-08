@@ -10,7 +10,7 @@
               here would only move the panic to the call site"
 )]
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::cargo::{CargoError, CargoErrorKind, Message};
 use crate::catalog::{Builder, Catalog};
@@ -154,6 +154,7 @@ impl Compile for ScriptedCompile {
             placements: &kept,
             markers: &[],
             comparable: &BTreeSet::default(),
+            probed: &BTreeMap::default(),
             catalog_digest: self.catalog.digest(),
         })?;
         let live: BTreeSet<u32> = kept.iter().map(|placement| placement.index).collect();

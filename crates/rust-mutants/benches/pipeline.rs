@@ -15,7 +15,7 @@
               by panicking is the whole of its error handling"
 )]
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
 use criterion::Criterion;
@@ -127,6 +127,7 @@ fn benchmarks(criterion: &mut Criterion) {
                 placements: std::hint::black_box(&placements),
                 markers: &[],
                 comparable: &BTreeSet::default(),
+                probed: &BTreeMap::default(),
                 catalog_digest: catalog.digest(),
             })
         });

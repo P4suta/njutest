@@ -55,5 +55,5 @@ src/lib.rs:46:21 eq-to-neq unreached
 src/lib.rs:52:5 return-default killed
 src/lib.rs:53:17 int-increment survived
 src/lib.rs:54:14 string-to-empty killed
-src/lib.rs:63:5 return-default survived
+src/lib.rs:63:5 return-default not_run
 ```

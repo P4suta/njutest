@@ -48,7 +48,8 @@ pub struct Site {
 /// rests on the compiler accepting them. One in a body's marker refuses only
 /// the marker, and the claim stands with a coverage region as its premise —
 /// a body a call cannot go into is a body a `const` context holds, not a body
-/// the claim was wrong about.
+/// the claim was wrong about. One in a probe's binding refuses only the probe:
+/// the mutant is still measured, by running it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Placed {
@@ -56,6 +57,8 @@ pub enum Placed {
     Witnesses,
     /// The call at a body's first statement.
     Marker,
+    /// The binding a returned value was put to the compiler through.
+    Probe,
 }
 
 /// One file with its witnesses written in.
@@ -104,6 +107,46 @@ impl Claimed {
     }
 }
 
+/// What one file puts to the compiler.
+///
+/// Two questions of different shapes travel together because one `cargo check`
+/// answers both. A condition is asked whether it is inert; a returned value is
+/// asked whether its type is one a guard may compare against what a return
+/// replacement would write. Neither can overlap the other: a probeable
+/// expression holds no `if` and no `while`, so no condition of one sits inside
+/// a probe's own bytes.
+#[derive(Debug, Clone, Copy)]
+pub struct Asking<'a> {
+    /// Every condition to witness, with the mutants resting on it.
+    pub conditions: &'a [Claimed],
+    /// Every returned value whose type a probe rests on.
+    pub probes: &'a [Probing],
+}
+
+impl Asking<'_> {
+    /// Whether this file has anything to put to the compiler at all.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.conditions.is_empty() && self.probes.is_empty()
+    }
+}
+
+/// One returned value whose type decides whether a guard may probe the mutation that replaces it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Probing {
+    /// The mutant's dense catalog index.
+    pub index: u32,
+    /// The returned expression, which is what the guard replaces and what the binding is put to.
+    pub value: Span,
+    /// What the probe asks about it.
+    pub question: crate::probe::form::Question,
+    /// How many `super::` segments separate the value's inline module from the file root.
+    pub super_depth: u32,
+}
+
+/// The name a probe's binding takes, which a program is unlikely to spell and which shadows rather than collides where one does.
+const BINDING: &str = "__rmw_value";
+
 /// Writes every claim's witnesses into `source`.
 ///
 /// # Errors
@@ -112,10 +155,11 @@ impl Claimed {
 pub fn witness_file(
     path: &str,
     source: &[u8],
-    claims: &[Claimed],
+    asking: &Asking<'_>,
 ) -> Result<WitnessFile, InstrumentError> {
+    let claims = asking.conditions;
     let text = String::from_utf8_lossy(source).into_owned();
-    if claims.is_empty() {
+    if asking.is_empty() {
         return Ok(WitnessFile {
             path: path.to_owned(),
             text,
@@ -147,6 +191,7 @@ pub fn witness_file(
             text: &text,
         },
         &conditions,
+        asking.probes,
         &module,
     )?;
     let placed = owners;
@@ -241,6 +286,7 @@ struct Reading<'a> {
 fn plan(
     file: Reading<'_>,
     conditions: &BTreeMap<Span, Condition>,
+    probes: &[Probing],
     module: &str,
 ) -> Result<(Vec<Splice>, Vec<Owned>), InstrumentError> {
     let Reading { path, source, text } = file;
@@ -301,7 +347,56 @@ fn plan(
         claims.dedup();
         owners.push((claims, Placed::Witnesses));
     }
+    probed(
+        &Reading { path, source, text },
+        probes,
+        module,
+        (&mut splices, &mut owners),
+    )?;
     Ok((splices, owners))
+}
+
+/// Binds each probed value so that the compiler is asked what type it is, in the shape the guard will hold.
+///
+/// The value is kept verbatim and only what surrounds it is written, so a
+/// value spelled over four lines still occupies four. Nothing here can overlap
+/// a condition's rewrite: a value a probe is offered for holds no `if` and no
+/// `while`, so no condition of one sits inside its bytes.
+fn probed(
+    file: &Reading<'_>,
+    probes: &[Probing],
+    module: &str,
+    (splices, owners): (&mut Vec<Splice>, &mut Vec<Owned>),
+) -> Result<(), InstrumentError> {
+    let Reading { path, source, .. } = *file;
+    for probe in probes {
+        let original = source
+            .get(at(probe.value.start)..at(probe.value.end))
+            .ok_or_else(|| {
+                InstrumentError::new(
+                    InstrumentErrorKind::SourceMismatch,
+                    path.to_owned(),
+                    format!("the value at {} is not inside the source", probe.value),
+                )
+            })?;
+        let mut replacement = format!("({{ let {BINDING} = ").into_bytes();
+        replacement.extend_from_slice(original);
+        replacement.extend_from_slice(
+            format!(
+                "; {}{module}::{}(&{BINDING}); {BINDING} }})",
+                "super::".repeat(usize::try_from(probe.super_depth).unwrap_or(0)),
+                probe.question.witness(),
+            )
+            .as_bytes(),
+        );
+        splices.push(Splice {
+            span: probe.value,
+            original: original.to_vec(),
+            replacement,
+        });
+        owners.push((vec![probe.index], Placed::Probe));
+    }
+    Ok(())
 }
 
 /// Where one rewrite ended up in the rewritten text.
@@ -344,12 +439,20 @@ fn one_line(operand: &str) -> String {
 
 /// The module the witness statements call into.
 fn runtime(module: &str) -> String {
+    let impls = IMPLS
+        .replace(
+            "{{OBSERVABLE}}",
+            &super::observable::declaration(OBSERVABLE, "__rmw_std"),
+        )
+        .replace(
+            "{{PROBE_BOUND}}",
+            &super::observable::bound(OBSERVABLE, "__rmw_std"),
+        );
     format!(
         "#[doc(hidden)] {allow}mod {module} {{ // {MARKER} — generated; DO NOT EDIT\n\
          {impls}\n\
          }}\n",
         allow = super::ALLOW_ATTRIBUTE,
-        impls = IMPLS,
     )
 }
 
@@ -399,4 +502,12 @@ const IMPLS: &str = "\
     impl<T: P + ?Sized> P for &mut T {}
     #[inline(always)] pub(crate) fn w_ord<A: W + ?Sized, B: W + ?Sized>(_a: &A, _b: &B) {}
     #[inline(always)] pub(crate) fn w_prim<T: P + ?Sized>(_x: &T) {}
-    #[inline(always)] pub(crate) fn body(_k: u32) {}";
+    #[inline(always)] pub(crate) fn body(_k: u32) {}
+    {{OBSERVABLE}}
+    #[inline(always)] pub(crate) fn w_default<T: {{PROBE_BOUND}}>(_x: &T) {}
+    #[inline(always)] pub(crate) fn w_true(_x: &bool) {}
+    #[inline(always)] pub(crate) fn w_ok_default<T: {{PROBE_BOUND}}, E>(_x: &__rmw_std::result::Result<T, E>) {}
+    #[inline(always)] pub(crate) fn w_some_default<T: {{PROBE_BOUND}}>(_x: &__rmw_std::option::Option<T>) {}";
+
+/// The trait the witness tree names the types a probe may compare a value of.
+const OBSERVABLE: &str = "O";

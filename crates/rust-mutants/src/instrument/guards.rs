@@ -7,13 +7,10 @@ use std::fmt::Write as _;
 
 use crate::syntax::Form;
 
-/// The path a guard calls the runtime through: `super::` once per inline module between the site and the file, since the runtime lives at the file's top level.
-#[must_use]
-pub(super) fn path(module: &str, super_depth: u32) -> String {
-    named(module, super_depth, "active")
-}
-
 /// The path one of the runtime's functions is called by from a site `super_depth` inline modules down.
+///
+/// The runtime lives at the file's top level, so a site inside an inline
+/// module reaches it through one `super::` per module between them.
 #[must_use]
 pub(super) fn named(module: &str, super_depth: u32, function: &str) -> String {
     let mut path = String::new();
@@ -26,7 +23,7 @@ pub(super) fn named(module: &str, super_depth: u32, function: &str) -> String {
     path
 }
 
-/// One alternative at a site: which mutant it is, what it reads, and whether the compiler vouched for comparing it with what it replaces.
+/// One alternative at a site: which mutant it is, what it reads, and what the compiler vouched a run may ask about it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct Alternative {
     /// The mutant's dense catalog index.
@@ -35,6 +32,8 @@ pub(super) struct Alternative {
     pub(super) text: String,
     /// Whether a run may evaluate this beside the original and record whether the two ever differed.
     pub(super) comparable: bool,
+    /// What a run may ask about the value this replaces, where the compiler vouched that asking runs none of the program's code.
+    pub(super) probe: Option<crate::probe::form::Question>,
 }
 
 /// A composed guard: its text, where each alternative's own text sits in it, and where the original branch does. The offsets are relative to the start of the text.
@@ -56,11 +55,10 @@ pub(super) fn compose(
     alternatives: &[Alternative],
     original: &str,
 ) -> Composed {
-    let path = paths.active;
     match form {
         Form::C => selector(paths, alternatives, original),
         Form::E => {
-            let mut composed = chain(path, alternatives, original);
+            let mut composed = chain(paths, alternatives, original, Probing::Written);
             let (open, close) = wrapping(original);
             composed.text.insert(0, open);
             composed.text.push(close);
@@ -71,7 +69,7 @@ pub(super) fn compose(
             composed.original_at = composed.original_at.saturating_add(1);
             composed
         }
-        Form::S => chain(path, alternatives, original),
+        Form::S => chain(paths, alternatives, original, Probing::Refused),
         Form::M => arm(paths, alternatives, original),
     }
 }
@@ -115,13 +113,30 @@ fn arm(paths: &Paths<'_>, alternatives: &[Alternative], original: &str) -> Compo
     composed
 }
 
-/// The two runtime functions a guard calls, each by the path its site reaches the module through.
+/// How a site reaches the runtime module its guards call into.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct Paths<'a> {
-    /// The function that says whether this mutant is the live one.
-    pub(super) active: &'a str,
-    /// The function that records a mutant whose branch differed from what it replaces, and answers what it replaces.
-    pub(super) differing: &'a str,
+    /// The module the runtime lives in, at the top level of the file.
+    pub(super) module: &'a str,
+    /// How many `super::` segments separate the site's inline module from it.
+    pub(super) depth: u32,
+}
+
+impl Paths<'_> {
+    /// The path the function that says whether a mutant is the live one is called by.
+    fn active(self) -> String {
+        self.of("active")
+    }
+
+    /// The path the function that records a differing branch is called by.
+    fn differing(self) -> String {
+        self.of("differing")
+    }
+
+    /// The path one of the runtime's functions is called by from this site.
+    fn of(self, function: &str) -> String {
+        named(self.module, self.depth, function)
+    }
 }
 
 /// Form C: a boolean selector with no block, so the site introduces no temporary scope of its own. The outer parentheses are load bearing: a nested Form C site sits inside its parent's `&&` chain, where `&&` binds tighter than the `||` this composes.
@@ -131,7 +146,8 @@ pub(super) struct Paths<'a> {
 /// a call and not a block for the same reason the rest of this form is an
 /// expression: a block here would be a temporary scope the site did not have.
 fn selector(paths: &Paths<'_>, alternatives: &[Alternative], original: &str) -> Composed {
-    let path = paths.active;
+    let path = paths.active();
+    let path = path.as_str();
     let mut text = String::from("(");
     let mut spans = Vec::with_capacity(alternatives.len());
     for one in alternatives {
@@ -148,7 +164,7 @@ fn selector(paths: &Paths<'_>, alternatives: &[Alternative], original: &str) -> 
     }
     let comparable: Vec<&Alternative> = alternatives.iter().filter(|one| one.comparable).collect();
     for one in &comparable {
-        let written = write!(text, "{}({}, ", paths.differing, one.index);
+        let written = write!(text, "{}({}, ", paths.differing(), one.index);
         debug_assert!(written.is_ok(), "writing to a String cannot fail");
     }
     text.push('(');
@@ -168,8 +184,37 @@ fn selector(paths: &Paths<'_>, alternatives: &[Alternative], original: &str) -> 
     }
 }
 
+/// Whether a form can hold the call that asks what the value it replaces already held.
+///
+/// The call takes the original branch's value and answers with it, so it fits
+/// wherever the branch is an expression and nowhere else. A statement is not,
+/// so Form S reports no probe however many it was offered, and no proof rests
+/// on a comparison no guard makes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Probing {
+    /// The form holds the call, so every vouched probe is written.
+    Written,
+    /// The form cannot hold it, so none is.
+    Refused,
+}
+
 /// Forms E and S: a branch chain. Both are the same text; only Form E is parenthesised, because it stands where a value does.
-fn chain(path: &str, alternatives: &[Alternative], original: &str) -> Composed {
+fn chain(
+    paths: &Paths<'_>,
+    alternatives: &[Alternative],
+    original: &str,
+    probing: Probing,
+) -> Composed {
+    let path = paths.active();
+    let path = path.as_str();
+    let probed: Vec<&Alternative> = if probing == Probing::Written {
+        alternatives
+            .iter()
+            .filter(|one| one.probe.is_some())
+            .collect()
+    } else {
+        Vec::new()
+    };
     let mut text = String::new();
     let mut spans = Vec::with_capacity(alternatives.len());
     for one in alternatives {
@@ -191,13 +236,29 @@ fn chain(path: &str, alternatives: &[Alternative], original: &str) -> Composed {
         };
     }
     text.push_str(" else { ");
+    for one in &probed {
+        let Some(question) = one.probe else {
+            continue;
+        };
+        let written = write!(text, "{}({}, ", paths.of(question.runtime()), one.index);
+        debug_assert!(written.is_ok(), "writing to a String cannot fail");
+    }
+    if !probed.is_empty() {
+        text.push('(');
+    }
     let original_at = text.len();
     text.push_str(original);
+    if !probed.is_empty() {
+        text.push(')');
+    }
+    for _ in &probed {
+        text.push(')');
+    }
     text.push_str(" }");
     Composed {
         text,
         alternatives: spans,
         original_at,
-        compared: Vec::new(),
+        compared: probed.iter().map(|one| one.index).collect(),
     }
 }

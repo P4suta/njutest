@@ -37,7 +37,7 @@ crates/app/src/main.rs:13:28 int-increment unreached
 crates/core/src/lib.rs:10:5 return-default killed
 crates/core/src/lib.rs:10:8 negate-condition killed
 crates/core/src/lib.rs:10:10 lt-to-le not_run
-crates/core/src/lib.rs:11:9 return-default survived
+crates/core/src/lib.rs:11:9 return-default not_run
 crates/core/src/lib.rs:12:15 negate-condition killed
 crates/core/src/lib.rs:12:17 gt-to-ge not_run
 crates/core/src/lib.rs:13:9 return-default killed

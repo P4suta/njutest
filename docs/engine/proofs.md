@@ -130,7 +130,7 @@ weekly.
 | coverage routing | — | this target's measured run covered no region holding the mutation | the (mutant, target) pair |
 | `branch-never-taken` | the compiler: this mutation changes nothing outside the body the condition gates | nothing of this target ran the marker at that body's first statement, or its measured run covered no region beginning inside the body | the (mutant, target) pair, and the tests of a kept target that did not enter the body |
 | `never-infected` | the guard: the mutation and what it replaces are both inert, so a run may evaluate both | nothing of this target ever saw the guard's two branches answer differently | the (mutant, target) pair, and the tests of a kept target that never saw them part |
-| `never-infected` | the probe: this test ran the mutation and its value never differed | the probe log this target's own run appended to | the (mutant, target) pair |
+| `never-infected` | the guard: the value a return replacement overwrites is of a type whose equality is the whole of what a program can tell apart | nothing of this target ever returned a value that differed from what the replacement writes | the (mutant, target) pair, and the tests of a kept target that never returned a differing one |
 
 `branch-never-taken` has two premises and either will do. The instrumenter
 writes a marker at the first statement of every body a claim names — in the
@@ -165,9 +165,27 @@ guard there holds both branches, so the baseline evaluates both and records
 every time they part. A target whose record never names the mutant ran a
 program that answered what the unmutated one answers wherever it looked, and
 by induction ran identically. There is no second tree, no second run, and the
-question is answered per test rather than per target. The probe tree remains
-for everything the syntax cannot call inert — a return replacement, an
-arithmetic edit — and `--probe` turns it on.
+question is answered per test rather than per target.
+
+A return replacement is answered the same way and for a different reason. The
+mutation writes a constant — the default, `true`, `Ok(default)`, `Some(default)`
+— so the guard need not evaluate it at all: it compares the value the branch
+that keeps the original produced against that constant. What it may compare is
+the sealed `Observable` trait, which names the types whose equality is the
+whole of what a program can tell apart: the primitives, `str` and `String`, and
+`Option` or `Vec` of one of those. Floats are outside it, because `-0.0 == 0.0`
+holds and `-0.0` is not what the default writes, so a probe there would call a
+mutation that changed the sign of a zero no change at all. A type of your own
+is outside it too: a `PartialEq` that answers about one field while a test
+reads another would say nothing happened while a test watched the difference.
+
+The question goes to the compiler in the witness tree, in the shape the guard
+will hold — `{ let v = <value>; w_default(&v); v }` — so what the compiler
+vouched for is literally what gets written. A value it refuses costs the probe
+and never the mutant: the mutation is still measured, by running it. And the
+syntax refuses first, before the compiler is asked: a value is offered a probe
+only when evaluating it is not itself an event, which rules out every call and
+every arithmetic operator.
 
 Guard routing is the default and costs no build: the guards of the
 instrumented tree record which of a target's tests reached them on the run
@@ -210,7 +228,7 @@ proof. Beside its report a run writes:
 | `touched-v1.json` | which of each target's tests reached which mutation, entered which proved body and saw which guard's two branches part; what was reached where nothing named a test; which targets said nothing this run can route by; and which mutants the tree could record anything about at all |
 | `reached-v1.json` | every region each target's measured run covered, every region the build instrumented, and what the measurement could not establish |
 | `catalog-v1.json` | every mutant, with the body of the branch the compiler vouched for |
-| `probe/<target>.log` | what each probe process appended |
+| `probe/<target>.log` | what each probe process appended, when `--probe` built the tree |
 
 An `evidence` recording names each with its size and digest.
 `cargo xtask engine-audit <run>` reads them and re-decides every discharge

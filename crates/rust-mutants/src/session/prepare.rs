@@ -640,6 +640,7 @@ fn establish(
         written: BTreeMap::new(),
         markers: marked(&discovery.catalog, &established.proofs),
         comparable: &established.comparable,
+        probed: &established.probed,
         compared: BTreeSet::new(),
         marked: BTreeSet::new(),
     };
@@ -792,6 +793,8 @@ struct TreeCompiler<'a> {
     markers: BTreeMap<String, Vec<crate::syntax::branch::Marker>>,
     /// Every mutant whose guard may compare its two branches, so a run records whether they ever differed.
     comparable: &'a BTreeSet<u32>,
+    /// Every return replacement whose guard may ask what the value it replaces already held, with the question to ask.
+    probed: &'a BTreeMap<u32, crate::probe::form::Question>,
     /// Every mutant whose guard in the tree that was last built actually does compare them, which is what a proof may rest on.
     compared: BTreeSet<u32>,
     /// Every marker the tree that was last built actually holds the call for.
@@ -820,6 +823,7 @@ impl Compile for TreeCompiler<'_> {
                 placements: &kept,
                 markers: self.markers.get(path).map_or(&[], Vec::as_slice),
                 comparable: self.comparable,
+                probed: self.probed,
                 catalog_digest: self.catalog.digest(),
             })?;
             self.workspace.trace.instrument(InstrumentRecord {

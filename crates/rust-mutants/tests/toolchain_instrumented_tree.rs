@@ -136,6 +136,7 @@ fn prepare(fixture: &str) -> Tree {
             placements: &placements,
             markers: &[],
             comparable: &BTreeSet::default(),
+            probed: &BTreeMap::default(),
             catalog_digest: discovery.catalog.digest(),
         })
         .expect("instrument");

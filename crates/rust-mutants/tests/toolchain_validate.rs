@@ -54,6 +54,7 @@ impl Compile for CargoScripted {
                 placements: &kept,
                 markers: &[],
                 comparable: &BTreeSet::default(),
+                probed: &BTreeMap::default(),
                 catalog_digest: self.catalog.digest(),
             })
             .map_err(ValidateError::from)?;

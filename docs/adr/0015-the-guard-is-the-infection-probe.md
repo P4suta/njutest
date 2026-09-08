@@ -83,8 +83,14 @@ That set travels to the audit in `touched-v1.json` as `narrowing.compared`,
 because an absence in the record is evidence only where something was
 recording.
 
-The probe tree stays, behind `--probe`, for everything the syntax cannot call
-inert: a return replacement, an arithmetic edit, a call swapped for another.
+The probe tree stays, behind `--probe`, for the return replacements the syntax
+cannot call inert.
+
+[ADR 0016](0016-the-probe-tree-is-a-tree-nobody-needs.md) took that back: the
+probe tree answered return replacements and nothing else, and a return
+replacement writes a constant, so a guard can compare against it without
+evaluating anything twice. The tree is gone and the layer covers more than it
+did.
 
 ## Consequences
 
@@ -102,7 +108,8 @@ inert: a return replacement, an arithmetic edit, a call swapped for another.
   coverage build and could only ask whether a probe log existed at all.
 - The layer says nothing about the conditions the compiler refuses — an
   operand of a type the sealed trait does not cover — and nothing about
-  arithmetic, calls, or returns. Those are the probe tree's.
+  arithmetic or calls. Returns were the probe tree's and are now the guard's
+  too ([ADR 0016](0016-the-probe-tree-is-a-tree-nobody-needs.md)).
 - With this in, reach and infection are both answered by one run of the
   unmutated program. Propagation is not, and cannot be: whether a difference
   reaches an assertion depends on everything between the site and the

@@ -22,7 +22,7 @@ refuses a difference, and `UPDATE_FATES=1` rewrites the block below.
 ```fates
 src/lib.rs:7:13 true-to-false survived
 src/lib.rs:8:13 false-to-true survived
-src/lib.rs:9:5 return-true survived
+src/lib.rs:9:5 return-true not_run
 src/lib.rs:9:7 and-to-or survived
 src/lib.rs:9:12 or-to-and killed
 src/lib.rs:13:21 int-increment unreached
