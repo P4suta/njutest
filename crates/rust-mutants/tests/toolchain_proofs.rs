@@ -334,3 +334,80 @@ fn a_target_that_never_entered_the_body_is_discharged_without_a_coverage_build()
     );
     session.close().expect("close");
 }
+
+/// The candidates of one file, as discovery would report them, with a catalog of them.
+fn discovered(path: &str, source: &str) -> rust_mutants::discover::Discovery {
+    use rust_mutants::catalog::Builder;
+    use rust_mutants::rule::Registry;
+    use rust_mutants::syntax::{Selection, discover_file};
+
+    let registry = Registry::canonical();
+    let selection = Selection::tier(&registry, Tier::All);
+    let found = discover_file(path, source.as_bytes(), &selection).expect("the source parses");
+    let mut builder = Builder::new();
+    for one in &found.candidates {
+        builder.add(one.candidate.clone()).expect("add");
+    }
+    rust_mutants::discover::Discovery {
+        files: Vec::new(),
+        candidates: found
+            .candidates
+            .into_iter()
+            .map(|one| rust_mutants::discover::Located {
+                found: one,
+                package: "fixture-probeable".to_owned(),
+            })
+            .collect(),
+        skips: Vec::new(),
+        claims: Vec::new(),
+        decisions: Vec::new(),
+        catalog: builder.build().expect("catalog"),
+    }
+}
+
+#[test]
+fn a_file_the_witness_tree_does_not_hold_vouches_for_nothing() {
+    let fixture = Fixture::copy("fixture-probeable");
+    let path = "src/lib.rs";
+    let source =
+        std::fs::read_to_string(fixture.root().join(path)).expect("the fixture's own source");
+    let discovery = discovered(path, &source);
+    assert!(
+        discovery
+            .candidates
+            .iter()
+            .any(|one| one.found.probe.is_some()),
+        "this fixture is the one with probes in it"
+    );
+
+    let cancel = Cancel::new();
+    let workspace = Workspace::open(
+        fixture.root(),
+        opening(&mjutest_devkit::paths::cargo_binary(), fixture.temp()),
+        &cancel,
+    )
+    .expect("the workspace opens");
+    let nothing = std::collections::BTreeMap::new();
+    let established = rust_mutants::prove::establish(
+        &rust_mutants::prove::Asking {
+            workspace: &workspace,
+            discovery: &discovery,
+            sources: &nothing,
+            options: &PrepareOptions {
+                tier: Tier::All,
+                branch_proofs: true,
+                ..PrepareOptions::default()
+            },
+        },
+        &cancel,
+        &rust_mutants::trace::Recorder::disabled(),
+    )
+    .expect("the pass runs");
+
+    assert!(
+        established.probed.is_empty() && established.comparable.is_empty(),
+        "with no source to write, the tree the compiler checked was the pristine one, and a \
+         check that passes over a file says nothing about anything in it: {established:?}"
+    );
+    workspace.close().expect("close");
+}

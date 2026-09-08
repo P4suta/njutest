@@ -38,6 +38,7 @@ that lets it be seen, tested, and audited — and both are completion criteria.
 | E9 ✓ | Answering without running | a run is counted in pairs of one mutant and one target rather than in seconds, what removed each pair is named and labelled a proof, a sufficient answer, a remembered one or a narrower question, and a remembered answer is keyed on the sources the build compiled, the manifests that chose its dependencies and the toolchain that compiled it rather than on the digest of a whole tree | `rust_mutants::work::Work` derived from the stored report alone, the `work` audit layer that holds it to the recording, `xtask/work_ceiling.txt` as a ratchet that may shrink and never grow, and the differential harness that runs four fixtures with every layer on and every layer off and holds the two answers to each other | the engine does less for the same question every release, and a test says so |
 | E10 ✓ | The guards are the measurement | reach is recorded by the guards on the run that verifies the baseline, so a mutation goes to the tests that reached it and no coverage build is made | `touched-v1.json` and the audit layer that re-decides from it, `fixture-order-dependent`, `fixture-threaded`, the differential harness over every combination of the two measurements, ADR 0014 | the answer is the one a run with nothing removed gives, and the tests started fall from 46 to 18 on `fixture-coverage` |
 | E11 ✓ | The difference that never was | a guard whose condition the compiler vouched for evaluates both of its branches on the baseline and records where they parted, so `never-infected` is a default layer with no tree, no build and no run of its own | `narrowing` in `touched-v1.json` and the audit layer that re-derives both kinds of discharge from it, the instrumenter reporting which guards it actually wrote the call into, ADR 0015 | eight fixtures stop starting a process for a mutation nothing could have noticed, and the answer is still the one a run with nothing removed gives |
+| E12 ✓ | The tree nobody needed | a return replacement writes a constant, so the guard compares the value the branch that keeps the original produced against it, and the probe tree — a check loop, a build of the workspace and a run of every target — goes | `instrument::observable` as one sealed trait rendered into both generated modules, the probe question put to the witness tree in the shape the guard will hold, `Marker::keyed_to` so a build cache nobody can look up again is collected, ADR 0016 | `prepare` falls from 575s to 427s cold on this engine's own workspace, three more fixture survivors are discharged without an execution, and the differential harness still holds every answer to a run with nothing removed |
 
 ## What is left, and what is not there to be had
 
@@ -67,9 +68,26 @@ can notice it. It costs a build of the mutant, which is why `--equivalence`
 asks it about survivors rather than before the run: a build costs more than
 the tests it would save. That trade is about the sizes, not about the proof.
 
+None of this reaches a **killer** layer. A proof layer removes an execution
+and must therefore fail toward running more; a killer adds one, so the wall
+that stops propagation from being proved cheaply is not a wall it stands
+behind. A model checker over one function — Kani is the one to look at — says
+"no input distinguishes these two", which is a stronger answer than any test
+run, and it is fail-closed for the ordinary reason: it costs a run, and a run
+it cannot finish leaves the mutation to the tests.
+
 So the next thing to make cheaper here is not a fourth layer. It is what the
 measurement above says: the witness pass claims very little on real code, and
 what a widening of it buys is measured rather than assumed.
+
+What preparing costs, measured on this engine's own workspace after E12: 427
+seconds on a cold cache and **99 on a warm one**, and 77 of those 99 are
+`verify` — one run of every target with nothing active. That run is the
+baseline and the measurement at once, so it is the floor: a mutation score
+cannot be had without running the unmutated program once. The builds around
+it come to twenty seconds warm. There is no large engine-side saving left to
+find; what is left is the yield of the layers, which is a different question
+and the one the numbers above are about.
 
 ## What E11 closed
 
