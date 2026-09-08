@@ -119,6 +119,11 @@ code!(
 );
 code!(SCRATCH_UNUSABLE, "MJ8001", "the run has nowhere to work");
 code!(
+    MERGE_REFUSED,
+    "MJ9001",
+    "the reports offered are not the parts of one catalog"
+);
+code!(
     BUILD_CACHE_UNUSABLE,
     "MJ8002",
     "a build cache layer could not be used"
@@ -286,6 +291,7 @@ pub const fn error_codes() -> &'static [ErrorCode] {
         BUILD_CACHE_UNUSABLE,
         CACHE_UNUSABLE,
         CACHE_CORRUPT,
+        MERGE_REFUSED,
     ]
 }
 

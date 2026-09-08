@@ -126,6 +126,19 @@ pub enum Command {
     Doctor(Doctor),
     /// Say what earlier runs left behind, and collect what is no longer an answer.
     Cache(Cache),
+    /// Combine the reports of the parts of one catalog into the report the whole would have written.
+    Merge(Merge),
+}
+
+/// `mjutest merge`.
+#[derive(Debug, Clone, clap::Args)]
+pub struct Merge {
+    /// The reports to combine, one per part.
+    #[arg(value_name = "REPORT", required = true)]
+    pub reports: Vec<PathBuf>,
+    /// Write the combined report here rather than to standard output.
+    #[arg(long, value_name = "FILE")]
+    pub output: Option<PathBuf>,
 }
 
 /// `mjutest cache`.

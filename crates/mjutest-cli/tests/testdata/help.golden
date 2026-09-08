@@ -20,6 +20,8 @@ Commands:
   diagnostics  Bundle everything about one run into one directory
   doctor       Report the toolchain and the tools a run needs
   cache        Say what earlier runs left behind, and collect what is no longer an answer
+  merge        Combine the reports of the parts of one catalog into the report the whole would have
+               written
   help         Print this message or the help of the given subcommand(s)
 
 Options:

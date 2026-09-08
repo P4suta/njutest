@@ -10,6 +10,7 @@ pub mod doctor;
 pub mod explain;
 pub mod fix;
 pub mod init;
+pub mod merge;
 pub mod plan;
 pub mod replay;
 pub mod reports;
@@ -32,6 +33,7 @@ pub fn run(
     match &request.command {
         Command::Init(arguments) => init::run(*arguments, environment, stdout, stderr),
         Command::Cache(arguments) => cache::run(arguments, environment, stdout, stderr),
+        Command::Merge(arguments) => merge::run(arguments, stdout, stderr),
         Command::Doctor(arguments) => doctor::run(*arguments, environment, stdout, stderr),
         Command::Verify(arguments) => verify::run(arguments, environment, stdout, stderr),
         Command::Plan(arguments) => plan::run(arguments, environment, stdout, stderr),

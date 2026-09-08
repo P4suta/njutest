@@ -742,6 +742,30 @@ fn a_route_held_to_a_target_the_run_does_not_report_is_held_to_nothing() {
     );
 }
 
+#[test]
+fn a_route_that_removed_a_target_with_a_proof_and_says_it_reached_nothing_is_a_violation() {
+    let audit = audited_with(
+        &base(),
+        &[serde_json::json!({
+            "seq": 1, "timestamp": "2026-09-06T00:00:00Z", "elapsed_ms": 0, "type": "route",
+            "route": {
+                "mutant": SURVIVED, "granularity": "unreached", "fallback": null,
+                "reaching": [],
+                "discharged": [{ "target": TARGET, "proof": "never-infected" }],
+                "considered": [TARGET], "reused": null
+            }
+        })],
+    );
+
+    assert!(
+        proven(&audit).contains(&SURVIVED.to_owned()),
+        "a target that reaches nothing needs no proof to remove it, and a proof that \
+         removed it says it did reach: one route claiming both is claiming the layer \
+         did work the reach layer had already done, and an audit that lets that pass \
+         cannot tell which layer paid for what: {audit}"
+    );
+}
+
 /// Every mutant the proof layers say a recording does not support.
 fn proven(audit: &Audit) -> Vec<String> {
     audit

@@ -125,11 +125,39 @@ test could forge a `FINDING`, `REPAIR`, `ACCEPTANCE`, or `LIMITATION`
 record, and a reader filtering for one would read a claim the run never
 made.
 
+## Parts of one catalog
+
+`mjutest verify --shard K/N` judges one part of the catalog and measures the
+whole baseline, because a mutation cannot be judged against tests that were
+not run. The engine's rule decides which part holds which mutant — the dense
+catalog index modulo N, counting K from one — so two runs of the same tree
+divide it the same way without talking to each other, and every mutant belongs
+to exactly one part. Nothing is sampled and nothing is skipped, which is what
+keeps this out of [ADR 0004](adr/0004-proof-layers-not-budgets.md)'s way: it
+divides the work rather than reducing it.
+
+A part concludes `PARTIAL` and records its `scope.shard`. It assures nothing on
+its own: the mutations it did not judge are not mutations nothing noticed, they
+are mutations nobody put to a test. A finding in a part is still a finding, so
+a part that found a defect says `DEFECT`.
+
+`mjutest merge <REPORT>...` writes the report the whole would have written. It
+refuses parts that disagree about the tree, the configuration, or the contract,
+and parts that both judged one mutant — the last says they were cut with
+different values of N. The mutant rows are the union, the accounting is derived
+from that union rather than added up from what each part claimed, and the
+verdict is decided again from the whole. A score is a ratio and never survives
+a merge: two ratios over different denominators average into a number no run
+observed.
+
+Every run's identity carries its shard, so a part never reads back the whole's
+stored answer and a whole never reads back a part's.
+
 ## Exit codes
 
 | Code | Meaning |
 | ---: | --- |
-| 0 | `ASSURED`, `CHANGE_ASSURED`, `SCOPE_ASSURED`, `RESOLVED`, or `COMPLETED` |
+| 0 | `ASSURED`, `CHANGE_ASSURED`, `SCOPE_ASSURED`, `PARTIAL`, `RESOLVED`, or `COMPLETED` |
 | 1 | `DEFECT` or `REPRODUCED` |
 | 2 | `INSUFFICIENT` |
 | 3 | `ERROR`, invalid input, or infrastructure failure |

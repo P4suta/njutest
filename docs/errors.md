@@ -125,4 +125,5 @@ first digit names an area:
 | `MJ8004` | A stored answer is not the answer it claims to be: a document that does not parse, that does not carry the identity it is filed under, or that does not satisfy the audit every durable report must. |
 | `MJ7001` | The toolchain has no `cargo miri`, and the `deep-v1` contract promises the suite is interpreted. Install it (`rustup +nightly component add miri`) or verify under `standard-v1`. |
 | `MJ8001` | The run has nowhere to work: its scratch directory could not be made. Failing to *claim* one is a limitation, not an error. |
+| `MJ9001` | The reports offered to `mjutest merge` are not the parts of one catalog: none were offered, they disagree about the tree, the configuration or the contract, or two of them judged the same mutant. Adding up answers about two different runs produces an answer about neither. |
 | `MJ6003` | The report contradicts itself — the numbers do not add up, the verdict is more than what ran supports, a fact recorded as unavailable is also present — so nothing was written. |

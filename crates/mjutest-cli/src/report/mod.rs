@@ -8,6 +8,7 @@ pub mod html;
 pub mod json;
 pub mod junit;
 pub mod lines;
+pub mod merge;
 pub mod sarif;
 
 use serde::{Deserialize, Serialize};
@@ -608,6 +609,57 @@ impl Report {
                 .cmp(&a.duration_ms)
                 .then_with(|| a.id.cmp(&b.id))
         });
+    }
+
+    /// Counts the target rows this report holds, which is where its target accounting comes from.
+    ///
+    /// Derived from the rows rather than kept alongside them, so a report
+    /// cannot say it selected a number of targets it does not list.
+    pub fn count_targets(&mut self) {
+        let counts = &mut self.accounting.targets;
+        *counts = TargetAccounting {
+            selected: u32::try_from(self.targets.len()).unwrap_or(u32::MAX),
+            ..TargetAccounting::default()
+        };
+        for target in &self.targets {
+            match target.status {
+                TargetStatus::Passed => counts.passed = counts.passed.saturating_add(1),
+                TargetStatus::Failed => counts.failed = counts.failed.saturating_add(1),
+                TargetStatus::Skipped => counts.skipped = counts.skipped.saturating_add(1),
+                TargetStatus::Missing => counts.missing = counts.missing.saturating_add(1),
+            }
+        }
+    }
+
+    /// What these observations support.
+    ///
+    /// A run given a part of the catalog assures nothing on its own, however
+    /// clean the part is: the mutations it did not judge are not mutations
+    /// nothing noticed, they are mutations nobody put to a test. It concludes
+    /// [`Verdict::Partial`], and `mjutest merge` is what carries a verdict. A
+    /// finding is still a finding — a defect found in one part is a defect —
+    /// so the part only reads where nothing was found.
+    #[must_use]
+    pub fn concluded(&self) -> Verdict {
+        if self.findings.iter().any(|finding| finding.kind.is_defect()) {
+            return Verdict::Defect;
+        }
+        if !self.findings.is_empty() {
+            return Verdict::Insufficient;
+        }
+        let observed = self.accounting.targets.passed > 0;
+        let asked = self.accounting.mutants.executed > 0;
+        if !observed || !asked {
+            return Verdict::Insufficient;
+        }
+        if self.scope.shard.is_some() {
+            return Verdict::Partial;
+        }
+        match self.run_kind {
+            RunKind::Full => Verdict::Assured,
+            RunKind::Changed => Verdict::ChangeAssured,
+            RunKind::Scoped => Verdict::ScopeAssured,
+        }
     }
 
     /// Whether a limitation of this name is stated.

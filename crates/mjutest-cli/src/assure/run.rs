@@ -18,7 +18,7 @@ use crate::error::RunnerError;
 use crate::git;
 use crate::report::{
     Finding, FindingKind, Limitation, MutantRecord, Report, RunKind, SoundnessAccounting,
-    TargetRecord, TargetStatus, Toolchain, UNAVAILABLE, Verdict,
+    TargetRecord, TargetStatus, Toolchain, UNAVAILABLE,
 };
 use crate::rustflags;
 use crate::scratch::{self, Scratch};
@@ -888,7 +888,7 @@ fn alone(config: &Config) -> bool {
 
 /// The verdict, the canonical order, and how long it all took.
 fn finish(report: &mut Report, started: Timestamp) {
-    report.verdict = verdict(report);
+    report.verdict = report.concluded();
     report.sort_targets();
     let finished = Timestamp::now();
     report.timing.finished = finished.to_string();
@@ -1239,50 +1239,7 @@ fn absorb(report: &mut Report, baseline: &baseline::Baseline) {
         });
     }
 
-    let counts = &mut report.accounting.targets;
-    counts.selected = u32::try_from(report.targets.len()).unwrap_or(u32::MAX);
-    for target in &report.targets {
-        match target.status {
-            TargetStatus::Passed => counts.passed = counts.passed.saturating_add(1),
-            TargetStatus::Failed => counts.failed = counts.failed.saturating_add(1),
-            TargetStatus::Skipped => counts.skipped = counts.skipped.saturating_add(1),
-            TargetStatus::Missing => counts.missing = counts.missing.saturating_add(1),
-        }
-    }
-}
-
-/// What the observations support.
-///
-/// A run given a part of the catalog assures nothing on its own, however
-/// clean the part is: the mutations it did not judge are not mutations
-/// nothing noticed, they are mutations nobody put to a test. It says
-/// `PARTIAL`, and `mjutest merge` is what carries the verdict. A finding is
-/// still a finding — a defect found in one part is a defect — so this reads
-/// only where nothing was found.
-fn verdict(report: &Report) -> Verdict {
-    if report
-        .findings
-        .iter()
-        .any(|finding| finding.kind.is_defect())
-    {
-        return Verdict::Defect;
-    }
-    if !report.findings.is_empty() {
-        return Verdict::Insufficient;
-    }
-    let observed = report.accounting.targets.passed > 0;
-    let asked = report.accounting.mutants.executed > 0;
-    if !observed || !asked {
-        return Verdict::Insufficient;
-    }
-    if report.scope.shard.is_some() {
-        return Verdict::Partial;
-    }
-    match report.run_kind {
-        RunKind::Full => Verdict::Assured,
-        RunKind::Changed => Verdict::ChangeAssured,
-        RunKind::Scoped => Verdict::ScopeAssured,
-    }
+    report.count_targets();
 }
 
 /// The `rustc -vV` and `cargo -vV` facts a report records.

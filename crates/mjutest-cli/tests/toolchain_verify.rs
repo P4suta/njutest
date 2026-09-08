@@ -71,6 +71,18 @@ fn verify(fixture: &Fixture, extra: &[&str]) -> Output {
         .expect("mjutest runs")
 }
 
+/// Where the latest run wrote its report.
+fn latest(fixture: &Fixture) -> PathBuf {
+    let index = fixture.root.join(mjutest_cli::app::reports::LATEST_ANY);
+    let text = std::fs::read_to_string(&index).expect("the latest index");
+    let value: serde_json::Value = serde_json::from_str(&text).expect("JSON");
+    let directory = value["directory"].as_str().expect("a directory").to_owned();
+    fixture
+        .root
+        .join(directory)
+        .join(mjutest_cli::app::reports::DOCUMENT_NAME)
+}
+
 fn document(fixture: &Fixture) -> serde_json::Value {
     let index = fixture.root.join(mjutest_cli::app::reports::LATEST_ANY);
     let text = std::fs::read_to_string(&index).expect("the latest index");
@@ -996,4 +1008,44 @@ fn a_part_that_is_not_a_part_of_anything_is_refused_before_anything_is_built() {
         !fixture.root.join("reports").exists(),
         "a refusal before the first build writes no report"
     );
+}
+
+#[test]
+fn the_parts_of_one_catalog_merge_into_the_verdict_neither_of_them_could_say() {
+    let fixture = fixture("fixture-assured");
+    assert_eq!(verify(&fixture, &["--shard", "1/2"]).status.code(), Some(0));
+    let one = latest(&fixture);
+    assert_eq!(verify(&fixture, &["--shard", "2/2"]).status.code(), Some(0));
+    let two = latest(&fixture);
+    assert_ne!(one, two, "two runs, two reports");
+
+    let merged = Command::new(env!("CARGO_BIN_EXE_mjutest"))
+        .args([
+            std::ffi::OsStr::new("merge"),
+            one.as_os_str(),
+            two.as_os_str(),
+        ])
+        .env_clear()
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("mjutest runs");
+    assert_eq!(
+        merged.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&merged.stderr)
+    );
+
+    let whole: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&merged.stdout)).expect("the whole is JSON");
+    assert_eq!(
+        whole["verdict"], "ASSURED",
+        "neither part could say this and the two of them together can: {whole}"
+    );
+    assert_eq!(whole["scope"]["shard"], serde_json::Value::Null);
+    assert_eq!(
+        whole["accounting"]["mutants"]["cataloged"], 4,
+        "and it holds every mutant the parts judged between them: {whole}"
+    );
+    assert_eq!(whole["accounting"]["mutants"]["killed"], 4);
 }
