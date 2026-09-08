@@ -437,3 +437,80 @@ pub fn f() -> Pair {
         "the value is kept verbatim and only what surrounds it is written: {body}"
     );
 }
+
+#[test]
+fn a_witnessed_file_is_still_a_program() {
+    let source = "pub fn f(a: i64, b: i32) -> i32 {\n    if a as\ni32 <= b\n    {\n        return 1;\n    }\n    0\n}\n";
+    let written = witness_file(
+        "src/lib.rs",
+        source.as_bytes(),
+        &conditions(&claimed(source)),
+    )
+    .expect("witnessed");
+    assert!(
+        written.text.contains("w_prim"),
+        "the cast's operand is what the compiler is asked about: {}",
+        written.text
+    );
+    syn::parse_file(&written.text).unwrap_or_else(|error| {
+        panic!(
+            "an operand spelled over two lines is written on one, and what separates two tokens \
+             has to survive that: {error}\n{}",
+            written.text
+        )
+    });
+}
+
+#[test]
+fn the_marker_of_a_body_names_the_lowest_mutant_that_rests_on_it() {
+    let source = "\
+pub fn f(a: i32, b: i32, c: i32, d: i32) -> i32 {
+    if a <= b && c <= d {
+        return 1;
+    }
+    0
+}
+";
+    let claims = claimed(source);
+    assert!(
+        claims.len() > 1,
+        "two narrowing comparisons rest on this one body: {claims:?}"
+    );
+    let lowest = claims
+        .iter()
+        .map(|one| one.index)
+        .min()
+        .expect("a claim to be lowest");
+    let written =
+        witness_file("src/lib.rs", source.as_bytes(), &conditions(&claims)).expect("witnessed");
+    assert!(
+        written.text.contains(&format!("__rmw::body({lowest});")),
+        "one body carries one marker however many claims rest on it, and it names the lowest of \
+         them so the log that records it needs no second numbering: {}",
+        written.text
+    );
+}
+
+#[test]
+fn a_value_that_is_not_in_the_source_is_refused_rather_than_written_around() {
+    let source = "pub fn f(a: i32) -> i32 {\n    return a;\n}\n";
+    let mut probes = probed(source);
+    let past = u32::try_from(source.len()).unwrap_or(u32::MAX);
+    probes[0].value = rust_mutants::span::Span::new(past, past.saturating_add(4)).expect("a span");
+
+    let error = witness_file(
+        "src/lib.rs",
+        source.as_bytes(),
+        &Asking {
+            conditions: &[],
+            probes: &probes,
+        },
+    )
+    .expect_err("a value outside the source is not one the tree can be written around");
+    assert_eq!(
+        error.kind(),
+        rust_mutants::instrument::InstrumentErrorKind::SourceMismatch,
+        "and it says which of the refusals it is, because the caller decides what a file it \
+         could not write costs: {error}"
+    );
+}
