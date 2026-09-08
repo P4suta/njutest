@@ -137,9 +137,16 @@ done
 description = "Run cargo-mutants, the external mutation tester, against this workspace"
 run = "cargo mutants --config .cargo/mutants.toml --workspace"
 
+# The order is cheapest refusal first, which is not the order CI runs them in:
+# CI runs the jobs at once and waits for all of them, and a person waits for
+# each in turn. Formatting answers in seconds, rustdoc and clippy and the
+# repository gates in tens of them, the suite in minutes. Two broken
+# documentation links and two fuzz targets naming code that had been deleted
+# all lived behind a three-minute suite, and every one of them is something
+# `lint` says in seventeen seconds.
 [tasks.check]
-description = "Run every local gate in the order CI runs them"
-run = ["mise run fmt:check", "mise run build", "mise run test", "mise run lint", "mise run deny"]
+description = "Run every local gate, the ones that answer quickest first"
+run = ["mise run fmt:check", "mise run build", "mise run lint", "mise run test", "mise run deny"]
 
 [tasks.bench]
 description = "Observe what the byte foundation and the report cost. Numbers, never gates"

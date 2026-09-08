@@ -39,8 +39,12 @@ write or an acceptance to record with a reason, never something to leave.
 
 ## Gates
 
-`mise run check` runs every local gate in the order CI runs them. Among them,
-`cargo xtask all` is this repository's own:
+`mise run check` runs every local gate, the ones that answer quickest first.
+That is not the order CI runs them in, because CI runs the jobs at once and
+waits for all of them while a person waits for each in turn: formatting answers
+in seconds, `lint` — clippy, rustdoc, the repository gates, the fuzz crate's
+own type check, spelling, TOML, workflows — in tens of them, and the suite in
+minutes. Among them, `cargo xtask all` is this repository's own:
 
 | Gate | Refuses |
 | --- | --- |
