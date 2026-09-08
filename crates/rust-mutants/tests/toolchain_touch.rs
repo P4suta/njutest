@@ -76,6 +76,7 @@ fn the_verify_run_measures_which_test_reached_each_mutant_without_a_coverage_bui
     assert_eq!(
         ran,
         [
+            "tests::a_name_before_m_is_named",
             "tests::a_short_list_is_short",
             "tests::a_version_is_earlier_than_a_later_one",
             "tests::clamp_returns_the_smaller",

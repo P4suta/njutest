@@ -31,6 +31,14 @@ pub fn short(items: &[i32]) -> bool {
     false
 }
 
+/// A condition over text, whose comparison is the library's rather than the program's: the compiler vouches for it too.
+pub fn named(name: &str) -> bool {
+    if name <= "m" {
+        return true;
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -43,6 +51,12 @@ mod tests {
     fn a_version_is_earlier_than_a_later_one() {
         assert!(super::earlier(super::Version(1), super::Version(2)));
         assert!(!super::earlier(super::Version(3), super::Version(2)));
+    }
+
+    #[test]
+    fn a_name_before_m_is_named() {
+        assert!(super::named("alpha"));
+        assert!(!super::named("zulu"));
     }
 
     #[test]

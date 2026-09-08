@@ -30,6 +30,14 @@ which markers the instrumenter actually wrote. Without it an absence in
 record instead of asking for a coverage build or a probe log. A reader of the
 file from an earlier release sees one more key; the version stayed 1.
 
+**The compiler vouches for a comparison of text.** The sealed trait the
+witness pass puts to it named the primitives alone; it now names `str` and a
+slice of something it already covers as well. Comparing two of those runs none
+of the program's code, cannot panic, allocates nothing, and terminates, which
+is the whole of what a claim needs — so `if name <= "m"` earns the same
+branch proof and the same comparison as `if a <= b` on two integers. A user
+type is refused as before.
+
 **A body inside a guard's own site is no longer discharged by silence.** The
 instrumenter cannot splice a marker into a body a guard writes twice, and the
 run used to rest `branch-never-taken` on a marker that was never in the tree.

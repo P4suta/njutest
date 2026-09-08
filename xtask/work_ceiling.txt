@@ -15,11 +15,17 @@
 # grow.** A change that makes the engine start more for the same question is a
 # change to argue for in a pull request, not one to notice in a graph later.
 #
+# The question is the fixture, and a fixture that gains code asks a bigger one.
+# Its `whole` columns are checked for equality rather than ratcheted, so a row
+# whose `started` rises beside a `whole` that rose is a fixture that grew; one
+# whose `started` rises on its own is the engine doing more, which is the thing
+# this file exists to refuse.
+#
 # The command is fixed so the numbers are: `run --tier all --offline --locked
 # --jobs 1`, with the configuration the fixture carries and nothing else.
 #
 # fixture             whole  started  tests  tests_started
 fixture-simple           33       10     33             10
-fixture-coverage         42       13     70             16
+fixture-coverage         57       17    114             21
 fixture-unreached        16        4     16              4
 fixture-baseline         51       13     51             13

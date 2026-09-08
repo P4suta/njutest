@@ -126,14 +126,25 @@ pub fn establish(
         refused_by(&written, &checked.messages)
     };
     let markers = markers_of(&claims);
-    let said = format!(
-        "{} claimed, {} refused, {} bodies the compiler would not take a marker in",
-        count(&claims),
-        refused.claims.len(),
-        refused.markers.len()
-    );
     let established = vouched(&claims, sources, &Checked { refused, markers }, trace);
-    trace.note("witness", &said);
+    trace.note(
+        "witness",
+        &format!(
+            "{} claimed of which {} name a body, {} vouched for of which {} carry a marker",
+            count(&claims),
+            claims
+                .values()
+                .flatten()
+                .filter(|claimed| claimed.body.is_some())
+                .count(),
+            established.comparable.len(),
+            established
+                .proofs
+                .values()
+                .filter(|proof| proof.marker.is_some())
+                .count(),
+        ),
+    );
     phase.end();
     Ok(established)
 }

@@ -142,6 +142,12 @@ coverage build. A body with no marker keeps the region as its only premise,
 and the record says which markers the tree carries so that a body without one
 is never mistaken for a body nothing entered.
 
+What makes a condition inert is what the sealed trait of
+[ADR 0008](../adr/0008-compiler-validated-acceptance-and-the-type-witness-pass.md)
+covers: the primitives, `str`, and a slice of one of those. Comparing two of
+those runs none of the program's code, cannot panic, allocates nothing, and
+terminates. A user type is refused, because its `PartialOrd` is the program.
+
 `never-infected` has two premises as well, and the guard's is free. A
 mutation on an operator the connectives of an inert condition reach —
 `a < b` inside `if a < b && c`, say — leaves the condition inert: the same

@@ -77,6 +77,11 @@ fn the_compiler_vouches_for_a_condition_of_primitives_and_refuses_the_rest() {
         "a condition of primitives earns its proof: {proven:?}"
     );
     assert!(
+        proven.iter().any(|one| one.starts_with("le-to-lt 36")),
+        "so does a comparison of text, whose comparison is the library's rather than the \
+         program's: {proven:?}"
+    );
+    assert!(
         !proven.iter().any(|one| one.starts_with("le-to-lt 16")),
         "a comparison the compiler will not vouch for earns none: {proven:?}"
     );

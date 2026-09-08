@@ -45,11 +45,15 @@ rather than as a survivor.
    about less than a test can read, is refused: the probe tree's own validation
    drops the site, and the mutant is simply unprobed.
 3. **A proof that needs a fact about a type asks the compiler for it.** The
-   branch proof needs the operands of a comparison to be primitive. A third
-   tree — pristine plus one witness statement per candidate, checked and never
-   run — gets `__rm::w_ord(&a, &b)` in front of the `if`; the sealed trait
-   behind it is implemented for the primitive types alone, and a witness that
-   fails to check leaves its candidate without a proof.
+   branch proof needs a comparison that runs none of the program's code. A
+   third tree — pristine plus one witness statement per candidate, checked and
+   never run — gets `__rm::w_ord(&a, &b)` in front of the `if`; the sealed
+   trait behind it names the types whose comparison is the language's or the
+   library's rather than the program's — the primitives, `str`, and a slice of
+   one of those — and a witness that fails to check leaves its candidate
+   without a proof. A user type is refused because its `PartialOrd` is the
+   program, and `String` because naming it would need `alloc`, which a
+   `#![no_std]` crate the module is generated into may not have.
 4. **`rust-analyzer` stays out.** A `TypeOracle` trait marks the extension
    point; nothing implements it.
 

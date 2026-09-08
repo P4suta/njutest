@@ -354,6 +354,14 @@ fn runtime(module: &str) -> String {
 }
 
 /// The sealed traits and the two functions. A trait implemented for the primitives and for references to them, and for nothing else, is exactly the question the syntax could not answer.
+///
+/// `str` and a slice of something the trait already covers are in it for the
+/// same reason the primitives are: comparing two of them runs none of the
+/// program's code. The comparison is the library's, it cannot panic, it
+/// allocates nothing, and it terminates — which is the whole of what a claim
+/// needs. A user type is refused as before, because its `PartialOrd` is the
+/// program, and so is `String`: naming it would need `alloc`, which a
+/// `#![no_std]` crate this module is generated into may not have.
 const IMPLS: &str = "\
     pub(crate) trait W {}
     pub(crate) trait P {}
@@ -361,6 +369,8 @@ const IMPLS: &str = "\
     impl W for isize {} impl W for u8 {} impl W for u16 {} impl W for u32 {} impl W for u64 {}
     impl W for u128 {} impl W for usize {} impl W for f32 {} impl W for f64 {}
     impl W for bool {} impl W for char {}
+    impl W for str {}
+    impl<T: W> W for [T] {}
     impl<T: W + ?Sized> W for &T {}
     impl<T: W + ?Sized> W for &mut T {}
     impl P for i8 {} impl P for i16 {} impl P for i32 {} impl P for i64 {} impl P for i128 {}

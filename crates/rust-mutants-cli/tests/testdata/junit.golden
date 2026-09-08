@@ -1,21 +1,27 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuites name="rust-mutants" tests="12" failures="1" errors="0" skipped="1" time="0.000">
-  <testsuite name="src/lib.rs" tests="12" failures="1" errors="0" skipped="1" time="0.000">
-    <testcase name="negate-condition at src/lib.rs:8:8 [671a3d2b45ac738ac6c8]" classname="src/lib.rs" time="0.000"/>
-    <testcase name="le-to-lt at src/lib.rs:8:14 [3f9278919bdfbd21848e]" classname="src/lib.rs" time="0.000">
+<testsuites name="rust-mutants" tests="16" failures="1" errors="0" skipped="2" time="0.000">
+  <testsuite name="src/lib.rs" tests="16" failures="1" errors="0" skipped="2" time="0.000">
+    <testcase name="negate-condition at src/lib.rs:8:8 [5a7d1e3d44b8cde5a9cf]" classname="src/lib.rs" time="0.000"/>
+    <testcase name="le-to-lt at src/lib.rs:8:14 [607f27ebae423d86a907]" classname="src/lib.rs" time="0.000">
       <skipped message="discharged"/>
     </testcase>
-    <testcase name="return-default at src/lib.rs:9:16 [bf1f12a0d4d8f383330b]" classname="src/lib.rs" time="0.000"/>
-    <testcase name="return-default at src/lib.rs:11:5 [00a57719b9761a8dbe88]" classname="src/lib.rs" time="0.000"/>
-    <testcase name="negate-condition at src/lib.rs:16:8 [79a57c513fc8d0e04ea5]" classname="src/lib.rs" time="0.000"/>
-    <testcase name="le-to-lt at src/lib.rs:16:10 [b0e23daf0ee463afcc88]" classname="src/lib.rs" time="0.000">
+    <testcase name="return-default at src/lib.rs:9:16 [3d491b0b9acfbe6bc7cf]" classname="src/lib.rs" time="0.000"/>
+    <testcase name="return-default at src/lib.rs:11:5 [7ca7f65824938d658e83]" classname="src/lib.rs" time="0.000"/>
+    <testcase name="negate-condition at src/lib.rs:16:8 [58ee15911844a4dc6fc5]" classname="src/lib.rs" time="0.000"/>
+    <testcase name="le-to-lt at src/lib.rs:16:10 [095fbfefaa7749ebb142]" classname="src/lib.rs" time="0.000">
       <failure message="survived" type="surviving-mutant">the tests did not notice that `&lt;=` became `&lt;` at src/lib.rs:16:10</failure>
     </testcase>
-    <testcase name="true-to-false at src/lib.rs:17:16 [9a6e48faa86084df6263]" classname="src/lib.rs" time="0.000"/>
-    <testcase name="false-to-true at src/lib.rs:19:5 [7ea79f356dbc71992d40]" classname="src/lib.rs" time="0.000"/>
-    <testcase name="negate-condition at src/lib.rs:28:8 [84cacd47ed6f375003a1]" classname="src/lib.rs" time="0.000"/>
-    <testcase name="le-to-lt at src/lib.rs:28:20 [ebdd05e49173fec8e763]" classname="src/lib.rs" time="0.000"/>
-    <testcase name="true-to-false at src/lib.rs:29:16 [c6279c53729bc4d39dde]" classname="src/lib.rs" time="0.000"/>
-    <testcase name="false-to-true at src/lib.rs:31:5 [9f8eac8f46ca5f222acf]" classname="src/lib.rs" time="0.000"/>
+    <testcase name="true-to-false at src/lib.rs:17:16 [538c284e2394a22e1504]" classname="src/lib.rs" time="0.000"/>
+    <testcase name="false-to-true at src/lib.rs:19:5 [a8cd22615580aa543777]" classname="src/lib.rs" time="0.000"/>
+    <testcase name="negate-condition at src/lib.rs:28:8 [3219e73ae61e14f63b75]" classname="src/lib.rs" time="0.000"/>
+    <testcase name="le-to-lt at src/lib.rs:28:20 [990b5a7285f7cda24f72]" classname="src/lib.rs" time="0.000"/>
+    <testcase name="true-to-false at src/lib.rs:29:16 [5d862397ceff5a046f12]" classname="src/lib.rs" time="0.000"/>
+    <testcase name="false-to-true at src/lib.rs:31:5 [c616fe8691cd4f656a54]" classname="src/lib.rs" time="0.000"/>
+    <testcase name="negate-condition at src/lib.rs:36:8 [104cb00a9f78fdab3455]" classname="src/lib.rs" time="0.000"/>
+    <testcase name="le-to-lt at src/lib.rs:36:13 [5c32d72280e91a9530b0]" classname="src/lib.rs" time="0.000">
+      <skipped message="discharged"/>
+    </testcase>
+    <testcase name="true-to-false at src/lib.rs:37:16 [84002e706b39ba0f66e6]" classname="src/lib.rs" time="0.000"/>
+    <testcase name="false-to-true at src/lib.rs:39:5 [2dd8c6768005a794023d]" classname="src/lib.rs" time="0.000"/>
   </testsuite>
 </testsuites>

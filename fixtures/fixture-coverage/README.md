@@ -12,7 +12,8 @@ of this fixture is that the licence is granted exactly where it is earned.
 | Condition | Claim | Proof | Why |
 | --- | --- | --- | --- |
 | `value <= limit` | yes | yes | both operands are primitives, and the compiler vouches for it |
-| `a <= b` on `Version` | yes | no | the comparison is a call, and the witness is refused |
+| `a <= b` on `Version` | yes | no | the comparison is a call into the program, and the witness is refused |
+| `name <= "m"` on `&str` | yes | yes | the comparison is the library's: it runs none of the program's code, cannot panic, and terminates |
 | `items.len() <= 2` | no | no | the condition runs the program's code, so the syntax claims nothing |
 
 `tests/upper.rs` runs the condition of `clamp` and never the branch it gates,
@@ -44,4 +45,9 @@ src/lib.rs:28:23 int-decrement killed
 src/lib.rs:28:23 int-increment killed
 src/lib.rs:29:16 true-to-false killed
 src/lib.rs:31:5 false-to-true killed
+src/lib.rs:36:8 negate-condition killed
+src/lib.rs:36:13 le-to-lt not_run
+src/lib.rs:36:16 string-to-empty killed
+src/lib.rs:37:16 true-to-false killed
+src/lib.rs:39:5 false-to-true killed
 ```

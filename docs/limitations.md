@@ -98,7 +98,13 @@ below is stated fail-closed.
   its infection log could not be read. Neither removes an execution: a layer
   that could not measure discharges nothing.
 - A guard compares its two branches only where the compiler vouched that the
-  condition around it is inert and the guard's own form can hold the call.
+  condition around it is inert — every comparison in it between primitives,
+  `str`, or a slice of those — and the guard's own form can hold the call. The
+  witness names one type for both operands, so a comparison between two
+  different ones is refused however inert it is: `want == got` on a `Vec<u8>`
+  and a `&[u8]`, or `name == DURATION` on a `String` and a `&str`. So is
+  anything the standard library defines outside `core`, `String` and `OsString`
+  among them, because the module is generated into `#![no_std]` crates too.
   Everywhere else `never-infected` says nothing about the mutation however
   many tests ran it, and the record names which mutants it can speak about so
   that its silence about the rest is never read as evidence. The probe tree,
