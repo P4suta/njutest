@@ -613,3 +613,42 @@ fn a_server_that_has_been_asked_to_stop_says_nothing_more_about_the_tree() {
          that one: {said:?}"
     );
 }
+
+#[test]
+fn the_whole_exchange_an_editor_has_with_this_server_is_recorded() {
+    let root = tempfile::tempdir().expect("a directory");
+    ran(root.path());
+
+    let output = served(
+        &[
+            json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+                "capabilities": { "general": { "positionEncodings": ["utf-8", "utf-16"] } }
+            } }),
+            json!({ "jsonrpc": "2.0", "method": "textDocument/didOpen" }),
+            json!({ "jsonrpc": "2.0", "id": 2, "method": "textDocument/codeAction",
+                "params": { "context": { "diagnostics": [
+                    { "data": { "mutant": "aaaaaaaaaaaa", "rule": "gt-to-ge@1" } }
+                ] } } }),
+            json!({ "jsonrpc": "2.0", "id": 3, "method": "shutdown" }),
+            json!({ "jsonrpc": "2.0", "method": "exit" }),
+        ],
+        root.path(),
+    );
+
+    assert!(
+        String::from_utf8_lossy(&output.said).starts_with("Content-Length: "),
+        "every message is framed the way the protocol frames them"
+    );
+    let mut lines = Vec::new();
+    for said in answers(output.said) {
+        let text = serde_json::to_string(&said).expect("one line");
+        lines.extend_from_slice(
+            text.replace(&root.path().display().to_string(), "<root>")
+                .as_bytes(),
+        );
+        lines.push(b'\n');
+    }
+    let golden =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testdata/lsp.golden.jsonl");
+    mjutest_devkit::golden::golden(&golden, &lines).expect("the recorded exchange");
+}
