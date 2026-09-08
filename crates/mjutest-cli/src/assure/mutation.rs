@@ -16,7 +16,7 @@ use crate::assure::baseline::Measured;
 use crate::assure::route::Route;
 use crate::assure::schedule;
 use crate::evidence::store;
-use crate::report::{Finding, FindingKind, MutantAccounting, TargetStatus};
+use crate::report::{Finding, FindingKind, MutantAccounting};
 use crate::ui::Notes;
 use crate::watch::Watch;
 
@@ -931,7 +931,14 @@ pub fn request_for(mutant: &str, measured: Option<&Measured>, args: &[String]) -
 }
 
 /// The last line worth quoting from a capture.
-fn tail(output: &[u8]) -> String {
+///
+/// The last line is where a test harness says what it found; everything above
+/// it is how it got there. A capture that said nothing at all is quoted as
+/// having said nothing, because an empty quotation reads as a line somebody
+/// forgot to copy rather than as silence. The length is bounded so that one
+/// enormous line cannot become the whole of a report a person has to read.
+#[must_use]
+pub fn tail(output: &[u8]) -> String {
     let text = String::from_utf8_lossy(output);
     text.lines()
         .rev()
@@ -940,10 +947,4 @@ fn tail(output: &[u8]) -> String {
         .chars()
         .take(200)
         .collect()
-}
-
-/// Whether a measured target is one a mutation phase can use.
-#[must_use]
-pub fn usable(measured: &Measured) -> bool {
-    measured.status == TargetStatus::Passed
 }

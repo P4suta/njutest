@@ -5,7 +5,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use mjutest_cli::assure::mutation::{Disposition, Judged, Mutation, Unconfirmed};
+use mjutest_cli::assure::mutation::{Disposition, Judged, Mutation, Unconfirmed, tail};
 use mjutest_cli::assure::route::{BRANCH_NEVER_TAKEN, Discharge, NEVER_INFECTED, Reaches, Route};
 use mjutest_cli::report::FindingKind;
 
@@ -176,5 +176,35 @@ fn a_survivor_tests_did_run_says_how_many_looked() {
         detail.contains("no test noticed") && detail.contains("1 target ran it"),
         "a target ran the mutation and passed anyway, which is a gap in what that target \
          asserts and not a proof about the mutation: {detail}"
+    );
+}
+
+#[test]
+fn what_a_capture_is_quoted_by_is_its_last_word_and_never_nothing() {
+    let harness = b"running 3 tests\ntest one ... ok\ntest two ... FAILED\n\
+                    failures:\n    two\ntest result: FAILED. 1 passed; 1 failed\n";
+
+    assert_eq!(
+        tail(harness),
+        "test result: FAILED. 1 passed; 1 failed",
+        "the last line is where a harness says what it found, and the lines above it are \
+         how it got there: quoting the first would put `running 3 tests` in front of \
+         somebody asking what went wrong"
+    );
+    assert_eq!(
+        tail(b"the answer\n\n   \n"),
+        "the answer",
+        "and blank lines after it are not what it said"
+    );
+    assert_eq!(
+        tail(b""),
+        "(it said nothing)",
+        "a capture with nothing in it is quoted as having said nothing: an empty \
+         quotation reads as a line somebody forgot to copy"
+    );
+    assert_eq!(
+        tail(&b"x".repeat(500)),
+        "x".repeat(200),
+        "and one enormous line does not become the whole of a report somebody has to read"
     );
 }
