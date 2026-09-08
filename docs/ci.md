@@ -41,7 +41,7 @@ on the verify step and upload `.mjutest/trace/` with the reports.
 
 | Workflow | Jobs | When |
 | --- | --- | --- |
-| `ci.yml` | the three-OS test matrix, lint (fmt, clippy, rustdoc, the `cargo xtask` gates, typos, taplo, actionlint, committed), cargo-deny, cargo-audit, the coverage ratchet, the `book` build, and `ci-success` which gathers them | every push and pull request |
+| `ci.yml` | the three-OS test matrix, lint (fmt, clippy, rustdoc, the `cargo xtask` gates, typos, taplo, actionlint, committed), cargo-deny, cargo-audit, the coverage ratchet, the `book` build, `action-smoke`, and `ci-success` which gathers them | every push and pull request |
 | `mutation.yml` | `cargo-mutants` over each package | weekly, and on request |
 | `dogfood.yml` | `shard` runs the engine over its own catalog in four parts, and `audit` puts the parts back together, checks each recording, and re-decides every part against the ledger | weekly, and on request |
 | `fuzz.yml` | every fuzz target for a fixed time | weekly, and on an engine pull request |
@@ -204,3 +204,16 @@ a person reading a log instead of the findings themselves.
 publishes, so the action does not compile this workspace inside somebody
 else's job. `cargo mjutest verify` works too, wherever the binary is on the
 path: the same program answers to the name cargo looks for.
+
+A workflow that has already put `mjutest` on the path keeps it: the action
+installs nothing unless `version` names a release or the binary is absent. A
+job that built the commit under test, restored a cached binary, or installed
+from somewhere else has said which one it wants, and installing over it would
+answer a question nobody asked.
+
+That is also what makes the action testable here. `action-smoke` builds this
+workspace's own `mjutest`, puts it on the path, and runs the action against
+`fixtures/fixture-assured` the way another repository would, checking that the
+`verdict` output is the one the run reached and that `report` names a file
+that exists. What it does not exercise is the install itself, which needs a
+published release; until there is one, that step is checked by reading.

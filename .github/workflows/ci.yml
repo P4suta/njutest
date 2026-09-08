@@ -231,10 +231,42 @@ jobs:
       - name: build the book, which refuses a summary naming a page nobody holds
         run: mdbook build docs
 
+  action-smoke:
+    name: action-smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+      - name: Fetch the locked dependency graph
+        env:
+          CARGO_NET_OFFLINE: "false"
+        run: cargo fetch --locked
+      - name: Build the mjutest this commit would ship and put it on the path
+        run: |
+          cargo build --locked --release --bin mjutest
+          echo "$PWD/target/release" >> "$GITHUB_PATH"
+      - name: Run the action the way another repository would
+        id: mjutest
+        uses: ./.github/actions/mjutest
+        with:
+          working-directory: fixtures/fixture-assured
+          args: --offline --locked --ui=plain
+          upload-sarif: "false"
+      - name: The verdict the action reports is the one the run reached
+        env:
+          VERDICT: ${{ steps.mjutest.outputs.verdict }}
+          REPORT: ${{ steps.mjutest.outputs.report }}
+        run: |
+          test "$VERDICT" = ASSURED || { echo "verdict was '$VERDICT'"; exit 1; }
+          test -f "fixtures/fixture-assured/$REPORT"
+
   ci-success:
     name: ci-success
     if: always()
-    needs: [test, lint, deny, audit, coverage, package-install, book]
+    needs: [test, lint, deny, audit, coverage, package-install, book, action-smoke]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

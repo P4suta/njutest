@@ -32,10 +32,30 @@ outputs:
 runs:
   using: composite
   steps:
-    - uses: taiki-e/install-action@daa3c1f1f9e335f32fb3b07458d5b2767e3849a5 # v2
+    # A workflow that already put mjutest on the path has said which one it
+    # wants: a build of the commit under test, a cached binary, a package from
+    # somewhere else. Installing over it would answer a question nobody asked
+    # and would leave this action untestable before its first release, since
+    # every step after it needs a binary that only a release provides.
+    - name: Decide whether mjutest has to be installed
+      id: present
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        if [ -z "${VERSION}" ] && command -v mjutest >/dev/null 2>&1; then
+          echo "install=false" >> "${GITHUB_OUTPUT}"
+          echo "using $(command -v mjutest)"
+        else
+          echo "install=true" >> "${GITHUB_OUTPUT}"
+        fi
+    - if: steps.present.outputs.install == 'true'
+      uses: taiki-e/install-action@daa3c1f1f9e335f32fb3b07458d5b2767e3849a5 # v2
       with:
         tool: cargo-binstall
     - name: Install mjutest
+      if: steps.present.outputs.install == 'true'
       shell: bash
       env:
         VERSION: ${{ inputs.version }}
