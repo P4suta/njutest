@@ -584,3 +584,32 @@ fn every_answer_is_pushed_out_rather_than_left_in_a_buffer() {
         published.flushes
     );
 }
+
+#[test]
+fn a_server_that_has_been_asked_to_stop_says_nothing_more_about_the_tree() {
+    let root = tempfile::tempdir().expect("a directory");
+    ran(root.path());
+
+    let output = served(
+        &[
+            json!({ "jsonrpc": "2.0", "id": 11, "method": "shutdown" }),
+            json!({ "jsonrpc": "2.0", "method": "textDocument/didSave" }),
+        ],
+        root.path(),
+    );
+
+    let said = answers(output.said);
+    assert!(
+        said.iter()
+            .all(|one| one["method"] != "textDocument/publishDiagnostics"),
+        "a client that asked this to shut down is waiting for that answer and for \
+         nothing else: what a later notification says goes to nobody, and a server \
+         still talking is one the editor has to keep reading to be rid of: {said:?}"
+    );
+    assert_eq!(
+        said.len(),
+        1,
+        "and the shutdown itself is still answered, because the client is waiting for \
+         that one: {said:?}"
+    );
+}

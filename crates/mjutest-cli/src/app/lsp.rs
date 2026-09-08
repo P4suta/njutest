@@ -177,11 +177,16 @@ pub fn message(input: &mut dyn BufRead) -> Option<Value> {
 
 /// Serves the protocol over `input` and `output` until the client asks it to stop.
 ///
+/// A client that has asked this to shut down is one that has stopped reading:
+/// it is waiting for the answer to that request and for nothing else, so what
+/// a later notification would say goes to nobody. Only `exit` follows.
+///
 /// # Errors
 /// None: a message this server does not answer is one it says nothing about,
 /// and a report it cannot read is a run that has not happened yet.
 pub fn serve(input: &mut dyn BufRead, output: &mut dyn Write, root: &Path) -> u8 {
     let mut encoding = Encoding::default();
+    let mut stopping = false;
     while let Some(request) = message(input) {
         let method = request
             .get("method")
@@ -195,12 +200,17 @@ pub fn serve(input: &mut dyn BufRead, output: &mut dyn Write, root: &Path) -> u8
                 reply(output, id.as_ref(), &capabilities(encoding));
             }
             "initialized" | "textDocument/didOpen" | "textDocument/didSave" => {
-                publish(output, root, encoding);
+                if !stopping {
+                    publish(output, root, encoding);
+                }
             }
             "textDocument/codeAction" => {
                 reply(output, id.as_ref(), &actions(&request));
             }
-            "shutdown" => reply(output, id.as_ref(), &Value::Null),
+            "shutdown" => {
+                stopping = true;
+                reply(output, id.as_ref(), &Value::Null);
+            }
             "exit" => break,
             _ => {
                 if id.is_some() {
