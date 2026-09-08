@@ -104,3 +104,37 @@ original = '''serve(
         &root,
     )'''
 reason = "serve carries EXIT_ASSURED out of every path, and that is zero, so the default and the call are the same number; an_editor_that_starts_this_server_is_told_what_the_last_run_found holds the process to it"
+
+# Two guards report one condition, and the second is the one that decides.
+#
+# `write` refuses a file of the snapshot it cannot write, and the `restore`
+# that always follows attempts every path `write` could have failed on, with
+# the same call on the same path. So a deterministic test gets the same error
+# and the same tree whichever guard is removed. These are not equivalent
+# mutations - with a transient failure the mutated pass vouches for claims in a
+# file the check never held, which is the one direction a proof layer may not
+# fail in. They are survivors this suite cannot reach, which is the class
+# `docs/limitations.md` names, and the contract they belong to is held by
+# `toolchain_proofs.rs::a_source_the_pass_cannot_write_stops_it_rather_than_letting_it_vouch`:
+# a file the pass may not write stops the pass rather than being vouched for.
+[[mutation.expect]]
+path = "crates/rust-mutants/src/prove.rs"
+item = "write"
+rule = "ignore-question-statement"
+original = "?"
+reason = "the restore that always follows attempts the same path with the same call, so no deterministic test parts the two; this is a fail-open the suite cannot reach rather than an equivalence, and a_source_the_pass_cannot_write_stops_it_rather_than_letting_it_vouch holds the contract"
+
+[[mutation.expect]]
+path = "crates/rust-mutants/src/prove.rs"
+item = "write"
+rule = "question-to-unwrap"
+original = "?"
+reason = "the restore that always follows attempts the same path with the same call, so no deterministic test parts the two; this is a fail-open the suite cannot reach rather than an equivalence, and a_source_the_pass_cannot_write_stops_it_rather_than_letting_it_vouch holds the contract"
+
+[[mutation.expect]]
+path = "crates/rust-mutants/src/prove.rs"
+item = "establish"
+rule = "question-to-unwrap"
+original = "?"
+line = 151
+reason = "the restore on the line above runs first and reports the same condition, so this one is reached only when a write failed and putting it back did not, which no deterministic test can arrange; a fail-open the suite cannot reach rather than an equivalence, and a_source_the_pass_cannot_write_stops_it_rather_than_letting_it_vouch holds the contract"

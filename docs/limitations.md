@@ -62,6 +62,18 @@ below is stated fail-closed.
   where the catalog a nested process inherits is its own, the binary is the
   mutant the outer run activated, and the guards already refuse every other
   case.
+- **A guard against a failure that reappears downstream is a survivor no
+  deterministic suite can decide.** A `?` on an I/O call whose failure is
+  reported again by a later call on the same resource - a write that is put
+  back by a restore of the same path, a lock taken twice, a file opened again -
+  hands its caller the same error whether the guard is there or not, and leaves
+  the same state behind. The two versions part only when the condition is
+  transient, and a test that can arrange a transient condition is a test that
+  has stopped being deterministic. Such a mutation is not equivalent: it is a
+  fail-open the suite cannot reach. Recording it as an expectation is right,
+  and the reason has to say which of the two it is, because a later reader
+  deciding whether to delete the guard needs to know that the run never
+  disagreed with it rather than that the run agreed.
 - A target whose own tests do not pass with nothing active is dropped from the
   ones a mutation may be put to (`baseline-not-passing`), and every one of them
   is named. Every mutation put to such a target comes back killed and not one

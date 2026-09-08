@@ -1101,3 +1101,70 @@ pub fn under(a: i32, b: i32, out: &mut i32) {
     );
     workspace.close().expect("close");
 }
+
+#[test]
+fn a_source_the_pass_cannot_write_stops_it_rather_than_letting_it_vouch() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let claimed = "\
+// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! A condition the pass would witness, in a file it may not write.
+
+/// Writes one where `a` is under `b`.
+pub fn under(a: i32, b: i32, out: &mut i32) {
+    if a < b {
+        *out = 1;
+    }
+}
+";
+    let path = "src/lib.rs";
+    let fixture = Fixture::copy("fixture-ignored");
+    std::fs::write(fixture.root().join(path), claimed).expect("the fixture's own source");
+    let discovery = discovered_in(&[(path, claimed)]);
+    let cancel = Cancel::new();
+    let workspace = Workspace::open(
+        fixture.root(),
+        opening(&mjutest_devkit::paths::cargo_binary(), fixture.temp()),
+        &cancel,
+    )
+    .expect("the workspace opens");
+
+    let held = workspace.snapshot_root().join(path);
+    let before = std::fs::metadata(&held)
+        .expect("the snapshot holds it")
+        .permissions();
+    std::fs::set_permissions(&held, std::fs::Permissions::from_mode(0o444))
+        .expect("a file nothing may write");
+    let mut sources = std::collections::BTreeMap::new();
+    drop(sources.insert(path.to_owned(), claimed.as_bytes().to_vec()));
+    let answered = rust_mutants::prove::establish(
+        &rust_mutants::prove::Asking {
+            workspace: &workspace,
+            discovery: &discovery,
+            sources: &sources,
+            options: &PrepareOptions {
+                tier: Tier::All,
+                branch_proofs: true,
+                ..PrepareOptions::default()
+            },
+        },
+        &cancel,
+        &rust_mutants::trace::Recorder::disabled(),
+    );
+    drop(std::fs::set_permissions(&held, before));
+
+    let Err(refused) = answered else {
+        panic!(
+            "the tree could not be given the file the claim is in, so the check that would have \
+             passed says nothing about it, and vouching for it would remove a mutant on a \
+             question nobody put"
+        );
+    };
+    assert!(
+        refused.to_string().contains(path),
+        "the refusal names the file it could not write: {refused}"
+    );
+    workspace.close().expect("close");
+}
