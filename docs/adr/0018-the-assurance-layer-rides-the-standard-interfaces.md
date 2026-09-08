@@ -73,15 +73,26 @@ plugin interface. An interface with one implementation is a promise nobody
 asked for.
 
 **The only interfaces to the test world are the two standard ones**: cargo's
-JSON artifact messages, and libtest's own command line. No third-party runner
-is a dependency of anything this repository must do.
+JSON artifact messages, and libtest's own command line. The run starts the
+test binaries itself through the second of those, which is what routing at
+`test` granularity already does — a process handed several test names as
+position filters is libtest's command line doing what it documents.
 
-**The executor may be substituted; the identity may not.** A run may come to
-be able to hand its baseline — the one pass over every target with nothing
-active — to another runner, `nextest` being the obvious one, for its retries
-and per-test timeouts. A target's identity is `docs/report-v1.md`'s and stays
-this repository's own whoever started the process. The inner loop is never
-substituted, for the reason above.
+**What somebody has to install to use this is cargo, and nothing else**
+(user decision, 2026-09-09). No third-party test runner is a dependency, and
+none is an option either. A tool with a chance of becoming part of a
+language's own infrastructure hands its dependencies to everybody who adopts
+it, so the question about one is never "is it good" — `nextest` is very good —
+but "should every project that wants an assurance verdict also have to want
+this". The answer has to be no for anything that is not already in the
+toolchain. The optional integrations that exist — Miri, `cargo-fuzz`, and the
+verifier M12 adds — are each the subject of a contract that names them
+(`deep-v1`, `verified-v1`), and a run that does not promise them runs without
+them.
+
+**A target's identity is this repository's own.** `docs/report-v1.md` defines
+it, and a report is compared against other reports of the same tree; borrowing
+another tool's names would make the identity theirs to change.
 
 ## Consequences
 
@@ -91,8 +102,11 @@ substituted, for the reason above.
   about it is configured in a syntax of ours.
 - `build.rs` and `targets.rs` stay. They are not a competitor to anything;
   they are the standard interface plus the identity a report promises.
-- If a substitutable executor is built, it is an enum of two — cargo and
-  nextest — under [ADR 0001](0001-seam-policy.md), never a trait object, and
-  cargo remains the default so the tool works with nothing installed.
+- Nothing gets faster by adopting somebody else's runner, and that door is
+  closed rather than left ajar. What is left to make the baseline cheaper is
+  the baseline itself, which is one pass over every target and is the floor a
+  mutation score cannot be had without.
+- A new optional tool arrives the way Miri did: as a contract that names it,
+  refuses to conclude without it, and is not what a default run promises.
 - The question of a plugin API is closed. Reopening it means arguing that a
   second engine exists to plug in.
