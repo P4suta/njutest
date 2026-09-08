@@ -481,8 +481,14 @@ impl Route {
     /// The targets that were measured, asked, and did not reach the mutation.
     ///
     /// A route that keeps nothing has to say who it asked, or "unreached" is a
-    /// word with nothing behind it. Every other route keeps what it asked, so
-    /// there is nothing here it does not already name.
+    /// word with nothing behind it and an audit can only confirm that the
+    /// engine said it.
+    ///
+    /// Only a route that keeps nothing carries the list. A route that kept
+    /// some targets and dropped others names the ones it kept and the ones a
+    /// proof removed, and says nothing about the ones the measurement placed
+    /// elsewhere — an asymmetry, and one a reader asking "why was this target
+    /// not run" meets.
     #[must_use]
     pub fn considered(&self) -> &[String] {
         match self {
