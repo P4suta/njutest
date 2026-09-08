@@ -1027,3 +1027,78 @@ fn a_form_that_cannot_hold_the_call_writes_no_probe_however_many_it_was_offered(
         "and no guard of the tree calls it: {body}"
     );
 }
+
+/// The site as the guard writes it when this mutant is the live one: its own bytes with the edit made.
+fn edited(placement: &rust_mutants::instrument::Placement) -> String {
+    let at = |offset: u32| usize::try_from(offset).unwrap_or(usize::MAX);
+    let start = at(placement
+        .edit
+        .start
+        .saturating_sub(placement.hint.site.start));
+    let end = at(placement.edit.end.saturating_sub(placement.hint.site.start));
+    let mut text = placement.hint.site_text.clone().into_bytes();
+    text.splice(start..end, placement.replacement.iter().copied());
+    String::from_utf8_lossy(&text).into_owned()
+}
+
+#[test]
+fn a_probe_around_the_original_leaves_every_nested_branch_where_it_says_it_is() {
+    let source = "pub fn f(a: i32, b: i32, c: bool) -> bool {\n    return a < b && c;\n}\n";
+    let selection = Selection::tier(&REGISTRY, Tier::All);
+    let discovery = discover_file("src/lib.rs", source.as_bytes(), &selection).expect("discover");
+    let mut builder = Builder::new();
+    for found in &discovery.candidates {
+        builder.add(found.candidate.clone()).expect("add");
+    }
+    let catalog = builder.build().expect("catalog");
+    let placements = plan_file(&catalog, "src/lib.rs", &discovery.candidates).expect("plan");
+    let probes = probeable(&discovery, &catalog);
+    assert!(
+        !probes.is_empty(),
+        "`return a < b` on a bool is a return replacement the syntax offers a probe for"
+    );
+    assert!(
+        placements.len() > probes.len(),
+        "and the comparison inside it is a site of its own, nested in the probed branch"
+    );
+
+    let file = instrument_file(&Instrumenting {
+        path: "src/lib.rs",
+        source: source.as_bytes(),
+        placements: &placements,
+        markers: &[],
+        comparable: &offered(&discovery, &catalog),
+        probed: &probes,
+        catalog_digest: catalog.digest(),
+    })
+    .expect("instrument");
+    let kept = file
+        .text
+        .find(" else { ")
+        .expect("a value-position guard keeps the original in an else");
+    assert!(
+        file.branches
+            .iter()
+            .any(|branch| usize::try_from(branch.span.start).unwrap_or(usize::MAX) > kept),
+        "a branch inside the probed original is what this is about: {}",
+        file.text
+    );
+    for branch in &file.branches {
+        let at = |offset: u32| usize::try_from(offset).unwrap_or(usize::MAX);
+        let held = file
+            .text
+            .get(at(branch.span.start)..at(branch.span.end))
+            .expect("a branch names bytes of the text it is about");
+        let placement = placements
+            .iter()
+            .find(|placement| placement.index == branch.index)
+            .expect("a branch is about a placed mutant");
+        assert_eq!(
+            held,
+            edited(placement),
+            "the span a branch reports is where a compiler's error about that mutant lands, and \
+             a probe written around the original must not move it: {branch:?} in {}",
+            file.text
+        );
+    }
+}
