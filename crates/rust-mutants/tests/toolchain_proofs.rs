@@ -861,8 +861,6 @@ pub fn both(a: i32, b: i32, c: i32, d: i32, out: &mut i32) {
 
 #[test]
 fn a_snapshot_the_pass_cannot_write_into_is_a_failure_rather_than_a_silence() {
-    use std::os::unix::fs::PermissionsExt as _;
-
     let source = "\
 // SPDX-FileCopyrightText: 2026 mjutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
@@ -891,11 +889,8 @@ pub fn under(a: i32, b: i32, out: &mut i32) {
     .expect("the workspace opens");
 
     let held = workspace.snapshot_root().join("src/other.rs");
-    let before = std::fs::metadata(&held)
-        .expect("the snapshot holds it")
-        .permissions();
-    std::fs::set_permissions(&held, std::fs::Permissions::from_mode(0o444))
-        .expect("a file nothing may write");
+    std::fs::remove_file(&held).expect("the snapshot holds it");
+    std::fs::create_dir_all(&held).expect("a place nothing may write a file to");
     let mut sources = std::collections::BTreeMap::new();
     for (path, text) in files {
         drop(sources.insert(path.to_owned(), text.as_bytes().to_vec()));
@@ -912,7 +907,7 @@ pub fn under(a: i32, b: i32, out: &mut i32) {
     };
     let refused =
         rust_mutants::prove::establish(&asked, &cancel, &rust_mutants::trace::Recorder::disabled());
-    drop(std::fs::set_permissions(&held, before));
+    drop(std::fs::remove_dir(&held));
 
     let error = refused.expect_err(
         "a tree the pass could not write into is one it must not carry on with: the witnesses \
@@ -928,7 +923,7 @@ pub fn under(a: i32, b: i32, out: &mut i32) {
         "and it says which file it could not write rather than which claim it could not make: \
          {error}"
     );
-    for (path, source) in &sources {
+    for (path, source) in sources.iter().filter(|(path, _)| *path != "src/other.rs") {
         assert_eq!(
             std::fs::read(workspace.snapshot_root().join(path)).unwrap_or_default(),
             *source,
@@ -972,8 +967,6 @@ pub fn under(a: i32, b: i32, out: &mut i32) {
 
 #[test]
 fn a_snapshot_the_pass_cannot_put_back_is_a_failure_rather_than_a_silence() {
-    use std::os::unix::fs::PermissionsExt as _;
-
     let claimed = "\
 // SPDX-FileCopyrightText: 2026 mjutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
@@ -1002,11 +995,8 @@ pub fn under(a: i32, b: i32, out: &mut i32) {
     .expect("the workspace opens");
 
     let held = workspace.snapshot_root().join("src/plain.rs");
-    let before = std::fs::metadata(&held)
-        .expect("the snapshot holds it")
-        .permissions();
-    std::fs::set_permissions(&held, std::fs::Permissions::from_mode(0o444))
-        .expect("a file nothing may write");
+    std::fs::remove_file(&held).expect("the snapshot holds it");
+    std::fs::create_dir_all(&held).expect("a place nothing may write a file to");
     let mut sources = std::collections::BTreeMap::new();
     for (path, text) in files {
         drop(sources.insert(path.to_owned(), text.as_bytes().to_vec()));
@@ -1025,7 +1015,7 @@ pub fn under(a: i32, b: i32, out: &mut i32) {
         &cancel,
         &rust_mutants::trace::Recorder::disabled(),
     );
-    drop(std::fs::set_permissions(&held, before));
+    drop(std::fs::remove_dir(&held));
 
     assert!(
         answered.is_err(),
@@ -1104,8 +1094,6 @@ pub fn under(a: i32, b: i32, out: &mut i32) {
 
 #[test]
 fn a_source_the_pass_cannot_write_stops_it_rather_than_letting_it_vouch() {
-    use std::os::unix::fs::PermissionsExt as _;
-
     let claimed = "\
 // SPDX-FileCopyrightText: 2026 mjutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
@@ -1132,11 +1120,8 @@ pub fn under(a: i32, b: i32, out: &mut i32) {
     .expect("the workspace opens");
 
     let held = workspace.snapshot_root().join(path);
-    let before = std::fs::metadata(&held)
-        .expect("the snapshot holds it")
-        .permissions();
-    std::fs::set_permissions(&held, std::fs::Permissions::from_mode(0o444))
-        .expect("a file nothing may write");
+    std::fs::remove_file(&held).expect("the snapshot holds it");
+    std::fs::create_dir_all(&held).expect("a place nothing may write a file to");
     let mut sources = std::collections::BTreeMap::new();
     drop(sources.insert(path.to_owned(), claimed.as_bytes().to_vec()));
     let answered = rust_mutants::prove::establish(
@@ -1153,7 +1138,7 @@ pub fn under(a: i32, b: i32, out: &mut i32) {
         &cancel,
         &rust_mutants::trace::Recorder::disabled(),
     );
-    drop(std::fs::set_permissions(&held, before));
+    drop(std::fs::remove_dir(&held));
 
     let Err(refused) = answered else {
         panic!(
