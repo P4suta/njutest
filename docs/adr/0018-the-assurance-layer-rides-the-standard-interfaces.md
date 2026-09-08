@@ -1,0 +1,82 @@
+<!--
+SPDX-FileCopyrightText: 2026 mjutest contributors
+SPDX-License-Identifier: MIT OR Apache-2.0
+-->
+
+# 0018 — The assurance layer rides the standard interfaces
+
+## Status
+
+Accepted, 2026-09-09 (user decision). Bounds every milestone after M14.
+
+## Context
+
+`mjutest` and `rust-mutants` are one workspace with a fixed dependency
+direction ([ADR 0012](0012-one-workspace-two-products.md)), and the runner has
+grown a layer that finds test binaries, names them, and runs them. That layer
+looks like a second implementation of `cargo nextest`, and the question was
+whether to invert the arrangement: make `mjutest` a general test runner, with
+mutation testing as one plugin among the ways people test.
+
+The reason to want that is sound. Mutation testing says nothing without tests,
+so something has to own the general facts about a suite, and that owner would
+be a natural home for property-based testing, fault injection, and whatever
+else comes. The reason not to is the same sentence read the other way: what
+those methods contribute is how a test is *written*, and a layer that owns how
+tests are written owns a syntax. This repository is not going to invent one.
+
+Measuring the supposed duplication changed the picture. `assure/schedule.rs`
+is 113 lines and none of them schedule tests: it decides how many mutations
+are measured at once and puts the answers back in catalog order.
+`targets.rs` is mostly the target identity `docs/report-v1.md` promises, which
+another runner cannot supply because it has an identity of its own. What is
+left is `build.rs` reading cargo's JSON artifact messages — which is what
+every runner does, `nextest` included, because it is the only interface cargo
+offers.
+
+One constraint decides the rest. `nextest` runs each test in its own process;
+that is its central design choice and where its isolation comes from. The
+inner loop of a mutation run needs the opposite: many tests in one process
+under one activation, which is what makes the schemata form cheap at all.
+Handing that loop to a per-test runner multiplies process starts by the number
+of tests in every target. This is arithmetic, not preference.
+
+## Decision
+
+**`mjutest` is an assurance layer, not a test layer.** It does not become a
+test runner, does not host plugins, and does not define a way to write a test.
+What it sells is the verdict and what stands behind it: the proof layers, the
+independent re-derivation in `cargo xtask proofaudit`, evidence reuse, and the
+contract each of those answers to.
+
+**Mutation is one evidence source among several, and that shape already
+exists**: `assure/mutation.rs`, `assure/deep.rs` (Miri), `assure/fuzz.rs`,
+`assure/repair.rs`, and the verification driver M12 adds are siblings under
+one `assure/`. Integrating a further method means adding a sibling, not a
+plugin interface. An interface with one implementation is a promise nobody
+asked for.
+
+**The only interfaces to the test world are the two standard ones**: cargo's
+JSON artifact messages, and libtest's own command line. No third-party runner
+is a dependency of anything this repository must do.
+
+**The executor may be substituted; the identity may not.** A run may come to
+be able to hand its baseline — the one pass over every target with nothing
+active — to another runner, `nextest` being the obvious one, for its retries
+and per-test timeouts. A target's identity is `docs/report-v1.md`'s and stays
+this repository's own whoever started the process. The inner loop is never
+substituted, for the reason above.
+
+## Consequences
+
+- A new testing method arrives as a phase under `assure/` with its own
+  contract clause, trace vocabulary, and audit layer, exactly as
+  [ADR 0004](0004-proof-layers-not-budgets.md) requires of a proof. Nothing
+  about it is configured in a syntax of ours.
+- `build.rs` and `targets.rs` stay. They are not a competitor to anything;
+  they are the standard interface plus the identity a report promises.
+- If a substitutable executor is built, it is an enum of two — cargo and
+  nextest — under [ADR 0001](0001-seam-policy.md), never a trait object, and
+  cargo remains the default so the tool works with nothing installed.
+- The question of a plugin API is closed. Reopening it means arguing that a
+  second engine exists to plug in.

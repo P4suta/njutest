@@ -55,3 +55,4 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 - [0014 The guards are the measurement](adr/0014-the-guards-are-the-measurement.md)
 - [0015 The guard is the infection probe](adr/0015-the-guard-is-the-infection-probe.md)
 - [0016 The probe tree is a tree nobody needs](adr/0016-the-probe-tree-is-a-tree-nobody-needs.md)
+- [0018 The assurance layer rides the standard interfaces](adr/0018-the-assurance-layer-rides-the-standard-interfaces.md)
