@@ -3,9 +3,15 @@
 
 //! Which mutations nothing noticed are mutations nothing could have noticed.
 
+#![expect(
+    clippy::indexing_slicing,
+    reason = "a list this test built holds what this test put in it, and a shorter one is the failure it is here to report"
+)]
+
 use std::collections::BTreeSet;
 
-use mjutest_cli::assure::equivalence::{Refused, Standing, askable};
+use mjutest_cli::assure::equivalence::{Decided, Refused, Standing, askable, settle};
+use mjutest_cli::assure::mutation::{Disposition, Judged};
 use mjutest_cli::assure::route::{Asked, Discharge, Fallback, NEVER_INFECTED, Reaches, Route};
 
 fn block(targets: &[&str]) -> Route {
@@ -116,4 +122,71 @@ fn a_tree_a_test_wrote_into_and_a_control_that_drifted_both_withdraw_the_answer(
 fn a_position_the_tests_ran_is_one_the_compiler_may_be_asked_about() {
     let none = BTreeSet::new();
     assert_eq!(askable(standing(&block(&["one"]), &none)), Ok(()));
+}
+
+fn survivor(display_id: &str) -> Judged {
+    Judged {
+        id: display_id.repeat(4),
+        display_id: display_id.to_owned(),
+        path: "src/lib.rs".to_owned(),
+        rule: "add-to-sub@1".to_owned(),
+        position: None,
+        disposition: Disposition::Survived {
+            route: block(&["core/lib/core"]),
+        },
+        source_run_id: None,
+    }
+}
+
+fn decided(display_id: &str, equivalent: bool) -> Decided {
+    Decided {
+        display_id: display_id.to_owned(),
+        equivalent,
+        detail: if equivalent {
+            "the compiler renders it identically".to_owned()
+        } else {
+            "the compiler renders it differently".to_owned()
+        },
+    }
+}
+
+#[test]
+fn one_mutation_this_layer_says_nothing_about_does_not_end_what_it_says_about_the_rest() {
+    let cancel = rust_mutants::runner::Cancel::new();
+    let trace = mjutest_cli::trace::Recorder::disabled();
+    let mut judged = vec![
+        survivor("aaaa"),
+        survivor("bbbb"),
+        survivor("cccc"),
+        survivor("dddd"),
+    ];
+
+    settle(
+        &mut judged,
+        &[
+            decided("aaaa", false),
+            decided("cccc", true),
+            decided("dddd", true),
+        ],
+        mjutest_cli::watch::Watch::new(&cancel, &trace),
+    );
+
+    let equivalent: Vec<&str> = judged
+        .iter()
+        .filter(|one| matches!(one.disposition, Disposition::Equivalent { .. }))
+        .map(|one| one.display_id.as_str())
+        .collect();
+    assert_eq!(
+        equivalent,
+        vec!["cccc", "dddd"],
+        "the first mutation the compiler renders differently, and the one this layer was \
+         never asked about, are two reasons to move on and neither is a reason to stop: \
+         a layer that stopped would leave every later equivalence reported as a gap in \
+         the tests, and nothing in the report would say the layer had given up"
+    );
+    assert!(
+        matches!(judged[0].disposition, Disposition::Survived { .. })
+            && matches!(judged[1].disposition, Disposition::Survived { .. }),
+        "and what it says nothing about it leaves alone"
+    );
 }
