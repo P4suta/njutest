@@ -5,7 +5,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # Roadmap
 
-**Status: M0 to M11 and E2 to E12 are done.** What remains of
+**Status: M0 to M11 and M13, and E2 to E12, are done.** What remains of
 M8 is the tag itself, which is a decision rather than a change: see
 `docs/release.md`. The user's decisions: one workspace, the engine first,
 the engine a standalone product too, every milestone completed, test-driven
@@ -38,6 +38,7 @@ that lets it be seen, tested, and audited — and both are completion criteria.
 | E9 ✓ | Answering without running | a run is counted in pairs of one mutant and one target rather than in seconds, what removed each pair is named and labelled a proof, a sufficient answer, a remembered one or a narrower question, and a remembered answer is keyed on the sources the build compiled, the manifests that chose its dependencies and the toolchain that compiled it rather than on the digest of a whole tree | `rust_mutants::work::Work` derived from the stored report alone, the `work` audit layer that holds it to the recording, `xtask/work_ceiling.txt` as a ratchet that may shrink and never grow, and the differential harness that runs four fixtures with every layer on and every layer off and holds the two answers to each other | the engine does less for the same question every release, and a test says so |
 | E10 ✓ | The guards are the measurement | reach is recorded by the guards on the run that verifies the baseline, so a mutation goes to the tests that reached it and no coverage build is made | `touched-v1.json` and the audit layer that re-decides from it, `fixture-order-dependent`, `fixture-threaded`, the differential harness over every combination of the two measurements, ADR 0014 | the answer is the one a run with nothing removed gives, and the tests started fall from 46 to 18 on `fixture-coverage` |
 | E11 ✓ | The difference that never was | a guard whose condition the compiler vouched for evaluates both of its branches on the baseline and records where they parted, so `never-infected` is a default layer with no tree, no build and no run of its own | `narrowing` in `touched-v1.json` and the audit layer that re-derives both kinds of discharge from it, the instrumenter reporting which guards it actually wrote the call into, ADR 0015 | eight fixtures stop starting a process for a mutation nothing could have noticed, and the answer is still the one a run with nothing removed gives |
+| M13 ✓ | Where the code is being written | `mjutest watch` verifies again whenever the tree changes and says what moved, `mjutest lsp` shows a completed run's findings in the editor and hands back the acceptance to record without applying it, `cargo mjutest` answers to the name cargo looks for, and `.github/actions/mjutest` runs a verification in somebody else's repository and hands the findings to code scanning | the loop driven by a look and a round the test supplies, so every rule of it is asserted rather than waited on, the protocol exchange recorded as a golden, the action exercised against a fixture with this workspace's own build, and `docs/` built as a book with the summary and the pages held to each other in both directions | a save is a verdict, a survivor is a diagnostic where the mutation is, and every page of the documentation is one the book reaches |
 | E12 ✓ | The tree nobody needed | a return replacement writes a constant, so the guard compares the value the branch that keeps the original produced against it, and the probe tree — a check loop, a build of the workspace and a run of every target — goes | `instrument::observable` as one sealed trait rendered into both generated modules, the probe question put to the witness tree in the shape the guard will hold, `Marker::keyed_to` so a build cache nobody can look up again is collected, ADR 0016 | `prepare` falls from 575s to 427s cold on this engine's own workspace, three more fixture survivors are discharged without an execution, and the differential harness still holds every answer to a run with nothing removed |
 
 ## What is left, and what is not there to be had
@@ -88,6 +89,23 @@ cannot be had without running the unmutated program once. The builds around
 it come to twenty seconds warm. There is no large engine-side saving left to
 find; what is left is the yield of the layers, which is a different question
 and the one the numbers above are about.
+
+The runner has no saving to import either, and that is now a decision rather
+than an accident: [ADR 0018](adr/0018-the-assurance-layer-rides-the-standard-interfaces.md)
+settles that a third-party test runner is neither a dependency nor an option,
+because a tool that might become part of the language's infrastructure hands
+its dependencies to everybody who adopts it. What somebody installs to use
+this is cargo. So the baseline is made cheaper by making the baseline cheaper,
+and by nothing else.
+
+What M14 still lacks is the part of sharing that is not sharding: a run can be
+cut into parts with `--shard K/N` and put back together with `mjutest merge`,
+and the base build those parts each make is still made once per machine.
+`mjutest cache` collects and expires the store; exporting and importing it is
+what would let a matrix of jobs build once. The benchmarks measure the report
+and the byte foundation, and not yet routing, the evidence key, or the
+equivalence comparison — those are observations rather than gates, and they
+are missing rather than wrong.
 
 ## What this engine cannot measure about itself, and what would change that
 
