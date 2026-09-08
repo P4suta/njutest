@@ -967,3 +967,38 @@ fn the_packages_a_session_measures_are_each_named_once_and_in_one_order() {
     );
     session.close().expect("the session closes");
 }
+
+#[test]
+fn a_mutant_in_a_file_the_session_holds_no_source_for_has_no_position() {
+    let fixture = Fixture::copy("fixture-simple");
+    let session = prepare(&fixture);
+
+    let held = session
+        .catalog()
+        .mutants()
+        .first()
+        .expect("a mutant the catalog holds")
+        .clone();
+    assert!(
+        session.position(&held).is_some(),
+        "the mutant the catalog holds is in a file the session kept"
+    );
+
+    let mut elsewhere = held.clone();
+    elsewhere.candidate.path = "src/never_copied.rs".to_owned();
+    assert_eq!(
+        session.position(&elsewhere),
+        None,
+        "a session that kept no source for a file cannot say where in it an edit is, and \
+         answering anyway would put a line number on a file nobody has"
+    );
+
+    let mut past = held;
+    past.candidate.span.start = u32::MAX;
+    assert!(
+        session.position(&past).is_some(),
+        "an offset past the end of a file is still a place in it: the answer is the end rather \
+         than nothing, because a caller asking where an edit is has one"
+    );
+    session.close().expect("the session closes");
+}
