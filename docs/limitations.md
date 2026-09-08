@@ -58,7 +58,10 @@ below is stated fail-closed.
   have killed is a survivor for as long as it is left out, so a reader working
   through survivors of a run that skipped targets has to hold that in mind: the
   survivor may be a gap in the suite, or it may be the target that was not
-  asked.
+  asked. [The roadmap](roadmap.md) argues that this one is worth revisiting:
+  where the catalog a nested process inherits is its own, the binary is the
+  mutant the outer run activated, and the guards already refuse every other
+  case.
 - A target whose own tests do not pass with nothing active is dropped from the
   ones a mutation may be put to (`baseline-not-passing`), and every one of them
   is named. Every mutation put to such a target comes back killed and not one
