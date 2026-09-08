@@ -1002,3 +1002,38 @@ fn a_mutant_in_a_file_the_session_holds_no_source_for_has_no_position() {
     );
     session.close().expect("the session closes");
 }
+
+#[test]
+fn the_questions_a_prepared_session_answers_about_itself_are_answered() {
+    let fixture = Fixture::copy("fixture-annotated");
+    let session = prepare(&fixture);
+
+    assert!(
+        !session.claims().is_empty(),
+        "this fixture carries the markers a reader writes beside the code, and a session that \
+         answers with none reports every one of them as hiding nothing"
+    );
+    assert_eq!(
+        session.workspace_digest().len(),
+        64,
+        "the tree a run says it measured is named by the digest of the tree it instrumented: {}",
+        session.workspace_digest()
+    );
+    let first = session
+        .catalog()
+        .mutants()
+        .first()
+        .expect("a mutant the catalog holds");
+    assert!(
+        session
+            .package_of(first.index)
+            .is_some_and(|named| !named.is_empty()),
+        "and a mutation belongs to the package a reader goes to for a test to write"
+    );
+    assert!(
+        !session.packages().is_empty(),
+        "which is one of the packages the session says it measures: {:?}",
+        session.packages()
+    );
+    session.close().expect("the session closes");
+}
