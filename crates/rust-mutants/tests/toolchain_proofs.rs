@@ -729,3 +729,61 @@ pub fn under(a: i32, b: i32, out: &mut i32) {
          every claim of it would be granted on a question nobody put: {established:?}"
     );
 }
+
+#[test]
+fn a_proof_names_the_braces_of_the_body_and_the_byte_after_the_first() {
+    let source = "\
+// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! One narrowing comparison over one body, whose braces are where they look.
+
+/// Writes one where `a` is at most `b`.
+pub fn under(a: i32, b: i32, out: &mut i32) {
+    if a <= b {
+        *out = 1;
+    }
+}
+";
+    let fixture = Fixture::copy("fixture-ignored");
+    let established = established_over(&fixture, &[("src/lib.rs", source)], &["src/lib.rs"]);
+    let proof = established
+        .proofs
+        .values()
+        .next()
+        .expect("the narrowing comparison names the body it gates");
+
+    let opening = source
+        .find("if a <= b {")
+        .map_or(0, |at| at + "if a <= b ".len());
+    let closing = source.rfind("    }\n}\n").map_or(0, |at| at + "    ".len());
+    let index = rust_mutants::syntax::LineIndex::new(source);
+    assert_eq!(
+        (proof.body_start.line, proof.body_start.byte_column),
+        {
+            let at = index.position(source, u32::try_from(opening).unwrap_or(0));
+            (at.line, at.byte_column)
+        },
+        "the body starts at its opening brace, which is where a coverage region beginning \
+         inside it begins"
+    );
+    assert_eq!(
+        (proof.body_end.line, proof.body_end.byte_column),
+        {
+            let at = index.position(source, u32::try_from(closing).unwrap_or(0));
+            (at.line, at.byte_column)
+        },
+        "and ends at its closing brace, which the region the compiler emits for what follows \
+         the branch sits on; one byte either way and a run that went past the branch reads as \
+         one that took it"
+    );
+    let marker = proof
+        .marker
+        .expect("the compiler took a marker in this body");
+    assert_eq!(
+        marker.at,
+        u32::try_from(opening).unwrap_or(0).saturating_add(1),
+        "and the call sits on the byte after the opening brace, so entering the body is what \
+         records it rather than reaching the branch"
+    );
+}

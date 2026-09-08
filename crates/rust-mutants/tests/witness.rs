@@ -484,9 +484,10 @@ pub fn f(a: i32, b: i32, c: i32, d: i32) -> i32 {
     let written =
         witness_file("src/lib.rs", source.as_bytes(), &conditions(&claims)).expect("witnessed");
     assert!(
-        written.text.contains(&format!("__rmw::body({lowest});")),
-        "one body carries one marker however many claims rest on it, and it names the lowest of \
-         them so the log that records it needs no second numbering: {}",
+        written.text.contains(&format!("{{__rmw::body({lowest});")),
+        "one body carries one marker however many claims rest on it, it names the lowest of \
+         them so the log that records it needs no second numbering, and it sits on the byte \
+         after the opening brace so that entering the body is what records it: {}",
         written.text
     );
 }
