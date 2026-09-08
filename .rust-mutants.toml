@@ -41,7 +41,7 @@ path = "crates/rust-mutants/src/prove.rs"
 item = "establish"
 rule = "delete-call-statement"
 original = "phase.end();"
-count = 3
+line = 201
 reason = "Phase ends its phase on Drop, so the explicit end at the tail of establish changes no recording; a_phase_guard_ends_its_phase_once_with_its_duration_and_phases_nest holds that"
 
 # The runner's own `Phase` is the same design and the same acceptance. Its
@@ -55,17 +55,6 @@ item = "observe"
 rule = "delete-call-statement"
 original = "phase.end();"
 reason = "the runner's Phase ends its phase on Drop, so the explicit end at the tail of observe changes no recording; a_phase_guard_ends_its_phase_once_with_its_duration_and_phases_nest holds that"
-
-# The witness check writes into a directory under the one the pristine build
-# already filled. Emptying the name it joins puts it in that directory instead,
-# which changes where cargo keeps artifacts and changes no answer any run
-# gives. The separation is a cache-layer choice (ADR 0010), not a premise.
-[[mutation.expect]]
-path = "crates/rust-mutants/src/prove.rs"
-item = "checking"
-rule = "string-to-empty"
-original = "\"witness\""
-reason = "the directory the witness check builds into is where artifacts are kept, not what the check establishes; every answer is the same either way"
 
 # The language server reads a report and says what it holds. Four of its
 # survivors are places where the mutation names the same value the code does.
@@ -126,15 +115,25 @@ reason = "the restore that always follows attempts the same path with the same c
 
 [[mutation.expect]]
 path = "crates/rust-mutants/src/prove.rs"
-item = "write"
-rule = "question-to-unwrap"
-original = "?"
-reason = "the restore that always follows attempts the same path with the same call, so no deterministic test parts the two; this is a fail-open the suite cannot reach rather than an equivalence, and a_source_the_pass_cannot_write_stops_it_rather_than_letting_it_vouch holds the contract"
-
-[[mutation.expect]]
-path = "crates/rust-mutants/src/prove.rs"
 item = "establish"
 rule = "question-to-unwrap"
 original = "?"
 line = 151
 reason = "the restore on the line above runs first and reports the same condition, so this one is reached only when a write failed and putting it back did not, which no deterministic test can arrange; a fail-open the suite cannot reach rather than an equivalence, and a_source_the_pass_cannot_write_stops_it_rather_than_letting_it_vouch holds the contract"
+
+# What the rewrite refuses when it cannot be applied, which it never is.
+#
+# `apply` fails when two splices cover the same bytes, and `plan` emits one
+# rewrite per span: two claims over one span become one site carrying both,
+# which is what `witness.rs::two_claims_over_one_span_are_one_rewrite_rather_than_two`
+# holds. So the splices handed to `apply` do not overlap, and the guard is the
+# one a later change to `plan` would meet rather than one this one reaches. It
+# stays because a half-rewritten file is a file the compiler would be asked a
+# question nobody wrote.
+[[mutation.expect]]
+path = "crates/rust-mutants/src/instrument/witness.rs"
+item = "witness_file"
+rule = "question-to-unwrap"
+original = "?"
+line = 204
+reason = "plan emits one rewrite per span, so the splices apply is handed never overlap and it never fails; two_claims_over_one_span_are_one_rewrite_rather_than_two holds that grouping, and this is an equivalence under it rather than an unreachable fail-open"

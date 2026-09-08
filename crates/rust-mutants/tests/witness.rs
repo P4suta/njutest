@@ -548,3 +548,35 @@ pub fn f(a: i32, b: i32, c: i32, d: i32) -> i32 {
         written.text
     );
 }
+
+#[test]
+fn two_claims_over_one_span_are_one_rewrite_rather_than_two() {
+    let source = "pub fn f(a: i32, b: i32) -> i32 { if a < b { 1 } else { 0 } }\n";
+    let mut claims = asked(source);
+    claims.extend(asked(source));
+    assert!(
+        claims.len() > 1,
+        "the same condition twice is what two claims over one span looks like"
+    );
+    for (at, one) in claims.iter_mut().enumerate() {
+        one.index = u32::try_from(at).unwrap_or(0);
+    }
+    let written = witness_file("src/lib.rs", source.as_bytes(), &conditions(&claims))
+        .expect("one rewrite of the span both claims name");
+    let over: Vec<(u32, u32)> = written
+        .sites
+        .iter()
+        .map(|site| (site.span.start, site.span.end))
+        .collect();
+    assert_eq!(
+        over.len(),
+        1,
+        "the claims name one span, so the file is rewritten there once: {over:?}"
+    );
+    assert_eq!(
+        written.sites[0].claims,
+        vec![0, 1],
+        "and the one rewrite carries both of them, or a claim would be vouched for by a witness \
+         nobody wrote"
+    );
+}

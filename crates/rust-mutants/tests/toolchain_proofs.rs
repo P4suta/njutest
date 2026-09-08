@@ -1168,3 +1168,216 @@ pub fn under(a: i32, b: i32, out: &mut i32) {
     );
     workspace.close().expect("close");
 }
+
+#[test]
+fn the_witness_check_builds_into_a_directory_of_its_own() {
+    let claimed = "\
+// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! A condition the pass witnesses.
+
+/// Writes one where `a` is under `b`.
+pub fn under(a: i32, b: i32, out: &mut i32) {
+    if a < b {
+        *out = 1;
+    }
+}
+";
+    let path = "src/lib.rs";
+    let fixture = Fixture::copy("fixture-ignored");
+    std::fs::write(fixture.root().join(path), claimed).expect("the fixture's own source");
+    let discovery = discovered_in(&[(path, claimed)]);
+    let cancel = Cancel::new();
+    let workspace = Workspace::open(
+        fixture.root(),
+        opening(&mjutest_devkit::paths::cargo_binary(), fixture.temp()),
+        &cancel,
+    )
+    .expect("the workspace opens");
+    let mut sources = std::collections::BTreeMap::new();
+    drop(sources.insert(path.to_owned(), claimed.as_bytes().to_vec()));
+    let established = rust_mutants::prove::establish(
+        &rust_mutants::prove::Asking {
+            workspace: &workspace,
+            discovery: &discovery,
+            sources: &sources,
+            options: &PrepareOptions {
+                tier: Tier::All,
+                branch_proofs: true,
+                ..PrepareOptions::default()
+            },
+        },
+        &cancel,
+        &rust_mutants::trace::Recorder::disabled(),
+    )
+    .expect("the pass runs");
+    assert!(
+        !established.comparable.is_empty(),
+        "the compiler took the condition, so the check that ran is the one being asked about"
+    );
+
+    let own = workspace.target_dir().join("witness");
+    assert!(
+        own.is_dir(),
+        "the tree the check is about is not the tree the run measures, and both name the same \
+         crates, so one target directory would hold whichever was compiled last: {}",
+        own.display()
+    );
+    workspace.close().expect("close");
+}
+
+#[test]
+fn a_marker_names_the_lowest_claim_of_the_body_it_stands_in() {
+    let claimed = "\
+// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! One body two claims gate, which one marker stands for.
+
+/// One where both bounds hold.
+pub fn both(a: i32, b: i32, c: i32, d: i32) -> i32 {
+    if a <= b && c <= d {
+        return 1;
+    }
+    0
+}
+";
+    let path = "src/lib.rs";
+    let fixture = Fixture::copy("fixture-ignored");
+    std::fs::write(fixture.root().join(path), claimed).expect("the fixture's own source");
+    let discovery = discovered_in(&[(path, claimed)]);
+    let cancel = Cancel::new();
+    let workspace = Workspace::open(
+        fixture.root(),
+        opening(&mjutest_devkit::paths::cargo_binary(), fixture.temp()),
+        &cancel,
+    )
+    .expect("the workspace opens");
+    let mut sources = std::collections::BTreeMap::new();
+    drop(sources.insert(path.to_owned(), claimed.as_bytes().to_vec()));
+    let established = rust_mutants::prove::establish(
+        &rust_mutants::prove::Asking {
+            workspace: &workspace,
+            discovery: &discovery,
+            sources: &sources,
+            options: &PrepareOptions {
+                tier: Tier::All,
+                branch_proofs: true,
+                ..PrepareOptions::default()
+            },
+        },
+        &cancel,
+        &rust_mutants::trace::Recorder::disabled(),
+    )
+    .expect("the pass runs");
+
+    let marked: Vec<(u32, u32)> = established
+        .proofs
+        .iter()
+        .filter_map(|(index, proof)| proof.marker.map(|marker| (*index, marker.index)))
+        .collect();
+    assert!(
+        marked.len() > 1,
+        "the two conditions share one body, so one marker stands for both: {marked:?}"
+    );
+    let lowest = marked
+        .iter()
+        .map(|(index, _)| *index)
+        .min()
+        .expect("a claim to be lowest");
+    assert!(
+        marked.iter().all(|(_, named)| *named == lowest),
+        "the one call a body carries names one claim, and reading it as reached is reading every \
+         claim of that body as reached, so it has to be the one they all agree on: {marked:?}"
+    );
+    workspace.close().expect("close");
+}
+
+#[test]
+fn a_file_the_tree_could_not_be_given_does_not_take_the_ones_after_it_with_it() {
+    let asked = "\
+// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! A condition discovery found, at an offset the source held for it does not have.
+
+/// Writes one where `a` is under `b`.
+pub fn under(a: i32, b: i32, out: &mut i32) {
+    if a <= b {
+        *out = 1;
+    }
+}
+";
+    let held = "\
+// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! Nothing.
+";
+    let refused = "\
+// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! A condition whose operands are the program's own, which the compiler refuses to vouch for.
+
+/// A version, ordered by a comparison the compiler does not vouch for.
+#[derive(PartialEq, PartialOrd)]
+pub struct Version(pub u32);
+
+/// Whether `a` is not after `b`.
+pub fn earlier(a: Version, b: Version) -> bool {
+    if a <= b {
+        return true;
+    }
+    false
+}
+";
+    let root = "\
+// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! Both of them.
+
+pub mod a;
+pub mod b;
+";
+    let fixture = Fixture::copy("fixture-ignored");
+    std::fs::write(fixture.root().join("src/lib.rs"), root).expect("the crate root");
+    std::fs::write(fixture.root().join("src/a.rs"), held).expect("the file with no claim in it");
+    std::fs::write(fixture.root().join("src/b.rs"), refused).expect("the file after it");
+    let discovery = discovered_in(&[("src/a.rs", asked), ("src/b.rs", refused)]);
+    let cancel = Cancel::new();
+    let workspace = Workspace::open(
+        fixture.root(),
+        opening(&mjutest_devkit::paths::cargo_binary(), fixture.temp()),
+        &cancel,
+    )
+    .expect("the workspace opens");
+    let mut sources = std::collections::BTreeMap::new();
+    drop(sources.insert("src/a.rs".to_owned(), held.as_bytes().to_vec()));
+    drop(sources.insert("src/b.rs".to_owned(), refused.as_bytes().to_vec()));
+    let established = rust_mutants::prove::establish(
+        &rust_mutants::prove::Asking {
+            workspace: &workspace,
+            discovery: &discovery,
+            sources: &sources,
+            options: &PrepareOptions {
+                tier: Tier::All,
+                branch_proofs: true,
+                ..PrepareOptions::default()
+            },
+        },
+        &cancel,
+        &rust_mutants::trace::Recorder::disabled(),
+    )
+    .expect("the pass runs");
+
+    assert!(
+        established.comparable.is_empty(),
+        "the first file could not be rewritten and the second holds a condition the compiler \
+         refuses, so a pass that stopped at the first would hand the check a tree without the \
+         second in it and read the silence as acceptance: {established:?}"
+    );
+    workspace.close().expect("close");
+}
