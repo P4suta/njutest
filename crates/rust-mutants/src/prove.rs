@@ -143,7 +143,7 @@ pub fn establish(
     let claims = &questions.conditions;
     let phase = trace.phase("witness");
     let root = workspace.snapshot_root().to_path_buf();
-    let written = write(&root, sources, &questions)?;
+    let written = witnessed(&root, sources, &questions)?;
     let checked = compile(
         &workspace.driver(cancel),
         &CompileOptions {
@@ -392,6 +392,26 @@ struct Rests {
     body: Option<crate::span::Span>,
     /// What the compiler must vouch for.
     witnesses: Vec<crate::syntax::branch::Witness>,
+}
+
+/// Writes the witness tree, putting the sources back where it could not finish.
+///
+/// A failure part of the way through leaves the files before it witnessed, so
+/// they go back before the failure is reported: a tree left witnessed is one
+/// every later phase would be about the wrong program, and the run that ends
+/// here is not always the process that looks at it next.
+fn witnessed(
+    root: &Path,
+    sources: &BTreeMap<String, Vec<u8>>,
+    questions: &Questions,
+) -> Result<Written, EngineError> {
+    match write(root, sources, questions) {
+        Ok(written) => Ok(written),
+        Err(error) => {
+            restore(root, sources)?;
+            Err(error)
+        }
+    }
 }
 
 /// Writes the witness tree over the pristine sources.

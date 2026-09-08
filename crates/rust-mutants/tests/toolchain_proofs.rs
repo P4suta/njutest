@@ -858,3 +858,83 @@ pub fn both(a: i32, b: i32, c: i32, d: i32, out: &mut i32) {
          with two is what tells adding from multiplying: {said:?} for {claimed} claims"
     );
 }
+
+#[test]
+fn a_snapshot_the_pass_cannot_write_into_is_a_failure_rather_than_a_silence() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let source = "\
+// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! One condition, which the pass would witness if it could write.
+
+/// Writes one where `a` is at most `b`.
+pub fn under(a: i32, b: i32, out: &mut i32) {
+    if a <= b {
+        *out = 1;
+    }
+}
+";
+    let fixture = Fixture::copy("fixture-ignored");
+    let files = [("src/lib.rs", source), ("src/other.rs", source)];
+    for (path, text) in files {
+        std::fs::write(fixture.root().join(path), text).expect("the fixture's own source");
+    }
+    let discovery = discovered_in(&files);
+    let cancel = Cancel::new();
+    let workspace = Workspace::open(
+        fixture.root(),
+        opening(&mjutest_devkit::paths::cargo_binary(), fixture.temp()),
+        &cancel,
+    )
+    .expect("the workspace opens");
+
+    let held = workspace.snapshot_root().join("src/other.rs");
+    let before = std::fs::metadata(&held)
+        .expect("the snapshot holds it")
+        .permissions();
+    std::fs::set_permissions(&held, std::fs::Permissions::from_mode(0o444))
+        .expect("a file nothing may write");
+    let mut sources = std::collections::BTreeMap::new();
+    for (path, text) in files {
+        drop(sources.insert(path.to_owned(), text.as_bytes().to_vec()));
+    }
+    let asked = rust_mutants::prove::Asking {
+        workspace: &workspace,
+        discovery: &discovery,
+        sources: &sources,
+        options: &PrepareOptions {
+            tier: Tier::All,
+            branch_proofs: true,
+            ..PrepareOptions::default()
+        },
+    };
+    let refused =
+        rust_mutants::prove::establish(&asked, &cancel, &rust_mutants::trace::Recorder::disabled());
+    drop(std::fs::set_permissions(&held, before));
+
+    let error = refused.expect_err(
+        "a tree the pass could not write into is one it must not carry on with: the witnesses \
+         are half there, and putting the sources back is what every later phase rests on",
+    );
+    assert!(
+        matches!(
+            error,
+            rust_mutants::EngineError::Session(
+                rust_mutants::workspace::SessionError::WriteFailed { .. }
+            )
+        ),
+        "and it says which file it could not write rather than which claim it could not make: \
+         {error}"
+    );
+    for (path, source) in &sources {
+        assert_eq!(
+            std::fs::read(workspace.snapshot_root().join(path)).unwrap_or_default(),
+            *source,
+            "and every file it did write is put back before it reports, because a tree left \
+             witnessed is one every later phase would be about the wrong program"
+        );
+    }
+    workspace.close().expect("close");
+}
