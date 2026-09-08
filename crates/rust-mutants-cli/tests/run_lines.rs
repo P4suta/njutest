@@ -297,3 +297,93 @@ fn the_findings_of_a_whole_run_are_in_one_order_and_said_once() {
          in, and says a finding both parts made once"
     );
 }
+
+/// One claim a reviewer of a part wrote, which the whole has to keep.
+fn claimed(why: &str) -> ExpectationDocument {
+    ExpectationDocument {
+        id: why.to_owned(),
+        locator: None,
+        reason: why.to_owned(),
+        outcome: "survived".to_owned(),
+        mutant: None,
+        covered: None,
+        standing: "unmatched".to_owned(),
+        actual: None,
+        why: None,
+    }
+}
+
+#[test]
+fn a_whole_run_is_what_its_parts_come_to_and_not_what_the_first_of_them_said() {
+    let part = |rows: Vec<RunMutantDocument>, milliseconds: u64, code: u8| {
+        let mut document = document();
+        document.run.duration_ms = milliseconds;
+        document.run.exit_code = code;
+        document.mutants = rows;
+        document
+    };
+    let killed = mutant(0, "killed", false);
+    let survived = mutant(1, "survived", false);
+    let unreached = {
+        let mut one = mutant(2, "not_run", false);
+        one.unreached = true;
+        one.not_run_reason = Some("unreached".to_owned());
+        one
+    };
+    let mut earlier = part(vec![killed], 1_000, 0);
+    earlier.expectations = vec![claimed("the first part's reviewer")];
+    let discharged = {
+        let mut one = mutant(3, "not_run", false);
+        one.not_run_reason = Some("discharged".to_owned());
+        one
+    };
+    let mut later = part(vec![survived, unreached, discharged], 250, 1);
+    later.expectations = vec![claimed("the second part's reviewer")];
+    let whole = rust_mutants_cli::report::run::merge(&[earlier, later]).expect("one whole");
+
+    assert_eq!(
+        whole.mutants.len(),
+        4,
+        "the whole holds every row its parts judged"
+    );
+    assert_eq!(
+        whole.accounting.cataloged, 4,
+        "and counts them: {:?}",
+        whole.accounting
+    );
+    assert_eq!(
+        (whole.accounting.unreached, whole.accounting.discharged),
+        (1, 1),
+        "including the column each reason is counted in: {:?}",
+        whole.accounting
+    );
+    assert_eq!(
+        (whole.accounting.not_run, whole.accounting.executed),
+        (2, 2),
+        "and what it did not run is not what it ran: {:?}",
+        whole.accounting
+    );
+    assert_eq!(
+        whole.expectations.len(),
+        2,
+        "and holds what every reviewer of every part claimed"
+    );
+    assert_eq!(whole.accounting.killed, 1);
+    assert_eq!(whole.accounting.survived, 1);
+    assert_eq!(
+        whole.run.duration_ms, 1_250,
+        "a whole took as long as its parts together"
+    );
+    assert_eq!(
+        whole.run.exit_code, 1,
+        "and earns what the whole earns, not what the part that ran first did"
+    );
+    assert!(
+        whole
+            .score
+            .as_ref()
+            .is_some_and(|score| score.decided == 2 && score.detected == 1),
+        "and scores the whole: {:?}",
+        whole.score
+    );
+}
