@@ -54,11 +54,17 @@ answer, and the tests here are mostly about those invariants.
 
 - It is released, widely used, and documented for a general audience. This is
   pre-1.0 and its contracts are still moving.
-- It works without the instrumentation this engine writes, so a workspace it
-  cannot instrument — `#![no_std]`, a proc-macro crate, a file reached by
-  `include!` — is one cargo-mutants can still mutate and this engine skips.
-  The skips are stated in every report rather than passed over silently, but
-  stated is not the same as done.
+- It works without the instrumentation this engine writes, so anything this
+  engine cannot instrument is something cargo-mutants can still mutate. What
+  that is now is narrow and named: a crate the host cannot lend `std` to (one
+  supplying a `#[panic_handler]` or a `#[global_allocator]`, `#![no_main]`, or
+  edition 2015), a fragment pasted in by `include!` where an expression goes,
+  and what a procedural macro expands to — the macro decides that during the
+  build, and a mutation is activated per test process, so the two never meet.
+  An ordinary `#![no_std]` crate, a proc-macro crate's own tests, and a file
+  `include!` pastes in at item position are all measured. The skips are stated
+  in every report rather than passed over silently, but stated is not the same
+  as done.
 - Its per-mutant build isolates a mutation completely. One snapshot cannot: a
   test that writes into the tree it is being measured in is a limitation this
   engine reports and cargo-mutants does not have.
