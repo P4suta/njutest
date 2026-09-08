@@ -185,3 +185,28 @@ fn a_failure_no_rewrite_accounts_for_is_one_that_vouches_for_nothing() {
         "and a check the compiler failed while saying nothing accounts for no claim at all"
     );
 }
+
+#[test]
+fn a_region_that_begins_exactly_where_the_body_does_is_the_body() {
+    let path = Path::new("src/lib.rs");
+    assert!(
+        !discharges(
+            &proof(),
+            path,
+            &[Block {
+                file: "src/lib.rs".into(),
+                start: Point {
+                    line: 10,
+                    column: 5
+                },
+                end: Point {
+                    line: 20,
+                    column: 5
+                },
+            }]
+        ),
+        "the body is [opening brace, closing brace), so a region that begins on the opening \
+         brace is the body's own and says it ran; reading that boundary the other way \
+         discharges a target that took the branch"
+    );
+}

@@ -411,3 +411,133 @@ fn a_file_the_witness_tree_does_not_hold_vouches_for_nothing() {
     );
     workspace.close().expect("close");
 }
+
+#[test]
+fn a_condition_the_compiler_takes_is_one_the_pass_vouches_for() {
+    let fixture = Fixture::copy("fixture-coverage");
+    let path = "src/lib.rs";
+    let source =
+        std::fs::read_to_string(fixture.root().join(path)).expect("the fixture's own source");
+    let discovery = discovered(path, &source);
+    assert!(
+        discovery
+            .candidates
+            .iter()
+            .any(|one| one.found.comparable.is_some()),
+        "this fixture holds conditions the syntax offers a comparison for"
+    );
+
+    let cancel = Cancel::new();
+    let workspace = Workspace::open(
+        fixture.root(),
+        opening(&mjutest_devkit::paths::cargo_binary(), fixture.temp()),
+        &cancel,
+    )
+    .expect("the workspace opens");
+    let mut sources = std::collections::BTreeMap::new();
+    drop(sources.insert(path.to_owned(), source.into_bytes()));
+    let established = rust_mutants::prove::establish(
+        &rust_mutants::prove::Asking {
+            workspace: &workspace,
+            discovery: &discovery,
+            sources: &sources,
+            options: &PrepareOptions {
+                tier: Tier::All,
+                branch_proofs: true,
+                ..PrepareOptions::default()
+            },
+        },
+        &cancel,
+        &rust_mutants::trace::Recorder::disabled(),
+    )
+    .expect("the pass runs");
+
+    assert!(
+        !established.comparable.is_empty(),
+        "a pass that vouched for nothing is one whose every discharge would rest on a question \
+         nobody put, and this tree's conditions are ones the compiler takes: {established:?}"
+    );
+    assert!(
+        !established.proofs.is_empty(),
+        "and a narrowing comparison names the body it gates, which is what a branch proof rests \
+         on: {established:?}"
+    );
+    workspace.close().expect("close");
+}
+
+#[test]
+fn a_widening_comparison_is_vouched_for_without_naming_a_body() {
+    let fixture = Fixture::copy("fixture-ignored");
+    let path = "src/lib.rs";
+    let source = "\
+// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! A condition that proves nothing about the body it gates, and no value to probe.
+
+/// Writes one where `a` is under `b`.
+pub fn under(a: i32, b: i32, out: &mut i32) {
+    if a < b {
+        *out = 1;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn one_is_under_two() {
+        let mut out = 0;
+        super::under(1, 2, &mut out);
+        assert_eq!(out, 1);
+    }
+}
+";
+    std::fs::write(fixture.root().join(path), source).expect("the source is the fixture's now");
+    let discovery = discovered(path, source);
+    assert!(
+        discovery
+            .candidates
+            .iter()
+            .all(|one| one.found.probe.is_none()),
+        "nothing here returns a value, so the pass is asked no probe at all"
+    );
+    assert!(
+        discovery
+            .candidates
+            .iter()
+            .any(|one| one.found.branch.is_none() && one.found.comparable.is_some()),
+        "widening `<` to `<=` proves nothing about the body and still compares"
+    );
+
+    let cancel = Cancel::new();
+    let workspace = Workspace::open(
+        fixture.root(),
+        opening(&mjutest_devkit::paths::cargo_binary(), fixture.temp()),
+        &cancel,
+    )
+    .expect("the workspace opens");
+    let mut sources = std::collections::BTreeMap::new();
+    drop(sources.insert(path.to_owned(), source.as_bytes().to_vec()));
+    let established = rust_mutants::prove::establish(
+        &rust_mutants::prove::Asking {
+            workspace: &workspace,
+            discovery: &discovery,
+            sources: &sources,
+            options: &PrepareOptions {
+                tier: Tier::All,
+                branch_proofs: true,
+                ..PrepareOptions::default()
+            },
+        },
+        &cancel,
+        &rust_mutants::trace::Recorder::disabled(),
+    )
+    .expect("the pass runs");
+
+    assert!(
+        !established.comparable.is_empty(),
+        "a comparison the compiler vouched for is one a guard may make, whether or not a branch \
+         proof rests on the same condition: {established:?}"
+    );
+    workspace.close().expect("close");
+}
