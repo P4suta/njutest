@@ -89,6 +89,27 @@ it come to twenty seconds warm. There is no large engine-side saving left to
 find; what is left is the yield of the layers, which is a different question
 and the one the numbers above are about.
 
+## What this engine cannot measure about itself, and what would change that
+
+A test that starts this engine inherits the activation the run composed and
+is refused (`RM0006`), and a test that inspects the tree it is being measured
+in reads a tree carrying the guards rather than the one a person wrote. Both
+refusals are correct, and `docs/limitations.md` says so. The cost is that the
+targets covering the engine's own wiring are exactly the ones a run of it
+cannot start, so what they would have killed is a survivor for as long as
+they are skipped, and a reader counting survivors has to count the skips too.
+
+The first of the two is worth revisiting. What makes an inherited activation
+dangerous is the catalog matching, and where it matches, this binary **is**
+the mutant the outer run activated — which is the answer the outer run wants.
+The runtime already refuses the rest: an identity it does not know activates
+nothing, a catalog that is not its own ends the process, and a record it may
+not append to is one it does not open. So `RM0006` is a better diagnostic for
+a case the guards already cover, and relaxing it where the binary's own
+catalog is the one active would let a run measure the tests that start it. It
+is a change to make on its own, with its own falsification: done wrongly, the
+guard stops protecting a person whose environment still names an old run.
+
 ## What E11 closed
 
 The infection question — the test ran the mutation and the mutation computed
