@@ -144,6 +144,22 @@ fn a_restored_target_keeps_reaching_its_whole_file_and_narrows_nothing() {
                 .contains(&PathBuf::from("src/other.rs"), Point { line: 1, column: 1 })),
         "it reaches the files it reached and no others"
     );
+    let whole = coverage.iter().next().expect("one block");
+    assert_eq!(
+        whole.start,
+        Point { line: 0, column: 0 },
+        "and it begins before the first thing in the file: a block that starts at the \
+         first line leaves whatever is above it outside, and what a restored target \
+         narrows with is nothing at all"
+    );
+    assert_eq!(
+        whole.end,
+        Point {
+            line: u32::MAX,
+            column: u32::MAX,
+        },
+        "and ends after the last"
+    );
 }
 
 #[test]

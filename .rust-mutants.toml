@@ -153,3 +153,19 @@ item = "addressed"
 rule = "first-to-last"
 original = "first"
 reason = "a locator with no count names one mutation and one with a count was narrowed by the line it carries, so the first and the last of what it names are written on the same line; a_locator_that_states_a_count_names_that_many_and_refuses_any_other_number and a_mutant_is_located_by_its_locator_and_a_moved_line_is_reported_not_guessed hold both halves"
+
+# Writing a checkpoint turns the state into text and then writes it, and the
+# first of those cannot fail: `State` is strings, numbers, and vectors of the
+# same, and `serde_json` refuses only a map whose keys are not strings or a
+# `Serialize` that returns an error of its own. Neither is reachable from this
+# type, and the type is what the invariant is about. The round trip is held by
+# `checkpoint.rs::what_an_interrupted_run_saved_is_what_the_next_one_reads`,
+# which writes a state and reads the same one back; if the type ever grows a
+# field that can refuse, that test is where it shows.
+[[mutation.expect]]
+path = "crates/mjutest-cli/src/checkpoint.rs"
+item = "write"
+rule = "question-to-unwrap"
+original = "?"
+line = 256
+reason = "serialising a State cannot fail: it is strings, numbers and vectors of them, and what_an_interrupted_run_saved_is_what_the_next_one_reads holds the round trip that would show a field which can refuse"
