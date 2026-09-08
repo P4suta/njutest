@@ -69,6 +69,18 @@ body". The record now carries which markers the tree actually holds, so such a
 body falls back to the coverage region and, with nothing measured, its targets
 run.
 
+And the measurement said where the layer does not reach yet. A `--dry-run` of
+this repository's own engine — 5,716 mutants against 67 targets — removes
+88.6% of the pairs and 93.8% of the tests, and **every one of them by reach**:
+`discharged=0`. The witness pass claims almost nothing here, because the
+conditions this engine writes compare text, and the sealed trait named the
+primitives alone. It now names `str` and a slice of one of those as well,
+which is sound for the same reason the primitives are; what remains refused is
+a comparison between two *different* types (`Vec<u8>` against `&[u8]`,
+`String` against `&str`), because the witness names one type for both
+operands. That is where the next widening is, and the `witness` note is what
+will say whether it paid.
+
 ## What E10 closed
 
 The measurement was a second full build. Instrumenting for coverage reaches
