@@ -6,7 +6,8 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use rust_mutants_cli::report::run::{RunDocument, lines};
+use rust_mutants_cli::report::lines;
+use rust_mutants_cli::report::run::RunDocument;
 
 fuzz_target!(|text: &str| {
     let Ok(document) = serde_json::from_str::<RunDocument>(text) else {

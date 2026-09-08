@@ -79,6 +79,9 @@ jobs:
           RUSTDOCFLAGS: "-D warnings"
       - name: repository gates (seam ratchet, dependency direction, fixtures, release consistency)
         run: cargo xtask all
+      - name: fuzz targets type-check against the API they fuzz
+        run: cargo check --locked --all-targets
+        working-directory: fuzz
       - name: typos
         uses: crate-ci/typos@3e8e1dbf18c56a9ed625484ca941497c73e7da2c # v1.47.2
       - name: taplo

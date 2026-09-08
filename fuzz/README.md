@@ -36,6 +36,7 @@ so each has to fail closed rather than plausibly.
 | `cargo_messages` | never panics; a diagnostic it accepts either names a whole primary span or names none |
 | `cargo_metadata` | never panics; every package and target it accepts is named and rooted |
 | `infection_log` | never panics; every index it accepts is one the catalog holds |
+| `touch_log` | never panics; every index it accepts is one the catalog holds, and every record it attributes to a test is one that test and the target can both see |
 | `duration` | never panics; what it renders it reads back as the same duration |
 | `run_report` | never panics; an accepted run report renders, and one the reader refuses says why rather than panicking |
 

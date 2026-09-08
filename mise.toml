@@ -59,8 +59,8 @@ run = [
 ]
 
 [tasks.lint]
-description = "Run clippy, rustdoc, the repository gates, spelling, TOML, and workflow linters"
-depends = ["clippy", "doc", "gates"]
+description = "Run clippy, rustdoc, the repository gates, the fuzz targets' own type check, spelling, TOML, and workflow linters"
+depends = ["clippy", "doc", "gates", "fuzz:check"]
 run = ["typos", "actionlint"]
 
 [tasks."build:examples"]
@@ -101,6 +101,11 @@ run = "cargo deny --locked check"
 [tasks.audit]
 description = "Check the dependency graph against the RustSec advisory database"
 run = "cargo audit --deny warnings"
+
+[tasks."fuzz:check"]
+description = "Type-check every cargo-fuzz target on the toolchain the workspace uses, so one cannot rot against an API change unnoticed"
+dir = "fuzz"
+run = "cargo check --locked --all-targets"
 
 [tasks."fuzz:build"]
 description = "Build every cargo-fuzz target (nightly, sanitizer) without running one"

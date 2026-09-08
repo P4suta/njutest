@@ -206,6 +206,13 @@ step: the source files, the manifest stanzas (each with `bench = false`, so
 `cargo bench` never builds a sanitizer target), the README rows, and the
 weekly workflow's matrix.
 
+Being standalone is what makes them cheap to run and easy to lose: nothing in
+`cargo test --workspace` compiles them, so a target can rot against an API
+change and say nothing until the weekly job. `mise run fuzz:check` — part of
+`mise run lint`, and a step of the CI lint job — type-checks the crate on the
+toolchain the workspace uses, which is the cheapest thing that would have
+noticed.
+
 ### Coverage
 
 The `coverage` job in `ci.yml` runs the suite once under `cargo llvm-cov` and

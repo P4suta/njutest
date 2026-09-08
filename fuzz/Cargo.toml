@@ -167,6 +167,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "touch_log"
+path = "fuzz_targets/touch_log.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "duration"
 path = "fuzz_targets/duration.rs"
 test = false
