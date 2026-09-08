@@ -130,3 +130,79 @@ fn a_mutant_nothing_delays_is_judged_once() {
     assert_eq!(judged.attempts.len(), 1);
     session.close().expect("close");
 }
+
+/// An observer that keeps what it was told rather than drawing it.
+#[derive(Default)]
+struct Watching {
+    /// How many mutants the run said it was about to judge.
+    total: u32,
+    /// How many it said it had finished.
+    finished: u32,
+}
+
+impl rust_mutants::run::Observer for Watching {
+    fn starting(&mut self, total: u32) {
+        self.total = total;
+    }
+
+    fn judged(&mut self, _judged: &rust_mutants::run::Judged, completed: u32, _total: u32) {
+        self.finished = completed;
+    }
+}
+
+#[test]
+fn one_job_and_several_judge_a_catalog_the_same_way() {
+    let fixture = Fixture::copy("fixture-simple");
+    let session = prepared(&fixture, &[]);
+    let quiet = Quiet::default();
+    let cancel = Cancel::new();
+
+    let answered = |jobs: usize| {
+        let mut watching = Watching::default();
+        let run = rust_mutants::run::run(
+            &session,
+            &rust_mutants::run::Options {
+                expectations: &[],
+                quiet: &quiet,
+                equivalence: None,
+                jobs,
+                args: &[],
+                shard: None,
+                outcomes: None,
+                filter: None,
+                fail_fast: false,
+            },
+            &cancel,
+            &mut watching,
+        )
+        .expect("the run answers");
+        assert_eq!(
+            usize::try_from(watching.total).unwrap_or(0),
+            run.judged.len(),
+            "a run says how many mutants it is about to judge before it judges one, or a \
+             caller drawing progress has no denominator"
+        );
+        assert_eq!(
+            watching.finished, watching.total,
+            "and says so about each of them as it finishes"
+        );
+        run.judged
+            .iter()
+            .map(|one| (one.index, one.outcome, one.target.clone()))
+            .collect::<Vec<_>>()
+    };
+
+    let alone = answered(1);
+    let together = answered(4);
+    assert!(
+        alone.len() > 1,
+        "this fixture holds more than one mutation: {alone:?}"
+    );
+    assert_eq!(
+        alone, together,
+        "measuring one mutant at a time and measuring several at once are two ways of doing \
+         the same work, so a catalog answers the same either way; a run that differed would \
+         make the answer depend on how busy the machine was"
+    );
+    session.close().expect("the session closes");
+}

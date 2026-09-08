@@ -212,3 +212,27 @@ item = "Run::exit_code"
 rule = "return-default"
 original = "EXIT_DETECTED"
 reason = "EXIT_DETECTED is zero and so is u8::default(), so a clean run exits with the same status either way; the_exit_code_says_what_the_run_established_and_nothing_more holds that number, and this is an equivalence under it rather than a fail-open the suite cannot reach"
+
+# Which way a run measures its mutants, which is two ways of one thing.
+#
+# Measuring one mutant at a time and measuring several at once are the same
+# work done differently, and a catalog answers the same either way: that is
+# what the two strategies are for, and it is what
+# `toolchain_run.rs::one_job_and_several_judge_a_catalog_the_same_way` holds,
+# by running one catalog both ways and comparing every row. Swapping which
+# number picks which strategy therefore changes no answer - it changes how
+# long the run takes, on a machine whose load the answer may not depend on.
+[[mutation.expect]]
+path = "crates/rust-mutants/src/run.rs"
+item = "run"
+rule = "negate-condition"
+original = "jobs(options.jobs) == 1"
+reason = "serially and the pool are two ways of doing one thing and a catalog answers the same either way; one_job_and_several_judge_a_catalog_the_same_way holds that by running one catalog both ways, and this is an equivalence under it rather than a fail-open the suite cannot reach"
+
+[[mutation.expect]]
+path = "crates/rust-mutants/src/run.rs"
+item = "run"
+rule = "eq-to-neq"
+original = "=="
+line = 709
+reason = "serially and the pool are two ways of doing one thing and a catalog answers the same either way; one_job_and_several_judge_a_catalog_the_same_way holds that by running one catalog both ways, and this is an equivalence under it rather than a fail-open the suite cannot reach"
