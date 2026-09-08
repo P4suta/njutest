@@ -1049,3 +1049,35 @@ fn the_parts_of_one_catalog_merge_into_the_verdict_neither_of_them_could_say() {
     );
     assert_eq!(whole["accounting"]["mutants"]["killed"], 4);
 }
+
+#[test]
+fn a_run_that_was_given_a_package_says_it_looked_at_that_one() {
+    let fixture = fixture("fixture-workspace");
+
+    let output = verify(&fixture, &["--package", "fixture-core", "--ui=plain"]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let document = document(&fixture);
+
+    assert_eq!(
+        document["run_kind"], "scoped",
+        "a run that was given one package of two looked at one package of two, and the \
+         kind is what the report's own audit reads to decide which assurance it may \
+         claim: {stdout}"
+    );
+    assert_ne!(
+        document["verdict"], "ASSURED",
+        "so the whole-workspace assurance is not one this run can reach. Naming the \
+         wider claim after the narrower look is the single sentence a reader would act \
+         on hardest and could not check: {stdout}"
+    );
+    let packages: Vec<&str> = document["targets"]
+        .as_array()
+        .expect("targets")
+        .iter()
+        .filter_map(|target| target["package"].as_str())
+        .collect();
+    assert!(
+        packages.iter().all(|package| *package == "fixture-core"),
+        "and it ran the package it was given and no other: {packages:?}"
+    );
+}
