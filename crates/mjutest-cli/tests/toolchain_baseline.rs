@@ -9,7 +9,9 @@
     reason = "a test reports a setup failure by panicking and asserts with panics"
 )]
 
-use mjutest_cli::assure::baseline::{Baseline, Measured, Reporting, observe};
+use mjutest_cli::assure::baseline::{
+    Baseline, Measured, RAN_NOTHING, Reporting, observe, refused, status_of,
+};
 use mjutest_cli::report::TargetStatus;
 use mjutest_cli::trace::Recorder;
 use mjutest_cli::watch::Watch;
@@ -170,4 +172,160 @@ fn a_target_libtest_skipped_every_test_of_is_not_a_target_nothing_is_known_about
             measured.target.name()
         );
     }
+}
+
+#[test]
+fn what_one_target_came_to_is_read_off_what_the_engine_said_about_it() {
+    use rust_mutants::outcome::Outcome;
+
+    for (outcome, ignored, output, status, says) in [
+        (Outcome::Survived, 0, "", TargetStatus::Passed, None),
+        (Outcome::Survived, 3, "", TargetStatus::Passed, None),
+        (
+            Outcome::Inconclusive,
+            1,
+            "",
+            TargetStatus::Skipped,
+            Some("libtest was told to skip every test of it: 1 ignored"),
+        ),
+        (
+            Outcome::Inconclusive,
+            2,
+            "",
+            TargetStatus::Skipped,
+            Some("libtest was told to skip every test of it: 2 ignored"),
+        ),
+        (
+            Outcome::Inconclusive,
+            0,
+            "",
+            TargetStatus::Missing,
+            Some(RAN_NOTHING),
+        ),
+    ] {
+        let (was, said) = status_of(outcome, ignored, output);
+        assert_eq!(was, status, "{outcome:?} with {ignored} ignored");
+        assert_eq!(said.as_deref(), says, "{outcome:?} with {ignored} ignored");
+    }
+}
+
+#[test]
+fn a_target_that_did_not_pass_says_what_a_reader_acts_on() {
+    use rust_mutants::outcome::Outcome;
+
+    for (outcome, ignored, output, status, says) in [
+        (
+            Outcome::Killed,
+            0,
+            "   Compiling pkg\ntest src/lib.rs - f (line 7) ... FAILED\n",
+            TargetStatus::Failed,
+            Some("test src/lib.rs - f (line 7) ... FAILED"),
+        ),
+        (
+            Outcome::Killed,
+            0,
+            "   Compiling pkg v0.1.0\nerror: could not compile\n",
+            TargetStatus::Failed,
+            Some("error: could not compile"),
+        ),
+        (
+            Outcome::Killed,
+            0,
+            "   only a build log\n",
+            TargetStatus::Failed,
+            Some("only a build log"),
+        ),
+        (
+            Outcome::Killed,
+            0,
+            "",
+            TargetStatus::Failed,
+            Some("the target failed"),
+        ),
+        (
+            Outcome::TimedOut,
+            0,
+            "",
+            TargetStatus::Failed,
+            Some("the target ran out of time"),
+        ),
+        (
+            Outcome::NotRun,
+            0,
+            "",
+            TargetStatus::Missing,
+            Some("the target was not run, so nothing was observed"),
+        ),
+        (
+            Outcome::Errored,
+            0,
+            "",
+            TargetStatus::Missing,
+            Some("the target could not be started, so nothing was observed"),
+        ),
+        (
+            Outcome::Errored,
+            0,
+            "error: the harness died\n",
+            TargetStatus::Missing,
+            Some("error: the harness died"),
+        ),
+    ] {
+        let (was, said) = status_of(outcome, ignored, output);
+        assert_eq!(
+            was, status,
+            "{outcome:?} with {ignored} ignored is {status:?}"
+        );
+        assert_eq!(
+            said.as_deref(),
+            says,
+            "{outcome:?} with {ignored} ignored says what a reader acts on"
+        );
+    }
+}
+
+#[test]
+fn a_target_that_failed_quotes_the_test_that_failed_and_not_the_build_log() {
+    use rust_mutants::outcome::Outcome;
+
+    let (_was, said) = status_of(
+        Outcome::Killed,
+        0,
+        "   Compiling fixture v0.1.0\ntest adds ... ok\nerror: unrelated\ntest doubling ... FAILED\n",
+    );
+    assert_eq!(
+        said.as_deref(),
+        Some("test doubling ... FAILED"),
+        "a target cargo runs prints a build log first, and which crate was compiled is \
+         true and not what somebody looking at a failing test needs. The line has to \
+         both name a test and say it failed: a test that passed names one and did not, \
+         and taking either would quote the wrong line"
+    );
+}
+
+#[test]
+fn a_workspace_that_does_not_compile_is_a_finding_and_not_an_error() {
+    let broken = mjutest_cli::error::RunnerError::from(rust_mutants::EngineError::from(
+        rust_mutants::workspace::SessionError::PristineBroken {
+            first: "error[E0425]: cannot find value `x`".to_owned(),
+        },
+    ));
+    let said = refused(&broken).expect("a build failure is what this run says about the tree");
+    assert_eq!(
+        said.failure.as_deref(),
+        Some("error[E0425]: cannot find value `x`"),
+        "the compiler's first line is what a person reading the report acts on"
+    );
+    assert!(said.targets.is_empty());
+
+    let elsewhere = mjutest_cli::error::RunnerError::from(rust_mutants::EngineError::from(
+        rust_mutants::workspace::SessionError::NoTargets {
+            packages: vec!["pkg".to_owned()],
+        },
+    ));
+    assert!(
+        refused(&elsewhere).is_none(),
+        "every other refusal is about this run rather than about the tree, and turning \
+         one into a finding would report a broken run as a broken workspace"
+    );
 }
