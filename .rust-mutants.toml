@@ -1,8 +1,14 @@
 # SPDX-FileCopyrightText: 2026 mjutest contributors
 # SPDX-License-Identifier: MIT OR Apache-2.0
 
-# rust-mutants against its own engine. `mise run dogfood:engine:audit` runs
+# rust-mutants against this repository. `mise run dogfood:engine:audit` runs
 # this and then re-decides what the run reported from the recording it kept.
+#
+# Every package of the workspace is here, the runner included. `mise run
+# dogfood` points the runner at the workspace, which is the runner measuring
+# somebody else; this is the runner being measured, and the two are different
+# questions. A repository that says it measures itself and leaves half of
+# itself out is one whose scope does not match its claim.
 #
 # A survivor here is a test to write or an acceptance to record below with a
 # reason. `cargo xtask engine-audit <run> --ledger .rust-mutants.toml` refuses
@@ -12,7 +18,7 @@
 version = 1
 
 [project]
-packages = ["rust-mutants", "rust-mutants-cli", "xtask"]
+packages = ["rust-mutants", "rust-mutants-cli", "mjutest-cli", "xtask"]
 
 [mutation]
 tier = "all"

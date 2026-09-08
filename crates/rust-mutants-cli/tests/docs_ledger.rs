@@ -93,10 +93,13 @@ fn the_engine_ledger_of_this_repository_is_one_the_reader_accepts() {
         vec![
             "rust-mutants".to_owned(),
             "rust-mutants-cli".to_owned(),
+            "mjutest-cli".to_owned(),
             "xtask".to_owned(),
         ],
-        "the ledger measures the engine, the command line it ships behind, and the audit that \
-         re-decides its runs"
+        "the ledger measures every package of this workspace: the engine, the command line it \
+         ships behind, the runner built on it, and the audit that re-decides its runs. A \
+         repository that says it measures itself and leaves half of itself out is one whose \
+         scope does not match its claim"
     );
     assert_eq!(
         config.mutation.tier,
