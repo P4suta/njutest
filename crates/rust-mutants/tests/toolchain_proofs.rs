@@ -599,3 +599,133 @@ fn said(recorder: &rust_mutants::trace::Recorder, established: &rust_mutants::pr
          on to do: {unpaired:?}"
     );
 }
+
+/// One `establish` over the files given, with `sources` holding only the ones named.
+fn established_over(
+    fixture: &Fixture,
+    files: &[(&str, &str)],
+    holding: &[&str],
+) -> rust_mutants::prove::Established {
+    for (path, source) in files {
+        if holding.contains(path) {
+            std::fs::write(fixture.root().join(path), source).expect("the fixture's own source");
+        }
+    }
+    let discovery = discovered_in(files);
+    let cancel = Cancel::new();
+    let workspace = Workspace::open(
+        fixture.root(),
+        opening(&mjutest_devkit::paths::cargo_binary(), fixture.temp()),
+        &cancel,
+    )
+    .expect("the workspace opens");
+    let mut sources = std::collections::BTreeMap::new();
+    for (path, source) in files {
+        if holding.contains(path) {
+            drop(sources.insert((*path).to_owned(), source.as_bytes().to_vec()));
+        }
+    }
+    let established = rust_mutants::prove::establish(
+        &rust_mutants::prove::Asking {
+            workspace: &workspace,
+            discovery: &discovery,
+            sources: &sources,
+            options: &PrepareOptions {
+                tier: Tier::All,
+                branch_proofs: true,
+                ..PrepareOptions::default()
+            },
+        },
+        &cancel,
+        &rust_mutants::trace::Recorder::disabled(),
+    )
+    .expect("the pass runs");
+    workspace.close().expect("close");
+    established
+}
+
+#[test]
+fn a_claim_that_names_no_body_does_not_stop_the_pass_looking_at_the_rest() {
+    let source = "\
+// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! A condition whose first comparison proves nothing and whose second proves something.
+
+/// Writes one where both hold.
+pub fn both(a: i32, b: i32, c: i32, d: i32, out: &mut i32) {
+    if a < b && c <= d {
+        *out = 1;
+    }
+}
+";
+    let fixture = Fixture::copy("fixture-ignored");
+    let established = established_over(&fixture, &[("src/lib.rs", source)], &["src/lib.rs"]);
+    assert!(
+        established
+            .proofs
+            .values()
+            .any(|proof| proof.marker.is_some()),
+        "widening `<` names no body and narrowing `<=` does; a pass that stopped at the first \
+         would leave the second without the marker its proof rests on: {established:?}"
+    );
+}
+
+#[test]
+fn a_file_the_pass_cannot_read_does_not_stop_it_writing_the_others() {
+    let refusable = "\
+// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! A comparison between a type of the program's own, which the compiler refuses to vouch for.
+
+/// A number the program compares its own way.
+#[derive(PartialEq, PartialOrd)]
+pub struct Own(pub i32);
+
+/// Writes one where `a` is under `b`.
+pub fn under(a: Own, b: Own, out: &mut i32) {
+    if a < b {
+        *out = 1;
+    }
+}
+";
+    let fixture = Fixture::copy("fixture-ignored");
+    let gone = "\
+// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! A file with a claim of its own, which no source is held for.
+
+/// Writes one where `a` is under `b`.
+pub fn under(a: i32, b: i32, out: &mut i32) {
+    if a < b {
+        *out = 1;
+    }
+}
+";
+    let files = [("src/gone.rs", gone), ("src/lib.rs", refusable)];
+    assert!(
+        discovered_in(&[("src/gone.rs", gone)])
+            .candidates
+            .iter()
+            .any(|one| one.found.comparable.is_some()),
+        "and the first file has a claim of its own, so the pass meets a file it cannot read \
+         before it reaches the second"
+    );
+    assert!(
+        discovered_in(&files)
+            .candidates
+            .iter()
+            .any(|one| one.found.comparable.is_some()),
+        "the second file holds a comparison the syntax offers and the compiler will refuse, \
+         which is what makes the difference visible at all"
+    );
+    let established = established_over(&fixture, &files, &["src/lib.rs"]);
+    assert!(
+        established.comparable.is_empty(),
+        "the first file has no source to write, and a pass that stopped there would leave the \
+         second unwritten too - so the compiler would see a pristine tree, say nothing, and \
+         every claim of it would be granted on a question nobody put: {established:?}"
+    );
+}

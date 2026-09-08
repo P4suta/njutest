@@ -514,3 +514,36 @@ fn a_value_that_is_not_in_the_source_is_refused_rather_than_written_around() {
          could not write costs: {error}"
     );
 }
+
+#[test]
+fn the_marker_names_the_lowest_claim_however_they_arrive() {
+    let source = "\
+pub fn f(a: i32, b: i32, c: i32, d: i32) -> i32 {
+    if a <= b && c <= d {
+        return 1;
+    }
+    0
+}
+";
+    let mut claims = claimed(source);
+    claims.sort_by_key(|one| std::cmp::Reverse(one.index));
+    let lowest = claims
+        .iter()
+        .map(|one| one.index)
+        .min()
+        .expect("a claim to be lowest");
+    assert_ne!(
+        claims.first().map(|one| one.index),
+        Some(lowest),
+        "handed to it highest first, so an order the writer did not impose is one it took"
+    );
+
+    let written =
+        witness_file("src/lib.rs", source.as_bytes(), &conditions(&claims)).expect("witnessed");
+    assert!(
+        written.text.contains(&format!("__rmw::body({lowest});")),
+        "the marker names the lowest claim whatever order they arrived in, because the log that \
+         records it is numbered by the catalog and not by the caller: {}",
+        written.text
+    );
+}

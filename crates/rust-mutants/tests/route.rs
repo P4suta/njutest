@@ -332,3 +332,32 @@ fn a_route_every_proof_removed_says_so_and_widens_nothing() {
         "and it keeps nobody, so there is nothing for it to name but the proofs"
     );
 }
+
+#[test]
+fn what_a_route_narrows_an_execution_to_is_one_ordered_list_of_names() {
+    let route = Route::Block {
+        reaching: vec![
+            rust_mutants::session::Reaches {
+                target: "demo/test/wide".to_owned(),
+                tests: rust_mutants::session::Asked::Every,
+            },
+            rust_mutants::session::Reaches {
+                target: "demo/lib/demo".to_owned(),
+                tests: rust_mutants::session::Asked::Every,
+            },
+        ],
+        discharged: vec![rust_mutants::session::Discharge {
+            target: "demo/lib/demo".to_owned(),
+            proof: rust_mutants::session::NEVER_INFECTED,
+        }],
+        fallback: None,
+    };
+    assert_eq!(
+        route.narrowing().unwrap_or_default(),
+        ["demo/lib/demo", "demo/test/wide"],
+        "this is the one place a narrowing is decided, and a caller with its own evidence runs \
+         exactly what it names: a target said twice is a second process for an answer already \
+         had, and an order that follows how the targets happened to be offered makes two runs \
+         of one tree ask two different questions"
+    );
+}
