@@ -6,7 +6,8 @@
 use mjutest_cli::config::Contract;
 use mjutest_cli::report::merge::{MergeError, merge};
 use mjutest_cli::report::{
-    MutantRecord, Position, Report, RunKind, TargetRecord, TargetStatus, Verdict,
+    Finding, FindingKind, Limitation, MutantRecord, Position, Report, RunKind, TargetRecord,
+    TargetStatus, Timing, Verdict,
 };
 
 fn part(shard: &str, mutants: &[(&str, &str)]) -> Report {
@@ -126,5 +127,164 @@ fn a_mutant_two_parts_both_judged_says_the_parts_were_cut_differently() {
         matches!(&refused, MergeError::Overlapping { mutant } if mutant == &both),
         "every mutant belongs to exactly one part, so two parts holding one of them is \
          two runs cut with different N: {refused}"
+    );
+}
+
+/// One mutant of a given disposition, so a part can hold more than the one that was killed.
+fn disposed(id: &str, outcome: &str, reused: bool) -> MutantRecord {
+    MutantRecord {
+        id: id.to_owned(),
+        display_id: id.get(..8).unwrap_or(id).to_owned(),
+        path: "src/lib.rs".to_owned(),
+        rule: "gt-to-ge@1".to_owned(),
+        position: Position {
+            line: 1,
+            column: 1,
+            character_column: 1,
+        },
+        outcome: outcome.to_owned(),
+        killed_by: None,
+        reused,
+        source_run_id: reused.then(|| "an earlier run".to_owned()),
+    }
+}
+
+#[test]
+fn the_whole_counts_every_disposition_its_parts_held() {
+    let mut one = part("1/2", &[]);
+    one.mutants = vec![
+        disposed(&"a".repeat(64), "killed", true),
+        disposed(&"b".repeat(64), "survived", true),
+        disposed(&"c".repeat(64), "compile-rejected", false),
+    ];
+    let mut two = part("2/2", &[]);
+    two.mutants = vec![
+        disposed(&"d".repeat(64), "timed_out", false),
+        disposed(&"e".repeat(64), "unreached", false),
+        disposed(&"f".repeat(64), "equivalent", false),
+        disposed(&"g".repeat(64), "inconclusive", false),
+    ];
+
+    let counts = merge(&[one, two]).expect("two parts").accounting.mutants;
+
+    assert_eq!(counts.cataloged, 7);
+    assert_eq!(counts.killed, 1);
+    assert_eq!(counts.survived, 1);
+    assert_eq!(counts.rejected, 1);
+    assert_eq!(counts.timed_out, 1);
+    assert_eq!(counts.unreached, 1);
+    assert_eq!(counts.equivalent, 1);
+    assert_eq!(counts.reused_killed, 1);
+    assert_eq!(counts.reused_survived, 1);
+    assert_eq!(
+        counts.executed, 4,
+        "killed, survived, timed out, and the one this release has no column for were \
+         each put to a test; unreached and equivalent were not, and a disposition a \
+         later release adds is executed until something says otherwise"
+    );
+}
+
+#[test]
+fn what_both_parts_state_the_whole_states_once() {
+    let stated = Limitation::new("touch-not-recorded", "the guards recorded nothing");
+    let raised = Finding::new(
+        FindingKind::SurvivingMutant,
+        "aaaaaaaa",
+        "nothing noticed it",
+    );
+    let mut one = part("1/2", &[("a".repeat(64).as_str(), "killed")]);
+    one.limitations = vec![stated.clone()];
+    one.findings = vec![raised.clone()];
+    let mut two = part("2/2", &[("b".repeat(64).as_str(), "killed")]);
+    two.limitations = vec![stated.clone()];
+    two.findings = vec![raised.clone()];
+
+    let whole = merge(&[one, two]).expect("two parts");
+
+    assert_eq!(
+        whole.limitations,
+        vec![stated],
+        "both parts measured the same baseline, so both state the same limitation about \
+         it; a whole that said it once per part would read as one limitation per shard: \
+         {:?}",
+        whole.limitations
+    );
+    assert_eq!(whole.findings, vec![raised]);
+}
+
+#[test]
+fn a_finding_only_one_part_raised_is_carried_by_the_whole() {
+    let mut one = part("1/2", &[("a".repeat(64).as_str(), "killed")]);
+    one.findings = vec![Finding::new(
+        FindingKind::SurvivingMutant,
+        "aaaaaaaa",
+        "nothing noticed it",
+    )];
+    let two = part("2/2", &[("b".repeat(64).as_str(), "killed")]);
+
+    let whole = merge(&[one, two]).expect("two parts");
+
+    assert_eq!(whole.findings.len(), 1, "{:?}", whole.findings);
+    assert_eq!(
+        whole.verdict,
+        Verdict::Insufficient,
+        "a finding in one part is a finding of the whole, and the whole is what carries \
+         the verdict it makes"
+    );
+}
+
+#[test]
+fn the_whole_ran_from_the_first_start_to_the_last_finish_and_cost_what_the_parts_cost() {
+    let mut one = part("1/2", &[("a".repeat(64).as_str(), "killed")]);
+    one.timing = Timing {
+        started: "2026-09-08T10:00:00Z".to_owned(),
+        finished: "2026-09-08T10:05:00Z".to_owned(),
+        duration_ms: 300_000,
+    };
+    let mut two = part("2/2", &[("b".repeat(64).as_str(), "killed")]);
+    two.timing = Timing {
+        started: "2026-09-08T09:00:00Z".to_owned(),
+        finished: "2026-09-08T09:10:00Z".to_owned(),
+        duration_ms: 600_000,
+    };
+
+    let whole = merge(&[one, two]).expect("two parts").timing;
+
+    assert_eq!(whole.started, "2026-09-08T09:00:00Z", "the earliest start");
+    assert_eq!(whole.finished, "2026-09-08T10:05:00Z", "the latest finish");
+    assert_eq!(
+        whole.duration_ms, 900_000,
+        "and the sum of what they cost, not the span between them: parts run on \
+         different machines at once, and the wall clock of the whole is not the work"
+    );
+}
+
+#[test]
+fn the_targets_of_the_whole_are_ordered_the_way_a_report_orders_them() {
+    let mut one = part("1/2", &[("a".repeat(64).as_str(), "killed")]);
+    if let Some(first) = one.targets.first_mut() {
+        first.duration_ms = 1;
+    }
+    one.targets.push(TargetRecord {
+        id: "two".to_owned(),
+        name: "pkg/test/slow".to_owned(),
+        package: "pkg".to_owned(),
+        status: TargetStatus::Passed,
+        duration_ms: 900,
+        message: None,
+    });
+    let two = part("2/2", &[("b".repeat(64).as_str(), "killed")]);
+
+    let whole = merge(&[one, two]).expect("two parts");
+
+    assert_eq!(
+        whole
+            .targets
+            .iter()
+            .map(|target| target.duration_ms)
+            .collect::<Vec<u64>>(),
+        vec![900, 1],
+        "slowest first, which is the order every report is read in: {:?}",
+        whole.targets
     );
 }
