@@ -143,23 +143,14 @@ pub fn establish(
     let claims = &questions.conditions;
     let phase = trace.phase("witness");
     let root = workspace.snapshot_root().to_path_buf();
-    let written = witnessed(&root, sources, &questions)?;
-    let checked = compile(
-        &workspace.driver(cancel),
-        &CompileOptions {
-            kind: CompileKind::Check,
-            packages: Vec::new(),
-            target_dir: Some(workspace.target_dir.join("witness")),
-            locked: workspace.locked,
-            offline: workspace.offline,
-            timeout: Workspace::timeout(options.build_timeout),
-            env: Vec::new(),
-            build: options.build.clone(),
-        },
-    );
+    let wrote = write(&root, sources, &questions);
+    let checked = wrote
+        .is_ok()
+        .then(|| compile(&workspace.driver(cancel), &checking(workspace, options)));
     restore(&root, sources)?;
+    let written = wrote?;
 
-    let Ok(checked) = checked else {
+    let Some(Ok(checked)) = checked else {
         phase.end();
         return Ok(Established::default());
     };
@@ -394,23 +385,22 @@ struct Rests {
     witnesses: Vec<crate::syntax::branch::Witness>,
 }
 
-/// Writes the witness tree, putting the sources back where it could not finish.
+/// How the witness tree is checked.
 ///
-/// A failure part of the way through leaves the files before it witnessed, so
-/// they go back before the failure is reported: a tree left witnessed is one
-/// every later phase would be about the wrong program, and the run that ends
-/// here is not always the process that looks at it next.
-fn witnessed(
-    root: &Path,
-    sources: &BTreeMap<String, Vec<u8>>,
-    questions: &Questions,
-) -> Result<Written, EngineError> {
-    match write(root, sources, questions) {
-        Ok(written) => Ok(written),
-        Err(error) => {
-            restore(root, sources)?;
-            Err(error)
-        }
+/// The check builds into a directory of its own so that the witness tree's
+/// artifacts do not displace the run's. Both trees name the same crates, so
+/// one target directory would hold whichever was compiled last, and every
+/// build after a witness pass would be a build of everything again.
+fn checking(workspace: &Workspace, options: &PrepareOptions) -> CompileOptions {
+    CompileOptions {
+        kind: CompileKind::Check,
+        packages: Vec::new(),
+        target_dir: Some(workspace.target_dir.join("witness")),
+        locked: workspace.locked,
+        offline: workspace.offline,
+        timeout: Workspace::timeout(options.build_timeout),
+        env: Vec::new(),
+        build: options.build.clone(),
     }
 }
 

@@ -299,3 +299,25 @@ fn the_file_a_diagnostic_names_is_read_however_the_platform_spells_a_path() {
         "while another file is another file, whatever separates its segments"
     );
 }
+
+#[test]
+fn a_message_that_is_not_an_error_does_not_stop_the_rule_reading_the_rest() {
+    let mut warning = rust_mutants::testkit::compile::diagnostic_at("src/lib.rs", 10, 11, 7);
+    if let rust_mutants::cargo::Message::CompilerMessage(compiler) = &mut warning {
+        compiler.message.level = "warning".to_owned();
+    }
+    let refused = rust_mutants::prove::refusal(
+        &written(),
+        &[
+            rust_mutants::cargo::Message::BuildFinished { success: false },
+            warning,
+            rust_mutants::testkit::compile::diagnostic_at("src/lib.rs", 12, 13, 7),
+        ],
+    );
+    assert!(
+        refused.claims.contains(&7),
+        "a line that is not a compiler message and one that is not an error are both passed \
+         over, and a rule that stopped at either would grant every claim the errors after it \
+         refuse: {refused:?}"
+    );
+}

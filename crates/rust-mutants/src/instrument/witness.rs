@@ -302,10 +302,7 @@ fn plan(
         }
     }
     for (body, (indices, depth)) in &bodies {
-        let mut claims = indices.clone();
-        claims.sort_unstable();
-        claims.dedup();
-        let Some(index) = claims.first().copied() else {
+        let Some(index) = indices.iter().copied().min() else {
             continue;
         };
         let after = body.start.saturating_add(1);
@@ -320,7 +317,7 @@ fn plan(
             original: Vec::new(),
             replacement: marker(module, *depth, index).into_bytes(),
         });
-        owners.push((claims, Placed::Marker));
+        owners.push((indices.clone(), Placed::Marker));
     }
     for (condition, held) in conditions {
         let (indices, depth) = (&held.indices, &held.depth);
@@ -342,10 +339,7 @@ fn plan(
             original: original.to_vec(),
             replacement,
         });
-        let mut claims = indices.clone();
-        claims.sort_unstable();
-        claims.dedup();
-        owners.push((claims, Placed::Witnesses));
+        owners.push(((*indices).clone(), Placed::Witnesses));
     }
     probed(
         &Reading { path, source, text },

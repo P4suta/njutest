@@ -230,7 +230,7 @@ impl Route {
                     })
             })
             .collect();
-        let mut reaching: Vec<Reaches> = targets
+        let reaching: Vec<Reaches> = targets
             .iter()
             .copied()
             .filter(|target| {
@@ -243,7 +243,6 @@ impl Route {
                 tests: Asked::Every,
             })
             .collect();
-        reaching.dedup();
         if reaching.is_empty() {
             return Self::Unreached {
                 considered: measurable

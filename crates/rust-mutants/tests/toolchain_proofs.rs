@@ -938,3 +938,166 @@ pub fn under(a: i32, b: i32, out: &mut i32) {
     }
     workspace.close().expect("close");
 }
+
+#[test]
+fn a_file_no_source_is_held_for_does_not_stop_the_pass_vouching_for_the_rest() {
+    let takeable = "\
+// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! A comparison between primitives, which the compiler vouches for.
+
+/// Writes one where `a` is under `b`.
+pub fn under(a: i32, b: i32, out: &mut i32) {
+    if a < b {
+        *out = 1;
+    }
+}
+";
+    let fixture = Fixture::copy("fixture-ignored");
+    let files = [("src/gone.rs", takeable), ("src/lib.rs", takeable)];
+    let established = established_over(&fixture, &files, &["src/lib.rs"]);
+    assert!(
+        !established.comparable.is_empty(),
+        "the first file has claims and no source, and reading what the compiler took is a walk \
+         over every file that has one: stopping at the first without would leave a tree the \
+         compiler did take unvouched for: {established:?}"
+    );
+    assert!(
+        established.comparable.len() < 2,
+        "and the file it could not write vouches for nothing, which is the other half of the \
+         same rule: {established:?}"
+    );
+}
+
+#[test]
+fn a_snapshot_the_pass_cannot_put_back_is_a_failure_rather_than_a_silence() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let claimed = "\
+// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! A condition the pass witnesses, in a file it can write.
+
+/// Writes one where `a` is under `b`.
+pub fn under(a: i32, b: i32, out: &mut i32) {
+    if a < b {
+        *out = 1;
+    }
+}
+";
+    let fixture = Fixture::copy("fixture-ignored");
+    let files = [("src/lib.rs", claimed), ("src/plain.rs", claimed)];
+    for (path, text) in files {
+        std::fs::write(fixture.root().join(path), text).expect("the fixture's own source");
+    }
+    let discovery = discovered_in(&[files[0]]);
+    let cancel = Cancel::new();
+    let workspace = Workspace::open(
+        fixture.root(),
+        opening(&mjutest_devkit::paths::cargo_binary(), fixture.temp()),
+        &cancel,
+    )
+    .expect("the workspace opens");
+
+    let held = workspace.snapshot_root().join("src/plain.rs");
+    let before = std::fs::metadata(&held)
+        .expect("the snapshot holds it")
+        .permissions();
+    std::fs::set_permissions(&held, std::fs::Permissions::from_mode(0o444))
+        .expect("a file nothing may write");
+    let mut sources = std::collections::BTreeMap::new();
+    for (path, text) in files {
+        drop(sources.insert(path.to_owned(), text.as_bytes().to_vec()));
+    }
+    let answered = rust_mutants::prove::establish(
+        &rust_mutants::prove::Asking {
+            workspace: &workspace,
+            discovery: &discovery,
+            sources: &sources,
+            options: &PrepareOptions {
+                tier: Tier::All,
+                branch_proofs: true,
+                ..PrepareOptions::default()
+            },
+        },
+        &cancel,
+        &rust_mutants::trace::Recorder::disabled(),
+    );
+    drop(std::fs::set_permissions(&held, before));
+
+    assert!(
+        answered.is_err(),
+        "the file with the claim was written and put back, and one without a claim was not \
+         writable at all - so the pass cannot say the tree is the one it was handed, and a \
+         pass that answered anyway would hand every later phase a tree nobody checked"
+    );
+    workspace.close().expect("close");
+}
+
+#[test]
+fn a_claim_in_a_file_the_tree_could_not_be_given_is_refused_rather_than_vouched_for() {
+    let asked = "\
+// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! A condition discovery found, at an offset a shorter source does not have.
+
+/// Writes one where `a` is under `b`.
+pub fn under(a: i32, b: i32, out: &mut i32) {
+    if a < b {
+        *out = 1;
+    }
+}
+";
+    let held = "\
+// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! Nothing.
+";
+    assert!(
+        held.len() < asked.len(),
+        "the held source is the shorter one"
+    );
+    let path = "src/lib.rs";
+    let discovery = discovered_in(&[(path, asked)]);
+    assert!(
+        !discovery.candidates.is_empty(),
+        "the longer source is the one with the condition in it"
+    );
+    let fixture = Fixture::copy("fixture-ignored");
+    let cancel = Cancel::new();
+    let workspace = Workspace::open(
+        fixture.root(),
+        opening(&mjutest_devkit::paths::cargo_binary(), fixture.temp()),
+        &cancel,
+    )
+    .expect("the workspace opens");
+    let mut sources = std::collections::BTreeMap::new();
+    drop(sources.insert(path.to_owned(), held.as_bytes().to_vec()));
+    let established = rust_mutants::prove::establish(
+        &rust_mutants::prove::Asking {
+            workspace: &workspace,
+            discovery: &discovery,
+            sources: &sources,
+            options: &PrepareOptions {
+                tier: Tier::All,
+                branch_proofs: true,
+                ..PrepareOptions::default()
+            },
+        },
+        &cancel,
+        &rust_mutants::trace::Recorder::disabled(),
+    )
+    .expect("the pass runs");
+
+    assert!(
+        established.comparable.is_empty(),
+        "the tree could not be given the file, so the check that passed never asked about the \
+         condition in it, and a claim vouched for on a question nobody put is a mutant removed \
+         without a run: {established:?}"
+    );
+    workspace.close().expect("close");
+}
