@@ -445,6 +445,7 @@ fn proofs(recording: &Recording<'_>, recorded: Option<&str>, audit: &mut Audit) 
         .map(|target| target.name.as_str())
         .collect();
     discharges(&removed, &ran, &mut notes);
+    kept(&routing.routes, &ran, &mut notes);
     reach(&routing.routes, &known, &executed, &mut notes);
 }
 
@@ -466,6 +467,46 @@ fn discharges(
             format!(
                 "{proof} removed {target} from what could notice this mutation, and {target} \
                  then {outcome} it; a layer that drops a target which finds a defect is unsound"
+            ),
+        );
+    }
+}
+
+/// Every kill, against the route that decided which targets would be asked: a layer that drops a target which then finds a defect is unsound, however it dropped it.
+///
+/// [`discharges`] asks this of the targets a proof removed, which a route
+/// names. This asks it of the ones the reach layer removed, which a route does
+/// not name — it names what it kept, and the rest were dropped because the
+/// measurement placed them elsewhere. The check does not need them named: a
+/// kill by a target the route did not keep is a kill by a target the route
+/// removed, and that is the one thing no layer may do.
+///
+/// A route that kept nothing is [`reach`]'s to answer for, and a route that
+/// widened to everything kept everything, so neither is asked here.
+fn kept(routes: &[crate::route::Route], ran: &[(String, String, String)], notes: &mut Notes<'_>) {
+    for (mutant, target, outcome) in ran {
+        if outcome != KILLED && outcome != TIMED_OUT {
+            continue;
+        }
+        let Some(route) = routes
+            .iter()
+            .find(|route| &route.mutant == mutant && route.reused.is_none())
+        else {
+            continue;
+        };
+        if route.reaching.is_empty() || route.reaching.iter().any(|one| one == target) {
+            continue;
+        }
+        if route.discharges(target) {
+            continue;
+        }
+        notes.violated(
+            mutant,
+            format!(
+                "the route did not keep {target} for this mutation and the recording then \
+                 shows {target} {outcome} it; a target the measurement placed elsewhere is \
+                 a target the reach layer removed, and a layer that removes one which \
+                 finds a defect is unsound"
             ),
         );
     }

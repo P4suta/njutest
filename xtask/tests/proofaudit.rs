@@ -766,6 +766,69 @@ fn a_route_that_removed_a_target_with_a_proof_and_says_it_reached_nothing_is_a_v
     );
 }
 
+#[test]
+fn a_kill_by_a_target_the_route_never_named_is_a_violation() {
+    let audit = audited_with(
+        &base(),
+        &[
+            serde_json::json!({
+                "seq": 1, "timestamp": "2026-09-06T00:00:00Z", "elapsed_ms": 0, "type": "route",
+                "route": {
+                    "mutant": KILLED, "granularity": "block", "fallback": null,
+                    "reaching": ["somewhere/else"], "discharged": [], "considered": [],
+                    "reused": null
+                }
+            }),
+            serde_json::json!({
+                "seq": 2, "timestamp": "2026-09-06T00:00:01Z", "elapsed_ms": 1, "type": "mutant-exec",
+                "mutant": {
+                    "mutant": KILLED, "target": TARGET, "args": [], "outcome": "killed",
+                    "duration_ms": 5
+                }
+            }),
+        ],
+    );
+
+    assert!(
+        proven(&audit).contains(&KILLED.to_owned()),
+        "the reach layer removed this target without running it, and the recording then \
+         shows it killing the mutation: a layer that drops a target which finds a defect \
+         is unsound whether it dropped it for a proof or for a measurement: {audit}"
+    );
+}
+
+#[test]
+fn a_route_that_kept_nothing_and_ran_something_is_one_violation_and_not_two() {
+    let audit = audited_with(
+        &base(),
+        &[
+            serde_json::json!({
+                "seq": 1, "timestamp": "2026-09-06T00:00:00Z", "elapsed_ms": 0, "type": "route",
+                "route": {
+                    "mutant": KILLED, "granularity": "unreached", "fallback": null,
+                    "reaching": [], "discharged": [], "considered": [TARGET], "reused": null
+                }
+            }),
+            serde_json::json!({
+                "seq": 2, "timestamp": "2026-09-06T00:00:01Z", "elapsed_ms": 1, "type": "mutant-exec",
+                "mutant": {
+                    "mutant": KILLED, "target": TARGET, "args": [], "outcome": "killed",
+                    "duration_ms": 5
+                }
+            }),
+        ],
+    );
+
+    assert_eq!(
+        proven(&audit),
+        vec![KILLED.to_owned()],
+        "a route that kept nothing is the reach layer's own claim and is answered there; \
+         saying the same fact twice in two sentences makes a reader look for two \
+         defects: {audit}"
+    );
+    assert_eq!(audit.violations(), 1, "{audit}");
+}
+
 /// Every mutant the proof layers say a recording does not support.
 fn proven(audit: &Audit) -> Vec<String> {
     audit
