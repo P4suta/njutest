@@ -221,6 +221,29 @@ fn a_run_that_asked_for_a_trace_leaves_one_that_reads_back() {
     assert_eq!(kinds.last(), Some(&"run-end"));
     assert!(kinds.contains(&"exec"), "{kinds:?}");
     assert!(kinds.contains(&"phase-end"), "{kinds:?}");
+
+    let phases: Vec<&str> = events
+        .iter()
+        .filter_map(|event| match &event.payload {
+            mjutest_cli::trace::Payload::PhaseStart { phase } => Some(phase.name.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        phases.first(),
+        Some(&"open"),
+        "a recording is read to find out where a run spent its time and where it \
+         stopped, so the first thing it says is the first thing the run did: a phase \
+         nobody opened leaves every event before the next one filed under nothing: \
+         {phases:?}"
+    );
+    for named in ["open", "baseline", "mutation"] {
+        assert!(
+            phases.contains(&named),
+            "every stage a run goes through names itself, or a reader counting the \
+             seconds between two events cannot say what happened in them: {phases:?}"
+        );
+    }
 }
 
 #[test]
@@ -230,6 +253,23 @@ fn progress_goes_to_the_error_stream_so_a_redirected_report_is_a_report() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
+    let stages: Vec<&str> = stderr
+        .lines()
+        .filter_map(|line| line.strip_prefix("== "))
+        .collect();
+    assert_eq!(
+        stages.first(),
+        Some(&"open"),
+        "the first thing a person watching is told is the first thing the run is doing, \
+         and a run that says nothing until it has built the workspace looks like one \
+         that has hung: {stderr}"
+    );
+    for named in ["open", "baseline", "mutation"] {
+        assert!(
+            stages.contains(&named),
+            "and every stage names itself as it starts: {stages:?}"
+        );
+    }
     assert!(stderr.contains("== baseline"), "{stderr}");
     assert!(
         !stdout.contains("== baseline"),
