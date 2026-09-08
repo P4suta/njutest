@@ -143,6 +143,29 @@ doctests, which is what the pipeline runs. `cargo xtask test`'s own suite
 (`xtask/tests/tasks.rs`) holds the naming to the rule, so a test that quietly
 starts a toolchain cannot land in the inner loop.
 
+### Which half a rule goes in
+
+The split is about speed, and it decides something else as well: **whether a
+mutation run can see that a rule is held.** The guards record which test
+reached which mutation in the process they run in, and a test that starts the
+binary in another process leaves no record there. So a mutation of the
+runner's own code is never routed to a `toolchain_*` target, and an assertion
+that lives only there is one the measurement cannot attribute to anything. The
+rule is held; the run reports a survivor.
+
+That happened here on 2026-09-09 to `assure/run.rs`'s first stage. A test in
+`toolchain_verify.rs` asserted that a verification names each stage as it
+starts, breaking the rule failed that test, and the mutation survived the run
+anyway, because the route named `toolchain_watch` — the one test that drives
+the runner in this process. Moving the assertion there, unchanged, killed it.
+
+So: **a rule about what this code does goes in an in-process test**, and a rule
+about what a person typing a command gets — the exit code, which stream a line
+went to, the files left behind — goes in a `toolchain_*` one, where it cannot
+be observed any other way. When a survivor's route names only `toolchain_*`
+targets, the question to ask first is not "what test is missing" but "is the
+test somewhere the measurement can see".
+
 ### The scripted toolchain
 
 `mjutest_devkit::fake_cargo` writes a script of invocations —
