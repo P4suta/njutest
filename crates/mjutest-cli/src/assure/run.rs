@@ -622,8 +622,6 @@ pub fn identity(request: &Request) -> Report {
             .provenance
             .identity
             .clone_from(&request.evidence.identity);
-    } else {
-        UNAVAILABLE.clone_into(&mut report.repository.workspace_digest);
     }
     report.scope.requested_packages = requested(request);
     report.scope.shard = request.shard.map(|shard| shard.to_string());

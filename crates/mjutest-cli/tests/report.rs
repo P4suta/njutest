@@ -11,7 +11,7 @@
 use mjutest_cli::report::audit::{Violation, validate_for_persistence};
 use mjutest_cli::report::{
     Finding, FindingKind, Git, Limitation, Position, Report, RunKind, SCHEMA, TargetAccounting,
-    TargetRecord, TargetStatus, Verdict,
+    TargetRecord, TargetStatus, UNAVAILABLE, Verdict,
 };
 
 /// A report that satisfies every invariant, for a test to break one thing in.
@@ -73,6 +73,25 @@ fn a_new_report_names_the_schema_the_run_and_what_it_ran_on() {
     assert_eq!(report.tool.rust_mutants, rust_mutants::VERSION);
     assert!(report.limitations.is_empty());
     assert!(report.mutants.is_empty());
+    assert_eq!(
+        RunKind::default(),
+        RunKind::Full,
+        "a run that was not narrowed looked at everything, and the widest assurance is \
+         the one a report of it may claim"
+    );
+
+    let fresh = Report::new(
+        "r",
+        RunKind::Full,
+        mjutest_cli::config::Contract::StandardV1,
+    );
+    assert_eq!(
+        fresh.repository.workspace_digest, UNAVAILABLE,
+        "a report says the tree it is about is unknown until somebody reads the tree: \
+         every phase that learns it overwrites this, and none of them has to remember to \
+         say so when it cannot"
+    );
+    assert_eq!(fresh.provenance.identity, UNAVAILABLE);
 }
 
 #[test]

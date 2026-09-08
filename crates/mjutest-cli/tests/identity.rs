@@ -237,3 +237,52 @@ fn a_run_that_could_not_ask_git_says_so_before_it_compiles_anything() {
         committed.limitations
     );
 }
+
+#[test]
+fn every_limitation_a_report_states_before_it_runs_is_a_finished_sentence() {
+    let root = tempfile::tempdir().expect("a directory");
+    let parent = tempfile::tempdir().expect("another directory");
+    let request = asked(&root.path().display().to_string());
+    let scratch = mjutest_cli::scratch::Scratch::create(
+        parent.path(),
+        "20260909T000000Z-000001",
+        request.started,
+    )
+    .expect("a directory to work in");
+    let cancel = rust_mutants::runner::Cancel::new();
+    let trace = mjutest_cli::trace::Recorder::disabled();
+    let environment = mjutest_cli::cli::Environment {
+        vars: Vec::new(),
+        working_directory: root.path().to_owned(),
+        temp_directory: parent.path().to_owned(),
+        cache_directory: parent.path().to_owned(),
+        cancel: cancel.clone(),
+    };
+
+    let mut report = identity(&request);
+    opened(
+        &mut report,
+        &request,
+        &environment,
+        (&scratch, mjutest_cli::watch::Watch::new(&cancel, &trace)),
+    );
+
+    assert!(
+        report.limitations.len() >= 2,
+        "a tree with no digest and a directory that is not a repository state one each: \
+         {:?}",
+        report.limitations
+    );
+    for limitation in &report.limitations {
+        assert!(
+            !limitation.name.trim().is_empty(),
+            "a limitation with no name is one nobody can look up: {limitation:?}"
+        );
+        assert!(
+            limitation.detail.trim().len() > 20 && !limitation.detail.contains("  "),
+            "and one with no sentence names something a run could not do and says \
+             nothing about what that means for the answer, which is the only part a \
+             reader acts on: {limitation:?}"
+        );
+    }
+}

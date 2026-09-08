@@ -169,3 +169,14 @@ rule = "question-to-unwrap"
 original = "?"
 line = 256
 reason = "serialising a State cannot fail: it is strings, numbers and vectors of them, and what_an_interrupted_run_saved_is_what_the_next_one_reads holds the round trip that would show a field which can refuse"
+
+# `RunKind` derives `Default` with `#[default]` on `Full`, because a run
+# nobody narrowed looked at everything. So the fallback and the default are the
+# same variant by construction, and `report.rs::a_new_report_names_the_schema_the_run_and_what_it_ran_on`
+# holds the value itself.
+[[mutation.expect]]
+path = "crates/mjutest-cli/src/assure/run.rs"
+item = "kind_of"
+rule = "return-default"
+original = "RunKind::Full"
+reason = "Full is what RunKind derives Default as, because a run nobody narrowed looked at everything; a_new_report_names_the_schema_the_run_and_what_it_ran_on holds both names to the one value"
