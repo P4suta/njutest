@@ -257,3 +257,29 @@ below is stated fail-closed.
   compile something other than the project's binaries. A project that
   configures them gets `target-rustflags-not-merged`, and a configuration
   file that cannot be parsed gets `cargo-configuration-unreadable`.
+
+## Survivors a suite cannot close
+
+A survivor is a test to write, and three kinds of them are not.
+
+Two are about the mutation. One is a mutation whose two versions no
+deterministic suite can tell apart, because the guard it removes is there for a
+failure that happens once and not again: a `?` on a write that a later restore
+of the same path repeats, a lock taken twice, a file opened again. The caller
+is handed the same error either way and the tree is left in the same state, and
+a test that could make the failure transient is not a deterministic test. Such
+a mutation is not equivalent — it is a fail-open the suite cannot reach — and
+the difference matters to whoever reads the acceptance later: a mutation this
+run agreed was equivalent may have its guard removed, and one it merely could
+not reach may not. An acceptance says which.
+
+The third is not about the mutation at all. **The instrument for observing it
+is more fragile than the thing observed.** The call site of a function whose
+every rule is already tested is one example: killing it means running the whole
+composition, and a test that runs a whole verification inside another one is
+one a measurement times out rather than answers. Reading the process
+environment for the toolchain's search path is another: the only input that
+tells the two versions apart is an environment with no toolchain in it, and a
+test that arranges that is measuring the environment rather than the code. Both
+are recorded here rather than accepted, because neither is a claim that the
+mutation changes nothing.
