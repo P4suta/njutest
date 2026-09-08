@@ -294,3 +294,113 @@ fn a_kill_a_checkpoint_cannot_attribute_is_one_a_resumed_run_judges_again() {
          that names nobody"
     );
 }
+
+#[test]
+fn a_fresh_state_has_tried_nothing_yet() {
+    assert_eq!(
+        State::new(&"a".repeat(64)).attempts,
+        0,
+        "the attempt count is what a resumed run adds to, and starting anywhere else \
+         would make the first attempt look like a retry of one nobody made"
+    );
+}
+
+#[test]
+fn the_mutants_a_state_carries_are_in_one_order_however_they_were_recorded() {
+    let mut state = State::new(&"a".repeat(64));
+    for id in ["m3", "m1", "m2"] {
+        state.record_mutant(mutant(id));
+    }
+
+    let ids: Vec<&str> = state.mutants.iter().map(|one| one.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        vec!["m1", "m2", "m3"],
+        "a checkpoint is written and read back and compared with another; two runs that \
+         judged the same mutants in a different order would write two different files \
+         for one state"
+    );
+}
+
+#[test]
+fn a_checkpoint_that_is_not_there_is_not_an_answer_and_not_a_failure_either() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let identity = "a".repeat(64);
+
+    assert!(
+        matches!(read(dir.path(), &identity), Ok(None)),
+        "no run has been interrupted here, so there is nothing to continue from"
+    );
+
+    let path = path_of(dir.path(), &identity);
+    std::fs::create_dir_all(&path).expect("a directory where the file goes");
+    let error = read(dir.path(), &identity).expect_err("a path that is not a file");
+    assert!(
+        matches!(error, CheckpointError::Unusable { .. }),
+        "and a checkpoint this could not read for any other reason is not the same as \
+         one that is not there: reading it as absent would start a run over and call it \
+         a fresh one: {error}"
+    );
+}
+
+#[test]
+fn a_checkpoint_that_cannot_be_written_says_which_path_refused_it() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let identity = "a".repeat(64);
+    let state = State::new(&identity);
+
+    let occupied = dir.path().join("occupied");
+    std::fs::write(&occupied, "not a directory").expect("a file where a root goes");
+    let wanted = path_of(&occupied, &identity)
+        .parent()
+        .expect("a directory")
+        .to_path_buf();
+    let refused = write(&occupied, &state).expect_err("a root that is a file");
+    assert!(
+        matches!(&refused, CheckpointError::Unusable { path, .. } if path == &wanted),
+        "the directory is what could not be made, and every later step fails for the \
+         same reason and names something else, so the path is the only thing that says \
+         which step this was: {refused}"
+    );
+
+    let taken = dir.path().join("taken");
+    let inner = path_of(&taken, &identity);
+    let directory = inner.parent().expect("a directory").to_path_buf();
+    std::fs::create_dir_all(directory.join("checkpoint.writing")).expect("mkdir");
+    let refused = write(&taken, &state).expect_err("a pending path that is a directory");
+    assert!(
+        matches!(&refused, CheckpointError::Unusable { path, .. } if path.ends_with("checkpoint.writing")),
+        "the state is written beside its own name and moved into place, so a pending \
+         file that cannot be written is the one to name: {refused}"
+    );
+
+    let blocked = dir.path().join("blocked");
+    let inner = path_of(&blocked, &identity);
+    std::fs::create_dir_all(&inner).expect("a directory where the checkpoint goes");
+    let refused = write(&blocked, &state).expect_err("a checkpoint path that is a directory");
+    assert!(
+        matches!(&refused, CheckpointError::Unusable { path, .. } if path == &inner),
+        "and one that was written and could not be moved into place names where it was \
+         going: {refused}"
+    );
+}
+
+#[test]
+fn a_run_that_finished_leaves_nothing_of_its_checkpoint_behind() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let identity = "a".repeat(64);
+    let path = write(dir.path(), &State::new(&identity)).expect("a checkpoint");
+    let directory = path.parent().expect("a directory").to_path_buf();
+
+    clear(dir.path(), &identity);
+
+    assert!(
+        !path.exists(),
+        "the state a finished run cannot continue from"
+    );
+    assert!(
+        !directory.exists(),
+        "and the directory it was alone in: a tree that fills with empty directories is \
+         one somebody eventually stops trusting to clean up after itself"
+    );
+}
