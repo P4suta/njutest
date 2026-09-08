@@ -85,7 +85,9 @@ run already collects can sometimes establish before any mutant is built.
   that names which proofs removed a mutation, leaving it to end mid-clause,
   and on fourteen field names inside a refusal, leaving it to say that
   something required was empty without saying what. A layer whose output is a
-  sentence is not tested by asserting that it spoke.
+  sentence is not tested by asserting that it spoke, and a refusal is not
+  tested by asserting that it refused: what a reader acts on is which thing it
+  said was wrong.
 - The layers share one blind spot: they see the coverage a test left behind.
   The limitations document names it once per layer.
 - A reader who sees mjutest go faster may ask which proof did it. The answer

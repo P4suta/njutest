@@ -98,6 +98,18 @@ below is stated fail-closed.
   one above seen from the other side: there, a test that spawns the engine
   cannot be verified; here, a line that only the spawned process runs cannot
   be reached.
+- **A survivor can mean the test is in the wrong place rather than that there
+  is no test.** A mutation is put to the targets a measurement says reach it,
+  and a target that spawns a process records nothing about what the guards
+  inside that process reached. So a rule can have a test that holds it, and
+  that fails when the rule is broken, and still be reported as a survivor,
+  because the target holding that test is one nothing can be attributed to and
+  the route sent the mutation elsewhere. Measured on the runner: an assertion
+  written in a target that spawns the binary left the mutation surviving, and
+  the same assertion moved into a target that drives the same code in its own
+  process killed it, with nothing else changed. The report names the targets a
+  mutation was put to, and a survivor whose targets all spawn is this case
+  rather than a gap in the suite.
 - Fuzz targets are found always and driven only when `[fuzz] run` says so;
   a tree that holds targets nobody asked to drive carries
   `fuzz-not-executed`. Without cargo-fuzz on a nightly toolchain, a run that
