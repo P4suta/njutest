@@ -215,6 +215,12 @@ fn an_expectation_the_run_confirms_stops_being_a_finding_and_a_stale_one_starts(
     let document = stored(&fixture);
     assert_eq!(document["accounting"]["expected"], 1, "{text}");
     assert_eq!(document["expectations"][0]["standing"], "met");
+    assert!(
+        document["expectations"][0].get("covered").is_none(),
+        "a claim that names one mutation says nothing about how many, or every claim in every \
+         report would carry a count nobody wrote: {}",
+        document["expectations"][0]
+    );
     let findings = document["findings"].as_array().expect("findings");
     assert!(
         findings
@@ -934,5 +940,37 @@ fn a_coverage_run_keeps_the_measurement_its_own_discharges_rest_on() {
             .is_some_and(|targets| !targets.is_empty()),
         "the measurement each target left behind is what a region-based discharge rests on: \
          {reached}"
+    );
+}
+
+#[test]
+fn a_claim_written_for_several_mutations_says_how_many_it_was_resolved_against() {
+    let fixture = Fixture::copy("fixture-families");
+    std::fs::write(
+        fixture.root().join(".rust-mutants.toml"),
+        "version = 1\n\n[[mutation.expect]]\npath = \"src/lib.rs\"\nitem = \"results\"\nrule = \
+         \"question-to-unwrap\"\noriginal = \"?\"\ncount = 2\nreason = \"both of them parse the \
+         same text, so one reason is written for the pair\"\n",
+    )
+    .expect("write the configuration");
+
+    let output = against(
+        &fixture,
+        &[
+            "run",
+            "--offline",
+            "--locked",
+            "--include",
+            "src/lib.rs",
+            "--operator",
+            "question-to-unwrap",
+        ],
+    );
+    let text = stdout(&output);
+    let document = stored(&fixture);
+    assert_eq!(
+        document["expectations"][0]["covered"], 2,
+        "the claim was resolved against both mutations its locator names, and a report that does \
+         not say how wide a reason is leaves a reader to re-derive it from the catalog: {text}"
     );
 }
