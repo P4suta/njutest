@@ -167,13 +167,18 @@ fn a_dry_run_says_what_it_would_cost_without_executing_a_mutant() {
 #[test]
 fn from_report_reruns_what_the_last_run_left() {
     let fixture = Fixture::copy("fixture-coverage");
-    let first = run(&fixture, &["--ui", "quiet"]);
+    let first = run(&fixture, &["--ui", "plain"]);
     assert_eq!(first.status.code(), Some(1), "{first:?}");
+    let left = judged(&said(&first))
+        .into_iter()
+        .filter(|(_, outcome)| outcome == "survived")
+        .count();
+    assert!(left > 0, "the fixture leaves something to measure again");
     let again = run(&fixture, &["--ui", "plain", "--from-report", "--no-cache"]);
     let text = said(&again);
     assert_eq!(
         judged(&text).len(),
-        1,
+        left,
         "only what the last run left is measured again: {text}"
     );
 }

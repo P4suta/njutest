@@ -477,7 +477,7 @@ impl<'a> Walker<'a> {
         let position = self.index.position(self.src, edit.span.start);
         let gate = self.gates.last().and_then(Option::as_ref);
         let branch = gate.and_then(|gate| gate.claim(rule_name, edit.span));
-        let comparable = gate.and_then(|gate| gate.comparable(edit.span));
+        let comparable = gate.and_then(|gate| gate.comparable(rule_name, edit.span));
         self.found.push(Found {
             candidate,
             position,

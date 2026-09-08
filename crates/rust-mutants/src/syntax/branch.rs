@@ -39,6 +39,22 @@ pub fn is_decreasing(rule: &str) -> bool {
     DECREASING.contains(&rule)
 }
 
+/// The rules whose edit is the negation of what it replaces, so the two can never answer the same.
+///
+/// `==` and `!=` are each other's negation. A guard between them parts on
+/// every evaluation of it, so a run that recorded whether they ever parted
+/// could only ever record that they did, and the call that recorded it would
+/// be a cost with no answer in it. Every other swap on a reachable operator
+/// agrees somewhere — `<` and `<=` everywhere but equality, `&&` and `||`
+/// wherever the two sides agree — and there the record says something.
+pub const NEGATING: [&str; 2] = ["eq-to-neq", "neq-to-eq"];
+
+/// Whether `rule` is one of [`NEGATING`].
+#[must_use]
+pub fn is_negating(rule: &str) -> bool {
+    NEGATING.contains(&rule)
+}
+
 /// What the compiler must vouch for before a claim becomes a proof.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[non_exhaustive]
@@ -186,9 +202,13 @@ impl Prepared {
     ///
     /// The witnesses are the condition's own: what makes it inert is what
     /// makes evaluating it twice inert.
+    ///
+    /// A rule that negates what it replaces is offered nothing, because the
+    /// two branches of such a guard part every time it runs and a record of
+    /// that answers no question ([`NEGATING`]).
     #[must_use]
-    pub fn comparable(&self, edit: Span) -> Option<Comparable> {
-        self.reachable.contains(&edit).then(|| Comparable {
+    pub fn comparable(&self, rule: &str, edit: Span) -> Option<Comparable> {
+        (!is_negating(rule) && self.reachable.contains(&edit)).then(|| Comparable {
             condition: self.condition,
             witnesses: self.witnesses.clone(),
         })

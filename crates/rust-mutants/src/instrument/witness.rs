@@ -353,24 +353,42 @@ fn runtime(module: &str) -> String {
     )
 }
 
-/// The sealed traits and the two functions. A trait implemented for the primitives and for references to them, and for nothing else, is exactly the question the syntax could not answer.
+/// The sealed traits and the two functions. `W` names the types whose comparison the standard library defines, and nothing else, which is exactly the question the syntax could not answer.
 ///
-/// `str` and a slice of something the trait already covers are in it for the
-/// same reason the primitives are: comparing two of them runs none of the
-/// program's code. The comparison is the library's, it cannot panic, it
-/// allocates nothing, and it terminates — which is the whole of what a claim
-/// needs. A user type is refused as before, because its `PartialOrd` is the
-/// program, and so is `String`: naming it would need `alloc`, which a
-/// `#![no_std]` crate this module is generated into may not have.
+/// `str`, a slice, and the owned types beside them are in it for the same
+/// reason the primitives are: comparing two of them runs none of the program's
+/// code. The comparison is the library's, it cannot panic, it allocates
+/// nothing, and it terminates — which is the whole of what a claim needs. A
+/// container is in it only when what it holds is, because a `Vec<T>`
+/// comparison is `T`'s comparison in a loop.
+///
+/// The two operands are asked about **separately**, which is what lets a
+/// `String` be compared with a `&str`. It is no weaker for it: a comparison
+/// between two of these types can only be the standard library's, because
+/// coherence lets nobody add a `PartialEq` or `PartialOrd` impl between two
+/// types they own neither of. Bring a type of your own to either side and it
+/// is not in `W`, whichever side it is on.
+///
+/// `std` is linked under a name of this module's own, as [ADR 0011] has the
+/// runtime do. A crate the host cannot lend `std` to is one this engine skips
+/// whole, so no witness is ever written into one.
+///
+/// [ADR 0011]: ../../../../docs/adr/0011-the-runtime-lives-at-the-end-of-each-instrumented-file.md
 const IMPLS: &str = "\
+    extern crate std as __rmw_std;
     pub(crate) trait W {}
     pub(crate) trait P {}
     impl W for i8 {} impl W for i16 {} impl W for i32 {} impl W for i64 {} impl W for i128 {}
     impl W for isize {} impl W for u8 {} impl W for u16 {} impl W for u32 {} impl W for u64 {}
     impl W for u128 {} impl W for usize {} impl W for f32 {} impl W for f64 {}
-    impl W for bool {} impl W for char {}
-    impl W for str {}
+    impl W for bool {} impl W for char {} impl W for () {}
+    impl W for str {} impl W for __rmw_std::string::String {}
+    impl W for __rmw_std::ffi::OsStr {} impl W for __rmw_std::ffi::OsString {}
+    impl W for __rmw_std::path::Path {} impl W for __rmw_std::path::PathBuf {}
     impl<T: W> W for [T] {}
+    impl<T: W, const N: usize> W for [T; N] {}
+    impl<T: W> W for __rmw_std::vec::Vec<T> {}
+    impl<T: W> W for __rmw_std::option::Option<T> {}
     impl<T: W + ?Sized> W for &T {}
     impl<T: W + ?Sized> W for &mut T {}
     impl P for i8 {} impl P for i16 {} impl P for i32 {} impl P for i64 {} impl P for i128 {}
@@ -379,6 +397,6 @@ const IMPLS: &str = "\
     impl P for bool {} impl P for char {}
     impl<T: P + ?Sized> P for &T {}
     impl<T: P + ?Sized> P for &mut T {}
-    #[inline(always)] pub(crate) fn w_ord<T: W + ?Sized>(_a: &T, _b: &T) {}
+    #[inline(always)] pub(crate) fn w_ord<A: W + ?Sized, B: W + ?Sized>(_a: &A, _b: &B) {}
     #[inline(always)] pub(crate) fn w_prim<T: P + ?Sized>(_x: &T) {}
     #[inline(always)] pub(crate) fn body(_k: u32) {}";

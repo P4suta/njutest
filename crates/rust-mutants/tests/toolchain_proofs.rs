@@ -82,6 +82,11 @@ fn the_compiler_vouches_for_a_condition_of_primitives_and_refuses_the_rest() {
          program's: {proven:?}"
     );
     assert!(
+        proven.iter().any(|one| one.starts_with("le-to-lt 44")),
+        "and so does one beside a comparison between two different types, both of them the \
+         standard library's: the operands are asked about separately: {proven:?}"
+    );
+    assert!(
         !proven.iter().any(|one| one.starts_with("le-to-lt 16")),
         "a comparison the compiler will not vouch for earns none: {proven:?}"
     );

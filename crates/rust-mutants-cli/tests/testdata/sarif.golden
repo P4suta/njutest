@@ -24,7 +24,7 @@
           "ruleId": "le-to-lt",
           "level": "error",
           "message": {
-            "text": "discharged-mutant: every target that could have noticed 607f27ebae423d86a907 was removed by a proof, so no test could have: the mutation is in code the tests run and never observe"
+            "text": "discharged-mutant: every target that could have noticed aceffa6a7e2a2e0c4fb2 was removed by a proof, so no test could have: the mutation is in code the tests run and never observe"
           },
           "locations": [
             {
@@ -44,14 +44,14 @@
             }
           ],
           "partialFingerprints": {
-            "rustMutantsMutantId/v1": "607f27ebae423d86a9074672ab4056a67a92c92b10728bec5c054eda05845fcc"
+            "rustMutantsMutantId/v1": "aceffa6a7e2a2e0c4fb281a9f986feae566d60d36cb66f4f0a6a52e0430d90dc"
           }
         },
         {
           "ruleId": "le-to-lt",
           "level": "warning",
           "message": {
-            "text": "surviving-mutant: no test noticed 095fbfefaa7749ebb142; 1 test ran and passed"
+            "text": "surviving-mutant: no test noticed 4ec926d27bd1b17fcd37; 1 test ran and passed"
           },
           "locations": [
             {
@@ -71,14 +71,14 @@
             }
           ],
           "partialFingerprints": {
-            "rustMutantsMutantId/v1": "095fbfefaa7749ebb1428f456d8121fd28298b5053deaeeeb62576e32784a1b3"
+            "rustMutantsMutantId/v1": "4ec926d27bd1b17fcd373749d83061cbc468b6bc6dffc4dad54bde57326ae0f1"
           }
         },
         {
           "ruleId": "le-to-lt",
           "level": "error",
           "message": {
-            "text": "discharged-mutant: every target that could have noticed 5c32d72280e91a9530b0 was removed by a proof, so no test could have: the mutation is in code the tests run and never observe"
+            "text": "discharged-mutant: every target that could have noticed 3b95a1d51748a373fc05 was removed by a proof, so no test could have: the mutation is in code the tests run and never observe"
           },
           "locations": [
             {
@@ -98,7 +98,34 @@
             }
           ],
           "partialFingerprints": {
-            "rustMutantsMutantId/v1": "5c32d72280e91a9530b064a87da18166bb82b3bc6fb5200e6cb281b40453c10e"
+            "rustMutantsMutantId/v1": "3b95a1d51748a373fc059ecdafa5d86a0fc6ee853d27f2c8383feeef2d4cb977"
+          }
+        },
+        {
+          "ruleId": "le-to-lt",
+          "level": "error",
+          "message": {
+            "text": "discharged-mutant: every target that could have noticed e5c73ebd900e221f3bd8 was removed by a proof, so no test could have: the mutation is in code the tests run and never observe"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/lib.rs"
+                },
+                "region": {
+                  "startLine": 44,
+                  "startColumn": 34,
+                  "endColumn": 36,
+                  "snippet": {
+                    "text": "<="
+                  }
+                }
+              }
+            }
+          ],
+          "partialFingerprints": {
+            "rustMutantsMutantId/v1": "e5c73ebd900e221f3bd8c59cc022e0a02aa33d7a893cd8a451a69cf9e5103192"
           }
         }
       ]

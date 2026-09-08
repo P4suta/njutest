@@ -31,12 +31,29 @@ record instead of asking for a coverage build or a probe log. A reader of the
 file from an earlier release sees one more key; the version stayed 1.
 
 **The compiler vouches for a comparison of text.** The sealed trait the
-witness pass puts to it named the primitives alone; it now names `str` and a
-slice of something it already covers as well. Comparing two of those runs none
-of the program's code, cannot panic, allocates nothing, and terminates, which
-is the whole of what a claim needs — so `if name <= "m"` earns the same
-branch proof and the same comparison as `if a <= b` on two integers. A user
-type is refused as before.
+witness pass puts to it named the primitives alone; it now names every type
+whose comparison the standard library defines — `str`, `String`, `OsStr`,
+`OsString`, `Path`, `PathBuf` — and an array, slice, `Vec` or `Option` of
+something it already covers. Comparing two of those runs none of the program's
+code, cannot panic, allocates nothing, and terminates, which is the whole of
+what a claim needs, so `if name <= "m"` earns the same branch proof as
+`if a <= b` on two integers. The two operands are asked about separately as
+well, so `if label == "target" && rank <= 3` no longer loses the `<=` claim to
+the `String` beside the `&str`. A type of your own is refused as before, on
+either side.
+
+**A witness check that failed and named nothing now vouches for nothing.** An
+error inside a condition's witnesses refused that claim and an error inside a
+body's marker refused only the marker; an error in neither was passed over,
+which read a tree that would not compile as a tree with nothing wrong in it
+and granted every claim. `prove::refusal` is the rule, and a failure it cannot
+account for costs the run every proof. Runs made before this release could
+have discharged a mutant on a check that never happened.
+
+**A guard between `==` and `!=` no longer records anything.** The two part on
+every evaluation, so the record could only say that they did. Such a mutation
+gets no witness statement and no comparison call, which is one less thing in
+the tree the witness pass checks and one less call on the baseline.
 
 **A body inside a guard's own site is no longer discharged by silence.** The
 instrumenter cannot splice a marker into a body a guard writes twice, and the

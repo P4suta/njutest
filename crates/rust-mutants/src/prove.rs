@@ -121,10 +121,25 @@ pub fn establish(
         return Ok(Established::default());
     };
     let refused = if checked.success {
-        Refused::default()
+        Refusal::default()
     } else {
-        refused_by(&written, &checked.messages)
+        refusal(&written, &checked.messages)
     };
+    if !checked.success && !refused.accounts_for_a_failure() {
+        trace.note(
+            "witness",
+            &format!(
+                "the witness tree did not compile and no rewrite of it accounts for that, so \
+                 nothing is vouched for: {}",
+                refused
+                    .unaccounted
+                    .first()
+                    .map_or("the compiler named no place at all", String::as_str)
+            ),
+        );
+        phase.end();
+        return Ok(Established::default());
+    }
     let markers = markers_of(&claims);
     let established = vouched(&claims, sources, &Checked { refused, markers }, trace);
     trace.note(
@@ -152,7 +167,7 @@ pub fn establish(
 /// What the one `cargo check` established: what it would not take, and the marker each body carries.
 struct Checked {
     /// What the compiler would not take, by what it costs.
-    refused: Refused,
+    refused: Refusal,
     /// The marker each body would carry, by the file and the body it is in.
     markers: BTreeMap<(String, crate::span::Span), Marker>,
 }
@@ -347,9 +362,20 @@ fn restore(root: &Path, sources: &BTreeMap<String, Vec<u8>>) -> Result<(), Engin
     Ok(())
 }
 
-/// The claims a diagnostic landed in. A witness the compiler refused is a claim this release does not make.
-fn refused_by(written: &[witness::WitnessFile], messages: &[crate::cargo::Message]) -> Refused {
-    let mut refused = Refused::default();
+/// What a failed check of the witness tree costs, as the pure rule of the diagnostics and the rewrites they landed in.
+///
+/// An error inside a condition's witnesses refuses that claim; one inside a
+/// body's marker refuses only the marker. An error that lands in neither is
+/// one this rule cannot localise, and it is reported rather than passed over:
+/// a check that failed for a reason nothing accounts for is a check that says
+/// nothing about any claim, and reading it as "nothing was refused" would
+/// grant every one of them on a question the compiler never answered.
+///
+/// A diagnostic with no span at all is cargo's own summary of the ones that
+/// have them, and says nothing this rule does not already have.
+#[must_use]
+pub fn refusal(written: &[witness::WitnessFile], messages: &[crate::cargo::Message]) -> Refusal {
+    let mut refused = Refusal::default();
     for message in messages {
         let crate::cargo::Message::CompilerMessage(compiler) = message else {
             continue;
@@ -360,20 +386,27 @@ fn refused_by(written: &[witness::WitnessFile], messages: &[crate::cargo::Messag
         let Some(span) = compiler.message.primary_span() else {
             continue;
         };
-        let Some(file) = written
+        let landed = written
             .iter()
             .find(|file| ends_with(&span.file_name, &file.path))
-        else {
-            continue;
-        };
-        for site in &file.sites {
-            if site.span.start > span.byte_start || span.byte_start >= site.span.end {
-                continue;
-            }
-            match site.placed {
-                witness::Placed::Witnesses => refused.claims.extend(site.claims.iter().copied()),
-                witness::Placed::Marker => refused.markers.extend(site.claims.iter().copied()),
-            }
+            .into_iter()
+            .flat_map(|file| &file.sites)
+            .filter(|site| site.span.start <= span.byte_start && span.byte_start < site.span.end)
+            .fold(false, |_, site| {
+                match site.placed {
+                    witness::Placed::Witnesses => {
+                        refused.claims.extend(site.claims.iter().copied());
+                    }
+                    witness::Placed::Marker => {
+                        refused.markers.extend(site.claims.iter().copied());
+                    }
+                }
+                true
+            });
+        if !landed {
+            refused
+                .unaccounted
+                .push(format!("{}: {}", span.file_name, compiler.message.message));
         }
     }
     refused
@@ -384,13 +417,31 @@ fn refused_by(written: &[witness::WitnessFile], messages: &[crate::cargo::Messag
 /// A diagnostic in a condition's witnesses refuses the claim, because the
 /// whole of it rests on the compiler accepting them. One in a body's marker
 /// refuses only the marker: the claim stands, with a coverage region as the
-/// one premise left to establish it.
+/// one premise left to establish it. An error in neither costs every claim,
+/// because it is the compiler refusing the tree for a reason this pass cannot
+/// name.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-struct Refused {
+#[non_exhaustive]
+pub struct Refusal {
     /// The mutants whose claim the compiler would not take.
-    claims: BTreeSet<u32>,
+    pub claims: BTreeSet<u32>,
     /// The mutants whose body the compiler would not take a marker in.
-    markers: BTreeSet<u32>,
+    pub markers: BTreeSet<u32>,
+    /// Every error no rewrite of the witness tree accounts for, as the file and what the compiler said.
+    pub unaccounted: Vec<String>,
+}
+
+impl Refusal {
+    /// Whether a check that failed is one this rule accounted for, which is what makes what it did not refuse a thing the compiler took.
+    ///
+    /// Something has to have been refused. A check the compiler failed and
+    /// this rule found nothing wrong with is one whose reason lies outside
+    /// every rewrite — in the manifest, the linker, a lint the tree denies —
+    /// and the claims it says nothing about are claims, not proofs.
+    #[must_use]
+    pub fn accounts_for_a_failure(&self) -> bool {
+        self.unaccounted.is_empty() && !(self.claims.is_empty() && self.markers.is_empty())
+    }
 }
 
 /// Whether the path a diagnostic names is the file that was written.

@@ -144,9 +144,17 @@ is never mistaken for a body nothing entered.
 
 What makes a condition inert is what the sealed trait of
 [ADR 0008](../adr/0008-compiler-validated-acceptance-and-the-type-witness-pass.md)
-covers: the primitives, `str`, and a slice of one of those. Comparing two of
-those runs none of the program's code, cannot panic, allocates nothing, and
-terminates. A user type is refused, because its `PartialOrd` is the program.
+covers: the types whose comparison the standard library defines, and a
+container of one of those. Comparing two of them runs none of the program's
+code, cannot panic, allocates nothing, and terminates. A user type is refused,
+because its `PartialOrd` is the program — on either side, since the two
+operands are asked about separately and a type of your own is in the trait
+neither way round.
+
+A swap that *negates* what it replaces is offered no comparison at all. `==`
+and `!=` part on every evaluation, so a record of whether they ever parted can
+only say that they did, and the call that recorded it would be a cost with no
+answer in it. Every other swap on a reachable operator agrees somewhere.
 
 `never-infected` has two premises as well, and the guard's is free. A
 mutation on an operator the connectives of an inert condition reach —

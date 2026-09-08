@@ -104,3 +104,84 @@ fn a_region_that_only_contains_the_body_says_nothing_about_it() {
          not that the body did"
     );
 }
+
+/// A witnessed file with one condition's witnesses at `[10, 20)` and one body marker at `[30, 40)`.
+fn witnessed() -> rust_mutants::instrument::witness::WitnessFile {
+    use rust_mutants::instrument::witness::{Placed, Site, WitnessFile};
+    use rust_mutants::span::Span;
+    WitnessFile {
+        path: "src/lib.rs".to_owned(),
+        text: String::new(),
+        sites: vec![
+            Site {
+                span: Span { start: 10, end: 20 },
+                claims: vec![1, 2],
+                placed: Placed::Witnesses,
+            },
+            Site {
+                span: Span { start: 30, end: 40 },
+                claims: vec![1],
+                placed: Placed::Marker,
+            },
+        ],
+        witnessed: true,
+    }
+}
+
+#[test]
+fn an_error_in_a_condition_refuses_its_claims_and_one_in_a_marker_refuses_only_the_marker() {
+    use rust_mutants::testkit::compile::diagnostic_at;
+    let files = [witnessed()];
+
+    let refused = rust_mutants::prove::refusal(&files, &[diagnostic_at("src/lib.rs", 12, 13, 1)]);
+    assert_eq!(refused.claims.iter().copied().collect::<Vec<u32>>(), [1, 2]);
+    assert!(refused.markers.is_empty());
+    assert!(refused.unaccounted.is_empty(), "{refused:?}");
+    assert!(
+        refused.accounts_for_a_failure(),
+        "the compiler named a rewrite, and what it did not name it took"
+    );
+
+    let refused = rust_mutants::prove::refusal(&files, &[diagnostic_at("src/lib.rs", 33, 34, 1)]);
+    assert!(
+        refused.claims.is_empty(),
+        "a body a call cannot go into is not a claim that was wrong: {refused:?}"
+    );
+    assert_eq!(refused.markers.iter().copied().collect::<Vec<u32>>(), [1]);
+    assert!(refused.accounts_for_a_failure());
+}
+
+#[test]
+fn a_failure_no_rewrite_accounts_for_is_one_that_vouches_for_nothing() {
+    use rust_mutants::testkit::compile::diagnostic_at;
+    let files = [witnessed()];
+
+    let elsewhere =
+        rust_mutants::prove::refusal(&files, &[diagnostic_at("src/lib.rs", 99, 100, 1)]);
+    assert!(elsewhere.claims.is_empty() && elsewhere.markers.is_empty());
+    assert_eq!(
+        elsewhere.unaccounted.len(),
+        1,
+        "an error in the file the witnesses were written into and outside every one of them is \
+         the tree refusing to compile for a reason this pass cannot name: {elsewhere:?}"
+    );
+    assert!(
+        !elsewhere.accounts_for_a_failure(),
+        "so nothing it did not refuse is anything the compiler took"
+    );
+
+    let another_file =
+        rust_mutants::prove::refusal(&files, &[diagnostic_at("src/other.rs", 12, 13, 1)]);
+    assert_eq!(another_file.unaccounted.len(), 1, "{another_file:?}");
+    assert!(!another_file.accounts_for_a_failure());
+
+    let nothing = rust_mutants::prove::refusal(&files, &[]);
+    assert!(
+        nothing.unaccounted.is_empty(),
+        "a check that said nothing said nothing: {nothing:?}"
+    );
+    assert!(
+        !nothing.accounts_for_a_failure(),
+        "and a check the compiler failed while saying nothing accounts for no claim at all"
+    );
+}

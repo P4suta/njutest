@@ -39,6 +39,14 @@ pub fn named(name: &str) -> bool {
     false
 }
 
+/// A condition whose two comparisons are between different types, both of them the standard library's. One refused witness refuses the whole condition, so this is what says neither is refused.
+pub fn labelled(label: String, rank: u8) -> bool {
+    if label == "target" && rank <= 3 {
+        return true;
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -57,6 +65,12 @@ mod tests {
     fn a_name_before_m_is_named() {
         assert!(super::named("alpha"));
         assert!(!super::named("zulu"));
+    }
+
+    #[test]
+    fn a_labelled_target_of_low_rank_is_labelled() {
+        assert!(super::labelled("target".to_owned(), 1));
+        assert!(!super::labelled("other".to_owned(), 1));
     }
 
     #[test]

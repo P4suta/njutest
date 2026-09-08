@@ -100,11 +100,14 @@ below is stated fail-closed.
 - A guard compares its two branches only where the compiler vouched that the
   condition around it is inert — every comparison in it between primitives,
   `str`, or a slice of those — and the guard's own form can hold the call. The
-  witness names one type for both operands, so a comparison between two
-  different ones is refused however inert it is: `want == got` on a `Vec<u8>`
-  and a `&[u8]`, or `name == DURATION` on a `String` and a `&str`. So is
-  anything the standard library defines outside `core`, `String` and `OsString`
-  among them, because the module is generated into `#![no_std]` crates too.
+  trait names the types whose comparison the standard library defines and a
+  container of one of those, and asks about the two operands separately, so a
+  comparison between two different ones is vouched for where both are named. A
+  type of your own is refused whichever side it is on, and so is a container
+  holding one.
+- A swap between `==` and `!=` is never offered the comparison. The two are
+  each other's negation, so a guard between them parts on every evaluation and
+  the record could only ever say that it did.
   Everywhere else `never-infected` says nothing about the mutation however
   many tests ran it, and the record names which mutants it can speak about so
   that its silence about the rest is never read as evidence. The probe tree,
