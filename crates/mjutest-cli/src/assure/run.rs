@@ -600,7 +600,14 @@ fn with_resources(environment: &Environment, resources: &crate::resource::Manage
 }
 
 /// The report as it is before anything has run: what the run is, what it was asked to verify, and what it already knows it will not claim.
-fn identity(request: &Request) -> Report {
+///
+/// Everything here is what makes two reports of the same workspace comparable
+/// to each other, and none of it is established by running anything: it is the
+/// question, written down before the answer. A run that could not read the
+/// tree as one number says so here, because a result nothing can be keyed to
+/// is one no later run may reuse.
+#[must_use]
+pub fn identity(request: &Request) -> Report {
     let mut report = Report::new(&request.run_id, kind_of(request), request.config.contract);
     report.timing.started = request.started.to_string();
     report.repository.root_name = root_name(&request.root);
