@@ -100,11 +100,17 @@ inert: a return replacement, an arithmetic edit, a call swapped for another.
 - `cargo xtask engine-audit` re-derives both kinds of discharge from the record
   alone. Before this it could only re-derive `branch-never-taken` from a
   coverage build and could only ask whether a probe log existed at all.
-- The layer says nothing about the conditions the compiler refuses — a
-  comparison of two `String`s, an operand of a type the sealed trait does not
-  cover — and nothing about arithmetic, calls, or returns. Those are the probe
-  tree's, and propagation is still the next layer to build
-  ([ADR 0004](0004-proof-layers-not-budgets.md)).
+- The layer says nothing about the conditions the compiler refuses — an
+  operand of a type the sealed trait does not cover — and nothing about
+  arithmetic, calls, or returns. Those are the probe tree's.
+- With this in, reach and infection are both answered by one run of the
+  unmutated program. Propagation is not, and cannot be: whether a difference
+  reaches an assertion depends on everything between the site and the
+  assertion, which is either a dataflow engine
+  ([ADR 0008](0008-compiler-validated-acceptance-and-the-type-witness-pass.md)
+  decision 5 keeps one out) or an execution. The whole-program case is already
+  answered by [ADR 0013](0013-codegen-identity-is-the-equivalence-proof.md),
+  and it costs a build. `docs/roadmap.md` says what follows from that.
 
 ## Alternatives
 

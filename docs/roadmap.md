@@ -39,6 +39,38 @@ that lets it be seen, tested, and audited — and both are completion criteria.
 | E10 ✓ | The guards are the measurement | reach is recorded by the guards on the run that verifies the baseline, so a mutation goes to the tests that reached it and no coverage build is made | `touched-v1.json` and the audit layer that re-decides from it, `fixture-order-dependent`, `fixture-threaded`, the differential harness over every combination of the two measurements, ADR 0014 | the answer is the one a run with nothing removed gives, and the tests started fall from 46 to 18 on `fixture-coverage` |
 | E11 ✓ | The difference that never was | a guard whose condition the compiler vouched for evaluates both of its branches on the baseline and records where they parted, so `never-infected` is a default layer with no tree, no build and no run of its own | `narrowing` in `touched-v1.json` and the audit layer that re-derives both kinds of discharge from it, the instrumenter reporting which guards it actually wrote the call into, ADR 0015 | eight fixtures stop starting a process for a mutation nothing could have noticed, and the answer is still the one a run with nothing removed gives |
 
+## What is left, and what is not there to be had
+
+[ADR 0004](adr/0004-proof-layers-not-budgets.md) names three ways a mutant
+survives and calls propagation — the state differed and the difference never
+reached an assertion — the next layer to build. After E11 the honest reading
+is that the engine already has the only propagation proof it can make, and
+that the rest of it is not a layer this engine can add.
+
+Reach and infection are both answerable from **one run of the unmutated
+program**, which is why they are cheap: the guards record what the tests
+reached, and where the compiler vouches that a site is inert they record
+whether its two branches ever parted. Propagation is not like that. Whether a
+difference reaches an assertion depends on everything between the site and the
+assertion, and there are two ways to know it: read the whole program, or run
+the mutated one. Reading it means a type-and-dataflow engine —
+[ADR 0008](adr/0008-compiler-validated-acceptance-and-the-type-witness-pass.md)
+decision 5 keeps `rust-analyzer` out, and an approximation of dataflow that is
+wrong once is a kill reported as a survivor. Running it is what an execution
+already is.
+
+The exception is the whole-program case, and the engine has it:
+[ADR 0013](adr/0013-codegen-identity-is-the-equivalence-proof.md) asks the
+compiler whether it renders the mutation identically, and an answer of
+`identical` is the strongest propagation proof there is — no test of any kind
+can notice it. It costs a build of the mutant, which is why `--equivalence`
+asks it about survivors rather than before the run: a build costs more than
+the tests it would save. That trade is about the sizes, not about the proof.
+
+So the next thing to make cheaper here is not a fourth layer. It is what the
+measurement above says: the witness pass claims very little on real code, and
+what a widening of it buys is measured rather than assumed.
+
 ## What E11 closed
 
 The infection question — the test ran the mutation and the mutation computed
