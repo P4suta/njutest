@@ -983,3 +983,47 @@ fn a_tree_holds_the_call_for_a_probe_only_where_the_compiler_vouched_for_one() {
         "and no guard of the tree calls it, however the runtime defines it: {body}"
     );
 }
+
+#[test]
+fn a_form_that_cannot_hold_the_call_writes_no_probe_however_many_it_was_offered() {
+    let source = "pub fn g() {}\npub fn f() {\n    g();\n}\n";
+    let selection = Selection::tier(&REGISTRY, Tier::All);
+    let discovery = discover_file("src/lib.rs", source.as_bytes(), &selection).expect("discover");
+    let mut builder = Builder::new();
+    for found in &discovery.candidates {
+        builder.add(found.candidate.clone()).expect("add");
+    }
+    let catalog = builder.build().expect("catalog");
+    let placements = plan_file(&catalog, "src/lib.rs", &discovery.candidates).expect("plan");
+    let statements: BTreeMap<u32, rust_mutants::probe::Question> = placements
+        .iter()
+        .filter(|placement| placement.hint.form == rust_mutants::syntax::Form::S)
+        .map(|placement| (placement.index, rust_mutants::probe::Question::Default))
+        .collect();
+    assert!(
+        !statements.is_empty(),
+        "deleting a call is a statement site, which is the form this is about"
+    );
+
+    let file = instrument_file(&Instrumenting {
+        path: "src/lib.rs",
+        source: source.as_bytes(),
+        placements: &placements,
+        markers: &[],
+        comparable: &BTreeSet::default(),
+        probed: &statements,
+        catalog_digest: catalog.digest(),
+    })
+    .expect("instrument");
+    assert!(
+        file.compared.is_empty(),
+        "the call answers with the value it was given, so a statement is nowhere to put it, and \
+         the tree reports what it wrote rather than what it was offered: {:?}",
+        file.compared
+    );
+    let body = file.text.split("#[doc(hidden)]").next().unwrap_or_default();
+    assert!(
+        !body.contains("undefaulted"),
+        "and no guard of the tree calls it: {body}"
+    );
+}
