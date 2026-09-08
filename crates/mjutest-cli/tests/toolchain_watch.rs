@@ -17,11 +17,15 @@ use std::time::Duration;
 use mjutest_cli::cli::Environment;
 use rust_mutants::runner::Cancel;
 
-/// Everything the watch said, stopping it once it says it is waiting or once a second round has answered.
+/// Everything the watch said, stopping it as soon as a round has reached a verdict.
 ///
-/// Both bounds are what makes this a test rather than a hang: a watch whose
-/// loop lost its stopping rule would otherwise keep this process alive until
-/// something outside killed it, and a killed test reports nothing.
+/// The signal is the verdict and not the line the watch says afterwards,
+/// because the verdict is written by the round itself: whatever the loop
+/// around it does or fails to do, one round reaching an answer is what this
+/// test is about, and cancelling there leaves every later rule to be asserted
+/// rather than waited on. A test that hangs when a rule goes missing is not a
+/// test that holds the rule; it is one something outside has to kill, and a
+/// killed test reports nothing.
 struct Stopping<'a> {
     cancel: &'a Cancel,
     said: String,
@@ -30,9 +34,7 @@ struct Stopping<'a> {
 impl Write for Stopping<'_> {
     fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
         self.said.push_str(&String::from_utf8_lossy(buffer));
-        if self.said.contains("waiting\tfor the next change")
-            || self.said.matches("VERDICT").count() > 1
-        {
+        if self.said.contains("VERDICT") {
             self.cancel.cancel();
         }
         Ok(buffer.len())

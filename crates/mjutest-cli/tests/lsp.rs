@@ -652,3 +652,38 @@ fn the_whole_exchange_an_editor_has_with_this_server_is_recorded() {
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testdata/lsp.golden.jsonl");
     mjutest_devkit::golden::golden(&golden, &lines).expect("the recorded exchange");
 }
+
+#[test]
+fn a_header_block_that_never_says_how_long_the_body_is_is_not_a_message() {
+    let body = json!({ "jsonrpc": "2.0", "id": 12, "method": "shutdown" }).to_string();
+    let mut input =
+        Cursor::new(format!("Content-Type: application/vscode-jsonrpc\r\n\r\n{body}").into_bytes());
+
+    assert!(
+        message(&mut input).is_none(),
+        "the length is what says where this message ends and the next one begins, and \
+         reading to the end of the stream instead would swallow every message after it"
+    );
+}
+
+#[test]
+fn a_pointer_that_names_no_run_is_not_a_run() {
+    let root = tempfile::tempdir().expect("a directory");
+    ran(root.path());
+    std::fs::write(
+        root.path().join("reports/latest-any.json"),
+        json!({ "run_id": "one" }).to_string(),
+    )
+    .expect("a pointer that says which run and not where it is");
+
+    let output = served(
+        &[json!({ "jsonrpc": "2.0", "method": "textDocument/didOpen" })],
+        root.path(),
+    );
+
+    assert!(
+        answers(output.said).is_empty(),
+        "the directory is the only thing in that file this can follow, and guessing one \
+         would put whatever is at the guess in front of a person as what their run found"
+    );
+}

@@ -383,6 +383,38 @@ fn the_loop_waits_between_looks_and_stops_waiting_once_it_is_cancelled() {
 }
 
 #[test]
+fn a_watch_cancelled_while_it_would_have_waited_does_not_wait() {
+    let cancel = Cancel::new();
+    let looks = Cell::new(0u64);
+    let poll = Duration::from_millis(200);
+    let waited = std::time::Instant::now();
+
+    let code = until(
+        &cancel,
+        poll,
+        || {
+            looks.set(looks.get().saturating_add(1));
+            if looks.get() >= 2 {
+                cancel.cancel();
+            }
+            Some(seen(&[("src/lib.rs", 10)]))
+        },
+        || 0,
+    );
+
+    assert_eq!(code, 0);
+    assert_eq!(looks.get(), 2, "the tree was read twice and changed once");
+    assert!(
+        waited.elapsed() < poll,
+        "the only look that found nothing new is the one that was cancelled, so there \
+         was never a moment to wait through: a watch that waits on its way out keeps a \
+         person waiting for one it has already stopped, and waiting once at some other \
+         moment is not the same rule: {:?}",
+        waited.elapsed()
+    );
+}
+
+#[test]
 fn a_watch_that_ran_nothing_says_what_a_run_that_found_nothing_says() {
     let cancel = Cancel::new();
     cancel.cancel();
