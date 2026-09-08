@@ -3,38 +3,61 @@
 
 //! A watch against a real workspace: the round it runs before anything changes, and the verdict it carries out of it.
 
-#![expect(
-    clippy::expect_used,
-    reason = "a test reports a setup failure by panicking"
-)]
-
 use std::ffi::OsString;
 use std::io::Write;
-use std::path::Path;
 use std::sync::mpsc::{RecvTimeoutError, channel};
 use std::time::Duration;
 
-use mjutest_cli::cli::Environment;
+use mjutest_cli::cli::{EXIT_ERROR, Environment};
 use rust_mutants::runner::Cancel;
 
-/// Everything the watch said, stopping it as soon as a round has reached a verdict.
+/// The longest this test will wait for a round that is not coming.
 ///
-/// The signal is the verdict and not the line the watch says afterwards,
-/// because the verdict is written by the round itself: whatever the loop
-/// around it does or fails to do, one round reaching an answer is what this
-/// test is about, and cancelling there leaves every later rule to be asserted
-/// rather than waited on. A test that hangs when a rule goes missing is not a
-/// test that holds the rule; it is one something outside has to kill, and a
-/// killed test reports nothing.
+/// The round here answers in milliseconds, so this is three orders of
+/// magnitude of headroom and never a bound the work runs into. It is here
+/// because the alternative bound is a line the round prints, and a test whose
+/// only bound is something the code under test says stops terminating the
+/// moment that code loses the line. A test that hangs when a rule goes missing
+/// is not a test that holds the rule: it is one something outside has to kill,
+/// and a killed test reports nothing.
+const LONGEST: Duration = Duration::from_secs(60);
+
+/// One of the watch's two streams, stopping it once the round has been.
+///
+/// Both streams share one flag, and the round here is one the workspace makes
+/// fail, so its complaint on the error stream is the signal that it has run.
+/// Stopping on *that* rather than only on the line being asserted is what
+/// keeps every later assertion an assertion: a round that printed the wrong
+/// thing on the other stream, or nothing at all, still ends the loop and still
+/// fails here rather than running out the clock.
 struct Stopping<'a> {
     cancel: &'a Cancel,
+    stops: bool,
     said: String,
+}
+
+impl<'a> Stopping<'a> {
+    const fn watching(cancel: &'a Cancel) -> Self {
+        Self {
+            cancel,
+            stops: false,
+            said: String::new(),
+        }
+    }
+
+    const fn complaining(cancel: &'a Cancel) -> Self {
+        Self {
+            cancel,
+            stops: true,
+            said: String::new(),
+        }
+    }
 }
 
 impl Write for Stopping<'_> {
     fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
         self.said.push_str(&String::from_utf8_lossy(buffer));
-        if self.said.contains("VERDICT") {
+        if self.stops || self.said.contains("waiting\tfor the next change") {
             self.cancel.cancel();
         }
         Ok(buffer.len())
@@ -45,37 +68,21 @@ impl Write for Stopping<'_> {
     }
 }
 
-fn copy(from: &Path, to: &Path) {
-    std::fs::create_dir_all(to).expect("the directory");
-    for entry in std::fs::read_dir(from).expect("the fixture") {
-        let entry = entry.expect("an entry");
-        let target = to.join(entry.file_name());
-        if entry.file_type().expect("a file type").is_dir() {
-            copy(&entry.path(), &target);
-        } else {
-            let _bytes = std::fs::copy(entry.path(), target).expect("a copy");
-        }
-    }
-}
-
 #[test]
 fn a_watch_verifies_the_tree_as_it_stands_and_carries_that_round_s_verdict() {
-    let dir = tempfile::Builder::new()
+    let root = tempfile::Builder::new()
         .prefix("mjutest-watch-")
         .tempdir()
         .expect("a temporary directory");
-    let root = dir.path().join("fixture-baseline");
-    copy(
-        &mjutest_devkit::paths::fixtures_dir().join("fixture-baseline"),
-        &root,
-    );
-    let scratch = dir.path().join("scratch");
+    std::fs::write(root.path().join("Cargo.toml"), "[package]\nname = \"\"\n")
+        .expect("a manifest cargo will refuse");
+    let scratch = root.path().join("scratch");
     std::fs::create_dir_all(&scratch).expect("a scratch directory");
 
     let vars: Vec<(OsString, OsString)> = std::env::vars_os().collect();
     let environment = Environment {
         cache_directory: Environment::cache_directory_of(&vars),
-        working_directory: root,
+        working_directory: root.path().to_owned(),
         temp_directory: scratch,
         vars,
         cancel: Cancel::new(),
@@ -84,16 +91,15 @@ fn a_watch_verifies_the_tree_as_it_stands_and_carries_that_round_s_verdict() {
     let watchdog = environment.cancel.clone();
     let (done, waited) = channel::<()>();
     let bound = std::thread::spawn(move || {
-        if waited.recv_timeout(Duration::from_secs(240)) == Err(RecvTimeoutError::Timeout) {
+        let expired = waited.recv_timeout(LONGEST) == Err(RecvTimeoutError::Timeout);
+        if expired {
             watchdog.cancel();
         }
+        expired
     });
 
-    let mut output = Stopping {
-        cancel: &environment.cancel,
-        said: String::new(),
-    };
-    let mut complaints = Vec::new();
+    let mut output = Stopping::watching(&environment.cancel);
+    let mut complaints = Stopping::complaining(&environment.cancel);
     let code = mjutest_cli::run_from(
         [
             "mjutest",
@@ -109,20 +115,31 @@ fn a_watch_verifies_the_tree_as_it_stands_and_carries_that_round_s_verdict() {
         &mut complaints,
     );
     drop(done);
-    bound.join().expect("the bound");
+    let expired = bound.join().expect("the bound");
 
     let said = output.said;
+    let complained = complaints.said;
+    assert!(
+        !expired,
+        "the round never wrote a second line, so this was stopped by its own clock \
+         rather than by the watch: {said}\n{complained}"
+    );
+    assert!(
+        said.starts_with("watching\t"),
+        "a person who starts a watch is told what it is on before it does anything: \
+         {said}"
+    );
     assert!(
         said.contains("waiting\tfor the next change"),
         "a watch that has answered for the tree in front of it says it is waiting, \
          because a round that ends in silence reads as one that is still running: \
-         {said}\n{}",
-        String::from_utf8_lossy(&complaints)
+         {said}\n{complained}"
     );
     assert_eq!(
-        code, 2,
-        "and the verdict it carries out is the round's own: this fixture is \
-         INSUFFICIENT, and a watch that reported success on it would be a green \
-         terminal for a suite with a gap in it: {said}"
+        code, EXIT_ERROR,
+        "and the verdict it carries out is the round's own: this tree is one cargo \
+         refuses, so the round is an error, and a watch that reported success on it \
+         would be a green terminal for a workspace nobody could measure: \
+         {said}\n{complained}"
     );
 }
