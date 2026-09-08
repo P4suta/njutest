@@ -313,12 +313,8 @@ fn documentation_arguments(workspace: &Workspace) -> Vec<std::ffi::OsString> {
     args
 }
 
-/// What the proof layers establish before anything is instrumented: which tests could not have noticed a return replacement, which branch proofs the compiler vouches for, and which targets reached what.
-type Layers = (
-    crate::probe::tree::Probed,
-    crate::prove::Established,
-    crate::reach::Reached,
-);
+/// What the proof layers establish before anything is instrumented: which branch proofs and which comparisons the compiler vouches for, and which targets reached what.
+type Layers = (crate::prove::Established, crate::reach::Reached);
 
 fn layers(
     asking: &crate::prove::Asking<'_>,
@@ -326,27 +322,13 @@ fn layers(
     cancel: &Cancel,
     trace: &crate::trace::Recorder,
 ) -> Result<Layers, EngineError> {
-    let probed = if asking.options.probe {
-        crate::probe::tree::establish(
-            &crate::probe::tree::Asking {
-                workspace: asking.workspace,
-                discovery: asking.discovery,
-                sources: asking.sources,
-                options: asking.options,
-            },
-            cancel,
-            trace,
-        )?
-    } else {
-        crate::probe::tree::Probed::default()
-    };
     let established = if asking.options.branch_proofs {
         crate::prove::establish(asking, cancel, trace)?
     } else {
         crate::prove::Established::default()
     };
     let reached = measured(asking, remembering, cancel, trace)?;
-    Ok((probed, established, reached))
+    Ok((established, reached))
 }
 
 /// What measuring this tree established, made now or remembered from the last run that made it.
@@ -509,7 +491,7 @@ pub fn prepare(
     let (sources, placements) = plan_tree(workspace.snapshot_root(), &discovery)?;
     plan_phase.end();
 
-    let (probed, established, reached) = layers(
+    let (established, reached) = layers(
         &crate::prove::Asking {
             workspace: &workspace,
             discovery: &discovery,
@@ -564,7 +546,6 @@ pub fn prepare(
         items,
         proofs: established.proofs,
         reached,
-        probed,
         validated,
         targets,
         scratch,
@@ -794,7 +775,7 @@ struct TreeCompiler<'a> {
     /// Every mutant whose guard may compare its two branches, so a run records whether they ever differed.
     comparable: &'a BTreeSet<u32>,
     /// Every return replacement whose guard may ask what the value it replaces already held, with the question to ask.
-    probed: &'a BTreeMap<u32, crate::probe::form::Question>,
+    probed: &'a BTreeMap<u32, crate::probe::Question>,
     /// Every mutant whose guard in the tree that was last built actually does compare them, which is what a proof may rest on.
     compared: BTreeSet<u32>,
     /// Every marker the tree that was last built actually holds the call for.

@@ -128,8 +128,6 @@ pub struct PrepareOptions {
     /// one process per target either way. Turning it off is how a caller asks
     /// for the answer a run with nothing removed would give.
     pub touch: bool,
-    /// Build and run the probe tree, which says which tests could not have noticed a return replacement however far they ran.
-    pub probe: bool,
     /// Build and run the tree once with coverage instrumentation, so a mutant is only ever run against the targets that reached it.
     pub coverage: bool,
     /// Ask the compiler which mutations change nothing outside the branch they sit in, so a target that never ran that branch is not run against them.
@@ -179,7 +177,6 @@ impl Default for PrepareOptions {
             verify: true,
             touch: true,
             failing: Failing::Refuse,
-            probe: false,
             coverage: true,
             branch_proofs: true,
             max_rounds: crate::validate::DEFAULT_MAX_ROUNDS,
@@ -271,8 +268,6 @@ pub struct Session {
     /// The branch proof of every mutant that has one, by catalog index.
     proofs: BTreeMap<u32, crate::syntax::branch::Proof>,
     reached: crate::reach::Reached,
-    /// What the probe pass established, empty when it did not run.
-    probed: crate::probe::tree::Probed,
     /// What the one run of every target with nothing active established, empty when nothing was verified.
     verified: Verified,
     /// What each set of tests a route named answers on its own, so the question is put once however many mutants that set covers.
@@ -737,7 +732,6 @@ impl Session {
             cargo: Some(self.workspace.toolchain.cargo()),
             sysroot: self.workspace.toolchain.sysroot(),
             active: None,
-            probe: None,
             touch: None,
             profile: None,
         };
@@ -823,20 +817,13 @@ impl Session {
     /// branch proof: one whose profile could not be read is in the route
     /// because nothing is known about it, and a proof resting on its silence
     /// would rest on the measurement's failure. The guards answer about the
-    /// mutants whose two branches the tree they were in compares, and the
-    /// probe about the targets it ran; a mutant either never asked about is
-    /// one it says nothing about.
+    /// mutants whose two branches the tree they were in compares, and a
+    /// mutant never asked about is one they say nothing about.
     fn proof_against(&self, mutant: &Mutant, target: &str) -> Option<&'static str> {
         if self.never_took_the_branch(mutant, target) {
             return Some(BRANCH_NEVER_TAKEN);
         }
         if self.never_differed(mutant.index, target) {
-            return Some(NEVER_INFECTED);
-        }
-        if self.probed.asked.contains(&mutant.index)
-            && let Some(infected) = self.probed.infected.get(target)
-            && !infected.contains(&mutant.index)
-        {
             return Some(NEVER_INFECTED);
         }
         None
@@ -969,12 +956,6 @@ impl Session {
     #[must_use]
     pub const fn trace(&self) -> &crate::trace::Recorder {
         &self.workspace.trace
-    }
-
-    /// What the probe pass established: which mutants it could ask about, and what each target infected.
-    #[must_use]
-    pub const fn probed(&self) -> &crate::probe::tree::Probed {
-        &self.probed
     }
 
     /// The name of the directory the source root sits in, which is what a report calls the workspace.
@@ -1125,7 +1106,6 @@ impl Session {
             cargo: Some(self.workspace.toolchain.cargo()),
             sysroot: self.workspace.toolchain.sysroot(),
             active: Some((mutant.id.as_str(), self.catalog.digest())),
-            probe: None,
             touch: None,
             profile: None,
         };
@@ -1184,7 +1164,6 @@ impl Session {
             cargo: Some(self.workspace.toolchain.cargo()),
             sysroot: self.workspace.toolchain.sysroot(),
             active: None,
-            probe: None,
             touch: None,
             profile: None,
         };

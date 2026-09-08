@@ -174,12 +174,6 @@ pub struct Mutation {
     /// It costs the run nothing it was not already spending. Turning it off is
     /// how a caller asks for the answer a run with nothing removed would give.
     pub touch: bool,
-    /// Ask each test what it would have noticed, so a target that ran a mutation without its value ever differing is not run against it.
-    ///
-    /// It costs a second instrumented tree and one run of every test, and it
-    /// removes work only where a mutation is a return replacement the probe
-    /// can answer for. A run says what it removed either way.
-    pub probe: bool,
     /// After the run, ask the compiler whether each survivor's mutation is one it renders at all.
     ///
     /// It costs a tree of its own and one build per survivor, and it never
@@ -326,7 +320,6 @@ impl Default for Mutation {
             verify: true,
             coverage: false,
             touch: true,
-            probe: false,
             equivalence: false,
             expect: Vec::new(),
             skip: Vec::new(),
@@ -846,7 +839,6 @@ version = 1
 # verify = true                  # run the instrumented baseline before believing a mutant
 # coverage = false               # build once with LLVM coverage and route by its regions as well
 # touch = true                   # ask the guards which tests reached them, and run only those
-# probe = false                  # ask each test what it would have noticed, and skip what it could not
 # equivalence = false            # ask the compiler whether a survivor's mutation is one it renders
 
 # A mutant a reviewer declared equivalent. The run confirms the claim and

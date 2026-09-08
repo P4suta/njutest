@@ -145,10 +145,6 @@ fn gathered<'a>(
             crate::diagnostics::Part::File(directory.join(rust_mutants::report::evidence::REACHED)),
         ),
         (
-            rust_mutants::report::evidence::PROBE,
-            crate::diagnostics::Part::Tree(directory.join(rust_mutants::report::evidence::PROBE)),
-        ),
-        (
             trace::RUN_DIRECTORY_NAME,
             crate::diagnostics::Part::Tree(directory.join(trace::RUN_DIRECTORY_NAME)),
         ),

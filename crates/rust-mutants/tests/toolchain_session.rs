@@ -489,7 +489,7 @@ fn a_dependency_s_documentation_is_not_this_run_s_to_measure() {
 }
 
 #[test]
-fn the_trace_of_a_probed_and_covered_run_names_every_layer() {
+fn the_trace_of_a_covered_run_names_every_layer() {
     use rust_mutants::trace::{MemorySink, Payload, Recorder, Sink};
 
     let fixture = Fixture::copy("fixture-coverage");
@@ -506,7 +506,6 @@ fn the_trace_of_a_probed_and_covered_run_names_every_layer() {
     let session = workspace
         .prepare(
             &PrepareOptions {
-                probe: true,
                 coverage: true,
                 ..PrepareOptions::default()
             },
@@ -532,8 +531,8 @@ fn the_trace_of_a_probed_and_covered_run_names_every_layer() {
     assert_eq!(
         began,
         [
-            "open", "prepare", "pristine", "discover", "plan", "probe", "witness", "coverage",
-            "validate", "build", "verify",
+            "open", "prepare", "pristine", "discover", "plan", "witness", "coverage", "validate",
+            "build", "verify",
         ],
         "every stage of a preparation is a phase a reader can time"
     );
@@ -559,10 +558,6 @@ fn the_trace_of_a_probed_and_covered_run_names_every_layer() {
             .count()
     };
     assert!(of("verify") > 0, "a target was run with nothing active");
-    assert!(
-        of("probe-exec") > 0,
-        "a target was run against the probe tree"
-    );
     assert!(of("witness") > 0, "a claim was put to the compiler");
     assert!(of("discover-file") > 0);
     assert!(of("instrument") > 0);

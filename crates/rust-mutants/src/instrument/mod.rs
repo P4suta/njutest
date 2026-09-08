@@ -317,7 +317,7 @@ pub struct Instrumenting<'a> {
     /// Every mutant whose guard may compare its two branches, so a run records whether they ever differed.
     pub comparable: &'a BTreeSet<u32>,
     /// Every return replacement whose guard may ask what the value it replaces already held, with the question to ask.
-    pub probed: &'a BTreeMap<u32, crate::probe::form::Question>,
+    pub probed: &'a BTreeMap<u32, crate::probe::Question>,
     /// The catalog every guard names, which the runtime refuses to be activated under another of.
     pub catalog_digest: &'a str,
 }
@@ -419,7 +419,7 @@ struct File<'a> {
     /// Every mutant of this file whose guard may compare its two branches.
     comparable: &'a BTreeSet<u32>,
     /// Every return replacement of this file whose guard may ask what the value it replaces already held.
-    probed: &'a BTreeMap<u32, crate::probe::form::Question>,
+    probed: &'a BTreeMap<u32, crate::probe::Question>,
 }
 
 impl File<'_> {

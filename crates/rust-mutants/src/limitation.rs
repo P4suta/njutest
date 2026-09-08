@@ -24,12 +24,6 @@ pub const COVERAGE_REFUSED_CONFIGURED_RUSTFLAGS: &str = "coverage-refused-config
 /// A cargo configuration file could not be parsed, so what a build compiles with is unknown.
 pub const CARGO_CONFIGURATION_UNREADABLE: &str = "cargo-configuration-unreadable";
 
-/// The probe tree could not be built, so nothing was asked which mutations a target infects.
-pub const PROBE_TREE_NOT_BUILT: &str = "probe-tree-not-built";
-
-/// A probe log could not be read, so what that target infected is unknown.
-pub const PROBE_LOG_UNREADABLE: &str = "probe-log-unreadable";
-
 /// The target says what it found by exiting rather than by printing a summary, so how many of its tests ran is unknown.
 pub const CUSTOM_HARNESS: &str = "custom-harness";
 
@@ -52,7 +46,7 @@ pub const TOUCH_NOT_RECORDED: &str = "touch-not-recorded";
 pub const TOUCH_LOG_UNREADABLE: &str = "touch-log-unreadable";
 
 /// Every limitation, in the order a reader meets them.
-pub const ALL: [&str; 14] = [
+pub const ALL: [&str; 12] = [
     CUSTOM_HARNESS,
     TARGET_SKIPPED_BY_CONFIGURATION,
     DOCTESTS_ROUTED_BY_FILE,
@@ -65,13 +59,11 @@ pub const ALL: [&str; 14] = [
     COVERAGE_NOT_MEASURED,
     COVERAGE_REFUSED_CONFIGURED_RUSTFLAGS,
     CARGO_CONFIGURATION_UNREADABLE,
-    PROBE_TREE_NOT_BUILT,
-    PROBE_LOG_UNREADABLE,
 ];
 
 /// What a log a runtime appends to says, keeping the failure where the file is there and this run could not read it.
 ///
-/// Both logs the engine reads back — the guards' record and the probe's — are
+/// The log the engine reads back — the guards' record — is
 /// written by a process that creates the file the first time it has something
 /// to say. A file that is not there is therefore a process that had nothing to
 /// say, and reads as the empty record. Any other failure is a file that exists

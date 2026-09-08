@@ -45,7 +45,7 @@ answer, and the tests here are mostly about those invariants.
 | Which candidates are real | the build decides, per mutant | one `cargo check` decides for all of them, and every refusal is kept with the compiler's own words |
 | Line numbers | shifted by the mutation | preserved, byte for byte, which is what every position in a report rests on |
 | Selection | `--in-diff`, `--file`, `--regex` | `--changed`, `--include`, `--exclude`, `--package`, `--shard K/N` |
-| Skipping work | `--baseline`, timeouts, `--in-diff` | proofs only: coverage routing, branch proofs, probes — no budget, no sample |
+| Skipping work | `--baseline`, timeouts, `--in-diff` | proofs only: guard routing, coverage routing, branch proofs, infection proofs — no budget, no sample |
 | Unbuildable mutants | reported as a build failure | refused before execution, with the diagnostic that refused them |
 | Report | `mutants.out/*.txt`, JSON | `rust-mutants/run-report` v1 with a JSON Schema, plus a Stryker projection, one offline page, and a terminal reader |
 | Verdict | a count | an exit code from a stated policy, with expectations a reviewer declares and the run verifies |
@@ -67,7 +67,7 @@ answer, and the tests here are mostly about those invariants.
 
 - **Proofs rather than budgets.** A mutant is not run against a target whose
   measured run never reached it, a branch proof discharges a target that never
-  took the branch, and a probe discharges a test that could not have observed
+  took the branch, and an infection proof discharges a test that could not have observed
   a return replacement. Every one of these is evidence the run already holds;
   none of them is a time limit or a sample.
 - **Paired confirmation.** A kill is believed only when the original passes

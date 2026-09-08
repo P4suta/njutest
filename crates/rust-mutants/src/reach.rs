@@ -237,7 +237,6 @@ fn run_targets(
             cargo: Some(workspace.toolchain.cargo()),
             sysroot: workspace.toolchain.sysroot(),
             active: None,
-            probe: None,
             touch: None,
             profile: Some(&pattern),
         };

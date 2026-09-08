@@ -108,10 +108,6 @@ fn what_the_run_did_not_leave_is_named_rather_than_passed_over() {
         "a run that recorded nothing left no recording, and a reader is told so: {absent:?}"
     );
     assert!(
-        absent.contains(&"probe"),
-        "and neither did it leave a probe log: {absent:?}"
-    );
-    assert!(
         stdout(&gathered).contains("absent\ttrace"),
         "{}",
         stdout(&gathered)

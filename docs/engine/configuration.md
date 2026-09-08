@@ -128,7 +128,7 @@ a timeout, and anything else leaves the run undecided.
 
 Every `[build]` key is what a person would have typed at cargo, passed on
 unchanged to every command a run compiles with: the pristine check, each
-validation round, the test build, and the coverage, probe, and witness builds.
+validation round, the test build, and the coverage and witness builds.
 Cargo compiles a different program for a different feature set, target triple,
 or profile, so a run that measures one of them while the project ships another
 measures a program nobody runs. The report's `selection.build` says which one
@@ -203,9 +203,8 @@ the code under it moves is worse than no skip at all.
 
 ## Reserved environment
 
-A run composes `RUST_MUTANTS_ACTIVE`, `RUST_MUTANTS_CATALOG`,
-`RUST_MUTANTS_PROBE`, and `RUST_MUTANTS_TOUCH` for every test process it
-starts. Finding any of them already set in its own environment ends the
+A run composes `RUST_MUTANTS_ACTIVE`, `RUST_MUTANTS_CATALOG`, and
+`RUST_MUTANTS_TOUCH` for every test process it starts. Finding any of them already set in its own environment ends the
 command with `RM0006`: nothing a test process said under an inherited
 activation would be about this run, and a touch log an outer run owns is one
 this run would append its own answers to.

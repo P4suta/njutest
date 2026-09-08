@@ -108,10 +108,6 @@ Options:
           Do not ask the guards which of each target's tests reached them, and so run every test of
           every target that could
 
-      --probe
-          Ask each test what it would have noticed, and never run one against a mutation it could
-          not have
-
       --equivalence
           After the run, ask the compiler whether each survivor's mutation is one it renders at all
 
@@ -304,10 +300,6 @@ Options:
           Do not ask the guards which of each target's tests reached them, and so run every test of
           every target that could
 
-      --probe
-          Ask each test what it would have noticed, and never run one against a mutation it could
-          not have
-
       --equivalence
           After the run, ask the compiler whether each survivor's mutation is one it renders at all
 
@@ -431,10 +423,6 @@ Options:
       --no-touch
           Do not ask the guards which of each target's tests reached them, and so run every test of
           every target that could
-
-      --probe
-          Ask each test what it would have noticed, and never run one against a mutation it could
-          not have
 
       --equivalence
           After the run, ask the compiler whether each survivor's mutation is one it renders at all
@@ -567,10 +555,6 @@ Options:
           Do not ask the guards which of each target's tests reached them, and so run every test of
           every target that could
 
-      --probe
-          Ask each test what it would have noticed, and never run one against a mutation it could
-          not have
-
       --equivalence
           After the run, ask the compiler whether each survivor's mutation is one it renders at all
 
@@ -698,10 +682,6 @@ Options:
           Do not ask the guards which of each target's tests reached them, and so run every test of
           every target that could
 
-      --probe
-          Ask each test what it would have noticed, and never run one against a mutation it could
-          not have
-
       --equivalence
           After the run, ask the compiler whether each survivor's mutation is one it renders at all
 
@@ -828,10 +808,6 @@ Options:
       --no-touch
           Do not ask the guards which of each target's tests reached them, and so run every test of
           every target that could
-
-      --probe
-          Ask each test what it would have noticed, and never run one against a mutation it could
-          not have
 
       --equivalence
           After the run, ask the compiler whether each survivor's mutation is one it renders at all
@@ -964,10 +940,6 @@ Options:
           Do not ask the guards which of each target's tests reached them, and so run every test of
           every target that could
 
-      --probe
-          Ask each test what it would have noticed, and never run one against a mutation it could
-          not have
-
       --equivalence
           After the run, ask the compiler whether each survivor's mutation is one it renders at all
 
@@ -1091,10 +1063,6 @@ Options:
       --no-touch
           Do not ask the guards which of each target's tests reached them, and so run every test of
           every target that could
-
-      --probe
-          Ask each test what it would have noticed, and never run one against a mutation it could
-          not have
 
       --equivalence
           After the run, ask the compiler whether each survivor's mutation is one it renders at all

@@ -154,6 +154,13 @@ strip = "symbols"
 panic = "abort"
 opt-level = 3
 
+# A test binary of this workspace is 73 MB, and 94% of that is DWARF nobody
+# reads: a failing test is read from its backtrace, which needs the file and
+# the line and not the variables. Keeping the full record cost 51 GB of the
+# 54 GB `target/debug/deps` holds, and filled the disk twice in one day.
+[profile.dev]
+debug = "line-tables-only"
+
 [profile.dev.package."*"]
 opt-level = 1
 

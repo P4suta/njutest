@@ -39,9 +39,7 @@ target crate see nothing to object to.
 
 The runtime compares the catalog digest it was generated with against
 `RUST_MUTANTS_CATALOG` and exits with status 97 on a mismatch, so a stale
-tree can never be mistaken for a survivor. The probe runtime is the same
-module in the probe tree, appending to the infection log named by
-`RUST_MUTANTS_PROBE`, and exits 98 when it cannot.
+tree can never be mistaken for a survivor.
 
 The same module is also what measures reach. When `RUST_MUTANTS_TOUCH` names
 a file, every guard records the thread that reached it, and libtest names

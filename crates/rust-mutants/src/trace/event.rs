@@ -14,7 +14,7 @@ pub const SCHEMA: &str = "rust-mutants-trace-v1";
 /// understands whole, and the schema under `schema/` is held to this list by a
 /// test: a type added to one and not the other is a recording no consumer can
 /// validate.
-pub const EVERY_TYPE: [&str; 25] = [
+pub const EVERY_TYPE: [&str; 24] = [
     "run-start",
     "phase-start",
     "phase-end",
@@ -28,7 +28,6 @@ pub const EVERY_TYPE: [&str; 25] = [
     "build",
     "verify",
     "touch",
-    "probe-exec",
     "witness",
     "skip-claim",
     "route",
@@ -128,11 +127,6 @@ pub enum Payload {
         /// The record.
         touch: TouchRecord,
     },
-    /// One target was run against the probe tree, which says what it infected.
-    ProbeExec {
-        /// The record.
-        probe: ProbeExecRecord,
-    },
     /// One branch claim was put to the compiler.
     Witness {
         /// The record.
@@ -208,7 +202,6 @@ impl Payload {
             Self::Build { .. } => "build",
             Self::Verify { .. } => "verify",
             Self::Touch { .. } => "touch",
-            Self::ProbeExec { .. } => "probe-exec",
             Self::SkipClaim { .. } => "skip-claim",
             Self::Kept { .. } => "kept",
             Self::Witness { .. } => "witness",
@@ -484,20 +477,6 @@ pub struct TouchRecord {
     /// How many distinct mutations anything of it saw its guard's two branches differ over, which is what could have noticed them.
     #[serde(default)]
     pub infected: u32,
-}
-
-/// One target run against the probe tree.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ProbeExecRecord {
-    /// The target.
-    pub target: String,
-    /// `measured`, `not-measured`, or `unreadable-log`: a log this release cannot read tells the run nothing.
-    pub outcome: String,
-    /// How many probed sites this target infected, when the log was read.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub infected: Option<u32>,
-    /// How long it took.
-    pub duration_ms: u64,
 }
 
 /// One branch claim put to the compiler.

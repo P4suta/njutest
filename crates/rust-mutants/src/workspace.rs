@@ -55,9 +55,9 @@ pub struct OpenOptions {
 }
 
 /// Claims the build cache for the life of this workspace, so a sweep elsewhere leaves it alone while cargo is writing into it. A cache that cannot be claimed is one another run is already using, which is not this run's business and not a reason to fail: cargo takes its own lock.
-fn claim_target(dir: &Path, now: jiff::Timestamp) -> Option<tempowner::Owner> {
+fn claim_target(dir: &Path, now: jiff::Timestamp, root: &Path) -> Option<tempowner::Owner> {
     std::fs::create_dir_all(dir).ok()?;
-    tempowner::claim_cache(dir, now, TARGET_OWNER_SCHEMA).ok()
+    tempowner::claim_cache_of(dir, now, TARGET_OWNER_SCHEMA, root).ok()
 }
 
 /// A read-only source tree and the disposable copy of it this run works in.
@@ -321,7 +321,7 @@ impl Workspace {
                 .strip_prefix(DIR_PREFIX)
                 .unwrap_or_default()
         ));
-        let target_owner = claim_target(&target_dir, now);
+        let target_owner = claim_target(&target_dir, now, &root);
         phase.end();
         Ok(Self {
             snapshot,

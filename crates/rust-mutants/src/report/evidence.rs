@@ -6,10 +6,10 @@
 //! A proof layer removes executions, and a report that says so without the
 //! evidence is a claim rather than a proof. These files are the premises: the
 //! measurement each target left behind, what its guards recorded about which of
-//! its tests reached them, the catalog with the branch bodies the compiler
-//! vouched for, and the log each probe process appended to. An audit reads
-//! them, re-decides every route, and says whether the run's own answers follow
-//! — with no access to the engine that produced them.
+//! its tests reached and infected them, and the catalog with the branch bodies
+//! the compiler vouched for. An audit reads them, re-decides every route, and
+//! says whether the run's own answers follow — with no access to the engine
+//! that produced them.
 //!
 //! Writing them never fails a run. What could not be written is one file a
 //! reader does not have, and a run that ended because it could not write a
@@ -27,9 +27,6 @@ pub const TOUCHED: &str = "touched-v1.json";
 
 /// The catalog, as a document.
 pub const CATALOG: &str = "catalog-v1.json";
-
-/// The directory the probe logs are copied into.
-pub const PROBE: &str = "probe";
 
 /// One file a run kept, with what a reader can check it by.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -64,33 +61,6 @@ pub fn write(
     }
     if let Ok(text) = serde_json::to_string(&super::catalog::document(session, options)) {
         written.extend(keep(directory, CATALOG, text.as_bytes()));
-    }
-    written.extend(probe_logs(session, directory));
-    written
-}
-
-/// Copies every probe log the pass left behind.
-fn probe_logs(session: &Session, directory: &Path) -> Vec<Written> {
-    let from = crate::probe::tree::logs_dir(session.target_dir());
-    let into = directory.join(PROBE);
-    let Ok(entries) = std::fs::read_dir(&from) else {
-        return Vec::new();
-    };
-    if std::fs::create_dir_all(&into).is_err() {
-        return Vec::new();
-    }
-    let mut written = Vec::new();
-    for entry in entries.flatten() {
-        let Some(name) = entry.file_name().to_str().map(ToOwned::to_owned) else {
-            continue;
-        };
-        let Ok(bytes) = std::fs::read(entry.path()) else {
-            continue;
-        };
-        written.extend(keep(&into, &name, &bytes).into_iter().map(|one| Written {
-            file: format!("{PROBE}/{}", one.file),
-            ..one
-        }));
     }
     written
 }

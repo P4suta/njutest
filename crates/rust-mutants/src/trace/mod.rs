@@ -17,9 +17,9 @@ use sha2::{Digest as _, Sha256};
 pub use event::{
     AttributionRecord, BisectRecord, BuildRecord, CacheRecord, DischargeRecord, DiscoverFileRecord,
     EVERY_TYPE, Event, EvidenceRecord, ExecRecord, IdenticalRecord, InstrumentRecord, KeptRecord,
-    MutantExecRecord, NoteRecord, OpenRecord, Payload, PhaseRecord, ProbeExecRecord, RouteRecord,
-    RunRecord, SCHEMA, SelectRecord, SiteRecord, SkipClaimRecord, SkipCount, SnapshotRecord,
-    SweepRecord, TargetRecord, TouchRecord, ValidateRoundRecord, VerifyRecord, WitnessRecord,
+    MutantExecRecord, NoteRecord, OpenRecord, Payload, PhaseRecord, RouteRecord, RunRecord, SCHEMA,
+    SelectRecord, SiteRecord, SkipClaimRecord, SkipCount, SnapshotRecord, SweepRecord,
+    TargetRecord, TouchRecord, ValidateRoundRecord, VerifyRecord, WitnessRecord,
 };
 pub use reader::{Problem, ReadError, check, read_events};
 pub use sink::{
@@ -279,11 +279,6 @@ impl Recorder {
     /// Records what one target's guards said they reached.
     pub fn touch(&self, record: TouchRecord) {
         self.emit(Payload::Touch { touch: record });
-    }
-
-    /// Records one target run against the probe tree.
-    pub fn probe_exec(&self, record: ProbeExecRecord) {
-        self.emit(Payload::ProbeExec { probe: record });
     }
 
     /// Records one branch claim put to the compiler.

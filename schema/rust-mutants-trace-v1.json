@@ -876,64 +876,6 @@
         "timestamp",
         "elapsed_ms",
         "type",
-        "probe"
-      ],
-      "properties": {
-        "seq": {
-          "type": "integer",
-          "minimum": 1
-        },
-        "timestamp": {
-          "type": "string",
-          "minLength": 1
-        },
-        "elapsed_ms": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "type": {
-          "const": "probe-exec"
-        },
-        "probe": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "target",
-            "outcome",
-            "duration_ms"
-          ],
-          "properties": {
-            "target": {
-              "type": "string",
-              "minLength": 1
-            },
-            "outcome": {
-              "enum": [
-                "measured",
-                "not-measured",
-                "unreadable-log"
-              ]
-            },
-            "infected": {
-              "type": "integer",
-              "minimum": 0
-            },
-            "duration_ms": {
-              "type": "integer",
-              "minimum": 0
-            }
-          }
-        }
-      }
-    },
-    {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "seq",
-        "timestamp",
-        "elapsed_ms",
-        "type",
         "witness"
       ],
       "properties": {

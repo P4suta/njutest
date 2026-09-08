@@ -152,7 +152,6 @@ fn ran(
         cargo: Some(workspace.toolchain.cargo()),
         sysroot: workspace.toolchain.sysroot(),
         active: None,
-        probe: None,
         touch: log.map(|log| execute::Touching {
             log,
             catalog: catalog.digest(),

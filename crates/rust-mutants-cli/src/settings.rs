@@ -72,7 +72,6 @@ impl Settings {
         config.mutation.coverage |= scope.switches.coverage;
         config.mutation.coverage &= !scope.switches.no_coverage;
         config.mutation.touch &= !scope.switches.no_touch;
-        config.mutation.probe |= scope.switches.probe;
         config.mutation.equivalence |= scope.switches.equivalence;
         config.execution.doctests &= !scope.switches.no_doctests;
         Ok(Self {
@@ -133,7 +132,6 @@ impl Settings {
             coverage: self.config.mutation.coverage,
             touch: self.config.mutation.touch,
             branch_proofs: self.config.mutation.coverage || self.config.mutation.touch,
-            probe: self.config.mutation.probe,
             build_timeout: self.config.mutation.build_timeout,
             mutant_timeout: self.config.mutation.timeout,
             doctests: self.config.execution.doctests,

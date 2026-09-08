@@ -189,8 +189,8 @@ they are what a person runs to find out that it is set.
 
 `diagnostics [RUN]` writes `rust-mutants/diagnostics` v1
 (`schema/rust-mutants-diagnostics-v1.json`) as `bundle.json`, beside a
-directory holding the run report, the catalog, the measurement, the probe
-logs, the recording, the configuration, a fresh `doctor-v1.json`,
+directory holding the run report, the catalog, the measurement, the
+recording, the configuration, a fresh `doctor-v1.json`,
 `toolchain.txt`, and `environment.txt`. `held` names what is in it and
 `absent` names what the run did not leave, so a reader knows the difference
 between a run that had nothing to say and a file that never arrived.
@@ -203,17 +203,16 @@ value its owner did not choose to publish.
 
 A run writes `touched-v1.json` (`schema/rust-mutants-touched-v1.json`),
 `reached-v1.json` (`schema/rust-mutants-reached-v1.json`) and
-`catalog-v1.json` beside its report, and copies every probe log into
-`probe/`. They are the premises its proof layers rest on: what each target's
-guards recorded about which of its tests reached which mutation, entered
-which proved body, and saw which guard's two branches part — with
-`narrowing` saying which mutants the tree could record anything about, so an
-absence in it is evidence rather than silence — the measurement the coverage
-build left behind, empty when nothing was measured, which says so, the
-catalog with the branch bodies the compiler vouched for, and what each probe
-process recorded. `cargo xtask engine-audit` reads them and re-decides
-every route without the engine that produced them, which is what makes a
-report's `discharged` a proof rather than a claim.
+`catalog-v1.json` beside its report. They are the premises its proof layers
+rest on: what each target's guards recorded about which of its tests reached
+which mutation, entered which proved body, and saw which mutation differ from
+what it replaces — with `narrowing` saying which mutants the tree could record
+anything about, so an absence in it is evidence rather than silence — the
+measurement the coverage build left behind, empty when nothing was measured,
+which says so, and the catalog with the branch bodies the compiler vouched
+for. `cargo xtask engine-audit` reads them and re-decides every route without
+the engine that produced them, which is what makes a report's `discharged` a
+proof rather than a claim.
 
 Writing them never fails a run. A file that could not be written is one an
 audit calls unaudited, which is the honest answer.
@@ -225,16 +224,3 @@ audit calls unaudited, which is the honest answer.
 [trace](trace.md). A recording is never evidence, so nothing here reads one
 to decide anything.
 
-## Infection log
-
-```text
-rust-mutants-infection-v1 <catalog digest> <N>
-<index>
-<index>
-```
-
-Written by the probe runtime with `O_APPEND`, one header per process, one
-index per infected mutant, first time only. Read fail-closed: a truncated
-line, a mismatched header, or an index beyond the catalog yields no facts at
-all — never the parseable prefix, which is exactly what a smaller wrong answer
-looks like.

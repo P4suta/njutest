@@ -87,7 +87,7 @@ pub struct Found {
     /// What the compiler must vouch for before this guard's two branches may be compared, so a run can record whether they ever differed. `None` where the syntax does not allow comparing them.
     pub comparable: Option<branch::Comparable>,
     /// What a probe of this edit would ask, when evaluating the expression a second time is not itself an event. `None` where no probe can be stated.
-    pub probe: Option<crate::probe::form::Question>,
+    pub probe: Option<crate::probe::Question>,
 }
 
 /// Why a place produced no candidate. Declared in rank order, which is the order skips are reported in.

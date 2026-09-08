@@ -152,7 +152,7 @@ together, which is how a long run becomes four short ones.
 
 | What | Where |
 | --- | --- |
-| the run report, catalog, measurement, probe logs | `reports/mutation/<run id>/` |
+| the run report, catalog, measurement, guard record | `reports/mutation/<run id>/` |
 | the recording, with `--trace` | `reports/mutation/<run id>/trace/` |
 | a bug report bundle | `reports/mutation/<run id>/diagnostics/` |
 | what earlier runs established | the user cache directory; `cache` says where |

@@ -27,8 +27,14 @@ a test that finds a defect.
 reads as "could this test have seen the replacement", so a `PartialEq` that
 answers about less than a test can see makes the probe say nothing happened
 while a test watches the difference. The probe is stated only for the types
-whose equality is the whole of what a program can tell apart, and this fixture
-is where a type outside that set is held to being refused.
+whose equality is the whole of what a program can tell apart — the primitives,
+`str`, `String`, and `Option` or `Vec` of one of those — and this fixture is
+where a type outside that set is held to being refused.
+
+No tree is built for any of this. The guard the instrumented tree already
+holds compares the value the branch that keeps the original produced against
+the constant the replacement writes, on the run that verifies the baseline
+([ADR 0016](../../docs/adr/0016-the-probe-tree-is-a-tree-nobody-needs.md)).
 
 ## Fates
 

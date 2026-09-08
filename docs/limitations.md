@@ -127,8 +127,17 @@ below is stated fail-closed.
   the record could only ever say that it did.
   Everywhere else `never-infected` says nothing about the mutation however
   many tests ran it, and the record names which mutants it can speak about so
-  that its silence about the rest is never read as evidence. The probe tree,
-  which `--probe` builds, is what answers for those.
+  that its silence about the rest is never read as evidence.
+- A return replacement is asked whether the value it overwrites already held
+  what it would write, and only where two things hold. Evaluating the value
+  must not itself be an event, which is an allowlist over the syntax that
+  refuses every call and every arithmetic operator; and its type must be one
+  whose equality is the whole of what a program can tell apart — the
+  primitives, `str`, `String`, and `Option` or `Vec` of one of those. A float
+  is refused because `-0.0 == 0.0` holds and `-0.0` is not what the default
+  writes; a type of your own is refused because its `PartialEq` may answer
+  about less than a test reads. A value the compiler refuses costs the
+  question and never the mutant, which is measured by running it.
 - A run refuses a tree whose instrumented baseline does not pass, and it names
   every target that failed rather than the first: a person reading the refusal
   is about to fix what it names, and a message that names one of five sends
@@ -145,8 +154,7 @@ below is stated fail-closed.
   first time it has something to say, so a file that is not there is a process
   that said nothing, and a file that is there and will not open is neither.
   Either way the target keeps every test of it in every route, which is what a
-  run that measured nothing about it has to do. The probe's own log is read by
-  the same rule.
+  run that measured nothing about it has to do.
 - A coverage export whose region ends before it starts is refused outright
   rather than read as far as it goes. Such a region describes nothing, and a
   reader that kept it would answer "this target did not reach that place" for

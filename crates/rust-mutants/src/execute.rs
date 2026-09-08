@@ -17,27 +17,23 @@ use crate::outcome::Outcome;
 use crate::runner::{Cancel, EXIT_CODE_UNAVAILABLE, RunResult, Spec, run};
 use crate::trace::{ExecRecord, Recorder};
 
-/// Selects the mutant to probe rather than to activate. Reserved here so that a stale value from an outer probe run is stripped, and used by the probe phase.
-pub const PROBE_ENV: &str = "RUST_MUTANTS_PROBE";
-
 /// Every variable the engine owns. A test process sees exactly the ones this run set, never one an outer run left behind.
-pub const RESERVED_ENV: [&str; 4] = [ACTIVE_ENV, CATALOG_ENV, PROBE_ENV, TOUCH_ENV];
+pub const RESERVED_ENV: [&str; 3] = [ACTIVE_ENV, CATALOG_ENV, TOUCH_ENV];
 
 /// The variables a run composes for every test process it starts, which it therefore never lets one inherit.
 ///
-/// The four reserved ones say which mutation is active and what the guards are
+/// The three reserved ones say which mutation is active and what the guards are
 /// to record, and an inherited one would decide what somebody else's run
 /// measured — or append this run's touches to a file another run is reading.
-/// `LLVM_PROFILE_FILE` is the fifth for a different reason: a measurement of
+/// `LLVM_PROFILE_FILE` is the fourth for a different reason: a measurement of
 /// this engine sets it, and an instrumented test process that inherited it
 /// would write over the very measurement that started the run. Removing it is
 /// not enough on its own — an instrumented binary with no path writes
 /// `default_*.profraw` into its working directory, which is the tree being
 /// measured — so a run puts a path of its own in its place.
-pub const COMPOSED_ENV: [&str; 5] = [
+pub const COMPOSED_ENV: [&str; 4] = [
     ACTIVE_ENV,
     CATALOG_ENV,
-    PROBE_ENV,
     TOUCH_ENV,
     crate::coverage::PROFILE_ENV,
 ];
@@ -403,9 +399,6 @@ pub const fn outcome_of(observed: Observation, summary: Option<Summary>, harness
     if observed.exit_code == STALE_CATALOG_EXIT || observed.stale_catalog {
         return Outcome::Errored;
     }
-    if observed.exit_code == crate::probe::runtime::UNAVAILABLE_EXIT {
-        return Outcome::Errored;
-    }
     if observed.exit_code != 0 {
         return Outcome::Killed;
     }
@@ -499,9 +492,6 @@ pub fn environment(
     if let Some((id, catalog)) = active {
         env.insert(OsString::from(ACTIVE_ENV), OsString::from(id));
         env.insert(OsString::from(CATALOG_ENV), OsString::from(catalog));
-    }
-    if let Some(probe) = context.probe {
-        env.insert(OsString::from(PROBE_ENV), probe.as_os_str().to_owned());
     }
     if let Some(touch) = context.touch {
         env.insert(OsString::from(TOUCH_ENV), touch.log.as_os_str().to_owned());
@@ -679,8 +669,6 @@ pub struct Context<'a> {
     pub sysroot: Option<&'a Path>,
     /// The mutant to activate: `(identity, catalog digest)`.
     pub active: Option<(&'a str, &'a str)>,
-    /// Where a probe process appends what it infected. `None` runs a process that records nothing.
-    pub probe: Option<&'a Path>,
     /// Where the guards append which of the process's threads reached them, and the catalog the record is about. `None` runs a process whose guards record nothing.
     pub touch: Option<Touching<'a>>,
     /// Where a coverage-instrumented process writes what it executed. `None` runs a process that measures nothing.

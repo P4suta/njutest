@@ -200,7 +200,7 @@ fn the_environment_is_the_base_plus_cargos_own_plus_the_activation() {
             OsString::from("stale"),
         ),
         (
-            OsString::from("RUST_MUTANTS_PROBE"),
+            OsString::from("RUST_MUTANTS_TOUCH"),
             OsString::from("stale"),
         ),
         (OsString::from("TMPDIR"), OsString::from("/tmp")),
@@ -212,7 +212,6 @@ fn the_environment_is_the_base_plus_cargos_own_plus_the_activation() {
             cargo: None,
             sysroot: None,
             active: Some(("abc", "digest")),
-            probe: None,
             touch: None,
             profile: None,
         },
@@ -230,9 +229,9 @@ fn the_environment_is_the_base_plus_cargos_own_plus_the_activation() {
     assert_eq!(lookup("RUST_MUTANTS_ACTIVE").as_deref(), Some("abc"));
     assert_eq!(lookup("RUST_MUTANTS_CATALOG").as_deref(), Some("digest"));
     assert_eq!(
-        lookup("RUST_MUTANTS_PROBE"),
+        lookup("RUST_MUTANTS_TOUCH"),
         None,
-        "a stale probe variable is removed, never inherited"
+        "a stale record variable is removed, never inherited"
     );
     for key in ["TMPDIR", "TMP", "TEMP"] {
         assert_eq!(
@@ -275,7 +274,6 @@ fn a_baseline_inherits_none_of_the_variables_a_run_composes_for_itself() {
             cargo: None,
             sysroot: None,
             active: None,
-            probe: None,
             touch: None,
             profile: None,
         },
@@ -302,7 +300,6 @@ fn the_guards_are_told_where_to_record_exactly_when_the_run_asks_them_to() {
             cargo: None,
             sysroot: None,
             active: None,
-            probe: None,
             touch: Some(rust_mutants::execute::Touching {
                 log,
                 catalog: "digest",
@@ -391,7 +388,6 @@ fn a_test_process_learns_which_cargo_built_it() {
             cargo: Some(Path::new("/opt/toolchain/bin/cargo")),
             sysroot: None,
             active: None,
-            probe: None,
             touch: None,
             profile: None,
         },
@@ -415,7 +411,6 @@ fn a_test_process_learns_which_cargo_built_it() {
             cargo: None,
             sysroot: None,
             active: None,
-            probe: None,
             touch: None,
             profile: None,
         },
@@ -500,7 +495,6 @@ fn an_inherited_coverage_profile_path_never_reaches_a_test_process() {
             cargo: None,
             sysroot: None,
             active: Some(("abc", "digest")),
-            probe: None,
             touch: None,
             profile: None,
         },
@@ -538,7 +532,6 @@ fn the_profile_path_a_coverage_pass_composes_is_the_one_it_gets() {
             cargo: None,
             sysroot: None,
             active: None,
-            probe: None,
             touch: None,
             profile: Some(mine),
         },
@@ -772,22 +765,6 @@ fn a_line_that_is_not_a_verdict_is_not_a_test() {
         b"test result: ok. 1 passed; 0 failed\nrunning 1 test\ntesting the water ... ok\n",
     );
     assert_eq!(lines, Lines::default());
-}
-
-#[test]
-fn a_probe_process_that_could_not_record_is_errored() {
-    let observed = Observation {
-        unstarted: false,
-        timed_out: false,
-        exit_code: rust_mutants::probe::runtime::UNAVAILABLE_EXIT,
-        stale_catalog: false,
-    };
-    assert_eq!(
-        outcome_of(observed, None, true),
-        Outcome::Errored,
-        "a process that says it could not record what it saw has said nothing about the \
-         mutation, and reading its exit as a kill would credit a test that never ran"
-    );
 }
 
 proptest::proptest! {

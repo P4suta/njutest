@@ -65,11 +65,10 @@ when something did. `--json` writes the same answer as
 ```console
 $ rust-mutants diagnostics
 reports/mutation/20260907T101122333Z/diagnostics
-absent	probe
 ```
 
 One directory holds everything a reader re-decides the run from: the run
-report, the catalog, the measurement (`reached-v1.json`), the probe logs, the
+report, the catalog, the measurement (`reached-v1.json`), the
 recording, the configuration, a fresh `doctor-v1.json`, `toolchain.txt`, and
 `environment.txt`. `bundle.json` names what is in it as `held` and what the
 run did not leave as `absent`, so a reader can tell a run that had nothing to

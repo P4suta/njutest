@@ -73,7 +73,6 @@ shape, and every line is checked against
 | `build` | the test binaries the build produced, each with its kind, whether it carries the libtest harness, and what a run could not establish about it |
 | `verify` | per target: what the suite said with nothing active, how many tests ran, and how long the baseline took |
 | `touch` | per target: how many of its tests reached a mutation, how many distinct mutations anything of it reached, how many were reached where nothing named a test, and how many it saw a guard's two branches differ over |
-| `probe-exec` | target, outcome, infected count |
 | `witness` | per candidate: the witness placed, whether it checked, and the diagnostic that refused it |
 | `skip-claim` | per `rust-mutants: skip` marker: where it sits, the reason its author wrote, and whether it hid anything |
 | `kept` | per directory a run was asked to keep rather than remove, with the run that kept it |

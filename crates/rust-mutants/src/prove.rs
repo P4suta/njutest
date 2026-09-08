@@ -283,7 +283,7 @@ pub struct Established {
     /// Every mutant whose guard may compare its two branches, because the compiler vouched for the condition being inert.
     pub comparable: BTreeSet<u32>,
     /// Every return replacement whose guard may ask whether the value it replaces already holds what it would write, with the question to ask.
-    pub probed: BTreeMap<u32, crate::probe::form::Question>,
+    pub probed: BTreeMap<u32, crate::probe::Question>,
 }
 
 /// The position one past the body's last byte. A body's end is exclusive, and a reader looking at the closing brace wants where it is rather than where the next thing starts.

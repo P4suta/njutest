@@ -6,7 +6,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 # rust-mutants architecture
 
 **Status: implemented.** Discovery, instrumentation, compiler-validated
-acceptance, execution, the probe tree, the branch proof, the public API, and
+acceptance, execution, the branch proof, the infection proof, the public API, and
 the command line all work; [the roadmap](../roadmap.md) says which milestone
 each part came from.
 
@@ -40,10 +40,9 @@ cargo metadata (in the snapshot) ─→ pristine cargo check + dep-info
         │
    cargo test --no-run ─→ test binaries, outside the snapshot
         │
-   [probe tree: second snapshot, probe runtime, infection log]
-   [witness tree: third snapshot, checked only, branch proofs]
+   [witness tree: second snapshot, checked only, branch proofs and probes]
         │
-   Session: exec(mutant, target, args) / probe(target, args) / changes()
+   Session: exec(mutant, target, args) / judge(mutant) / changes()
 ```
 
 ## What a scoped run compiles
@@ -141,7 +140,7 @@ never look like a run that saw nothing change.
 `--features`, `--all-features`, `--no-default-features`, `--build-target`,
 `--profile`, and `--build-jobs` are what the `[build]` section spells, and
 they reach every command a run compiles with: the pristine check, each
-validation round, the test build, and the coverage, probe, and witness builds.
+validation round, the test build, and the coverage and witness builds.
 Cargo compiles a different program for a different feature set, triple, or
 profile, so the report's `selection.build` says which one was measured and a
 stored outcome is only reused for a run compiled the same way. The build
@@ -198,9 +197,12 @@ the condition around it is inert — the same witnesses a branch proof rests on
 — the baseline evaluates both and records every time they parted. A target
 that never saw them part is discharged `never-infected`, and a kept target is
 asked only for the tests that did. It is the same run and the same log, so the
-layer is free; what the syntax cannot call inert is the probe tree's, which
-`--probe` builds. See
-[ADR 0015](../adr/0015-the-guard-is-the-infection-probe.md).
+layer is free. A return replacement is answered the same way for a different
+reason: it writes a constant, so the guard compares the value the branch that
+keeps the original produced against that constant, with the compiler vouching
+for the type in the same witness tree. See
+[ADR 0015](../adr/0015-the-guard-is-the-infection-probe.md) and
+[ADR 0016](../adr/0016-the-probe-tree-is-a-tree-nobody-needs.md).
 
 `Session::judge` runs what the route reaches and `Session::exec` runs what the
 measurement placed, discharges included: a discharge is a proof a caller may
@@ -492,12 +494,12 @@ A test process the engine starts is told what cargo would have told it:
 ### The environment a test process gets
 
 A test process inherits the environment the run was started with, plus what
-cargo sets for its target, minus the five variables a run composes for
-itself: `RUST_MUTANTS_ACTIVE`, `RUST_MUTANTS_CATALOG`, `RUST_MUTANTS_PROBE`,
-`RUST_MUTANTS_TOUCH`, and `LLVM_PROFILE_FILE`. The first four decide which
-mutation is active and what the guards are to record, and an inherited one
-would make every answer be about somebody else's run — or append this run's
-touches to a file another run is about to read. The fifth is there because a
+cargo sets for its target, minus the four variables a run composes for
+itself: `RUST_MUTANTS_ACTIVE`, `RUST_MUTANTS_CATALOG`, `RUST_MUTANTS_TOUCH`,
+and `LLVM_PROFILE_FILE`. The first three decide which mutation is active and
+what the guards are to record, and an inherited one would make every answer be
+about somebody else's run — or append this run's touches to a file another run
+is about to read. The fourth is there because a
 measurement *of this engine* sets it: an
 instrumented test process that inherited it would write over the very
 measurement that started the run. Removing it is not enough on its own, since

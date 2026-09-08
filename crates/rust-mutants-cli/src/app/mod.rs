@@ -37,10 +37,9 @@ pub use stored::run_id;
 use stored::{named, newest, prune, store};
 
 /// The variables a run composes for itself, which it therefore refuses to inherit.
-pub const RESERVED_ENV: [&str; 4] = [
+pub const RESERVED_ENV: [&str; 3] = [
     "RUST_MUTANTS_ACTIVE",
     "RUST_MUTANTS_CATALOG",
-    "RUST_MUTANTS_PROBE",
     "RUST_MUTANTS_TOUCH",
 ];
 

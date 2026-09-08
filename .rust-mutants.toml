@@ -16,7 +16,6 @@ packages = ["rust-mutants", "rust-mutants-cli", "xtask"]
 
 [mutation]
 tier = "all"
-probe = true
 
 [execution]
 offline = true

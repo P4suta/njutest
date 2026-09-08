@@ -103,18 +103,13 @@ fn every_proof_that_removed_a_run_claimed_the_answer_a_whole_run_gives() {
     let mut removed_something: u32 = 0;
     let mut claims: u32 = 0;
     for name in FIXTURES {
-        let probe: &[&str] = if name == "fixture-probeable" {
-            &["--probe"]
-        } else {
-            &[]
-        };
-        let whole = established(name, &[Measuring::NOTHING.flags(), probe].concat());
+        let whole = established(name, Measuring::NOTHING.flags());
         for measuring in Measuring::ALL {
             if measuring == Measuring::NOTHING {
                 continue;
             }
             let mode = measuring.name();
-            let proved = established(name, &[measuring.flags(), probe].concat());
+            let proved = established(name, measuring.flags());
             assert_eq!(
                 proved.rows.len(),
                 whole.rows.len(),

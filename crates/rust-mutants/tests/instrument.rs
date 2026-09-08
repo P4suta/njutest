@@ -873,7 +873,7 @@ fn instrumented(path: &str, source: &str) -> Option<(String, Catalog)> {
 fn probeable(
     discovery: &rust_mutants::syntax::FileDiscovery,
     catalog: &Catalog,
-) -> BTreeMap<u32, rust_mutants::probe::form::Question> {
+) -> BTreeMap<u32, rust_mutants::probe::Question> {
     discovery
         .candidates
         .iter()

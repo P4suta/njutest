@@ -8,7 +8,7 @@
     reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
 )]
 
-use rust_mutants::probe::form::{PROBED, Question, is_effect_free, is_probed};
+use rust_mutants::probe::{PROBED, Question, is_effect_free, is_probed};
 
 fn effect_free(source: &str) -> bool {
     let expr: syn::Expr = syn::parse_str(source).expect("the expression parses");

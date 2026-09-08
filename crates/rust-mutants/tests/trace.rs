@@ -17,9 +17,9 @@ use rust_mutants::testkit::trace::{memory_recorder, stepping_clock, type_names};
 use rust_mutants::trace::summary::{diff, render, summarize};
 use rust_mutants::trace::{
     DirSink, EVERY_TYPE, ExecRecord, FILE_NAME, MemorySink, OUTPUT_DIRECTORY_NAME,
-    OUTPUT_FILE_LIMIT, OpenRecord, Payload, ProbeExecRecord, Problem, Recorder, RouteRecord,
-    SCHEMA, Sink, SnapshotRecord, SweepRecord, TRUNCATION_MARKER, VerifyRecord, WitnessRecord,
-    check, read_events,
+    OUTPUT_FILE_LIMIT, OpenRecord, Payload, Problem, Recorder, RouteRecord, SCHEMA, Sink,
+    SnapshotRecord, SweepRecord, TRUNCATION_MARKER, VerifyRecord, WitnessRecord, check,
+    read_events,
 };
 use std::collections::BTreeSet;
 
@@ -536,12 +536,6 @@ fn one_of_each_measurement(recorder: &Recorder) {
         sites: 7,
         loose: 1,
         infected: 2,
-    });
-    recorder.probe_exec(ProbeExecRecord {
-        target: "demo/lib/demo".to_owned(),
-        outcome: "measured".to_owned(),
-        infected: Some(2),
-        duration_ms: 8,
     });
     recorder.witness(WitnessRecord {
         index: 1,

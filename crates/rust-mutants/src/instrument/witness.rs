@@ -139,7 +139,7 @@ pub struct Probing {
     /// The returned expression, which is what the guard replaces and what the binding is put to.
     pub value: Span,
     /// What the probe asks about it.
-    pub question: crate::probe::form::Question,
+    pub question: crate::probe::Question,
     /// How many `super::` segments separate the value's inline module from the file root.
     pub super_depth: u32,
 }

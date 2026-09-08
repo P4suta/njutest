@@ -177,13 +177,9 @@ fn a_target_that_never_ran_the_body_is_discharged_by_the_branch_proof() {
 }
 
 #[test]
-fn a_mutation_whose_two_branches_never_parted_is_discharged_without_a_probe_tree() {
+fn a_mutation_whose_two_branches_never_parted_is_discharged_on_the_baseline_run() {
     let fixture = Fixture::copy("fixture-coverage");
     let session = prepared(&fixture, false);
-    assert!(
-        session.probed().asked.is_empty(),
-        "the probe tree is not what says so here"
-    );
     let mut named = Vec::new();
     for mutant in session.catalog().mutants() {
         for one in session.route(mutant).discharged() {
@@ -282,9 +278,9 @@ fn a_proof_with_nothing_measured_at_all_removes_nothing() {
     session.close().expect("close");
 }
 
-/// A prepared session that probes, measuring coverage or not.
+/// A prepared session that measures coverage or does not.
 fn probing(fixture: &Fixture, coverage: bool) -> rust_mutants::session::Session {
-    probed(
+    measuring(
         fixture,
         if coverage {
             Measuring::BOTH
@@ -294,12 +290,12 @@ fn probing(fixture: &Fixture, coverage: bool) -> rust_mutants::session::Session 
     )
 }
 
-/// A prepared session that probes and measures nothing at all, so a proof has no premise to rest on.
+/// A prepared session that measures nothing at all, so a proof has no premise to rest on.
 fn unmeasured(fixture: &Fixture) -> rust_mutants::session::Session {
-    probed(fixture, Measuring::NOTHING)
+    measuring(fixture, Measuring::NOTHING)
 }
 
-fn probed(fixture: &Fixture, measuring: Measuring) -> rust_mutants::session::Session {
+fn measuring(fixture: &Fixture, measuring: Measuring) -> rust_mutants::session::Session {
     let cancel = Cancel::new();
     let workspace = Workspace::open(
         fixture.root(),
@@ -308,20 +304,14 @@ fn probed(fixture: &Fixture, measuring: Measuring) -> rust_mutants::session::Ses
     )
     .expect("the workspace opens");
     workspace
-        .prepare(
-            &PrepareOptions {
-                probe: true,
-                ..measuring.options(Tier::All)
-            },
-            &cancel,
-        )
+        .prepare(&measuring.options(Tier::All), &cancel)
         .expect("the session prepares")
 }
 
 #[test]
 fn a_target_that_never_entered_the_body_is_discharged_without_a_coverage_build() {
     let fixture = Fixture::copy("fixture-coverage");
-    let session = probed(
+    let session = measuring(
         &fixture,
         Measuring {
             coverage: false,

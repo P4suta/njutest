@@ -33,7 +33,7 @@ pub(super) struct Alternative {
     /// Whether a run may evaluate this beside the original and record whether the two ever differed.
     pub(super) comparable: bool,
     /// What a run may ask about the value this replaces, where the compiler vouched that asking runs none of the program's code.
-    pub(super) probe: Option<crate::probe::form::Question>,
+    pub(super) probe: Option<crate::probe::Question>,
 }
 
 /// A composed guard: its text, where each alternative's own text sits in it, and where the original branch does. The offsets are relative to the start of the text.

@@ -51,6 +51,16 @@ pub struct Marker {
     /// What the directory is for. Absent in a marker written before roles existed, which means a scratch.
     #[serde(default)]
     pub role: Role,
+    /// The tree a cache is keyed to, so a sweep can tell a cache a run will look up from one nothing can name again.
+    ///
+    /// A cache is spared however old it is, which is only safe while some
+    /// later run can still hit it. The key is derived from the source tree, so
+    /// a cache whose tree is gone is one no run will ever look up, and
+    /// sparing it is how a temporary directory grows without bound. Absent in
+    /// a marker written before caches said this, which says nothing either
+    /// way and is therefore spared as it always was.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keyed_to: Option<String>,
 }
 
 /// The lock file inside `dir`.
@@ -117,7 +127,15 @@ pub fn claim(dir: &Path, now: Timestamp) -> Result<Owner, ClaimError> {
 /// # Errors
 /// Those of [`claim`].
 pub fn claim_as(dir: &Path, now: Timestamp, schema: &str) -> Result<Owner, ClaimError> {
-    claim_with(dir, now, schema, Role::Scratch)
+    claim_with(
+        dir,
+        now,
+        Claiming {
+            schema,
+            role: Role::Scratch,
+            keyed_to: None,
+        },
+    )
 }
 
 /// [`claim_as`] for a build cache: a directory a sweep spares however old it is, because the next run wants what is in it.
@@ -125,10 +143,54 @@ pub fn claim_as(dir: &Path, now: Timestamp, schema: &str) -> Result<Owner, Claim
 /// # Errors
 /// Those of [`claim`].
 pub fn claim_cache(dir: &Path, now: Timestamp, schema: &str) -> Result<Owner, ClaimError> {
-    claim_with(dir, now, schema, Role::Cache)
+    claim_with(
+        dir,
+        now,
+        Claiming {
+            schema,
+            role: Role::Cache,
+            keyed_to: None,
+        },
+    )
 }
 
-fn claim_with(dir: &Path, now: Timestamp, schema: &str, role: Role) -> Result<Owner, ClaimError> {
+/// [`claim_cache`] for a cache keyed to a tree, which is what lets a sweep collect it once the tree is gone.
+///
+/// # Errors
+/// Those of [`claim`].
+pub fn claim_cache_of(
+    dir: &Path,
+    now: Timestamp,
+    schema: &str,
+    keyed_to: &Path,
+) -> Result<Owner, ClaimError> {
+    claim_with(
+        dir,
+        now,
+        Claiming {
+            schema,
+            role: Role::Cache,
+            keyed_to: Some(keyed_to.display().to_string()),
+        },
+    )
+}
+
+/// What a claim writes into the marker beside the lock.
+struct Claiming<'a> {
+    /// The schema the marker names, which says which program wrote it.
+    schema: &'a str,
+    /// What the directory is for.
+    role: Role,
+    /// The tree a cache is keyed to, where it is one.
+    keyed_to: Option<String>,
+}
+
+fn claim_with(dir: &Path, now: Timestamp, claiming: Claiming<'_>) -> Result<Owner, ClaimError> {
+    let Claiming {
+        schema,
+        role,
+        keyed_to,
+    } = claiming;
     let lock = acquire(&lock_path(dir)).map_err(|source| ClaimError::Lock {
         dir: dir.to_path_buf(),
         source,
@@ -144,6 +206,7 @@ fn claim_with(dir: &Path, now: Timestamp, schema: &str, role: Role) -> Result<Ow
         started: now,
         kept: false,
         role,
+        keyed_to,
     };
     if let Err(source) = write_marker(dir, &marker) {
         drop(lock);
@@ -447,7 +510,11 @@ enum Verdict {
 fn judge(dir: &Path, entry: &fs::DirEntry, now: Timestamp) -> io::Result<Verdict> {
     match read_marker(dir) {
         Ok(marker) if marker.kept => return Ok(Verdict::Kept),
-        Ok(marker) if marker.role == Role::Cache => return Ok(Verdict::Cache),
+        Ok(marker) if marker.role == Role::Cache => {
+            if !orphaned(marker.keyed_to.as_deref()) {
+                return Ok(Verdict::Cache);
+            }
+        }
         Err(MarkerError::Missing { .. }) => return legacy(entry, now),
         Ok(_) | Err(_) => {}
     }
@@ -458,6 +525,15 @@ fn judge(dir: &Path, entry: &fs::DirEntry, now: Timestamp) -> io::Result<Verdict
             Ok(Verdict::Abandoned)
         }
     }
+}
+
+/// Whether a cache is keyed to a tree that is no longer there.
+///
+/// A cache with no key says nothing either way: it was written before caches
+/// said what they are keyed to, and a sweep that guessed would remove one a
+/// run is about to use.
+fn orphaned(keyed_to: Option<&str>) -> bool {
+    keyed_to.is_some_and(|tree| !Path::new(tree).exists())
 }
 
 /// A directory with no marker at all: one created before this convention, or one whose marker was lost. Age is the only evidence there is, and a young one is left alone because it may be a run in progress.

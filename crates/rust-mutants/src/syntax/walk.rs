@@ -26,7 +26,7 @@ use super::shape::{
 };
 use super::{Claim, Decision, Form, Found, Include, Selection, SiteHint, SkipReason, beside};
 use crate::catalog::Candidate;
-use crate::probe::form::Question;
+use crate::probe::Question;
 use crate::span::Span;
 
 /// What the enclosing function returns, as far as its signature says.
@@ -1481,7 +1481,7 @@ impl<'a> Walker<'a> {
             form: Form::E,
             span,
         });
-        let probeable = crate::probe::form::is_effect_free(expr);
+        let probeable = crate::probe::is_effect_free(expr);
         let offer = |walker: &mut Self, rule: &str, replacement: &str| {
             walker.emit(
                 rule,
