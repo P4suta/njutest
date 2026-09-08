@@ -437,7 +437,9 @@ impl Recorded {
 /// Which of the records the tree could say anything about, which is what turns an absence into evidence.
 #[derive(Debug, Default)]
 struct Narrowing {
+    /// Every mutant whose guard evaluates its two readings, so `infected` is about it.
     compared: BTreeSet<u64>,
+    /// The marker each mutant's branch proof rests on, so `bodies` is about it.
     bodies: BTreeMap<u64, u64>,
 }
 
@@ -469,7 +471,9 @@ impl Narrowing {
 /// One kind of thing the guards report, by the thread that reported it.
 #[derive(Debug, Default)]
 struct Seen {
+    /// What each named test of the target reported.
     tests: BTreeMap<String, BTreeSet<u64>>,
+    /// What was reported where nothing named a test, which is therefore about every test of it.
     loose: BTreeSet<u64>,
 }
 
@@ -533,9 +537,13 @@ impl Seen {
 /// What one target's guards recorded.
 #[derive(Debug, Default)]
 struct Touches {
+    /// The mutant sites each test reached.
     reached: Seen,
+    /// The proved bodies each test entered, by the marker at the body's first statement.
     bodies: Seen,
+    /// The mutations each test saw a guard's two readings part over.
     infected: Seen,
+    /// How many tests of this target the baseline ran, which is what "all of them" counts against.
     ran: usize,
 }
 
@@ -638,8 +646,9 @@ pub(super) fn proofs(report: &Report, evidence: &Evidence<'_>, audit: &mut Audit
         );
         return;
     }
-    branch_discharges(&claims, evidence, &mut notes);
-    infection_discharges(&claims, evidence, &mut notes);
+    let recorded = record_of(evidence.touched);
+    branch_discharges(&claims, recorded.as_ref(), evidence, &mut notes);
+    infection_discharges(&claims, recorded.as_ref(), evidence, &mut notes);
     if let Some(recorded) = evidence.recorded {
         never_ran(&claims, recorded, &mut notes);
     }
@@ -731,17 +740,18 @@ fn saw_a_difference(recorded: &Recorded, claim: &Discharged) -> Option<bool> {
 }
 
 /// Re-derives every `branch-never-taken` discharge from what the guards recorded, and from the coverage regions for the ones they say nothing about.
-fn branch_discharges(claims: &[Discharged], evidence: &Evidence<'_>, notes: &mut Notes<'_>) {
-    let recorded = record_of(evidence.touched);
+fn branch_discharges(
+    claims: &[Discharged],
+    recorded: Option<&Recorded>,
+    evidence: &Evidence<'_>,
+    notes: &mut Notes<'_>,
+) {
     let mut branch: Vec<&Discharged> = Vec::new();
     for claim in claims
         .iter()
         .filter(|claim| claim.proof == "branch-never-taken")
     {
-        match recorded
-            .as_ref()
-            .and_then(|one| entered_the_body(one, claim))
-        {
+        match recorded.and_then(|one| entered_the_body(one, claim)) {
             Some(true) => notes.violated(
                 "branch-never-taken",
                 format!(
@@ -847,16 +857,17 @@ fn ran_the_body(reached: &Value, target: &str, path: &str, body: &Value) -> bool
 }
 
 /// Re-derives every `never-infected` discharge from what the guards recorded, and asks for the probe's own log where they say nothing.
-fn infection_discharges(claims: &[Discharged], evidence: &Evidence<'_>, notes: &mut Notes<'_>) {
-    let recorded = record_of(evidence.touched);
+fn infection_discharges(
+    claims: &[Discharged],
+    recorded: Option<&Recorded>,
+    evidence: &Evidence<'_>,
+    notes: &mut Notes<'_>,
+) {
     for claim in claims
         .iter()
         .filter(|claim| claim.proof == "never-infected")
     {
-        match recorded
-            .as_ref()
-            .and_then(|one| saw_a_difference(one, claim))
-        {
+        match recorded.and_then(|one| saw_a_difference(one, claim)) {
             Some(true) => notes.violated(
                 "never-infected",
                 format!(

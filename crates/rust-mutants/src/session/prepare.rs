@@ -576,11 +576,17 @@ struct Instrumented {
 /// What instrumenting the tree is done from: the snapshot to write into, the mutants to place, and what the proof layers established about them.
 #[derive(Debug, Clone, Copy)]
 struct Establishing<'a> {
+    /// The workspace whose snapshot the instrumented tree is written into.
     workspace: &'a Workspace,
+    /// What there is to mutate, with the catalog every guard names.
     discovery: &'a discover::Discovery,
+    /// The pristine bytes of every mutable file.
     sources: &'a BTreeMap<String, Vec<u8>>,
+    /// The mutants placed in each file.
     placements: &'a BTreeMap<String, Vec<Placement>>,
+    /// What the proof layers established about them: the branch proofs, and which guards may compare their two readings.
     established: &'a crate::prove::Established,
+    /// What the run was asked to prepare.
     options: &'a PrepareOptions,
 }
 

@@ -291,8 +291,11 @@ fn rests_on(found: &crate::syntax::Found) -> Option<Rests> {
 
 /// What one candidate rests on: the condition to witness, and the body a branch proof about it names.
 struct Rests {
+    /// The whole condition, which the witnesses are written in front of.
     condition: crate::span::Span,
+    /// The body a branch proof names, or nothing where only the comparison rests on the condition.
     body: Option<crate::span::Span>,
+    /// What the compiler must vouch for.
     witnesses: Vec<crate::syntax::branch::Witness>,
 }
 
