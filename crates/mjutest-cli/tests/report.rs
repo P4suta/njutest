@@ -554,3 +554,121 @@ fn a_report_that_says_where_its_facts_came_from_says_one_thing_about_it() {
         );
     }
 }
+
+/// Every report this audit refuses, one for each way it refuses one.
+fn refused() -> Vec<Report> {
+    let mut counted = sound();
+    counted.accounting.targets.passed = 99;
+
+    let mut blank = sound();
+    blank.schema.clear();
+
+    let mut failing = sound();
+    failing.accounting.targets.failed = 1;
+    failing.accounting.targets.passed = 1;
+    failing.targets[0].status = TargetStatus::Failed;
+
+    let mut disagreeing = sound();
+    disagreeing.targets[2].status = TargetStatus::Failed;
+
+    let mut found = sound();
+    found.findings = vec![Finding::new(
+        FindingKind::SurvivingMutant,
+        "aaaaaaaaaaaa",
+        "nothing noticed it",
+    )];
+
+    let mut silent = sound();
+    silent.verdict = Verdict::Defect;
+
+    let mut anonymous = sound();
+    anonymous.provenance.cached = true;
+
+    let mut itself = sound();
+    itself.provenance.cached = true;
+    itself.provenance.source_run_id = Some(itself.run_id.clone());
+
+    let mut nameless = sound();
+    nameless.provenance.cached = true;
+    nameless.provenance.source_run_id = Some(String::new());
+
+    let mut established = sound();
+    established.provenance.source_run_id = Some("20260905T081500Z-000000".to_owned());
+
+    let mut unasked = sound();
+    unasked.repository.git = Git::unavailable();
+
+    let mut claiming = sound();
+    claiming.repository.git = Git::unavailable();
+    claiming.repository.git.dirty = true;
+    claiming.limitations = vec![Limitation::new(
+        "git-metadata-unavailable",
+        "git said nothing",
+    )];
+
+    let mut backwards = sound();
+    backwards.targets.reverse();
+
+    let mut empty = sound();
+    empty.accounting.targets = TargetAccounting::default();
+    empty.targets.clear();
+
+    vec![
+        counted,
+        blank,
+        failing,
+        disagreeing,
+        found,
+        silent,
+        anonymous,
+        itself,
+        nameless,
+        established,
+        unasked,
+        claiming,
+        backwards,
+        empty,
+    ]
+}
+
+#[test]
+fn every_refusal_is_a_finished_sentence() {
+    let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let mut kinds = 0u32;
+    for report in refused() {
+        let violations = validate_for_persistence(&report);
+        assert!(!violations.is_empty(), "a report this audit refuses");
+        for violation in violations {
+            kinds = kinds.saturating_add(1);
+            let said = violation.to_string();
+            assert!(
+                !said.contains("  "),
+                "two spaces where a word was: a sentence with a hole in it is one \
+                 somebody wrote and nobody read: {said:?}"
+            );
+            assert!(
+                !said.trim_end().ends_with([';', ':', ',']),
+                "a sentence that stops at its own semicolon promised a reason and gave \
+                 none: {said:?}"
+            );
+            assert!(
+                !said.ends_with(char::is_whitespace),
+                "and one that stops at the space before the reason is the same hole with \
+                 nothing to see: whatever the words around it were, they were written to \
+                 be followed by something: {said:?}"
+            );
+            assert!(
+                said.len() > 20 && !said.contains("Violation"),
+                "what is wrong, in words a reader can act on, and not the name of a \
+                 variant: {said:?}"
+            );
+            let _known = seen.insert(said);
+        }
+    }
+    assert!(
+        kinds >= 14,
+        "one report for each way this refuses one, and every way says something \
+         different: {kinds} refusals, {} of them distinct",
+        seen.len()
+    );
+}
