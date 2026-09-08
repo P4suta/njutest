@@ -325,3 +325,34 @@ fn a_shard_nobody_could_have_meant_is_refused_by_the_text_it_was_given() {
         );
     }
 }
+
+#[test]
+fn a_proof_removing_a_mutation_and_nothing_reaching_it_are_counted_and_named_apart() {
+    use rust_mutants::run::NotRunReason;
+
+    let unrun = |index: u32, why: NotRunReason| {
+        let mut one = judged(index, Outcome::NotRun);
+        one.not_run_reason = Some(why);
+        one
+    };
+    let run = of(vec![
+        unrun(1, NotRunReason::Unreached),
+        unrun(2, NotRunReason::Discharged),
+        judged(3, Outcome::Killed),
+    ]);
+
+    let tally = run.tally();
+    assert_eq!(
+        (tally.unreached, tally.discharged, tally.not_run),
+        (1, 1, 2),
+        "each reason is counted in its own column, or a reader is told a proof removed what \
+         nothing reached: {tally:?}"
+    );
+    let kinds: Vec<FindingKind> = run.findings().iter().map(|one| one.kind).collect();
+    assert_eq!(
+        kinds,
+        [FindingKind::UnreachedMutant, FindingKind::DischargedMutant],
+        "and the finding says the same, in the order the rows are in: a reader told the wrong \
+         one checks the proof when they should write a test, or the other way about"
+    );
+}
