@@ -140,3 +140,25 @@ fn a_tree_that_passes_reports_a_baseline_for_every_target_it_ran() {
         );
     }
 }
+
+#[test]
+fn a_target_whose_every_test_is_ignored_says_so_rather_than_saying_nothing() {
+    let fixture = Fixture::copy("fixture-ignored");
+    let session = prepare(&fixture, Failing::Refuse).expect("prepare");
+    let baseline = session
+        .verified()
+        .targets
+        .get("fixture-ignored/lib/fixture_ignored")
+        .expect("the library target was verified");
+    assert_eq!(
+        baseline.outcome,
+        rust_mutants::outcome::Outcome::Inconclusive,
+        "a target that ran no test decided nothing"
+    );
+    assert_eq!(baseline.tests, 0, "it ran none");
+    assert_eq!(
+        baseline.ignored, 2,
+        "and it says how many it was told to skip, which is what tells it from a harness \
+         that printed no summary at all"
+    );
+}

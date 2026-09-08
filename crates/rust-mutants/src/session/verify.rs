@@ -64,6 +64,7 @@ pub(super) fn verify(
             tests: result
                 .tests_run
                 .unwrap_or_else(|| u32::try_from(result.passed_tests.len()).unwrap_or(u32::MAX)),
+            ignored: u32::try_from(result.ignored_tests.len()).unwrap_or(u32::MAX),
             output: if matches!(
                 result.outcome,
                 crate::outcome::Outcome::Survived | crate::outcome::Outcome::Inconclusive
@@ -172,6 +173,14 @@ pub struct Baseline {
     pub duration: Duration,
     /// How many tests it ran, which is what asking the whole of it about one mutation costs.
     pub tests: u32,
+    /// How many tests the harness was told to skip, which is what tells a target that ran nothing from one that said nothing.
+    ///
+    /// `tests` counts what passed and what failed and nothing else, so a
+    /// target whose every test carries `#[ignore]` runs none and reports
+    /// none. Without this it is indistinguishable from a harness that printed
+    /// no summary at all, and the two are opposite things: one is a target
+    /// with nothing to say, the other is a target nothing was learned about.
+    pub ignored: u32,
     /// What it printed, kept only where it did not pass, because that is the only time anybody reads it.
     pub output: String,
 }
