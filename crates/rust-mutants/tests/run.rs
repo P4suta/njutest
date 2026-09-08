@@ -425,3 +425,45 @@ fn a_claim_is_written_back_by_the_way_it_named_its_mutant() {
         "and a claim that named nothing says nothing rather than something a reader would look for"
     );
 }
+
+#[test]
+fn the_outcomes_a_clean_run_says_nothing_about_are_each_left_out_for_their_own_reason() {
+    use rust_mutants::run::NotRunReason;
+
+    let unrun = |index: u32, why: NotRunReason| {
+        let mut one = judged(index, Outcome::NotRun);
+        one.not_run_reason = Some(why);
+        one
+    };
+    let mut accounted = judged(1, Outcome::Survived);
+    accounted.expected = true;
+    let rows = vec![
+        accounted,
+        judged(2, Outcome::Killed),
+        judged(3, Outcome::TimedOut),
+        unrun(4, NotRunReason::Unselected),
+        unrun(5, NotRunReason::StoppedEarly),
+        judged(6, Outcome::Survived),
+    ];
+    let run = of(rows);
+
+    let kinds: Vec<FindingKind> = run.findings().iter().map(|one| one.kind).collect();
+    assert_eq!(
+        kinds,
+        [FindingKind::SurvivingMutant],
+        "a survivor a reviewer accounted for, a mutation the tests noticed, one they noticed by \
+         running out of time, and two a run was never about are each left out for a reason of \
+         their own, and the one nobody accounted for is the finding"
+    );
+    let tally = run.tally();
+    assert_eq!(
+        (
+            tally.expected,
+            tally.killed,
+            tally.timed_out,
+            tally.survived
+        ),
+        (1, 1, 1, 2),
+        "and the columns count them where a reader looks: {tally:?}"
+    );
+}
