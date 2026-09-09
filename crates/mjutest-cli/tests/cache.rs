@@ -252,3 +252,91 @@ fn an_entry_that_is_not_there_is_no_answer_and_an_entry_that_cannot_be_read_is_a
          working: {error}"
     );
 }
+
+fn keepable() -> Report {
+    report("20260905T081500Z-abcdef", &"c".repeat(64))
+}
+
+#[test]
+fn a_report_the_store_may_not_keep_says_which_of_the_three_reasons_it_is() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let kept = store(dir.path());
+
+    let mut nameless = keepable();
+    nameless.provenance.identity = mjutest_cli::report::UNAVAILABLE.to_owned();
+    let mut copied = keepable();
+    copied.provenance.cached = true;
+    copied.provenance.source_run_id = Some("20260905T081500Z-000000".to_owned());
+    let mut unsound = keepable();
+    unsound.accounting.targets.passed = 99;
+    if let Some(first) = unsound.targets.first_mut() {
+        first.status = TargetStatus::Failed;
+    }
+
+    for (what, report, says) in [
+        (
+            "a report with no identity",
+            &nameless,
+            "answers for no inputs",
+        ),
+        (
+            "a report that was itself read back",
+            &copied,
+            "already stored where it came from",
+        ),
+        (
+            "a report a reader could not check",
+            &unsound,
+            "accounts for",
+        ),
+    ] {
+        let refused = kept.put(report).expect_err(what);
+        assert!(
+            matches!(&refused, CacheError::Refused { message } if message.contains(says)),
+            "{what} is one the store may not keep, and which of the three it is decides \
+             what somebody does about it. A report with more than one thing wrong is \
+             quoted from the first of them, because that is the one to fix: {refused}"
+        );
+    }
+
+    assert!(
+        kept.put(&keepable()).is_ok(),
+        "and a report that is none of those is what the store is for"
+    );
+}
+
+#[test]
+fn a_report_that_cannot_be_written_names_the_path_that_refused_it() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let kept = store(&dir.path().join("root"));
+    let report = keepable();
+    let identity = report.provenance.identity.clone();
+
+    let inside = kept
+        .entry(&identity)
+        .parent()
+        .expect("the store's own directory")
+        .to_path_buf();
+    std::fs::create_dir_all(inside.join(format!("{identity}.writing")))
+        .expect("a directory where the pending file goes");
+    let refused = kept
+        .put(&report)
+        .expect_err("a pending path that is a directory");
+    assert!(
+        matches!(&refused, CacheError::Unusable { path, .. } if path.ends_with(format!("{identity}.writing"))),
+        "the answer is written beside its own name and moved into place, so a pending \
+         file that cannot be written is the one to name: {refused}"
+    );
+
+    let other = tempfile::tempdir().expect("tempdir");
+    let elsewhere = store(&other.path().join("root"));
+    std::fs::create_dir_all(elsewhere.entry(&identity)).expect("a directory where the entry goes");
+    let refused = elsewhere
+        .put(&report)
+        .expect_err("an entry that is a directory");
+    assert!(
+        matches!(&refused, CacheError::Unusable { path, .. } if path == &elsewhere.entry(&identity)),
+        "and one that was written and could not be moved into place names where it was \
+         going: {refused}"
+    );
+}
