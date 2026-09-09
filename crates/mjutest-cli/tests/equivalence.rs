@@ -4,6 +4,7 @@
 //! Which mutations nothing noticed are mutations nothing could have noticed.
 
 #![expect(
+    clippy::expect_used,
     clippy::indexing_slicing,
     reason = "a list this test built holds what this test put in it, and a shorter one is the failure it is here to report"
 )]
@@ -147,6 +148,61 @@ fn decided(display_id: &str, equivalent: bool) -> Decided {
         } else {
             "the compiler renders it differently".to_owned()
         },
+    }
+}
+
+fn recording() -> mjutest_cli::trace::Recorder {
+    mjutest_cli::trace::Recorder::new(
+        mjutest_cli::trace::Sink::Memory(mjutest_cli::trace::MemorySink::unbounded()),
+        mjutest_cli::trace::Clock::stepping(
+            jiff::Timestamp::from_second(1_800_000_000).expect("in range"),
+            std::time::Duration::from_secs(1),
+        ),
+        mjutest_cli::trace::StartRecord::of(
+            "20260909T000000Z-000001",
+            mjutest_cli::report::RunKind::Full,
+            mjutest_cli::config::Contract::StandardV1,
+        ),
+    )
+}
+
+#[test]
+fn what_this_layer_decided_about_each_mutation_is_in_the_recording() {
+    let cancel = rust_mutants::runner::Cancel::new();
+    let trace = recording();
+    let mut judged = vec![survivor("aaaa"), survivor("bbbb")];
+
+    settle(
+        &mut judged,
+        &[decided("aaaa", false), decided("bbbb", true)],
+        mjutest_cli::watch::Watch::new(&cancel, &trace),
+    );
+
+    let notes: Vec<String> = trace
+        .events()
+        .iter()
+        .filter_map(|event| match &event.payload {
+            mjutest_cli::trace::Payload::Note { note } => {
+                Some(format!("{} {}", note.kind, note.detail))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        notes.len(),
+        2,
+        "this layer removes findings, and a run that removed one has to say which and \
+         why: a proof nobody can read back is one nobody can audit, which is what ADR \
+         0004 decision 4 asks of every layer: {notes:?}"
+    );
+    for (mutant, said) in [("aaaa", "differently"), ("bbbb", "identically")] {
+        assert!(
+            notes.iter().any(|note| note.starts_with("equivalence ")
+                && note.contains(mutant)
+                && note.contains(said)),
+            "and it says what the compiler answered about each, under a topic a reader \
+             can filter for: {notes:?}"
+        );
     }
 }
 
