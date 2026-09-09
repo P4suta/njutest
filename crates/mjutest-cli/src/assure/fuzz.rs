@@ -167,6 +167,7 @@ fn one(done: &mut Fuzzed, fuzzing: &Fuzzing<'_>, target: &str, watch: Watch<'_>)
             kind: FindingKind::NotMeasured,
             subject: format!("fuzz:{target}"),
             detail: format!("{target} was not driven, which the configuration asks for"),
+            path: None,
             position: None,
         });
         return;
@@ -193,6 +194,7 @@ fn one(done: &mut Fuzzed, fuzzing: &Fuzzing<'_>, target: &str, watch: Watch<'_>)
             kind: FindingKind::FailingTest,
             subject: format!("fuzz:{target}"),
             detail: format!("{target} crashed on the input {artifact} kept"),
+            path: None,
             position: None,
         });
         done.crashes.push(Crash {

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/P4suta/mjutest/schema/mjutest-assurance-report-v1.json",
   "title": "mjutest assurance report v1",
-  "description": "One completed verification: what was asked, what ran, what it established, and every limitation on the claim. There is no percentage in this document, by design — a verdict is a claim a reader can check, and a coverage number is not.",
+  "description": "One completed verification: what was asked, what ran, what it established, and every limitation on the claim. There is no percentage in this document, by design \u2014 a verdict is a claim a reader can check, and a coverage number is not.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -27,18 +27,31 @@
     "limitations"
   ],
   "properties": {
-    "schema": { "const": "mjutest-assurance-report-v1" },
-    "schema_version": { "const": 1 },
+    "schema": {
+      "const": "mjutest-assurance-report-v1"
+    },
+    "schema_version": {
+      "const": 1
+    },
     "run_id": {
       "type": "string",
       "minLength": 1,
       "description": "The run's identity, which is also its directory name under reports/runs."
     },
     "run_kind": {
-      "enum": ["full", "changed", "scoped"],
+      "enum": [
+        "full",
+        "changed",
+        "scoped"
+      ],
       "description": "How much of the workspace the run looked at. It bounds which verdicts the run may reach."
     },
-    "contract": { "enum": ["standard-v1", "deep-v1"] },
+    "contract": {
+      "enum": [
+        "standard-v1",
+        "deep-v1"
+      ]
+    },
     "verdict": {
       "enum": [
         "ASSURED",
@@ -54,28 +67,62 @@
     "tool": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["mjutest", "rust_mutants"],
+      "required": [
+        "mjutest",
+        "rust_mutants"
+      ],
       "properties": {
-        "mjutest": { "type": "string", "minLength": 1 },
-        "rust_mutants": { "type": "string", "minLength": 1 }
+        "mjutest": {
+          "type": "string",
+          "minLength": 1
+        },
+        "rust_mutants": {
+          "type": "string",
+          "minLength": 1
+        }
       }
     },
     "toolchain": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["rustc", "cargo", "target", "os", "arch"],
+      "required": [
+        "rustc",
+        "cargo",
+        "target",
+        "os",
+        "arch"
+      ],
       "properties": {
-        "rustc": { "type": "string", "minLength": 1 },
-        "cargo": { "type": "string", "minLength": 1 },
-        "target": { "type": "string", "minLength": 1 },
-        "os": { "type": "string", "minLength": 1 },
-        "arch": { "type": "string", "minLength": 1 }
+        "rustc": {
+          "type": "string",
+          "minLength": 1
+        },
+        "cargo": {
+          "type": "string",
+          "minLength": 1
+        },
+        "target": {
+          "type": "string",
+          "minLength": 1
+        },
+        "os": {
+          "type": "string",
+          "minLength": 1
+        },
+        "arch": {
+          "type": "string",
+          "minLength": 1
+        }
       }
     },
     "provenance": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["identity", "cached", "source_run_id"],
+      "required": [
+        "identity",
+        "cached",
+        "source_run_id"
+      ],
       "description": "Where the facts in this report came from. A run that read an earlier run's answer says so and names it, so a reader can check the claim rather than take it.",
       "properties": {
         "identity": {
@@ -83,9 +130,19 @@
           "minLength": 1,
           "description": "The evidence identity of the inputs, which is what a cached answer is keyed on."
         },
-        "cached": { "type": "boolean" },
+        "cached": {
+          "type": "boolean"
+        },
         "source_run_id": {
-          "oneOf": [{ "type": "null" }, { "type": "string", "minLength": 1 }],
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "minLength": 1
+            }
+          ],
           "description": "The run that established the facts, present exactly when cached is true."
         }
       }
@@ -101,49 +158,114 @@
         "git"
       ],
       "properties": {
-        "root_name": { "type": "string", "minLength": 1 },
-        "packages": { "type": "array", "items": { "type": "string" } },
-        "workspace_digest": { "$ref": "#/$defs/opaque" },
-        "configuration_digest": { "$ref": "#/$defs/opaque" },
-        "git": { "$ref": "#/$defs/git" }
+        "root_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "packages": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "workspace_digest": {
+          "$ref": "#/$defs/opaque"
+        },
+        "configuration_digest": {
+          "$ref": "#/$defs/opaque"
+        },
+        "git": {
+          "$ref": "#/$defs/git"
+        }
       }
     },
     "scope": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["requested_packages", "resolved_packages", "excluded"],
+      "required": [
+        "requested_packages",
+        "resolved_packages",
+        "excluded"
+      ],
       "properties": {
-        "requested_packages": { "type": "array", "items": { "type": "string" } },
-        "resolved_packages": { "type": "array", "items": { "type": "string" } },
-        "excluded": { "type": "array", "items": { "type": "string" } }
+        "requested_packages": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "resolved_packages": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "excluded": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
       }
     },
     "timing": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["started", "finished", "duration_ms"],
+      "required": [
+        "started",
+        "finished",
+        "duration_ms"
+      ],
       "properties": {
-        "started": { "type": "string", "minLength": 1 },
-        "finished": { "type": "string", "minLength": 1 },
-        "duration_ms": { "$ref": "#/$defs/count" }
+        "started": {
+          "type": "string",
+          "minLength": 1
+        },
+        "finished": {
+          "type": "string",
+          "minLength": 1
+        },
+        "duration_ms": {
+          "$ref": "#/$defs/count"
+        }
       }
     },
     "accounting": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["targets", "mutants", "soundness"],
+      "required": [
+        "targets",
+        "mutants",
+        "soundness"
+      ],
       "properties": {
         "targets": {
           "type": "object",
           "additionalProperties": false,
           "description": "Every selected target has exactly one terminal state, so passed + failed + skipped + missing equals selected.",
-          "required": ["selected", "passed", "failed", "skipped", "missing"],
+          "required": [
+            "selected",
+            "passed",
+            "failed",
+            "skipped",
+            "missing"
+          ],
           "properties": {
-            "selected": { "$ref": "#/$defs/count" },
-            "passed": { "$ref": "#/$defs/count" },
-            "failed": { "$ref": "#/$defs/count" },
-            "skipped": { "$ref": "#/$defs/count" },
-            "missing": { "$ref": "#/$defs/count" }
+            "selected": {
+              "$ref": "#/$defs/count"
+            },
+            "passed": {
+              "$ref": "#/$defs/count"
+            },
+            "failed": {
+              "$ref": "#/$defs/count"
+            },
+            "skipped": {
+              "$ref": "#/$defs/count"
+            },
+            "missing": {
+              "$ref": "#/$defs/count"
+            }
           }
         },
         "mutants": {
@@ -164,26 +286,56 @@
             "reused_survived"
           ],
           "properties": {
-            "cataloged": { "$ref": "#/$defs/count" },
-            "rejected": { "$ref": "#/$defs/count" },
-            "executed": { "$ref": "#/$defs/count" },
-            "killed": { "$ref": "#/$defs/count" },
-            "survived": { "$ref": "#/$defs/count" },
-            "timed_out": { "$ref": "#/$defs/count" },
-            "unreached": { "$ref": "#/$defs/count" },
-            "equivalent": { "$ref": "#/$defs/count" },
-            "accepted": { "$ref": "#/$defs/count" },
-            "reused_killed": { "$ref": "#/$defs/count" },
-            "reused_survived": { "$ref": "#/$defs/count" }
+            "cataloged": {
+              "$ref": "#/$defs/count"
+            },
+            "rejected": {
+              "$ref": "#/$defs/count"
+            },
+            "executed": {
+              "$ref": "#/$defs/count"
+            },
+            "killed": {
+              "$ref": "#/$defs/count"
+            },
+            "survived": {
+              "$ref": "#/$defs/count"
+            },
+            "timed_out": {
+              "$ref": "#/$defs/count"
+            },
+            "unreached": {
+              "$ref": "#/$defs/count"
+            },
+            "equivalent": {
+              "$ref": "#/$defs/count"
+            },
+            "accepted": {
+              "$ref": "#/$defs/count"
+            },
+            "reused_killed": {
+              "$ref": "#/$defs/count"
+            },
+            "reused_survived": {
+              "$ref": "#/$defs/count"
+            }
           }
         },
         "soundness": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["unsafe_items", "packages_with_unsafe", "executed"],
+          "required": [
+            "unsafe_items",
+            "packages_with_unsafe",
+            "executed"
+          ],
           "properties": {
-            "unsafe_items": { "$ref": "#/$defs/count" },
-            "packages_with_unsafe": { "$ref": "#/$defs/count" },
+            "unsafe_items": {
+              "$ref": "#/$defs/count"
+            },
+            "packages_with_unsafe": {
+              "$ref": "#/$defs/count"
+            },
             "executed": {
               "type": "boolean",
               "description": "False under standard-v1, where the phase is a static inventory and a non-empty one is a limitation."
@@ -211,18 +363,57 @@
           "why"
         ],
         "properties": {
-          "finding": { "type": "string" },
-          "mutant": { "type": "string" },
-          "kind": { "enum": ["patch", "corpus"] },
-          "path": { "type": "string" },
-          "digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-          "preimage": {
-            "oneOf": [{ "type": "null" }, { "type": "string", "pattern": "^[0-9a-f]{64}$" }]
+          "finding": {
+            "type": "string"
           },
-          "stability_runs": { "type": "integer", "minimum": 0 },
-          "kill_runs": { "type": "integer", "minimum": 0 },
-          "accepted": { "type": "boolean" },
-          "why": { "oneOf": [{ "type": "null" }, { "type": "string" }] }
+          "mutant": {
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "patch",
+              "corpus"
+            ]
+          },
+          "path": {
+            "type": "string"
+          },
+          "digest": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "preimage": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            ]
+          },
+          "stability_runs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "kill_runs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "accepted": {
+            "type": "boolean"
+          },
+          "why": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string"
+              }
+            ]
+          }
         }
       }
     },
@@ -232,14 +423,24 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["capability", "instance", "environment"],
+        "required": [
+          "capability",
+          "instance",
+          "environment"
+        ],
         "properties": {
-          "capability": { "type": "string" },
-          "instance": { "type": "string" },
+          "capability": {
+            "type": "string"
+          },
+          "instance": {
+            "type": "string"
+          },
           "environment": {
             "description": "The variable names the provider set for every test process, in name order. Never a value: a report is read by people who may not hold the secret in it.",
             "type": "array",
-            "items": { "type": "string" }
+            "items": {
+              "type": "string"
+            }
           }
         }
       }
@@ -247,25 +448,36 @@
     "targets": {
       "type": "array",
       "description": "Every selected target, slowest first and then by identity, so two runs of the same work produce the same document.",
-      "items": { "$ref": "#/$defs/target" }
+      "items": {
+        "$ref": "#/$defs/target"
+      }
     },
     "mutants": {
       "type": "array",
-      "items": { "$ref": "#/$defs/mutant" }
+      "items": {
+        "$ref": "#/$defs/mutant"
+      }
     },
     "findings": {
       "type": "array",
       "description": "What the run found wrong with the code under test. A finding is a claim about the project; a limitation is a claim the run declines to make about itself.",
-      "items": { "$ref": "#/$defs/finding" }
+      "items": {
+        "$ref": "#/$defs/finding"
+      }
     },
     "limitations": {
       "type": "array",
       "description": "The parts of the claim the run refuses to make, stated so a reader never has to infer them.",
-      "items": { "$ref": "#/$defs/limitation" }
+      "items": {
+        "$ref": "#/$defs/limitation"
+      }
     }
   },
   "$defs": {
-    "count": { "type": "integer", "minimum": 0 },
+    "count": {
+      "type": "integer",
+      "minimum": 0
+    },
     "opaque": {
       "type": "string",
       "minLength": 1,
@@ -274,7 +486,7 @@
     "git": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Either git could be asked and every field says what it said, or it could not and every field is the explicit unavailable state — never an empty string, which would read as \"nothing to say\".",
+      "description": "Either git could be asked and every field says what it said, or it could not and every field is the explicit unavailable state \u2014 never an empty string, which would read as \"nothing to say\".",
       "required": [
         "available",
         "commit",
@@ -284,39 +496,100 @@
         "changed_files"
       ],
       "properties": {
-        "available": { "type": "boolean" },
-        "commit": { "type": "string", "minLength": 1 },
-        "branch": { "type": "string", "minLength": 1 },
-        "dirty": { "type": "boolean" },
-        "merge_base": { "type": ["string", "null"] },
-        "changed_files": { "type": "array", "items": { "type": "string" } }
+        "available": {
+          "type": "boolean"
+        },
+        "commit": {
+          "type": "string",
+          "minLength": 1
+        },
+        "branch": {
+          "type": "string",
+          "minLength": 1
+        },
+        "dirty": {
+          "type": "boolean"
+        },
+        "merge_base": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "changed_files": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
       }
     },
     "position": {
       "type": "object",
       "additionalProperties": false,
       "description": "Two 1-based columns, because one toolchain uses two units: an llvm-cov region counts UTF-8 bytes and a rustc diagnostic counts Unicode scalars. Both come from one byte offset, so they cannot disagree.",
-      "required": ["line", "column", "character_column"],
+      "required": [
+        "line",
+        "column",
+        "character_column"
+      ],
       "properties": {
-        "line": { "type": "integer", "minimum": 1 },
-        "column": { "type": "integer", "minimum": 1 },
-        "character_column": { "type": "integer", "minimum": 1 }
+        "line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "column": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "character_column": {
+          "type": "integer",
+          "minimum": 1
+        }
       }
     },
     "target": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "name", "package", "status", "duration_ms", "message"],
+      "required": [
+        "id",
+        "name",
+        "package",
+        "status",
+        "duration_ms",
+        "message"
+      ],
       "properties": {
-        "id": { "type": "string", "minLength": 1 },
-        "name": { "type": "string", "minLength": 1 },
-        "package": { "type": "string", "minLength": 1 },
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "package": {
+          "type": "string",
+          "minLength": 1
+        },
         "status": {
-          "enum": ["passed", "failed", "skipped", "missing"],
+          "enum": [
+            "passed",
+            "failed",
+            "skipped",
+            "missing"
+          ],
           "description": "A target that could not be found is missing, which is fail-closed rather than a pass."
         },
-        "duration_ms": { "$ref": "#/$defs/count" },
-        "message": { "type": ["string", "null"] }
+        "duration_ms": {
+          "$ref": "#/$defs/count"
+        },
+        "message": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
       }
     },
     "mutant": {
@@ -334,19 +607,44 @@
         "source_run_id"
       ],
       "properties": {
-        "id": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-        "display_id": { "type": "string", "minLength": 1 },
-        "path": { "type": "string", "minLength": 1 },
-        "position": { "$ref": "#/$defs/position" },
-        "rule": { "type": "string", "minLength": 1 },
-        "outcome": { "type": "string", "minLength": 1 },
+        "id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "display_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "position": {
+          "$ref": "#/$defs/position"
+        },
+        "rule": {
+          "type": "string",
+          "minLength": 1
+        },
+        "outcome": {
+          "type": "string",
+          "minLength": 1
+        },
         "killed_by": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "description": "The identity of the target that noticed it, when one did."
         },
-        "reused": { "type": "boolean" },
+        "reused": {
+          "type": "boolean"
+        },
         "source_run_id": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "description": "The run this disposition came from, when it was reused."
         }
       }
@@ -354,7 +652,13 @@
     "finding": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind", "subject", "detail", "position"],
+      "required": [
+        "kind",
+        "subject",
+        "detail",
+        "path",
+        "position"
+      ],
       "properties": {
         "kind": {
           "enum": [
@@ -368,20 +672,53 @@
             "undefined-behaviour"
           ]
         },
-        "subject": { "type": "string", "minLength": 1 },
-        "detail": { "type": "string", "minLength": 1 },
+        "subject": {
+          "type": "string",
+          "minLength": 1
+        },
+        "detail": {
+          "type": "string",
+          "minLength": 1
+        },
         "position": {
-          "oneOf": [{ "$ref": "#/$defs/position" }, { "type": "null" }]
+          "oneOf": [
+            {
+              "$ref": "#/$defs/position"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "path": {
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       }
     },
     "limitation": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "detail"],
+      "required": [
+        "name",
+        "detail"
+      ],
       "properties": {
-        "name": { "type": "string", "minLength": 1 },
-        "detail": { "type": "string", "minLength": 1 }
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "detail": {
+          "type": "string",
+          "minLength": 1
+        }
       }
     }
   }

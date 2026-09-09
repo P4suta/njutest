@@ -314,6 +314,7 @@ fn finding_of(judged: &Judged) -> Option<Finding> {
         }
     };
     let mut finding = Finding::new(kind, &judged.display_id, &detail);
+    finding.path = Some(judged.path.clone());
     finding.position = judged.position;
     Some(finding)
 }

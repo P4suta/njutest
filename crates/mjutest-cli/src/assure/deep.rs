@@ -177,6 +177,7 @@ fn read(said: &str, ending: Ending) -> Interpreted {
             kind: FindingKind::UndefinedBehaviour,
             subject: "soundness".to_owned(),
             detail: line,
+            path: None,
             position: None,
         });
         return interpreted;
@@ -195,6 +196,7 @@ fn read(said: &str, ending: Ending) -> Interpreted {
             detail: "the suite was not interpreted whole, so nothing is claimed about the \
                      unsafe it holds"
                 .to_owned(),
+            path: None,
             position: None,
         });
         return interpreted;
@@ -204,6 +206,7 @@ fn read(said: &str, ending: Ending) -> Interpreted {
             kind: FindingKind::FailingTest,
             subject: "soundness".to_owned(),
             detail: "a test fails under the interpreter that passes without it".to_owned(),
+            path: None,
             position: None,
         });
     }

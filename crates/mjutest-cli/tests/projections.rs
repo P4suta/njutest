@@ -16,6 +16,18 @@ use mjutest_cli::report::{
     TargetRecord, TargetStatus, Verdict, html, junit, sarif,
 };
 
+/// One survivor of `src/lib.rs`, at a line the run knows or at none at all.
+fn found(subject: &str, detail: &str, line: u32) -> Finding {
+    let mut finding = Finding::new(FindingKind::SurvivingMutant, subject, detail);
+    finding.path = Some("src/lib.rs".to_owned());
+    finding.position = Some(Position {
+        line,
+        column: line,
+        character_column: line,
+    });
+    finding
+}
+
 fn report() -> Report {
     let mut report = Report::new(
         "20260905T081500Z-abcdef",
@@ -75,17 +87,14 @@ fn report() -> Report {
         reused: false,
         source_run_id: None,
     }];
-    let mut finding = Finding::new(
-        FindingKind::SurvivingMutant,
-        "cccccccc",
-        "no test noticed <this> & that",
-    );
-    finding.position = Some(Position {
-        line: 12,
-        column: 9,
-        character_column: 9,
-    });
-    report.findings = vec![finding];
+    report.findings = vec![
+        found("cccccccc", "no test noticed <this> & that", 12),
+        found(
+            "dddddddd",
+            "no measured target reaches mul-to-div@1 at src/lib.rs",
+            0,
+        ),
+    ];
     report.limitations = vec![Limitation::new("doctests-not-routed", "doctests run once")];
     report
 }
@@ -135,7 +144,7 @@ fn the_sarif_log_carries_every_finding_with_a_rule_and_a_place() {
     assert_eq!(run["automationDetails"]["id"], "20260905T081500Z-abcdef");
 
     let results = run["results"].as_array().expect("results");
-    assert_eq!(results.len(), 1);
+    assert_eq!(results.len(), 2);
     assert_eq!(results[0]["ruleId"], "surviving-mutant");
     assert_eq!(
         results[0]["level"], "warning",
@@ -220,4 +229,67 @@ fn the_identity_a_reader_needs_travels_as_properties() {
         document.contains("<property name=\"mutants_survived\" value=\"1\"/>"),
         "{document}"
     );
+}
+
+#[test]
+fn every_place_the_sarif_log_names_is_one_a_reader_of_the_repository_can_open() {
+    let log = sarif::document(&report());
+    let run = &log["runs"][0];
+    let rules: Vec<&str> = run["tool"]["driver"]["rules"]
+        .as_array()
+        .expect("rules")
+        .iter()
+        .filter_map(|rule| rule["id"].as_str())
+        .collect();
+    let measured = report();
+    let paths: Vec<&str> = measured
+        .mutants
+        .iter()
+        .map(|mutant| mutant.path.as_str())
+        .collect();
+
+    for result in run["results"].as_array().expect("results") {
+        assert!(
+            result["ruleId"]
+                .as_str()
+                .is_some_and(|id| rules.contains(&id)),
+            "a result whose rule the driver does not declare is one a consumer refuses \
+             the whole log for: {result}"
+        );
+        let Some(location) = result["locations"].as_array().and_then(|all| all.first()) else {
+            assert!(
+                result["message"]["text"]
+                    .as_str()
+                    .is_some_and(|said| !said.is_empty()),
+                "a finding with nowhere to point still says what it is, because a result \
+                 with neither a place nor a sentence is a row a reader cannot act on: \
+                 {result}"
+            );
+            continue;
+        };
+        let place = &location["physicalLocation"];
+        let uri = place["artifactLocation"]["uri"]
+            .as_str()
+            .expect("a place a result is at");
+        assert!(
+            paths.contains(&uri),
+            "a result points at {uri}, which is not a file this run measured. Code \
+             scanning shows an alert against the path in the log, so a log that names \
+             an identity instead of a file puts every finding on a file nobody has: \
+             {result}"
+        );
+        assert!(
+            !uri.starts_with('/') && !uri.contains(':'),
+            "and it is relative to the repository, because an absolute path is a path \
+             on the machine that ran it: {uri}"
+        );
+        assert!(
+            place["region"]["startLine"]
+                .as_u64()
+                .is_some_and(|line| line >= 1),
+            "and its line is one a file has. SARIF counts from one, so a region at line \
+             zero is a log a consumer refuses, and a finding whose position the run does \
+             not know is given no place rather than a place nobody can go to: {result}"
+        );
+    }
 }

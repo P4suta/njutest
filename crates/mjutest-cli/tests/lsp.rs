@@ -51,6 +51,7 @@ fn reported() -> Report {
         kind: FindingKind::SurvivingMutant,
         subject: "aaaaaaaaaaaa".to_owned(),
         detail: "no test noticed gt-to-ge@1".to_owned(),
+        path: None,
         position: None,
     });
     report
@@ -80,6 +81,7 @@ fn a_finding_about_something_that_is_not_in_a_file_is_not_shown_in_one() {
         kind: FindingKind::FailingTest,
         subject: "pkg/lib/pkg".to_owned(),
         detail: "the target failed".to_owned(),
+        path: None,
         position: None,
     });
     let root = tempfile::tempdir().expect("a directory");
@@ -317,6 +319,7 @@ fn a_finding_this_cannot_place_does_not_hide_the_ones_after_it() {
             kind: FindingKind::FailingTest,
             subject: "pkg/lib/pkg".to_owned(),
             detail: "the target failed".to_owned(),
+            path: None,
             position: None,
         },
     );

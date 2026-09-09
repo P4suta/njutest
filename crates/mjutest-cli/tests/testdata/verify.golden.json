@@ -32,6 +32,7 @@
     {
       "detail": "no test could have noticed gt-to-ge@1 at src/lib.rs:8: every one of the 1 targets that reach it was removed without being run, by never-infected",
       "kind": "surviving-mutant",
+      "path": "src/lib.rs",
       "position": {
         "character_column": 10,
         "column": 10,
@@ -42,6 +43,7 @@
     {
       "detail": "no test could have noticed lt-to-le@1 at src/lib.rs:10: every one of the 1 targets that reach it was removed without being run, by never-infected",
       "kind": "surviving-mutant",
+      "path": "src/lib.rs",
       "position": {
         "character_column": 17,
         "column": 17,
@@ -52,6 +54,7 @@
     {
       "detail": "no measured target reaches return-default@1 at src/lib.rs: each of them was measured, was asked, and answered that nothing of it executes the position",
       "kind": "surviving-mutant",
+      "path": "src/lib.rs",
       "position": {
         "character_column": 9,
         "column": 9,

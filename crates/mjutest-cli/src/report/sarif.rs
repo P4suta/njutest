@@ -61,12 +61,17 @@ fn result(finding: &Finding) -> serde_json::Value {
         "partialFingerprints".to_owned(),
         serde_json::json!({ "mjutestSubject": finding.subject }),
     );
-    if let Some(position) = finding.position {
+    if let Some((path, position)) = finding
+        .path
+        .as_ref()
+        .zip(finding.position)
+        .filter(|(_path, position)| position.line >= 1)
+    {
         value.insert(
             "locations".to_owned(),
             serde_json::json!([{
                 "physicalLocation": {
-                    "artifactLocation": { "uri": finding.subject },
+                    "artifactLocation": { "uri": path },
                     "region": {
                         "startLine": position.line,
                         "startColumn": position.character_column,

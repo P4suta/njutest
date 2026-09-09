@@ -422,6 +422,14 @@ pub struct Finding {
     pub subject: String,
     /// One sentence a person can act on.
     pub detail: String,
+    /// The file it is in, when the run knows, relative to the workspace root.
+    ///
+    /// A subject is an identity — a mutant, a target, a package — and an
+    /// identity is not somewhere anybody can open. Every projection that puts
+    /// a finding on a line needs the file as well, and a log that gives a
+    /// consumer the identity instead puts every alert on a path nobody has.
+    #[serde(default)]
+    pub path: Option<String>,
     /// Where it is, when the run knows.
     pub position: Option<Position>,
 }
@@ -443,6 +451,7 @@ impl Finding {
             kind,
             subject: subject.to_owned(),
             detail: detail.to_owned(),
+            path: None,
             position: None,
         }
     }

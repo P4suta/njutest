@@ -146,6 +146,7 @@ fn one(done: &mut Sanitized, sanitizing: &Sanitizing<'_>, sanitizer: &str, watch
             kind: FindingKind::UndefinedBehaviour,
             subject: format!("sanitizer:{sanitizer}"),
             detail: line,
+            path: None,
             position: None,
         });
     } else if ran.exit_code != 0 {
@@ -153,6 +154,7 @@ fn one(done: &mut Sanitized, sanitizing: &Sanitizing<'_>, sanitizer: &str, watch
             kind: FindingKind::FailingTest,
             subject: format!("sanitizer:{sanitizer}"),
             detail: format!("a test fails under {sanitizer} that passes without it"),
+            path: None,
             position: None,
         });
     }
@@ -170,6 +172,7 @@ fn refuse(done: &mut Sanitized, sanitizer: &str, why: &str) {
         detail: format!(
             "the suite was not run under {sanitizer}, which the configuration asks for"
         ),
+        path: None,
         position: None,
     });
 }

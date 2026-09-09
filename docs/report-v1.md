@@ -93,6 +93,18 @@ ID. A mutant disposition may say `reused: true` with a `source_run_id`; the
 accounting carries `reused_killed` and `reused_survived`, each part of
 `killed` and `survived`.
 
+## What a finding is about
+
+A finding names its `subject` — a mutant, a target, a package — and an
+identity is not somewhere anybody can open. So a finding that is about a
+place in the tree also carries `path`, relative to the workspace root, beside
+its `position`. Both are `null` for a finding that is about a target or a
+package rather than a line.
+
+Every consumer that puts a finding on a line needs the file as well: SARIF
+shows an alert against the path in the log, and a log that gave the identity
+instead put every alert on a file nobody had.
+
 ## Positions
 
 Every position in a report — a mutant's, a coverage region's, a finding's —

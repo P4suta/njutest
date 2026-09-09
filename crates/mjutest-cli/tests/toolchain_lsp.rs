@@ -43,6 +43,7 @@ fn verified(root: &std::path::Path) -> String {
         kind: FindingKind::SurvivingMutant,
         subject: "bbbbbbbbbbbb".to_owned(),
         detail: "no test noticed gt-to-ge@1".to_owned(),
+        path: None,
         position: None,
     });
     std::fs::create_dir_all(root.join("reports/runs/one")).expect("mkdir");
