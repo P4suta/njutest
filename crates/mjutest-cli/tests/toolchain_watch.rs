@@ -19,14 +19,21 @@ use rust_mutants::runner::Cancel;
 
 /// The longest this test will wait for a round that is not coming.
 ///
-/// The round here answers in milliseconds, so this is three orders of
+/// The round here answers in well under a second, so this is an order of
 /// magnitude of headroom and never a bound the work runs into. It is here
 /// because the alternative bound is a line the round prints, and a test whose
 /// only bound is something the code under test says stops terminating the
 /// moment that code loses the line. A test that hangs when a rule goes missing
 /// is not a test that holds the rule: it is one something outside has to kill,
 /// and a killed test reports nothing.
-const LONGEST: Duration = Duration::from_secs(60);
+///
+/// It is ten seconds and not sixty because a bound only helps while it is
+/// shorter than whatever else would stop the process first. At sixty a
+/// measurement's own patience ran out before this did, and four rules of the
+/// watch loop came back as a mutation that timed out rather than one a test
+/// caught — the same finding to a reader counting survivors, and nothing at
+/// all to one asking which rule is held.
+const LONGEST: Duration = Duration::from_secs(10);
 
 /// One of the watch's two streams, stopping it once the round has been.
 ///

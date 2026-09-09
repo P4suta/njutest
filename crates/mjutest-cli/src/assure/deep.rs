@@ -9,6 +9,7 @@
 //! stated as a limitation, never as a pass: a suite that was not interpreted
 //! is not a suite that was interpreted and found sound.
 
+use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::path::Path;
 use std::time::Duration;
@@ -129,14 +130,21 @@ pub fn interpret(
 }
 
 /// What Miri's own environment is: the run's, plus what the configuration passes to the interpreter.
+///
+/// A map and not a list, because a process started with two bindings of one
+/// name reads whichever of them the operating system hands it first, and a
+/// phase that decided what the interpreter checks that way would be deciding
+/// it by the order a list happened to be in. Saying it as a map is what makes
+/// "one name, one value" true rather than maintained.
 fn environment(interpreting: &Interpreting<'_>) -> Vec<(OsString, OsString)> {
-    let mut env = interpreting.env.clone();
+    let mut env: BTreeMap<OsString, OsString> = interpreting.env.iter().cloned().collect();
     if !interpreting.flags.is_empty() {
-        let name = OsString::from("MIRIFLAGS");
-        env.retain(|(other, _)| *other != name);
-        env.push((name, OsString::from(interpreting.flags.join(" "))));
+        let _replaced = env.insert(
+            OsString::from("MIRIFLAGS"),
+            OsString::from(interpreting.flags.join(" ")),
+        );
     }
-    env
+    env.into_iter().collect()
 }
 
 /// How one Miri run ended, apart from what it said.
@@ -164,13 +172,11 @@ fn read(said: &str, ending: Ending) -> Interpreted {
         ));
         return interpreted;
     }
-    if said.contains(UNDEFINED) {
+    if let Some(line) = first_line(said, UNDEFINED) {
         interpreted.findings.push(Finding {
             kind: FindingKind::UndefinedBehaviour,
             subject: "soundness".to_owned(),
-            detail: first_line(said, UNDEFINED).unwrap_or_else(|| {
-                "the interpreter found undefined behaviour in the suite".to_owned()
-            }),
+            detail: line,
             position: None,
         });
         return interpreted;

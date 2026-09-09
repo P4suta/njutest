@@ -2,6 +2,11 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Running the suite under a sanitizer: what it finds, and what it says when it cannot run.
+
+#![expect(
+    clippy::expect_used,
+    reason = "the helpers that build one request and read back what the process it started saw are not themselves tests, and a setup that did not happen is reported by panicking"
+)]
 #![cfg(unix)]
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -223,4 +228,223 @@ fn what_a_run_asks_of_the_sanitizer_is_the_whole_of_what_it_asks() {
         Some(dir.path().display().to_string().as_str())
     );
     assert_eq!(exec.timeout_ms, Some(30_000));
+}
+
+/// What the cargo a run started actually saw in its environment.
+fn as_started(dir: &Path, base: Vec<(std::ffi::OsString, std::ffi::OsString)>) -> String {
+    let seen = dir.join("environment");
+    let cancel = Cancel::new();
+    let trace = Recorder::disabled();
+    let cargo = cargo();
+    let mut env = base;
+    env.push((
+        std::ffi::OsString::from("FAKE_CARGO_ENV_OUT"),
+        std::ffi::OsString::from(seen.display().to_string()),
+    ));
+    let _done = sanitize(
+        &Sanitizing {
+            root: dir,
+            cargo: &cargo,
+            host: "x86_64-unknown-linux-gnu",
+            env,
+            packages: &[],
+            sanitizers: &["address".to_owned()],
+            timeout: Some(Duration::from_secs(30)),
+            offline: true,
+            locked: true,
+        },
+        Watch::new(&cancel, &trace),
+    );
+    std::fs::read_to_string(&seen).expect("what the cargo it started saw")
+}
+
+#[test]
+fn the_flags_a_sanitizer_needs_are_the_ones_the_process_it_started_had() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let seen = as_started(dir.path(), saying("test result: ok", 0));
+    assert!(
+        seen.contains("RUSTFLAGS=-Zsanitizer=address\n"),
+        "a sanitizer is a compiler flag, so a run that composed it and did not hand it \
+         over builds an uninstrumented suite and reports that it found nothing: {seen}"
+    );
+
+    let mut carrying = saying("test result: ok", 0);
+    carrying.push((
+        std::ffi::OsString::from("RUSTFLAGS"),
+        std::ffi::OsString::from("--cfg mine"),
+    ));
+    carrying.push((
+        std::ffi::OsString::from("CARGO_ENCODED_RUSTFLAGS"),
+        std::ffi::OsString::from("--cfg\u{1f}theirs"),
+    ));
+    let seen = as_started(dir.path(), carrying);
+    assert!(
+        seen.contains("RUSTFLAGS=--cfg mine -Zsanitizer=address\n"),
+        "and what the run was already building with is still there beside it, separated \
+         the way a compiler reads them: a phase that dropped it would build something \
+         other than the workspace under measurement: {seen}"
+    );
+    assert!(
+        seen.contains("CARGO_ENCODED_RUSTFLAGS=<unset>"),
+        "while the encoded form is taken away, because cargo reads that one instead of \
+         the flags this phase just composed, and a suite built without the sanitizer \
+         that reports no finding is the worst answer this phase can give: {seen}"
+    );
+}
+
+#[test]
+fn a_run_that_named_no_package_asks_the_sanitizer_for_the_whole_workspace() {
+    let dir = tempfile::tempdir().expect("a directory");
+    let cancel = Cancel::new();
+    let trace = Recorder::new(
+        mjutest_cli::trace::Sink::Memory(mjutest_cli::trace::MemorySink::unbounded()),
+        mjutest_cli::trace::Clock::stepping(
+            jiff::Timestamp::from_second(1_800_000_000).expect("in range"),
+            Duration::from_secs(1),
+        ),
+        mjutest_cli::trace::StartRecord::of(
+            "20260909T000000Z-000001",
+            mjutest_cli::report::RunKind::Full,
+            mjutest_cli::config::Contract::DeepV1,
+        ),
+    );
+    let cargo = cargo();
+    let _done = sanitize(
+        &Sanitizing {
+            root: dir.path(),
+            cargo: &cargo,
+            host: "x86_64-unknown-linux-gnu",
+            env: saying("test result: ok", 0),
+            packages: &[],
+            sanitizers: &["address".to_owned()],
+            timeout: Some(Duration::from_secs(30)),
+            offline: true,
+            locked: true,
+        },
+        Watch::new(&cancel, &trace),
+    );
+    let exec = trace
+        .events()
+        .iter()
+        .find_map(|event| match &event.payload {
+            mjutest_cli::trace::Payload::Exec { exec } => Some(exec.clone()),
+            _ => None,
+        })
+        .expect("the command it started");
+    assert_eq!(
+        exec.argv,
+        vec![
+            cargo.display().to_string(),
+            "+nightly".to_owned(),
+            "test".to_owned(),
+            "--target".to_owned(),
+            "x86_64-unknown-linux-gnu".to_owned(),
+            "--workspace".to_owned(),
+            "--offline".to_owned(),
+            "--locked".to_owned(),
+        ],
+        "a run that named no package asked about all of them, and one that asked the \
+         sanitizer about cargo's default instead would report a clean workspace having \
+         checked one package of it"
+    );
+}
+
+#[test]
+fn what_a_sanitizer_could_not_say_is_said_in_words_a_person_can_act_on() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let done = sanitized("test result: ok", 0, dir.path(), &["address".to_owned()]);
+    let stated = done.limitations.first().expect("a limitation");
+    assert!(
+        stated
+            .detail
+            .contains("standard library the suite links is not built with the sanitizer"),
+        "every sanitizer run says what it did not instrument, in the words rather than \
+         only by the name: a name is a code a reader looks up and a sentence is one they \
+         act on: {stated:?}"
+    );
+
+    let refused = sanitized(
+        "error: the option `Z` is only accepted on the nightly compiler",
+        1,
+        dir.path(),
+        &["address".to_owned()],
+    );
+    assert!(
+        refused
+            .limitations
+            .iter()
+            .any(|one| one.detail.contains("address was asked for")
+                && one.detail.contains("the toolchain would not run it")),
+        "a sanitizer that could not run says which one and why, because the two \
+         together are the whole of what somebody would change: {refused:?}"
+    );
+    assert!(
+        refused
+            .findings
+            .iter()
+            .any(|one| one.detail.contains("the suite was not run under address")),
+        "and the finding says the same thing to whoever reads findings rather than \
+         limitations: {refused:?}"
+    );
+
+    let failing = sanitized(
+        "test result: FAILED. 1 failed",
+        101,
+        dir.path(),
+        &["address".to_owned()],
+    );
+    assert!(
+        failing
+            .findings
+            .iter()
+            .any(|one| one.detail == "a test fails under address that passes without it"),
+        "and a suite that fails only under the sanitizer says that it is the sanitizer \
+         that makes the difference, which is the whole finding: {failing:?}"
+    );
+}
+
+#[test]
+fn a_sanitizer_that_runs_out_of_time_has_not_checked_anything() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let cancel = Cancel::new();
+    let trace = Recorder::disabled();
+    let cargo = cargo();
+    let mut env = saying("test result: ok", 0);
+    env.push((
+        std::ffi::OsString::from("FAKE_CARGO_SLEEP"),
+        std::ffi::OsString::from("5"),
+    ));
+    let done = sanitize(
+        &Sanitizing {
+            root: dir.path(),
+            cargo: &cargo,
+            host: "x86_64-unknown-linux-gnu",
+            env,
+            packages: &[],
+            sanitizers: &["address".to_owned()],
+            timeout: Some(Duration::from_millis(200)),
+            offline: true,
+            locked: true,
+        },
+        Watch::new(&cancel, &trace),
+    );
+    assert!(
+        done.ran.is_empty(),
+        "a sanitizer run that was stopped is not a sanitizer run: counting it makes a \
+         suite nobody finished checking into one that came back clean: {done:?}"
+    );
+    assert!(
+        done.limitations
+            .iter()
+            .any(|one| one.detail.contains("address was asked for")
+                && one.detail.contains("it ran out of time")),
+        "and it says which of the ways it could fail this was, because more time and a \
+         different toolchain are different things to do: {done:?}"
+    );
+    assert!(
+        done.findings
+            .iter()
+            .any(|one| one.kind == FindingKind::NotMeasured),
+        "and what was asked for and not done is a finding: {done:?}"
+    );
 }

@@ -175,3 +175,54 @@ fn a_record_says_what_shape_it_is_and_what_established_it() {
     let text = serde_json::to_string(&other).expect("renders");
     assert!(text.contains("\"kind\":\"survived\""), "{text}");
 }
+
+#[test]
+fn a_record_that_says_it_is_another_shape_is_refused_rather_than_read_as_this_one() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    write(dir.path(), &record("m1", "run-1", killed("t1", "k1"))).expect("written");
+    let path = path_of(dir.path(), "m1");
+    let text = std::fs::read_to_string(&path).expect("the record");
+    std::fs::write(&path, text.replace(SCHEMA, "mjutest-mutation-evidence-v9"))
+        .expect("a record of a shape this release does not know");
+
+    let error = read(dir.path(), "m1").expect_err("a record of another shape");
+    assert!(matches!(error, StoreError::Corrupt { .. }), "{error}");
+    assert!(
+        error.to_string().contains("mjutest-mutation-evidence-v9"),
+        "a release that read a later shape's record as its own would believe a claim \
+         made under rules it does not have, so it says which shape it found: {error}"
+    );
+}
+
+#[test]
+fn a_record_that_cannot_be_read_or_written_is_a_refusal_and_never_a_miss() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::create_dir_all(path_of(dir.path(), "m1")).expect("a directory where a record goes");
+
+    let error = read(dir.path(), "m1").expect_err("a record that cannot be read");
+    assert!(
+        matches!(error, StoreError::Unusable { .. }),
+        "a record this run could not read is not a run that has no record: reading it \
+         as a miss makes an unreadable disk look like a cold cache, and the run \
+         re-establishes what it could not read rather than saying it could not: {error}"
+    );
+
+    let refused = write(dir.path(), &record("m1", "run-1", killed("t1", "k1")))
+        .expect_err("a record that cannot be written");
+    assert!(
+        matches!(refused, StoreError::Unusable { .. }),
+        "and one it could not write is not one it wrote: a later run reads what is \
+         there, so a write nobody noticed failing is a run that will read an older \
+         answer and believe this one established it: {refused}"
+    );
+
+    let blocked = dir.path().join("blocked");
+    std::fs::write(&blocked, "a file where a store's directory goes").expect("the file");
+    let refused = write(&blocked, &record("m2", "run-1", killed("t1", "k1")))
+        .expect_err("a store with nowhere to put its records");
+    assert!(
+        matches!(refused, StoreError::Unusable { .. }),
+        "and a store whose directory cannot be made is refused before anything is \
+         filed under it: {refused}"
+    );
+}

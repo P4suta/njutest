@@ -8,7 +8,8 @@
 //! run under it, and a run that could not do that has not established what
 //! was asked for.
 
-use std::ffi::OsString;
+use std::collections::BTreeMap;
+use std::ffi::{OsStr, OsString};
 use std::path::Path;
 use std::time::Duration;
 
@@ -79,19 +80,19 @@ pub struct Sanitized {
 #[must_use]
 pub fn sanitize(sanitizing: &Sanitizing<'_>, watch: Watch<'_>) -> Sanitized {
     let mut done = Sanitized::default();
-    if sanitizing.sanitizers.is_empty() {
-        return done;
-    }
-    done.limitations.push(Limitation::new(
-        UNINSTRUMENTED_STD_LIMITATION,
-        "the standard library the suite links is not built with the sanitizer, so what it \
-         holds is not what was checked",
-    ));
-    for sanitizer in sanitizing.sanitizers {
-        if watch.cancel.is_cancelled() {
-            break;
+    if !sanitizing.sanitizers.is_empty() {
+        done.limitations.push(Limitation::new(
+            UNINSTRUMENTED_STD_LIMITATION,
+            "the standard library the suite links is not built with the sanitizer, so what \
+             it holds is not what was checked",
+        ));
+        for sanitizer in sanitizing
+            .sanitizers
+            .iter()
+            .take_while(|_| !watch.cancel.is_cancelled())
+        {
+            one(&mut done, sanitizing, sanitizer, watch);
         }
-        one(&mut done, sanitizing, sanitizer, watch);
     }
     done
 }
@@ -174,16 +175,17 @@ fn refuse(done: &mut Sanitized, sanitizer: &str, why: &str) {
 }
 
 /// The environment one sanitizer run adds: the flag, and nothing else the caller did not already have.
+///
+/// A map and not a list, because a process started with two bindings of one
+/// name reads whichever of them the operating system hands it first, and
+/// whether the suite is built with the sanitizer at all would then be decided
+/// by the order a list happened to be in. Saying it as a map is what makes
+/// "one name, one value" true rather than maintained.
 fn instrumenting(base: &[(OsString, OsString)], sanitizer: &str) -> Vec<(OsString, OsString)> {
-    let mut env: Vec<(OsString, OsString)> = base
-        .iter()
-        .filter(|(name, _)| name != "RUSTFLAGS" && name != "CARGO_ENCODED_RUSTFLAGS")
-        .cloned()
-        .collect();
-    let mut flags: Vec<String> = base
-        .iter()
-        .find(|(name, _)| name == "RUSTFLAGS")
-        .map(|(_, value)| {
+    let mut env: BTreeMap<OsString, OsString> = base.iter().cloned().collect();
+    let mut flags: Vec<String> = env
+        .get(OsStr::new("RUSTFLAGS"))
+        .map(|value| {
             value
                 .to_string_lossy()
                 .split_whitespace()
@@ -191,7 +193,8 @@ fn instrumenting(base: &[(OsString, OsString)], sanitizer: &str) -> Vec<(OsStrin
                 .collect()
         })
         .unwrap_or_default();
+    let _dropped = env.remove(OsStr::new("CARGO_ENCODED_RUSTFLAGS"));
     flags.push(format!("-Zsanitizer={sanitizer}"));
-    env.push((OsString::from("RUSTFLAGS"), OsString::from(flags.join(" "))));
-    env
+    let _replaced = env.insert(OsString::from("RUSTFLAGS"), OsString::from(flags.join(" ")));
+    env.into_iter().collect()
 }

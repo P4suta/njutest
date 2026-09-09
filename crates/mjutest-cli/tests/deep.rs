@@ -260,3 +260,215 @@ fn a_run_that_named_packages_asks_the_interpreter_for_those_and_not_the_workspac
          report what it found there"
     );
 }
+
+#[test]
+fn the_flags_a_configuration_gives_the_interpreter_are_the_ones_it_ran_with() {
+    let dir = tempfile::tempdir().expect("a directory");
+    let seen = dir.path().join("environment");
+    let cancel = Cancel::new();
+    let trace = Recorder::disabled();
+    let cargo = cargo();
+    let mut env = saying("no undefined behaviour", 0);
+    env.push((
+        std::ffi::OsString::from("MIRIFLAGS"),
+        std::ffi::OsString::from("-Zmiri-from-the-outside"),
+    ));
+    env.push((
+        std::ffi::OsString::from("FAKE_CARGO_ENV_OUT"),
+        std::ffi::OsString::from(seen.display().to_string()),
+    ));
+    let flags = [
+        "-Zmiri-strict-provenance".to_owned(),
+        "-Zmiri-symbolic-alignment-check".to_owned(),
+    ];
+
+    let _done = interpret(
+        &Interpreting {
+            root: dir.path(),
+            cargo: &cargo,
+            env,
+            packages: &[],
+            flags: &flags,
+            timeout: Some(Duration::from_secs(30)),
+            offline: true,
+            locked: true,
+        },
+        Watch::new(&cancel, &trace),
+    );
+
+    let said = std::fs::read_to_string(&seen).expect("what the cargo it started saw");
+    assert!(
+        said.contains("MIRIFLAGS=-Zmiri-strict-provenance -Zmiri-symbolic-alignment-check\n"),
+        "the interpreter is told what to check by this one variable, so a run that \
+         composed the flags and did not hand them over interprets under the defaults and \
+         reports what those found: {said}"
+    );
+    assert!(
+        !said.contains("-Zmiri-from-the-outside"),
+        "and what the process already carried is replaced rather than added to, because \
+         two values of one variable is one value and which one it is would depend on the \
+         order a list happened to be in: {said}"
+    );
+}
+
+#[test]
+fn an_interpreter_left_to_run_as_it_was_started_keeps_the_variable_it_was_given() {
+    let dir = tempfile::tempdir().expect("a directory");
+    let seen = dir.path().join("environment");
+    let cancel = Cancel::new();
+    let trace = Recorder::disabled();
+    let cargo = cargo();
+    let mut env = saying("no undefined behaviour", 0);
+    env.push((
+        std::ffi::OsString::from("MIRIFLAGS"),
+        std::ffi::OsString::from("-Zmiri-from-the-outside"),
+    ));
+    env.push((
+        std::ffi::OsString::from("FAKE_CARGO_ENV_OUT"),
+        std::ffi::OsString::from(seen.display().to_string()),
+    ));
+
+    let _done = interpret(
+        &Interpreting {
+            root: dir.path(),
+            cargo: &cargo,
+            env,
+            packages: &[],
+            flags: &[],
+            timeout: Some(Duration::from_secs(30)),
+            offline: true,
+            locked: true,
+        },
+        Watch::new(&cancel, &trace),
+    );
+
+    let said = std::fs::read_to_string(&seen).expect("what the cargo it started saw");
+    assert!(
+        said.contains("MIRIFLAGS=-Zmiri-from-the-outside\n"),
+        "a configuration that asked for no flags of its own is not a configuration that \
+         asked for none at all: taking away what the run was started with would quietly \
+         interpret under different rules than the person who set it expects: {said}"
+    );
+}
+
+#[test]
+fn an_interpreter_that_runs_out_of_time_has_interpreted_nothing() {
+    let dir = tempfile::tempdir().expect("a directory");
+    let cancel = Cancel::new();
+    let trace = Recorder::disabled();
+    let cargo = cargo();
+    let mut env = saying("no undefined behaviour", 0);
+    env.push((
+        std::ffi::OsString::from("FAKE_CARGO_SLEEP"),
+        std::ffi::OsString::from("5"),
+    ));
+
+    let done = interpret(
+        &Interpreting {
+            root: dir.path(),
+            cargo: &cargo,
+            env,
+            packages: &[],
+            flags: &[],
+            timeout: Some(Duration::from_millis(200)),
+            offline: true,
+            locked: true,
+        },
+        Watch::new(&cancel, &trace),
+    )
+    .expect("a run that was stopped is not a toolchain without an interpreter");
+
+    assert!(
+        !done.executed,
+        "an interpretation that was stopped is not an interpretation: a contract that \
+         promises the suite is interpreted would be answered by one that got part of \
+         the way through and was cut off: {done:?}"
+    );
+    assert!(
+        done.limitations
+            .iter()
+            .any(|one| one.detail.contains("ran out of time")
+                && one.detail.contains("not interpreted whole")),
+        "and it says which of the ways it could come back empty this was, because more \
+         time and a suite the interpreter cannot follow are different things to do: \
+         {done:?}"
+    );
+    assert!(
+        done.findings.is_empty(),
+        "and it claims nothing about what it did not finish reading: {done:?}"
+    );
+}
+
+#[test]
+fn what_the_interpreter_established_is_said_in_words_a_person_can_act_on() {
+    let dir = tempfile::tempdir().expect("a directory");
+
+    let found = interpreted(
+        "test demo ... error: Undefined Behavior: attempting a read access",
+        1,
+        dir.path(),
+    )
+    .expect("an interpreter that ran");
+    assert!(
+        found.findings.iter().any(
+            |one| one.subject == "soundness" && one.detail.contains("attempting a read access")
+        ),
+        "what the interpreter said is quoted rather than summarised, because the line \
+         it printed is where the reader goes next: {found:?}"
+    );
+
+    let refused = interpreted("error: unsupported operation: `mmap`", 1, dir.path())
+        .expect("an interpreter that ran");
+    assert!(
+        refused.limitations.iter().any(|one| one
+            .detail
+            .contains("could not interpret the suite whole")
+            && one.detail.contains("`mmap`")),
+        "and what it would not follow says what it was: {refused:?}"
+    );
+    assert!(
+        refused.findings.iter().any(|one| one.subject == "soundness"
+            && one
+                .detail
+                .contains("nothing is claimed about the unsafe it holds")),
+        "and the finding says what is therefore not established, which is the whole \
+         difference between a gap and a pass: {refused:?}"
+    );
+
+    let failing = interpreted("test result: FAILED. 1 failed", 101, dir.path())
+        .expect("an interpreter that ran");
+    assert!(
+        failing.findings.iter().any(|one| one.subject == "soundness"
+            && one.detail == "a test fails under the interpreter that passes without it"),
+        "and a suite that fails only under the interpreter says that it is the \
+         interpreter that makes the difference: {failing:?}"
+    );
+}
+
+#[test]
+fn a_toolchain_without_an_interpreter_says_what_it_was_told_rather_than_what_it_assumed() {
+    let dir = tempfile::tempdir().expect("a directory");
+    let refused = interpreted(
+        "warning: something else entirely\nerror: no such subcommand: `miri`",
+        1,
+        dir.path(),
+    )
+    .expect_err("no interpreter");
+    assert!(
+        refused.to_string().contains("no such subcommand"),
+        "the line the toolchain printed is what a person acts on, and the first line of \
+         whatever came back is not that line: {refused}"
+    );
+
+    let quiet = interpreted(
+        "cargo-miri is not installed for the toolchain",
+        1,
+        dir.path(),
+    )
+    .expect_err("no interpreter");
+    assert!(
+        quiet.to_string().contains("miri"),
+        "and a toolchain that said so without the word this looks for still leaves \
+         something to read rather than an empty refusal: {quiet}"
+    );
+}
