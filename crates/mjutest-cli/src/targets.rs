@@ -249,6 +249,16 @@ pub struct TargetError {
 }
 
 impl TargetError {
+    /// A failure of `kind` about `unit`, saying `message`.
+    #[must_use]
+    pub fn new(kind: TargetErrorKind, unit: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            kind,
+            unit: unit.into(),
+            message: message.into(),
+        }
+    }
+
     /// The failure mode.
     #[must_use]
     pub const fn kind(&self) -> TargetErrorKind {

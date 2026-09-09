@@ -8,7 +8,7 @@
     reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
 )]
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use mjutest_cli::error::error_codes;
 
@@ -57,20 +57,128 @@ fn error_codes_are_unique_well_formed_and_sorted() {
 }
 
 #[test]
-fn every_variant_reports_a_declared_code() {
+fn every_failure_reports_a_declared_code() {
     let declared: BTreeSet<&str> = error_codes().iter().map(|c| c.code).collect();
-    let config = mjutest_cli::config::Config::parse("version = 9\n", std::path::Path::new("x"))
-        .expect_err("nine is not a version");
-    let samples = [
-        mjutest_cli::error::RunnerError::Interrupted,
-        mjutest_cli::error::RunnerError::from(config),
-    ];
-    for sample in &samples {
+    for sample in mjutest_cli::testkit::every_failure() {
+        let carried = sample.code().code;
+        let engine = rust_mutants::error::error_codes()
+            .iter()
+            .any(|code| code.code == carried);
         assert!(
-            declared.contains(sample.code().code),
-            "{sample:?} reports an undeclared code"
+            declared.contains(carried) || engine,
+            "{sample:?} reports {carried} and neither ledger declares it, so a person \
+             searching docs/errors.md for what they were told finds nothing. The engine's \
+             codes travel through the runner under their own names on purpose: renaming \
+             them would make a user's report unsearchable"
         );
     }
+}
+
+#[test]
+fn every_code_the_runner_declares_is_one_some_place_reports() {
+    let names = constants();
+    let mut reported = BTreeSet::new();
+    for text in sources() {
+        for code in error_codes() {
+            let constant = names.get(code.code).map_or("", String::as_str);
+            if text.contains(code.code) || (!constant.is_empty() && text.contains(constant)) {
+                let _added = reported.insert(code.code);
+            }
+        }
+    }
+    let orphaned: Vec<&str> = error_codes()
+        .iter()
+        .map(|code| code.code)
+        .filter(|code| !reported.contains(code))
+        .collect();
+    assert!(
+        orphaned.is_empty(),
+        "these codes are declared and documented and no place in the runner reports \
+         them. A code in the ledger that nothing can print is a page about something \
+         that cannot happen, and a reader who trusts the ledger to be the whole list \
+         has no way to tell which entries are real: {orphaned:?}"
+    );
+}
+
+/// The constant each code is declared under, as the ledger names it.
+fn constants() -> BTreeMap<String, String> {
+    ledger()
+        .split("code!(")
+        .skip(1)
+        .filter_map(|block| {
+            let (name, rest) = block.split_once(',')?;
+            let (_, quoted) = rest.split_once('"')?;
+            let (code, _) = quoted.split_once('"')?;
+            Some((code.to_owned(), name.trim().to_owned()))
+        })
+        .collect()
+}
+
+/// The ledger's own text.
+fn ledger() -> String {
+    std::fs::read_to_string(
+        mjutest_devkit::paths::workspace_root().join("crates/mjutest-cli/src/error.rs"),
+    )
+    .expect("the error ledger")
+}
+
+/// The text of every Rust file of the runner, with the ledger's declarations taken out.
+///
+/// A code is declared once and reported wherever a failure carries it, and it
+/// is the second that this looks for. Leaving the declarations in would make
+/// every code report itself, which is the one thing being checked against.
+fn sources() -> Vec<String> {
+    let root = mjutest_devkit::paths::workspace_root().join("crates/mjutest-cli/src");
+    let mut found = Vec::new();
+    let mut pending = vec![root];
+    while let Some(directory) = pending.pop() {
+        for entry in std::fs::read_dir(&directory)
+            .expect("a directory")
+            .flatten()
+        {
+            let path = entry.path();
+            if path.is_dir() {
+                pending.push(path);
+            } else if path.extension().is_some_and(|kind| kind == "rs") {
+                let text = std::fs::read_to_string(&path).expect("a source file");
+                found.push(if path.file_name().is_some_and(|name| name == "error.rs") {
+                    declarations_removed(&text)
+                } else {
+                    text
+                });
+            }
+        }
+    }
+    found
+}
+
+/// The ledger with everything that declares a code taken out, so a declaration is not a report.
+///
+/// That is both halves of it: the `code!` invocations and the list they are
+/// gathered into. Leaving either in would let a code name itself, which is the
+/// one thing being checked against.
+fn declarations_removed(text: &str) -> String {
+    let text = text.split_once("pub const fn error_codes()").map_or_else(
+        || text.to_owned(),
+        |(before, listing)| {
+            let after = listing
+                .split_once("\n}\n")
+                .map_or("", |(_gathered, rest)| rest);
+            format!("{before}{after}")
+        },
+    );
+    text.split("code!(")
+        .enumerate()
+        .map(|(at, block)| {
+            if at == 0 {
+                block.to_owned()
+            } else {
+                block
+                    .split_once(");")
+                    .map_or_else(String::new, |(_declared, rest)| rest.to_owned())
+            }
+        })
+        .collect()
 }
 
 #[test]

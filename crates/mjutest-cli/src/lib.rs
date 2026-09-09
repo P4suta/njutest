@@ -31,6 +31,9 @@ pub mod trace;
 pub mod ui;
 pub mod watch;
 
+#[cfg(any(test, feature = "testkit"))]
+pub mod testkit;
+
 use std::ffi::OsString;
 use std::io::Write;
 
