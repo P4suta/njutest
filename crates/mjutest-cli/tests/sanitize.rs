@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Running the suite under a sanitizer: what it finds, and what it says when it cannot run.
-
 #![cfg(unix)]
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -158,4 +157,70 @@ fn every_sanitizer_the_configuration_names_is_run() {
         &["address".to_owned(), "leak".to_owned()],
     );
     assert_eq!(done.ran, ["address", "leak"]);
+}
+
+#[test]
+fn what_a_run_asks_of_the_sanitizer_is_the_whole_of_what_it_asks() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let cancel = Cancel::new();
+    let trace = Recorder::new(
+        mjutest_cli::trace::Sink::Memory(mjutest_cli::trace::MemorySink::unbounded()),
+        mjutest_cli::trace::Clock::stepping(
+            jiff::Timestamp::from_second(1_800_000_000).expect("in range"),
+            Duration::from_secs(1),
+        ),
+        mjutest_cli::trace::StartRecord::of(
+            "20260909T000000Z-000001",
+            mjutest_cli::report::RunKind::Full,
+            mjutest_cli::config::Contract::DeepV1,
+        ),
+    );
+    let cargo = cargo();
+    let packages = ["core".to_owned()];
+
+    let _done = sanitize(
+        &Sanitizing {
+            root: dir.path(),
+            cargo: &cargo,
+            host: "x86_64-unknown-linux-gnu",
+            env: saying("", 0),
+            packages: &packages,
+            sanitizers: &["address".to_owned()],
+            timeout: Some(Duration::from_secs(30)),
+            offline: true,
+            locked: true,
+        },
+        Watch::new(&cancel, &trace),
+    );
+
+    let exec = trace
+        .events()
+        .iter()
+        .find_map(|event| match &event.payload {
+            mjutest_cli::trace::Payload::Exec { exec } => Some(exec.clone()),
+            _ => None,
+        })
+        .expect("the command it started");
+    assert_eq!(
+        exec.argv,
+        vec![
+            cargo.display().to_string(),
+            "+nightly".to_owned(),
+            "test".to_owned(),
+            "--target".to_owned(),
+            "x86_64-unknown-linux-gnu".to_owned(),
+            "--package".to_owned(),
+            "core".to_owned(),
+            "--offline".to_owned(),
+            "--locked".to_owned(),
+        ],
+        "a sanitizer needs the standard library built with it, which is what naming the \
+         host target asks for, and the rest is what the run was asked about and the two \
+         promises it makes to every cargo command"
+    );
+    assert_eq!(
+        exec.dir.as_deref(),
+        Some(dir.path().display().to_string().as_str())
+    );
+    assert_eq!(exec.timeout_ms, Some(30_000));
 }
