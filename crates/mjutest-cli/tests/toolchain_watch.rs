@@ -475,10 +475,14 @@ fn report_of(root: &std::path::Path) -> serde_json::Value {
 /// What a run whose every measurement was slow exactly once concludes.
 fn once_slow(report: &serde_json::Value) {
     assert_eq!(
-        report["accounting"]["mutants"]["killed"].as_u64(),
-        Some(6),
+        (
+            report["accounting"]["mutants"]["killed"].as_u64(),
+            report["accounting"]["mutants"]["survived"].as_u64(),
+        ),
+        (Some(6), Some(1)),
         "every mutation but one is noticed here, and by the second measurement rather \
-         than the first: {report}"
+         than the first. The one nothing noticed ran and was not noticed, which is a \
+         different fact from one nothing could decide: {report}"
     );
     assert_eq!(
         report["accounting"]["mutants"]["timed_out"].as_u64(),
@@ -823,11 +827,11 @@ fn a_run_in_this_process_writes_what_it_learned_before_it_compiled_anything() {
 
     stages_of(&String::from_utf8_lossy(&complaints), &root);
 
-    accounted(&report);
+    accounted(&report, &root);
 }
 
 /// What a whole run's report says about the targets and the mutations it judged.
-fn accounted(report: &serde_json::Value) {
+fn accounted(report: &serde_json::Value, root: &std::path::Path) {
     let targets = report["targets"].as_array().expect("target records");
     assert!(
         !targets.is_empty(),
@@ -864,11 +868,37 @@ fn accounted(report: &serde_json::Value) {
     );
     assert_eq!(report["verdict"], "INSUFFICIENT");
     assert_eq!(
-        report["accounting"]["mutants"]["killed"].as_u64(),
-        Some(7),
-        "and what the tests did notice is counted: a phase that reported every \
-         mutation as unnoticed would reach the same verdict on this fixture by a route \
-         that says nothing about the suite: {report}"
+        (
+            report["accounting"]["mutants"]["killed"].as_u64(),
+            report["accounting"]["mutants"]["survived"].as_u64(),
+            report["accounting"]["mutants"]["unreached"].as_u64(),
+        ),
+        (Some(7), Some(2), Some(1)),
+        "and every mutation is in the column it belongs to. A phase that reported them \
+         all as unnoticed, or all as something nothing could decide, reaches the same \
+         verdict on this fixture by a route that says nothing about the suite: {report}"
+    );
+    let counted = report["accounting"]["mutants"]["cataloged"]
+        .as_u64()
+        .expect("how many were judged");
+    let paced: Vec<(u64, u64)> = events_of(root)
+        .iter()
+        .filter_map(|event| match &event.payload {
+            mjutest_cli::trace::Payload::Progress { progress } => {
+                Some((progress.done?, progress.total?))
+            }
+            _ => None,
+        })
+        .filter(|(_done, total)| *total == counted)
+        .collect();
+    assert_eq!(
+        paced,
+        (1..=counted)
+            .map(|done| (done, counted))
+            .collect::<Vec<(u64, u64)>>(),
+        "and it counts them off one at a time to whoever is watching: a phase that says \
+         the same number twice, or skips one, is one whose remaining time cannot be read \
+         off it, which is the only thing that line is for"
     );
     let named: Vec<&str> = report["mutants"]
         .as_array()

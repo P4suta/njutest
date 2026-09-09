@@ -249,3 +249,14 @@ rule = "question-to-unwrap"
 original = "?"
 line = 230
 reason = "a Record is strings and an enum of strings, so rendering it as JSON has no failure arm; a_record_says_what_shape_it_is_and_what_established_it renders both of its shapes and reads them back"
+
+# The mutation phase's `Phase` is the third of the same design and the same
+# acceptance. `crates/mjutest-cli/tests/trace.rs` drops a phase without calling
+# `end` and still finds the `phase-end`, which is the invariant all three rest
+# on.
+[[mutation.expect]]
+path = "crates/mjutest-cli/src/assure/mutation.rs"
+item = "run_resuming"
+rule = "delete-call-statement"
+original = "phase.end();"
+reason = "the runner's Phase ends its phase on Drop, so the explicit end at the tail of run_resuming changes no recording; a_phase_guard_ends_its_phase_once_with_its_duration_and_phases_nest holds that"
