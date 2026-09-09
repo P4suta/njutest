@@ -261,3 +261,12 @@ fn the_identity_is_about_the_variables_and_not_about_how_the_list_was_built() {
         "and a different environment is a different question"
     );
 }
+
+#[test]
+fn the_identity_of_a_known_run_is_the_one_it_has_always_been() {
+    let golden = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/testdata/evidence-identity.golden");
+
+    mjutest_devkit::golden::golden(&golden, identity(&inputs()).as_bytes())
+        .expect("the recorded identity");
+}

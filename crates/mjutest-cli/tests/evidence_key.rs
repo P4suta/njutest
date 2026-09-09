@@ -233,3 +233,12 @@ fn a_behaviour_key_is_about_the_variables_and_not_about_how_the_list_was_built()
          the report would say it was reused when it was not"
     );
 }
+
+#[test]
+fn the_behaviour_key_of_a_known_target_is_the_one_it_has_always_been() {
+    let golden = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/testdata/behaviour-key.golden");
+
+    mjutest_devkit::golden::golden(&golden, behaviour(&linked(), &common()).as_bytes())
+        .expect("the recorded key");
+}
