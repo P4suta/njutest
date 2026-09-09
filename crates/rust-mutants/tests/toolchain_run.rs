@@ -136,8 +136,12 @@ fn a_mutant_nothing_delays_is_judged_once() {
 struct Watching {
     /// How many mutants the run said it was about to judge.
     total: u32,
+    /// Every mutant it said it was starting, by identity.
+    started: Vec<String>,
     /// How many it said it had finished.
     finished: u32,
+    /// Whether it was told the run was over.
+    over: bool,
 }
 
 impl rust_mutants::run::Observer for Watching {
@@ -145,8 +149,16 @@ impl rust_mutants::run::Observer for Watching {
         self.total = total;
     }
 
+    fn started(&mut self, mutant: &rust_mutants::catalog::Mutant) {
+        self.started.push(mutant.display_id.clone());
+    }
+
     fn judged(&mut self, _judged: &rust_mutants::run::Judged, completed: u32, _total: u32) {
         self.finished = completed;
+    }
+
+    fn finished(&mut self, _duration: Duration) {
+        self.over = true;
     }
 }
 
@@ -185,6 +197,19 @@ fn one_job_and_several_judge_a_catalog_the_same_way() {
         assert_eq!(
             watching.finished, watching.total,
             "and says so about each of them as it finishes"
+        );
+        assert_eq!(
+            watching.started.len(),
+            run.judged.iter().filter(|one| one.route.is_some()).count(),
+            "and names each one as it starts it, or a caller drawing which mutant is running \
+             now has nothing to draw: {:?}",
+            watching.started
+        );
+        assert!(watching.over, "and says when there is no more to come");
+        assert!(
+            run.judged.iter().all(|one| one.route.is_some()),
+            "every judged mutant carries the route it was put to, which is the only place a \
+             reader sees a proof layer remove work"
         );
         run.judged
             .iter()
