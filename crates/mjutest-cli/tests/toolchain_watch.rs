@@ -433,13 +433,7 @@ fn judged(events: &[mjutest_cli::trace::Event]) {
          a discharge resting on evidence from one resting on silence: {seen:?}"
     );
 
-    let execs: Vec<&mjutest_cli::trace::MutantExecRecord> = events
-        .iter()
-        .filter_map(|event| match &event.payload {
-            mjutest_cli::trace::Payload::MutantExec { mutant } => Some(mutant),
-            _ => None,
-        })
-        .collect();
+    let execs = executions(events);
     let started = execs.first().expect("a mutation this run started");
     assert!(
         !started.mutant.is_empty() && !started.target.is_empty() && !started.outcome.is_empty(),
@@ -478,6 +472,35 @@ fn report_of(root: &std::path::Path) -> serde_json::Value {
     .expect("the report is JSON")
 }
 
+/// What a run whose every measurement was slow exactly once concludes.
+fn once_slow(report: &serde_json::Value) {
+    assert_eq!(
+        report["accounting"]["mutants"]["killed"].as_u64(),
+        Some(6),
+        "every mutation but one is noticed here, and by the second measurement rather \
+         than the first: {report}"
+    );
+    assert_eq!(
+        report["accounting"]["mutants"]["timed_out"].as_u64(),
+        Some(0),
+        "a bound reached once and not again is not a mutation that ran out of time. \
+         Every measurement here was slow the first time and quick the second, and a run \
+         that reported them as timeouts would hand a person seven findings caused by \
+         whatever else the machine was doing: {report}"
+    );
+}
+
+/// Every mutation execution a recording holds.
+fn executions(events: &[mjutest_cli::trace::Event]) -> Vec<&mjutest_cli::trace::MutantExecRecord> {
+    events
+        .iter()
+        .filter_map(|event| match &event.payload {
+            mjutest_cli::trace::Payload::MutantExec { mutant } => Some(mutant),
+            _ => None,
+        })
+        .collect()
+}
+
 /// Every event the latest recording under `root` holds.
 fn events_of(root: &std::path::Path) -> Vec<mjutest_cli::trace::Event> {
     let recording = std::fs::read_dir(root.join(".mjutest/trace"))
@@ -490,6 +513,91 @@ fn events_of(root: &std::path::Path) -> Vec<mjutest_cli::trace::Event> {
         std::fs::File::open(&recording).expect("the stream"),
     ))
     .expect("the events read back")
+}
+
+#[test]
+fn a_second_run_of_one_tree_reads_back_what_the_first_established_and_says_whose_it_is() {
+    let dir = tempfile::Builder::new()
+        .prefix("mjutest-again-")
+        .tempdir()
+        .expect("a temporary directory");
+    let root = dir.path().join("fixture-baseline");
+    copy(
+        &mjutest_devkit::paths::fixtures_dir().join("fixture-baseline"),
+        &root,
+    );
+    let scratch = dir.path().join("scratch");
+    std::fs::create_dir_all(&scratch).expect("a directory to work in");
+    let vars: Vec<(OsString, OsString)> = std::env::vars_os().collect();
+    let environment = Environment {
+        cache_directory: dir.path().join("cache"),
+        working_directory: root.clone(),
+        temp_directory: scratch,
+        vars,
+        cancel: Cancel::new(),
+    };
+    let once = || {
+        let (mut said, mut complaints) = (Vec::new(), Vec::new());
+        let code = mjutest_cli::run_from(
+            ["mjutest", "verify", "--offline", "--locked", "--ui=plain"].map(OsString::from),
+            &environment,
+            &mut said,
+            &mut complaints,
+        );
+        (code, String::from_utf8_lossy(&complaints).into_owned())
+    };
+
+    let (first, complained) = once();
+    assert_eq!(first, 2, "the first run establishes it: {complained}");
+    let established = report_of(&root);
+    assert_eq!(
+        established["accounting"]["mutants"]["reused_killed"].as_u64(),
+        Some(0),
+        "and establishes all of it itself, because there was nothing to read back yet"
+    );
+    let run_id = established["run_id"]
+        .as_str()
+        .expect("the run that established it")
+        .to_owned();
+
+    std::fs::write(
+        root.join("NOTES.md"),
+        "a file beside the code that no test reads\n",
+    )
+    .expect("a change to the tree that is not a change to the package");
+
+    let (second, complained) = once();
+    assert_eq!(
+        second, 2,
+        "and the second reaches the same verdict: {complained}"
+    );
+    let read_back = report_of(&root);
+    assert_eq!(
+        read_back["provenance"]["cached"],
+        serde_json::Value::Bool(false),
+        "a tree that changed is a tree this run answered for itself, whatever the file \
+         that changed was: {read_back}"
+    );
+    assert!(
+        read_back["accounting"]["mutants"]["reused_killed"]
+            .as_u64()
+            .is_some_and(|counted| counted > 0),
+        "reading back what an earlier run of this exact tree established is the whole \
+         of why a second run is cheap, and a run that established it all again would be \
+         doing the work twice while reporting that it had not: {read_back}"
+    );
+    let sources: Vec<&str> = read_back["mutants"]
+        .as_array()
+        .expect("mutants")
+        .iter()
+        .filter_map(|one| one["source_run_id"].as_str())
+        .collect();
+    assert!(
+        !sources.is_empty() && sources.iter().all(|source| *source == run_id),
+        "and each answer it read back names the run that established it, or a person \
+         reading a kill has no way to find the execution behind it: this run says \
+         {sources:?} and the first was {run_id}"
+    );
 }
 
 /// A run in this process against `fixture`, and what it left behind.
@@ -569,23 +677,10 @@ fn a_mutation_that_never_returns_is_stopped_measured_alone_and_reported_as_a_tim
     );
 
     let report = report_of(&root);
-    assert_eq!(
-        report["accounting"]["mutants"]["timed_out"].as_u64(),
-        Some(0),
-        "a bound reached once and not again is not a mutation that ran out of time. \
-         Every measurement here was slow the first time and quick the second, and a run \
-         that reported them as timeouts would hand a person seven findings caused by \
-         whatever else the machine was doing: {report}"
-    );
+    once_slow(&report);
 
     let events = events_of(&root);
-    let execs: Vec<&mjutest_cli::trace::MutantExecRecord> = events
-        .iter()
-        .filter_map(|event| match &event.payload {
-            mjutest_cli::trace::Payload::MutantExec { mutant } => Some(mutant),
-            _ => None,
-        })
-        .collect();
+    let execs = executions(&events);
     let expired: std::collections::BTreeSet<&str> = execs
         .iter()
         .filter(|exec| exec.outcome == "timed_out" && !exec.alone)
@@ -710,6 +805,21 @@ fn a_run_in_this_process_writes_what_it_learned_before_it_compiled_anything() {
         "and states that it could not name the commit it verified, which is the one \
          thing that would let somebody come back to this tree: {stated:?}"
     );
+    let skipped = report["limitations"]
+        .as_array()
+        .expect("limitations")
+        .iter()
+        .find(|one| one["name"] == "skipped-test-code")
+        .expect("what the run did not mutate");
+    assert!(
+        skipped["detail"]
+            .as_str()
+            .is_some_and(|detail| detail.starts_with("1 places were not mutated")),
+        "and how much of the tree it did not mutate, with the number: a run that says \
+         it skipped something without saying how much reads as a footnote, and the \
+         difference between one place and four hundred is the difference between a \
+         report about this workspace and a report about a corner of it: {skipped}"
+    );
 
     stages_of(&String::from_utf8_lossy(&complaints), &root);
 
@@ -753,4 +863,23 @@ fn accounted(report: &serde_json::Value) {
          against: {report}"
     );
     assert_eq!(report["verdict"], "INSUFFICIENT");
+    assert_eq!(
+        report["accounting"]["mutants"]["killed"].as_u64(),
+        Some(7),
+        "and what the tests did notice is counted: a phase that reported every \
+         mutation as unnoticed would reach the same verdict on this fixture by a route \
+         that says nothing about the suite: {report}"
+    );
+    let named: Vec<&str> = report["mutants"]
+        .as_array()
+        .expect("mutants")
+        .iter()
+        .filter_map(|one| one["killed_by"].as_str())
+        .collect();
+    assert_eq!(
+        named.len(),
+        7,
+        "and each kill names the test that noticed, because the whole of what a kill \
+         hands a person is where to look: {named:?}"
+    );
 }

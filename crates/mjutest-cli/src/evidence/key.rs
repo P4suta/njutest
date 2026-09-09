@@ -21,15 +21,29 @@ use super::tree::Scan;
 /// The domain hashed first for a behaviour key.
 pub const KEY_DOMAIN: &str = "mjutest-mutation-evidence-key-v2";
 
-/// APIs whose result depends on what is in a directory rather than on what a file says. A package that uses one keys the whole tree: Rust offers no portable, unprivileged observation of what a test actually read, so the selection is static and widens rather than trusts.
+/// APIs whose result depends on what is in a directory rather than on what a file says.
+///
+/// A package that uses one keys the whole tree: Rust offers no portable,
+/// unprivileged observation of what a test actually read, so the selection is
+/// static and widens rather than trusts.
+///
+/// Two of them name the path a crate is reached through rather than the
+/// crate's bare name, because the bare names are ordinary English. `ignore`
+/// is how every `#[ignore]` in every Rust test suite spells itself and `glob`
+/// is inside `global`, so as bare words they matched almost every package
+/// that exists and keyed all of them on the whole tree — which is not a
+/// widening that costs a little, it is one that throws away every stored
+/// answer the moment anybody edits a README. A crate is reached as
+/// `ignore::Walk` or through `use ignore::…`, and both of those are
+/// `ignore::`.
 pub const DIRECTORY_READERS: [&str; 7] = [
     "read_dir",
     "walkdir",
     "globset",
     "include_dir",
     "current_dir",
-    "glob",
-    "ignore",
+    "glob::",
+    "ignore::",
 ];
 
 /// What every key of one run shares.

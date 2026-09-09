@@ -472,3 +472,38 @@ fn every_package_of_a_closure_is_reached_whatever_the_ones_before_it_were() {
          them"
     );
 }
+
+#[test]
+fn a_word_that_is_ordinary_english_does_not_key_a_package_on_the_whole_tree() {
+    let repo = Repo::new();
+    repo.package("demo").lib(
+        "pub fn f() -> usize { 1 }\n\
+         #[cfg(test)]\n\
+         mod tests {\n\
+             #[test]\n\
+             #[ignore = \"slow\"]\n\
+             fn slow() { assert_eq!(super::f(), 1); }\n\
+             #[test]\n\
+             fn global_counter_starts_at_one() { assert_eq!(super::f(), 1); }\n\
+         }\n",
+    );
+    let scanned = scan(repo.root(), &[], &[]).expect("the tree reads");
+    assert!(
+        !reads_directories_under(repo.root(), &scanned, ""),
+        "a suite that marks a test ignored, or names something global, has not said it \
+         reads a directory. Keying it on the whole tree throws away every answer the \
+         moment anybody edits a file beside it, which is every stored answer in a \
+         repository where somebody writes documentation"
+    );
+
+    repo.write(
+        "src/listing.rs",
+        "use ignore::WalkBuilder;\npub fn all() -> usize { WalkBuilder::new(\".\").build().count() }\n",
+    );
+    let scanned = scan(repo.root(), &[], &[]).expect("the tree reads");
+    assert!(
+        reads_directories_under(repo.root(), &scanned, ""),
+        "while a package that reaches the crate does say so, and the path it is reached \
+         through is what says it"
+    );
+}
