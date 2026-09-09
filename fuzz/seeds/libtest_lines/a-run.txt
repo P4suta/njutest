@@ -1,0 +1,6 @@
+running 3 tests
+test cases::adds ... ok
+test cases::slow ... ignored
+test cases::breaks ... FAILED
+
+test result: FAILED. 1 passed; 1 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.02s

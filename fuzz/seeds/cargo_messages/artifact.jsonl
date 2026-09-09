@@ -1,0 +1,2 @@
+{"reason": "compiler-artifact", "package_id": "demo 0.1.0 (path+file:///w)", "target": {"kind": ["lib"], "crate_types": ["lib"], "name": "demo", "src_path": "/w/src/lib.rs", "test": true}, "profile": {"test": true}, "executable": "/w/target/debug/deps/demo-1a2b", "filenames": ["/w/target/debug/deps/demo-1a2b"], "fresh": false}
+{"reason": "build-finished", "success": true}

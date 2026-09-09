@@ -1,0 +1,11 @@
+version = 1
+
+[project]
+exclude = ["target/**"]
+
+[execution]
+timeout = "10m"
+jobs = 0
+
+[mutation]
+equivalence = false

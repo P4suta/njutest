@@ -19,10 +19,16 @@ second and no coverage worth keeping, against three million runs in
 forty-five seconds from three seed documents, with `candidates`, `version`
 and `kind` in the dictionary it learned.
 
-So `fuzz/seeds/<target>/` is committed, the workflow copies it into the
-corpus before running, and `xtask/tests/docs.rs` refuses a seed directory
-that names no target. A target whose input is bytes rather than a document
-needs none.
+So `fuzz/seeds/<target>/` is committed and the workflow copies it into the
+corpus before running. Three gates keep it honest: `xtask/tests/fuzz_ledger.rs`
+refuses a seed directory that names no target or holds nothing, and
+`crates/mjutest-cli/tests/fuzz_seeds.rs` — with the three whose readers live
+on the other side in `crates/rust-mutants-cli/tests/fuzz_seeds.rs` — puts
+every seed to the reader its target uses. **A seed the reader refuses is not
+a seed**: the target returns on the first line and the run explores what it
+explored before. Writing these found two of mine that did exactly that.
+
+A target whose input is bytes rather than a document needs none.
 
 The runner's targets are here for a particular reason: three of the four
 read something a *test suite* can influence. A suite that printed its own

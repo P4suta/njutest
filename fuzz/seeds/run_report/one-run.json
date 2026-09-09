@@ -1,0 +1,477 @@
+{
+  "document_type": "rust-mutants/run-report",
+  "schema_version": 1,
+  "tool_version": "0.1.0",
+  "run": {
+    "id": "20260909T230752768Z",
+    "started_at": "2026-09-09T23:07:52.768515692Z",
+    "finished_at": "2026-09-09T23:07:53.390668572Z",
+    "duration_ms": 6,
+    "interrupted": false,
+    "exit_code": 1,
+    "shard": null
+  },
+  "workspace": {
+    "root_name": "fixture-baseline",
+    "toolchain": "rustc 1.98.1 (48a229cea 2026-09-01)",
+    "workspace_digest": "eb370d98395e76cb285ee9980558ea11455e13aa7da5978bc4de97d414c9fc43",
+    "catalog_digest": "ea0d8c716458270180acc101d875493b2673202f4135e018cb48a352e07abf1a",
+    "platform": {
+      "os": "gnu",
+      "arch": "x86_64",
+      "target": "x86_64-unknown-linux-gnu"
+    }
+  },
+  "selection": {
+    "tier": "balanced",
+    "operators": [],
+    "include": [],
+    "exclude": [],
+    "packages": []
+  },
+  "accounting": {
+    "cataloged": 10,
+    "refused": 0,
+    "skipped": 1,
+    "executed": 7,
+    "killed": 7,
+    "survived": 0,
+    "timed_out": 0,
+    "inconclusive": 0,
+    "errored": 0,
+    "not_run": 3,
+    "unreached": 1,
+    "discharged": 2,
+    "expected": 0
+  },
+  "score": {
+    "detected": 7,
+    "decided": 7,
+    "value": 1.0
+  },
+  "targets": [
+    {
+      "id": "fixture-baseline/lib/fixture_baseline",
+      "kind": "lib",
+      "harness": true,
+      "tests": 1
+    },
+    {
+      "id": "fixture-baseline/test/doubling",
+      "kind": "test",
+      "harness": true,
+      "tests": 1
+    },
+    {
+      "id": "fixture-baseline/doc/fixture_baseline",
+      "kind": "doc",
+      "harness": true,
+      "tests": 1,
+      "limitations": [
+        "doctests-routed-by-file",
+        "doctests-none"
+      ]
+    }
+  ],
+  "established_tests": 0,
+  "mutants": [
+    {
+      "index": 0,
+      "id": "0cb3400e6fea6d01b5b03bb8184b305aedbe265b49c32cb61560a7afa2ae6d65",
+      "display_id": "0cb3400e6fea6d01b5b0",
+      "path": "src/lib.rs",
+      "package": "fixture-baseline",
+      "family": "return-replacement",
+      "rule": "return-default",
+      "rule_version": 1,
+      "line": 8,
+      "column": 5,
+      "start_byte": 461,
+      "end_byte": 565,
+      "source_digest": "3442d3cf255f35325ae16117d008909b7cf1ccd50d5af6f38d6b27c97c995a23",
+      "original": "if n > 0 {\n        \"positive\"\n    } else if n < 0 {\n        \"negative\"\n    } else {\n        \"zero\"\n    }",
+      "replacement": "Default::default()",
+      "outcome": "killed",
+      "target": "fixture-baseline/lib/fixture_baseline",
+      "exit_code": 101,
+      "duration_ms": 1,
+      "tests_run": 1,
+      "killed_by": [
+        "tests::sign_names_both_sides_of_zero"
+      ],
+      "retried": false,
+      "route": {
+        "granularity": "block",
+        "reaching": [
+          "fixture-baseline/lib/fixture_baseline"
+        ],
+        "executed": [
+          "fixture-baseline/lib/fixture_baseline"
+        ]
+      },
+      "expected": false,
+      "unreached": false,
+      "source_run_id": null
+    },
+    {
+      "index": 1,
+      "id": "ae6162ece39e3389335db4344482a86f8b7e93863b0b492fdf8868cea5b12c7b",
+      "display_id": "ae6162ece39e3389335d",
+      "path": "src/lib.rs",
+      "package": "fixture-baseline",
+      "family": "condition-negation",
+      "rule": "negate-condition",
+      "rule_version": 1,
+      "line": 8,
+      "column": 8,
+      "start_byte": 464,
+      "end_byte": 469,
+      "source_digest": "3442d3cf255f35325ae16117d008909b7cf1ccd50d5af6f38d6b27c97c995a23",
+      "original": "n > 0",
+      "replacement": "!(n > 0)",
+      "outcome": "killed",
+      "target": "fixture-baseline/lib/fixture_baseline",
+      "exit_code": 101,
+      "duration_ms": 1,
+      "tests_run": 1,
+      "killed_by": [
+        "tests::sign_names_both_sides_of_zero"
+      ],
+      "retried": false,
+      "route": {
+        "granularity": "block",
+        "reaching": [
+          "fixture-baseline/lib/fixture_baseline"
+        ],
+        "executed": [
+          "fixture-baseline/lib/fixture_baseline"
+        ]
+      },
+      "expected": false,
+      "unreached": false,
+      "source_run_id": null
+    },
+    {
+      "index": 2,
+      "id": "366948fbe36bfd19786d81fbae6446524d338a866fb8e99a17def9f50fd3485d",
+      "display_id": "366948fbe36bfd19786d",
+      "path": "src/lib.rs",
+      "package": "fixture-baseline",
+      "family": "comparison",
+      "rule": "gt-to-ge",
+      "rule_version": 1,
+      "line": 8,
+      "column": 10,
+      "start_byte": 466,
+      "end_byte": 467,
+      "source_digest": "3442d3cf255f35325ae16117d008909b7cf1ccd50d5af6f38d6b27c97c995a23",
+      "original": ">",
+      "replacement": ">=",
+      "outcome": "not_run",
+      "target": "",
+      "exit_code": -1,
+      "duration_ms": 0,
+      "tests_run": null,
+      "retried": false,
+      "not_run_reason": "discharged",
+      "route": {
+        "granularity": "discharged",
+        "reaching": [],
+        "discharged": [
+          {
+            "target": "fixture-baseline/lib/fixture_baseline",
+            "proof": "never-infected"
+          }
+        ]
+      },
+      "expected": false,
+      "unreached": false,
+      "source_run_id": null
+    },
+    {
+      "index": 3,
+      "id": "b6f6f7454e99e11dfd807eeea7e2e121461d68b588ccb1a0015d6e75d32adfb1",
+      "display_id": "b6f6f7454e99e11dfd80",
+      "path": "src/lib.rs",
+      "package": "fixture-baseline",
+      "family": "return-replacement",
+      "rule": "return-default",
+      "rule_version": 1,
+      "line": 9,
+      "column": 9,
+      "start_byte": 480,
+      "end_byte": 490,
+      "source_digest": "3442d3cf255f35325ae16117d008909b7cf1ccd50d5af6f38d6b27c97c995a23",
+      "original": "\"positive\"",
+      "replacement": "Default::default()",
+      "outcome": "killed",
+      "target": "fixture-baseline/lib/fixture_baseline",
+      "exit_code": 101,
+      "duration_ms": 1,
+      "tests_run": 1,
+      "killed_by": [
+        "tests::sign_names_both_sides_of_zero"
+      ],
+      "retried": false,
+      "route": {
+        "granularity": "block",
+        "reaching": [
+          "fixture-baseline/lib/fixture_baseline"
+        ],
+        "executed": [
+          "fixture-baseline/lib/fixture_baseline"
+        ]
+      },
+      "expected": false,
+      "unreached": false,
+      "source_run_id": null
+    },
+    {
+      "index": 4,
+      "id": "9618aa1c71c281ae983584d26d09b1411bae1974fad571eb0a814eb4b44a2f17",
+      "display_id": "9618aa1c71c281ae9835",
+      "path": "src/lib.rs",
+      "package": "fixture-baseline",
+      "family": "condition-negation",
+      "rule": "negate-condition",
+      "rule_version": 1,
+      "line": 10,
+      "column": 15,
+      "start_byte": 505,
+      "end_byte": 510,
+      "source_digest": "3442d3cf255f35325ae16117d008909b7cf1ccd50d5af6f38d6b27c97c995a23",
+      "original": "n < 0",
+      "replacement": "!(n < 0)",
+      "outcome": "killed",
+      "target": "fixture-baseline/lib/fixture_baseline",
+      "exit_code": 101,
+      "duration_ms": 1,
+      "tests_run": 1,
+      "killed_by": [
+        "tests::sign_names_both_sides_of_zero"
+      ],
+      "retried": false,
+      "route": {
+        "granularity": "block",
+        "reaching": [
+          "fixture-baseline/lib/fixture_baseline"
+        ],
+        "executed": [
+          "fixture-baseline/lib/fixture_baseline"
+        ]
+      },
+      "expected": false,
+      "unreached": false,
+      "source_run_id": null
+    },
+    {
+      "index": 5,
+      "id": "2bcb6eb7d96056277fa103492ff96c0d2aac9bdbcb6631aa89793025fc77c4a0",
+      "display_id": "2bcb6eb7d96056277fa1",
+      "path": "src/lib.rs",
+      "package": "fixture-baseline",
+      "family": "comparison",
+      "rule": "lt-to-le",
+      "rule_version": 1,
+      "line": 10,
+      "column": 17,
+      "start_byte": 507,
+      "end_byte": 508,
+      "source_digest": "3442d3cf255f35325ae16117d008909b7cf1ccd50d5af6f38d6b27c97c995a23",
+      "original": "<",
+      "replacement": "<=",
+      "outcome": "not_run",
+      "target": "",
+      "exit_code": -1,
+      "duration_ms": 0,
+      "tests_run": null,
+      "retried": false,
+      "not_run_reason": "discharged",
+      "route": {
+        "granularity": "discharged",
+        "reaching": [],
+        "discharged": [
+          {
+            "target": "fixture-baseline/lib/fixture_baseline",
+            "proof": "never-infected"
+          }
+        ]
+      },
+      "expected": false,
+      "unreached": false,
+      "source_run_id": null
+    },
+    {
+      "index": 6,
+      "id": "ee0a61bc9f91d9acc4cf69d15879a1df1d4f7892ef853789a1d98cff5979cd4e",
+      "display_id": "ee0a61bc9f91d9acc4cf",
+      "path": "src/lib.rs",
+      "package": "fixture-baseline",
+      "family": "return-replacement",
+      "rule": "return-default",
+      "rule_version": 1,
+      "line": 11,
+      "column": 9,
+      "start_byte": 521,
+      "end_byte": 531,
+      "source_digest": "3442d3cf255f35325ae16117d008909b7cf1ccd50d5af6f38d6b27c97c995a23",
+      "original": "\"negative\"",
+      "replacement": "Default::default()",
+      "outcome": "killed",
+      "target": "fixture-baseline/lib/fixture_baseline",
+      "exit_code": 101,
+      "duration_ms": 1,
+      "tests_run": 1,
+      "killed_by": [
+        "tests::sign_names_both_sides_of_zero"
+      ],
+      "retried": false,
+      "route": {
+        "granularity": "block",
+        "reaching": [
+          "fixture-baseline/lib/fixture_baseline"
+        ],
+        "executed": [
+          "fixture-baseline/lib/fixture_baseline"
+        ]
+      },
+      "expected": false,
+      "unreached": false,
+      "source_run_id": null
+    },
+    {
+      "index": 7,
+      "id": "97b5a75a9e1efeeff23366ed26389245afc47b6091c7a2595eca2eb5cd052886",
+      "display_id": "97b5a75a9e1efeeff233",
+      "path": "src/lib.rs",
+      "package": "fixture-baseline",
+      "family": "return-replacement",
+      "rule": "return-default",
+      "rule_version": 1,
+      "line": 13,
+      "column": 9,
+      "start_byte": 553,
+      "end_byte": 559,
+      "source_digest": "3442d3cf255f35325ae16117d008909b7cf1ccd50d5af6f38d6b27c97c995a23",
+      "original": "\"zero\"",
+      "replacement": "Default::default()",
+      "outcome": "not_run",
+      "target": "",
+      "exit_code": -1,
+      "duration_ms": 0,
+      "tests_run": null,
+      "retried": false,
+      "not_run_reason": "unreached",
+      "route": {
+        "granularity": "unreached",
+        "reaching": []
+      },
+      "expected": false,
+      "unreached": true,
+      "source_run_id": null
+    },
+    {
+      "index": 8,
+      "id": "f0bd7961d77aed7f5cbad88497803bfdca9aec313cb41c9f0e970f7861d756a2",
+      "display_id": "f0bd7961d77aed7f5cba",
+      "path": "src/lib.rs",
+      "package": "fixture-baseline",
+      "family": "return-replacement",
+      "rule": "return-default",
+      "rule_version": 1,
+      "line": 19,
+      "column": 5,
+      "start_byte": 690,
+      "end_byte": 695,
+      "source_digest": "3442d3cf255f35325ae16117d008909b7cf1ccd50d5af6f38d6b27c97c995a23",
+      "original": "n * 2",
+      "replacement": "Default::default()",
+      "outcome": "killed",
+      "target": "fixture-baseline/test/doubling",
+      "exit_code": 101,
+      "duration_ms": 1,
+      "tests_run": 1,
+      "killed_by": [
+        "doubling_is_addition_twice"
+      ],
+      "retried": false,
+      "route": {
+        "granularity": "block",
+        "reaching": [
+          "fixture-baseline/test/doubling"
+        ],
+        "executed": [
+          "fixture-baseline/test/doubling"
+        ]
+      },
+      "expected": false,
+      "unreached": false,
+      "source_run_id": null
+    },
+    {
+      "index": 9,
+      "id": "d0f665a548910bd9ed45eae5a3c02fa1e5b826af1bf0ed2ae01a52d493a3961e",
+      "display_id": "d0f665a548910bd9ed45",
+      "path": "src/lib.rs",
+      "package": "fixture-baseline",
+      "family": "arithmetic",
+      "rule": "mul-to-div",
+      "rule_version": 1,
+      "line": 19,
+      "column": 7,
+      "start_byte": 692,
+      "end_byte": 693,
+      "source_digest": "3442d3cf255f35325ae16117d008909b7cf1ccd50d5af6f38d6b27c97c995a23",
+      "original": "*",
+      "replacement": "/",
+      "outcome": "killed",
+      "target": "fixture-baseline/test/doubling",
+      "exit_code": 101,
+      "duration_ms": 1,
+      "tests_run": 1,
+      "killed_by": [
+        "doubling_is_addition_twice"
+      ],
+      "retried": false,
+      "route": {
+        "granularity": "block",
+        "reaching": [
+          "fixture-baseline/test/doubling"
+        ],
+        "executed": [
+          "fixture-baseline/test/doubling"
+        ]
+      },
+      "expected": false,
+      "unreached": false,
+      "source_run_id": null
+    }
+  ],
+  "rejections": [],
+  "skips": [
+    {
+      "reason": "test-code",
+      "path": "src/lib.rs",
+      "count": 1,
+      "explanation": "the code is a test: a #[test] function or anything behind #[cfg(test)], which measures itself"
+    }
+  ],
+  "expectations": [],
+  "findings": [
+    {
+      "kind": "discharged-mutant",
+      "mutant": "366948fbe36bfd19786d81fbae6446524d338a866fb8e99a17def9f50fd3485d",
+      "detail": "every target that could have noticed 366948fbe36bfd19786d was removed by a proof, so no test could have: the mutation is in code the tests run and never observe"
+    },
+    {
+      "kind": "discharged-mutant",
+      "mutant": "2bcb6eb7d96056277fa103492ff96c0d2aac9bdbcb6631aa89793025fc77c4a0",
+      "detail": "every target that could have noticed 2bcb6eb7d96056277fa1 was removed by a proof, so no test could have: the mutation is in code the tests run and never observe"
+    },
+    {
+      "kind": "unreached-mutant",
+      "mutant": "97b5a75a9e1efeeff23366ed26389245afc47b6091c7a2595eca2eb5cd052886",
+      "detail": "no measured test reaches 97b5a75a9e1efeeff233: the mutation lives in code the tests never execute"
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+[build]
+rustflags = ["-C", "opt-level=1"]
+target-dir = "target"
+
+[term]
+color = "never"
