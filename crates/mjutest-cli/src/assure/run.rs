@@ -365,8 +365,17 @@ fn kept(report: &mut Report, request: &Request, crash: &super::fuzz::Crash) {
     });
 }
 
-/// The limitation a run states when a generation provider could not be asked.
+/// The limitation a run states when a generation provider could not be asked, or said something this release cannot read.
 pub const GENERATION_LIMITATION: &str = "generation-provider-unavailable";
+
+/// The limitation a run states when a candidate held up and could not be stored.
+///
+/// A different name from [`GENERATION_LIMITATION`] because it is a different
+/// thing to do about: a provider nobody could ask is a provider to fix, and a
+/// candidate that held up and could not be kept is a disk to make room on.
+/// `fix --apply` writes what was checked rather than asking again, so a
+/// candidate whose content is gone is an offer nothing can take up.
+pub const GENERATION_NOT_KEPT_LIMITATION: &str = "generation-candidate-not-kept";
 
 /// Asks the generation provider, when the configuration names one.
 fn proposed(
@@ -499,7 +508,7 @@ fn considered(
     };
     if verdict.accepted && crate::repair::keep(&request.root, proposal).is_err() {
         report.limitations.push(Limitation::new(
-            GENERATION_LIMITATION,
+            GENERATION_NOT_KEPT_LIMITATION,
             &format!("a candidate for {mutant} could not be kept, so it cannot be applied"),
         ));
         return;

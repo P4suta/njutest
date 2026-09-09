@@ -833,6 +833,142 @@ fn a_run_that_held_something_says_what_it_held_and_lets_go_of_it() {
     );
 }
 
+/// The test a generation provider offers to close the gap the ignored test left.
+const OFFERED: &str = "Ly8gU1BEWC1GaWxlQ29weXJpZ2h0VGV4dDogMjAyNiBtanV0ZXN0IGNvbnRyaWJ1dG9ycwovLyBTUERYLUxpY2Vuc2UtSWRlbnRpZmllcjogTUlUIE9SIEFwYWNoZS0yLjAKCi8vISBPZmZlcmVkIGJ5IGEgZ2VuZXJhdGlvbiBwcm92aWRlciB0byBjbG9zZSB0aGUgZ2FwIHRoZSBpZ25vcmVkIHRlc3QgbGVmdC4KCiNbdGVzdF0KZm4gemVyb19oYXNfYV9zaWduX29mX2l0c19vd24oKSB7CiAgICBhc3NlcnRfZXEhKGZpeHR1cmVfYmFzZWxpbmU6OnNpZ24oMCksICJ6ZXJvIik7Cn0K";
+
+#[test]
+fn a_candidate_offered_for_a_gap_is_put_to_the_tests_before_it_is_recorded() {
+    let dir = tempfile::Builder::new()
+        .prefix("mjutest-offering-")
+        .tempdir()
+        .expect("a temporary directory");
+    let root = dir.path().join("fixture-baseline");
+    copy(
+        &mjutest_devkit::paths::fixtures_dir().join("fixture-baseline"),
+        &root,
+    );
+    let provider =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testdata/fake-generator.sh");
+    std::fs::write(
+        root.join(".mjutest.toml"),
+        format!(
+            "version = 1\n\n[generation]\ncommand = [\"/bin/sh\", {:?}]\n\
+             environment = [\"FAKE_GENERATOR_OFFERS\"]\n",
+            provider.to_string_lossy()
+        ),
+    )
+    .expect("a configuration that names a generator");
+    let scratch = dir.path().join("scratch");
+    std::fs::create_dir_all(&scratch).expect("a directory to work in");
+
+    let mut vars: Vec<(OsString, OsString)> = std::env::vars_os().collect();
+    vars.push((
+        OsString::from("FAKE_GENERATOR_OFFERS"),
+        OsString::from(format!(
+            r#"{{"version":1,"candidates":[{{"kind":"patch","path":"tests/zero.rs","preimage_sha256":null,"content_base64":"{OFFERED}"}}]}}"#
+        )),
+    ));
+    let environment = Environment {
+        cache_directory: dir.path().join("cache"),
+        working_directory: root.clone(),
+        temp_directory: scratch,
+        vars,
+        cancel: Cancel::new(),
+    };
+
+    let (mut said, mut complaints) = (Vec::new(), Vec::new());
+    let code = mjutest_cli::run_from(
+        ["mjutest", "verify", "--offline", "--locked", "--no-cache"].map(OsString::from),
+        &environment,
+        &mut said,
+        &mut complaints,
+    );
+    assert_eq!(code, 2, "{}", String::from_utf8_lossy(&complaints));
+
+    let report = report_of(&root);
+    let offered = report["candidates"]
+        .as_array()
+        .expect("candidates")
+        .first()
+        .expect("what the generator offered");
+    assert_eq!(
+        (
+            offered["path"].as_str(),
+            offered["accepted"].as_bool(),
+            offered["stability_runs"].as_u64(),
+            offered["kill_runs"].as_u64(),
+        ),
+        (Some("tests/zero.rs"), Some(true), Some(3), Some(2)),
+        "a candidate is put to the tests before it is written down: the patched tree \
+         has to pass on its own and catch the mutation twice, and a run that recorded \
+         one without asking would offer somebody a test that does not do what it says: \
+         {report}"
+    );
+    assert!(
+        !root.join("tests/zero.rs").exists(),
+        "and it stays a proposal: verifying is reading, and the only thing that writes \
+         into somebody's tree is being asked to"
+    );
+    assert!(
+        std::fs::read_dir(root.join(mjutest_cli::repair::STORE))
+            .expect("the candidates this run kept")
+            .flatten()
+            .count()
+            > 0,
+        "and what it holds up is kept, because `fix --apply` writes what was checked \
+         rather than asking the generator again for something nobody put to the tests"
+    );
+
+    unkeepable(dir.path(), &root, environment);
+}
+
+/// A candidate that holds up and has nowhere to be kept.
+fn unkeepable(dir: &std::path::Path, from: &std::path::Path, environment: Environment) {
+    let root = from;
+    let blocked = dir.join("fixture-blocked");
+    copy(root, &blocked);
+    for gone in [".mjutest", "reports"] {
+        drop(std::fs::remove_dir_all(blocked.join(gone)));
+    }
+    std::fs::create_dir_all(blocked.join(".mjutest")).expect("the directory it works in");
+    std::fs::write(
+        blocked.join(mjutest_cli::repair::STORE),
+        "a file where the candidates go",
+    )
+    .expect("a file where a directory belongs");
+    let scratch = dir.join("scratch-again");
+    std::fs::create_dir_all(&scratch).expect("a directory to work in");
+    let elsewhere = Environment {
+        working_directory: blocked.clone(),
+        temp_directory: scratch,
+        cache_directory: dir.join("cache-again"),
+        ..environment
+    };
+    let (mut said, mut complaints) = (Vec::new(), Vec::new());
+    let _code = mjutest_cli::run_from(
+        ["mjutest", "verify", "--offline", "--locked", "--no-cache"].map(OsString::from),
+        &elsewhere,
+        &mut said,
+        &mut complaints,
+    );
+    let report = report_of(&blocked);
+    assert!(
+        report["limitations"]
+            .as_array()
+            .expect("limitations")
+            .iter()
+            .any(|one| one["name"] == "generation-candidate-not-kept"),
+        "a candidate that held up and could not be kept is one nothing can apply \
+         afterwards, so the run says so rather than recording an offer whose content is \
+         gone: {report}"
+    );
+    assert!(
+        report["candidates"].as_array().is_some_and(Vec::is_empty),
+        "and it does not record it, because a candidate a reader cannot get back is an \
+         offer that cannot be taken up: {report}"
+    );
+}
+
 /// A run in this process against `fixture`, and what it left behind.
 fn verified_in_process(
     fixture: &str,

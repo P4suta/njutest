@@ -122,9 +122,20 @@ below is stated fail-closed.
   sanitizer the configuration asks for and the toolchain will not run is
   `sanitizer-unavailable`; every sanitizer run also carries
   `sanitizer-standard-library-not-instrumented`.
-- Repository reads are not observed at run time. A package that uses a
-  directory-reading API keys the whole snapshot for evidence reuse; nothing
-  is excluded from testing.
+- Repository reads are not observed at run time. A package that names a
+  directory-reading crate keys the whole snapshot for evidence reuse; nothing
+  is excluded from testing. The names searched for are the paths those crates
+  are reached through (`ignore::`, `glob::`) rather than their bare words,
+  because `ignore` is how every `#[ignore]` spells itself and `glob` is inside
+  `global`: a marker that matches every package keys every package on the
+  whole tree, which is not a widening that costs a little but one that throws
+  every stored answer away whenever anybody edits a file beside the code.
+- A generation provider that could not be asked, or that said something this
+  release cannot read, is `generation-provider-unavailable`. A candidate that
+  held up under the tests and could not be stored is
+  `generation-candidate-not-kept`, which is a different thing to do about:
+  `fix --apply` writes what was checked rather than asking again, so a
+  candidate whose content is gone is an offer nothing can take up.
 - Mutation inside a macro invocation the engine has no allowlist entry for, a
   `const` context, and `#[cfg]`-guarded code is skipped with a stated reason.
   The leading arguments of the six assertion macros are mutated; the rest of
