@@ -450,27 +450,23 @@ fn a_run_told_not_to_touch_the_network_tells_every_command_it_starts() {
         locked: true,
         offline: true,
     };
-    let asked = metadata_arguments(promised, false);
-    assert!(
-        asked.contains(&"--offline") && asked.contains(&"--locked"),
+    assert_eq!(
+        metadata_arguments(promised, false),
+        ["metadata", "--format-version", "1", "--locked", "--offline"],
         "resolving the workspace is a command a run starts, and one that reached out anyway \
-         would keep the promise for the builds and break it before the first of them: {asked:?}"
+         would keep the promise for the builds and break it before the first of them"
     );
-
-    let free = metadata_arguments(
-        MetadataOptions {
-            locked: false,
-            offline: false,
-        },
-        true,
-    );
-    assert!(
-        !free.contains(&"--offline") && !free.contains(&"--locked"),
+    assert_eq!(
+        metadata_arguments(
+            MetadataOptions {
+                locked: false,
+                offline: false,
+            },
+            true,
+        ),
+        ["metadata", "--format-version", "1", "--no-deps"],
         "and a run that promised neither asks for neither, or every project would be resolved \
-         against a lock file it did not agree to: {free:?}"
-    );
-    assert!(
-        free.contains(&"--no-deps") && !asked.contains(&"--no-deps"),
-        "the resolve that reads no dependencies says so and the one that reads them does not"
+         against a lock file it did not agree to; the resolve that reads no dependencies is \
+         the one that says so"
     );
 }
