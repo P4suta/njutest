@@ -166,6 +166,17 @@ be observed any other way. When a survivor's route names only `toolchain_*`
 targets, the question to ask first is not "what test is missing" but "is the
 test somewhere the measurement can see".
 
+A whole run in this process is `mjutest_cli::run_from` with an `Environment` the
+test builds, and it reaches every phase the configuration turns on. That is
+what `toolchain_watch.rs` does, and it is why a `.mjutest.toml` written into a
+copied fixture is the lever for a whole cluster of survivors rather than one:
+`[execution] timeout` with a fixture that is slow once reaches the bound that
+expires and the quiet measurement after it, `[mutation] equivalence` reaches
+the layer that removes findings, `[resources]` and `[generation]` reach the
+providers, and a `fuzz/fuzz_targets` directory reaches the gap a run states
+about targets nobody asked it to drive. Each of those was measured as unreached
+until a run in this process was configured into it.
+
 ### The scripted toolchain
 
 `mjutest_devkit::fake_cargo` writes a script of invocations —
