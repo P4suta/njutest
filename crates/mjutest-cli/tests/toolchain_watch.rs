@@ -223,3 +223,78 @@ fn a_run_with_nowhere_to_work_stops_before_it_says_it_looked() {
          them no way to say how far it went: {phases:?}"
     );
 }
+
+#[test]
+fn a_run_told_where_to_look_for_a_toolchain_looks_there_and_nowhere_else() {
+    let root = tempfile::Builder::new()
+        .prefix("mjutest-nocargo-")
+        .tempdir()
+        .expect("a temporary directory");
+    std::fs::write(
+        root.path().join("Cargo.toml"),
+        "[workspace]\nmembers = []\n",
+    )
+    .expect("a manifest");
+    let empty = root.path().join("empty");
+    std::fs::create_dir_all(&empty).expect("a directory with no toolchain in it");
+    let scratch = root.path().join("scratch");
+    std::fs::create_dir_all(&scratch).expect("a directory to work in");
+
+    let environment = Environment {
+        cache_directory: root.path().to_owned(),
+        working_directory: root.path().to_owned(),
+        temp_directory: scratch,
+        vars: vec![(
+            OsString::from("PATH"),
+            OsString::from(empty.display().to_string()),
+        )],
+        cancel: Cancel::new(),
+    };
+
+    let (mut said, mut complaints) = (Vec::new(), Vec::new());
+    let code = mjutest_cli::run_from(
+        ["mjutest", "verify", "--offline", "--locked"].map(OsString::from),
+        &environment,
+        &mut said,
+        &mut complaints,
+    );
+
+    let complained = String::from_utf8_lossy(&complaints);
+    assert_eq!(
+        code, EXIT_ERROR,
+        "the only place this run was told to look for a toolchain has none in it, and \
+         finding one somewhere else would build the workspace with a compiler nobody \
+         named: {complained}"
+    );
+    assert!(
+        complained.contains("cargo"),
+        "and it says what it could not find: {complained}"
+    );
+
+    let scratch = root.path().join("scratch-again");
+    std::fs::create_dir_all(&scratch).expect("a directory to work in");
+    let told = Environment {
+        cache_directory: root.path().to_owned(),
+        working_directory: root.path().to_owned(),
+        temp_directory: scratch,
+        vars: std::env::vars_os()
+            .filter(|(name, _value)| name == "PATH")
+            .collect(),
+        cancel: Cancel::new(),
+    };
+    let (mut said, mut complaints) = (Vec::new(), Vec::new());
+    let _code = mjutest_cli::run_from(
+        ["mjutest", "verify", "--offline", "--locked"].map(OsString::from),
+        &told,
+        &mut said,
+        &mut complaints,
+    );
+
+    let complained = String::from_utf8_lossy(&complaints);
+    assert!(
+        !complained.contains("no search path"),
+        "and a run whose environment does name a place to look is told that place: \
+         reading some other variable, or reading none, would have it report that nobody \
+         said where to look while somebody had: {complained}"
+    );
+}
