@@ -1147,7 +1147,8 @@ fn within(change: Option<&git::Change>) -> Vec<rust_mutants::glob::Pattern> {
     change.map_or_else(Vec::new, |change| rust_mutants::git::within(change, &[]))
 }
 
-fn record(report: &mut Report, mutation: &mutation::Mutation, accepted: &BTreeSet<String>) {
+/// Puts what the mutation phase judged into the report: the counts, one row per mutation, the findings, and what was not mutated.
+pub fn record(report: &mut Report, mutation: &mutation::Mutation, accepted: &BTreeSet<String>) {
     report.accounting.mutants = mutation.accounting(accepted);
     report.mutants = mutation
         .judged
@@ -1184,7 +1185,8 @@ fn record(report: &mut Report, mutation: &mutation::Mutation, accepted: &BTreeSe
 /// what the ledger in [`docs/limitations.md`](../../../../docs/limitations.md)
 /// is keyed by, so the name is what reaches the report and the targets go into
 /// the sentence: one limitation about five targets is one row, not five.
-fn about(limitations: &[String]) -> Vec<(String, Vec<String>)> {
+#[must_use]
+pub fn about(limitations: &[String]) -> Vec<(String, Vec<String>)> {
     let mut named: std::collections::BTreeMap<String, Vec<String>> =
         std::collections::BTreeMap::new();
     for limitation in limitations {
@@ -1202,7 +1204,7 @@ fn about(limitations: &[String]) -> Vec<(String, Vec<String>)> {
 }
 
 /// Puts what the baseline observed into the report.
-fn absorb(report: &mut Report, baseline: &baseline::Baseline) {
+pub fn absorb(report: &mut Report, baseline: &baseline::Baseline) {
     for (name, targets) in about(&baseline.limitations) {
         let detail = limitation_detail(&name);
         let detail = if targets.is_empty() {
