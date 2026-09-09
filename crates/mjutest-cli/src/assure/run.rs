@@ -591,14 +591,21 @@ fn hold(
 }
 
 /// The environment every later phase runs with: this run's own, and what the resources it holds told it.
+///
+/// Composed as a map, so a name a resource spoke for is the value every later
+/// phase reads rather than one of two the operating system chooses between,
+/// and so two runs of one workspace hand the same list over in the same order.
 fn with_resources(environment: &Environment, resources: &crate::resource::Manager) -> Environment {
     let mut held = environment.clone();
+    let mut vars: std::collections::BTreeMap<std::ffi::OsString, std::ffi::OsString> =
+        held.vars.into_iter().collect();
     for (name, value) in resources.environment() {
-        let name = std::ffi::OsString::from(name);
-        held.vars.retain(|(other, _)| *other != name);
-        held.vars.push((name, std::ffi::OsString::from(value)));
+        let _replaced = vars.insert(
+            std::ffi::OsString::from(name),
+            std::ffi::OsString::from(value),
+        );
     }
-    held.vars.sort();
+    held.vars = vars.into_iter().collect();
     held
 }
 

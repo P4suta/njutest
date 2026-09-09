@@ -748,6 +748,91 @@ fn a_mutation_the_compiler_renders_identically_is_only_equivalent_where_the_test
     );
 }
 
+#[test]
+fn a_run_that_held_something_says_what_it_held_and_lets_go_of_it() {
+    let dir = tempfile::Builder::new()
+        .prefix("mjutest-holding-")
+        .tempdir()
+        .expect("a temporary directory");
+    let root = dir.path().join("fixture-baseline");
+    copy(
+        &mjutest_devkit::paths::fixtures_dir().join("fixture-baseline"),
+        &root,
+    );
+    let provider =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testdata/fake-provider.sh");
+    std::fs::write(
+        root.join(".mjutest.toml"),
+        format!(
+            "version = 1\n\n[resources.postgres]\ncommand = [\"/bin/sh\", {:?}]\n\
+             timeout = \"10s\"\nenvironment = [\"FAKE_PROVIDER_READY\", \"FAKE_PROVIDER_STOPPED\"]\n",
+            provider.to_string_lossy()
+        ),
+    )
+    .expect("a configuration that names a resource");
+    let scratch = dir.path().join("scratch");
+    std::fs::create_dir_all(&scratch).expect("a directory to work in");
+
+    let mut vars: Vec<(OsString, OsString)> = std::env::vars_os().collect();
+    vars.push((
+        OsString::from("FAKE_PROVIDER_READY"),
+        OsString::from(
+            r#"{"version":1,"status":"ready","instance":"pg-1","environment":{"DATABASE_URL":"postgres://127.0.0.1/test"}}"#,
+        ),
+    ));
+    vars.push((
+        OsString::from("FAKE_PROVIDER_STOPPED"),
+        OsString::from(r#"{"version":1,"status":"stopped","instance":"pg-1"}"#),
+    ));
+    let environment = Environment {
+        cache_directory: dir.path().join("cache"),
+        working_directory: root.clone(),
+        temp_directory: scratch,
+        vars,
+        cancel: Cancel::new(),
+    };
+
+    let (mut said, mut complaints) = (Vec::new(), Vec::new());
+    let code = mjutest_cli::run_from(
+        ["mjutest", "verify", "--offline", "--locked", "--no-cache"].map(OsString::from),
+        &environment,
+        &mut said,
+        &mut complaints,
+    );
+    assert_eq!(code, 2, "{}", String::from_utf8_lossy(&complaints));
+
+    let report = report_of(&root);
+    let held = report["resources"]
+        .as_array()
+        .expect("resources")
+        .first()
+        .expect("the one it was told to hold");
+    assert_eq!(
+        (held["capability"].as_str(), held["instance"].as_str()),
+        (Some("postgres"), Some("pg-1")),
+        "a run that was given something to hold says what it held and which one it \
+         got, because a test that fails against a resource is a different question \
+         from one that fails without it: {report}"
+    );
+    assert_eq!(
+        held["environment"],
+        serde_json::json!(["DATABASE_URL"]),
+        "and the variables it told the tests about by name, never their values: what a \
+         provider hands over is a credential as often as not, and a report is a \
+         document people put in front of each other: {report}"
+    );
+    assert!(
+        !report["limitations"]
+            .as_array()
+            .expect("limitations")
+            .iter()
+            .any(|one| one["name"] == "resource-not-stopped"),
+        "and it lets go of it: a resource nobody released is one the next run waits \
+         for, and a run that stopped one without saying so leaves a person no way to \
+         tell that from one that never held it: {report}"
+    );
+}
+
 /// A run in this process against `fixture`, and what it left behind.
 fn verified_in_process(
     fixture: &str,
