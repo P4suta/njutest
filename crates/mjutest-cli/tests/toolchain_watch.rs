@@ -1065,6 +1065,147 @@ fn unkeepable(dir: &std::path::Path, from: &std::path::Path, environment: Enviro
     );
 }
 
+/// A stream that raises `cancel` once a run has judged a mutation and started saying so about the next.
+///
+/// The counting-off is looked for after the stage that judges mutations names
+/// itself, because the phase before it counts its targets off the same way: a
+/// stream that stopped on the first `[2/` it saw would interrupt the baseline
+/// and leave nothing established to keep.
+struct Interrupting<'a> {
+    cancel: &'a Cancel,
+    said: String,
+}
+
+impl Write for Interrupting<'_> {
+    fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+        self.said.push_str(&String::from_utf8_lossy(buffer));
+        if self
+            .said
+            .split_once("== mutation")
+            .is_some_and(|(_before, after)| after.contains("[2/"))
+        {
+            self.cancel.cancel();
+        }
+        Ok(buffer.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[test]
+fn a_run_that_was_stopped_leaves_what_it_established_for_the_next_one() {
+    let dir = tempfile::Builder::new()
+        .prefix("mjutest-stopped-")
+        .tempdir()
+        .expect("a temporary directory");
+    let root = dir.path().join("fixture-baseline");
+    copy(
+        &mjutest_devkit::paths::fixtures_dir().join("fixture-baseline"),
+        &root,
+    );
+    let scratch = dir.path().join("scratch");
+    std::fs::create_dir_all(&scratch).expect("a directory to work in");
+    let vars: Vec<(OsString, OsString)> = std::env::vars_os().collect();
+    let environment = Environment {
+        cache_directory: dir.path().join("cache"),
+        working_directory: root.clone(),
+        temp_directory: scratch,
+        vars,
+        cancel: Cancel::new(),
+    };
+
+    let mut said = Vec::new();
+    let mut complaints = Interrupting {
+        cancel: &environment.cancel,
+        said: String::new(),
+    };
+    let _code = mjutest_cli::run_from(
+        ["mjutest", "verify", "--offline", "--locked", "--ui=plain"].map(OsString::from),
+        &environment,
+        &mut said,
+        &mut complaints,
+    );
+
+    left_behind(&environment.cache_directory);
+
+    resumed(&root, environment);
+}
+
+/// What a run that was stopped wrote where its successor will look.
+fn left_behind(cache: &std::path::Path) {
+    let kept: Vec<serde_json::Value> =
+        std::fs::read_dir(cache.join("mjutest/outcomes-v1/checkpoints"))
+            .expect("the checkpoints directory")
+            .flatten()
+            .filter_map(|entry| {
+                std::fs::read_to_string(entry.path().join(mjutest_cli::checkpoint::FILE_NAME)).ok()
+            })
+            .filter_map(|text| serde_json::from_str(&text).ok())
+            .collect();
+    let state = kept.first().expect("what the stopped run established");
+    assert!(
+        state["mutants"]
+            .as_array()
+            .is_some_and(|mutants| !mutants.is_empty()),
+        "a run that was stopped keeps what it established up to there, or an interrupt \
+         costs the whole run, which is the opposite of what a checkpoint is for: {state}"
+    );
+    assert!(
+        state["mutants"]
+            .as_array()
+            .expect("mutants")
+            .iter()
+            .all(|one| one["killed_by"].as_str().is_some_and(|by| !by.is_empty())),
+        "and each of them names the target that decided it, because a kill nobody can \
+         attribute is not one the next run may carry: the report it ends in has to say \
+         which test noticed: {state}"
+    );
+    assert_eq!(
+        state["attempts"].as_u64(),
+        Some(1),
+        "and it counts this as one attempt, which is how a run that keeps being \
+         interrupted is told from one that ran once: {state}"
+    );
+}
+
+/// What the next run of the same tree does with it.
+fn resumed(root: &std::path::Path, environment: Environment) {
+    let environment = Environment {
+        cancel: Cancel::new(),
+        ..environment
+    };
+    let (mut said, mut complaints) = (Vec::new(), Vec::new());
+    let code = mjutest_cli::run_from(
+        ["mjutest", "verify", "--offline", "--locked", "--ui=plain"].map(OsString::from),
+        &environment,
+        &mut said,
+        &mut complaints,
+    );
+    assert_eq!(code, 2, "{}", String::from_utf8_lossy(&complaints));
+    let report = report_of(root);
+    assert_eq!(
+        report["provenance"]["cached"],
+        serde_json::Value::Bool(false),
+        "and the next run of the same tree establishes it rather than reading back what \
+         the stopped one reached. A run that was told to stop stopped: its answer is \
+         what it got through, and storing that under the tree's identity would hand the \
+         next run a partial measurement wearing a whole one's name: {report}"
+    );
+    assert!(
+        report["limitations"]
+            .as_array()
+            .expect("limitations")
+            .iter()
+            .any(|one| one["name"] == "resumed-from-checkpoint"),
+        "while what it did establish is carried forward, and the run that continues says \
+         so: a restored target keeps reaching its whole file rather than the regions \
+         inside it, and a reader comparing two reports has to know which one that was: \
+         {report}"
+    );
+}
+
 /// A run in this process against `fixture`, and what it left behind.
 fn verified_in_process(
     fixture: &str,

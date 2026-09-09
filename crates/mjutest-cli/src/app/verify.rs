@@ -218,7 +218,9 @@ fn establish(establishing: &Establishing<'_>, streams: Streams<'_>) -> u8 {
             report: &report,
             request: &request,
             store,
-            store_it: !arguments.no_cache && evidence.is_known(),
+            store_it: !arguments.no_cache
+                && evidence.is_known()
+                && !environment.cancel.is_cancelled(),
             kept: &outcome.kept,
         },
         arguments,
@@ -400,6 +402,11 @@ struct Persisting<'a> {
 }
 
 /// Writes the report where a reader will look for it, retires what the configuration no longer keeps, and stores the answer for the next run of the same inputs. Returns the exit code only when the report could not be written, which is the one failure that stops the run from having answered at all.
+///
+/// A run that was asked to stop does not store its answer. It still writes it
+/// where a person can read it — what it got through is what it got through —
+/// but the next run of the same tree may not read it back as a whole one, and
+/// what it did establish is carried forward by the checkpoint instead.
 fn persist(persisting: &Persisting<'_>, arguments: &Verify, stderr: &mut dyn Write) -> Option<u8> {
     let Persisting {
         root,
