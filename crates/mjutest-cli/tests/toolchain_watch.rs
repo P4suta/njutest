@@ -318,16 +318,7 @@ fn stages_of(complained: &str, root: &std::path::Path) {
         .lines()
         .filter_map(|line| line.strip_prefix("== "))
         .collect();
-    let recording = std::fs::read_dir(root.join(".mjutest/trace"))
-        .expect("the trace directory")
-        .flatten()
-        .map(|entry| entry.path().join(mjutest_cli::trace::FILE_NAME))
-        .next()
-        .expect("one recording");
-    let events = mjutest_cli::trace::read_events(std::io::BufReader::new(
-        std::fs::File::open(&recording).expect("the stream"),
-    ))
-    .expect("the events read back");
+    let events = events_of(root);
     let problems = mjutest_cli::trace::check(&events);
     assert!(problems.is_empty(), "{problems:?}");
     let recorded: Vec<&str> = events
@@ -470,6 +461,177 @@ fn judged(events: &[mjutest_cli::trace::Event]) {
     );
 }
 
+/// The report the latest run of `root` wrote, found the way a person finds it.
+fn report_of(root: &std::path::Path) -> serde_json::Value {
+    let index: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(root.join("reports/latest-any.json")).expect("the latest index"),
+    )
+    .expect("the index is JSON");
+    let directory = index["directory"].as_str().expect("the run's directory");
+    serde_json::from_str(
+        &std::fs::read_to_string(
+            root.join(directory)
+                .join("mjutest-assurance-report-v1.json"),
+        )
+        .expect("the report"),
+    )
+    .expect("the report is JSON")
+}
+
+/// Every event the latest recording under `root` holds.
+fn events_of(root: &std::path::Path) -> Vec<mjutest_cli::trace::Event> {
+    let recording = std::fs::read_dir(root.join(".mjutest/trace"))
+        .expect("the trace directory")
+        .flatten()
+        .map(|entry| entry.path().join(mjutest_cli::trace::FILE_NAME))
+        .next()
+        .expect("one recording");
+    mjutest_cli::trace::read_events(std::io::BufReader::new(
+        std::fs::File::open(&recording).expect("the stream"),
+    ))
+    .expect("the events read back")
+}
+
+/// A run in this process against `fixture`, and what it left behind.
+fn verified_in_process(
+    fixture: &str,
+    dir: &std::path::Path,
+    extra: &[&str],
+    carrying: &[(&str, &str)],
+) -> (u8, String, std::path::PathBuf) {
+    let root = dir.join(fixture);
+    copy(&mjutest_devkit::paths::fixtures_dir().join(fixture), &root);
+    if !carrying.is_empty() {
+        let named: Vec<String> = carrying
+            .iter()
+            .map(|(name, _value)| format!("{name:?}"))
+            .collect();
+        std::fs::write(
+            root.join(".mjutest.toml"),
+            format!(
+                "version = 1\n\n[execution]\ntimeout = \"1s\"\nenvironment = [{}]\n",
+                named.join(", ")
+            ),
+        )
+        .expect("a configuration this run reads");
+    }
+    let scratch = dir.join("scratch");
+    std::fs::create_dir_all(&scratch).expect("a directory to work in");
+
+    let mut vars: Vec<(OsString, OsString)> = std::env::vars_os().collect();
+    vars.extend(
+        carrying
+            .iter()
+            .map(|(name, value)| (OsString::from(*name), OsString::from(*value))),
+    );
+    let environment = Environment {
+        cache_directory: Environment::cache_directory_of(&vars),
+        working_directory: root.clone(),
+        temp_directory: scratch,
+        vars,
+        cancel: Cancel::new(),
+    };
+    let mut args: Vec<OsString> = ["mjutest", "verify", "--offline", "--locked", "--no-cache"]
+        .map(OsString::from)
+        .to_vec();
+    args.extend(extra.iter().map(|one| OsString::from(*one)));
+
+    let (mut said, mut complaints) = (Vec::new(), Vec::new());
+    let code = mjutest_cli::run_from(args, &environment, &mut said, &mut complaints);
+    let _kept = String::from_utf8_lossy(&said).into_owned();
+    (
+        code,
+        String::from_utf8_lossy(&complaints).into_owned(),
+        root,
+    )
+}
+
+#[test]
+fn a_mutation_that_never_returns_is_stopped_measured_alone_and_reported_as_a_timeout() {
+    let dir = tempfile::Builder::new()
+        .prefix("mjutest-hang-")
+        .tempdir()
+        .expect("a temporary directory");
+    let paused = dir.path().join("paused");
+    let (code, complained, root) = verified_in_process(
+        "fixture-hang",
+        dir.path(),
+        &["--trace", "--ui=plain"],
+        &[
+            ("FIXTURE_HANG_MARKER", &paused.display().to_string()),
+            ("FIXTURE_HANG_PAUSE_MS", "4000"),
+        ],
+    );
+    assert_eq!(
+        code, 2,
+        "this fixture is slow once per mutation and bounded at a second, so every \
+         measurement of it runs out of time and every one is asked again: {complained}"
+    );
+
+    let report = report_of(&root);
+    assert_eq!(
+        report["accounting"]["mutants"]["timed_out"].as_u64(),
+        Some(0),
+        "a bound reached once and not again is not a mutation that ran out of time. \
+         Every measurement here was slow the first time and quick the second, and a run \
+         that reported them as timeouts would hand a person seven findings caused by \
+         whatever else the machine was doing: {report}"
+    );
+
+    let events = events_of(&root);
+    let execs: Vec<&mjutest_cli::trace::MutantExecRecord> = events
+        .iter()
+        .filter_map(|event| match &event.payload {
+            mjutest_cli::trace::Payload::MutantExec { mutant } => Some(mutant),
+            _ => None,
+        })
+        .collect();
+    let expired: std::collections::BTreeSet<&str> = execs
+        .iter()
+        .filter(|exec| exec.outcome == "timed_out" && !exec.alone)
+        .map(|exec| exec.mutant.as_str())
+        .collect();
+    assert!(
+        !expired.is_empty(),
+        "and the recording says which measurement ran out of time even where the report \
+         does not, because that is the whole account of where the minutes went: \
+         {execs:?}"
+    );
+    let alone: std::collections::BTreeSet<&str> = execs
+        .iter()
+        .filter(|exec| exec.alone)
+        .map(|exec| exec.mutant.as_str())
+        .collect();
+    assert_eq!(
+        alone, expired,
+        "a budget that expired is measured once more with the machine to itself and \
+         nothing else is, because a bound reached while a dozen measurements shared the \
+         processors is a bound about the machine. Giving the machine to a measurement \
+         that did not need it spends the run's time on nothing; withholding it from one \
+         that did turns the load into a finding: {execs:?}"
+    );
+    for mutant in &alone {
+        assert!(
+            execs
+                .iter()
+                .any(|exec| exec.mutant == *mutant && !exec.alone),
+            "and the quiet measurement is a second one rather than the only one: a \
+             mutation measured only alone is one the run never put to the tests the \
+             ordinary way: {execs:?}"
+        );
+    }
+    assert!(
+        report["mutants"]
+            .as_array()
+            .expect("mutants")
+            .iter()
+            .filter(|one| expired.contains(one["display_id"].as_str().unwrap_or_default()))
+            .all(|one| one["outcome"] != "timed_out"),
+        "and what the second measurement said is what the mutation is reported as: the \
+         first one is how long it took, not what it established: {report}"
+    );
+}
+
 fn copy(from: &std::path::Path, to: &std::path::Path) {
     std::fs::create_dir_all(to).expect("the directory");
     for entry in std::fs::read_dir(from).expect("the fixture") {
@@ -530,20 +692,7 @@ fn a_run_in_this_process_writes_what_it_learned_before_it_compiled_anything() {
         String::from_utf8_lossy(&complaints)
     );
 
-    let index: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(root.join("reports/latest-any.json")).expect("the latest index"),
-    )
-    .expect("the index is JSON");
-    let directory = index["directory"].as_str().expect("the run's directory");
-    let report: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(
-            root.join(directory)
-                .join("mjutest-assurance-report-v1.json"),
-        )
-        .expect("the report"),
-    )
-    .expect("the report is JSON");
-
+    let report = report_of(&root);
     assert_eq!(
         report["repository"]["git"]["available"],
         serde_json::Value::Bool(false),
