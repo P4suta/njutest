@@ -429,9 +429,9 @@ pub fn run_resuming(
     subject: Subject<'_>,
     options: &MutationOptions,
     resume: &mut Resume<'_>,
-    reporting: crate::assure::baseline::Reporting<'_, '_>,
+    mut reporting: crate::assure::baseline::Reporting<'_, '_>,
 ) -> Result<Mutation, crate::error::RunnerError> {
-    let crate::assure::baseline::Reporting { notes, watch } = reporting;
+    let watch = reporting.watch;
     let (session, baseline) = (subject.session, subject.baseline);
     let phase = watch.trace.phase("mutation-judge");
     let mut mutation = Mutation::default();
@@ -475,7 +475,7 @@ pub fn run_resuming(
     for (index, answer) in measured.into_iter().enumerate() {
         let judged = answer?;
         let done = u64::try_from(index).unwrap_or(u64::MAX).saturating_add(1);
-        notes.progress(&judged.display_id, done, total);
+        reporting.progress(&judged.display_id, done, total);
         (resume.record)(&judged);
         mutation.judged.push(judged);
     }

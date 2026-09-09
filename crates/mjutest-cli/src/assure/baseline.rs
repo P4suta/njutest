@@ -60,14 +60,34 @@ pub struct Reporting<'a, 'b> {
     pub watch: Watch<'a>,
 }
 
+impl Reporting<'_, '_> {
+    /// Says how far a phase has got, to the person watching and to the recording alike.
+    ///
+    /// [The trace's contract](../../../../docs/trace-v1.md) calls a `progress`
+    /// event "a progress note as the UI saw it", which makes the two one
+    /// statement rather than two. Saying it in one place is what keeps them
+    /// one: while they were two calls the baseline phase made both and the
+    /// mutation phase — the long one, the one somebody leaves running — made
+    /// only the terminal's, so a recording of that run could not tell a slow
+    /// phase from a stuck one.
+    pub fn progress(&mut self, message: &str, done: u64, total: u64) {
+        self.watch.trace.progress(ProgressRecord {
+            message: message.to_owned(),
+            done: Some(done),
+            total: Some(total),
+        });
+        self.notes.progress(message, done, total);
+    }
+}
+
 /// Reads what the session's one verified run of every target came to.
 ///
 /// A target that did not pass is a row like any other. The engine hands back
 /// the table whether or not anything in it passed, because the moment a reader
 /// most needs the table is the moment the answer is "all of them".
 #[must_use]
-pub fn observe(session: &Session, reporting: Reporting<'_, '_>) -> Baseline {
-    let Reporting { notes, watch } = reporting;
+pub fn observe(session: &Session, mut reporting: Reporting<'_, '_>) -> Baseline {
+    let watch = reporting.watch;
     let phase = watch.trace.phase("baseline-measure");
     let verified = session.verified();
     let mut baseline = Baseline {
@@ -85,12 +105,7 @@ pub fn observe(session: &Session, reporting: Reporting<'_, '_>) -> Baseline {
         let built = built(id);
         let target = built.map_or_else(|| named(id), target_of);
         let done = u64::try_from(done).unwrap_or(u64::MAX).saturating_add(1);
-        watch.trace.progress(ProgressRecord {
-            message: target.name(),
-            done: Some(done),
-            total: Some(total),
-        });
-        notes.progress(&target.name(), done, total);
+        reporting.progress(&target.name(), done, total);
         let (status, message) = status_of(observed.outcome, observed.ignored, &observed.output);
         baseline.targets.push(Measured {
             target,

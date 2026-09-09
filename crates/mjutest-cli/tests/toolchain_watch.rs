@@ -331,6 +331,43 @@ fn stages_of(complained: &str, root: &std::path::Path) {
         })
         .collect();
 
+    let routed: Vec<&str> = events
+        .iter()
+        .filter_map(|event| match &event.payload {
+            mjutest_cli::trace::Payload::Route { route } => Some(route.mutant.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        !routed.is_empty(),
+        "every mutation a run judged says which targets could have noticed it and which \
+         a proof removed, or the layer that removed them left no trace of having worked"
+    );
+    let kinds: Vec<&str> = events
+        .iter()
+        .map(|event| event.payload.type_name())
+        .collect();
+    assert!(
+        kinds.contains(&"mutant-exec"),
+        "a run says what it started, or the minutes it spent belong to nothing a reader \
+         can name: {kinds:?}"
+    );
+    let progressed: Vec<&str> = events
+        .iter()
+        .filter_map(|event| match &event.payload {
+            mjutest_cli::trace::Payload::Progress { progress } => Some(progress.message.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        routed.iter().any(|mutant| progressed.contains(mutant)),
+        "and it says how far it has got through the phase that takes the time, to the \
+         recording and not only to the terminal in front of somebody: a run judging \
+         mutations for half an hour whose recording says nothing between the phase \
+         starting and the phase ending cannot be told from one that stopped. Progress \
+         reached {progressed:?}, mutations {routed:?}"
+    );
+
     for named in ["open", "soundness", "baseline", "mutation"] {
         assert!(
             said.contains(&named),
