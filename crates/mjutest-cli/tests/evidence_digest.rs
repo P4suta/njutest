@@ -230,3 +230,34 @@ fn a_run_that_judged_one_part_of_a_catalog_is_not_the_run_that_judged_all_of_it(
     assert_ne!(half, other_half, "and one part is not the other");
     assert_eq!(EVIDENCE_DOMAIN, "mjutest-evidence-v2");
 }
+
+#[test]
+fn the_identity_is_about_the_variables_and_not_about_how_the_list_was_built() {
+    let once = identity(&inputs());
+
+    let twice = identity(&Inputs {
+        environment: vec![
+            ("RUSTFLAGS".to_owned(), "-Copt-level=1".to_owned()),
+            ("CC".to_owned(), "clang".to_owned()),
+            ("CC".to_owned(), "clang".to_owned()),
+        ],
+        ..inputs()
+    });
+
+    assert_eq!(
+        once, twice,
+        "the same variables with the same values, gathered twice or in another order, \
+         are the same environment: a run whose identity depended on how its list was \
+         assembled would refuse to reuse what an identical run established, and nothing \
+         in either report would say why"
+    );
+
+    let different = identity(&Inputs {
+        environment: vec![("CC".to_owned(), "gcc".to_owned())],
+        ..inputs()
+    });
+    assert_ne!(
+        once, different,
+        "and a different environment is a different question"
+    );
+}

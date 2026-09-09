@@ -209,3 +209,27 @@ fn what_a_target_links_is_read_from_the_resolved_graph() {
     assert_eq!(linked.dependencies, "b".repeat(64));
     assert!(!linked.reads_directories);
 }
+
+#[test]
+fn a_behaviour_key_is_about_the_variables_and_not_about_how_the_list_was_built() {
+    let once = behaviour(&linked(), &common());
+
+    let twice = behaviour(
+        &linked(),
+        &Common {
+            environment: vec![
+                ("RUSTFLAGS".to_owned(), "-Copt-level=1".to_owned()),
+                ("RUSTFLAGS".to_owned(), "-Copt-level=1".to_owned()),
+            ],
+            ..common()
+        },
+    );
+
+    assert_eq!(
+        once, twice,
+        "what a key is about is the environment a target is run in, and the same \
+         variable named twice is one variable: a key that changed with the shape of the \
+         list would make a run re-establish what an identical run already answered, and \
+         the report would say it was reused when it was not"
+    );
+}
