@@ -60,6 +60,8 @@ pub struct Interpreting<'a> {
     pub timeout: Option<Duration>,
     /// Whether cargo may reach the network, which Miri's own setup may need.
     pub offline: bool,
+    /// Whether cargo may change the lock file. A phase that let it would measure a dependency set the baseline never saw, and would write into the tree under measurement.
+    pub locked: bool,
 }
 
 /// What interpreting the suite established.
@@ -99,6 +101,9 @@ pub fn interpret(
     }
     if interpreting.offline {
         argv.push(OsString::from("--offline"));
+    }
+    if interpreting.locked {
+        argv.push(OsString::from("--locked"));
     }
     let mut spec = Spec::new(argv);
     spec.dir = Some(interpreting.root.to_path_buf());

@@ -48,6 +48,7 @@ fn interpreted(said: &str, code: i32, dir: &Path) -> Result<Interpreted, RunnerE
             flags: &[],
             timeout: Some(Duration::from_secs(30)),
             offline: true,
+            locked: true,
         },
         Watch::new(&cancel, &trace),
     )
@@ -132,9 +133,59 @@ fn a_cargo_that_is_not_there_is_a_toolchain_with_no_interpreter() {
             flags: &[],
             timeout: Some(Duration::from_secs(30)),
             offline: true,
+            locked: true,
         },
         Watch::new(&cancel, &trace),
     )
     .expect_err("no interpreter");
     assert_eq!(refused.code().code, "MJ7001", "{refused}");
+}
+
+#[test]
+fn what_a_run_promised_cargo_it_would_not_do_is_said_to_this_cargo_too() {
+    let dir = tempfile::tempdir().expect("a directory");
+    let cancel = Cancel::new();
+    let trace = Recorder::new(
+        mjutest_cli::trace::Sink::Memory(mjutest_cli::trace::MemorySink::unbounded()),
+        mjutest_cli::trace::Clock::stepping(
+            jiff::Timestamp::from_second(1_800_000_000).expect("in range"),
+            Duration::from_secs(1),
+        ),
+        mjutest_cli::trace::StartRecord::of(
+            "20260909T000000Z-000001",
+            mjutest_cli::report::RunKind::Full,
+            mjutest_cli::config::Contract::DeepV1,
+        ),
+    );
+    let cargo = cargo();
+
+    let _done = interpret(
+        &Interpreting {
+            root: dir.path(),
+            cargo: &cargo,
+            env: saying("no undefined behaviour", 0),
+            packages: &[],
+            flags: &[],
+            timeout: Some(Duration::from_secs(30)),
+            offline: true,
+            locked: true,
+        },
+        Watch::new(&cancel, &trace),
+    );
+
+    let argv: Vec<String> = trace
+        .events()
+        .iter()
+        .find_map(|event| match &event.payload {
+            mjutest_cli::trace::Payload::Exec { exec } => Some(exec.argv.clone()),
+            _ => None,
+        })
+        .expect("the command it started");
+    assert!(
+        argv.contains(&"--offline".to_owned()) && argv.contains(&"--locked".to_owned()),
+        "`--locked` and `--offline` are promises about every cargo command a run starts, \
+         and this is one of them: an interpretation that let cargo change the lock file \
+         would measure a dependency set the baseline never saw, and would write into the \
+         tree it is measuring: {argv:?}"
+    );
 }

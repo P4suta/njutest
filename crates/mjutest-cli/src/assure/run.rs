@@ -211,6 +211,7 @@ fn deepened(
             flags: &request.config.soundness.miri_flags,
             timeout: Some(request.config.execution.timeout),
             offline: request.cargo.offline,
+            locked: request.cargo.locked,
         },
         watch,
     )?;
@@ -228,6 +229,7 @@ fn deepened(
             sanitizers: &request.config.soundness.sanitizers,
             timeout: Some(request.config.execution.timeout),
             offline: request.cargo.offline,
+            locked: request.cargo.locked,
         },
         watch,
     );

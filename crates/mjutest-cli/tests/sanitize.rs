@@ -53,6 +53,7 @@ fn sanitized(
             sanitizers,
             timeout: Some(Duration::from_secs(30)),
             offline: true,
+            locked: true,
         },
         Watch::new(&cancel, &trace),
     )

@@ -60,6 +60,8 @@ pub struct Sanitizing<'a> {
     pub timeout: Option<Duration>,
     /// Whether cargo may reach the network.
     pub offline: bool,
+    /// Whether cargo may change the lock file. A phase that let it would measure a dependency set the baseline never saw, and would write into the tree under measurement.
+    pub locked: bool,
 }
 
 /// What running the suite under the sanitizers established.
@@ -113,6 +115,9 @@ fn one(done: &mut Sanitized, sanitizing: &Sanitizing<'_>, sanitizer: &str, watch
     }
     if sanitizing.offline {
         argv.push(OsString::from("--offline"));
+    }
+    if sanitizing.locked {
+        argv.push(OsString::from("--locked"));
     }
     let mut spec = Spec::new(argv);
     spec.dir = Some(sanitizing.root.to_path_buf());
