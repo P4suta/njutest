@@ -13,6 +13,10 @@
     clippy::arithmetic_side_effects,
     reason = "a law about counts is written the way a reader adds them up; the values are a report's own and cannot approach the width they are held in"
 )]
+#![expect(
+    clippy::indexing_slicing,
+    reason = "a law reads a document by the names its own subject put there, and a document missing one of them is a failure to report by panicking"
+)]
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -204,6 +208,140 @@ proptest! {
             identity(&ordered),
             "and a variable named twice with one value is one variable: a process cannot \
              be started with two of them and read anything but one"
+        );
+    }
+}
+
+/// What a test can print and a page must not become.
+///
+/// Every generated detail carries it, because a law about escaping is only
+/// exercised by data that would do damage unescaped: a random string of angle
+/// brackets almost never spells a tag.
+const MARKUP: &str = "<script>alert('x')</script>";
+
+/// One finding of any kind, about a place a run may or may not know.
+fn finding() -> impl Strategy<Value = mjutest_cli::report::Finding> {
+    (
+        prop_oneof![
+            Just(mjutest_cli::report::FindingKind::SurvivingMutant),
+            Just(mjutest_cli::report::FindingKind::FailingTest),
+            Just(mjutest_cli::report::FindingKind::TargetMissing),
+            Just(mjutest_cli::report::FindingKind::Timeout),
+            Just(mjutest_cli::report::FindingKind::NotMeasured),
+            Just(mjutest_cli::report::FindingKind::UndefinedBehaviour),
+        ],
+        "[a-z0-9]{1,20}",
+        "[a-zA-Z0-9 <>&\"'/:@-]{1,60}".prop_map(|said| format!("{MARKUP}{said}")),
+        proptest::option::of((
+            "(src|tests)/[a-z_]{1,8}\\.rs",
+            prop_oneof![Just(0_u32), 1_u32..500],
+        )),
+    )
+        .prop_map(|(kind, subject, detail, place)| {
+            let mut one = mjutest_cli::report::Finding::new(kind, &subject, &detail);
+            if let Some((path, line)) = place {
+                one.path = Some(path);
+                one.position = Some(mjutest_cli::report::Position {
+                    line,
+                    column: line,
+                    character_column: line,
+                });
+            }
+            one
+        })
+}
+
+/// A report of a run that found these things.
+fn reported(findings: Vec<mjutest_cli::report::Finding>) -> mjutest_cli::report::Report {
+    let mut report = mjutest_cli::report::Report::new(
+        "20260909T000000Z-000001",
+        mjutest_cli::report::RunKind::Full,
+        Contract::StandardV1,
+    );
+    "workspace".clone_into(&mut report.repository.root_name);
+    report.verdict = mjutest_cli::report::Verdict::Insufficient;
+    report.mutants = findings
+        .iter()
+        .filter_map(|one| Some((one.path.clone()?, one.position?)))
+        .enumerate()
+        .map(|(at, (path, position))| mjutest_cli::report::MutantRecord {
+            id: format!("{at:064x}"),
+            display_id: format!("{at:020x}"),
+            path,
+            position,
+            rule: "add-to-sub@1".to_owned(),
+            outcome: "survived".to_owned(),
+            killed_by: None,
+            reused: false,
+            source_run_id: None,
+        })
+        .collect();
+    report.findings = findings;
+    report
+}
+
+proptest! {
+    /// Whatever a run found, the document a machine reads is the one it can read.
+    #[test]
+    fn every_projection_of_every_report_is_one_its_reader_accepts(
+        findings in proptest::collection::vec(finding(), 0..8)
+    ) {
+        let report = reported(findings);
+
+        let rendered = mjutest_cli::report::json::render(&report).expect("a report renders");
+        let read = mjutest_cli::report::json::parse(&rendered).expect("and reads back");
+        prop_assert_eq!(
+            mjutest_cli::report::json::render(&read).expect("and renders again"),
+            rendered,
+            "a report that does not survive being written and read is one no later run \
+             and no other tool can be handed"
+        );
+
+        let log = mjutest_cli::report::sarif::document(&report);
+        let run = &log["runs"][0];
+        let rules: Vec<String> = run["tool"]["driver"]["rules"]
+            .as_array()
+            .expect("rules")
+            .iter()
+            .filter_map(|rule| rule["id"].as_str().map(str::to_owned))
+            .collect();
+        for result in run["results"].as_array().expect("results") {
+            let id = result["ruleId"].as_str().unwrap_or_default().to_owned();
+            prop_assert!(
+                rules.contains(&id),
+                "a consumer refuses the whole log for one result whose rule the driver \
+                 does not declare: {}",
+                result
+            );
+            if let Some(place) = result["locations"].as_array().and_then(|all| all.first()) {
+                let region = &place["physicalLocation"]["region"];
+                prop_assert!(
+                    region["startLine"].as_u64().is_some_and(|line| line >= 1),
+                    "and for one region at a line no file has: {}",
+                    result
+                );
+            }
+        }
+
+        let page = mjutest_cli::report::html::document(&report);
+        prop_assert!(
+            !page.contains(MARKUP),
+            "nothing a test printed becomes markup in a page somebody opens, and what a \
+             test prints is whatever the code under test printed"
+        );
+        let document = mjutest_cli::report::junit::document(&report);
+        prop_assert!(
+            !document.contains(MARKUP),
+            "nor a tag in the document a reporter parses"
+        );
+        prop_assert!(
+            document.starts_with("<?xml") && document.ends_with("</testsuites>\n"),
+            "and the document a test reporter reads is a whole one: {document}"
+        );
+        let stream = mjutest_cli::report::lines::stream(&report);
+        prop_assert!(
+            stream.lines().all(|line| !line.contains('\n')),
+            "and every record a person greps for is one line"
         );
     }
 }
