@@ -666,6 +666,88 @@ fn fuzz_targets_a_run_was_not_asked_to_drive_are_a_gap_it_states_rather_than_pas
     );
 }
 
+#[test]
+fn a_mutation_the_compiler_renders_identically_is_only_equivalent_where_the_tests_ran_it() {
+    let dir = tempfile::Builder::new()
+        .prefix("mjutest-equivalent-")
+        .tempdir()
+        .expect("a temporary directory");
+    let root = dir.path().join("fixture-equivalent");
+    copy(
+        &mjutest_devkit::paths::fixtures_dir().join("fixture-equivalent"),
+        &root,
+    );
+    std::fs::write(
+        root.join(".mjutest.toml"),
+        "version = 1\n\n[mutation]\nequivalence = true\n",
+    )
+    .expect("a configuration that asks the compiler");
+    let scratch = dir.path().join("scratch");
+    std::fs::create_dir_all(&scratch).expect("a directory to work in");
+    let vars: Vec<(OsString, OsString)> = std::env::vars_os().collect();
+    let environment = Environment {
+        cache_directory: dir.path().join("cache"),
+        working_directory: root.clone(),
+        temp_directory: scratch,
+        vars,
+        cancel: Cancel::new(),
+    };
+
+    let (mut said, mut complaints) = (Vec::new(), Vec::new());
+    let code = mjutest_cli::run_from(
+        [
+            "mjutest",
+            "verify",
+            "--offline",
+            "--locked",
+            "--no-cache",
+            "--trace",
+            "--ui=plain",
+        ]
+        .map(OsString::from),
+        &environment,
+        &mut said,
+        &mut complaints,
+    );
+    let complained = String::from_utf8_lossy(&complaints).into_owned();
+    assert_eq!(code, 2, "{complained}");
+
+    let stages: Vec<&str> = complained
+        .lines()
+        .filter_map(|line| line.strip_prefix("== "))
+        .collect();
+    assert!(
+        stages.contains(&"equivalence"),
+        "a run asked to put its survivors to the compiler names that stage as it starts \
+         it, because it is two builds a survivor and a person watching the minutes go \
+         by has to know which of them are these: {stages:?}"
+    );
+
+    let report = report_of(&root);
+    assert_eq!(
+        report["accounting"]["mutants"]["equivalent"].as_u64(),
+        Some(1),
+        "the compiler renders `n + 0` and `n - 0` identically at this fixture's \
+         optimisation level, and the tests run it, so no test could have noticed: that \
+         is a finding removed rather than a survivor reported: {report}"
+    );
+    let surviving: Vec<&str> = report["findings"]
+        .as_array()
+        .expect("findings")
+        .iter()
+        .filter(|one| one["kind"] == "surviving-mutant" || one["kind"] == "unreached-mutant")
+        .filter_map(|one| one["detail"].as_str())
+        .collect();
+    assert!(
+        surviving.iter().any(|detail| detail.contains("div-to-mul")),
+        "while the mutation of a function nothing calls also comes out identical, \
+         because the linker dropped it, and that is the finding itself rather than a \
+         proof: identical bytes mean no test can tell them apart, which is reassuring \
+         when the tests run the code and is the whole problem when they do not. It said \
+         {surviving:?}"
+    );
+}
+
 /// A run in this process against `fixture`, and what it left behind.
 fn verified_in_process(
     fixture: &str,
