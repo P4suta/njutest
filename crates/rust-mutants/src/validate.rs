@@ -665,10 +665,7 @@ impl Isolation<'_> {
     /// The first of `sets` the compiler still refuses, if any.
     fn first_failing(&mut self, sets: &[Vec<u32>]) -> Result<Option<Vec<u32>>, ValidateError> {
         for set in sets {
-            if set.is_empty() || set.len() == 1 && !self.fails(set)? {
-                continue;
-            }
-            if set.len() > 1 && !self.fails(set)? {
+            if set.is_empty() || !self.fails(set)? {
                 continue;
             }
             return Ok(Some(set.clone()));

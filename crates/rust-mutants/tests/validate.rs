@@ -388,3 +388,46 @@ fn an_interaction_of_two_mutants_condemns_the_pair_and_says_so() {
         );
     }
 }
+
+#[test]
+fn a_message_before_an_error_does_not_stop_the_reading_of_the_rest() {
+    let scripted = scripted(&[], &[]);
+    let file = instrument_file(&Instrumenting {
+        path: "src/lib.rs",
+        source: scripted.source(),
+        placements: scripted.placements(),
+        markers: &[],
+        comparable: &BTreeSet::default(),
+        probed: &BTreeMap::default(),
+        catalog_digest: scripted.catalog().digest(),
+    })
+    .expect("instrument");
+    let branch = file.branches[0];
+    let at = |index: u32| diagnostic_at("src/lib.rs", branch.span.start, branch.span.end, index);
+    let Message::CompilerMessage(mut warning) = at(branch.index) else {
+        panic!("a compiler message");
+    };
+    warning.message.level = "warning".to_owned();
+
+    let alone = attribute(std::slice::from_ref(&file), &[at(branch.index)]);
+    assert_eq!(
+        alone.condemned.len(),
+        1,
+        "the error on its own condemns the mutant it names"
+    );
+
+    let after = attribute(
+        &[file],
+        &[
+            Message::BuildFinished { success: false },
+            Message::CompilerMessage(warning),
+            at(branch.index),
+        ],
+    );
+    assert_eq!(
+        after.condemned, alone.condemned,
+        "and a message that is not the compiler's, and a warning, are each passed over rather \
+         than ending the reading: a build that stopped at the first of them would accept every \
+         mutant the compiler refused after it"
+    );
+}
