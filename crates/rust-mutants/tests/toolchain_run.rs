@@ -231,3 +231,63 @@ fn one_job_and_several_judge_a_catalog_the_same_way() {
     );
     session.close().expect("the session closes");
 }
+
+#[test]
+fn the_budget_one_execution_gets_is_derived_from_what_that_target_cost() {
+    let fixture = Fixture::copy("fixture-simple");
+    let session = Workspace::open(
+        fixture.root(),
+        OpenOptions {
+            cargo: Some(mjutest_devkit::paths::cargo_binary()),
+            temp_directory: fixture.temp().to_path_buf(),
+            env: std::env::vars_os().collect(),
+            locked: true,
+            offline: true,
+            ..OpenOptions::default()
+        },
+        &Cancel::new(),
+    )
+    .expect("open")
+    .prepare(
+        &PrepareOptions {
+            tier: Tier::All,
+            ..PrepareOptions::default()
+        },
+        &Cancel::new(),
+    )
+    .expect("a session whose budget nobody chose");
+
+    let target = session
+        .targets()
+        .first()
+        .expect("a target the run built")
+        .id
+        .clone();
+    let measured = session
+        .baseline(&target)
+        .expect("a target that was verified says what its own baseline took");
+    assert!(
+        measured > Duration::ZERO,
+        "running a target takes time, and a budget derived from nothing is a budget nobody \
+         calibrated: {measured:?}"
+    );
+
+    let (derived, source) = session.timeout_for(&Request::new(String::new()), &target);
+    assert_eq!(source, TimeoutSource::Derived);
+    assert!(
+        derived > measured,
+        "a mutation is given more than the unmutated program took, or every mutation of a \
+         target would time out on the machine that verified it: {derived:?} against {measured:?}"
+    );
+
+    let chosen = Duration::from_secs(17);
+    assert_eq!(
+        session.timeout_for(
+            &Request::new(String::new()).with_timeout(Some(chosen)),
+            &target
+        ),
+        (chosen, TimeoutSource::Configured),
+        "and a caller who chose one is a caller who chose one"
+    );
+    session.close().expect("the session closes");
+}

@@ -57,6 +57,25 @@ at. It is still a result, with no location rather than an invented one, and in
 JUnit it is a failing case in a `findings` suite of its own. A finding nobody
 can see in the view they actually read is a finding that does not exist.
 
+## A score that falls because the measurement grew
+
+A score is `detected / decided`, and `decided` counts only what the run
+answered about. A mutation nothing measured reaches is `not_run` with
+`unreached`, which says the measurement never asked — so it is outside the
+ratio entirely.
+
+That makes one movement look like a regression when it is the opposite. Write
+a test that drives code no measurement reached before, and mutations of that
+code stop being `unreached` and become answers: some killed, some survived.
+The survivors were always there. What changed is that the run can now say so.
+Measured on this workspace: one test added to a runner's own suite moved four
+hundred and fifty eight mutations from unreached to executed, and the
+survivors went from six to three hundred and five.
+
+So a falling score with a rising `executed` is coverage arriving, not
+detection leaving. The two numbers next to each other say which happened, and
+a report that quotes the score alone cannot.
+
 ## The page
 
 `--format html` writes one file that fetches nothing: no font, no stylesheet,
