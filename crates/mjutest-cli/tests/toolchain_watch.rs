@@ -604,6 +604,68 @@ fn a_second_run_of_one_tree_reads_back_what_the_first_established_and_says_whose
     );
 }
 
+#[test]
+fn fuzz_targets_a_run_was_not_asked_to_drive_are_a_gap_it_states_rather_than_passes_over() {
+    let dir = tempfile::Builder::new()
+        .prefix("mjutest-fuzzing-")
+        .tempdir()
+        .expect("a temporary directory");
+    let root = dir.path().join("fixture-baseline");
+    copy(
+        &mjutest_devkit::paths::fixtures_dir().join("fixture-baseline"),
+        &root,
+    );
+    let targets = root.join("fuzz/fuzz_targets");
+    std::fs::create_dir_all(&targets).expect("a fuzz directory");
+    for named in ["parses", "renders"] {
+        std::fs::write(
+            targets.join(format!("{named}.rs")),
+            "#![no_main]\nlibfuzzer_sys::fuzz_target!(|_data: &[u8]| {});\n",
+        )
+        .expect("a fuzz target");
+    }
+    std::fs::write(targets.join("README.md"), "not a target\n").expect("a file beside them");
+
+    let scratch = dir.path().join("scratch");
+    std::fs::create_dir_all(&scratch).expect("a directory to work in");
+    let vars: Vec<(OsString, OsString)> = std::env::vars_os().collect();
+    let environment = Environment {
+        cache_directory: dir.path().join("cache"),
+        working_directory: root.clone(),
+        temp_directory: scratch,
+        vars,
+        cancel: Cancel::new(),
+    };
+    let (mut said, mut complaints) = (Vec::new(), Vec::new());
+    let code = mjutest_cli::run_from(
+        ["mjutest", "verify", "--offline", "--locked", "--no-cache"].map(OsString::from),
+        &environment,
+        &mut said,
+        &mut complaints,
+    );
+    assert_eq!(code, 2, "{}", String::from_utf8_lossy(&complaints));
+
+    let report = report_of(&root);
+    let stated = report["limitations"]
+        .as_array()
+        .expect("limitations")
+        .iter()
+        .find(|one| one["name"] == "fuzz-not-executed")
+        .expect("what the run did not drive");
+    let detail = stated["detail"].as_str().unwrap_or_default();
+    assert!(
+        detail.starts_with("2 fuzz targets are here and were not driven"),
+        "a tree that holds fuzz targets and a run that was not asked to drive them is a \
+         gap, and passing over it silently reads as a workspace with no fuzzing in it: \
+         {stated}"
+    );
+    assert!(
+        detail.ends_with("parses, renders"),
+        "and it names them, because which ones were not driven is what a person would \
+         go and drive: {stated}"
+    );
+}
+
 /// A run in this process against `fixture`, and what it left behind.
 fn verified_in_process(
     fixture: &str,
