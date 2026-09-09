@@ -19,7 +19,7 @@ use super::digest::Fields;
 use super::tree::Scan;
 
 /// The domain hashed first for a behaviour key.
-pub const KEY_DOMAIN: &str = "mjutest-mutation-evidence-key-v1";
+pub const KEY_DOMAIN: &str = "mjutest-mutation-evidence-key-v2";
 
 /// APIs whose result depends on what is in a directory rather than on what a file says. A package that uses one keys the whole tree: Rust offers no portable, unprivileged observation of what a test actually read, so the selection is static and widens rather than trusts.
 pub const DIRECTORY_READERS: [&str; 7] = [

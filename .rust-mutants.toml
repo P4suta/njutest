@@ -236,3 +236,16 @@ rule = "eq-to-neq"
 original = "=="
 line = 709
 reason = "serially and the pool are two ways of doing one thing and a catalog answers the same either way; one_job_and_several_judge_a_catalog_the_same_way holds that by running one catalog both ways, and this is an equivalence under it rather than a fail-open the suite cannot reach"
+
+# A `Record` is strings and an enum of strings, so `serde_json::to_string` has
+# no failure to take: the `?` and an unwrap answer alike because the Err arm
+# does not exist for this type. `evidence_store.rs::a_record_says_what_shape_it_is_and_what_established_it`
+# renders both shapes of `Outcome` and reads them back, which is the invariant
+# this rests on.
+[[mutation.expect]]
+path = "crates/mjutest-cli/src/evidence/store.rs"
+item = "write"
+rule = "question-to-unwrap"
+original = "?"
+line = 230
+reason = "a Record is strings and an enum of strings, so rendering it as JSON has no failure arm; a_record_says_what_shape_it_is_and_what_established_it renders both of its shapes and reads them back"

@@ -3,13 +3,12 @@
 
 //! One run's identity. Two runs share it exactly when nothing that could change what the tests say has changed.
 
-use rust_mutants::id::write_length_prefixed;
 use sha2::{Digest as _, Sha256};
 
 use crate::config::Contract;
 
-/// The domain hashed first for a run's identity. The recipe version is in the name: a future recipe becomes `mjutest-evidence-v2` so a v1 identity can never be mistaken for a v2 one.
-pub const EVIDENCE_DOMAIN: &str = "mjutest-evidence-v2";
+/// The domain hashed first for a run's identity. The recipe version is in the name: a future recipe becomes `mjutest-evidence-v4` so a v3 identity can never be mistaken for a v4 one.
+pub const EVIDENCE_DOMAIN: &str = "mjutest-evidence-v3";
 
 /// A digest built from named fields. Every field is length-prefixed and preceded by its own name, so no two different lists of values can produce the same number.
 #[derive(Debug)]
@@ -58,25 +57,19 @@ impl Fields {
     }
 }
 
-/// A field too long to length-prefix cannot occur: every value here is a digest, a version banner, a path, or an environment value, and none reaches four gigabytes. Should one ever, [`absorb`] takes it.
-fn write(hasher: &mut Sha256, value: &str) {
-    if write_length_prefixed(hasher, value).is_err() {
-        absorb(hasher, value);
-    }
-}
-
-/// What a value too long to carry its own length contributes to a digest instead of itself.
+/// Adds one value to a digest as the digest of its bytes, which is a fixed width, so no two different lists of values give one number.
 ///
-/// This is separate from [`write`] because the branch that calls it is one no
-/// test can reach — reaching it needs a single field of four gigabytes — while
-/// what it contributes is a claim a test can hold on its own. The claim has
-/// two halves and both matter: the marker says the value arrived in this form
-/// rather than the ordinary one, so a run cannot be made to produce the same
-/// number by two different routes, and the value's own digest keeps two
-/// different overlong values apart, which is the whole difference between
-/// absorbing a value and dropping it.
-pub fn absorb(hasher: &mut Sha256, value: &str) {
-    hasher.update(b"\xffoverlong\xff");
+/// Fixed width is what makes the concatenation unambiguous, and it is why
+/// there is no length here to write. A length is not fixed width: it has a
+/// value it cannot carry, and therefore a branch for what to do about that
+/// value — a branch no field of this digest can ever reach, since every one
+/// of them is a digest, a version banner, a path, or an environment value.
+/// A branch nothing reaches is a branch nothing holds to anything, and the
+/// way to be rid of one is to not have it.
+///
+/// Two different values give two different digests unless SHA-256 collides,
+/// which is the assumption the whole recipe already rests on.
+fn write(hasher: &mut Sha256, value: &str) {
     hasher.update(Sha256::digest(value.as_bytes()));
 }
 

@@ -220,9 +220,16 @@ fn a_record_that_cannot_be_read_or_written_is_a_refusal_and_never_a_miss() {
     std::fs::write(&blocked, "a file where a store's directory goes").expect("the file");
     let refused = write(&blocked, &record("m2", "run-1", killed("t1", "k1")))
         .expect_err("a store with nowhere to put its records");
+    let directory = path_of(&blocked, "m2")
+        .parent()
+        .expect("the directory a record goes in")
+        .display()
+        .to_string();
     assert!(
-        matches!(refused, StoreError::Unusable { .. }),
-        "and a store whose directory cannot be made is refused before anything is \
-         filed under it: {refused}"
+        refused.to_string().contains(&directory) && !refused.to_string().contains("m2.json"),
+        "and a store whose directory cannot be made names the directory rather than the \
+         file it would have held: carrying on to the write turns one refusal a person \
+         can act on into a second one about a path that was never the problem. It said \
+         {refused}, and the directory is {directory}"
     );
 }
