@@ -494,6 +494,17 @@ fn once_slow(report: &serde_json::Value) {
     );
 }
 
+/// Every stage the latest recording under `root` names, in the order it named them.
+fn recorded_stages(root: &std::path::Path) -> Vec<String> {
+    events_of(root)
+        .iter()
+        .filter_map(|event| match &event.payload {
+            mjutest_cli::trace::Payload::PhaseStart { phase } => Some(phase.name.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
 /// Every mutation execution a recording holds.
 fn executions(events: &[mjutest_cli::trace::Event]) -> Vec<&mjutest_cli::trace::MutantExecRecord> {
     events
@@ -716,11 +727,13 @@ fn a_mutation_the_compiler_renders_identically_is_only_equivalent_where_the_test
         .lines()
         .filter_map(|line| line.strip_prefix("== "))
         .collect();
+    let recorded = recorded_stages(&root);
     assert!(
-        stages.contains(&"equivalence"),
+        stages.contains(&"equivalence") && recorded.iter().any(|name| name == "equivalence"),
         "a run asked to put its survivors to the compiler names that stage as it starts \
-         it, because it is two builds a survivor and a person watching the minutes go \
-         by has to know which of them are these: {stages:?}"
+         it, to the person watching and to the recording alike, because it is two builds \
+         a survivor and somebody watching the minutes go by has to know which of them \
+         are these: {stages:?} and {recorded:?}"
     );
 
     let report = report_of(&root);
@@ -794,14 +807,38 @@ fn a_run_that_held_something_says_what_it_held_and_lets_go_of_it() {
 
     let (mut said, mut complaints) = (Vec::new(), Vec::new());
     let code = mjutest_cli::run_from(
-        ["mjutest", "verify", "--offline", "--locked", "--no-cache"].map(OsString::from),
+        [
+            "mjutest",
+            "verify",
+            "--offline",
+            "--locked",
+            "--no-cache",
+            "--trace",
+        ]
+        .map(OsString::from),
         &environment,
         &mut said,
         &mut complaints,
     );
-    assert_eq!(code, 2, "{}", String::from_utf8_lossy(&complaints));
+    let complained = String::from_utf8_lossy(&complaints).into_owned();
+    assert_eq!(code, 2, "{complained}");
+    let stages: Vec<&str> = complained
+        .lines()
+        .filter_map(|line| line.strip_prefix("== "))
+        .collect();
+    let recorded = recorded_stages(&root);
+    assert!(
+        stages.contains(&"resources") && recorded.iter().any(|name| name == "resources"),
+        "a run that waits for somebody else's program to become ready names that stage \
+         as it starts it, to the person watching and to the recording alike: {stages:?} \
+         and {recorded:?}"
+    );
 
-    let report = report_of(&root);
+    leased(&report_of(&root));
+}
+
+/// What a report says about the one resource a run was told to hold.
+fn leased(report: &serde_json::Value) {
     let held = report["resources"]
         .as_array()
         .expect("resources")
@@ -853,7 +890,7 @@ fn a_candidate_offered_for_a_gap_is_put_to_the_tests_before_it_is_recorded() {
         root.join(".mjutest.toml"),
         format!(
             "version = 1\n\n[generation]\ncommand = [\"/bin/sh\", {:?}]\n\
-             environment = [\"FAKE_GENERATOR_OFFERS\"]\n",
+             environment = [\"FAKE_GENERATOR_OFFERS\", \"FAKE_GENERATOR_ASKED\"]\n",
             provider.to_string_lossy()
         ),
     )
@@ -861,7 +898,12 @@ fn a_candidate_offered_for_a_gap_is_put_to_the_tests_before_it_is_recorded() {
     let scratch = dir.path().join("scratch");
     std::fs::create_dir_all(&scratch).expect("a directory to work in");
 
+    let asked = dir.path().join("asked.jsonl");
     let mut vars: Vec<(OsString, OsString)> = std::env::vars_os().collect();
+    vars.push((
+        OsString::from("FAKE_GENERATOR_ASKED"),
+        OsString::from(asked.display().to_string()),
+    ));
     vars.push((
         OsString::from("FAKE_GENERATOR_OFFERS"),
         OsString::from(format!(
@@ -878,14 +920,70 @@ fn a_candidate_offered_for_a_gap_is_put_to_the_tests_before_it_is_recorded() {
 
     let (mut said, mut complaints) = (Vec::new(), Vec::new());
     let code = mjutest_cli::run_from(
-        ["mjutest", "verify", "--offline", "--locked", "--no-cache"].map(OsString::from),
+        [
+            "mjutest",
+            "verify",
+            "--offline",
+            "--locked",
+            "--no-cache",
+            "--trace",
+        ]
+        .map(OsString::from),
         &environment,
         &mut said,
         &mut complaints,
     );
     assert_eq!(code, 2, "{}", String::from_utf8_lossy(&complaints));
 
+    let complained = String::from_utf8_lossy(&complaints).into_owned();
+    let stages: Vec<&str> = complained
+        .lines()
+        .filter_map(|line| line.strip_prefix("== "))
+        .collect();
+    let recorded = recorded_stages(&root);
+    assert!(
+        stages.contains(&"generation") && recorded.iter().any(|name| name == "generation"),
+        "a run that asks somebody else for a candidate names that stage as it starts \
+         it, to the person watching and to the recording alike, because the minutes it \
+         spends waiting are somebody else's program running: {stages:?} and {recorded:?}"
+    );
+
+    questioned(&asked);
+
     let report = report_of(&root);
+    offered_and_checked(&report, &root);
+    unkeepable(dir.path(), &root, environment);
+}
+
+/// What a run tells a generation provider about the gap it is asking to close.
+fn questioned(asked: &std::path::Path) {
+    let put = std::fs::read_to_string(asked).expect("what the generator was asked");
+    let question: serde_json::Value =
+        serde_json::from_str(put.lines().next().expect("one question")).expect("it is JSON");
+    assert_eq!(
+        question["finding"]["kind"], "surviving-mutant",
+        "and it says what kind of gap it is asking about, because what closes a \
+         mutation nothing noticed is a different thing from what closes a test that \
+         fails: {question}"
+    );
+    assert!(
+        question["finding"]["line"]
+            .as_u64()
+            .is_some_and(|line| line > 0)
+            && question["finding"]["path"] == "src/lib.rs",
+        "and where it is, which is what a generator needs to write anything at all: \
+         {question}"
+    );
+    assert!(
+        question["finding"]["replay"]
+            .as_str()
+            .is_some_and(|said| said.starts_with("mjutest replay ")),
+        "and how to see it again, so whoever reads the answer can check it: {question}"
+    );
+}
+
+/// What a run records about a candidate it put to the tests.
+fn offered_and_checked(report: &serde_json::Value, root: &std::path::Path) {
     let offered = report["candidates"]
         .as_array()
         .expect("candidates")
@@ -918,8 +1016,6 @@ fn a_candidate_offered_for_a_gap_is_put_to_the_tests_before_it_is_recorded() {
         "and what it holds up is kept, because `fix --apply` writes what was checked \
          rather than asking the generator again for something nobody put to the tests"
     );
-
-    unkeepable(dir.path(), &root, environment);
 }
 
 /// A candidate that holds up and has nowhere to be kept.

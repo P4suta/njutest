@@ -451,6 +451,12 @@ fn propose(report: &mut Report, request: &Request, environment: &Environment, wa
 }
 
 /// What the provider is told about one finding.
+///
+/// A finding names its subject the way a person types it, which is the short
+/// form of a mutant's identity, and the row it stands for carries both. The
+/// lookup takes either: matching only the long one silently sent every ask out
+/// with no path, no line and no rule, leaving a provider the summary sentence
+/// to parse and nothing else.
 fn ask(
     report: &Report,
     request: &Request,
@@ -458,7 +464,10 @@ fn ask(
     allowed: &[String],
 ) -> crate::repair::Ask {
     let (mutant, detail) = about;
-    let found = report.mutants.iter().find(|one| one.id == mutant);
+    let found = report
+        .mutants
+        .iter()
+        .find(|one| one.display_id == mutant || one.id == mutant);
     crate::repair::Ask {
         version: crate::repair::VERSION,
         finding: crate::repair::AskedFinding {
