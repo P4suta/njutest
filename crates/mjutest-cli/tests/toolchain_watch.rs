@@ -3,6 +3,12 @@
 
 //! A watch against a real workspace: the round it runs before anything changes, and the verdict it carries out of it.
 
+#![expect(
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    reason = "the helper that copies a fixture is not itself a test, and a copy that fails is a setup failure to report by panicking"
+)]
+
 use std::ffi::OsString;
 use std::io::Write;
 use std::sync::mpsc::{RecvTimeoutError, channel};
@@ -296,5 +302,97 @@ fn a_run_told_where_to_look_for_a_toolchain_looks_there_and_nowhere_else() {
         "and a run whose environment does name a place to look is told that place: \
          reading some other variable, or reading none, would have it report that nobody \
          said where to look while somebody had: {complained}"
+    );
+}
+
+fn copy(from: &std::path::Path, to: &std::path::Path) {
+    std::fs::create_dir_all(to).expect("the directory");
+    for entry in std::fs::read_dir(from).expect("the fixture") {
+        let entry = entry.expect("an entry");
+        let target = to.join(entry.file_name());
+        if entry.file_type().expect("a file type").is_dir() {
+            copy(&entry.path(), &target);
+        } else {
+            let _bytes = std::fs::copy(entry.path(), target).expect("a copy");
+        }
+    }
+}
+
+#[test]
+fn a_run_in_this_process_writes_what_it_learned_before_it_compiled_anything() {
+    let dir = tempfile::Builder::new()
+        .prefix("mjutest-inprocess-")
+        .tempdir()
+        .expect("a temporary directory");
+    let root = dir.path().join("fixture-baseline");
+    copy(
+        &mjutest_devkit::paths::fixtures_dir().join("fixture-baseline"),
+        &root,
+    );
+    let scratch = dir.path().join("scratch");
+    std::fs::create_dir_all(&scratch).expect("a directory to work in");
+
+    let vars: Vec<(OsString, OsString)> = std::env::vars_os().collect();
+    let environment = Environment {
+        cache_directory: Environment::cache_directory_of(&vars),
+        working_directory: root.clone(),
+        temp_directory: scratch,
+        vars,
+        cancel: Cancel::new(),
+    };
+
+    let (mut said, mut complaints) = (Vec::new(), Vec::new());
+    let code = mjutest_cli::run_from(
+        [
+            "mjutest",
+            "verify",
+            "--offline",
+            "--locked",
+            "--no-cache",
+            "--ui=plain",
+        ]
+        .map(OsString::from),
+        &environment,
+        &mut said,
+        &mut complaints,
+    );
+    assert_eq!(
+        code,
+        2,
+        "this fixture has a gap its own tests cannot see: {}\n{}",
+        String::from_utf8_lossy(&said),
+        String::from_utf8_lossy(&complaints)
+    );
+
+    let index: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(root.join("reports/latest-any.json")).expect("the latest index"),
+    )
+    .expect("the index is JSON");
+    let directory = index["directory"].as_str().expect("the run's directory");
+    let report: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(
+            root.join(directory)
+                .join("mjutest-assurance-report-v1.json"),
+        )
+        .expect("the report"),
+    )
+    .expect("the report is JSON");
+
+    assert_eq!(
+        report["repository"]["git"]["available"],
+        serde_json::Value::Bool(false),
+        "a copied fixture is not a repository, and the report says what git answered \
+         rather than leaving the question unasked: {report}"
+    );
+    let stated: Vec<&str> = report["limitations"]
+        .as_array()
+        .expect("limitations")
+        .iter()
+        .filter_map(|one| one["name"].as_str())
+        .collect();
+    assert!(
+        stated.contains(&"git-metadata-unavailable"),
+        "and states that it could not name the commit it verified, which is the one \
+         thing that would let somebody come back to this tree: {stated:?}"
     );
 }
