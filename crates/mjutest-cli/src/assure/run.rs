@@ -839,7 +839,8 @@ fn take_inventory(report: &mut Report, request: &Request, metadata: &Metadata) -
 /// refuses to prepare a tree whose instrumented baseline fails, and a run that
 /// reached it anyway would report that refusal as an error over a failure this
 /// run has already found and already reports. The verdict is the baseline's.
-fn measurable(baseline: &baseline::Baseline) -> bool {
+#[must_use]
+pub fn measurable(baseline: &baseline::Baseline) -> bool {
     baseline.failure.is_none()
         && !baseline
             .targets
@@ -851,7 +852,8 @@ fn measurable(baseline: &baseline::Baseline) -> bool {
 ///
 /// A run that named packages looked at those, and the contract reserves
 /// `ASSURED` for a run that looked at everything.
-fn kind_of(request: &Request) -> RunKind {
+#[must_use]
+pub fn kind_of(request: &Request) -> RunKind {
     if request.changed.is_some() {
         RunKind::Changed
     } else if requested(request).is_empty() {
@@ -894,7 +896,8 @@ fn locate(
 }
 
 /// Whether a resource only one test may hold at a time forces the run to measure one target at a time.
-fn alone(config: &Config) -> bool {
+#[must_use]
+pub fn alone(config: &Config) -> bool {
     config.resources.values().any(|resource| resource.exclusive)
 }
 
@@ -1269,7 +1272,8 @@ fn describe(toolchain: &rust_mutants::cargo::Toolchain) -> Toolchain {
 }
 
 /// The packages the command line asked for, or the configuration's.
-fn requested(request: &Request) -> Vec<String> {
+#[must_use]
+pub fn requested(request: &Request) -> Vec<String> {
     if request.packages.is_empty() {
         request.config.project.packages.clone()
     } else {
@@ -1278,7 +1282,8 @@ fn requested(request: &Request) -> Vec<String> {
 }
 
 /// The packages the run settled on: what was asked for, or every member.
-fn resolved(request: &Request, members: &[String]) -> Vec<String> {
+#[must_use]
+pub fn resolved(request: &Request, members: &[String]) -> Vec<String> {
     let asked = requested(request);
     if asked.is_empty() {
         Vec::new()

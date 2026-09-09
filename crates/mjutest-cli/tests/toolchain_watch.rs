@@ -866,6 +866,37 @@ fn accounted(report: &serde_json::Value, root: &std::path::Path) {
         "a report that never says when it finished is one nothing can be compared \
          against: {report}"
     );
+    provenance(report);
+    concluded(report, root);
+}
+
+/// What a report says about the thing it is about and what produced it.
+fn provenance(report: &serde_json::Value) {
+    for named in ["rustc", "cargo", "target", "os", "arch"] {
+        assert!(
+            report["toolchain"][named]
+                .as_str()
+                .is_some_and(|said| !said.is_empty()),
+            "and it says what built the thing it is about, because the same suite \
+             under two compilers is two answers: {named} is missing from {report}"
+        );
+    }
+    assert_eq!(
+        report["repository"]["packages"],
+        serde_json::json!(["fixture-baseline"]),
+        "and which packages the workspace holds, which is the scope every count in it \
+         is over: {report}"
+    );
+    assert!(
+        report["resources"].as_array().is_some_and(Vec::is_empty),
+        "a run that was given nothing to hold says so rather than leaving the question \
+         unasked, because a resource nobody released is one the next run waits for: \
+         {report}"
+    );
+}
+
+/// What a whole run of the baseline fixture concludes about the mutations it judged.
+fn concluded(report: &serde_json::Value, root: &std::path::Path) {
     assert_eq!(report["verdict"], "INSUFFICIENT");
     assert_eq!(
         (
@@ -878,28 +909,6 @@ fn accounted(report: &serde_json::Value, root: &std::path::Path) {
          all as unnoticed, or all as something nothing could decide, reaches the same \
          verdict on this fixture by a route that says nothing about the suite: {report}"
     );
-    let counted = report["accounting"]["mutants"]["cataloged"]
-        .as_u64()
-        .expect("how many were judged");
-    let paced: Vec<(u64, u64)> = events_of(root)
-        .iter()
-        .filter_map(|event| match &event.payload {
-            mjutest_cli::trace::Payload::Progress { progress } => {
-                Some((progress.done?, progress.total?))
-            }
-            _ => None,
-        })
-        .filter(|(_done, total)| *total == counted)
-        .collect();
-    assert_eq!(
-        paced,
-        (1..=counted)
-            .map(|done| (done, counted))
-            .collect::<Vec<(u64, u64)>>(),
-        "and it counts them off one at a time to whoever is watching: a phase that says \
-         the same number twice, or skips one, is one whose remaining time cannot be read \
-         off it, which is the only thing that line is for"
-    );
     let named: Vec<&str> = report["mutants"]
         .as_array()
         .expect("mutants")
@@ -911,5 +920,31 @@ fn accounted(report: &serde_json::Value, root: &std::path::Path) {
         7,
         "and each kill names the test that noticed, because the whole of what a kill \
          hands a person is where to look: {named:?}"
+    );
+    paced(report, root);
+}
+
+/// That the phase counted its mutations off one at a time to whoever was watching.
+fn paced(report: &serde_json::Value, root: &std::path::Path) {
+    let counted = report["accounting"]["mutants"]["cataloged"]
+        .as_u64()
+        .expect("how many were judged");
+    let said: Vec<(u64, u64)> = events_of(root)
+        .iter()
+        .filter_map(|event| match &event.payload {
+            mjutest_cli::trace::Payload::Progress { progress } => {
+                Some((progress.done?, progress.total?))
+            }
+            _ => None,
+        })
+        .filter(|(_done, total)| *total == counted)
+        .collect();
+    assert_eq!(
+        said,
+        (1..=counted)
+            .map(|done| (done, counted))
+            .collect::<Vec<(u64, u64)>>(),
+        "a phase that says the same number twice, or skips one, is one whose remaining \
+         time cannot be read off it, which is the only thing that line is for"
     );
 }
