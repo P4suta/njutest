@@ -84,6 +84,19 @@ pub struct CompilerMessage {
     pub message: Diagnostic,
 }
 
+/// Whether the path a diagnostic names is the file that was written.
+///
+/// rustc reports a path relative to the directory it ran in, which is the
+/// workspace root, and the engine names files the same way; a member's nested
+/// path therefore matches exactly, and an absolute one by suffix. The
+/// separator is normalised because a diagnostic on Windows spells one path
+/// with backslashes and the catalog spells the same path with slashes.
+#[must_use]
+pub fn names_file(reported: &str, path: &str) -> bool {
+    let reported = reported.replace('\\', "/");
+    reported == path || reported.ends_with(&format!("/{path}"))
+}
+
 /// One rustc diagnostic.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct Diagnostic {

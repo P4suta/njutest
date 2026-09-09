@@ -216,18 +216,12 @@ fn locate(files: &[FileOutput], diagnostic: &Diagnostic) -> Option<u32> {
 fn branch_at(files: &[FileOutput], span: &crate::cargo::DiagnosticSpan) -> Option<u32> {
     let file = files
         .iter()
-        .find(|file| ends_with_path(&span.file_name, &file.path))?;
+        .find(|file| crate::cargo::names_file(&span.file_name, &file.path))?;
     file.branches
         .iter()
         .filter(|branch| branch.span.start <= span.byte_start && span.byte_start < branch.span.end)
         .min_by_key(|branch| branch.span.len())
         .map(|branch| branch.index)
-}
-
-/// Whether the path a diagnostic names is the file that was written. rustc reports a path relative to the directory it ran in, which is the workspace root, and the engine names files the same way; a member's nested path therefore matches exactly, and an absolute one by suffix.
-fn ends_with_path(reported: &str, path: &str) -> bool {
-    let reported = reported.replace('\\', "/");
-    reported == path || reported.ends_with(&format!("/{path}"))
 }
 
 fn rendered(diagnostic: &Diagnostic) -> String {

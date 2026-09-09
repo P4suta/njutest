@@ -486,7 +486,7 @@ pub fn refusal(written: &[witness::WitnessFile], messages: &[crate::cargo::Messa
         };
         let landed = written
             .iter()
-            .find(|file| ends_with(&span.file_name, &file.path))
+            .find(|file| crate::cargo::names_file(&span.file_name, &file.path))
             .into_iter()
             .flat_map(|file| &file.sites)
             .filter(|site| site.span.start <= span.byte_start && span.byte_start < site.span.end)
@@ -563,10 +563,4 @@ fn unasked(questions: &Questions, paths: &BTreeSet<String>, refused: &mut Refusa
             refused.probes.extend(file.iter().map(|probe| probe.index));
         }
     }
-}
-
-/// Whether the path a diagnostic names is the file that was written.
-fn ends_with(reported: &str, path: &str) -> bool {
-    let reported = reported.replace('\\', "/");
-    reported == path || reported.ends_with(&format!("/{path}"))
 }

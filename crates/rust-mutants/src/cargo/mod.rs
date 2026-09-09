@@ -25,7 +25,8 @@ pub use depinfo::{Unit, dep_info_path, parse_dep_info, units_of};
 
 pub use locate::{LocateOptions, Toolchain, command_failed, resolve_executable};
 pub use messages::{
-    Artifact, CompilerMessage, Diagnostic, DiagnosticSpan, Message, Profile, parse_messages,
+    Artifact, CompilerMessage, Diagnostic, DiagnosticSpan, Message, Profile, names_file,
+    parse_messages,
 };
 pub use metadata::{
     DepKind, Dependency, Metadata, MetadataOptions, Node, NodeDep, Package, Resolve, Target,
