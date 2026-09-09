@@ -259,6 +259,26 @@ impl Target {
     }
 }
 
+/// What one `cargo metadata` is asked, with the promises a run made about the network and the lock file kept.
+///
+/// A run told not to touch the network is told that about every command it
+/// starts, and this is one of them: a resolve that reached out anyway would
+/// have kept the promise for the builds and broken it before the first one.
+#[must_use]
+pub fn metadata_arguments(options: MetadataOptions, no_deps: bool) -> Vec<&'static str> {
+    let mut args = vec!["metadata", "--format-version", "1"];
+    if no_deps {
+        args.push("--no-deps");
+    }
+    if options.locked {
+        args.push("--locked");
+    }
+    if options.offline {
+        args.push("--offline");
+    }
+    args
+}
+
 impl Metadata {
     /// Parses a metadata document.
     ///
@@ -301,17 +321,9 @@ impl Metadata {
         options: MetadataOptions,
         no_deps: bool,
     ) -> Result<Self, CargoError> {
-        let mut args = vec!["metadata", "--format-version", "1"];
-        if no_deps {
-            args.push("--no-deps");
-        }
-        if options.locked {
-            args.push("--locked");
-        }
-        if options.offline {
-            args.push("--offline");
-        }
-        let mut spec = driver.toolchain.command(driver.dir, args);
+        let mut spec = driver
+            .toolchain
+            .command(driver.dir, metadata_arguments(options, no_deps));
         spec.structured_stdout = Some(METADATA_OUTPUT_LIMIT);
         let result = run(&spec, driver.cancel);
         driver.trace.exec(ExecRecord::of(&spec, &result));

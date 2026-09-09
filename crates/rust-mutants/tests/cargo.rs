@@ -441,3 +441,36 @@ fn a_build_writes_no_debug_information_unless_it_is_asked_to() {
         "a profile somebody named is one they meant, and this engine does not edit it: {named:?}"
     );
 }
+
+#[test]
+fn a_run_told_not_to_touch_the_network_tells_every_command_it_starts() {
+    use rust_mutants::cargo::{MetadataOptions, metadata_arguments};
+
+    let promised = MetadataOptions {
+        locked: true,
+        offline: true,
+    };
+    let asked = metadata_arguments(promised, false);
+    assert!(
+        asked.contains(&"--offline") && asked.contains(&"--locked"),
+        "resolving the workspace is a command a run starts, and one that reached out anyway \
+         would keep the promise for the builds and break it before the first of them: {asked:?}"
+    );
+
+    let free = metadata_arguments(
+        MetadataOptions {
+            locked: false,
+            offline: false,
+        },
+        true,
+    );
+    assert!(
+        !free.contains(&"--offline") && !free.contains(&"--locked"),
+        "and a run that promised neither asks for neither, or every project would be resolved \
+         against a lock file it did not agree to: {free:?}"
+    );
+    assert!(
+        free.contains(&"--no-deps") && !asked.contains(&"--no-deps"),
+        "the resolve that reads no dependencies says so and the one that reads them does not"
+    );
+}
