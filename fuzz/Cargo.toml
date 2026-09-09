@@ -115,6 +115,12 @@ name = "carried_answers"
 path = "fuzz_targets/carried_answers.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "offered_candidates"
+path = "fuzz_targets/offered_candidates.rs"
+test = false
+doc = false
 bench = false
 
 [[bin]]

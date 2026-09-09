@@ -320,3 +320,34 @@ fn every_fuzz_target_is_driven_and_every_one_driven_is_a_target() {
          people learn to ignore, and the ones beside it go with it: {absent:?}"
     );
 }
+
+/// Every target a seed corpus is committed for.
+fn seeded_targets() -> BTreeSet<String> {
+    let seeds = root().join("fuzz/seeds");
+    let Ok(entries) = std::fs::read_dir(&seeds) else {
+        return BTreeSet::new();
+    };
+    entries
+        .flatten()
+        .filter(|entry| entry.path().is_dir())
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect()
+}
+
+#[test]
+fn every_committed_seed_belongs_to_a_target_that_still_exists() {
+    let seeded = seeded_targets();
+    assert!(
+        !seeded.is_empty(),
+        "a fuzz target whose input is a document explores nothing from an empty corpus: \
+         random bytes are not JSON, and fuzz/corpus is not committed, so a nightly run \
+         of one starts where the last one started. Seeds are what make it a run"
+    );
+    let defined = fuzz_targets();
+    let orphaned: Vec<&String> = seeded.difference(&defined).collect();
+    assert!(
+        orphaned.is_empty(),
+        "these seed corpora name targets the fuzz crate does not define, so nothing \
+         will ever read them: {orphaned:?}"
+    );
+}

@@ -9,6 +9,21 @@ cargo-fuzz targets for the parts of this workspace that read input somebody
 else wrote, or transform bytes. Each target states one property; a crash is
 a bug in the property or the code, never in the input.
 
+## Seeds
+
+`fuzz/corpus/` is not committed, so a nightly run starts from nothing. For a
+target whose input is a *document*, that means it starts and finishes without
+once getting past the parser: random bytes are not JSON. Measured on
+`offered_candidates` — fifty thousand runs from an empty corpus in under a
+second and no coverage worth keeping, against three million runs in
+forty-five seconds from three seed documents, with `candidates`, `version`
+and `kind` in the dictionary it learned.
+
+So `fuzz/seeds/<target>/` is committed, the workflow copies it into the
+corpus before running, and `xtask/tests/docs.rs` refuses a seed directory
+that names no target. A target whose input is bytes rather than a document
+needs none.
+
 The runner's targets are here for a particular reason: three of the four
 read something a *test suite* can influence. A suite that printed its own
 `test result:` line, an `llvm-cov` export from a version nobody expected, a

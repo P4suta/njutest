@@ -1,9 +1,9 @@
 # SPDX-FileCopyrightText: 2026 mjutest contributors
 # SPDX-License-Identifier: MIT OR Apache-2.0
 #
-# cargo-fuzz against the engine's fail-closed parsers and byte
-# transformations (fuzz/README.md lists the targets and their properties).
-# A pull request that touches the engine or the harness gets a short smoke;
+# cargo-fuzz against the fail-closed parsers and byte transformations of both
+# products (fuzz/README.md lists the targets and their properties).
+# A pull request that touches either of them or the harness gets a short smoke;
 # the weekly run spends real time. A crash is uploaded as an artifact and is
 # a test to write, never an input to blame.
 name: fuzz
@@ -12,6 +12,7 @@ on:
   pull_request:
     paths:
       - "crates/rust-mutants/**"
+      - "crates/mjutest-cli/**"
       - "fuzz/**"
       - ".github/workflows/fuzz.yml"
   schedule:
@@ -50,6 +51,7 @@ jobs:
           - libtest_summary
           - report_document
           - carried_answers
+          - offered_candidates
           - engine_config
           - run_report
           - engine_coverage_export
@@ -93,6 +95,10 @@ jobs:
             budget="-runs=5000"
           else
             budget="-max_total_time=1500"
+          fi
+          if [ -d "fuzz/seeds/$TARGET" ]; then
+            mkdir -p "fuzz/corpus/$TARGET"
+            cp "fuzz/seeds/$TARGET/"* "fuzz/corpus/$TARGET/"
           fi
           cargo fuzz run "$TARGET" -- "$budget" -max_len=4096
       - name: Upload crash artifacts
