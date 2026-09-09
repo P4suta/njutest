@@ -345,3 +345,64 @@ proptest! {
         );
     }
 }
+
+proptest! {
+    /// However many workers a run is given, every mutation is answered for once, in order.
+    #[test]
+    fn a_run_answers_for_every_mutation_once_and_in_the_order_it_catalogued_them(
+        count in prop_oneof![Just(0_usize), Just(1_usize), 2_usize..40],
+        workers in prop_oneof![Just(1_usize), 2_usize..12],
+    ) {
+        let items: Vec<usize> = (0..count).collect();
+        let answers = mjutest_cli::assure::schedule::measure(&items, workers, |at, item| {
+            prop_assert_eq!(at, *item, "a worker is told which item it has");
+            Ok(at.saturating_mul(2))
+        });
+        let answers: Vec<usize> = answers
+            .into_iter()
+            .collect::<Result<Vec<usize>, TestCaseError>>()?;
+        prop_assert_eq!(
+            answers,
+            items.iter().map(|at| at.saturating_mul(2)).collect::<Vec<usize>>(),
+            "a report's rows are the catalog's order, so a run that handed them back in \
+             the order they happened to finish would give two runs of one tree two \
+             reports and every diff between them would be about the machine"
+        );
+    }
+
+    /// How many measurements run at once follows the configuration, the machine, and what a resource forbids.
+    #[test]
+    fn how_widely_a_run_measures_is_what_it_was_told_bounded_by_what_it_has(
+        jobs in prop_oneof![Just(0_u32), 1_u32..64],
+        available in prop_oneof![Just(0_usize), 1_usize..64],
+        exclusive in proptest::bool::ANY,
+    ) {
+        let workers = mjutest_cli::assure::schedule::workers(jobs, available, exclusive);
+        prop_assert!(
+            workers >= 1,
+            "a run measures something: nought workers is a run that never finishes"
+        );
+        if exclusive {
+            prop_assert_eq!(
+                workers, 1,
+                "a resource only one test may hold at a time decides it for the whole \
+                 run, whatever was configured and whatever the machine offers"
+            );
+        } else if jobs > 0 {
+            prop_assert_eq!(
+                workers,
+                usize::try_from(jobs).unwrap_or(1),
+                "and a run told how many gets that many: the machine's own count is a \
+                 default, not a bound on what somebody asked for"
+            );
+        } else {
+            prop_assert!(
+                workers <= mjutest_cli::assure::schedule::CAP,
+                "while a run that said nothing takes what the machine offers up to the \
+                 cap, because every worker is a test process and a machine's whole \
+                 parallelism spent on those leaves nothing to run them"
+            );
+            prop_assert!(workers <= available.max(1));
+        }
+    }
+}
