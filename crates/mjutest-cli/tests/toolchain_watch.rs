@@ -1206,6 +1206,151 @@ fn resumed(root: &std::path::Path, environment: Environment) {
     );
 }
 
+/// One run of `fixture` in this process under `configured`, and the report it wrote.
+fn once(
+    fixture: &str,
+    dir: &std::path::Path,
+    name: &str,
+    configured: Option<&str>,
+) -> serde_json::Value {
+    let root = dir.join(name);
+    copy(&mjutest_devkit::paths::fixtures_dir().join(fixture), &root);
+    if let Some(text) = configured {
+        std::fs::write(root.join(".mjutest.toml"), text).expect("a configuration");
+    }
+    let scratch = dir.join(format!("{name}-scratch"));
+    std::fs::create_dir_all(&scratch).expect("a directory to work in");
+    let vars: Vec<(OsString, OsString)> = std::env::vars_os().collect();
+    let environment = Environment {
+        cache_directory: dir.join(format!("{name}-cache")),
+        working_directory: root.clone(),
+        temp_directory: scratch,
+        vars,
+        cancel: Cancel::new(),
+    };
+    let (mut said, mut complaints) = (Vec::new(), Vec::new());
+    let code = mjutest_cli::run_from(
+        ["mjutest", "verify", "--offline", "--locked", "--no-cache"].map(OsString::from),
+        &environment,
+        &mut said,
+        &mut complaints,
+    );
+    assert!(
+        matches!(code, 0..=2),
+        "{name} reached a verdict rather than a failure: {}",
+        String::from_utf8_lossy(&complaints)
+    );
+    report_of(&root)
+}
+
+#[test]
+fn a_run_of_one_tree_says_the_same_thing_however_many_times_and_however_widely_it_is_run() {
+    let dir = tempfile::Builder::new()
+        .prefix("mjutest-again-and-again-")
+        .tempdir()
+        .expect("a temporary directory");
+
+    let first = once("fixture-baseline", dir.path(), "first", None);
+    let again = once("fixture-baseline", dir.path(), "again", None);
+    assert_eq!(
+        mjutest_devkit::report::normalize(&first),
+        mjutest_devkit::report::normalize(&again),
+        "a run of one tree twice says one thing twice, or every number in it is about          the afternoon it was produced rather than about the workspace. Everything that          may differ between two runs — when they started, what they were called — is          what a normalised report takes out; what is left is the answer"
+    );
+
+    let alone = once(
+        "fixture-baseline",
+        dir.path(),
+        "alone",
+        Some("version = 1\n\n[execution]\njobs = 1\n"),
+    );
+    let together = once(
+        "fixture-baseline",
+        dir.path(),
+        "together",
+        Some("version = 1\n\n[execution]\njobs = 8\n"),
+    );
+    assert_eq!(
+        mjutest_devkit::report::normalize(&alone),
+        mjutest_devkit::report::normalize(&together),
+        "and measuring eight mutations at once rather than one changes which processes          overlap and nothing a report says: a verdict that moved with the machine's load          would be a verdict about the machine"
+    );
+    assert_eq!(
+        mjutest_devkit::report::normalize(&alone),
+        mjutest_devkit::report::normalize(&first),
+        "and neither does saying nothing about how many"
+    );
+}
+
+/// One part of `fixture`'s catalog, judged in this process.
+fn part(root: &std::path::Path, dir: &std::path::Path, shard: &str) -> serde_json::Value {
+    let scratch = dir.join(format!("part-{}-scratch", shard.replace('/', "-")));
+    std::fs::create_dir_all(&scratch).expect("a directory to work in");
+    let vars: Vec<(OsString, OsString)> = std::env::vars_os().collect();
+    let environment = Environment {
+        cache_directory: dir.join("parts-cache"),
+        working_directory: root.to_path_buf(),
+        temp_directory: scratch,
+        vars,
+        cancel: Cancel::new(),
+    };
+    let (mut said, mut complaints) = (Vec::new(), Vec::new());
+    let code = mjutest_cli::run_from(
+        [
+            "mjutest",
+            "verify",
+            "--offline",
+            "--locked",
+            "--no-cache",
+            "--shard",
+            shard,
+        ]
+        .map(OsString::from),
+        &environment,
+        &mut said,
+        &mut complaints,
+    );
+    assert_eq!(code, 0, "{shard}: {}", String::from_utf8_lossy(&complaints));
+    report_of(root)
+}
+
+#[test]
+fn a_catalog_cut_into_parts_and_put_back_together_says_what_the_whole_would_have() {
+    let dir = tempfile::Builder::new()
+        .prefix("mjutest-in-parts-")
+        .tempdir()
+        .expect("a temporary directory");
+
+    let whole = once("fixture-assured", dir.path(), "whole", None);
+
+    let root = dir.path().join("parts");
+    copy(
+        &mjutest_devkit::paths::fixtures_dir().join("fixture-assured"),
+        &root,
+    );
+    let one = part(&root, dir.path(), "1/2");
+    let two = part(&root, dir.path(), "2/2");
+    assert_ne!(one["run_id"], two["run_id"], "two runs, two reports");
+
+    let parts: Vec<mjutest_cli::report::Report> = [&one, &two]
+        .into_iter()
+        .map(|document| {
+            mjutest_cli::report::json::parse(&document.to_string()).expect("a part reads back")
+        })
+        .collect();
+    let merged = mjutest_cli::report::merge::merge(&parts).expect("two parts of one catalog");
+    let combined = serde_json::to_value(&merged).expect("the whole is a document");
+
+    assert_eq!(
+        mjutest_devkit::report::normalize(&combined),
+        mjutest_devkit::report::normalize(&whole),
+        "dividing the work is not a budget only if the pieces add back up to it. A run \
+         cut in two and put back together has to say what one run of the same tree says \
+         — the same verdict, the same counts, the same row for every mutation — or \
+         --shard is a way of getting a different answer cheaply"
+    );
+}
+
 /// A run in this process against `fixture`, and what it left behind.
 ///
 /// A `carrying` that is not empty also writes a configuration bounding one
