@@ -1207,6 +1207,7 @@ dependencies = [
  "jsonschema",
  "mjutest-devkit",
  "proc-macro2",
+ "proptest",
  "rust-mutants",
  "rustix",
  "serde",
