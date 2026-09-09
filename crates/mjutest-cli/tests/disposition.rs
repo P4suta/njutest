@@ -429,3 +429,70 @@ fn every_disposition_is_counted_once_in_the_columns_it_belongs_to() {
          reader adds up to check the rest"
     );
 }
+
+#[test]
+fn which_test_decided_a_mutation_is_named_by_the_dispositions_that_had_one() {
+    let route = Route::Discharged {
+        discharged: vec![discharge("pkg/lib/pkg", NEVER_INFECTED)],
+    };
+
+    for (what, disposition) in [
+        (
+            "a kill",
+            Disposition::Killed {
+                by: "pkg/test/it one".to_owned(),
+            },
+        ),
+        (
+            "a timeout",
+            Disposition::TimedOut {
+                on: "pkg/test/it one".to_owned(),
+            },
+        ),
+        (
+            "a pair that did not agree",
+            Disposition::Unconfirmed {
+                on: "pkg/test/it one".to_owned(),
+                why: Unconfirmed::DidNotReproduce,
+            },
+        ),
+        (
+            "a harness that could not run",
+            Disposition::Errored {
+                on: "pkg/test/it one".to_owned(),
+                detail: "no binary".to_owned(),
+            },
+        ),
+    ] {
+        assert_eq!(
+            disposition.decided_by(),
+            Some("pkg/test/it one"),
+            "{what} happened against one target, and which one is the thing a reader \
+             cannot work out from anything else in the row"
+        );
+    }
+
+    for (what, disposition) in [
+        (
+            "a survivor",
+            Disposition::Survived {
+                route: route.clone(),
+            },
+        ),
+        ("one nothing reached", Disposition::Unreached),
+        ("one proved equivalent", Disposition::Equivalent { route }),
+        (
+            "one the compiler refused",
+            Disposition::Rejected {
+                diagnostic: "no".to_owned(),
+            },
+        ),
+    ] {
+        assert_eq!(
+            disposition.decided_by(),
+            None,
+            "{what} was decided by no test, and naming one would put a target in a row \
+             as having said something it never said"
+        );
+    }
+}
