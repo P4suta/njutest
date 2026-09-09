@@ -270,3 +270,30 @@ fn the_identity_of_a_known_run_is_the_one_it_has_always_been() {
     mjutest_devkit::golden::golden(&golden, identity(&inputs()).as_bytes())
         .expect("the recorded identity");
 }
+
+#[test]
+fn a_value_too_long_to_carry_its_own_length_is_absorbed_rather_than_dropped() {
+    use sha2::Digest as _;
+
+    let absorbed = |value: &str| {
+        let mut hasher = sha2::Sha256::new();
+        mjutest_cli::evidence::digest::absorb(&mut hasher, value);
+        hex::encode(hasher.finalize())
+    };
+    assert_ne!(
+        absorbed("one"),
+        absorbed("other"),
+        "a field this cannot length-prefix still decides the number, or two runs whose \
+         inputs differ only in that field would read each other's answers"
+    );
+
+    let mut plain = sha2::Sha256::new();
+    plain.update(sha2::Sha256::digest(b"one"));
+    assert_ne!(
+        absorbed("one"),
+        hex::encode(plain.finalize()),
+        "and it says that it arrived in this form rather than the ordinary one: without \
+         the marker an overlong field and an ordinary field carrying that field's digest \
+         are one input, and a digest two different inputs share is not an identity"
+    );
+}

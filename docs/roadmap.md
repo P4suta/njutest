@@ -109,14 +109,14 @@ its dependencies to everybody who adopts it. What somebody installs to use
 this is cargo. So the baseline is made cheaper by making the baseline cheaper,
 and by nothing else.
 
-What M14 still lacks is the part of sharing that is not sharding: a run can be
-cut into parts with `--shard K/N` and put back together with `mjutest merge`,
-and the base build those parts each make is still made once per machine.
-`mjutest cache` collects and expires the store; exporting and importing it is
-what would let a matrix of jobs build once. The benchmarks measure the report
-and the byte foundation, and not yet routing, the evidence key, or the
-equivalence comparison — those are observations rather than gates, and they
-are missing rather than wrong.
+M14 is done. A run is cut into parts with `--shard K/N` and put back together
+with `mjutest merge`; `mjutest cache` collects and expires the store, and
+`--export`/`--import` carry its answers between machines, which is what lets a
+matrix reuse what one of its legs established. An answer that arrives is held
+to what a run of the receiving machine would keep it to, because that rule
+lives in `Store::put` and nowhere else. What the answers do not carry is the
+build: the compiled tree is the engine's, keyed to the workspace root under
+the temporary directory, and `docs/ci.md` says how a matrix caches it.
 
 ## What this engine cannot measure about itself, and what would change that
 

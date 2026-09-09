@@ -121,8 +121,8 @@ first digit names an area:
 | `MJ6004` | The report could not be written where a reader will look for it. |
 | `MJ6005` | There is no such run to answer about, or none at all. A command never answers about a different run than the one it was asked about. |
 | `MJ8002` | A build cache layer could not be used: it holds files this program did not put there, or it could not be written. Never a reason to fail a run — the command builds without one. |
-| `MJ8003` | The store of earlier answers could not be used, or a report was offered for storage that must not be stored. |
-| `MJ8004` | A stored answer is not the answer it claims to be: a document that does not parse, that does not carry the identity it is filed under, or that does not satisfy the audit every durable report must. |
+| `MJ8003` | The store of earlier answers could not be used, a report was offered for storage that must not be stored, or the stream answers were being carried on or off this machine stopped. |
+| `MJ8004` | A stored answer is not the answer it claims to be, or a line offered to this machine is not an answer at all: a document that does not parse, that does not carry the identity it is filed under, or that does not satisfy the audit every durable report must. |
 | `MJ7001` | The toolchain has no `cargo miri`, and the `deep-v1` contract promises the suite is interpreted. Install it (`rustup +nightly component add miri`) or verify under `standard-v1`. |
 | `MJ8001` | The run has nowhere to work: its scratch directory could not be made. Failing to *claim* one is a limitation, not an error. |
 | `MJ9001` | The reports offered to `mjutest merge` are not the parts of one catalog: none were offered, they disagree about the tree, the configuration or the contract, or two of them judged the same mutant. Adding up answers about two different runs produces an answer about neither. |

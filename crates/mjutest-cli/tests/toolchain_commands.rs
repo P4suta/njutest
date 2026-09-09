@@ -43,15 +43,17 @@ fn copy(from: &Path, to: &Path) {
 }
 
 fn mjutest(fixture: &Fixture, args: &[&str]) -> Output {
+    let cache = mjutest_devkit::paths::cache_beside(&fixture.root).expect("a cache directory");
+    mjutest_caching(fixture, args, &cache)
+}
+
+fn mjutest_caching(fixture: &Fixture, args: &[&str], cache: &Path) -> Output {
     Command::new(env!("CARGO_BIN_EXE_mjutest"))
         .args(args)
         .current_dir(&fixture.root)
         .env_clear()
         .env("NO_COLOR", "1")
-        .env(
-            "XDG_CACHE_HOME",
-            mjutest_devkit::paths::cache_beside(&fixture.root).expect("a cache directory"),
-        )
+        .env("XDG_CACHE_HOME", cache)
         .env(
             "TMPDIR",
             mjutest_devkit::paths::temp_beside(&fixture.root).expect("a temporary directory"),
@@ -362,5 +364,56 @@ fn cache_says_how_many_directories_it_spared_rather_than_only_what_it_took() {
         spared.is_dir(),
         "and it is still there: {}",
         spared.display()
+    );
+}
+
+#[test]
+fn answers_one_machine_established_are_the_answers_another_one_holds() {
+    let fixture = verified("fixture-baseline");
+    let carried = fixture.root.join("answers.jsonl");
+    let path = carried.to_str().expect("a path");
+
+    let output = mjutest(&fixture, &["cache", "--export", path]);
+    assert_eq!(output.status.code(), Some(0), "{}", stdout(&output));
+    let text = stdout(&output);
+    assert!(
+        text.contains("exported  1 answers"),
+        "a machine that has answered for a tree says how many answers left it, because \
+         a job that exports nothing and says nothing is a matrix that quietly builds \
+         everything as many times as it has jobs: {text}"
+    );
+
+    let elsewhere = fixture.root.join("another-machine");
+    std::fs::create_dir_all(&elsewhere).expect("a second cache");
+    let output = mjutest_caching(&fixture, &["cache"], &elsewhere);
+    assert!(
+        stdout(&output).contains("holds     0 answers"),
+        "the second machine starts knowing nothing: {}",
+        stdout(&output)
+    );
+
+    let output = mjutest_caching(&fixture, &["cache", "--import", path], &elsewhere);
+    assert_eq!(output.status.code(), Some(0), "{}", stdout(&output));
+    assert!(
+        stdout(&output).contains("imported  1 answers"),
+        "and says how many arrived: {}",
+        stdout(&output)
+    );
+    let output = mjutest_caching(&fixture, &["cache"], &elsewhere);
+    assert!(
+        stdout(&output).contains("holds     1 answers"),
+        "which is what it holds afterwards, so the next run of the same tree on it \
+         reads an answer rather than establishing one: {}",
+        stdout(&output)
+    );
+
+    let output = mjutest(&fixture, &["cache", "--export", path, "--import", path]);
+    assert_eq!(
+        output.status.code(),
+        Some(i32::from(mjutest_cli::cli::EXIT_ERROR)),
+        "and a command told to carry answers both ways at once is refused, because \
+         which of the two it did would decide whether the file is the answers or the \
+         answers are the file: {}",
+        String::from_utf8_lossy(&output.stderr)
     );
 }

@@ -173,6 +173,12 @@ pub struct Cache {
     /// Remove what has expired, then the oldest of what is left until the store is under its size.
     #[arg(long)]
     pub gc: bool,
+    /// Write every answer this machine holds to FILE, one to a line, for another machine to read.
+    #[arg(long, value_name = "FILE")]
+    pub export: Option<PathBuf>,
+    /// Read answers another machine wrote into this machine's store, holding each to what a run of this one would keep.
+    #[arg(long, value_name = "FILE", conflicts_with = "export")]
+    pub import: Option<PathBuf>,
 }
 
 /// `mjutest verify`.

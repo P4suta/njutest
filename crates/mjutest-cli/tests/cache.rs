@@ -340,3 +340,116 @@ fn a_report_that_cannot_be_written_names_the_path_that_refused_it() {
          going: {refused}"
     );
 }
+
+#[test]
+fn what_one_machine_established_is_carried_to_another_and_answers_there() {
+    let here = tempfile::tempdir().expect("tempdir");
+    let there = tempfile::tempdir().expect("tempdir");
+    let (one, two) = ("d".repeat(64), "e".repeat(64));
+    let _kept = store(here.path())
+        .put(&report("20260909T000000Z-aaaaaa", &one))
+        .expect("the first answer");
+    let _kept = store(here.path())
+        .put(&report("20260909T000001Z-bbbbbb", &two))
+        .expect("the second answer");
+
+    let mut carried = Vec::new();
+    let written = store(here.path())
+        .export(&mut carried)
+        .expect("what this machine knows");
+    assert_eq!(
+        written, 2,
+        "a matrix of jobs that each rebuild what one of them already answered pays for \
+         the same work as many times as it has jobs, so what leaves a machine is every \
+         answer it holds"
+    );
+
+    let read = store(there.path())
+        .import(&mut carried.as_slice())
+        .expect("what the other machine now knows");
+    assert_eq!(read, 2, "and every one of them arrives");
+    for identity in [&one, &two] {
+        assert!(
+            store(there.path())
+                .get(identity)
+                .expect("the store answers")
+                .is_some_and(|report| &report.provenance.identity == identity),
+            "and answers there for the inputs it answered for here, which is the whole \
+             of what carrying it is for"
+        );
+    }
+}
+
+#[test]
+fn an_answer_a_machine_cannot_vouch_for_is_not_carried_to_another_one() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = store(dir.path());
+    let identity = "f".repeat(64);
+    let _kept = store
+        .put(&report("20260909T000000Z-aaaaaa", &identity))
+        .expect("an answer");
+    std::fs::write(store.entry(&identity), "{ not a report }").expect("the entry, spoiled");
+
+    let mut carried = Vec::new();
+    let refused = store.export(&mut carried).expect_err("a refusal");
+    assert!(
+        matches!(refused, CacheError::Corrupt { .. }),
+        "an entry a machine cannot read back is not one it may hand to another machine: \
+         copying it makes one broken answer into two, and the second machine has no way \
+         left to know where it came from: {refused}"
+    );
+    assert!(
+        refused.to_string().contains(&identity),
+        "and it names the entry, which is the one thing a person can remove: {refused}"
+    );
+    assert!(
+        carried.is_empty() || !carried.is_empty(),
+        "the stream is whatever was written before the refusal; the refusal is the claim"
+    );
+}
+
+#[test]
+fn what_arrives_from_another_machine_is_held_to_what_a_run_of_this_one_would_be() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = store(dir.path());
+    let mut misfiled = report("20260909T000000Z-aaaaaa", &"1".repeat(64));
+    misfiled.accounting.targets.selected = 7;
+    let line = mjutest_cli::report::json::line(&misfiled).expect("a report as one line");
+
+    let refused = store.import(&mut line.as_bytes()).expect_err("a refusal");
+    assert!(
+        matches!(refused, CacheError::Refused { .. }),
+        "what a machine may store is what a run may store, and an answer that arrived \
+         over the network gets no weaker a check than one this machine established: \
+         {refused}"
+    );
+
+    let refused = store
+        .import(&mut b"not a report at all\n".as_slice())
+        .expect_err("a refusal");
+    assert!(
+        matches!(refused, CacheError::Arriving { line: 1, .. }),
+        "and a stream that is not answers at all is refused rather than skipped: \
+         {refused}"
+    );
+    assert!(
+        refused.to_string().contains('1'),
+        "naming the line, because that is where a person looks: {refused}"
+    );
+    assert_eq!(
+        store.status().expect("the store").entries,
+        0,
+        "and nothing that failed the check is left behind"
+    );
+
+    let spread =
+        mjutest_cli::report::json::render(&report("20260909T000000Z-aaaaaa", &"2".repeat(64)))
+            .expect("a report a person can read");
+    let refused = store.import(&mut spread.as_bytes()).expect_err("a refusal");
+    assert!(
+        matches!(refused, CacheError::Arriving { line: 1, .. }),
+        "one line is one answer, so a document laid out for a person to read is refused \
+         at its first line rather than taken for as many answers as it has lines: \
+         {refused}"
+    );
+}

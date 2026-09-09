@@ -35,6 +35,12 @@ pub fn run(
         config.cache.max_bytes,
         config.cache.ttl,
     );
+    if let Some(destination) = arguments.export.as_ref() {
+        return said(carry(&store, destination, Direction::Out), stdout, stderr);
+    }
+    if let Some(source) = arguments.import.as_ref() {
+        return said(carry(&store, source, Direction::In), stdout, stderr);
+    }
     let collected = if arguments.gc {
         match store.collect(Timestamp::now()) {
             Ok(collected) => collected,
@@ -74,6 +80,65 @@ pub fn run(
     temporary(environment, stdout);
     preserved(&root, stdout);
     EXIT_ASSURED
+}
+
+/// Which way answers are moving between this machine and a file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Direction {
+    /// Out of the store, into the file.
+    Out,
+    /// Out of the file, into the store.
+    In,
+}
+
+/// Carries answers between this machine's store and a file, and says how many moved.
+///
+/// A command that carried nothing says so with the same line as one that
+/// carried a thousand, because "it worked" and "there was nothing to work on"
+/// are different facts and a job that silently exports an empty store is one
+/// whose matrix quietly builds everything twice.
+fn carry(
+    store: &Store,
+    path: &Path,
+    direction: Direction,
+) -> Result<String, crate::cache::store::CacheError> {
+    let opening = |source| crate::cache::store::CacheError::Unusable {
+        path: path.to_path_buf(),
+        source,
+    };
+    let (said, moved) = match direction {
+        Direction::Out => (
+            "exported",
+            std::fs::File::create(path)
+                .map_err(opening)
+                .and_then(|file| store.export(&mut std::io::BufWriter::new(file)))?,
+        ),
+        Direction::In => (
+            "imported",
+            std::fs::File::open(path)
+                .map_err(opening)
+                .and_then(|mut file| store.import(&mut file))?,
+        ),
+    };
+    Ok(format!("{said}  {moved} answers\t{}", path.display()))
+}
+
+/// Says what a carrying came to, or diagnoses why it did not happen.
+fn said(
+    carried: Result<String, crate::cache::store::CacheError>,
+    stdout: &mut dyn Write,
+    stderr: &mut dyn Write,
+) -> u8 {
+    match carried {
+        Ok(line) => {
+            super::say(stdout, &line);
+            EXIT_ASSURED
+        }
+        Err(error) => {
+            super::diagnose(stderr, &error.to_string());
+            EXIT_ERROR
+        }
+    }
 }
 
 /// What runs preserved on purpose and is still there. The ledger names a directory; the directory's own marker says whether it may be removed, so this reports rather than collects.

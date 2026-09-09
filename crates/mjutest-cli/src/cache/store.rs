@@ -47,6 +47,21 @@ pub enum CacheError {
         /// Why it must not be stored.
         message: String,
     },
+    /// The stream answers were being carried on or off this machine stopped.
+    #[error("{}: carrying answers: {source}", error::CACHE_UNUSABLE.code)]
+    Carrying {
+        /// The operating system's reason.
+        #[source]
+        source: std::io::Error,
+    },
+    /// A line offered to this machine is not an answer at all.
+    #[error("{}: line {line}: {message}", error::CACHE_CORRUPT.code)]
+    Arriving {
+        /// Which line, counting from one.
+        line: u32,
+        /// What is wrong with it.
+        message: String,
+    },
 }
 
 impl CacheError {
@@ -54,8 +69,10 @@ impl CacheError {
     #[must_use]
     pub const fn code(&self) -> ErrorCode {
         match self {
-            Self::Unusable { .. } | Self::Refused { .. } => error::CACHE_UNUSABLE,
-            Self::Corrupt { .. } => error::CACHE_CORRUPT,
+            Self::Unusable { .. } | Self::Refused { .. } | Self::Carrying { .. } => {
+                error::CACHE_UNUSABLE
+            }
+            Self::Corrupt { .. } | Self::Arriving { .. } => error::CACHE_CORRUPT,
         }
     }
 }
@@ -250,6 +267,70 @@ impl Store {
             collected.evicted.push(entry.path);
         }
         Ok(collected)
+    }
+
+    /// Writes every answer this store holds, one to a line, and says how many.
+    ///
+    /// A matrix of jobs that each establish what one of them has established
+    /// already pays for the same work as many times as it has jobs. What
+    /// crosses between them is answers, and an answer is a report, so what is
+    /// written here is the report format and there is nothing else to read.
+    ///
+    /// An entry this machine cannot read back stops the export and names it.
+    /// Copying an answer nobody can check turns one broken answer into two,
+    /// and the machine it lands on has no way left to tell where it came from.
+    ///
+    /// # Errors
+    /// [`CacheError::Corrupt`] for an entry that is not the answer it claims
+    /// to be, [`CacheError::Unusable`] for a store that cannot be listed, and
+    /// [`CacheError::Carrying`] for a destination that stops taking bytes.
+    pub fn export(&self, out: &mut dyn std::io::Write) -> Result<u32, CacheError> {
+        let mut written: u32 = 0;
+        for entry in self.entries()? {
+            let Some(identity) = entry.path.file_stem().and_then(std::ffi::OsStr::to_str) else {
+                continue;
+            };
+            let Some(report) = self.get(identity)? else {
+                continue;
+            };
+            let text = crate::report::json::line(&report).map_err(|error| CacheError::Corrupt {
+                path: entry.path.clone(),
+                message: error.to_string(),
+            })?;
+            writeln!(out, "{text}").map_err(|source| CacheError::Carrying { source })?;
+            written = written.saturating_add(1);
+        }
+        Ok(written)
+    }
+
+    /// Reads answers another machine wrote, and says how many this one now holds.
+    ///
+    /// There is no check here that storing does not already make. What a
+    /// machine may keep is what a run may keep, and that rule lives in
+    /// [`Store::put`]: an answer that arrived from somewhere else is held to
+    /// it exactly as one this machine established, because a second copy of
+    /// the rule is a second chance to write it more loosely.
+    ///
+    /// # Errors
+    /// [`CacheError::Arriving`] for a line that is not a report, naming the
+    /// line, [`CacheError::Refused`] for an answer this machine may not keep,
+    /// and [`CacheError::Carrying`] for a source that stops mid-stream.
+    pub fn import(&self, input: &mut dyn std::io::Read) -> Result<u32, CacheError> {
+        let mut read: u32 = 0;
+        for (at, line) in std::io::BufRead::lines(std::io::BufReader::new(input)).enumerate() {
+            let line = line.map_err(|source| CacheError::Carrying { source })?;
+            if line.trim().is_empty() {
+                continue;
+            }
+            let report =
+                crate::report::json::parse(&line).map_err(|error| CacheError::Arriving {
+                    line: u32::try_from(at).unwrap_or(u32::MAX).saturating_add(1),
+                    message: error.to_string(),
+                })?;
+            let _at = self.put(&report)?;
+            read = read.saturating_add(1);
+        }
+        Ok(read)
     }
 
     fn entries(&self) -> Result<Vec<Entry>, CacheError> {

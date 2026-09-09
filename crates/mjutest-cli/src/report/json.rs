@@ -72,6 +72,19 @@ pub fn render(report: &Report) -> Result<String, ReportError> {
     Ok(text)
 }
 
+/// The same document with its whitespace taken out, for a stream where one line is one report.
+///
+/// What may be written is decided by the same `Serialize` this crate derives,
+/// so this and [`render`] cannot come to say different things: the only
+/// difference between them is where a reader's eye goes.
+///
+/// # Errors
+/// [`ReportError::Unserializable`], which is an invariant failure rather than
+/// anything about the run.
+pub fn line(report: &Report) -> Result<String, ReportError> {
+    serde_json::to_string(report).map_err(|source| ReportError::Unserializable { source })
+}
+
 /// Reads a document this version understands, and refuses anything else.
 ///
 /// # Errors

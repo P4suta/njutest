@@ -17,7 +17,7 @@
 //! route was decided by region and named at least one target — and a mutation
 //! nothing reached keeps its finding whatever the compiler did with it.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::assure::route::Route;
 
@@ -224,16 +224,18 @@ pub fn asked(
     judged: &[crate::assure::mutation::Judged],
 ) -> Vec<Asked> {
     let catalog = session.catalog();
+    let by_id: BTreeMap<&str, &rust_mutants::catalog::Mutant> = catalog
+        .mutants()
+        .iter()
+        .map(|mutant| (mutant.id.as_str(), mutant))
+        .collect();
     judged
         .iter()
         .filter_map(|one| {
             let crate::assure::mutation::Disposition::Survived { route } = &one.disposition else {
                 return None;
             };
-            let mutant = catalog
-                .mutants()
-                .iter()
-                .find(|mutant| mutant.id == one.id)?;
+            let mutant = by_id.get(one.id.as_str())?;
             Some(Asked {
                 candidate: mutant.candidate.clone(),
                 display_id: one.display_id.clone(),
@@ -250,11 +252,12 @@ pub fn settle(
     decided: &[Decided],
     watch: crate::watch::Watch<'_>,
 ) {
+    let mut answers: BTreeMap<&str, &Decided> = BTreeMap::new();
+    for answer in decided {
+        let _first = answers.entry(answer.display_id.as_str()).or_insert(answer);
+    }
     for one in judged.iter_mut() {
-        let Some(answer) = decided
-            .iter()
-            .find(|answer| answer.display_id == one.display_id)
-        else {
+        let Some(answer) = answers.get(one.display_id.as_str()) else {
             continue;
         };
         watch.trace.note(

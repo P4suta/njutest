@@ -10,7 +10,7 @@
 //! diagnostics, parallelism, and how long the run took are outside every key
 //! (ADR 0007).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use rust_mutants::cargo::Metadata;
@@ -77,8 +77,7 @@ pub fn behaviour(linked: &Linked, common: &Common) -> String {
 }
 
 fn key(domain: &str, linked: &Linked, common: &Common) -> String {
-    let environment: std::collections::BTreeSet<&(String, String)> =
-        common.environment.iter().collect();
+    let environment: BTreeSet<&(String, String)> = common.environment.iter().collect();
     let mut fields = Fields::new(domain);
     fields
         .list("packages", &linked.packages)
@@ -151,26 +150,24 @@ pub fn linked_by(reading: &Reading<'_>, package_id: &str) -> Linked {
         .iter()
         .map(|package| (package.id.as_str(), package))
         .collect();
-    let mut packages = Vec::new();
+    let mut packages = BTreeSet::new();
     let mut sources = BTreeMap::new();
     let mut reads_directories = false;
     for id in &closure {
         let Some(package) = by_id.get(id.as_str()) else {
-            packages.push(id.clone());
+            let _first = packages.insert(id.clone());
             continue;
         };
         let name = format!("{}@{}", package.name, package.version);
-        packages.push(name.clone());
+        let _first = packages.insert(name.clone());
         let Some(prefix) = inside(root, package.manifest_dir()) else {
             continue;
         };
         sources.insert(name, package_digest(root, scan, &prefix));
         reads_directories |= reads_directories_under(root, scan, &prefix);
     }
-    packages.sort();
-    packages.dedup();
     Linked {
-        packages,
+        packages: packages.into_iter().collect(),
         sources,
         dependencies: dependencies.to_owned(),
         reads_directories,

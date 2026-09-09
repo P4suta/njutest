@@ -58,12 +58,26 @@ impl Fields {
     }
 }
 
-/// A field too long to length-prefix cannot occur: every value here is a digest, a version banner, a path, or an environment value, and none reaches four gigabytes. Should one ever, the digest absorbs a marker rather than silently dropping the value.
+/// A field too long to length-prefix cannot occur: every value here is a digest, a version banner, a path, or an environment value, and none reaches four gigabytes. Should one ever, [`absorb`] takes it.
 fn write(hasher: &mut Sha256, value: &str) {
     if write_length_prefixed(hasher, value).is_err() {
-        hasher.update(b"\xffoverlong\xff");
-        hasher.update(Sha256::digest(value.as_bytes()));
+        absorb(hasher, value);
     }
+}
+
+/// What a value too long to carry its own length contributes to a digest instead of itself.
+///
+/// This is separate from [`write`] because the branch that calls it is one no
+/// test can reach — reaching it needs a single field of four gigabytes — while
+/// what it contributes is a claim a test can hold on its own. The claim has
+/// two halves and both matter: the marker says the value arrived in this form
+/// rather than the ordinary one, so a run cannot be made to produce the same
+/// number by two different routes, and the value's own digest keeps two
+/// different overlong values apart, which is the whole difference between
+/// absorbing a value and dropping it.
+pub fn absorb(hasher: &mut Sha256, value: &str) {
+    hasher.update(b"\xffoverlong\xff");
+    hasher.update(Sha256::digest(value.as_bytes()));
 }
 
 /// How much of the workspace a run looked at. It is part of the identity: a run that looked at one package established less than one that looked at everything, and the two must never share a cached answer.
@@ -101,12 +115,12 @@ impl Mode {
         match self {
             Self::Full => Vec::new(),
             Self::Changed { base } => vec![base.clone()],
-            Self::Scoped { packages } => {
-                let mut sorted = packages.clone();
-                sorted.sort_unstable();
-                sorted.dedup();
-                sorted
-            }
+            Self::Scoped { packages } => packages
+                .iter()
+                .cloned()
+                .collect::<std::collections::BTreeSet<String>>()
+                .into_iter()
+                .collect(),
         }
     }
 }

@@ -169,6 +169,44 @@ job's limit; the cache is not.
 what differs, which is usually the difference between two minutes and two
 hours. Keep the whole catalog for the weekly run.
 
+## Carrying answers between machines
+
+The cache a run reads back lives on the machine that filled it, and a hosted
+runner is a fresh machine every time. `mjutest cache --export FILE` writes
+every answer this machine holds, one JSON document to a line, and
+`mjutest cache --import FILE` reads them into another machine's store. Both
+say how many moved, so a job that carried nothing says so rather than
+succeeding silently.
+
+```yaml
+- uses: actions/cache@v4
+  with:
+    path: answers.jsonl
+    key: mjutest-answers-${{ github.sha }}
+    restore-keys: mjutest-answers-
+- run: mjutest cache --import answers.jsonl || true
+- run: mjutest verify --locked
+  continue-on-error: true
+- run: mjutest cache --export answers.jsonl
+```
+
+The import is allowed to fail on the first run of a repository, when there is
+no file yet; nothing else here is. An answer arriving from another machine is
+held to exactly what a run of this one would keep it to — the identity it is
+filed under, and the audit every durable report must satisfy — because that
+rule lives in one place and a second copy of it would be a second chance to
+write it more loosely. A line that is not an answer refuses the import and
+names the line (`MJ8004`); an entry this machine cannot read back refuses the
+export and names the entry, since copying an answer nobody can check makes one
+broken answer into two.
+
+**What this does not carry is the build.** The compiled tree lives under the
+temporary directory, keyed to the workspace root, and it is the engine's
+rather than the runner's; `mjutest cache` prints where it is. A matrix that
+wants to compile once caches that directory with a stable `TMPDIR`, and every
+leg of it must be the same platform and the same toolchain for the artifacts
+to be usable at all.
+
 ## Using it from another repository
 
 `.github/actions/mjutest` is a composite action that installs a published

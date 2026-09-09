@@ -244,8 +244,16 @@ fn the_behaviour_key_of_a_known_target_is_the_one_it_has_always_been() {
     let golden = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/testdata/behaviour-key.golden");
 
-    mjutest_devkit::golden::golden(&golden, behaviour(&linked(), &common()).as_bytes())
-        .expect("the recorded key");
+    let reading = Linked {
+        reads_directories: true,
+        ..linked()
+    };
+    let recorded = format!(
+        "{}\n{}\n",
+        behaviour(&linked(), &common()),
+        behaviour(&reading, &common())
+    );
+    mjutest_devkit::golden::golden(&golden, recorded.as_bytes()).expect("the recorded key");
 }
 
 /// The digest one package is keyed on, in a tree this test writes.
@@ -350,5 +358,117 @@ fn a_package_that_says_it_reads_what_sits_beside_it_is_keyed_on_all_of_it() {
         with_script,
         "and a build script can read anything and tell cargo to watch it, which this \
          release does not read, so the same answer holds: everything beside it"
+    );
+}
+
+/// A workspace whose closure holds a package of every kind `linked_by` has to tell apart.
+fn four_kinds(repo: &Repo) -> Metadata {
+    repo.package("demo").lib("pub fn f() {}\n");
+    repo.write(
+        "crates/deep/Cargo.toml",
+        "[package]\nname = \"deep\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    );
+    repo.write(
+        "crates/deep/src/lib.rs",
+        "pub fn all() -> usize { std::fs::read_dir(\".\").into_iter().count() }\n",
+    );
+    repo.write(
+        "crates/quiet/Cargo.toml",
+        "[package]\nname = \"quiet\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    );
+    repo.write("crates/quiet/src/lib.rs", "pub fn g() {}\n");
+
+    let root = repo.root().display().to_string();
+    let document = format!(
+        r#"{{
+          "version": 1,
+          "workspace_root": "{root}",
+          "target_directory": "{root}/target",
+          "workspace_members": ["demo 0.1.0 (path+file://{root})"],
+          "packages": [
+            {{ "id": "demo 0.1.0 (path+file://{root})", "name": "demo", "version": "0.1.0",
+               "manifest_path": "{root}/Cargo.toml" }},
+            {{ "id": "far 1.0.0 (registry+x)", "name": "far", "version": "1.0.0",
+               "manifest_path": "/elsewhere/Cargo.toml" }},
+            {{ "id": "deep 0.1.0 (path+file://{root}/crates/deep)", "name": "deep",
+               "version": "0.1.0", "manifest_path": "{root}/crates/deep/Cargo.toml" }},
+            {{ "id": "quiet 0.1.0 (path+file://{root}/crates/quiet)", "name": "quiet",
+               "version": "0.1.0", "manifest_path": "{root}/crates/quiet/Cargo.toml" }}
+          ],
+          "resolve": {{
+            "root": null,
+            "nodes": [
+              {{ "id": "demo 0.1.0 (path+file://{root})", "deps": [
+                 {{ "pkg": "ghost 9.9.9 (registry+x)", "dep_kinds": [{{ "kind": null }}] }},
+                 {{ "pkg": "far 1.0.0 (registry+x)", "dep_kinds": [{{ "kind": null }}] }},
+                 {{ "pkg": "deep 0.1.0 (path+file://{root}/crates/deep)",
+                    "dep_kinds": [{{ "kind": null }}] }},
+                 {{ "pkg": "quiet 0.1.0 (path+file://{root}/crates/quiet)",
+                    "dep_kinds": [{{ "kind": null }}] }}
+              ] }},
+              {{ "id": "ghost 9.9.9 (registry+x)", "deps": [] }},
+              {{ "id": "far 1.0.0 (registry+x)", "deps": [] }},
+              {{ "id": "deep 0.1.0 (path+file://{root}/crates/deep)", "deps": [] }},
+              {{ "id": "quiet 0.1.0 (path+file://{root}/crates/quiet)", "deps": [] }}
+            ]
+          }}
+        }}"#
+    );
+    Metadata::parse(document.as_bytes()).expect("the document parses")
+}
+
+#[test]
+fn every_package_of_a_closure_is_reached_whatever_the_ones_before_it_were() {
+    let repo = Repo::new();
+    let metadata = four_kinds(&repo);
+    let scanned = scan(repo.root(), &[], &[]).expect("the tree reads");
+    let dependencies = "b".repeat(64);
+    let linked = linked_by(
+        &Reading {
+            metadata: &metadata,
+            scan: &scanned,
+            root: repo.root(),
+            dependencies: &dependencies,
+        },
+        &format!("demo 0.1.0 (path+file://{})", repo.root().display()),
+    );
+
+    assert!(
+        linked
+            .packages
+            .contains(&"ghost 9.9.9 (registry+x)".to_owned()),
+        "a package the resolved graph names and the package list does not is named by \
+         the id it was asked about, because a key that leaves it out is a key that says \
+         two closures are one: {:?}",
+        linked.packages
+    );
+    assert!(
+        linked.packages.contains(&"quiet@0.1.0".to_owned())
+            && linked.packages.contains(&"deep@0.1.0".to_owned())
+            && linked.packages.contains(&"far@1.0.0".to_owned()),
+        "and every package after it is still read: a closure is walked to its end, and \
+         one that stops at the first package it cannot name, or at the first outside the \
+         tree, silently keys a target on part of what it links: {:?}",
+        linked.packages
+    );
+    assert!(
+        linked.sources.contains_key("deep@0.1.0") && linked.sources.contains_key("quiet@0.1.0"),
+        "a package inside the tree is keyed on its own sources wherever in the tree it \
+         is, so the directories between the root and it have to be spelled back out: \
+         {:?}",
+        linked.sources
+    );
+    assert_ne!(
+        linked.sources.get("deep@0.1.0"),
+        linked.sources.get("quiet@0.1.0"),
+        "and two packages in two directories are keyed on two different things: a \
+         prefix that came out empty would name the whole tree for both of them"
+    );
+    assert!(
+        linked.reads_directories,
+        "one package of a closure that reads a directory makes the whole key the tree's, \
+         however many packages beside it do not: a target links what it links, and the \
+         one dependency whose answer depends on what is on the disk decides for all of \
+         them"
     );
 }

@@ -59,6 +59,8 @@ toml_edit = { workspace = true }
 rustix = { workspace = true }
 
 [dev-dependencies]
+hex = { workspace = true }
+sha2 = { workspace = true }
 rustix = { workspace = true }
 rust-mutants = { workspace = true, features = ["testkit"] }
 criterion = { workspace = true }
@@ -68,6 +70,10 @@ tempfile = { workspace = true }
 
 [[bench]]
 name = "report"
+harness = false
+
+[[bench]]
+name = "evidence"
 harness = false
 
 [lints]
