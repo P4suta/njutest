@@ -41,6 +41,53 @@ fn help_flag_matches_the_recorded_help_text() {
     mjutest_devkit::golden::golden(&golden, &output.stdout).expect("help text is the recorded one");
 }
 
+/// Every command the top-level help lists, which is every command there is.
+///
+/// Read from the help rather than written down here, because a list somebody
+/// maintains beside the one the program prints is a list that falls behind:
+/// none of these had a recorded help at all until it was read from the
+/// program instead.
+fn subcommands() -> Vec<String> {
+    let help = String::from_utf8_lossy(&rust_mutants(&["--help"]).stdout).into_owned();
+    let listing = help
+        .split_once("Commands:\n")
+        .map_or(String::new(), |(_before, rest)| {
+            rest.split("\n\n").next().unwrap_or_default().to_owned()
+        });
+    let named: Vec<String> = listing
+        .lines()
+        .filter_map(|line| line.strip_prefix("  "))
+        .filter(|line| !line.starts_with(' '))
+        .filter_map(|line| line.split_whitespace().next())
+        .filter(|name| *name != "help")
+        .map(str::to_owned)
+        .collect();
+    assert!(
+        named.len() > 10,
+        "the help lists {} commands, and reading none of them is not the same as there \
+         being none: {listing}",
+        named.len()
+    );
+    named
+}
+
+#[test]
+fn every_subcommand_has_its_own_recorded_help() {
+    for name in subcommands() {
+        let output = rust_mutants(&[name.as_str(), "--help"]);
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "the help offers {name} and the program does not take it: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let golden = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join(format!("tests/testdata/help-{name}.golden"));
+        mjutest_devkit::golden::golden(&golden, &output.stdout)
+            .unwrap_or_else(|error| panic!("{name}: {error}"));
+    }
+}
+
 #[test]
 fn no_arguments_prints_the_usage_to_stderr_and_exits_2() {
     let output = rust_mutants(&[]);

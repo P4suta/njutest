@@ -1,0 +1,23 @@
+List the operators this release knows, with the tier and version that pin them
+
+Usage: rust-mutants rules [OPTIONS]
+
+Options:
+      --color <WHEN>
+          Whether to paint the output. `auto` paints a terminal that has not set `NO_COLOR`
+
+          Possible values:
+          - auto:   Colour a terminal that has not asked to go without
+          - always: Always
+          - never:  Never
+          
+          [default: auto]
+
+      --tier <TIER>
+          Only the rules this tier selects. Every tier when none is named
+
+      --json
+          Print the rules as a document rather than the lines a person reads
+
+  -h, --help
+          Print help (see a summary with '-h')

@@ -1,0 +1,27 @@
+Gather everything one run established into one directory, for a bug report
+
+Usage: rust-mutants diagnostics [OPTIONS] [RUN]
+
+Arguments:
+  [RUN]
+          The run, by its identity. Defaults to the newest
+
+Options:
+      --color <WHEN>
+          Whether to paint the output. `auto` paints a terminal that has not set `NO_COLOR`
+
+          Possible values:
+          - auto:   Colour a terminal that has not asked to go without
+          - always: Always
+          - never:  Never
+          
+          [default: auto]
+
+      --root <DIR>
+          The workspace root. Defaults to the working directory
+
+      --output <DIR>
+          Write the bundle here rather than beside the run
+
+  -h, --help
+          Print help (see a summary with '-h')

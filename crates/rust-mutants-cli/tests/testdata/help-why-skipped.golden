@@ -1,0 +1,125 @@
+Tally why places were passed over
+
+Usage: rust-mutants why-skipped [OPTIONS]
+
+Options:
+      --color <WHEN>
+          Whether to paint the output. `auto` paints a terminal that has not set `NO_COLOR`
+
+          Possible values:
+          - auto:   Colour a terminal that has not asked to go without
+          - always: Always
+          - never:  Never
+          
+          [default: auto]
+
+      --root <DIR>
+          The workspace root. Defaults to the working directory
+
+      --config <FILE>
+          Read this configuration file instead of the one in the workspace root
+
+      --no-config
+          Read no configuration file at all
+
+      --tier <TIER>
+          Which tier of operators to apply
+
+          Possible values:
+          - balanced: The operators worth running everywhere
+          - strong:   Balanced, plus the bitwise and compound-assignment families
+          - all:      Every operator, statement deletion included
+
+      --operator <RULE>
+          Apply exactly these operators, by name. Repeatable
+
+      --include <GLOB>
+          Only mutate files matching this pattern. Repeatable
+
+      --exclude <GLOB>
+          Never mutate files matching this pattern. Repeatable
+
+      --changed
+          Mutate only the files that differ from `HEAD`, committed and not. Narrows `--include`
+          rather than widening it
+
+      --changed-from <REV>
+          Mutate only the files that differ from this revision
+
+  -p, --package <NAME>
+          Only mutate these packages. Repeatable
+
+      --allow-outside <DIR>
+          Let the build read this directory from outside the root, copying it beside the tree.
+          Repeatable
+
+      --features <LIST>
+          Compile with these cargo features. Repeatable, and each may be a comma-separated list
+
+      --build-target <TRIPLE>
+          Compile for this target triple instead of the host. Not `run --target`, which names a test
+          target
+
+      --profile <NAME>
+          Compile with this cargo profile
+
+      --build-jobs <N>
+          How many compilation jobs cargo may run at once
+
+  -j, --jobs <N>
+          How many mutants to measure at once. Zero is as many as the machine has, capped at four
+
+      --skip-target <PKG/KIND/NAME>
+          Never start this target, by the id a report names it with. Repeatable
+
+      --timeout <DURATION>
+          How long one mutant execution may take before it is retried serially, as in `90s` or `5m`
+
+      --trace [<DIR>]
+          Record what the run does, as JSON Lines. Without a directory a run writes beside its
+          report and every other command under `<reports>/traces/`
+
+      --offline
+          Never touch the network
+
+      --locked
+          Refuse to change `Cargo.lock`
+
+      --keep-temp
+          Keep the snapshot and the target directory instead of removing them
+
+      --no-verify
+          Skip the run of every target with nothing active
+
+      --coverage
+          Measure once which target reached what, and run a mutant only against the targets that
+          reached it
+
+      --no-coverage
+          Run every mutant against every target, measuring no coverage and proving nothing about
+          reach
+
+      --no-touch
+          Do not ask the guards which of each target's tests reached them, and so run every test of
+          every target that could
+
+      --equivalence
+          After the run, ask the compiler whether each survivor's mutation is one it renders at all
+
+      --no-doctests
+          Leave a library's documented examples out of the targets
+
+      --all-features
+          Compile with every feature of every selected package
+
+      --no-default-features
+          Compile with the default features off
+
+      --file <PATH>
+          Say every place in this file rather than tallying the whole tree
+
+      --line <N>
+          With `--file`, only the places on this line
+
+  -h, --help
+          Print help (see a summary with '-h')

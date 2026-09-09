@@ -1,0 +1,24 @@
+Read a recording back: what it counted, what each phase took, and what moved between two of them
+
+Usage: rust-mutants trace [OPTIONS] <COMMAND>
+
+Commands:
+  summary  What a recording counted, what every phase took, and which commands were the slowest
+  check    Say whether a recording is complete: it begins, it ends, it lost nothing, and every phase
+           it opened it closed
+  diff     What moved between two recordings
+  help     Print this message or the help of the given subcommand(s)
+
+Options:
+      --color <WHEN>
+          Whether to paint the output. `auto` paints a terminal that has not set `NO_COLOR`
+
+          Possible values:
+          - auto:   Colour a terminal that has not asked to go without
+          - always: Always
+          - never:  Never
+          
+          [default: auto]
+
+  -h, --help
+          Print help (see a summary with '-h')
