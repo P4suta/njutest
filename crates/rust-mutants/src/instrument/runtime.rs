@@ -474,12 +474,10 @@ pub fn render(rendering: &Rendering<'_>) -> String {
         markers,
         newline,
     } = *rendering;
-    let mut ids: Vec<(&str, u32)> = placements
+    let ids: BTreeSet<(&str, u32)> = placements
         .iter()
         .map(|placement| (placement.id.as_str(), placement.index))
         .collect();
-    ids.sort_unstable();
-    ids.dedup();
     let mut table = String::new();
     for (id, index) in &ids {
         let written = writeln!(table, "        ({id:?}, {index}),");

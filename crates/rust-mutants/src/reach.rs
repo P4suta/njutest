@@ -260,16 +260,14 @@ fn run_targets(
 
 /// Every executable the build produced, test harnesses and plain binaries alike.
 fn executables(messages: &[crate::cargo::Message]) -> Vec<PathBuf> {
-    let mut found: Vec<PathBuf> = messages
+    let found: BTreeSet<PathBuf> = messages
         .iter()
         .filter_map(|message| match message {
             crate::cargo::Message::CompilerArtifact(artifact) => artifact.executable.clone(),
             _ => None,
         })
         .collect();
-    found.sort();
-    found.dedup();
-    found
+    found.into_iter().collect()
 }
 
 /// A target's identity as one file name: the identity is a path of its own, and a profile is a file beside the others rather than a tree.
