@@ -375,6 +375,8 @@ fn stages_of(complained: &str, root: &std::path::Path) {
          reached {progressed:?}, mutations {routed:?}"
     );
 
+    judged(&events);
+
     for named in ["open", "soundness", "baseline", "mutation"] {
         assert!(
             said.contains(&named),
@@ -387,6 +389,85 @@ fn stages_of(complained: &str, root: &std::path::Path) {
              run is not in front of them: {recorded:?}"
         );
     }
+}
+
+/// What a run records about each mutation it judged, which is the only account of that phase a person has afterwards.
+fn judged(events: &[mjutest_cli::trace::Event]) {
+    let phases: Vec<&str> = events
+        .iter()
+        .filter_map(|event| match &event.payload {
+            mjutest_cli::trace::Payload::PhaseStart { phase } => Some(phase.name.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        phases.contains(&"mutation-judge"),
+        "the phase that takes the time names itself in the recording, or the minutes \
+         between two events belong to nothing anybody can name: {phases:?}"
+    );
+
+    let routes: Vec<&mjutest_cli::trace::RouteRecord> = events
+        .iter()
+        .filter_map(|event| match &event.payload {
+            mjutest_cli::trace::Payload::Route { route } => Some(route),
+            _ => None,
+        })
+        .collect();
+    let placed = routes
+        .iter()
+        .find(|route| route.granularity == "block")
+        .expect("a mutation the measurement placed");
+    assert!(
+        placed.fallback.is_none() && !placed.reaching.is_empty(),
+        "a route the measurement decided says so by naming the targets it decided on \
+         and nothing that widened it: a route that named neither is one a reader cannot \
+         tell from a measurement that said nothing: {placed:?}"
+    );
+
+    let probes: Vec<&mjutest_cli::trace::ProbeExecRecord> = events
+        .iter()
+        .filter_map(|event| match &event.payload {
+            mjutest_cli::trace::Payload::ProbeExec { probe } => Some(probe),
+            _ => None,
+        })
+        .collect();
+    let seen = probes
+        .iter()
+        .find(|probe| probe.outcome == "measured")
+        .expect("a target the infection layer measured");
+    assert!(
+        seen.infected.is_some() && !seen.target.is_empty(),
+        "a target the layer measured carries a count, because none is not zero: a \
+         reader who cannot tell \"infected nothing\" from \"was never asked\" cannot tell \
+         a discharge resting on evidence from one resting on silence: {seen:?}"
+    );
+
+    let execs: Vec<&mjutest_cli::trace::MutantExecRecord> = events
+        .iter()
+        .filter_map(|event| match &event.payload {
+            mjutest_cli::trace::Payload::MutantExec { mutant } => Some(mutant),
+            _ => None,
+        })
+        .collect();
+    let started = execs.first().expect("a mutation this run started");
+    assert!(
+        !started.mutant.is_empty() && !started.target.is_empty() && !started.outcome.is_empty(),
+        "every execution says which mutation it was, what it ran against, and what came \
+         of it, or the count of executions is a number about nothing: {started:?}"
+    );
+    assert!(
+        !execs.iter().any(|exec| exec.alone),
+        "and none of them was given the machine to itself, because none of them ran out \
+         of time: a run that says it did that without a budget expiring is one whose \
+         account of where the time went is wrong: {execs:?}"
+    );
+    let against: std::collections::BTreeSet<&str> =
+        execs.iter().map(|exec| exec.target.as_str()).collect();
+    assert!(
+        !against.contains("package-suite"),
+        "and a mutation the measurement placed is put to the targets it placed rather \
+         than to the package, which is the whole of what routing buys: {against:?}"
+    );
 }
 
 fn copy(from: &std::path::Path, to: &std::path::Path) {

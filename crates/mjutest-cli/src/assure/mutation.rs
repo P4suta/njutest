@@ -17,7 +17,6 @@ use crate::assure::route::Route;
 use crate::assure::schedule;
 use crate::evidence::store;
 use crate::report::{Finding, FindingKind, MutantAccounting};
-use crate::ui::Notes;
 use crate::watch::Watch;
 
 /// Why a kill could not be believed.
@@ -361,7 +360,8 @@ pub struct Evidence {
 
 impl Evidence {
     /// The identity of the target a person calls `name`.
-    fn identity(&self, name: &str) -> Option<&str> {
+    #[must_use]
+    pub fn identity(&self, name: &str) -> Option<&str> {
         self.names
             .iter()
             .find(|(_id, called)| called.as_str() == name)
@@ -374,35 +374,13 @@ impl Evidence {
     /// by identity, and reuse is a claim about a set: a set this run can only
     /// half resolve is one it may neither believe nor record, because the half
     /// it resolved is a smaller claim wearing the same name.
-    fn identities(&self, names: &[&str]) -> Option<Vec<String>> {
+    #[must_use]
+    pub fn identities(&self, names: &[&str]) -> Option<Vec<String>> {
         names
             .iter()
             .map(|name| self.identity(name).map(ToOwned::to_owned))
             .collect()
     }
-}
-
-/// Runs every accepted mutant against the tests that could notice it.
-///
-/// # Errors
-/// The engine's refusals. A mutant that survives is not an error: it is the
-/// finding.
-pub fn run(
-    subject: Subject<'_>,
-    options: &MutationOptions,
-    notes: &mut Notes<'_>,
-    watch: Watch<'_>,
-) -> Result<Mutation, crate::error::RunnerError> {
-    let mut nothing = |_judged: &Judged| {};
-    run_resuming(
-        subject,
-        options,
-        &mut Resume {
-            state: None,
-            record: &mut nothing,
-        },
-        crate::assure::baseline::Reporting { notes, watch },
-    )
 }
 
 /// What an interrupted run already judged, and where to record what this one judges.
@@ -417,14 +395,15 @@ pub struct Resume<'a> {
     pub record: &'a mut dyn FnMut(&Judged),
 }
 
-/// [`run`], continuing from what an interrupted run had already judged.
+/// Runs every accepted mutant against the tests that could notice it, continuing from what an interrupted run had already judged.
 ///
 /// Only a kill and a confirmed timeout are inherited: both are existential
 /// claims about this exact tree, and a named test noticing a mutant stays true
 /// however the next run routes. Everything else is re-derived.
 ///
 /// # Errors
-/// See [`run`].
+/// The engine's refusals. A mutant that survives is not an error: it is the
+/// finding.
 pub fn run_resuming(
     subject: Subject<'_>,
     options: &MutationOptions,
@@ -611,7 +590,12 @@ fn record_route(watch: Watch<'_>, mutant: &Mutant, route: &Route, reused: Option
 }
 
 /// What an earlier run established about this mutant, when this run may believe it.
-fn reuse(options: &MutationOptions, route: &Route, mutant: &str) -> Option<(Disposition, String)> {
+#[must_use]
+pub fn reuse(
+    options: &MutationOptions,
+    route: &Route,
+    mutant: &str,
+) -> Option<(Disposition, String)> {
     let evidence = options.evidence.as_ref()?;
     let record = store::read(&evidence.root, mutant).ok()??;
     let reaching: BTreeSet<String> = answered(route, evidence)?.into_iter().collect();
@@ -632,7 +616,7 @@ fn reuse(options: &MutationOptions, route: &Route, mutant: &str) -> Option<(Disp
 }
 
 /// Records what this run established, for the next run of a tree these targets still behave the same in. Only a named kill and a survival are recorded: everything else is about the run rather than about the mutant.
-fn keep(options: &MutationOptions, mutant: &str, route: &Route, disposition: &Disposition) {
+pub fn keep(options: &MutationOptions, mutant: &str, route: &Route, disposition: &Disposition) {
     let Some(evidence) = options.evidence.as_ref() else {
         return;
     };
@@ -680,7 +664,8 @@ fn keep(options: &MutationOptions, mutant: &str, route: &Route, disposition: &Di
 /// target, so naming each of them with its own behaviour key says exactly that,
 /// and a target that enters or leaves the suite is then visible where one key
 /// over the package would have hidden it.
-fn answered(route: &Route, evidence: &Evidence) -> Option<Vec<String>> {
+#[must_use]
+pub fn answered(route: &Route, evidence: &Evidence) -> Option<Vec<String>> {
     evidence.identities(&route.reaching())
 }
 
@@ -788,7 +773,7 @@ fn against(
         Outcome::Killed | Outcome::TimedOut => Ok(Some(
             match confirm(
                 session,
-                &narrowed(request, measured, &result),
+                &narrowed(request, measured, &result.target),
                 judging.controls,
                 watch,
             )? {
@@ -910,11 +895,16 @@ pub const fn quiet_measurement_due(outcome: Outcome, cancelled: bool) -> bool {
 /// pass right now, and the kill has to reproduce — so a request that named no
 /// target is narrowed to the one that answered. Asking the whole suite again
 /// would put both questions to every other target as well.
-fn narrowed(request: Request, measured: Option<&Measured>, result: &MutantResult) -> Request {
-    if measured.is_some() || result.target.is_empty() {
+///
+/// `answered` is the target the execution says found it, which is empty when
+/// the execution did not say. This takes that rather than the whole result,
+/// because it is the whole of what the decision reads.
+#[must_use]
+pub fn narrowed(request: Request, measured: Option<&Measured>, answered: &str) -> Request {
+    if measured.is_some() || answered.is_empty() {
         return request;
     }
-    request.with_target(result.target.clone()).test(None)
+    request.with_target(answered.to_owned()).test(None)
 }
 
 /// The name a route that ran the whole package suite answers to, in a recording and in a report.

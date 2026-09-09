@@ -496,3 +496,86 @@ fn which_test_decided_a_mutation_is_named_by_the_dispositions_that_had_one() {
         );
     }
 }
+
+/// Three mutations of one disposition, so a column counted over them is that column alone.
+fn three(of_a_kind: [(&str, Disposition, bool); 3]) -> Mutation {
+    Mutation {
+        judged: of_a_kind
+            .into_iter()
+            .map(|(name, disposition, reused)| of(name, disposition, reused))
+            .collect(),
+        skips: BTreeMap::new(),
+    }
+}
+
+#[test]
+fn each_column_counts_its_own_kind_and_not_whatever_makes_the_total_come_out() {
+    let route = || Route::Discharged {
+        discharged: vec![discharge("pkg/lib/pkg", NEVER_INFECTED)],
+    };
+    let killed = || Disposition::Killed {
+        by: "one".to_owned(),
+    };
+    let none = BTreeSet::new();
+    let first = |name: &str| BTreeSet::from([name.repeat(4)]);
+
+    assert_eq!(
+        three([
+            ("aaaa", killed(), true),
+            ("bbbb", killed(), false),
+            ("cccc", killed(), false),
+        ])
+        .accounting(&none)
+        .reused_killed,
+        1,
+        "a run says how many of its kills it read back rather than establishing, so the \
+         ones it counts are the ones naming the run they came from: counting the others \
+         gives the same total on a run where the two happen to be even, and a different \
+         answer on every run where they are not"
+    );
+    assert_eq!(
+        three([
+            ("mmmm", Disposition::Survived { route: route() }, true),
+            ("nnnn", Disposition::Survived { route: route() }, false),
+            ("oooo", Disposition::Survived { route: route() }, false),
+        ])
+        .accounting(&none)
+        .reused_survived,
+        1,
+        "and how many survivals"
+    );
+    assert_eq!(
+        three([
+            ("dddd", Disposition::Survived { route: route() }, false),
+            ("eeee", Disposition::Survived { route: route() }, false),
+            ("ffff", Disposition::Survived { route: route() }, false),
+        ])
+        .accounting(&first("dddd"))
+        .accepted,
+        1,
+        "and how many of its survivors a reviewer answered for, which is the ones the \
+         ledger names rather than the ones it does not"
+    );
+    assert_eq!(
+        three([
+            ("gggg", Disposition::Unreached, false),
+            ("hhhh", Disposition::Unreached, false),
+            ("iiii", Disposition::Unreached, false),
+        ])
+        .accounting(&first("gggg"))
+        .accepted,
+        1,
+        "and the same of the mutations nothing reached"
+    );
+    assert_eq!(
+        three([
+            ("jjjj", Disposition::Equivalent { route: route() }, false),
+            ("kkkk", Disposition::Equivalent { route: route() }, false),
+            ("llll", Disposition::Equivalent { route: route() }, false),
+        ])
+        .accounting(&first("jjjj"))
+        .accepted,
+        1,
+        "and of the ones the compiler rendered identically"
+    );
+}
