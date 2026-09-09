@@ -305,6 +305,46 @@ fn a_run_told_where_to_look_for_a_toolchain_looks_there_and_nowhere_else() {
     );
 }
 
+/// Every stage a whole run goes through names itself, to a person and to a recording.
+fn stages_of(complained: &str, root: &std::path::Path) {
+    let said: Vec<&str> = complained
+        .lines()
+        .filter_map(|line| line.strip_prefix("== "))
+        .collect();
+    let recording = std::fs::read_dir(root.join(".mjutest/trace"))
+        .expect("the trace directory")
+        .flatten()
+        .map(|entry| entry.path().join(mjutest_cli::trace::FILE_NAME))
+        .next()
+        .expect("one recording");
+    let events = mjutest_cli::trace::read_events(std::io::BufReader::new(
+        std::fs::File::open(&recording).expect("the stream"),
+    ))
+    .expect("the events read back");
+    let problems = mjutest_cli::trace::check(&events);
+    assert!(problems.is_empty(), "{problems:?}");
+    let recorded: Vec<&str> = events
+        .iter()
+        .filter_map(|event| match &event.payload {
+            mjutest_cli::trace::Payload::PhaseStart { phase } => Some(phase.name.as_str()),
+            _ => None,
+        })
+        .collect();
+
+    for named in ["open", "soundness", "baseline", "mutation"] {
+        assert!(
+            said.contains(&named),
+            "every stage a whole run goes through names itself as it starts, or the \
+             minutes between two lines belong to nothing anybody can name: {said:?}"
+        );
+        assert!(
+            recorded.contains(&named),
+            "and says the same to a recording, which is what somebody reads when the \
+             run is not in front of them: {recorded:?}"
+        );
+    }
+}
+
 fn copy(from: &std::path::Path, to: &std::path::Path) {
     std::fs::create_dir_all(to).expect("the directory");
     for entry in std::fs::read_dir(from).expect("the fixture") {
@@ -349,6 +389,7 @@ fn a_run_in_this_process_writes_what_it_learned_before_it_compiled_anything() {
             "--offline",
             "--locked",
             "--no-cache",
+            "--trace",
             "--ui=plain",
         ]
         .map(OsString::from),
@@ -395,4 +436,47 @@ fn a_run_in_this_process_writes_what_it_learned_before_it_compiled_anything() {
         "and states that it could not name the commit it verified, which is the one \
          thing that would let somebody come back to this tree: {stated:?}"
     );
+
+    stages_of(&String::from_utf8_lossy(&complaints), &root);
+
+    accounted(&report);
+}
+
+/// What a whole run's report says about the targets and the mutations it judged.
+fn accounted(report: &serde_json::Value) {
+    let targets = report["targets"].as_array().expect("target records");
+    assert!(
+        !targets.is_empty(),
+        "a run that measured targets says which ones, or the counts it carries are \
+         numbers about nothing a reader can check: {report}"
+    );
+    let durations: Vec<u64> = targets
+        .iter()
+        .filter_map(|one| one["duration_ms"].as_u64())
+        .collect();
+    assert!(
+        durations.windows(2).all(|pair| pair[0] >= pair[1]),
+        "and they are ordered slowest first, which is the order somebody reading for \
+         where the time went needs: {durations:?}"
+    );
+    assert_eq!(
+        report["accounting"]["targets"]["selected"].as_u64(),
+        u64::try_from(targets.len()).ok(),
+        "the counts and the records are two ways of saying one thing: {report}"
+    );
+    assert!(
+        report["accounting"]["mutants"]["cataloged"]
+            .as_u64()
+            .is_some_and(|counted| counted > 0)
+            && !report["mutants"].as_array().expect("mutants").is_empty(),
+        "and a run that catalogued mutations records what became of each: {report}"
+    );
+    assert!(
+        report["timing"]["finished"]
+            .as_str()
+            .is_some_and(|when| !when.is_empty()),
+        "a report that never says when it finished is one nothing can be compared \
+         against: {report}"
+    );
+    assert_eq!(report["verdict"], "INSUFFICIENT");
 }
