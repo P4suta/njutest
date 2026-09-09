@@ -98,6 +98,7 @@ multiple_crate_versions = "allow"
 
 [workspace.dependencies]
 # Internal crates. Version and path together so a member can be published.
+mjutest-cli = { version = "0.1.0", path = "crates/mjutest-cli" }
 rust-mutants = { version = "0.1.0", path = "crates/rust-mutants" }
 mjutest = { version = "0.1.0", path = "crates/mjutest" }
 mjutest-macros = { version = "0.1.0", path = "crates/mjutest-macros" }

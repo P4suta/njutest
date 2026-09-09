@@ -60,7 +60,7 @@ rustix = { workspace = true }
 
 [dev-dependencies]
 hex = { workspace = true }
-mjutest-cli = { path = ".", features = ["testkit"] }
+mjutest-cli = { workspace = true, features = ["testkit"] }
 proptest = { workspace = true }
 sha2 = { workspace = true }
 rustix = { workspace = true }

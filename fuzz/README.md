@@ -54,6 +54,8 @@ so each has to fail closed rather than plausibly.
 | `touch_log` | never panics; every index it accepts is one the catalog holds, and every record it attributes to a test is one that test and the target can both see |
 | `duration` | never panics; what it renders it reads back as the same duration |
 | `run_report` | never panics; an accepted run report renders, and one the reader refuses says why rather than panicking |
+| `carried_answers` | never panics; a stream from another machine adds answers or is refused whole, and everything a machine holds is everything it hands on |
+| `offered_candidates` | never panics; every candidate that comes back names a relative path, inside the tree, that the configuration allowed — because what comes back is what `fix --apply` writes |
 
 ```sh
 mise run fuzz:smoke                     # every target, 2000 runs each

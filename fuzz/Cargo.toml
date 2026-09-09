@@ -109,12 +109,14 @@ name = "report_document"
 path = "fuzz_targets/report_document.rs"
 test = false
 doc = false
+bench = false
 
 [[bin]]
 name = "carried_answers"
 path = "fuzz_targets/carried_answers.rs"
 test = false
 doc = false
+bench = false
 
 [[bin]]
 name = "offered_candidates"

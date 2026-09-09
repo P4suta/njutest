@@ -109,3 +109,39 @@ fn the_readme_says_the_number_of_runs_the_smoke_task_actually_does() {
         "fuzz/README.md says something other than {runs} runs, which is what the task does"
     );
 }
+
+#[test]
+fn every_seed_corpus_belongs_to_a_target_that_still_exists() {
+    let named: Vec<String> = declared().into_iter().map(|(name, _bench)| name).collect();
+    let seeds = root().join("fuzz/seeds");
+    let mut seeded: Vec<String> = std::fs::read_dir(&seeds)
+        .expect("the seed corpora")
+        .flatten()
+        .filter(|entry| entry.path().is_dir())
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect();
+    seeded.sort();
+    assert!(
+        !seeded.is_empty(),
+        "a target whose input is a document explores nothing from an empty corpus, and \
+         fuzz/corpus is not committed: random bytes are not JSON, so a nightly run of \
+         one starts where the last one started. Seeds are what make it a run"
+    );
+    let orphaned: Vec<&String> = seeded.iter().filter(|name| !named.contains(name)).collect();
+    assert!(
+        orphaned.is_empty(),
+        "these seed corpora name targets the fuzz crate does not define, so nothing \
+         will ever read them: {orphaned:?}"
+    );
+    for name in &seeded {
+        let held = std::fs::read_dir(seeds.join(name))
+            .expect("one seed corpus")
+            .flatten()
+            .count();
+        assert!(
+            held > 0,
+            "and {name} has a seed directory with nothing in it, which is the empty \
+             corpus this exists to avoid"
+        );
+    }
+}
