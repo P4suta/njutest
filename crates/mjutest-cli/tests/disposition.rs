@@ -316,3 +316,116 @@ fn a_survivor_some_tests_ran_and_others_were_removed_from_says_the_tests_ran() {
          have noticed would send them to audit the proof instead: {detail}"
     );
 }
+
+fn of(display_id: &str, disposition: Disposition, reused: bool) -> Judged {
+    Judged {
+        id: display_id.repeat(4),
+        display_id: display_id.to_owned(),
+        path: "src/lib.rs".to_owned(),
+        rule: "add-to-sub@1".to_owned(),
+        position: None,
+        disposition,
+        source_run_id: reused.then(|| "20260905T081500Z-000000".to_owned()),
+    }
+}
+
+/// One of every disposition, some read back from an earlier run.
+fn all_of_them() -> Mutation {
+    let route = || Route::Discharged {
+        discharged: vec![discharge("pkg/lib/pkg", NEVER_INFECTED)],
+    };
+    Mutation {
+        judged: vec![
+            of(
+                "aaaa",
+                Disposition::Rejected {
+                    diagnostic: "no".to_owned(),
+                },
+                false,
+            ),
+            of(
+                "bbbb",
+                Disposition::Killed {
+                    by: "one".to_owned(),
+                },
+                false,
+            ),
+            of(
+                "cccc",
+                Disposition::Killed {
+                    by: "one".to_owned(),
+                },
+                true,
+            ),
+            of(
+                "dddd",
+                Disposition::TimedOut {
+                    on: "one".to_owned(),
+                },
+                false,
+            ),
+            of("eeee", Disposition::Survived { route: route() }, false),
+            of("ffff", Disposition::Survived { route: route() }, true),
+            of("gggg", Disposition::Survived { route: route() }, false),
+            of("hhhh", Disposition::Unreached, false),
+            of("iiii", Disposition::Unreached, false),
+            of("jjjj", Disposition::Equivalent { route: route() }, false),
+            of(
+                "kkkk",
+                Disposition::Unconfirmed {
+                    on: "one".to_owned(),
+                    why: Unconfirmed::DidNotReproduce,
+                },
+                false,
+            ),
+            of(
+                "llll",
+                Disposition::Errored {
+                    on: "one".to_owned(),
+                    detail: "no binary".to_owned(),
+                },
+                false,
+            ),
+        ],
+        skips: BTreeMap::new(),
+    }
+}
+
+#[test]
+fn every_disposition_is_counted_once_in_the_columns_it_belongs_to() {
+    let accepted = BTreeSet::from(["gggg".repeat(4), "iiii".repeat(4), "jjjj".repeat(4)]);
+
+    let counts = all_of_them().accounting(&accepted);
+
+    assert_eq!(counts.cataloged, 12, "one row for every mutation judged");
+    assert_eq!(counts.rejected, 1);
+    assert_eq!(
+        counts.executed, 8,
+        "a mutation is executed when something ran it: the kills, the timeout, the \
+         survivals, the pair that did not agree and the harness that failed. What is not \
+         executed is what was refused, what nothing reached, and what the compiler \
+         rendered identically"
+    );
+    assert_eq!(counts.killed, 2);
+    assert_eq!(counts.timed_out, 1);
+    assert_eq!(counts.survived, 3);
+    assert_eq!(counts.unreached, 2);
+    assert_eq!(counts.equivalent, 1);
+    assert_eq!(
+        counts.reused_killed, 1,
+        "and a run says how much of what it reports it established itself"
+    );
+    assert_eq!(counts.reused_survived, 1);
+    assert_eq!(
+        counts.accepted, 3,
+        "an acceptance answers for a survivor, for a mutation nothing reached, and for \
+         one proved equivalent, and for nothing else: counting a timeout or an error \
+         among them would let a reviewer sign off on an outcome nobody established"
+    );
+    assert_eq!(
+        counts.cataloged,
+        counts.rejected + counts.executed + counts.unreached + counts.equivalent,
+        "and every mutation is in exactly one of the four, which is the identity a \
+         reader adds up to check the rest"
+    );
+}
