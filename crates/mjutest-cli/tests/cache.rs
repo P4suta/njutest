@@ -227,3 +227,28 @@ fn a_run_that_is_interrupted_while_waiting_stops_waiting() {
         .expect_err("a cancelled wait is not a wait");
     assert!(matches!(error, LeaseError::Interrupted { .. }), "{error}");
 }
+
+#[test]
+fn an_entry_that_is_not_there_is_no_answer_and_an_entry_that_cannot_be_read_is_a_refusal() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = store(dir.path());
+    let identity = "a".repeat(64);
+
+    assert!(
+        matches!(store.get(&identity), Ok(None)),
+        "no earlier run answered this question here, which is what an empty store is"
+    );
+
+    let path = store.entry(&identity);
+    std::fs::create_dir_all(&path).expect("a directory where an entry goes");
+    let error = store
+        .get(&identity)
+        .expect_err("an entry that is not a file");
+    assert!(
+        matches!(&error, CacheError::Unusable { path: named, .. } if named == &path),
+        "and an entry this could not read for any other reason is not the same as one \
+         that is not there: reading it as absent would establish everything again and \
+         call that a fresh answer, with nothing anywhere saying the store had stopped \
+         working: {error}"
+    );
+}
