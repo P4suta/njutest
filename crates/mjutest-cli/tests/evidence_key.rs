@@ -3,6 +3,11 @@
 
 //! The behaviour key of one target: everything that could change what it does, and nothing else.
 
+#![expect(
+    clippy::expect_used,
+    reason = "the helper that keys one package of a tree this test wrote is not itself a test, and a tree that cannot be read is a setup failure to report by panicking"
+)]
+
 use std::collections::BTreeMap;
 
 use mjutest_cli::evidence::key::{
@@ -241,4 +246,109 @@ fn the_behaviour_key_of_a_known_target_is_the_one_it_has_always_been() {
 
     mjutest_devkit::golden::golden(&golden, behaviour(&linked(), &common()).as_bytes())
         .expect("the recorded key");
+}
+
+/// The digest one package is keyed on, in a tree this test writes.
+fn keyed(repo: &Repo) -> String {
+    let scanned = scan(repo.root(), &[], &[]).expect("the tree reads");
+    let document = format!(
+        r#"{{
+          "version": 1,
+          "workspace_root": "{root}",
+          "target_directory": "{root}/target",
+          "workspace_members": ["demo 0.1.0 (path+file://{root})"],
+          "packages": [
+            {{ "id": "demo 0.1.0 (path+file://{root})", "name": "demo", "version": "0.1.0",
+               "manifest_path": "{root}/Cargo.toml" }}
+          ],
+          "resolve": {{
+            "root": null,
+            "nodes": [{{ "id": "demo 0.1.0 (path+file://{root})", "deps": [] }}]
+          }}
+        }}"#,
+        root = repo.root().display()
+    );
+    let metadata = Metadata::parse(document.as_bytes()).expect("the document parses");
+    let dependencies = "b".repeat(64);
+    let linked = linked_by(
+        &Reading {
+            metadata: &metadata,
+            scan: &scanned,
+            root: repo.root(),
+            dependencies: &dependencies,
+        },
+        &format!("demo 0.1.0 (path+file://{})", repo.root().display()),
+    );
+    linked
+        .sources
+        .get("demo@0.1.0")
+        .expect("the package's own digest")
+        .clone()
+}
+
+#[test]
+fn a_package_is_keyed_on_what_it_compiles_and_not_on_what_sits_beside_it() {
+    let repo = Repo::new();
+    repo.package("demo").lib("pub fn f() {}\n");
+    let alone = keyed(&repo);
+
+    repo.write("NOTES.md", "something a reader wrote\n");
+    assert_eq!(
+        keyed(&repo),
+        alone,
+        "a file the compiler never opens cannot change what the tests say, and keying \
+         on it would throw away every stored answer whenever somebody edited a README"
+    );
+
+    repo.write("src/other.rs", "pub fn g() {}\n");
+    let with_source = keyed(&repo);
+    assert_ne!(
+        with_source, alone,
+        "and a Rust file is one the compiler does open"
+    );
+
+    repo.write(
+        "Cargo.toml",
+        "[package]\nname = \"demo\"\nversion = \"0.1.1\"\nedition = \"2024\"\n",
+    );
+    assert_ne!(
+        keyed(&repo),
+        with_source,
+        "so is the manifest, which says what the compiler is given"
+    );
+}
+
+#[test]
+fn a_package_that_says_it_reads_what_sits_beside_it_is_keyed_on_all_of_it() {
+    let reading = Repo::new();
+    reading.package("demo").lib("pub fn f() {}\n");
+    reading.write("data.txt", "one\n");
+    let before = keyed(&reading);
+    reading.write(
+        "src/embedded.rs",
+        "pub const DATA: &str = include_str!(\"../data.txt\");\n",
+    );
+    let naming = keyed(&reading);
+    reading.write("data.txt", "two\n");
+    assert_ne!(
+        keyed(&reading),
+        naming,
+        "a package whose source names include_str! is one whose behaviour depends on a \
+         file the compiler was never told about, so what it is keyed on is everything \
+         beside it"
+    );
+    assert_ne!(naming, before, "and naming it is itself a change");
+
+    let building = Repo::new();
+    building.package("demo").lib("pub fn f() {}\n");
+    building.write("build.rs", "fn main() {}\n");
+    building.write("data.txt", "one\n");
+    let with_script = keyed(&building);
+    building.write("data.txt", "two\n");
+    assert_ne!(
+        keyed(&building),
+        with_script,
+        "and a build script can read anything and tell cargo to watch it, which this \
+         release does not read, so the same answer holds: everything beside it"
+    );
 }
