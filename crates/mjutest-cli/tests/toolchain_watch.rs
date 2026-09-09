@@ -1207,6 +1207,12 @@ fn resumed(root: &std::path::Path, environment: Environment) {
 }
 
 /// A run in this process against `fixture`, and what it left behind.
+///
+/// A `carrying` that is not empty also writes a configuration bounding one
+/// command at two seconds and letting those variables through. Two and not
+/// one because the bound has to be longer than an ordinary measurement takes
+/// on a machine that is doing something else at the time: a bound a loaded
+/// machine reaches turns the load into a finding.
 fn verified_in_process(
     fixture: &str,
     dir: &std::path::Path,
@@ -1223,7 +1229,7 @@ fn verified_in_process(
         std::fs::write(
             root.join(".mjutest.toml"),
             format!(
-                "version = 1\n\n[execution]\ntimeout = \"1s\"\nenvironment = [{}]\n",
+                "version = 1\n\n[execution]\ntimeout = \"2s\"\nenvironment = [{}]\n",
                 named.join(", ")
             ),
         )
@@ -1273,7 +1279,7 @@ fn a_mutation_that_never_returns_is_stopped_measured_alone_and_reported_as_a_tim
         &["--trace", "--ui=plain"],
         &[
             ("FIXTURE_HANG_MARKER", &paused.display().to_string()),
-            ("FIXTURE_HANG_PAUSE_MS", "4000"),
+            ("FIXTURE_HANG_PAUSE_MS", "8000"),
         ],
     );
     assert_eq!(
