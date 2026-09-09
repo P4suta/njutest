@@ -57,7 +57,6 @@ jobs:
           - libtest_lines
           - cargo_messages
           - cargo_metadata
-          - infection_log
           - touch_log
           - duration
     steps:

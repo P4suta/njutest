@@ -259,3 +259,64 @@ fn every_page_the_documentation_holds_is_one_the_book_summary_reaches() {
         missing.join("\n")
     );
 }
+
+/// Every fuzz target the crate defines, by the name `cargo fuzz run` takes.
+fn fuzz_targets() -> BTreeSet<String> {
+    read("fuzz/Cargo.toml")
+        .lines()
+        .filter_map(|line| line.strip_prefix("name = \""))
+        .filter_map(|rest| rest.strip_suffix('"'))
+        .map(str::to_owned)
+        .filter(|name| !name.ends_with("-fuzz"))
+        .collect()
+}
+
+/// Every target the nightly fuzz workflow drives.
+fn fuzz_matrix() -> BTreeSet<String> {
+    let text = read(".github/workflows/fuzz.yml");
+    let mut named = BTreeSet::new();
+    let mut listing = false;
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed == "target:" {
+            listing = true;
+            continue;
+        }
+        if !listing {
+            continue;
+        }
+        match trimmed.strip_prefix("- ") {
+            Some(name) => {
+                let _added = named.insert(name.to_owned());
+            }
+            None => listing = false,
+        }
+    }
+    named
+}
+
+#[test]
+fn every_fuzz_target_is_driven_and_every_one_driven_is_a_target() {
+    let defined = fuzz_targets();
+    let driven = fuzz_matrix();
+    assert!(
+        !defined.is_empty() && !driven.is_empty(),
+        "the fuzz crate defines {} targets and the workflow drives {}, and neither \
+         list being read is the same as neither list disagreeing",
+        defined.len(),
+        driven.len()
+    );
+    let undriven: Vec<&String> = defined.difference(&driven).collect();
+    assert!(
+        undriven.is_empty(),
+        "these fuzz targets are committed and nothing drives them, so what they would \
+         find is found by nobody: {undriven:?}"
+    );
+    let absent: Vec<&String> = driven.difference(&defined).collect();
+    assert!(
+        absent.is_empty(),
+        "and the workflow drives these, which the fuzz crate does not define: a job \
+         that fails every night because it names something that was renamed is a job \
+         people learn to ignore, and the ones beside it go with it: {absent:?}"
+    );
+}
