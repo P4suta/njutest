@@ -1073,6 +1073,7 @@ impl Session {
             Running {
                 alone: false,
                 chosen: &chosen,
+                mutant,
             },
             cancel,
         )
@@ -1102,6 +1103,7 @@ impl Session {
         let running = |alone: bool| Running {
             alone,
             chosen: &chosen,
+            mutant,
         };
         let first = quiet.shared(|| self.execute(request, running(false), cancel))?;
         let (timeout, timeout_source) = self.timeout_for(request, &first.target);
@@ -1145,8 +1147,11 @@ impl Session {
         how: Running<'_>,
         cancel: &Cancel,
     ) -> Result<MutantResult, EngineError> {
-        let Running { alone, chosen } = how;
-        let mutant = self.resolve(&request.mutant)?;
+        let Running {
+            alone,
+            chosen,
+            mutant,
+        } = how;
         let targets = self.selected(request.target.as_deref())?;
         let targets = match chosen {
             Chosen::Everything => targets,
@@ -1407,6 +1412,8 @@ struct Running<'a> {
     alone: bool,
     /// What the route this execution rests on narrowed it to.
     chosen: &'a Chosen,
+    /// The mutation, resolved once by whoever asked rather than again here.
+    mutant: &'a Mutant,
 }
 
 /// Whose evidence an execution is narrowed by.

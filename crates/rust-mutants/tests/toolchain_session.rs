@@ -248,6 +248,19 @@ fn a_request_that_names_nothing_is_refused_by_name() {
         .unwrap_err();
     assert!(short.to_string().contains("RM5003"), "{short}");
 
+    let judged = session
+        .judge(
+            &Request::new("ffffffff".to_owned()),
+            &rust_mutants::run::Quiet::default(),
+            &cancel,
+        )
+        .unwrap_err();
+    assert!(
+        judged.to_string().contains("RM5003"),
+        "every way of asking about a mutation refuses a name no mutation answers to, rather \
+         than ending the run where it was asked: {judged}"
+    );
+
     let target = session
         .exec(
             &Request::new(session.catalog().mutants()[0].display_id.clone())
