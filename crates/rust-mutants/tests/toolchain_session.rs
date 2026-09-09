@@ -1037,3 +1037,65 @@ fn the_questions_a_prepared_session_answers_about_itself_are_answered() {
     );
     session.close().expect("the session closes");
 }
+
+#[test]
+fn a_mutation_reaches_the_documentation_of_its_own_library_and_no_other() {
+    let documented = Fixture::copy("fixture-doctest");
+    let session = prepare(&documented);
+    let doc: Vec<&str> = session
+        .targets()
+        .iter()
+        .filter(|target| target.kind == rust_mutants::execute::TargetKind::Doc)
+        .map(|target| target.id.as_str())
+        .collect();
+    assert_eq!(
+        doc.len(),
+        1,
+        "this fixture documents its library with examples: {doc:?}"
+    );
+    let reaching_doc = session
+        .catalog()
+        .mutants()
+        .iter()
+        .filter(|mutant| {
+            let route = session.route(mutant);
+            doc.iter().any(|id| route.reaching().contains(id))
+        })
+        .count();
+    assert!(
+        reaching_doc > 0,
+        "a documented example is compiled by rustdoc while cargo runs it, so no measurement \
+         names it and every mutation of the library it is written in reaches it"
+    );
+    session.close().expect("the session closes");
+
+    let undocumented = Fixture::copy("fixture-workspace");
+    let session = prepare(&undocumented);
+    let empty: Vec<&str> = session
+        .targets()
+        .iter()
+        .filter(|target| {
+            target.kind == rust_mutants::execute::TargetKind::Doc
+                && target
+                    .limitations
+                    .iter()
+                    .any(|one| one == rust_mutants::limitation::DOCTESTS_NONE)
+        })
+        .map(|target| target.id.as_str())
+        .collect();
+    assert_eq!(
+        empty.len(),
+        1,
+        "and this one has a library that documents no example: {empty:?}"
+    );
+    for mutant in session.catalog().mutants() {
+        let route = session.route(mutant);
+        assert!(
+            !empty.iter().any(|id| route.reaching().contains(id)),
+            "which has nothing to run, so nothing is routed to it: {} reached {:?}",
+            mutant.display_id,
+            route.reaching()
+        );
+    }
+    session.close().expect("the session closes");
+}
