@@ -77,9 +77,8 @@ pub fn behaviour(linked: &Linked, common: &Common) -> String {
 }
 
 fn key(domain: &str, linked: &Linked, common: &Common) -> String {
-    let mut environment = common.environment.clone();
-    environment.sort();
-    environment.dedup();
+    let environment: std::collections::BTreeSet<&(String, String)> =
+        common.environment.iter().collect();
     let mut fields = Fields::new(domain);
     fields
         .list("packages", &linked.packages)

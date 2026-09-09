@@ -146,9 +146,8 @@ pub struct Inputs {
 /// The run's identity: the number a later run compares its own against before believing anything an earlier one recorded.
 #[must_use]
 pub fn identity(inputs: &Inputs) -> String {
-    let mut environment: Vec<(String, String)> = inputs.environment.clone();
-    environment.sort();
-    environment.dedup();
+    let environment: std::collections::BTreeSet<&(String, String)> =
+        inputs.environment.iter().collect();
     let mut fields = Fields::new(EVIDENCE_DOMAIN);
     fields
         .field("tree", &inputs.tree)
