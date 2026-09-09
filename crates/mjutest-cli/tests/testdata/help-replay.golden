@@ -1,0 +1,12 @@
+Put one finding back to the tests and say whether it is still there
+
+Usage: mjutest replay [OPTIONS] <FINDING>
+
+Arguments:
+  <FINDING>  The finding, by subject or by any prefix that names exactly one
+
+Options:
+      --run <RUN>  The run to read the finding from. The latest by default
+      --offline    Pass `--offline` to cargo
+      --locked     Pass `--locked` to cargo
+  -h, --help       Print help

@@ -1,0 +1,12 @@
+Say what repairs a run was offered, and write the ones that hold up
+
+Usage: mjutest fix [OPTIONS]
+
+Options:
+      --run <RUN>           The run whose candidates to read. The latest by default
+      --apply               Write the candidates that hold up, rather than only saying what they are
+      --candidate <DIGEST>  Write only this candidate, by its digest or any prefix that names
+                            exactly one
+      --offline             Never touch the network
+      --locked              Refuse to change `Cargo.lock`
+  -h, --help                Print help

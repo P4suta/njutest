@@ -86,17 +86,40 @@ fn an_unknown_flag_is_invalid_input_and_exits_3() {
     assert!(stderr.contains("--no-such-flag"), "{stderr}");
 }
 
+/// Every command the top-level help lists, which is every command there is.
+///
+/// Read from the help rather than written down here, because a list somebody
+/// maintains beside the one the program prints is a list that falls behind:
+/// half of these had no recorded help at all until it was read from the
+/// program instead.
+fn subcommands() -> Vec<String> {
+    let help = String::from_utf8_lossy(&mjutest(&["--help"]).stdout).into_owned();
+    let listing = help
+        .split_once("Commands:\n")
+        .map_or(String::new(), |(_before, rest)| {
+            rest.split("\n\n").next().unwrap_or_default().to_owned()
+        });
+    let named: Vec<String> = listing
+        .lines()
+        .filter_map(|line| line.strip_prefix("  "))
+        .filter(|line| !line.starts_with(' '))
+        .filter_map(|line| line.split_whitespace().next())
+        .filter(|name| *name != "help")
+        .map(str::to_owned)
+        .collect();
+    assert!(
+        named.len() > 10,
+        "the help lists {} commands, and reading none of them is not the same as there \
+         being none: {listing}",
+        named.len()
+    );
+    named
+}
+
 #[test]
 fn every_subcommand_has_its_own_recorded_help() {
-    for name in [
-        "verify",
-        "plan",
-        "report",
-        "trace",
-        "diagnostics",
-        "init",
-        "doctor",
-    ] {
+    for name in subcommands() {
+        let name = name.as_str();
         let output = mjutest(&[name, "--help"]);
         assert_eq!(
             output.status.code(),
@@ -109,6 +132,19 @@ fn every_subcommand_has_its_own_recorded_help() {
             &output.stdout,
         )
         .unwrap_or_else(|error| panic!("{name}: {error}"));
+    }
+}
+
+#[test]
+fn every_command_the_help_lists_is_one_the_program_answers_to() {
+    for name in subcommands() {
+        let output = mjutest(&[name.as_str(), "--help"]);
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "the help offers {name} and the program does not take it: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 }
 
