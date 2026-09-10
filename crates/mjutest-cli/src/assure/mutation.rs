@@ -369,17 +369,25 @@ impl Evidence {
             .map(|(id, _called)| id.as_str())
     }
 
-    /// The identities of the targets a route names, or nothing when one of them is not a target this run's baseline saw pass.
+    /// The identities of the targets a route names, or which of them is not a target this run's baseline saw pass.
     ///
     /// A route names targets the way the engine does and a record names them
     /// by identity, and reuse is a claim about a set: a set this run can only
     /// half resolve is one it may neither believe nor record, because the half
     /// it resolved is a smaller claim wearing the same name.
-    #[must_use]
-    pub fn identities(&self, names: &[&str]) -> Option<Vec<String>> {
+    ///
+    /// # Errors
+    /// Names the first target it could not resolve.
+    pub fn identities(&self, names: &[&str]) -> Result<Vec<String>, store::Refusal> {
         names
             .iter()
-            .map(|name| self.identity(name).map(ToOwned::to_owned))
+            .map(|name| {
+                self.identity(name).map(ToOwned::to_owned).ok_or_else(|| {
+                    store::Refusal::TargetUnknown {
+                        target: (*name).to_owned(),
+                    }
+                })
+            })
             .collect()
     }
 }
@@ -493,14 +501,13 @@ fn establish(
         }
     } else {
         let route = session.route(mutant);
-        let reused = reuse(options, &route, &mutant.id);
-        record_route(
-            watch,
-            mutant,
-            &route,
-            reused.as_ref().map(|(_, run)| run.as_str()),
-        );
-        if let Some((disposition, run_id)) = reused {
+        let consulted = reuse(options, &route, &mutant.id);
+        record_route(watch, mutant, &route, &consulted);
+        if let Consulted::Believed {
+            disposition,
+            run_id,
+        } = consulted
+        {
             source = Some(run_id);
             disposition
         } else {
@@ -562,7 +569,7 @@ fn record_probe(watch: Watch<'_>, session: &Session, baseline: &[Measured]) {
 }
 
 /// Records how one mutant's tests were chosen, and whether this run established the answer itself.
-fn record_route(watch: Watch<'_>, mutant: &Mutant, route: &Route, reused: Option<&str>) {
+fn record_route(watch: Watch<'_>, mutant: &Mutant, route: &Route, consulted: &Consulted) {
     watch.trace.route(crate::trace::RouteRecord {
         mutant: mutant.display_id.clone(),
         granularity: route.granularity().to_owned(),
@@ -586,21 +593,62 @@ fn record_route(watch: Watch<'_>, mutant: &Mutant, route: &Route, reused: Option
             })
             .collect(),
         considered: route.considered().to_vec(),
-        reused: reused.map(ToOwned::to_owned),
+        reused: match consulted {
+            Consulted::Believed { run_id, .. } => Some(run_id.clone()),
+            Consulted::NotKept | Consulted::Refused(_) => None,
+        },
+        refused: match consulted {
+            Consulted::Refused(refusal) => Some(refusal.name().to_owned()),
+            Consulted::NotKept | Consulted::Believed { .. } => None,
+        },
     });
 }
 
-/// What an earlier run established about this mutant, when this run may believe it.
+/// What a store of earlier answers had to say about one mutant.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Consulted {
+    /// This run keeps no store of what earlier runs established, so there was nothing to ask.
+    NotKept,
+    /// What an earlier run established, and the run that established it.
+    Believed {
+        /// What that run established about the mutant.
+        disposition: Disposition,
+        /// The run that established it.
+        run_id: String,
+    },
+    /// A store was asked and this run may not believe what it holds.
+    Refused(store::Refusal),
+}
+
+/// What an earlier run established about this mutant, or why this run may not believe it.
+///
+/// Every path out of here that is not a belief names its reason, because the
+/// reason is the only thing that parts a cold store from one that stopped
+/// answering. A run whose store refuses everything and a run with no store at
+/// all do exactly the same work, and told only how long they took, nobody can
+/// tell them apart.
 #[must_use]
-pub fn reuse(
-    options: &MutationOptions,
-    route: &Route,
-    mutant: &str,
-) -> Option<(Disposition, String)> {
-    let evidence = options.evidence.as_ref()?;
-    let record = store::read(&evidence.root, mutant).ok()??;
-    let reaching: BTreeSet<String> = answered(route, evidence)?.into_iter().collect();
-    record.believable(&reaching, &evidence.standing).ok()?;
+pub fn reuse(options: &MutationOptions, route: &Route, mutant: &str) -> Consulted {
+    let Some(evidence) = options.evidence.as_ref() else {
+        return Consulted::NotKept;
+    };
+    let record = match store::read(&evidence.root, mutant) {
+        Ok(Some(record)) => record,
+        Ok(None) => return Consulted::Refused(store::Refusal::Nothing),
+        Err(error) => {
+            return Consulted::Refused(store::Refusal::Unreadable {
+                message: error.to_string(),
+            });
+        }
+    };
+    let reaching: BTreeSet<String> = match answered(route, evidence) {
+        Ok(named) => named.into_iter().collect(),
+        Err(refusal) => return Consulted::Refused(refusal),
+    };
+    if let Err(refusal) = record.believable(&reaching, &evidence.standing) {
+        return Consulted::Refused(refusal);
+    }
     let disposition = match &record.outcome {
         store::Outcome::Killed { target, .. } => Disposition::Killed {
             by: evidence
@@ -613,7 +661,10 @@ pub fn reuse(
             route: route.clone(),
         },
     };
-    Some((disposition, record.run_id))
+    Consulted::Believed {
+        disposition,
+        run_id: record.run_id,
+    }
 }
 
 /// Records what this run established, for the next run of a tree these targets still behave the same in. Only a named kill and a survival are recorded: everything else is about the run rather than about the mutant.
@@ -636,7 +687,7 @@ pub fn keep(options: &MutationOptions, mutant: &str, route: &Route, disposition:
         }
         Disposition::Survived { .. } => {
             let mut targets = BTreeMap::new();
-            let Some(named) = answered(route, evidence) else {
+            let Ok(named) = answered(route, evidence) else {
                 return;
             };
             for target in named {
@@ -665,8 +716,10 @@ pub fn keep(options: &MutationOptions, mutant: &str, route: &Route, disposition:
 /// target, so naming each of them with its own behaviour key says exactly that,
 /// and a target that enters or leaves the suite is then visible where one key
 /// over the package would have hidden it.
-#[must_use]
-pub fn answered(route: &Route, evidence: &Evidence) -> Option<Vec<String>> {
+///
+/// # Errors
+/// Names the first target this run's baseline has no identity for.
+pub fn answered(route: &Route, evidence: &Evidence) -> Result<Vec<String>, store::Refusal> {
     evidence.identities(&route.reaching())
 }
 

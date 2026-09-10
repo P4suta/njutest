@@ -70,7 +70,8 @@ names one a reader could go and read. Given the run's recording as well, it
 holds the proof layers to what the run wrote down: no target a proof removed
 from what could notice a mutation may then be the target that killed it, a
 route that says no measured target reaches a mutation may not then run one
-against it, and a route the measurement widened has to run something. The
+against it, a route the measurement widened has to run something, and a route
+may not say both that it read an answer back and that it refused one. The
 reach layer is re-derived rather than confirmed, because a route names the
 targets it removed every execution from: each of those names is held to the
 targets the run reports, to the targets the same route kept, and to the

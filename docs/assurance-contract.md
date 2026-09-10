@@ -331,6 +331,16 @@ executing them. A kill is an existential claim and a survival is the
 universal one; the two are reused under conditions of the same shape, over
 one target and over every target respectively.
 
+A believed record is an execution that did not happen, so this is a layer and
+[ADR 0004](adr/0004-proof-layers-not-budgets.md) decision 4 asks the same of it
+as of any other: the route of every mutant records either the run whose answer
+it took or why it took none — `nothing-recorded`, `unreadable`,
+`target-unknown`, `not-routed`, `key-changed`, `not-passing`,
+`target-entered`, `nothing-routed` — and never both. A run that kept no store
+of earlier answers records neither, which is what parts it from a run whose
+store refuses everything: told only how long the two took, nobody can tell
+them apart.
+
 #### A kill
 
 Reused when: the mutant has the same content-addressed identity; the recorded

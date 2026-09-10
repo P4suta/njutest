@@ -53,11 +53,29 @@ pub enum Outcome {
 }
 
 /// Why a record could not be believed. A run says which so a reader can tell "nothing was recorded" from "what was recorded no longer describes this tree".
+///
+/// Reuse is a layer: a believed record is an execution the run did not perform,
+/// and [ADR 0004](../../../../docs/adr/0004-proof-layers-not-budgets.md)
+/// decision 4 asks that a layer be visible. A reader who sees a run go faster
+/// asks which record answered; a reader who sees it do the work again asks what
+/// was wrong with the one that was there. A layer that speaks only when it
+/// applies leaves the second reader with nothing, and the second reader is the
+/// one looking at a store that stopped working.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Refusal {
     /// Nothing was ever recorded about this mutant.
     Nothing,
+    /// A record is there and could not be read as one.
+    Unreadable {
+        /// What stopped the read.
+        message: String,
+    },
+    /// A target this run routes to the mutant is not one it measured a baseline for, so a record naming it could be neither believed nor written.
+    TargetUnknown {
+        /// The target this run has no identity for.
+        target: String,
+    },
     /// The recorded target is not one this run routes to the mutant.
     NotRouted {
         /// The target the record names.
@@ -80,6 +98,23 @@ pub enum Refusal {
     },
     /// This run routes no target to the mutant, so the recorded survival is a universal claim over nothing.
     NothingRouted,
+}
+
+impl Refusal {
+    /// The word a recording carries, so a reader counts the reasons a run did the work again without reading prose.
+    #[must_use]
+    pub const fn name(&self) -> &'static str {
+        match self {
+            Self::Nothing => "nothing-recorded",
+            Self::Unreadable { .. } => "unreadable",
+            Self::TargetUnknown { .. } => "target-unknown",
+            Self::NotRouted { .. } => "not-routed",
+            Self::KeyChanged { .. } => "key-changed",
+            Self::NotPassing { .. } => "not-passing",
+            Self::TargetEntered { .. } => "target-entered",
+            Self::NothingRouted => "nothing-routed",
+        }
+    }
 }
 
 /// What this run knows about the targets a record may name.

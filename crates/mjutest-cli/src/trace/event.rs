@@ -281,6 +281,15 @@ pub struct RouteRecord {
     pub considered: Vec<String>,
     /// The run this disposition was read back from, when it was not established here.
     pub reused: Option<String>,
+    /// Why the answer an earlier run left was not the one this run used, when there was a store to ask.
+    ///
+    /// A believed record is an execution that did not happen, so reuse is a
+    /// layer like any other and decision 4 asks the same of it. Saying only
+    /// when it applied leaves a run that reuses nothing looking exactly like a
+    /// run with nothing to reuse, and a store that has quietly stopped
+    /// answering is the failure this field is here to make visible.
+    #[serde(default)]
+    pub refused: Option<String>,
 }
 
 /// Which tests of one target a route puts the mutation to.

@@ -10,7 +10,9 @@
 
 use std::collections::BTreeMap;
 
-use mjutest_cli::assure::mutation::{Disposition, Evidence, MutationOptions, keep, reuse};
+use mjutest_cli::assure::mutation::{
+    Consulted, Disposition, Evidence, MutationOptions, keep, reuse,
+};
 use mjutest_cli::evidence::store::{self, Standing};
 use rust_mutants::session::{Fallback, Reaches, Route};
 
@@ -43,6 +45,16 @@ const fn options(evidence: Option<Evidence>) -> MutationOptions {
     }
 }
 
+/// What one consultation of the store ended on: what it believed, or the word it refused with.
+fn said(consulted: &Consulted) -> String {
+    match consulted {
+        Consulted::NotKept => "not-kept".to_owned(),
+        Consulted::Believed { run_id, .. } => format!("believed {run_id}"),
+        Consulted::Refused(refusal) => refusal.name().to_owned(),
+        other => format!("a shape this test does not know: {other:?}"),
+    }
+}
+
 fn reaching(names: &[&str]) -> Route {
     Route::All {
         reaching: names.iter().map(|name| (*name).to_owned()).collect(),
@@ -67,8 +79,14 @@ fn a_kill_an_earlier_run_recorded_is_read_back_under_the_name_a_reader_reads() {
     )
     .expect("an earlier run's record");
 
-    let (disposition, run) = reuse(&options(Some(held)), &reaching(&["core/lib/core"]), "m1")
-        .expect("a kill this run may believe");
+    let consulted = reuse(&options(Some(held)), &reaching(&["core/lib/core"]), "m1");
+    let Consulted::Believed {
+        disposition,
+        run_id,
+    } = consulted
+    else {
+        panic!("a kill this run may believe");
+    };
     assert_eq!(
         disposition,
         Disposition::Killed {
@@ -79,7 +97,7 @@ fn a_kill_an_earlier_run_recorded_is_read_back_under_the_name_a_reader_reads() {
          quoted the identity would name a test nobody can run"
     );
     assert_eq!(
-        run, "20260909T000000Z-000001",
+        run_id, "20260909T000000Z-000001",
         "and says whose answer it is"
     );
 }
@@ -100,30 +118,35 @@ fn a_run_that_cannot_resolve_every_target_a_route_names_believes_nothing() {
     )
     .expect("an earlier run's record");
 
-    assert!(
-        reuse(
+    assert_eq!(
+        said(&reuse(
             &options(Some(held.clone())),
             &reaching(&["core/lib/core", "core/lib/newcomer"]),
             "m1",
-        )
-        .is_none(),
+        )),
+        "target-unknown",
         "reuse is a claim about a set, and a set this run can only half resolve is one \
          it may neither believe nor record: the half it resolved is a smaller claim \
          wearing the same name, and believing it would report that nothing noticed a \
          mutation a target nobody looked up might have"
     );
-    assert!(
-        reuse(
+    assert_eq!(
+        said(&reuse(
             &options(Some(held.clone())),
             &reaching(&["core/lib/core", "core/test/wide"]),
             "m1",
-        )
-        .is_none(),
+        )),
+        "target-entered",
         "and a survival recorded against one target is not a survival against two: the \
          target that entered since is one the earlier run never ran"
     );
-    assert!(
-        reuse(&options(Some(held)), &reaching(&["core/lib/core"]), "m1").is_some(),
+    assert_eq!(
+        said(&reuse(
+            &options(Some(held)),
+            &reaching(&["core/lib/core"]),
+            "m1"
+        )),
+        "believed 20260909T000000Z-000001",
         "while the set the earlier run answered for is one this run may believe"
     );
 }
@@ -250,23 +273,31 @@ fn recorded(root: &std::path::Path, held: &MutationOptions) {
 fn a_record_this_run_cannot_read_is_not_a_run_with_no_record() {
     let dir = tempfile::tempdir().expect("tempdir");
     let held = evidence(dir.path());
-    assert!(
-        reuse(
+    assert_eq!(
+        said(&reuse(
             &options(Some(held.clone())),
             &reaching(&["core/lib/core"]),
             "nobody",
-        )
-        .is_none(),
-        "a mutation no earlier run answered for is one this run establishes itself"
+        )),
+        "nothing-recorded",
+        "a mutation no earlier run answered for is one this run establishes itself, and \
+         says so: a store that was asked and had nothing is not a run that never asked"
     );
 
     std::fs::create_dir_all(store::path_of(dir.path(), "m1"))
         .expect("a directory where a record goes");
-    assert!(
-        reuse(&options(Some(held)), &reaching(&["core/lib/core"]), "m1").is_none(),
+    assert_eq!(
+        said(&reuse(
+            &options(Some(held)),
+            &reaching(&["core/lib/core"]),
+            "m1"
+        )),
+        "unreadable",
         "and a record this run cannot read is one it does not believe rather than one \
          it stops for: the answer it could not read is re-established, which is the \
-         direction a cache may be wrong in"
+         direction a cache may be wrong in. It is not the same as no record either — \
+         one is a cold store and the other is a store that has stopped working, and a \
+         run that reports both as silence leaves nobody able to tell which they have"
     );
 }
 
@@ -274,9 +305,12 @@ fn a_record_this_run_cannot_read_is_not_a_run_with_no_record() {
 fn a_run_with_nowhere_to_read_or_write_evidence_neither_believes_nor_records() {
     let dir = tempfile::tempdir().expect("tempdir");
     let none = options(None);
-    assert!(
-        reuse(&none, &reaching(&["core/lib/core"]), "m1").is_none(),
-        "a run holding no evidence has nothing to believe"
+    assert_eq!(
+        said(&reuse(&none, &reaching(&["core/lib/core"]), "m1")),
+        "not-kept",
+        "a run holding no evidence has nothing to believe, and nothing to refuse either: \
+         a run that keeps no store and one whose store refuses everything do the same \
+         work, and only this parts them"
     );
     keep(
         &none,
@@ -298,15 +332,17 @@ fn the_targets_a_route_answers_for_are_the_ones_it_names_whatever_shape_it_is() 
     let held = evidence(dir.path());
     assert_eq!(
         held.identities(&["core/test/wide", "core/lib/core"]),
-        Some(vec!["id-two".to_owned(), "id-one".to_owned()]),
+        Ok(vec!["id-two".to_owned(), "id-one".to_owned()]),
         "the identities come back in the order the route named them, because a route is \
          a list a reader compares against the report's own"
     );
     assert_eq!(
         held.identities(&["core/lib/core", "core/lib/newcomer"]),
-        None,
+        Err(store::Refusal::TargetUnknown {
+            target: "core/lib/newcomer".to_owned()
+        }),
         "and one name that resolves to nothing makes the whole set unresolvable rather \
-         than a shorter set"
+         than a shorter set, and names the one that did not resolve"
     );
     assert_eq!(held.identity("core/lib/core"), Some("id-one"));
     assert_eq!(held.identity("id-one"), None, "a name is not an identity");
@@ -330,8 +366,9 @@ fn the_targets_a_route_answers_for_are_the_ones_it_names_whatever_shape_it_is() 
         ),
     )
     .expect("an earlier run's record");
-    assert!(
-        reuse(&options(Some(held)), &block, "m1").is_some(),
+    assert_eq!(
+        said(&reuse(&options(Some(held)), &block, "m1")),
+        "believed 20260909T000000Z-000001",
         "and a route that named its targets one way is answered for the same way as one \
          that named them another: what a record is about is the set, not the shape of \
          the route that produced it"

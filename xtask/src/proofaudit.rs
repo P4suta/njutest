@@ -447,6 +447,27 @@ fn proofs(recording: &Recording<'_>, recorded: Option<&str>, audit: &mut Audit) 
     discharges(&removed, &ran, &mut notes);
     kept(&routing.routes, &ran, &mut notes);
     reach(&routing.routes, &known, &executed, &mut notes);
+    believed(&routing.routes, &mut notes);
+}
+
+/// Reuse, re-derived: a route names the run whose answer it took, or why it took none, and never both.
+///
+/// A believed record is an execution that did not happen, so reuse is a layer
+/// like the others and the recording has to say which way it went for every
+/// mutation. A route that names a run and a reason at once is a recording that
+/// says the answer was read back and that it was not, and a reader who cannot
+/// tell which cannot tell what the run did.
+fn believed(routes: &[crate::route::Route], notes: &mut Notes<'_>) {
+    for route in routes {
+        if let (Some(run), Some(refusal)) = (route.reused.as_ref(), route.refused.as_ref()) {
+            notes.violated(
+                &route.mutant,
+                format!(
+                    "the route says the answer was read back from {run} and that it was                      refused as {refusal}; one of those is not what happened, and a                      recording that says both cannot be held to either"
+                ),
+            );
+        }
+    }
 }
 
 /// Every proof that removed a target, against the kills the recording holds: a layer that drops a target which then finds a defect is unsound.

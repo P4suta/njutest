@@ -65,6 +65,8 @@ pub struct Route {
     pub considered: Vec<String>,
     /// The run this disposition was read back from.
     pub reused: Option<String>,
+    /// Why the answer an earlier run left was not the one used, when there was a store of them to ask.
+    pub refused: Option<String>,
 }
 
 impl Route {
@@ -195,6 +197,7 @@ fn route(record: &Value) -> Route {
         executed: strings(record, "executed"),
         considered: strings(record, "considered"),
         reused: text(record, "reused"),
+        refused: text(record, "refused"),
     }
 }
 

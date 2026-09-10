@@ -505,6 +505,19 @@ fn recorded_stages(root: &std::path::Path) -> Vec<String> {
         .collect()
 }
 
+/// What each route of the latest recording said about the answer an earlier run had left: the run it took, and why it took none.
+fn consulted(root: &std::path::Path) -> Vec<(Option<String>, Option<String>)> {
+    events_of(root)
+        .iter()
+        .filter_map(|event| match &event.payload {
+            mjutest_cli::trace::Payload::Route { route } => {
+                Some((route.reused.clone(), route.refused.clone()))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
 /// Every mutation execution a recording holds.
 fn executions(events: &[mjutest_cli::trace::Event]) -> Vec<&mjutest_cli::trace::MutantExecRecord> {
     events
@@ -517,13 +530,23 @@ fn executions(events: &[mjutest_cli::trace::Event]) -> Vec<&mjutest_cli::trace::
 }
 
 /// Every event the latest recording under `root` holds.
+///
+/// A recording is filed under the run's own identity, which starts with the
+/// time it began, so the last of them in order is the last of them in time. A
+/// directory listing is in no order at all, and a test that took whichever came
+/// first would read an earlier run's recording as this one's the moment a
+/// second run existed.
 fn events_of(root: &std::path::Path) -> Vec<mjutest_cli::trace::Event> {
-    let recording = std::fs::read_dir(root.join(".mjutest/trace"))
+    let mut recordings: Vec<std::path::PathBuf> = std::fs::read_dir(root.join(".mjutest/trace"))
         .expect("the trace directory")
         .flatten()
-        .map(|entry| entry.path().join(mjutest_cli::trace::FILE_NAME))
-        .next()
-        .expect("one recording");
+        .map(|entry| entry.path())
+        .collect();
+    recordings.sort();
+    let recording = recordings
+        .last()
+        .expect("one recording")
+        .join(mjutest_cli::trace::FILE_NAME);
     mjutest_cli::trace::read_events(std::io::BufReader::new(
         std::fs::File::open(&recording).expect("the stream"),
     ))
@@ -554,7 +577,15 @@ fn a_second_run_of_one_tree_reads_back_what_the_first_established_and_says_whose
     let once = || {
         let (mut said, mut complaints) = (Vec::new(), Vec::new());
         let code = mjutest_cli::run_from(
-            ["mjutest", "verify", "--offline", "--locked", "--ui=plain"].map(OsString::from),
+            [
+                "mjutest",
+                "verify",
+                "--offline",
+                "--locked",
+                "--trace",
+                "--ui=plain",
+            ]
+            .map(OsString::from),
             &environment,
             &mut said,
             &mut complaints,
@@ -564,6 +595,17 @@ fn a_second_run_of_one_tree_reads_back_what_the_first_established_and_says_whose
 
     let (first, complained) = once();
     assert_eq!(first, 2, "the first run establishes it: {complained}");
+    let asked = consulted(&root);
+    assert!(
+        !asked.is_empty()
+            && asked.iter().all(|(reused, refused)| reused.is_none()
+                && refused.as_deref() == Some("nothing-recorded")),
+        "a believed record is an execution that did not happen, so the recording says \
+         what the store answered for every mutation and not only for the ones it \
+         answered. Here there is nothing in it yet, and saying so is what parts a cold \
+         store from one that has quietly stopped answering: told only how long they \
+         took, the two runs look the same. It said {asked:?}"
+    );
     let established = report_of(&root);
     assert_eq!(
         established["accounting"]["mutants"]["reused_killed"].as_u64(),
@@ -586,22 +628,36 @@ fn a_second_run_of_one_tree_reads_back_what_the_first_established_and_says_whose
         second, 2,
         "and the second reaches the same verdict: {complained}"
     );
-    let read_back = report_of(&root);
+    read_back(&root, &run_id);
+}
+
+/// What the second run of one tree says about the answers the first one left.
+fn read_back(root: &std::path::Path, run_id: &str) {
+    let report = report_of(root);
     assert_eq!(
-        read_back["provenance"]["cached"],
+        report["provenance"]["cached"],
         serde_json::Value::Bool(false),
         "a tree that changed is a tree this run answered for itself, whatever the file \
-         that changed was: {read_back}"
+         that changed was: {report}"
     );
     assert!(
-        read_back["accounting"]["mutants"]["reused_killed"]
+        report["accounting"]["mutants"]["reused_killed"]
             .as_u64()
             .is_some_and(|counted| counted > 0),
         "reading back what an earlier run of this exact tree established is the whole \
          of why a second run is cheap, and a run that established it all again would be \
-         doing the work twice while reporting that it had not: {read_back}"
+         doing the work twice while reporting that it had not: {report}"
     );
-    let sources: Vec<&str> = read_back["mutants"]
+    let again = consulted(root);
+    assert!(
+        again
+            .iter()
+            .any(|(reused, refused)| reused.as_deref() == Some(run_id) && refused.is_none()),
+        "and the second names the run whose answer it took, with nothing to say against \
+         it: a route that carried both would be a run that believed a record and \
+         recorded a reason for not believing it. It said {again:?}"
+    );
+    let sources: Vec<&str> = report["mutants"]
         .as_array()
         .expect("mutants")
         .iter()

@@ -1625,3 +1625,40 @@ fn the_reach_layer_is_re_derived_from_the_recording_rather_than_left_unaudited()
         "and a recording that holds together holds together: {audit}"
     );
 }
+
+#[test]
+fn a_route_that_says_an_answer_was_both_read_back_and_refused_is_a_violation() {
+    let consulting = |reused: serde_json::Value, refused: serde_json::Value| {
+        audited_with(
+            &base(),
+            &[serde_json::json!({
+                "seq": 1, "timestamp": "2026-09-06T00:00:00Z", "elapsed_ms": 0, "type": "route",
+                "route": {
+                    "mutant": SURVIVED, "granularity": "block", "fallback": null,
+                    "reaching": [TARGET], "discharged": [], "considered": [],
+                    "reused": reused, "refused": refused
+                }
+            })],
+        )
+    };
+    let run = serde_json::json!("20260906T000000Z-000001");
+    let reason = serde_json::json!("key-changed");
+    let null = serde_json::Value::Null;
+
+    let both = consulting(run.clone(), reason.clone());
+    assert!(
+        proven(&both).contains(&SURVIVED.to_owned()),
+        "a believed record is an execution that did not happen, so the recording has to \
+         say which way reuse went for each mutation; one that says the answer was taken \
+         and that it was refused says neither: {both}"
+    );
+
+    let taken = consulting(run, null.clone());
+    let refused = consulting(null.clone(), reason);
+    let asked = consulting(null.clone(), null);
+    assert!(
+        proven(&taken).is_empty() && proven(&refused).is_empty() && proven(&asked).is_empty(),
+        "while a route that names one of the two, or neither because there was no store \
+         to ask, is a route that says what happened: {taken}, {refused}, {asked}"
+    );
+}
