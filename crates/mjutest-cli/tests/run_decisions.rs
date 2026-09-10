@@ -8,6 +8,7 @@
     reason = "the helper that builds one request is not itself a test, and a timestamp out of range is a setup failure to report by panicking"
 )]
 
+use mjutest_cli::app::plan::{Planned, line};
 use mjutest_cli::assure::baseline::{Baseline, Measured};
 use mjutest_cli::assure::run::{
     Request, alone, first_line, kind_of, measurable, requested, resolved, reusable, selected,
@@ -380,5 +381,62 @@ fn a_build_that_failed_without_saying_anything_is_still_reported_as_one() {
         "while a build that failed with nothing on any line is one a person still has to \
          be told about: an empty sentence in a report reads as a run that forgot to fill \
          it in, and the reader looks for the failure somewhere it is not"
+    );
+}
+
+/// One binary a plan would name, holding `tests` tests of which `ignored` are skipped.
+fn planned(unit: mjutest_cli::targets::UnitKind, tests: usize, ignored: usize) -> Planned {
+    Planned {
+        target: mjutest_cli::targets::Target {
+            id: "id-1".to_owned(),
+            package: "demo".to_owned(),
+            unit,
+            unit_name: "demo".to_owned(),
+            path: "whole binary".to_owned(),
+            ignored: false,
+            executable: std::path::PathBuf::from("/nowhere"),
+            cwd: std::path::PathBuf::from("/nowhere"),
+            env: Vec::new(),
+        },
+        tests,
+        ignored,
+    }
+}
+
+#[test]
+fn a_plan_names_a_binary_and_says_what_put_it_there_only_when_asked() {
+    let ordinary = planned(mjutest_cli::targets::UnitKind::Lib, 7, 2);
+    assert_eq!(
+        line(&ordinary, false),
+        format!("TARGET\tid-1\t{}", ordinary.target.name()),
+        "a plan nobody asked to explain itself names the binary by its identity and by \
+         the name a person reads, and stops: the identity is what a report joins on and \
+         the name is what a person recognises"
+    );
+
+    let explained = line(&ordinary, true);
+    assert!(
+        explained.starts_with(&line(&ordinary, false)) && explained.contains("9 tests, 2 of them"),
+        "and one that was asked adds the reason to the same line, counting the ignored \
+         ones in the total, because a suite that says it has nine and a plan that says \
+         seven is a difference a person goes looking for: {explained:?}"
+    );
+
+    assert!(
+        line(&planned(mjutest_cli::targets::UnitKind::Doc, 3, 0), true)
+            .contains("a library's documented examples"),
+        "a library's examples are named for what they are, since a route cannot narrow \
+         them and the count would read as one it could"
+    );
+    assert!(
+        line(&planned(mjutest_cli::targets::UnitKind::Test, 0, 0), true)
+            .contains("answers by exiting"),
+        "and a binary that holds no test it can name is one that answers by exiting, \
+         which is a different reason for the same absence"
+    );
+    assert!(
+        line(&planned(mjutest_cli::targets::UnitKind::Test, 0, 4), true).contains("4 tests, 4"),
+        "while one whose every test is ignored holds tests: a plan that called it a \
+         whole binary would hide four tests nobody is running"
     );
 }

@@ -589,6 +589,8 @@ fn planned(root: &Path) {
         asked_why.out
     );
 
+    refused_to_plan(root);
+
     let narrowed = ask(
         root,
         &[
@@ -608,6 +610,27 @@ fn planned(root: &Path) {
          reader cannot see is a plan they cannot check: {}",
         narrowed.out
     );
+}
+
+/// What saying what a run would measure says about a workspace that will not build.
+fn refused_to_plan(root: &Path) {
+    let broken = root.join("src/lib.rs");
+    let source = std::fs::read_to_string(&broken).expect("the library");
+    std::fs::write(&broken, format!("{source}\nfn broken( {{\n")).expect("a library cargo refuses");
+    let refused = ask(root, &["plan", "--offline", "--locked"]);
+    assert_ne!(
+        refused.code, 0,
+        "a workspace that does not compile has nothing to plan, and saying what it would \
+         measure would be naming binaries that cannot be built: {}{}",
+        refused.out, refused.err
+    );
+    assert!(
+        refused.err.contains("does not compile"),
+        "and says which of the things that can go wrong this was, because a plan that \
+         fails in silence reads as a workspace with no targets in it: {}",
+        refused.err
+    );
+    std::fs::write(&broken, &source).expect("the library, as it was");
 }
 
 #[test]
