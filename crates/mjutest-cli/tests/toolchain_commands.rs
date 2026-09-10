@@ -404,3 +404,104 @@ fn answers_one_machine_established_are_the_answers_another_one_holds() {
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+/// Where the run a fixture just finished wrote its report.
+fn latest_report(fixture: &Fixture) -> PathBuf {
+    let index = fixture.root.join(mjutest_cli::app::reports::LATEST_ANY);
+    let value: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(index).expect("the index")).expect("JSON");
+    fixture
+        .root
+        .join(value["directory"].as_str().expect("a directory"))
+        .join(mjutest_cli::app::reports::DOCUMENT_NAME)
+}
+
+/// Judges one part of a catalog and keeps the report it wrote.
+fn shard(fixture: &Fixture, part: &str) -> PathBuf {
+    let output = mjutest(
+        fixture,
+        &["verify", "--offline", "--locked", "--shard", part],
+    );
+    assert!(
+        output.status.code() == Some(0) || output.status.code() == Some(2),
+        "a part of a catalog is judged like any other run: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    latest_report(fixture)
+}
+
+#[test]
+fn merge_combines_the_parts_of_one_catalog_and_refuses_the_parts_of_two() {
+    let fixture = fixture("fixture-baseline");
+    let one = shard(&fixture, "1/2");
+    let two = shard(&fixture, "2/2");
+    assert_ne!(one, two, "two runs, two reports");
+
+    let whole = fixture.root.join("whole.json");
+    let output = mjutest(
+        &fixture,
+        &[
+            "merge",
+            &one.display().to_string(),
+            &two.display().to_string(),
+            "--output",
+            &whole.display().to_string(),
+        ],
+    );
+    let text = std::fs::read_to_string(&whole).expect("the whole");
+    let combined = mjutest_cli::report::json::parse(&text).expect("the whole reads back");
+    assert_eq!(
+        output.status.code(),
+        Some(i32::from(combined.verdict.exit_code())),
+        "the parts are put together and the exit code is the whole's verdict, because a \
+         pipeline that shards has nothing else to fail on: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        combined.scope.shard, None,
+        "and the whole is not a part: a combined report that still named one of them \
+         would be read as the answer for that part alone: {text}"
+    );
+
+    let missing = fixture.root.join("nowhere.json");
+    let refused = mjutest(
+        &fixture,
+        &[
+            "merge",
+            &one.display().to_string(),
+            &missing.display().to_string(),
+        ],
+    );
+    let said = String::from_utf8_lossy(&refused.stderr);
+    assert!(
+        refused.status.code() == Some(3) && said.contains("nowhere.json"),
+        "a part that is not there is a part nobody judged, and the whole would be the \
+         rest of the catalog wearing the name of all of it. It names the path a person \
+         has to go and look at: {said}"
+    );
+
+    fixture_changed(&fixture);
+    let elsewhere = shard(&fixture, "1/2");
+    let refused = mjutest(
+        &fixture,
+        &[
+            "merge",
+            &two.display().to_string(),
+            &elsewhere.display().to_string(),
+        ],
+    );
+    let said = String::from_utf8_lossy(&refused.stderr);
+    assert!(
+        refused.status.code() == Some(3) && said.contains("the tree"),
+        "and two parts of two trees are not two parts of one: added up they would be a \
+         verdict about a tree neither of them measured, which is the one thing sharding \
+         may never buy. It said {said}"
+    );
+}
+
+/// Changes the tree under the fixture, so that a later run is a run of another one.
+fn fixture_changed(fixture: &Fixture) {
+    let path = fixture.root.join("src/lib.rs");
+    let source = std::fs::read_to_string(&path).expect("the library");
+    std::fs::write(&path, format!("{source}\npub const ADDED: u8 = 1;\n")).expect("a change");
+}
