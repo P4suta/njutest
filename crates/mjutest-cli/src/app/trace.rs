@@ -77,7 +77,8 @@ fn summary(root: &Path, named: Option<&str>, streams: &mut Streams<'_>) -> u8 {
 /// reader will ask when a run goes faster: which proof did it. It is a count of
 /// discharges, never of seconds, because a layer that removes an execution is
 /// the only thing in this program allowed to make a run shorter.
-fn proofs(events: &[Event]) -> Vec<(String, u64)> {
+#[must_use]
+pub fn proofs(events: &[Event]) -> Vec<(String, u64)> {
     let mut counted: BTreeMap<String, u64> = BTreeMap::new();
     for event in events {
         let Payload::Route { route } = &event.payload else {
@@ -101,7 +102,8 @@ pub const ENGINE_DIRECTORY: &str = "engine";
 /// A run is mostly the time its subprocesses take, and the question a person
 /// asks of a slow run is which of them it was. Answering it used to mean
 /// writing a script over the recording.
-fn slowest(events: &[Event]) -> Vec<(u64, String)> {
+#[must_use]
+pub fn slowest(events: &[Event]) -> Vec<(u64, String)> {
     let mut timed: Vec<(u64, String)> = events
         .iter()
         .filter_map(|event| match &event.payload {
@@ -115,27 +117,39 @@ fn slowest(events: &[Event]) -> Vec<(u64, String)> {
 }
 
 /// How many of the slowest commands a summary names.
-const SLOWEST_KEPT: usize = 5;
+pub const SLOWEST_KEPT: usize = 5;
 
 /// How wide a rendered command may be before the rest of it is elided.
-const COMMAND_WIDTH: usize = 72;
+pub const COMMAND_WIDTH: usize = 72;
 
 /// One command, short enough to read in a line: the program by its file name, then as much of its arguments as fits.
-fn said(argv: &[String]) -> String {
-    let program = argv
+///
+/// A line that was cut says so. Cutting one and leaving it looking whole hands
+/// a reader a command they can neither run nor recognise, and the ones they
+/// could run look exactly the same.
+#[must_use]
+pub fn said(argv: &[String]) -> String {
+    let mut line = argv
         .first()
         .and_then(|path| Path::new(path).file_name())
         .map_or_else(String::new, |name| name.to_string_lossy().into_owned());
-    let mut line = program;
+    let mut cut = false;
     for argument in argv.iter().skip(1) {
         if line.chars().count() >= COMMAND_WIDTH {
-            line.push_str(" …");
+            cut = true;
             break;
         }
         line.push(' ');
         line.push_str(argument);
     }
-    line.chars().take(COMMAND_WIDTH + 2).collect()
+    if line.chars().count() > COMMAND_WIDTH {
+        cut = true;
+    }
+    if cut {
+        line = line.chars().take(COMMAND_WIDTH).collect();
+        line.push_str(" …");
+    }
+    line
 }
 
 /// What the engine recorded beside this run, when it recorded anything.
@@ -236,7 +250,8 @@ fn load(root: &Path, named: Option<&str>, stderr: &mut dyn Write) -> Option<(Str
 }
 
 /// How many events of each type.
-fn counts(events: &[Event]) -> BTreeMap<String, u64> {
+#[must_use]
+pub fn counts(events: &[Event]) -> BTreeMap<String, u64> {
     let mut counts = BTreeMap::new();
     for event in events {
         let count = counts
@@ -248,7 +263,8 @@ fn counts(events: &[Event]) -> BTreeMap<String, u64> {
 }
 
 /// How long each phase took, summed over however many times it ran.
-fn phases(events: &[Event]) -> BTreeMap<String, u64> {
+#[must_use]
+pub fn phases(events: &[Event]) -> BTreeMap<String, u64> {
     let mut durations: BTreeMap<String, u64> = BTreeMap::new();
     for event in events {
         if let Payload::PhaseEnd { phase } = &event.payload {
@@ -260,7 +276,8 @@ fn phases(events: &[Event]) -> BTreeMap<String, u64> {
 }
 
 /// How many times each program ran, by the name it was started as.
-fn commands(events: &[Event]) -> BTreeMap<String, u64> {
+#[must_use]
+pub fn commands(events: &[Event]) -> BTreeMap<String, u64> {
     let mut counts: BTreeMap<String, u64> = BTreeMap::new();
     for event in events {
         if let Payload::Exec { exec } = &event.payload {
@@ -277,7 +294,8 @@ fn commands(events: &[Event]) -> BTreeMap<String, u64> {
 }
 
 /// Every key of both maps, in order.
-fn keys(left: &BTreeMap<String, u64>, right: &BTreeMap<String, u64>) -> Vec<String> {
+#[must_use]
+pub fn keys(left: &BTreeMap<String, u64>, right: &BTreeMap<String, u64>) -> Vec<String> {
     let mut names: Vec<String> = left.keys().chain(right.keys()).cloned().collect();
     names.sort();
     names.dedup();
@@ -285,14 +303,16 @@ fn keys(left: &BTreeMap<String, u64>, right: &BTreeMap<String, u64>) -> Vec<Stri
 }
 
 /// The signed difference, which is what a reader is actually looking at.
-fn delta(from: u64, to: u64) -> i64 {
+#[must_use]
+pub fn delta(from: u64, to: u64) -> i64 {
     i64::try_from(to)
         .unwrap_or(i64::MAX)
         .saturating_sub(i64::try_from(from).unwrap_or(i64::MAX))
 }
 
 /// One problem, in a line.
-fn describe(problem: &Problem) -> String {
+#[must_use]
+pub fn describe(problem: &Problem) -> String {
     match problem {
         Problem::MissingRunStart => {
             "the recording has no run-start: its beginning was lost".to_owned()
