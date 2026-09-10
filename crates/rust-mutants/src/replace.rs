@@ -3,24 +3,25 @@
 
 //! Replacing a file so that whoever reads it next reads one whole version of it.
 //!
-//! Three stores under `.mjutest` answer a later run: the checkpoint an
-//! interrupted run left, the reports a cache keeps, and what earlier runs
-//! established about individual mutants. Every one of them is written by one
-//! run and believed by another, and the two are not ordered — a run is
-//! interrupted mid-write, a shard writes while a sibling shard reads, an editor
-//! loop verifies while a pipeline does.
+//! Both products keep files that a later run reads and believes: what earlier
+//! runs established about individual mutants, the checkpoint an interrupted run
+//! left, the reports a cache holds, the report itself and the pointer that
+//! names the newest one. Every one of them is written by one run and read by
+//! another, and the two are not ordered — a run is interrupted mid-write, a
+//! shard writes while a sibling shard reads, a pipeline step reads the report
+//! while the run that made it is still writing.
 //!
 //! Bytes that land in the destination itself arrive over the old ones, and a
 //! reader that arrives between the truncation and the last byte holds a file
 //! that is neither answer. That reader either refuses it, which throws away an
 //! answer nobody contradicted, or reads a prefix that happens to parse, which
-//! is the same store saying two things. So the bytes are staged beside the
+//! is one store saying two things. So the bytes are staged beside the
 //! destination and arrive by a rename, which is one step: a reader holds what
 //! was there or what replaced it, and never the seam between them.
 //!
-//! Saying it here rather than in each of the three is the point. Two of them
-//! said it already and the third did not, which is what a rule written more
-//! than once looks like from the outside.
+//! Saying it once is the point. It was written twice here and not at all in
+//! the other five places that wanted it, which is what a rule written more than
+//! once looks like from the outside.
 
 use std::path::{Path, PathBuf};
 

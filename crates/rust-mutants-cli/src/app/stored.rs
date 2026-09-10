@@ -55,11 +55,9 @@ pub(super) fn store(
     id: &str,
     document: &run_report::RunDocument,
 ) -> Result<PathBuf, CliError> {
-    let dir = directory.join(id);
-    std::fs::create_dir_all(&dir).map_err(|source| CliError::writing(&dir, source))?;
-    let path = dir.join(run_report::FILE_NAME);
-    std::fs::write(&path, json_line(document))
-        .map_err(|source| CliError::writing(&path, source))?;
+    let path = directory.join(id).join(run_report::FILE_NAME);
+    rust_mutants::replace::file(&path, json_line(document).as_bytes())
+        .map_err(|failure| CliError::writing(&failure.path, failure.source))?;
     let latest = directory.join(run_report::LATEST_FILE_NAME);
     let pointer = serde_json::json!({
         "document_type": "rust-mutants/latest-run",
@@ -67,8 +65,8 @@ pub(super) fn store(
         "run": id,
         "document": format!("{id}/{}", run_report::FILE_NAME),
     });
-    std::fs::write(&latest, json_line(&pointer))
-        .map_err(|source| CliError::writing(&latest, source))?;
+    rust_mutants::replace::file(&latest, json_line(&pointer).as_bytes())
+        .map_err(|failure| CliError::writing(&failure.path, failure.source))?;
     Ok(path)
 }
 

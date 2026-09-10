@@ -68,7 +68,7 @@ pub fn write(
 /// Writes one file and says what it holds, or nothing when it could not be written.
 fn keep(directory: &Path, name: &str, bytes: &[u8]) -> Option<Written> {
     let path: PathBuf = directory.join(name);
-    std::fs::write(&path, bytes).ok()?;
+    crate::replace::file(&path, bytes).ok()?;
     Some(Written {
         file: name.to_owned(),
         bytes: u64::try_from(bytes.len()).unwrap_or(u64::MAX),

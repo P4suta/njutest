@@ -79,10 +79,10 @@ impl Ledger {
                 run_id: run_id.to_owned(),
             });
         }
-        std::fs::create_dir_all(directory)?;
         let text = serde_json::to_string_pretty(&ledger)
             .map_err(|error| std::io::Error::other(error.to_string()))?;
-        std::fs::write(directory.join(FILE_NAME), format!("{text}\n"))?;
+        rust_mutants::replace::file(&directory.join(FILE_NAME), format!("{text}\n").as_bytes())
+            .map_err(|failure| failure.source)?;
         Ok(ledger)
     }
 
@@ -99,10 +99,10 @@ impl Ledger {
             }
         }
         let empty = Self::default();
-        std::fs::create_dir_all(directory)?;
         let text = serde_json::to_string_pretty(&empty)
             .map_err(|error| std::io::Error::other(error.to_string()))?;
-        std::fs::write(directory.join(FILE_NAME), format!("{text}\n"))?;
+        rust_mutants::replace::file(&directory.join(FILE_NAME), format!("{text}\n").as_bytes())
+            .map_err(|failure| failure.source)?;
         Ok((removed, empty))
     }
 }

@@ -201,9 +201,11 @@ impl Store {
             message: error.to_string(),
         })?;
         let path = self.entry(identity);
-        crate::replace::file(&path, text.as_bytes()).map_err(|failure| CacheError::Unusable {
-            path: failure.path,
-            source: failure.source,
+        rust_mutants::replace::file(&path, text.as_bytes()).map_err(|failure| {
+            CacheError::Unusable {
+                path: failure.path,
+                source: failure.source,
+            }
         })?;
         Ok(path)
     }

@@ -169,10 +169,7 @@ impl Store {
         let Ok(text) = serde_json::to_string(record) else {
             return;
         };
-        if std::fs::create_dir_all(&self.root).is_err() {
-            return;
-        }
-        drop(std::fs::write(self.entry(key), text));
+        drop(crate::replace::file(&self.entry(key), text.as_bytes()));
     }
 
     /// How many records the store holds, and how many bytes they take.

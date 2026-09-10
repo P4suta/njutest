@@ -249,9 +249,11 @@ pub fn write(root: &Path, state: &State) -> Result<PathBuf, CheckpointError> {
         path: path.clone(),
         source: std::io::Error::other(error),
     })?;
-    crate::replace::file(&path, text.as_bytes()).map_err(|failure| CheckpointError::Unusable {
-        path: failure.path,
-        source: failure.source,
+    rust_mutants::replace::file(&path, text.as_bytes()).map_err(|failure| {
+        CheckpointError::Unusable {
+            path: failure.path,
+            source: failure.source,
+        }
     })?;
     Ok(path)
 }

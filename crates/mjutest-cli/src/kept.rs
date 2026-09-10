@@ -82,11 +82,9 @@ pub fn record(
         ledger.kept.push(entry);
     }
     let path = root.join(FILE_NAME);
-    if let Some(directory) = path.parent() {
-        std::fs::create_dir_all(directory)?;
-    }
     let text = serde_json::to_string_pretty(&ledger).map_err(std::io::Error::other)?;
-    std::fs::write(&path, format!("{text}\n"))?;
+    rust_mutants::replace::file(&path, format!("{text}\n").as_bytes())
+        .map_err(|failure| failure.source)?;
     Ok(path)
 }
 

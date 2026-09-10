@@ -182,8 +182,8 @@ fn create(directory: &Path) -> Result<(), StoreError> {
 }
 
 fn write(path: &Path, bytes: &[u8]) -> Result<(), StoreError> {
-    std::fs::write(path, bytes).map_err(|source| StoreError::NotKept {
-        path: path.display().to_string(),
-        source,
+    rust_mutants::replace::file(path, bytes).map_err(|failure| StoreError::NotKept {
+        path: failure.path.display().to_string(),
+        source: failure.source,
     })
 }

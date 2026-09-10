@@ -25,6 +25,7 @@ pub mod outcomes;
 pub mod probe;
 pub mod prove;
 pub mod reach;
+pub mod replace;
 pub mod report;
 pub mod rule;
 pub mod run;
