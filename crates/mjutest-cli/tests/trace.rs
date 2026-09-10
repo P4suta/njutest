@@ -378,13 +378,111 @@ fn the_reader_reports_a_gap_a_missing_end_and_what_the_run_said_it_dropped() {
         "a stream with no end is a run that did not finish: {unfinished:?}"
     );
 
-    events.remove(1);
+    let lost = events.remove(1);
     let gapped = check(&events);
     assert!(
-        gapped
-            .iter()
-            .any(|problem| matches!(problem, Problem::SequenceGap { .. })),
-        "{gapped:?}"
+        gapped.contains(&Problem::SequenceGap {
+            expected: lost.seq,
+            found: lost.seq.saturating_add(1),
+        }),
+        "a gap says which number was expected and which arrived, because that is what \
+         says how many events went and where: a reader told only that there was a gap \
+         cannot tell one lost event from a thousand. It lost {} and said {gapped:?}",
+        lost.seq
+    );
+}
+
+/// One event, as a recording writes it down.
+fn written() -> String {
+    let trace = recording();
+    trace.note("a", "one");
+    serde_json::to_string(&trace.events()[0]).expect("an event is a document")
+}
+
+/// A reader that gives what it holds and then stops working, which is a recording on a disk going away under it.
+struct Failing {
+    line: String,
+    given: bool,
+}
+
+impl io::Read for Failing {
+    fn read(&mut self, _buffer: &mut [u8]) -> io::Result<usize> {
+        Err(io::Error::other("the recording went away"))
+    }
+}
+
+impl io::BufRead for Failing {
+    fn fill_buf(&mut self) -> io::Result<&[u8]> {
+        if self.given {
+            return Err(io::Error::other("the recording went away"));
+        }
+        self.given = true;
+        Ok(self.line.as_bytes())
+    }
+
+    fn consume(&mut self, _amount: usize) {}
+}
+
+#[test]
+fn a_recording_that_stops_being_readable_is_an_error_and_never_a_shorter_recording() {
+    let stopped = read_events(Failing {
+        line: format!("{}\n", written()),
+        given: false,
+    })
+    .expect_err("a stream that stops part way through");
+    assert!(
+        matches!(stopped, mjutest_cli::trace::ReadError::Io { .. }),
+        "the events before the failure are not the recording: reading them as one hands \
+         an audit a run that ended where the disk did, with no run-end and no way to \
+         tell that from a run somebody killed. It said {stopped}"
+    );
+}
+
+#[test]
+fn a_blank_line_is_passed_over_and_a_line_that_is_not_an_event_names_itself() {
+    let one = written();
+    let read = read_events(io::BufReader::new(
+        format!("{one}\n\n   \n{one}\n").as_bytes(),
+    ))
+    .expect("a recording with blank lines in it");
+    assert_eq!(
+        read.len(),
+        2,
+        "a blank line is nothing a run wrote, so it is passed over rather than taken as \
+         the end: a recording flushed in pieces has them, and stopping at the first \
+         would hand an audit the beginning of a run and call it the whole"
+    );
+
+    let refused = read_events(io::BufReader::new(
+        format!("{one}\n\n{{\"seq\":2}}\n").as_bytes(),
+    ))
+    .expect_err("a line that is not an event");
+    assert!(
+        matches!(
+            refused,
+            mjutest_cli::trace::ReadError::Malformed { line: 3, .. }
+        ),
+        "and a line that is not an event names the line it is on, counted from one and \
+         counting the blank ones, because a person opens the file at that number. It \
+         said {refused}"
+    );
+}
+
+#[test]
+fn a_recording_that_lost_one_event_says_so_like_any_other() {
+    let trace = recording();
+    trace.run_end("ASSURED", None, None);
+    let mut events = trace.events();
+    let Some(Payload::RunEnd { run }) = events.last_mut().map(|event| &mut event.payload) else {
+        panic!("a run-end last");
+    };
+    run.events_dropped = 1;
+    let problems = check(&events);
+    assert!(
+        problems.contains(&Problem::Dropped(1)),
+        "one event lost is a recording with a hole in it, and a reader who is told about \
+         three but not about one has a threshold nobody wrote down between a complete \
+         recording and an incomplete one: {problems:?}"
     );
 }
 

@@ -97,15 +97,16 @@ pub fn check(events: &[Event]) -> Vec<Problem> {
     ) {
         problems.push(Problem::MissingRunStart);
     }
-    let mut expected = events.first().map_or(1, |event| event.seq);
+    let mut expected: Option<u64> = None;
     for event in events {
-        if event.seq != expected {
+        let wanted = expected.unwrap_or(event.seq);
+        if event.seq != wanted {
             problems.push(Problem::SequenceGap {
-                expected,
+                expected: wanted,
                 found: event.seq,
             });
         }
-        expected = event.seq.saturating_add(1);
+        expected = Some(event.seq.saturating_add(1));
     }
     match events.last().map(|event| &event.payload) {
         Some(Payload::RunEnd { run }) => {
