@@ -96,18 +96,31 @@ fn a_sysroot_without_llvm_profdata_is_a_warning_that_names_the_component() {
     );
 }
 
+/// The doctor reports a reserved variable rather than stopping on it.
+///
+/// The variable it is given here is the one that says where the guards write,
+/// and not the one that says which mutation is active. Under a measurement of
+/// this program the binary a test starts is itself instrumented, and an
+/// activation handed to it activates a mutation in the thing under test: the
+/// process exits on a stale catalog with nothing on its output, and the test
+/// asserts about an empty string. All three are the same check to the doctor,
+/// and only one of them turns the test into a measurement of itself.
 #[test]
 fn a_reserved_variable_is_what_the_doctor_reports_rather_than_what_stops_it() {
     let fixture = Fixture::copy("fixture-simple");
     let empty = fixture.temp().join("nothing");
     std::fs::create_dir_all(&empty).expect("an empty directory");
-    let output = asked(&fixture, &empty, &[("RUST_MUTANTS_ACTIVE", "0123456789")]);
+    let output = asked(
+        &fixture,
+        &empty,
+        &[("RUST_MUTANTS_TOUCH", "/nowhere/touch.log")],
+    );
     let text = String::from_utf8_lossy(&output.stdout).into_owned();
     assert!(
         text.contains("FAIL environment"),
         "the one command a broken environment is for answers about it: {text}"
     );
-    assert!(text.contains("RUST_MUTANTS_ACTIVE"), "{text}");
+    assert!(text.contains("RUST_MUTANTS_TOUCH"), "{text}");
 }
 
 #[test]
