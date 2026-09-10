@@ -1,0 +1,53 @@
+{
+  "schemaVersion": "2.0",
+  "thresholds": {
+    "high": 80,
+    "low": 60
+  },
+  "projectRoot": ".",
+  "files": {
+    "src/lib.rs": {
+      "language": "rust",
+      "source": "pub fn wide(n: i32) -> bool {\n    n > 1\n}\n",
+      "mutants": [
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000000",
+          "mutatorName": "gt-to-ge",
+          "replacement": ">=",
+          "location": {
+            "start": {
+              "line": 2,
+              "column": 7
+            },
+            "end": {
+              "line": 2,
+              "column": 8
+            }
+          },
+          "status": "Killed",
+          "killedBy": [
+            "demo/lib/demo"
+          ],
+          "duration": 41
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000001",
+          "mutatorName": "gt-to-ge",
+          "replacement": "<",
+          "location": {
+            "start": {
+              "line": 2,
+              "column": 7
+            },
+            "end": {
+              "line": 2,
+              "column": 8
+            }
+          },
+          "status": "Survived",
+          "duration": 41
+        }
+      ]
+    }
+  }
+}

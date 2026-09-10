@@ -580,3 +580,45 @@ fn every_row_carries_the_place_it_takes_when_a_reader_asks_for_findings_first() 
          do not: {page}"
     );
 }
+
+/// Where one recorded projection lives.
+fn recorded(name: &str) -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/testdata")
+        .join(name)
+}
+
+#[test]
+fn the_page_is_the_page_that_was_reviewed() {
+    let page = html::document(&document(), &sources());
+    mjutest_devkit::golden::golden(&recorded("report.golden.html"), page.as_bytes())
+        .expect("the page a reviewer read");
+}
+
+#[test]
+fn the_stryker_projection_is_the_document_that_was_reviewed() {
+    let projection = stryker::project(
+        &document(),
+        std::path::Path::new("."),
+        Thresholds { high: 80, low: 60 },
+        &sources(),
+    )
+    .expect("every mutated file is one the run measured");
+    let text = serde_json::to_string_pretty(&projection).expect("the projection is a document");
+    mjutest_devkit::golden::golden(
+        &recorded("stryker.golden.json"),
+        format!("{text}\n").as_bytes(),
+    )
+    .expect("the projection a reviewer read");
+}
+
+#[test]
+fn the_sarif_log_is_the_document_that_was_reviewed() {
+    let text =
+        serde_json::to_string_pretty(&sarif::log(&document())).expect("the log is a document");
+    mjutest_devkit::golden::golden(
+        &recorded("sarif.golden.json"),
+        format!("{text}\n").as_bytes(),
+    )
+    .expect("the log a reviewer read");
+}
