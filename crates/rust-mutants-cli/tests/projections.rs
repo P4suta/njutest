@@ -9,8 +9,10 @@
 //! crate's own tests reach does not follow a guard across that boundary.
 
 #![expect(
+    clippy::expect_used,
     clippy::indexing_slicing,
-    reason = "a test reads a document by the names its own fixture put there"
+    reason = "the helpers that build one document are not themselves tests, and a test \
+              reads a document by the names its own fixture put there"
 )]
 
 use std::collections::BTreeMap;
@@ -324,5 +326,257 @@ fn the_sarif_log_carries_every_finding_where_a_reader_can_open_it() {
         results[0]["locations"][0]["physicalLocation"]["region"]["startLine"].as_u64(),
         Some(2),
         "and on the line it is on: {json}"
+    );
+}
+
+/// One mutant with the outcome and the reach a run gave it.
+fn outcome(index: u32, outcome: &str, unreached: bool) -> RunMutantDocument {
+    RunMutantDocument {
+        outcome: outcome.to_owned(),
+        unreached,
+        ..mutant(index, outcome, ">=")
+    }
+}
+
+/// What the stryker projection made of a document holding just these mutants.
+fn projected(mutants: Vec<RunMutantDocument>) -> serde_json::Value {
+    let mut document = document();
+    document.mutants = mutants;
+    let projection = stryker::project(
+        &document,
+        std::path::Path::new("."),
+        Thresholds { high: 80, low: 60 },
+        &sources(),
+    )
+    .expect("every mutated file is one the run measured");
+    serde_json::to_value(&projection).expect("the projection is a document")
+}
+
+#[test]
+fn every_outcome_is_said_in_the_word_that_reader_knows() {
+    let json = projected(vec![
+        outcome(0, "killed", false),
+        outcome(1, "survived", false),
+        outcome(2, "timed_out", false),
+        outcome(3, "inconclusive", false),
+        outcome(4, "errored", false),
+        outcome(5, "not_run", true),
+        outcome(6, "not_run", false),
+        outcome(7, "a word from a later release", false),
+    ]);
+    let mutants = json["files"]["src/lib.rs"]["mutants"]
+        .as_array()
+        .expect("the mutations")
+        .clone();
+    assert_eq!(
+        mutants
+            .iter()
+            .map(|one| one["status"].as_str().unwrap_or_default())
+            .collect::<Vec<&str>>(),
+        vec![
+            "Killed",
+            "Survived",
+            "Timeout",
+            "RuntimeError",
+            "RuntimeError",
+            "NoCoverage",
+            "Pending",
+            "Pending",
+        ],
+        "this run's words and that reader's are two vocabularies, and every one of ours \
+         has to arrive as one of theirs: a status the reader does not know is a mutation \
+         it draws nothing for. A mutation nothing reached is `NoCoverage` and not \
+         `Survived`, because the two are different things to do about: {json}"
+    );
+    assert!(
+        mutants[3]["statusReason"]
+            .as_str()
+            .is_some_and(|it| it.contains("did not reproduce"))
+            && mutants[4]["statusReason"]
+                .as_str()
+                .is_some_and(|it| it.contains("exit")),
+        "and the two that arrive as one word carry the sentence that parts them: a \
+         timeout nobody could reproduce is not a harness that failed: {json}"
+    );
+    assert!(
+        mutants[0]["statusReason"].is_null(),
+        "while one whose status says everything carries no sentence: {json}"
+    );
+}
+
+#[test]
+fn only_a_mutation_something_noticed_names_what_noticed_it() {
+    let mut named = outcome(0, "killed", false);
+    named.killed_by = vec!["demo::works".to_owned()];
+    let mut unnamed = outcome(1, "killed", false);
+    unnamed.killed_by = Vec::new();
+    let mut nowhere = outcome(2, "killed", false);
+    nowhere.killed_by = Vec::new();
+    nowhere.target = String::new();
+    let alive = outcome(3, "survived", false);
+
+    let json = projected(vec![named, unnamed, nowhere, alive]);
+    let mutants = json["files"]["src/lib.rs"]["mutants"]
+        .as_array()
+        .expect("the mutations")
+        .clone();
+    assert_eq!(
+        mutants[0]["killedBy"][0].as_str(),
+        Some("demo::works"),
+        "a harness that named the test that noticed is quoted: {json}"
+    );
+    assert_eq!(
+        mutants[1]["killedBy"][0].as_str(),
+        Some("demo/lib/demo"),
+        "one that did not leaves the binary, which is the smallest true thing this run \
+         can say about what noticed it: {json}"
+    );
+    assert!(
+        mutants[2]["killedBy"].is_null() && mutants[3]["killedBy"].is_null(),
+        "and where there is nothing to name, nothing is named: a survivor with a killer \
+         beside it is a report saying two things: {json}"
+    );
+}
+
+#[test]
+fn a_column_is_counted_the_way_that_reader_counts_it() {
+    let mut document = document();
+    document.mutants = vec![mutant(0, "killed", ">=")];
+    let wide = "pub fn wide(n: i32) -> bool {\n    // ★★★ n > 1\n}\n";
+    document.mutants[0].line = 2;
+    document.mutants[0].column = 20;
+    document.mutants[0].original = ">".to_owned();
+    let projection = stryker::project(
+        &document,
+        std::path::Path::new("."),
+        Thresholds { high: 80, low: 60 },
+        &BTreeMap::from([("src/lib.rs".to_owned(), Held::Measured(wide.to_owned()))]),
+    )
+    .expect("the file the run measured");
+    let json = serde_json::to_value(&projection).expect("the projection is a document");
+    let start = json["files"]["src/lib.rs"]["mutants"][0]["location"]["start"].clone();
+    assert_eq!(
+        (start["line"].as_u64(), start["column"].as_u64()),
+        (Some(2), Some(14)),
+        "this schema counts columns in UTF-16 and a run counts them in bytes, so a line \
+         with anything but ASCII before the mutation arrives at a different number: \
+         three stars are nine bytes and three units, so byte twenty is unit fourteen, \
+         and a reader handed the byte column underlines six columns to the right of the \
+         code: {start}"
+    );
+    let end = json["files"]["src/lib.rs"]["mutants"][0]["location"]["end"].clone();
+    assert_eq!(
+        end["column"].as_u64(),
+        Some(15),
+        "and the end is one unit past what was replaced, in the same counting: {end}"
+    );
+}
+
+#[test]
+fn a_mutation_over_several_lines_ends_on_the_last_of_them() {
+    let mut document = document();
+    document.mutants = vec![mutant(0, "killed", "")];
+    document.mutants[0].line = 1;
+    document.mutants[0].column = 1;
+    document.mutants[0].original = "if a {\n    b\n}".to_owned();
+    let projection = stryker::project(
+        &document,
+        std::path::Path::new("."),
+        Thresholds { high: 80, low: 60 },
+        &sources(),
+    )
+    .expect("the file the run measured");
+    let json = serde_json::to_value(&projection).expect("the projection is a document");
+    let location = json["files"]["src/lib.rs"]["mutants"][0]["location"].clone();
+    assert_eq!(
+        (
+            location["start"]["line"].as_u64(),
+            location["end"]["line"].as_u64(),
+            location["end"]["column"].as_u64()
+        ),
+        (Some(1), Some(3), Some(2)),
+        "a mutation that replaced three lines ends on the third of them, one past its \
+         last unit: ending it on the first would underline a line and a bit of it, and \
+         the reader would show the wrong code: {location}"
+    );
+    assert!(
+        json["files"]["src/lib.rs"]["mutants"][0]["replacement"].is_null(),
+        "and a mutation that replaced its bytes with nothing carries no replacement, \
+         rather than an empty one the reader would draw as a change to nothing: {json}"
+    );
+}
+
+#[test]
+fn the_page_says_what_the_run_decided_and_what_it_decided_nothing_about() {
+    let page = html::document(&document(), &sources());
+    assert!(
+        page.contains("50.0%") && page.contains("1 detected of 2 decided"),
+        "a score is the first thing on the page, with the two numbers it came from \
+         beside it: a percentage nobody can check is the one thing this program does not \
+         report: {page}"
+    );
+    for (name, count) in [("cataloged", 2), ("killed", 1), ("survived", 1)] {
+        assert!(
+            page.contains(&format!("<th>{name}</th><td>{count}</td>")),
+            "and every column of the accounting is on it, so a reader adding them up \
+             gets the catalog: {name} is not {count} in\n{page}"
+        );
+    }
+    assert!(
+        page.contains("surviving-mutant"),
+        "the findings are named: a page with a score and no findings is one a reader \
+         takes as a clean run: {page}"
+    );
+    assert!(
+        page.contains("pub fn wide"),
+        "and the source the run measured is on it, so a reader sees the mutation where \
+         it is rather than a line number to go and look up: {page}"
+    );
+
+    let mut nothing = document();
+    nothing.score = None;
+    nothing.mutants = Vec::new();
+    nothing.findings = Vec::new();
+    let page = html::document(&nothing, &sources());
+    assert!(
+        page.contains("decided nothing, which is not a score of zero"),
+        "a run that decided nothing says so: nought per cent is what a suite that \
+         noticed none of them earns, and a run that judged none of them earned nothing \
+         at all: {page}"
+    );
+    assert!(
+        page.contains("Nothing was found.") && page.contains("Nothing was cataloged."),
+        "and the empty sections say they are empty rather than being absent, because a \
+         section that is not there reads as one the release does not have: {page}"
+    );
+}
+
+#[test]
+fn every_row_carries_the_place_it_takes_when_a_reader_asks_for_findings_first() {
+    let mut document = document();
+    let mut accepted = outcome(4, "survived", false);
+    accepted.expected = true;
+    document.mutants = vec![
+        outcome(0, "killed", false),
+        outcome(1, "survived", false),
+        outcome(2, "not_run", true),
+        outcome(3, "errored", false),
+        accepted,
+    ];
+    let page = html::document(&document, &sources());
+    let ranked: Vec<&str> = page
+        .lines()
+        .filter_map(|line| line.split("data-rank=\"").nth(1))
+        .filter_map(|rest| rest.split('"').next())
+        .collect();
+    assert_eq!(
+        ranked,
+        vec!["4", "0", "2", "1", "3"],
+        "the rows a person has to act on carry the lowest place — a survivor nobody \
+         accepted first, then what the run could not decide, then what nothing reached — \
+         and the ones something noticed carry the highest. A survivor a reviewer accepted \
+         goes below what nobody has looked at, because it is not a row anybody has to \
+         act on. Without this the four rows that matter sit under the four hundred that \
+         do not: {page}"
     );
 }
