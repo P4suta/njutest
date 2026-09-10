@@ -15,7 +15,11 @@
 
 use std::path::{Path, PathBuf};
 
-use mjutest_cli::app::reports::{LATEST_ANY, LATEST_FULL, pointed_at, retain};
+use mjutest_cli::app::reports::{
+    DOCUMENT_NAME, HTML_NAME, JUNIT_NAME, LATEST_ANY, LATEST_FULL, SARIF_NAME, keep, pointed_at,
+    retain,
+};
+use mjutest_cli::report::{Report, RunKind, Verdict};
 
 /// A workspace with one directory per run named, and an index pointing where asked.
 fn filled(runs: &[&str], indexes: &[(&str, &str)]) -> (tempfile::TempDir, PathBuf) {
@@ -154,5 +158,87 @@ fn an_index_that_names_nothing_is_read_as_naming_nothing() {
         pointed_at(&named, LATEST_ANY).as_deref(),
         Some("20260101T000000Z-aaaaaa"),
         "while one that names a run answers with it"
+    );
+}
+
+/// A report a run may keep: one that passes its own audit.
+fn keepable(run: &str, kind: RunKind) -> Report {
+    let mut report = Report::new(run, kind, mjutest_cli::config::Contract::StandardV1);
+    "demo".clone_into(&mut report.repository.root_name);
+    report.repository.workspace_digest = "a".repeat(64);
+    report.repository.configuration_digest = "b".repeat(64);
+    "rustc 1.98.0".clone_into(&mut report.toolchain.rustc);
+    report
+        .limitations
+        .push(mjutest_cli::report::Limitation::new(
+            "git-metadata-unavailable",
+            "the tree a test builds is not a git repository",
+        ));
+    report.verdict = Verdict::Insufficient;
+    report
+}
+
+#[test]
+fn a_run_keeps_every_projection_beside_its_document_and_points_both_indexes() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path();
+    let run = "20260101T000000Z-aaaaaa";
+    let kept = keep(root, &keepable(run, RunKind::Full)).expect("a report a run may keep");
+
+    for name in [
+        DOCUMENT_NAME,
+        HTML_NAME,
+        SARIF_NAME,
+        JUNIT_NAME,
+        mjutest_cli::report::lines::FILE_NAME,
+    ] {
+        assert!(
+            kept.directory.join(name).exists(),
+            "the surface a team already reads is the one it will read this on, and a \
+             projection that has to be generated later is one nobody generates: {name}"
+        );
+    }
+    assert_eq!(
+        (
+            pointed_at(root, LATEST_ANY).as_deref(),
+            pointed_at(root, LATEST_FULL).as_deref()
+        ),
+        (Some(run), Some(run)),
+        "a run over the whole project is the latest of any kind and the latest full one"
+    );
+
+    let narrowed = "20260102T000000Z-bbbbbb";
+    let _kept = keep(root, &keepable(narrowed, RunKind::Changed)).expect("a report");
+    assert_eq!(
+        (
+            pointed_at(root, LATEST_ANY).as_deref(),
+            pointed_at(root, LATEST_FULL).as_deref()
+        ),
+        (Some(narrowed), Some(run)),
+        "while a run that looked at only what changed is the latest of any kind and not \
+         the latest full one: a reader asking what the whole project last established \
+         would otherwise be handed an answer about a handful of files"
+    );
+}
+
+#[test]
+fn a_report_that_fails_its_own_audit_is_not_written_at_all() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path();
+    let run = "20260101T000000Z-aaaaaa";
+    let mut wrong = keepable(run, RunKind::Full);
+    wrong.verdict = Verdict::Assured;
+    wrong.findings.push(mjutest_cli::report::Finding::new(
+        mjutest_cli::report::FindingKind::SurvivingMutant,
+        "abcdef",
+        "no test noticed this",
+    ));
+
+    let refused = keep(root, &wrong).expect_err("a report that says two things at once");
+    assert!(
+        !root.join("reports/runs").join(run).exists() && pointed_at(root, LATEST_ANY).is_none(),
+        "an assurance is the claim that nothing was found, so one carrying a finding is \
+         a report nobody may be handed — and half of one on disk with no index naming it \
+         is worse than none: a later collection reads the directory as a run: {refused}"
     );
 }

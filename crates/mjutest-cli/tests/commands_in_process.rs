@@ -507,6 +507,33 @@ fn refusals(it: &Verified, survivor: &str) {
         nobody.out, nobody.err
     );
 
+    let configured = it.root.join(mjutest_cli::config::FILE_NAME);
+    let held = std::fs::read_to_string(&configured).expect("the configuration");
+    std::fs::write(
+        &configured,
+        "version = 1\nacceptance = \"not a list of tables\"\n",
+    )
+    .expect("a configuration whose acceptance is not one");
+    let wrong = ask(&it.root, &["accept", survivor, "--reason", "why not"]);
+    assert_ne!(
+        wrong.code, 0,
+        "an acceptance list that is not a list is one nothing may be appended to: writing \
+         a table into it would replace what somebody wrote with something the reader \
+         refuses, and the reviews of every survivor would go with it: {}{}",
+        wrong.out, wrong.err
+    );
+
+    std::fs::write(&configured, "version = 1\nthis is not toml\n")
+        .expect("a configuration that does not parse");
+    let unparsable = ask(&it.root, &["accept", survivor, "--reason", "why not"]);
+    assert!(
+        unparsable.code != 0 && unparsable.err.contains(mjutest_cli::config::FILE_NAME),
+        "and one that does not parse at all is named rather than written over: {}{}",
+        unparsable.out,
+        unparsable.err
+    );
+    std::fs::write(&configured, held).expect("the configuration, as it was");
+
     let several = ask(
         &it.root,
         &[
@@ -588,6 +615,27 @@ fn bundled(it: &Verified) {
 
 /// What the store says it holds, and what it carries between machines.
 fn stored(it: &Verified) {
+    std::fs::write(
+        it.root.join(mjutest_cli::config::FILE_NAME),
+        "version = 1\n\n[cache]\nmax_bytes = 1\n",
+    )
+    .expect("a store bounded at nothing");
+    let before = ask(&it.root, &["cache"]);
+    assert!(
+        before.out.contains("collected 0 expired, 0 evicted"),
+        "a store nobody asked to collect takes nothing, however far over its bound it \
+         is: a command that collected as a side effect of being asked what it holds \
+         would take answers from a run that is still using them: {}",
+        before.out
+    );
+    let swept = ask(&it.root, &["cache", "--gc"]);
+    assert!(
+        swept.out.contains("evicted") && !swept.out.contains("0 evicted"),
+        "while one that was asked takes what is over the bound and says how much: a \
+         collection nobody can see the size of is one nobody runs twice: {}",
+        swept.out
+    );
+
     let held = ask(&it.root, &["cache"]);
     assert_eq!(held.code, 0, "{}{}", held.out, held.err);
     for said in [
