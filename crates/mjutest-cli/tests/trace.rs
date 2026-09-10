@@ -544,3 +544,37 @@ fn the_wire_shape_is_the_recorded_one() {
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testdata/trace.golden.jsonl");
     mjutest_devkit::golden::golden(&golden, &lines).expect("the recorded stream");
 }
+
+#[test]
+fn a_stage_and_the_work_inside_it_do_not_answer_to_one_name() {
+    let trace = recording();
+    trace.stage("mutation");
+    let inner = trace.phase("mutation-judge");
+    inner.end();
+    trace.stage("equivalence");
+    trace.run_end("ASSURED", None, None);
+    assert!(
+        !check(&trace.events())
+            .iter()
+            .any(|problem| matches!(problem, Problem::PhaseRepeated { .. })),
+        "a stage and the work inside it are two phases with two names, and a recording \
+         that names them apart has nothing to answer for: {:?}",
+        check(&trace.events())
+    );
+
+    let twice = recording();
+    twice.stage("equivalence");
+    let same = twice.phase("equivalence");
+    same.end();
+    twice.run_end("ASSURED", None, None);
+    let problems = check(&twice.events());
+    assert!(
+        problems.contains(&Problem::PhaseRepeated {
+            name: "equivalence".to_owned(),
+            times: 2
+        }),
+        "while a recording that opens one name twice is one whose phase durations are \
+         summed by name, so that phase is reported at the sum of the two and a person \
+         reading it goes looking for time the run never spent there: {problems:?}"
+    );
+}

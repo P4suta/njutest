@@ -37,7 +37,7 @@ which carries `events_emitted` and `events_dropped`.
 | Type | Records |
 | --- | --- |
 | `run-start` | schema, tool versions, run id, run kind, contract |
-| `phase-start`, `phase-end` | a phase boundary: name, and on the end its duration |
+| `phase-start`, `phase-end` | a phase boundary: name, and on the end its duration. A reader sums these by name, so one name opens one phase: the work inside a stage is named for the work — `baseline-measure` inside `baseline` — and `mjutest trace` says so when a recording opens a name twice |
 | `exec` | one command: argv verbatim, dir, environment variable **names**, timeout, exit code, timed-out flag, duration, output digest and preserved-output path |
 | `progress` | a progress note as the UI saw it |
 | `artifact` | something the run kept (`--keep-temp`) |

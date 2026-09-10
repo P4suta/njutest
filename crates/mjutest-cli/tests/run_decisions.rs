@@ -9,7 +9,10 @@
 )]
 
 use mjutest_cli::assure::baseline::{Baseline, Measured};
-use mjutest_cli::assure::run::{Request, alone, kind_of, measurable, requested, resolved};
+use mjutest_cli::assure::run::{
+    Request, alone, first_line, kind_of, measurable, requested, resolved, reusable, selected,
+    stated,
+};
 use mjutest_cli::config::Config;
 use mjutest_cli::report::{RunKind, TargetStatus};
 
@@ -222,5 +225,160 @@ fn a_resource_only_one_test_may_hold_makes_the_run_measure_one_at_a_time() {
          run: two measurements sharing it would answer about each other rather than \
          about the mutations, and which of them was wrong is not something a report \
          could say afterwards"
+    );
+}
+
+/// Cargo's answer about a workspace of these packages, each manifest where the name says.
+fn metadata(packages: &[(&str, &str)]) -> rust_mutants::cargo::Metadata {
+    serde_json::from_value(serde_json::json!({
+        "version": 1,
+        "workspace_root": "/w",
+        "target_directory": "/w/target",
+        "workspace_members": [],
+        "packages": packages
+            .iter()
+            .map(|(name, manifest)| serde_json::json!({
+                "id": format!("path+file:///w#{name}"),
+                "name": name,
+                "version": "0.1.0",
+                "manifest_path": manifest,
+            }))
+            .collect::<Vec<_>>(),
+    }))
+    .expect("metadata this release reads")
+}
+
+#[test]
+fn the_packages_an_inventory_walks_are_the_ones_in_scope_that_have_somewhere_to_walk() {
+    let workspace = metadata(&[
+        ("core", "/w/core/Cargo.toml"),
+        ("edge", "/w/edge/Cargo.toml"),
+    ]);
+    assert_eq!(
+        selected(&[], &workspace),
+        vec![
+            ("core".to_owned(), std::path::PathBuf::from("/w/core")),
+            ("edge".to_owned(), std::path::PathBuf::from("/w/edge")),
+        ],
+        "a scope that names nothing is a run that looked at everything, so an empty list \
+         widens: narrowing on it would inventory nothing at all and report a workspace \
+         with no unsafe in it"
+    );
+    assert_eq!(
+        selected(&["edge".to_owned()], &workspace),
+        vec![("edge".to_owned(), std::path::PathBuf::from("/w/edge"))],
+        "and a scope that names one package walks that one"
+    );
+
+    for named in ["Cargo.toml", ""] {
+        assert_eq!(
+            selected(&[], &metadata(&[("nowhere", named)])),
+            Vec::new(),
+            "while a package whose manifest names no directory is left out rather than \
+             entered under one nobody has: an inventory is the files under a directory, \
+             and this one would be walked from wherever the process happens to stand, \
+             which is the whole machine as readily as the package. A bare name has a \
+             parent and it is the empty path, so the two ways of naming no directory \
+             are two guards and not one: {named:?}"
+        );
+    }
+}
+
+#[test]
+fn a_tree_the_compiler_vouches_for_entirely_has_no_limitation_to_state() {
+    assert_eq!(
+        stated(&mjutest_cli::soundness::Inventory::default()),
+        Vec::new(),
+        "a limitation on every report of every tree with no unsafe in it is a line a \
+         reader learns to skip, and the next one they skip is one that mattered"
+    );
+
+    let found = mjutest_cli::soundness::Inventory {
+        items: vec![mjutest_cli::soundness::Item {
+            package: "core".to_owned(),
+            path: "core/src/lib.rs".to_owned(),
+            line: 7,
+            kind: mjutest_cli::soundness::Kind::Block,
+        }],
+        packages: vec!["core".to_owned()],
+        unreadable: Vec::new(),
+    };
+    let found_states = stated(&found);
+    assert_eq!(
+        found_states
+            .iter()
+            .map(|one| one.name.clone())
+            .collect::<Vec<_>>(),
+        vec!["soundness-not-executed".to_owned()],
+        "while a place the compiler stops vouching for is one this contract counts and \
+         does not execute, which is a limitation the report states rather than a claim \
+         it makes: {found_states:?}"
+    );
+
+    let unread = mjutest_cli::soundness::Inventory {
+        unreadable: vec!["core/src/odd.rs".to_owned()],
+        ..found
+    };
+    let unread_states = stated(&unread);
+    assert_eq!(
+        unread_states
+            .iter()
+            .map(|one| one.name.clone())
+            .collect::<Vec<_>>(),
+        vec![
+            "soundness-source-unreadable".to_owned(),
+            "soundness-not-executed".to_owned()
+        ],
+        "and a file that was not read is not a file with nothing in it, so the run says \
+         both what it found and what it could not look at: a count taken over part of a \
+         tree, reported as a count over the tree, is the one number a reader cannot \
+         check: {unread_states:?}"
+    );
+}
+
+#[test]
+fn a_run_that_looked_at_less_than_everything_neither_believes_nor_records() {
+    assert!(
+        reusable(RunKind::Full, &std::collections::BTreeMap::new()),
+        "a run over the whole project with nothing started beside it establishes what \
+         the next such run may believe"
+    );
+    for narrowed in [RunKind::Changed, RunKind::Scoped] {
+        assert!(
+            !reusable(narrowed, &std::collections::BTreeMap::new()),
+            "while a run that looked at less established less: what it did not route to \
+             a mutant it did not ask, so the survival it would record is a claim over a \
+             smaller set wearing the name of the larger one. {narrowed:?} may not"
+        );
+    }
+    let resources: std::collections::BTreeMap<String, mjutest_cli::config::Resource> =
+        toml::from_str("[database]\ncommand = [\"serve\"]\n").expect("one resource");
+    assert!(
+        !reusable(RunKind::Full, &resources),
+        "and a resource a run started is a fact about the world its tests ran in that no \
+         behaviour key covers: the next run may start a different one, or none, and \
+         nothing in the record would say so"
+    );
+}
+
+#[test]
+fn a_build_that_failed_without_saying_anything_is_still_reported_as_one() {
+    assert_eq!(
+        first_line("error: no method named `probe`\n  --> src/lib.rs:7\n"),
+        "error: no method named `probe`",
+        "a compiler says several things and a report has room for one, which is the \
+         first: the ones after it are about the same failure"
+    );
+    assert_eq!(
+        first_line("\n\n  \nerror: late\n"),
+        "error: late",
+        "and the first thing it said, rather than the first line it printed"
+    );
+    assert_eq!(
+        first_line(""),
+        "the workspace does not compile",
+        "while a build that failed with nothing on any line is one a person still has to \
+         be told about: an empty sentence in a report reads as a run that forgot to fill \
+         it in, and the reader looks for the failure somewhere it is not"
     );
 }

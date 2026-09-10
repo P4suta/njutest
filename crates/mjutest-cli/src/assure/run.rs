@@ -3,7 +3,7 @@
 
 //! One verification, from a request to a report.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use jiff::Timestamp;
@@ -615,7 +615,7 @@ fn hold(
 /// and so two runs of one workspace hand the same list over in the same order.
 fn with_resources(environment: &Environment, resources: &crate::resource::Manager) -> Environment {
     let mut held = environment.clone();
-    let mut vars: std::collections::BTreeMap<std::ffi::OsString, std::ffi::OsString> =
+    let mut vars: BTreeMap<std::ffi::OsString, std::ffi::OsString> =
         held.vars.into_iter().collect();
     for (name, value) in resources.environment() {
         let _replaced = vars.insert(
@@ -807,18 +807,7 @@ pub const SOUNDNESS_UNREADABLE_LIMITATION: &str = "soundness-source-unreadable";
 /// `standard-v1` does not execute any of them: a non-empty inventory is a
 /// limitation the report states rather than a claim it makes (ADR 0009).
 fn take_inventory(report: &mut Report, request: &Request, metadata: &Metadata) -> BTreeSet<String> {
-    let selected: Vec<(String, PathBuf)> = metadata
-        .packages
-        .iter()
-        .filter(|package| {
-            report.scope.resolved_packages.is_empty()
-                || report.scope.resolved_packages.contains(&package.name)
-        })
-        .filter_map(|package| {
-            let directory = package.manifest_path.parent()?;
-            Some((package.name.clone(), directory.to_path_buf()))
-        })
-        .collect();
+    let selected = selected(&report.scope.resolved_packages, metadata);
     let Ok(taken) = soundness::inventory(&request.root, &selected) else {
         report.limitations.push(Limitation::new(
             SOUNDNESS_UNREADABLE_LIMITATION,
@@ -832,8 +821,49 @@ fn take_inventory(report: &mut Report, request: &Request, metadata: &Metadata) -
         packages_with_unsafe: count(taken.packages.len()),
         executed: false,
     };
+    report.limitations.extend(stated(&taken));
+    taken.packages.iter().cloned().collect()
+}
+
+/// The packages a run's scope names, each with the directory its manifest is in.
+///
+/// A scope that names nothing is a run that looked at everything, which is why
+/// an empty list widens rather than narrows.
+///
+/// A package whose manifest names no directory is left out, and there are two
+/// ways for it to name none: a path with no parent at all, and one whose
+/// parent is the empty path, which is what every bare file name has. Both
+/// would be walked from wherever the process happens to stand, which is the
+/// whole machine as readily as the package, and an inventory taken over the
+/// wrong tree is a count nobody can check against anything.
+#[must_use]
+pub fn selected(resolved: &[String], metadata: &Metadata) -> Vec<(String, PathBuf)> {
+    metadata
+        .packages
+        .iter()
+        .filter(|package| resolved.is_empty() || resolved.contains(&package.name))
+        .filter_map(|package| {
+            let directory = package.manifest_path.parent()?;
+            if directory.as_os_str().is_empty() {
+                return None;
+            }
+            Some((package.name.clone(), directory.to_path_buf()))
+        })
+        .collect()
+}
+
+/// What a report says about an inventory, which is nothing at all when there was nothing to say.
+///
+/// `standard-v1` counts the places a package steps outside what the compiler
+/// guarantees and does not execute any of them, so a non-empty inventory is a
+/// limitation the report states rather than a claim it makes (ADR 0009). An
+/// empty one states nothing: a limitation on every report of every tree with no
+/// unsafe in it is a line a reader learns to skip.
+#[must_use]
+pub fn stated(taken: &soundness::Inventory) -> Vec<Limitation> {
+    let mut stated = Vec::new();
     if !taken.unreadable.is_empty() {
-        report.limitations.push(Limitation::new(
+        stated.push(Limitation::new(
             SOUNDNESS_UNREADABLE_LIMITATION,
             &format!(
                 "{} files could not be read as Rust this release understands, so what they \
@@ -844,7 +874,7 @@ fn take_inventory(report: &mut Report, request: &Request, metadata: &Metadata) -
         ));
     }
     if !taken.is_empty() {
-        report.limitations.push(Limitation::new(
+        stated.push(Limitation::new(
             SOUNDNESS_LIMITATION,
             &format!(
                 "{} places in {} packages step outside what the compiler guarantees, and this \
@@ -854,7 +884,7 @@ fn take_inventory(report: &mut Report, request: &Request, metadata: &Metadata) -
             ),
         ));
     }
-    taken.packages.iter().cloned().collect()
+    stated
 }
 
 /// Whether there is anything to measure mutations against.
@@ -1038,7 +1068,7 @@ fn prove_equivalence(
     }
     notes.phase("equivalence");
     watch.trace.stage("equivalence");
-    let phase = watch.trace.phase("equivalence");
+    let phase = watch.trace.phase("equivalence-prove");
     let request = mutating.request;
     let decided = equivalence::prove(
         &equivalence::Proving {
@@ -1125,12 +1155,12 @@ fn prepare(
 fn evidence_of(mutating: &Mutating<'_>) -> Option<mutation::Evidence> {
     let request = mutating.request;
     let root = request.evidence_store.as_ref()?;
-    if mutating.report.run_kind != RunKind::Full || !request.config.resources.is_empty() {
+    if !reusable(mutating.report.run_kind, &request.config.resources) {
         return None;
     }
     let keying = request.evidence.keying.as_ref()?;
     let mut standing = crate::evidence::store::Standing::default();
-    let mut names = std::collections::BTreeMap::new();
+    let mut names = BTreeMap::new();
     for measured in &mutating.baseline.targets {
         if measured.status != TargetStatus::Passed {
             continue;
@@ -1159,6 +1189,20 @@ fn evidence_of(mutating: &Mutating<'_>) -> Option<mutation::Evidence> {
         standing,
         names,
     })
+}
+
+/// Whether a run of this shape may read and write what earlier runs established about individual mutants.
+///
+/// Both conditions remove reuse rather than allow it, and either alone is
+/// enough to remove it. A run that looked at less than the whole project
+/// established less: what it did not route to a mutant it did not ask, so a
+/// survival it records is a claim over a smaller set wearing the name of the
+/// larger one. And a resource a run started is a fact about the world its
+/// tests ran in that no behaviour key covers — the next run may start a
+/// different one, or none, and nothing in the record would say so.
+#[must_use]
+pub fn reusable(run_kind: RunKind, resources: &BTreeMap<String, crate::config::Resource>) -> bool {
+    run_kind == RunKind::Full && resources.is_empty()
 }
 
 /// The package id cargo gave the package called `name`.
@@ -1215,8 +1259,7 @@ pub fn record(report: &mut Report, mutation: &mutation::Mutation, accepted: &BTr
 /// the sentence: one limitation about five targets is one row, not five.
 #[must_use]
 pub fn about(limitations: &[String]) -> Vec<(String, Vec<String>)> {
-    let mut named: std::collections::BTreeMap<String, Vec<String>> =
-        std::collections::BTreeMap::new();
+    let mut named: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for limitation in limitations {
         let (name, target) = limitation
             .split_once(':')
@@ -1328,8 +1371,13 @@ fn root_name(root: &std::path::Path) -> String {
     )
 }
 
-/// One sentence of a compiler's several.
-fn first_line(text: &str) -> String {
+/// One sentence of a compiler's several, and something to say when it said nothing.
+///
+/// A build that failed with no message on any line is a build a person still
+/// has to be told about, and an empty sentence in a report reads as a run that
+/// forgot to fill it in.
+#[must_use]
+pub fn first_line(text: &str) -> String {
     text.lines()
         .find(|line| !line.trim().is_empty())
         .unwrap_or("the workspace does not compile")

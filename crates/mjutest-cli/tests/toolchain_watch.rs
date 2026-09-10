@@ -783,6 +783,12 @@ fn a_mutation_the_compiler_renders_identically_is_only_equivalent_where_the_test
         .lines()
         .filter_map(|line| line.strip_prefix("== "))
         .collect();
+    let problems = mjutest_cli::trace::check(&events_of(&root));
+    assert!(
+        problems.is_empty(),
+        "a recording of a run that put its survivors to the compiler is a recording a \
+         reader can add up: {problems:?}"
+    );
     let recorded = recorded_stages(&root);
     assert!(
         stages.contains(&"equivalence") && recorded.iter().any(|name| name == "equivalence"),
@@ -792,7 +798,12 @@ fn a_mutation_the_compiler_renders_identically_is_only_equivalent_where_the_test
          are these: {stages:?} and {recorded:?}"
     );
 
-    let report = report_of(&root);
+    proved_equivalent(&root);
+}
+
+/// What the equivalence layer decided, and the one survivor it may not take.
+fn proved_equivalent(root: &std::path::Path) {
+    let report = report_of(root);
     assert_eq!(
         report["accounting"]["mutants"]["equivalent"].as_u64(),
         Some(1),

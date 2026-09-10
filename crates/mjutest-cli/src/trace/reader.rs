@@ -3,6 +3,7 @@
 
 //! Reading a recording back, and saying what is wrong with it.
 
+use std::collections::BTreeMap;
 use std::io::{self, BufRead};
 
 use super::event::{Event, Payload};
@@ -77,6 +78,13 @@ pub enum Problem {
     },
     /// The recording's own accounting says events were dropped.
     Dropped(u64),
+    /// One name opened a phase more than once, so whatever sums phase durations by name counts that phase twice.
+    PhaseRepeated {
+        /// The name that began twice.
+        name: String,
+        /// How many times it began.
+        times: u64,
+    },
 }
 
 /// Says what is wrong with a recording: a missing start or end, sequence gaps, and the drops the run-end admits to. Empty for a complete recording.
@@ -107,5 +115,32 @@ pub fn check(events: &[Event]) -> Vec<Problem> {
         }
         _ => problems.push(Problem::MissingRunEnd),
     }
+    problems.extend(repeated(events));
     problems
+}
+
+/// Every phase name that began more than once.
+///
+/// A reader sums a recording's phase durations by name, so one name opened
+/// twice is one phase reported at twice its length. It happens where a stage
+/// and the work inside it are given the same name, and the run that does it
+/// looks slower in exactly the place a person is trying to make faster. The
+/// nested phases of this runner are named for the work rather than for the
+/// stage — `baseline-measure` inside `baseline` — and this holds them to it.
+fn repeated(events: &[Event]) -> Vec<Problem> {
+    let mut began: BTreeMap<&str, u64> = BTreeMap::new();
+    for event in events {
+        if let Payload::PhaseStart { phase } = &event.payload {
+            let times = began.entry(phase.name.as_str()).or_insert(0);
+            *times = times.saturating_add(1);
+        }
+    }
+    began
+        .into_iter()
+        .filter(|(_name, times)| *times > 1)
+        .map(|(name, times)| Problem::PhaseRepeated {
+            name: name.to_owned(),
+            times,
+        })
+        .collect()
 }

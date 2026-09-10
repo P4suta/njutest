@@ -304,5 +304,9 @@ fn describe(problem: &Problem) -> String {
             format!("a gap in the sequence: expected {expected}, found {found}")
         }
         Problem::Dropped(count) => format!("the run says it dropped {count} events"),
+        Problem::PhaseRepeated { name, times } => format!(
+            "the phase {name} began {times} times, so its duration above is the sum of \
+             {times} of them and not how long it took"
+        ),
     }
 }
