@@ -95,7 +95,11 @@ pub fn run(
 }
 
 /// Notes whether one part of the bundle is there.
-fn record(present: bool, name: &str, held: &mut Vec<String>, absent: &mut Vec<String>) {
+///
+/// A bundle is what somebody sends when a run went wrong, so what is missing
+/// from it is as much of the answer as what is in it: a part nobody listed
+/// either way is one the reader assumes was never asked for.
+pub fn record(present: bool, name: &str, held: &mut Vec<String>, absent: &mut Vec<String>) {
     if present {
         held.push(name.to_owned());
     } else {
@@ -104,12 +108,17 @@ fn record(present: bool, name: &str, held: &mut Vec<String>, absent: &mut Vec<St
 }
 
 /// Copies one file, answering whether it was there.
-fn copy(from: &Path, to: &PathBuf) -> bool {
+#[must_use]
+pub fn copy(from: &Path, to: &PathBuf) -> bool {
     std::fs::copy(from, to).is_ok()
 }
 
 /// Copies a directory, answering whether it was there and held anything.
-fn copy_tree(from: &Path, to: &Path) -> bool {
+///
+/// A directory that is there and empty held nothing, and saying it was there
+/// would put a name in the bundle with nothing behind it.
+#[must_use]
+pub fn copy_tree(from: &Path, to: &Path) -> bool {
     let Ok(entries) = std::fs::read_dir(from) else {
         return false;
     };

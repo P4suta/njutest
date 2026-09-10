@@ -218,19 +218,8 @@ fn a_mutant_is_explained_by_the_run_that_judged_it_and_never_by_a_guess() {
          identity a report carries are visibly the same thing: {}",
         explained.out
     );
-    let placed = said.get("WHERE").copied().unwrap_or_default();
-    assert!(
-        placed.contains(".rs:") && placed.matches(':').count() == 2,
-        "and where it is, as a file and a line and a column, which is what an editor \
-         takes: {placed:?}"
-    );
-    for named in ["RULE", "OUTCOME"] {
-        assert!(
-            said.get(named).is_some_and(|it| !it.is_empty()),
-            "and what was done to the code and what came of it: {named} is not in\n{}",
-            explained.out
-        );
-    }
+    placed_and_ruled(&said, &explained.out);
+
     let killed = parsed["mutants"]
         .as_array()
         .expect("mutants")
@@ -257,12 +246,105 @@ fn a_mutant_is_explained_by_the_run_that_judged_it_and_never_by_a_guess() {
          it did: {}{}",
         nobody.out, nobody.err
     );
+    assert!(
+        nobody.err.contains("ffffffffffffffff"),
+        "naming what was asked for, because the usual answer is a typo: {}",
+        nobody.err
+    );
 
     let ambiguous = ask(&it.root, &["explain", ""]);
     assert_ne!(
         ambiguous.code, 0,
         "and a name that could be any of them is not one of them: {}{}",
         ambiguous.out, ambiguous.err
+    );
+    assert!(
+        ambiguous.err.contains("names") && ambiguous.err.contains(", "),
+        "which says how many it names and which they are, so a person can pick one \
+         without going back to the report: {}",
+        ambiguous.err
+    );
+
+    open_and_then_accepted(&it, &parsed);
+}
+
+/// Where an explanation says the mutation is, and what it says was done there.
+fn placed_and_ruled(said: &std::collections::BTreeMap<&str, &str>, whole: &str) {
+    let placed = said.get("WHERE").copied().unwrap_or_default();
+    assert!(
+        placed.contains(".rs:") && placed.matches(':').count() == 2,
+        "where it is, as a file and a line and a column, which is what an editor takes: \
+         {placed:?}"
+    );
+    for named in ["RULE", "OUTCOME"] {
+        assert!(
+            said.get(named).is_some_and(|it| !it.is_empty()),
+            "and what was done to the code and what came of it: {named} is not in\n{whole}"
+        );
+    }
+}
+
+/// What an explanation says about a survivor, before a reviewer looks at it and after.
+fn open_and_then_accepted(it: &Verified, parsed: &serde_json::Value) {
+    let survivor = parsed["findings"]
+        .as_array()
+        .expect("findings")
+        .iter()
+        .find(|finding| finding["kind"] == "surviving-mutant")
+        .and_then(|finding| finding["subject"].as_str())
+        .expect("a survivor")
+        .to_owned();
+    let open = ask(&it.root, &["explain", &survivor]);
+    assert!(
+        open.out.lines().any(|line| line.starts_with("FINDING\t")),
+        "a mutation nothing noticed carries the finding it raised, so an explanation is \
+         where a person can go from the identity to what to do about it: {}",
+        open.out
+    );
+
+    accepted_next_time(it, &survivor);
+}
+
+/// What an explanation says about a mutation a reviewer has since accepted.
+fn accepted_next_time(it: &Verified, survivor: &str) {
+    let recorded = ask(
+        &it.root,
+        &["accept", survivor, "--reason", "reviewed: equivalent"],
+    );
+    assert_eq!(recorded.code, 0, "{}{}", recorded.out, recorded.err);
+    let again = ask(
+        &it.root,
+        &[
+            "verify",
+            "--offline",
+            "--locked",
+            "--no-cache",
+            "--ui=plain",
+        ],
+    );
+    assert!(
+        again.code <= 2,
+        "the next run reads the acceptance: {}{}",
+        again.out,
+        again.err
+    );
+
+    let explained = ask(&it.root, &["explain", survivor]);
+    assert!(
+        explained.out.contains("ACCEPTANCE\t"),
+        "and an explanation of it says a reviewer accepted it, because otherwise a \
+         mutation nothing noticed and raising no finding reads as one nothing was \
+         recorded about at all: {}",
+        explained.out
+    );
+    assert!(
+        !explained
+            .out
+            .lines()
+            .any(|line| line.starts_with("FINDING\t")),
+        "with no finding beside it: an acceptance that left the finding standing would \
+         be a review that changed nothing: {}",
+        explained.out
     );
 }
 
