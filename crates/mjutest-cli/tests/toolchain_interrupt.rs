@@ -10,24 +10,11 @@
     reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
 )]
 
+use mjutest_devkit::fixture::copy_tree;
 use std::io::{BufRead as _, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
-
-fn copy(from: &Path, to: &Path) {
-    std::fs::create_dir_all(to).expect("the directory");
-    for entry in std::fs::read_dir(from).expect("the fixture") {
-        let entry = entry.expect("an entry");
-        let kind = entry.file_type().expect("a file type");
-        let target = to.join(entry.file_name());
-        if kind.is_dir() {
-            copy(&entry.path(), &target);
-        } else if kind.is_file() {
-            std::fs::copy(entry.path(), target).expect("a copy");
-        }
-    }
-}
 
 /// Every live process on this machine whose process group is `group`.
 fn in_group(group: u32) -> Vec<u32> {
@@ -61,7 +48,7 @@ fn interrupted_by(signal: rustix::process::Signal, expected: i32) {
         .tempdir()
         .expect("a temporary directory");
     let root = dir.path().join("fixture-baseline");
-    copy(
+    copy_tree(
         &mjutest_devkit::paths::fixtures_dir().join("fixture-baseline"),
         &root,
     );
@@ -167,7 +154,7 @@ fn an_interrupted_run_leaves_what_an_earlier_one_established_rather_than_clearin
         .tempdir()
         .expect("a temporary directory");
     let root = dir.path().join("fixture-assured");
-    copy(
+    copy_tree(
         &mjutest_devkit::paths::fixtures_dir().join("fixture-assured"),
         &root,
     );

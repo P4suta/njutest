@@ -15,6 +15,7 @@ use std::sync::mpsc::{RecvTimeoutError, channel};
 use std::time::Duration;
 
 use mjutest_cli::cli::{EXIT_ERROR, Environment};
+use mjutest_devkit::fixture::copy_tree;
 use rust_mutants::runner::Cancel;
 
 /// The longest this test will wait for a round that is not coming.
@@ -560,7 +561,7 @@ fn a_second_run_of_one_tree_reads_back_what_the_first_established_and_says_whose
         .tempdir()
         .expect("a temporary directory");
     let root = dir.path().join("fixture-baseline");
-    copy(
+    copy_tree(
         &mjutest_devkit::paths::fixtures_dir().join("fixture-baseline"),
         &root,
     );
@@ -678,7 +679,7 @@ fn fuzz_targets_a_run_was_not_asked_to_drive_are_a_gap_it_states_rather_than_pas
         .tempdir()
         .expect("a temporary directory");
     let root = dir.path().join("fixture-baseline");
-    copy(
+    copy_tree(
         &mjutest_devkit::paths::fixtures_dir().join("fixture-baseline"),
         &root,
     );
@@ -740,7 +741,7 @@ fn a_mutation_the_compiler_renders_identically_is_only_equivalent_where_the_test
         .tempdir()
         .expect("a temporary directory");
     let root = dir.path().join("fixture-equivalent");
-    copy(
+    copy_tree(
         &mjutest_devkit::paths::fixtures_dir().join("fixture-equivalent"),
         &root,
     );
@@ -835,7 +836,7 @@ fn a_run_that_held_something_says_what_it_held_and_lets_go_of_it() {
         .tempdir()
         .expect("a temporary directory");
     let root = dir.path().join("fixture-baseline");
-    copy(
+    copy_tree(
         &mjutest_devkit::paths::fixtures_dir().join("fixture-baseline"),
         &root,
     );
@@ -947,7 +948,7 @@ fn a_candidate_offered_for_a_gap_is_put_to_the_tests_before_it_is_recorded() {
         .tempdir()
         .expect("a temporary directory");
     let root = dir.path().join("fixture-baseline");
-    copy(
+    copy_tree(
         &mjutest_devkit::paths::fixtures_dir().join("fixture-baseline"),
         &root,
     );
@@ -1089,7 +1090,7 @@ fn offered_and_checked(report: &serde_json::Value, root: &std::path::Path) {
 fn unkeepable(dir: &std::path::Path, from: &std::path::Path, environment: Environment) {
     let root = from;
     let blocked = dir.join("fixture-blocked");
-    copy(root, &blocked);
+    copy_tree(root, &blocked);
     for gone in [".mjutest", "reports"] {
         drop(std::fs::remove_dir_all(blocked.join(gone)));
     }
@@ -1168,7 +1169,7 @@ fn a_run_that_was_stopped_leaves_what_it_established_for_the_next_one() {
         .tempdir()
         .expect("a temporary directory");
     let root = dir.path().join("fixture-baseline");
-    copy(
+    copy_tree(
         &mjutest_devkit::paths::fixtures_dir().join("fixture-baseline"),
         &root,
     );
@@ -1281,7 +1282,7 @@ fn once(
     configured: Option<&str>,
 ) -> serde_json::Value {
     let root = dir.join(name);
-    copy(&mjutest_devkit::paths::fixtures_dir().join(fixture), &root);
+    copy_tree(&mjutest_devkit::paths::fixtures_dir().join(fixture), &root);
     if let Some(text) = configured {
         std::fs::write(root.join(".mjutest.toml"), text).expect("a configuration");
     }
@@ -1391,7 +1392,7 @@ fn a_catalog_cut_into_parts_and_put_back_together_says_what_the_whole_would_have
     let whole = once("fixture-assured", dir.path(), "whole", None);
 
     let root = dir.path().join("parts");
-    copy(
+    copy_tree(
         &mjutest_devkit::paths::fixtures_dir().join("fixture-assured"),
         &root,
     );
@@ -1508,7 +1509,7 @@ fn a_target_the_fuzzer_could_not_drive_is_a_gap_and_never_a_target_that_found_no
         .tempdir()
         .expect("a temporary directory");
     let root = dir.path().join("fixture-baseline");
-    copy(
+    copy_tree(
         &mjutest_devkit::paths::fixtures_dir().join("fixture-baseline"),
         &root,
     );
@@ -1580,7 +1581,7 @@ fn verified_in_process(
     carrying: &[(&str, &str)],
 ) -> (u8, String, std::path::PathBuf) {
     let root = dir.join(fixture);
-    copy(&mjutest_devkit::paths::fixtures_dir().join(fixture), &root);
+    copy_tree(&mjutest_devkit::paths::fixtures_dir().join(fixture), &root);
     if !carrying.is_empty() {
         let named: Vec<String> = carrying
             .iter()
@@ -1699,19 +1700,6 @@ fn a_mutation_that_never_returns_is_stopped_measured_alone_and_reported_as_a_tim
     );
 }
 
-fn copy(from: &std::path::Path, to: &std::path::Path) {
-    std::fs::create_dir_all(to).expect("the directory");
-    for entry in std::fs::read_dir(from).expect("the fixture") {
-        let entry = entry.expect("an entry");
-        let target = to.join(entry.file_name());
-        if entry.file_type().expect("a file type").is_dir() {
-            copy(&entry.path(), &target);
-        } else {
-            let _bytes = std::fs::copy(entry.path(), target).expect("a copy");
-        }
-    }
-}
-
 #[test]
 fn a_run_in_this_process_writes_what_it_learned_before_it_compiled_anything() {
     let dir = tempfile::Builder::new()
@@ -1719,7 +1707,7 @@ fn a_run_in_this_process_writes_what_it_learned_before_it_compiled_anything() {
         .tempdir()
         .expect("a temporary directory");
     let root = dir.path().join("fixture-baseline");
-    copy(
+    copy_tree(
         &mjutest_devkit::paths::fixtures_dir().join("fixture-baseline"),
         &root,
     );

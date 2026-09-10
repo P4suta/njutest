@@ -10,6 +10,7 @@
     reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
 )]
 
+use mjutest_devkit::fixture::copy_tree;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -27,22 +28,8 @@ fn fixture(name: &str) -> Fixture {
         .tempdir()
         .expect("a temporary directory");
     let root = dir.path().join(name);
-    copy(&source, &root);
+    copy_tree(&source, &root);
     Fixture { root, _dir: dir }
-}
-
-fn copy(from: &Path, to: &Path) {
-    std::fs::create_dir_all(to).expect("the directory");
-    for entry in std::fs::read_dir(from).expect("the fixture") {
-        let entry = entry.expect("an entry");
-        let kind = entry.file_type().expect("a file type");
-        let target = to.join(entry.file_name());
-        if kind.is_dir() {
-            copy(&entry.path(), &target);
-        } else if kind.is_file() {
-            std::fs::copy(entry.path(), target).expect("a copy");
-        }
-    }
 }
 
 fn verify(fixture: &Fixture, extra: &[&str]) -> Output {
