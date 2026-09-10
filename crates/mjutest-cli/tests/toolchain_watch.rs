@@ -1412,6 +1412,93 @@ fn the_contract_that_promises_the_suite_is_interpreted_interprets_it() {
     );
 }
 
+/// A tree holding one fuzz target, which `builds` says whether cargo could build.
+fn with_fuzz_target(root: &std::path::Path, builds: bool) {
+    let targets = root.join("fuzz/fuzz_targets");
+    std::fs::create_dir_all(&targets).expect("a fuzz directory");
+    std::fs::write(
+        targets.join("parses.rs"),
+        if builds {
+            "#![no_main]\nfn main() {}\n"
+        } else {
+            "this is not rust at all\n"
+        },
+    )
+    .expect("a fuzz target");
+    std::fs::write(
+        root.join("fuzz/Cargo.toml"),
+        "[package]\nname = \"a-fuzz\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\
+         publish = false\n\n[[bin]]\nname = \"parses\"\npath = \"fuzz_targets/parses.rs\"\n\
+         test = false\ndoc = false\nbench = false\n",
+    )
+    .expect("a fuzz crate");
+}
+
+#[test]
+fn a_target_the_fuzzer_could_not_drive_is_a_gap_and_never_a_target_that_found_nothing() {
+    let dir = tempfile::Builder::new()
+        .prefix("mjutest-undriven-")
+        .tempdir()
+        .expect("a temporary directory");
+    let root = dir.path().join("fixture-baseline");
+    copy(
+        &mjutest_devkit::paths::fixtures_dir().join("fixture-baseline"),
+        &root,
+    );
+    with_fuzz_target(&root, false);
+    std::fs::write(
+        root.join(".mjutest.toml"),
+        "version = 1\n\n[fuzz]\nrun = true\nmax_total_time = \"3s\"\n",
+    )
+    .expect("a configuration that asks for the targets to be driven");
+
+    let scratch = dir.path().join("scratch");
+    std::fs::create_dir_all(&scratch).expect("a directory to work in");
+    let vars: Vec<(OsString, OsString)> = std::env::vars_os().collect();
+    let environment = Environment {
+        cache_directory: dir.path().join("cache"),
+        working_directory: root.clone(),
+        temp_directory: scratch,
+        vars,
+        cancel: Cancel::new(),
+    };
+    let (mut said, mut complaints) = (Vec::new(), Vec::new());
+    let code = mjutest_cli::run_from(
+        ["mjutest", "verify", "--offline", "--locked", "--no-cache"].map(OsString::from),
+        &environment,
+        &mut said,
+        &mut complaints,
+    );
+    assert_eq!(code, 2, "{}", String::from_utf8_lossy(&complaints));
+
+    let report = report_of(&root);
+    let stated: Vec<&str> = report["limitations"]
+        .as_array()
+        .expect("limitations")
+        .iter()
+        .filter_map(|one| one["name"].as_str())
+        .collect();
+    assert!(
+        stated.contains(&"cargo-fuzz-unavailable"),
+        "a target the fuzzer was asked to drive and could not is a gap this run says it \
+         has. Counting it as driven is the worst answer a fuzzing phase can give: \
+         nothing ran, and the report reads as though something did and found nothing: \
+         {stated:?}"
+    );
+    assert!(
+        report["findings"]
+            .as_array()
+            .expect("findings")
+            .iter()
+            .any(|one| one["kind"] == "not-measured"
+                && one["subject"]
+                    .as_str()
+                    .is_some_and(|at| at.contains("parses"))),
+        "and it is a finding, naming the target, because what was asked for and not \
+         done is what a person acts on: {report}"
+    );
+}
+
 /// A run in this process against `fixture`, and what it left behind.
 ///
 /// A `carrying` that is not empty also writes a configuration bounding one

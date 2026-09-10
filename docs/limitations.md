@@ -112,9 +112,14 @@ below is stated fail-closed.
   rather than a gap in the suite.
 - Fuzz targets are found always and driven only when `[fuzz] run` says so;
   a tree that holds targets nobody asked to drive carries
-  `fuzz-not-executed`. Without cargo-fuzz on a nightly toolchain, a run that
-  was asked to drive them carries `cargo-fuzz-unavailable` and a
-  `not-measured` finding instead.
+  `fuzz-not-executed`. A target the fuzzer could not drive — no cargo-fuzz on
+  a nightly toolchain, a fuzz crate that will not build, a sanitizer the
+  toolchain has no runtime for — carries `cargo-fuzz-unavailable` and a
+  `not-measured` finding instead, and is never counted among the targets that
+  were driven. libFuzzer exits non-zero when it finds something, and something
+  is an input it keeps, so a status with nothing kept is a target that never
+  started. A run stopped by its own bound *was* driven, for less time than it
+  was asked, and says that instead.
 - `standard-v1` does not execute anything about `unsafe` code; it
   inventories it and says so (`soundness-not-executed`). `deep-v1` interprets
   the suite under Miri and refuses to run at all without it (`MJ7001`), and

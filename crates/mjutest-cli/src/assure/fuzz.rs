@@ -137,6 +137,14 @@ pub fn fuzz(fuzzing: &Fuzzing<'_>, watch: Watch<'_>) -> Fuzzed {
 }
 
 /// Drives one target and reads what it left behind.
+///
+/// A fuzzer that came back with a status and left nothing behind did not run:
+/// libFuzzer exits non-zero when it finds something, and something is an input
+/// it keeps. So a non-zero status with no new artifact is a target that never
+/// started — a crate that would not build, a sanitizer the toolchain has no
+/// runtime for — and counting that as driven is the worst answer a fuzzing
+/// phase can give: nothing ran, and the report reads as though something did
+/// and found nothing.
 fn one(done: &mut Fuzzed, fuzzing: &Fuzzing<'_>, target: &str, watch: Watch<'_>) {
     let before = artifacts(fuzzing.root, target);
     let mut spec = Spec::new([
@@ -158,7 +166,14 @@ fn one(done: &mut Fuzzed, fuzzing: &Fuzzing<'_>, target: &str, watch: Watch<'_>)
     let ran = run(&spec, watch.cancel);
     watch.trace.exec(ExecRecord::of(&spec, &ran));
     let said = String::from_utf8_lossy(&ran.output).into_owned();
-    if ran.error.is_some() || ABSENT.iter().any(|marker| said.contains(marker)) {
+    let left: Vec<String> = artifacts(fuzzing.root, target)
+        .into_iter()
+        .filter(|artifact| !before.contains(artifact))
+        .collect();
+    let undriven = ran.error.is_some()
+        || ABSENT.iter().any(|marker| said.contains(marker))
+        || (!ran.timed_out && ran.exit_code != 0 && left.is_empty());
+    if undriven {
         done.limitations.push(Limitation::new(
             UNAVAILABLE_LIMITATION,
             &format!("{target} was to be driven and cargo-fuzz could not be run"),
@@ -179,10 +194,7 @@ fn one(done: &mut Fuzzed, fuzzing: &Fuzzing<'_>, target: &str, watch: Watch<'_>)
             &format!("{target} ran out of time before it was driven for as long as it was asked"),
         ));
     }
-    for artifact in artifacts(fuzzing.root, target) {
-        if before.contains(&artifact) {
-            continue;
-        }
+    for artifact in left {
         let Ok(content) = std::fs::read(fuzzing.root.join(&artifact)) else {
             continue;
         };

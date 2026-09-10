@@ -112,6 +112,63 @@ mod driving {
     }
 
     #[test]
+    fn a_target_stopped_before_its_time_was_up_was_driven_for_less_than_it_was_asked() {
+        let dir = tree(&["parse"]);
+        let mut env = saying("Done 1 runs", 0, None);
+        env.push((OsString::from("FAKE_CARGO_SLEEP"), OsString::from("5")));
+        let cancel = Cancel::new();
+        let trace = Recorder::disabled();
+        let cargo = cargo();
+        let done = fuzz(
+            &Fuzzing {
+                root: dir.path(),
+                cargo: &cargo,
+                env,
+                targets: &[],
+                max_total_time: Duration::from_secs(1),
+                timeout: Some(Duration::from_millis(300)),
+            },
+            Watch::new(&cancel, &trace),
+        );
+
+        assert_eq!(
+            done.ran,
+            ["parse"],
+            "a fuzzer that was stopped was still driven: what it covered before the \
+             bound is covered, and calling it undriven would throw that away: {done:?}"
+        );
+        assert!(
+            done.limitations.iter().any(|one| one
+                .detail
+                .contains("ran out of time before it was driven for as long as it was asked")),
+            "and how far short it fell is a different thing to do about from a fuzzer \
+             that could not be run at all — more time against a toolchain to fix: \
+             {done:?}"
+        );
+    }
+
+    #[test]
+    fn a_target_the_fuzzer_never_started_is_not_one_that_found_nothing() {
+        let dir = tree(&["parse"]);
+        let done = driven(
+            saying("error: could not compile `a-fuzz`", 101, None),
+            dir.path(),
+            &[],
+        );
+        assert!(
+            done.ran.is_empty(),
+            "libFuzzer exits non-zero when it finds something, and something is an input \
+             it keeps. A status with nothing kept is a target that never started, and \
+             counting it as driven says the fuzzer looked and found nothing: {done:?}"
+        );
+        assert_eq!(
+            done.findings.first().map(|one| one.kind),
+            Some(FindingKind::NotMeasured),
+            "what was asked for and not done is a finding: {done:?}"
+        );
+    }
+
+    #[test]
     fn an_input_that_crashes_a_target_is_kept_as_a_candidate_for_the_corpus() {
         let dir = tree(&["parse"]);
         let done = driven(
