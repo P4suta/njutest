@@ -167,7 +167,7 @@ path = "crates/mjutest-cli/src/checkpoint.rs"
 item = "write"
 rule = "question-to-unwrap"
 original = "?"
-line = 256
+line = 251
 reason = "serialising a State cannot fail: it is strings, numbers and vectors of them, and what_an_interrupted_run_saved_is_what_the_next_one_reads holds the round trip that would show a field which can refuse"
 
 # `RunKind` derives `Default` with `#[default]` on `Full`, because a run
@@ -247,7 +247,7 @@ path = "crates/mjutest-cli/src/evidence/store.rs"
 item = "write"
 rule = "question-to-unwrap"
 original = "?"
-line = 230
+line = 225
 reason = "a Record is strings and an enum of strings, so rendering it as JSON has no failure arm; a_record_says_what_shape_it_is_and_what_established_it renders both of its shapes and reads them back"
 
 # The mutation phase's `Phase` is the third of the same design and the same

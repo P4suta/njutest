@@ -379,17 +379,6 @@ fn a_checkpoint_that_cannot_be_written_says_which_path_refused_it() {
          which step this was: {refused}"
     );
 
-    let taken = dir.path().join("taken");
-    let inner = path_of(&taken, &identity);
-    let directory = inner.parent().expect("a directory").to_path_buf();
-    std::fs::create_dir_all(directory.join("checkpoint.writing")).expect("mkdir");
-    let refused = write(&taken, &state).expect_err("a pending path that is a directory");
-    assert!(
-        matches!(&refused, CheckpointError::Unusable { path, .. } if path.ends_with("checkpoint.writing")),
-        "the state is written beside its own name and moved into place, so a pending \
-         file that cannot be written is the one to name: {refused}"
-    );
-
     let blocked = dir.path().join("blocked");
     let inner = path_of(&blocked, &identity);
     std::fs::create_dir_all(&inner).expect("a directory where the checkpoint goes");

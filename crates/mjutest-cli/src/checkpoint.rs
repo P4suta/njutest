@@ -245,23 +245,13 @@ pub fn read(root: &Path, identity: &str) -> Result<Option<State>, CheckpointErro
 /// See [`CheckpointError::Unusable`].
 pub fn write(root: &Path, state: &State) -> Result<PathBuf, CheckpointError> {
     let path = path_of(root, &state.identity);
-    let directory = path.parent().unwrap_or(root);
-    std::fs::create_dir_all(directory).map_err(|source| CheckpointError::Unusable {
-        path: directory.to_path_buf(),
-        source,
-    })?;
     let text = serde_json::to_string(state).map_err(|error| CheckpointError::Unusable {
         path: path.clone(),
         source: std::io::Error::other(error),
     })?;
-    let pending = directory.join("checkpoint.writing");
-    std::fs::write(&pending, text).map_err(|source| CheckpointError::Unusable {
-        path: pending.clone(),
-        source,
-    })?;
-    std::fs::rename(&pending, &path).map_err(|source| CheckpointError::Unusable {
-        path: path.clone(),
-        source,
+    crate::replace::file(&path, text.as_bytes()).map_err(|failure| CheckpointError::Unusable {
+        path: failure.path,
+        source: failure.source,
     })?;
     Ok(path)
 }

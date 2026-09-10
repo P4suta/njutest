@@ -307,26 +307,8 @@ fn a_report_the_store_may_not_keep_says_which_of_the_three_reasons_it_is() {
 
 #[test]
 fn a_report_that_cannot_be_written_names_the_path_that_refused_it() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let kept = store(&dir.path().join("root"));
     let report = keepable();
     let identity = report.provenance.identity.clone();
-
-    let inside = kept
-        .entry(&identity)
-        .parent()
-        .expect("the store's own directory")
-        .to_path_buf();
-    std::fs::create_dir_all(inside.join(format!("{identity}.writing")))
-        .expect("a directory where the pending file goes");
-    let refused = kept
-        .put(&report)
-        .expect_err("a pending path that is a directory");
-    assert!(
-        matches!(&refused, CacheError::Unusable { path, .. } if path.ends_with(format!("{identity}.writing"))),
-        "the answer is written beside its own name and moved into place, so a pending \
-         file that cannot be written is the one to name: {refused}"
-    );
 
     let other = tempfile::tempdir().expect("tempdir");
     let elsewhere = store(&other.path().join("root"));
@@ -336,8 +318,8 @@ fn a_report_that_cannot_be_written_names_the_path_that_refused_it() {
         .expect_err("an entry that is a directory");
     assert!(
         matches!(&refused, CacheError::Unusable { path, .. } if path == &elsewhere.entry(&identity)),
-        "and one that was written and could not be moved into place names where it was \
-         going: {refused}"
+        "an answer is written beside its own name and moved into place, so one that was \
+         written and could not be moved names where it was going: {refused}"
     );
 }
 

@@ -200,19 +200,10 @@ impl Store {
         let text = crate::report::json::render(report).map_err(|error| CacheError::Refused {
             message: error.to_string(),
         })?;
-        std::fs::create_dir_all(&self.root).map_err(|source| CacheError::Unusable {
-            path: self.root.clone(),
-            source,
-        })?;
         let path = self.entry(identity);
-        let pending = self.root.join(format!("{identity}.writing"));
-        std::fs::write(&pending, &text).map_err(|source| CacheError::Unusable {
-            path: pending.clone(),
-            source,
-        })?;
-        std::fs::rename(&pending, &path).map_err(|source| CacheError::Unusable {
-            path: path.clone(),
-            source,
+        crate::replace::file(&path, text.as_bytes()).map_err(|failure| CacheError::Unusable {
+            path: failure.path,
+            source: failure.source,
         })?;
         Ok(path)
     }

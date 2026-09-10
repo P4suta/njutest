@@ -219,18 +219,13 @@ pub fn read(root: &Path, mutant: &str) -> Result<Option<Record>, StoreError> {
 /// See [`StoreError::Unusable`].
 pub fn write(root: &Path, record: &Record) -> Result<PathBuf, StoreError> {
     let path = path_of(root, &record.mutant);
-    let directory = path.parent().unwrap_or(root);
-    std::fs::create_dir_all(directory).map_err(|source| StoreError::Unusable {
-        path: directory.to_path_buf(),
-        source,
-    })?;
     let text = serde_json::to_string(record).map_err(|error| StoreError::Unusable {
         path: path.clone(),
         source: std::io::Error::other(error),
     })?;
-    std::fs::write(&path, text).map_err(|source| StoreError::Unusable {
-        path: path.clone(),
-        source,
+    crate::replace::file(&path, text.as_bytes()).map_err(|failure| StoreError::Unusable {
+        path: failure.path,
+        source: failure.source,
     })?;
     Ok(path)
 }
