@@ -4,26 +4,47 @@
 //! Everything one run established about one mutant, read back from what it stored.
 
 #![expect(
-    clippy::expect_used,
     clippy::indexing_slicing,
     reason = "a test reports a setup failure by panicking, asserts with panics, and a document \
               this test caused to be written is one it may index"
 )]
 
-use std::path::Path;
+use std::ffi::OsString;
 use std::process::Output;
 
 use mjutest_devkit::fixture::Fixture;
+use rust_mutants::runner::Cancel;
+use rust_mutants_cli::{Environment, Streams};
 
 fn against(fixture: &Fixture, args: &[&str]) -> Output {
-    let mut command = mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")));
-    command.env("NO_COLOR", "1");
-    command.env("TMPDIR", fixture.temp());
-    command.env("XDG_CACHE_HOME", fixture.cache());
-    command.args(args);
-    command.args(["--root", &fixture.root().to_string_lossy()]);
-    command.args(["--offline", "--locked"]);
-    command.output().expect("rust-mutants runs")
+    let root = fixture.root().to_string_lossy().into_owned();
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let code = rust_mutants_cli::run_from(
+        std::iter::once("rust-mutants")
+            .chain(args.iter().copied())
+            .chain(["--root", root.as_str()])
+            .chain(["--offline", "--locked"])
+            .map(OsString::from),
+        &environment(fixture),
+        &Cancel::new(),
+        Streams {
+            out: &mut out,
+            err: &mut err,
+        },
+    );
+    mjutest_devkit::process::answered(code, out, err)
+}
+
+fn environment(fixture: &Fixture) -> Environment {
+    Environment {
+        vars: mjutest_devkit::paths::environment_for_a_run(),
+        temp_directory: fixture.temp().to_path_buf(),
+        cache_directory: fixture.cache().to_path_buf(),
+        working_directory: fixture.root().to_path_buf(),
+        no_color: true,
+        stdout_is_terminal: false,
+        paints: false,
+    }
 }
 
 fn measured(fixture: &Fixture) {

@@ -3,26 +3,31 @@
 
 //! A tree that reads code from beside itself: refused by name, and measured when somebody says it may.
 
-#![expect(
-    clippy::expect_used,
-    reason = "the helper that starts the engine is not itself a test"
-)]
-
-use std::path::Path;
+use std::ffi::OsString;
 use std::process::Output;
 
 use mjutest_devkit::fixture::Fixture;
+use rust_mutants::runner::Cancel;
+use rust_mutants_cli::{Environment, Streams};
 
 fn run(fixture: &Fixture, args: &[&str]) -> Output {
-    let mut command = mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")));
-    command.env("NO_COLOR", "1");
-    command.env("TMPDIR", fixture.temp());
-    command.env("XDG_CACHE_HOME", fixture.cache());
-    command.arg("run");
-    command.args(["--root", &fixture.root().to_string_lossy()]);
-    command.args(["--tier", "all", "--offline", "--locked"]);
-    command.args(args);
-    command.output().expect("rust-mutants runs")
+    let root = fixture.root().to_string_lossy().into_owned();
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let code = rust_mutants_cli::run_from(
+        std::iter::once("rust-mutants")
+            .chain(["run"])
+            .chain(["--root", root.as_str()])
+            .chain(["--tier", "all", "--offline", "--locked"])
+            .chain(args.iter().copied())
+            .map(OsString::from),
+        &environment(fixture),
+        &Cancel::new(),
+        Streams {
+            out: &mut out,
+            err: &mut err,
+        },
+    );
+    mjutest_devkit::process::answered(code, out, err)
 }
 
 #[test]
@@ -73,4 +78,16 @@ fn an_allowed_sibling_is_copied_beside_the_tree_and_the_run_measures() {
         !text.contains("cataloged=0"),
         "and found something to measure: {text}"
     );
+}
+
+fn environment(fixture: &Fixture) -> Environment {
+    Environment {
+        vars: mjutest_devkit::paths::environment_for_a_run(),
+        temp_directory: fixture.temp().to_path_buf(),
+        cache_directory: fixture.cache().to_path_buf(),
+        working_directory: fixture.root().to_path_buf(),
+        no_color: true,
+        stdout_is_terminal: false,
+        paints: false,
+    }
 }

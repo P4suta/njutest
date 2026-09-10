@@ -3,26 +3,31 @@
 
 //! A tree whose own test fails, which is a tree no mutation of can be measured against.
 
-#![expect(
-    clippy::expect_used,
-    reason = "the helper that starts the engine is not itself a test"
-)]
-
-use std::path::Path;
+use std::ffi::OsString;
 use std::process::Output;
 
 use mjutest_devkit::fixture::Fixture;
+use rust_mutants::runner::Cancel;
+use rust_mutants_cli::{Environment, Streams};
 
 fn run(fixture: &Fixture, args: &[&str]) -> Output {
-    let mut command = mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")));
-    command.env("NO_COLOR", "1");
-    command.env("TMPDIR", fixture.temp());
-    command.env("XDG_CACHE_HOME", fixture.cache());
-    command.arg("run");
-    command.args(["--root", &fixture.root().to_string_lossy()]);
-    command.args(["--tier", "all", "--offline", "--locked"]);
-    command.args(args);
-    command.output().expect("rust-mutants runs")
+    let root = fixture.root().to_string_lossy().into_owned();
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let code = rust_mutants_cli::run_from(
+        std::iter::once("rust-mutants")
+            .chain(["run"])
+            .chain(["--root", root.as_str()])
+            .chain(["--tier", "all", "--offline", "--locked"])
+            .chain(args.iter().copied())
+            .map(OsString::from),
+        &environment(fixture),
+        &Cancel::new(),
+        Streams {
+            out: &mut out,
+            err: &mut err,
+        },
+    );
+    mjutest_devkit::process::answered(code, out, err)
 }
 
 #[test]
@@ -96,4 +101,16 @@ fn a_refusal_names_every_target_that_failed_rather_than_the_first() {
             && said.contains("--skip-target fixture-verify-fails/test/beside"),
         "what it says to do about it covers every one of them: {said}"
     );
+}
+
+fn environment(fixture: &Fixture) -> Environment {
+    Environment {
+        vars: mjutest_devkit::paths::environment_for_a_run(),
+        temp_directory: fixture.temp().to_path_buf(),
+        cache_directory: fixture.cache().to_path_buf(),
+        working_directory: fixture.root().to_path_buf(),
+        no_color: true,
+        stdout_is_terminal: false,
+        paints: false,
+    }
 }

@@ -3,23 +3,41 @@
 
 //! Mutating what changed: what a change set selects, and what it refuses to guess.
 
-#![expect(
-    clippy::expect_used,
-    reason = "a test reports a setup failure by panicking and asserts with panics"
-)]
+use std::ffi::OsString;
 
 use mjutest_devkit::fixture::Fixture;
-use std::path::Path;
+use rust_mutants::runner::Cancel;
+use rust_mutants_cli::{Environment, Streams};
 use std::process::Output;
 
 fn against(fixture: &Fixture, args: &[&str]) -> Output {
-    mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")))
-        .env("NO_COLOR", "1")
-        .env("TMPDIR", fixture.temp())
-        .args(args)
-        .args(["--root", &fixture.root().to_string_lossy()])
-        .output()
-        .expect("rust-mutants runs")
+    let root = fixture.root().to_string_lossy().into_owned();
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let code = rust_mutants_cli::run_from(
+        std::iter::once("rust-mutants")
+            .chain(args.iter().copied())
+            .chain(["--root", root.as_str()])
+            .map(OsString::from),
+        &environment(fixture),
+        &Cancel::new(),
+        Streams {
+            out: &mut out,
+            err: &mut err,
+        },
+    );
+    mjutest_devkit::process::answered(code, out, err)
+}
+
+fn environment(fixture: &Fixture) -> Environment {
+    Environment {
+        vars: mjutest_devkit::paths::environment_for_a_run(),
+        temp_directory: fixture.temp().to_path_buf(),
+        cache_directory: fixture.cache().to_path_buf(),
+        working_directory: fixture.root().to_path_buf(),
+        no_color: true,
+        stdout_is_terminal: false,
+        paints: false,
+    }
 }
 
 fn stdout(output: &Output) -> String {

@@ -9,5 +9,6 @@ pub mod fake_cargo;
 pub mod fixture;
 pub mod golden;
 pub mod paths;
+pub mod process;
 pub mod repo;
 pub mod report;

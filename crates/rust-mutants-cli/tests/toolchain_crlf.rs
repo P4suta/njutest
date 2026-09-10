@@ -11,9 +11,12 @@
               test caused to be written is one it may index"
 )]
 
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use mjutest_devkit::fixture::{Fate, Fixture};
+use rust_mutants::runner::Cancel;
+use rust_mutants_cli::{Environment, Streams};
 
 /// A copy of `fixture-simple` with every source line ending the other way.
 ///
@@ -63,14 +66,22 @@ fn rust_sources(root: &Path) -> Vec<String> {
 
 /// What one run of a tree establishes, and the full identity of every row.
 fn run(fixture: &Fixture) -> (Vec<Fate>, Vec<String>) {
-    let mut command = mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")));
-    command.env("NO_COLOR", "1");
-    command.env("TMPDIR", fixture.temp());
-    command.env("XDG_CACHE_HOME", fixture.cache());
-    command.arg("run");
-    command.args(["--root", &fixture.root().to_string_lossy()]);
-    command.args(["--tier", "all", "--offline", "--locked"]);
-    let output = command.output().expect("rust-mutants runs");
+    let root = fixture.root().to_string_lossy().into_owned();
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let code = rust_mutants_cli::run_from(
+        std::iter::once("rust-mutants")
+            .chain(["run"])
+            .chain(["--root", root.as_str()])
+            .chain(["--tier", "all", "--offline", "--locked"])
+            .map(OsString::from),
+        &environment(fixture),
+        &Cancel::new(),
+        Streams {
+            out: &mut out,
+            err: &mut err,
+        },
+    );
+    let output = mjutest_devkit::process::answered(code, out, err);
     assert!(
         output.status.code().is_some_and(|code| code < 2),
         "{}",
@@ -144,4 +155,16 @@ fn the_fates_a_crlf_tree_reaches_are_the_ones_its_readme_states() {
         "the fates a fixture's README states are about the program, and the line endings are \
          not part of the program"
     );
+}
+
+fn environment(fixture: &Fixture) -> Environment {
+    Environment {
+        vars: mjutest_devkit::paths::environment_for_a_run(),
+        temp_directory: fixture.temp().to_path_buf(),
+        cache_directory: fixture.cache().to_path_buf(),
+        working_directory: fixture.root().to_path_buf(),
+        no_color: true,
+        stdout_is_terminal: false,
+        paints: false,
+    }
 }

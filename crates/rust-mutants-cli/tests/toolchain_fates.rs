@@ -11,9 +11,12 @@
               a document this test wrote itself is one it may index"
 )]
 
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use mjutest_devkit::fixture::{Fate, Fixture};
+use rust_mutants::runner::Cancel;
+use rust_mutants_cli::{Environment, Streams};
 
 /// The variable that rewrites the blocks rather than refusing them, as `UPDATE_GOLDEN` does for a golden.
 const UPDATE: &str = "UPDATE_FATES";
@@ -58,15 +61,23 @@ fn resolved(fixture: &Fixture, args: &[String]) -> Vec<String> {
 
 /// What a run of one fixture establishes, in the order a block states it.
 fn recorded(fixture: &Fixture, args: &[String]) -> Vec<Fate> {
-    let mut command = mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")));
-    command.env("NO_COLOR", "1");
-    command.env("TMPDIR", fixture.temp());
-    command.env("XDG_CACHE_HOME", fixture.cache());
-    command.arg("run");
-    command.args(["--root", &fixture.root().to_string_lossy()]);
-    command.args(["--tier", "all", "--offline", "--locked"]);
-    command.args(args);
-    let output = command.output().expect("rust-mutants runs");
+    let root = fixture.root().to_string_lossy().into_owned();
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let code = rust_mutants_cli::run_from(
+        std::iter::once("rust-mutants")
+            .chain(["run"])
+            .chain(["--root", root.as_str()])
+            .chain(["--tier", "all", "--offline", "--locked"])
+            .chain(args.iter().map(String::as_str))
+            .map(OsString::from),
+        &environment(fixture),
+        &Cancel::new(),
+        Streams {
+            out: &mut out,
+            err: &mut err,
+        },
+    );
+    let output = mjutest_devkit::process::answered(code, out, err);
     let code = output.status.code();
     let said = String::from_utf8_lossy(&output.stderr);
     let directory = fixture.root().join("reports/mutation");
@@ -243,4 +254,16 @@ fn walk(base: &Path) -> Vec<PathBuf> {
         }
     }
     found
+}
+
+fn environment(fixture: &Fixture) -> Environment {
+    Environment {
+        vars: mjutest_devkit::paths::environment_for_a_run(),
+        temp_directory: fixture.temp().to_path_buf(),
+        cache_directory: fixture.cache().to_path_buf(),
+        working_directory: fixture.root().to_path_buf(),
+        no_color: true,
+        stdout_is_terminal: false,
+        paints: false,
+    }
 }
