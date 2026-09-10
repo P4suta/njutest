@@ -16,7 +16,7 @@ use std::io::Write;
 
 use rust_mutants::{snapshot, workspace};
 
-use super::{RESERVED_ENV, json_line, locating, write};
+use super::{json_line, locating, write};
 use crate::Environment;
 use crate::report::doctor as doctor_report;
 
@@ -347,12 +347,7 @@ fn workspace_check(root: &Path, manifest: &Path) -> doctor_report::Check {
 /// Whether a reserved variable is already set, which would make every answer a run gives an answer about something else.
 fn environment_check(environment: &Environment) -> doctor_report::Check {
     use doctor_report::Standing::{Fail, Ok as Well};
-    let set: Vec<String> = environment
-        .vars
-        .iter()
-        .map(|(name, _)| name.to_string_lossy().into_owned())
-        .filter(|name| RESERVED_ENV.contains(&name.as_str()))
-        .collect();
+    let set = super::reserved_names(environment);
     if set.is_empty() {
         return doctor_report::Check::new("environment", Well, "no reserved variable is set", None);
     }

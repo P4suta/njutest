@@ -189,16 +189,30 @@ const fn diagnoses(command: &cli::Command) -> bool {
     )
 }
 
+/// The reserved variables this environment already names, in the order they are set.
+///
+/// A variable exported with no value activates nothing, and a shell that
+/// exports a name it never assigned is a shell everybody has, so the rule is
+/// about the value and never about the name alone. It is written once because
+/// the doctor answers about the same rule the run refuses on: one that said
+/// `fail` where a run says nothing sends a person to unset a variable that was
+/// never in the way.
+#[must_use]
+pub fn reserved_names(environment: &Environment) -> Vec<String> {
+    environment
+        .vars
+        .iter()
+        .filter(|(_, value)| !value.is_empty())
+        .map(|(name, _)| name.to_string_lossy().into_owned())
+        .filter(|name| RESERVED_ENV.contains(&name.as_str()))
+        .collect()
+}
+
 fn reserved(environment: &Environment) -> Result<(), CliError> {
-    for (name, value) in &environment.vars {
-        let name = name.to_string_lossy();
-        if RESERVED_ENV.contains(&name.as_ref()) && !value.is_empty() {
-            return Err(CliError::EnvironmentReserved {
-                name: name.into_owned(),
-            });
-        }
-    }
-    Ok(())
+    reserved_names(environment).into_iter().next().map_or_else(
+        || Ok(()),
+        |name| Err(CliError::EnvironmentReserved { name }),
+    )
 }
 
 fn workspace_command(
