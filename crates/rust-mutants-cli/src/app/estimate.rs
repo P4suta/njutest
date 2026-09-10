@@ -9,7 +9,8 @@ use rust_mutants::run;
 use rust_mutants::session::{self, Route, Session};
 
 /// What a run would cost, from what preparing established and before a mutant is executed.
-pub(super) fn estimate(session: &Session, filter: &run::Filter) -> String {
+#[must_use]
+pub fn estimate(session: &Session, filter: &run::Filter) -> String {
     let targets = u64::try_from(session.targets().len()).unwrap_or(u64::MAX);
     let held: u64 = session
         .targets()
@@ -69,27 +70,27 @@ pub(super) fn estimate(session: &Session, filter: &run::Filter) -> String {
 
 /// What a dry run counted, in pairs of one mutant and one target.
 #[derive(Debug, Clone, Copy, Default)]
-struct Estimated {
+pub struct Estimated {
     /// Every mutant the catalog holds.
-    cataloged: u64,
+    pub cataloged: u64,
     /// The mutants a filter left out.
-    unselected: u64,
+    pub unselected: u64,
     /// The mutants with at least one target to ask.
-    selected: u64,
+    pub selected: u64,
     /// The mutants no target would be asked about.
-    nothing_to_ask: u64,
+    pub nothing_to_ask: u64,
     /// The pairs a run would start at most, before one target answers for the rest.
-    pairs: u64,
+    pub pairs: u64,
     /// The pairs the measurement removed.
-    unreached: u64,
+    pub unreached: u64,
     /// The pairs a proof removed.
-    discharged: u64,
+    pub discharged: u64,
     /// The tests a run would start, which is what the pairs are asked for.
-    tests: u64,
+    pub tests: u64,
     /// The tests a run that asked every test of every target about every mutant would start.
-    tests_whole: u64,
+    pub tests_whole: u64,
     /// What those tests would take on this machine, target by target.
-    duration: std::time::Duration,
+    pub duration: std::time::Duration,
 }
 
 impl Estimated {
@@ -98,7 +99,8 @@ impl Estimated {
     /// A count is the same on every machine; a duration is a guess about this
     /// one. The count is what a person decides by, so it comes first and the
     /// guess comes last, marked as one.
-    fn said(&self, targets: u64) -> String {
+    #[must_use]
+    pub fn said(&self, targets: u64) -> String {
         let whole = self.cataloged.saturating_mul(targets);
         let removed = whole.saturating_sub(self.pairs);
         let widened =
