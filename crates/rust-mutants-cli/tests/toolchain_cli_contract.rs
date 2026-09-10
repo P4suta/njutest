@@ -4,13 +4,15 @@
 //! What the command line answers about a real tree: what it lists, what it catalogs, and what it exits with.
 
 #![expect(
-    clippy::expect_used,
     clippy::indexing_slicing,
     reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
 )]
 
+use std::ffi::OsString;
+
 use mjutest_devkit::fixture::Fixture;
-use std::path::Path;
+use rust_mutants::runner::Cancel;
+use rust_mutants_cli::{Environment, Streams};
 use std::process::Output;
 
 /// Runs the binary against a fixture, with the environment a real run has.
@@ -19,15 +21,24 @@ fn stdout(output: &Output) -> String {
 }
 
 fn against(fixture: &Fixture, args: &[&str]) -> Output {
-    let mut command = mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")));
-    command.env("NO_COLOR", "1");
-    command.env("TMPDIR", fixture.temp());
-    command.arg(args[0]);
-    command.args(["--root", &fixture.root().to_string_lossy()]);
-    command.args(["--tier", "all"]);
-    command.args(["--offline", "--locked"]);
-    command.args(&args[1..]);
-    command.output().expect("rust-mutants runs")
+    let root = fixture.root().to_string_lossy().into_owned();
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let code = rust_mutants_cli::run_from(
+        std::iter::once("rust-mutants")
+            .chain(args.iter().copied().take(1))
+            .chain(["--root", root.as_str()])
+            .chain(["--tier", "all"])
+            .chain(["--offline", "--locked"])
+            .chain(args.iter().copied().skip(1))
+            .map(OsString::from),
+        &environment(fixture),
+        &Cancel::new(),
+        Streams {
+            out: &mut out,
+            err: &mut err,
+        },
+    );
+    mjutest_devkit::process::answered(code, out, err)
 }
 #[test]
 fn list_names_every_candidate_without_building_anything() {
@@ -296,4 +307,16 @@ fn equivalence_asks_about_at_most_the_limit_it_was_given() {
         .filter(|line| line.contains('\t') && !line.starts_with("EQUIVALENCE"))
         .count();
     assert_eq!(rows, 2, "{text}");
+}
+
+fn environment(fixture: &Fixture) -> Environment {
+    Environment {
+        vars: mjutest_devkit::paths::environment_for_a_run(),
+        temp_directory: fixture.temp().to_path_buf(),
+        cache_directory: fixture.cache().to_path_buf(),
+        working_directory: fixture.root().to_path_buf(),
+        no_color: true,
+        stdout_is_terminal: false,
+        paints: false,
+    }
 }

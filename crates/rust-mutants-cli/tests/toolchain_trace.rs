@@ -14,32 +14,51 @@
 use std::path::{Path, PathBuf};
 use std::process::Output;
 
+use std::ffi::OsString;
+
 use mjutest_devkit::fixture::Fixture;
+use rust_mutants::runner::Cancel;
+use rust_mutants_cli::{Environment, Streams};
 
 fn against(fixture: &Fixture, args: &[&str]) -> Output {
-    let mut command = mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")));
-    command.env("NO_COLOR", "1");
-    command.env("TMPDIR", fixture.temp());
-    command.env("XDG_CACHE_HOME", fixture.cache());
-    command.current_dir(fixture.root());
-    command.arg(args[0]);
-    command.args(["--root", &fixture.root().to_string_lossy()]);
-    command.args(["--offline", "--locked"]);
-    command.args(&args[1..]);
-    command.output().expect("rust-mutants runs")
+    let root = fixture.root().to_string_lossy().into_owned();
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let code = rust_mutants_cli::run_from(
+        std::iter::once("rust-mutants")
+            .chain(args.iter().copied().take(1))
+            .chain(["--root", root.as_str()])
+            .chain(["--offline", "--locked"])
+            .chain(args.iter().copied().skip(1))
+            .map(OsString::from),
+        &environment(fixture),
+        &Cancel::new(),
+        Streams {
+            out: &mut out,
+            err: &mut err,
+        },
+    );
+    mjutest_devkit::process::answered(code, out, err)
 }
 
 /// A reading of a recording, which names its own root rather than taking one before the subcommand.
 fn reading(fixture: &Fixture, args: &[&str]) -> Output {
-    let mut command = mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")));
-    command.env("NO_COLOR", "1");
-    command.env("TMPDIR", fixture.temp());
-    command.current_dir(fixture.root());
-    command.arg("trace");
-    command.arg(args[0]);
-    command.args(["--root", &fixture.root().to_string_lossy()]);
-    command.args(&args[1..]);
-    command.output().expect("rust-mutants runs")
+    let root = fixture.root().to_string_lossy().into_owned();
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let code = rust_mutants_cli::run_from(
+        std::iter::once("rust-mutants")
+            .chain(["trace"])
+            .chain(args.iter().copied().take(1))
+            .chain(["--root", root.as_str()])
+            .chain(args.iter().copied().skip(1))
+            .map(OsString::from),
+        &environment(fixture),
+        &Cancel::new(),
+        Streams {
+            out: &mut out,
+            err: &mut err,
+        },
+    );
+    mjutest_devkit::process::answered(code, out, err)
 }
 
 /// Where a fixture's reports are stored.
@@ -492,5 +511,17 @@ fn a_mutation_a_run_puts_to_the_tests_leaves_the_execution_that_ran_it() {
             "a mutation that ran leaves the execution that ran it, or a recording says a run \
              removed work it did: {index}"
         );
+    }
+}
+
+fn environment(fixture: &Fixture) -> Environment {
+    Environment {
+        vars: mjutest_devkit::paths::environment_for_a_run(),
+        temp_directory: fixture.temp().to_path_buf(),
+        cache_directory: fixture.cache().to_path_buf(),
+        working_directory: fixture.root().to_path_buf(),
+        no_color: true,
+        stdout_is_terminal: false,
+        paints: false,
     }
 }

@@ -28,12 +28,15 @@
 )]
 
 use std::collections::BTreeMap;
-use std::path::Path;
+
+use std::ffi::OsString;
 
 use mjutest_devkit::fixture::Fixture;
 use rust_mutants::report::run::{RunDocument, RunMutantDocument};
+use rust_mutants::runner::Cancel;
 use rust_mutants::testkit::measuring::Measuring;
 use rust_mutants::work::Work;
+use rust_mutants_cli::{Environment, Streams};
 
 /// The fixtures the layers have something to say about.
 ///
@@ -58,16 +61,23 @@ struct Established {
 
 fn established(name: &str, extra: &[&str]) -> Established {
     let fixture = Fixture::copy(name);
-    let output = mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")))
-        .env("NO_COLOR", "1")
-        .env("TMPDIR", fixture.temp())
-        .env("XDG_CACHE_HOME", fixture.cache())
-        .args(["run", "--tier", "all", "--offline", "--locked"])
-        .args(["--jobs", "1", "--ui", "quiet", "--no-cache"])
-        .args(extra)
-        .args(["--root", &fixture.root().to_string_lossy()])
-        .output()
-        .expect("rust-mutants runs");
+    let root = fixture.root().to_string_lossy().into_owned();
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let code = rust_mutants_cli::run_from(
+        std::iter::once("rust-mutants")
+            .chain(["run", "--tier", "all", "--offline", "--locked"])
+            .chain(["--jobs", "1", "--ui", "quiet", "--no-cache"])
+            .chain(extra.iter().copied())
+            .chain(["--root", root.as_str()])
+            .map(OsString::from),
+        &environment(&fixture),
+        &Cancel::new(),
+        Streams {
+            out: &mut out,
+            err: &mut err,
+        },
+    );
+    let output = mjutest_devkit::process::answered(code, out, err);
     assert!(
         output.status.code().is_some_and(|code| code <= 1),
         "{name} {extra:?}: {}",
@@ -230,16 +240,23 @@ fn the_guards_put_a_mutation_to_fewer_tests_than_routing_by_target_can() {
 fn a_remembered_measurement_routes_a_run_exactly_as_a_fresh_one_would() {
     let fixture = Fixture::copy("fixture-coverage");
     let report = |fixture: &Fixture, extra: &[&str]| -> BTreeMap<String, String> {
-        let output = mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")))
-            .env("NO_COLOR", "1")
-            .env("TMPDIR", fixture.temp())
-            .env("XDG_CACHE_HOME", fixture.cache())
-            .args(["run", "--tier", "all", "--offline", "--locked"])
-            .args(["--jobs", "1", "--ui", "quiet"])
-            .args(extra)
-            .args(["--root", &fixture.root().to_string_lossy()])
-            .output()
-            .expect("rust-mutants runs");
+        let root = fixture.root().to_string_lossy().into_owned();
+        let (mut out, mut err) = (Vec::new(), Vec::new());
+        let code = rust_mutants_cli::run_from(
+            std::iter::once("rust-mutants")
+                .chain(["run", "--tier", "all", "--offline", "--locked"])
+                .chain(["--jobs", "1", "--ui", "quiet"])
+                .chain(extra.iter().copied())
+                .chain(["--root", root.as_str()])
+                .map(OsString::from),
+            &environment(fixture),
+            &Cancel::new(),
+            Streams {
+                out: &mut out,
+                err: &mut err,
+            },
+        );
+        let output = mjutest_devkit::process::answered(code, out, err);
         assert!(
             output.status.code().is_some_and(|code| code <= 1),
             "{}",
@@ -262,14 +279,21 @@ fn a_remembered_measurement_routes_a_run_exactly_as_a_fresh_one_would() {
             .collect()
     };
     let fresh = report(&fixture, &[]);
-    let cleared = mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")))
-        .env("NO_COLOR", "1")
-        .env("TMPDIR", fixture.temp())
-        .env("XDG_CACHE_HOME", fixture.cache())
-        .args(["cache", "--clear-outcomes"])
-        .args(["--root", &fixture.root().to_string_lossy()])
-        .output()
-        .expect("rust-mutants runs");
+    let root = fixture.root().to_string_lossy().into_owned();
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let code = rust_mutants_cli::run_from(
+        std::iter::once("rust-mutants")
+            .chain(["cache", "--clear-outcomes"])
+            .chain(["--root", root.as_str()])
+            .map(OsString::from),
+        &environment(&fixture),
+        &Cancel::new(),
+        Streams {
+            out: &mut out,
+            err: &mut err,
+        },
+    );
+    let cleared = mjutest_devkit::process::answered(code, out, err);
     assert_eq!(cleared.status.code(), Some(0), "{cleared:?}");
     let remembered = report(&fixture, &[]);
     assert_eq!(
@@ -278,4 +302,16 @@ fn a_remembered_measurement_routes_a_run_exactly_as_a_fresh_one_would() {
          mutant exactly as the run that made it did"
     );
     assert!(!fresh.is_empty(), "there was something to compare");
+}
+
+fn environment(fixture: &Fixture) -> Environment {
+    Environment {
+        vars: mjutest_devkit::paths::environment_for_a_run(),
+        temp_directory: fixture.temp().to_path_buf(),
+        cache_directory: fixture.cache().to_path_buf(),
+        working_directory: fixture.root().to_path_buf(),
+        no_color: true,
+        stdout_is_terminal: false,
+        paints: false,
+    }
 }

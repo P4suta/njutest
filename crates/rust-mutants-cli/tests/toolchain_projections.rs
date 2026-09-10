@@ -4,24 +4,33 @@
 //! What a stored run becomes for other readers: a Stryker report, one page, and one doctor document.
 
 #![expect(
-    clippy::expect_used,
     clippy::indexing_slicing,
     reason = "a test reports a setup failure by panicking and reads a document as a table"
 )]
 
+use std::ffi::OsString;
+
 use mjutest_devkit::fixture::Fixture;
-use std::path::Path;
+use rust_mutants::runner::Cancel;
+use rust_mutants_cli::{Environment, Streams};
 use std::process::Output;
 
 fn against(fixture: &Fixture, args: &[&str]) -> Output {
-    mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")))
-        .env("NO_COLOR", "1")
-        .env("TMPDIR", fixture.temp())
-        .env("XDG_CACHE_HOME", fixture.cache())
-        .args(args)
-        .args(["--root", &fixture.root().to_string_lossy()])
-        .output()
-        .expect("rust-mutants runs")
+    let root = fixture.root().to_string_lossy().into_owned();
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let code = rust_mutants_cli::run_from(
+        std::iter::once("rust-mutants")
+            .chain(args.iter().copied())
+            .chain(["--root", root.as_str()])
+            .map(OsString::from),
+        &environment(fixture),
+        &Cancel::new(),
+        Streams {
+            out: &mut out,
+            err: &mut err,
+        },
+    );
+    mjutest_devkit::process::answered(code, out, err)
 }
 
 fn stdout(output: &Output) -> String {
@@ -251,13 +260,19 @@ fn a_package_with_nothing_to_run_is_a_warning_that_names_it() {
 fn a_root_that_is_a_member_of_a_workspace_fails_and_names_the_root_to_use() {
     let fixture = Fixture::copy("fixture-workspace");
     let member = fixture.root().join("crates/core");
-    let asked = mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")))
-        .env("NO_COLOR", "1")
-        .env("TMPDIR", fixture.temp())
-        .env("XDG_CACHE_HOME", fixture.cache())
-        .args(["doctor", "--root", &member.to_string_lossy()])
-        .output()
-        .expect("rust-mutants runs");
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let code = rust_mutants_cli::run_from(
+        std::iter::once("rust-mutants")
+            .chain(["doctor", "--root", &member.to_string_lossy()])
+            .map(OsString::from),
+        &environment(&fixture),
+        &Cancel::new(),
+        Streams {
+            out: &mut out,
+            err: &mut err,
+        },
+    );
+    let asked = mjutest_devkit::process::answered(code, out, err);
     let text = String::from_utf8_lossy(&asked.stdout).into_owned();
     assert!(text.contains("FAIL workspace"), "{text}");
     assert!(
@@ -308,4 +323,16 @@ fn a_project_that_moved_its_reports_is_still_told_what_a_run_kept() {
         !text.contains("0 kept on purpose"),
         "a project that moved its reports would otherwise be told nothing was kept: {text}"
     );
+}
+
+fn environment(fixture: &Fixture) -> Environment {
+    Environment {
+        vars: mjutest_devkit::paths::environment_for_a_run(),
+        temp_directory: fixture.temp().to_path_buf(),
+        cache_directory: fixture.cache().to_path_buf(),
+        working_directory: fixture.root().to_path_buf(),
+        no_color: true,
+        stdout_is_terminal: false,
+        paints: false,
+    }
 }

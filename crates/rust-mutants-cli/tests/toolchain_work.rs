@@ -17,10 +17,12 @@
     reason = "a test reports a setup failure by panicking and reads a ledger as a table"
 )]
 
-use std::path::Path;
+use std::ffi::OsString;
 
 use mjutest_devkit::fixture::Fixture;
+use rust_mutants::runner::Cancel;
 use rust_mutants::work::Work;
+use rust_mutants_cli::{Environment, Streams};
 
 /// One line of the ceiling: a fixture, and what a whole run and this engine start of each unit.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -59,15 +61,22 @@ fn ceilings() -> Vec<Ceiling> {
 
 fn measured(name: &str) -> Work {
     let fixture = Fixture::copy(name);
-    let output = mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")))
-        .env("NO_COLOR", "1")
-        .env("TMPDIR", fixture.temp())
-        .env("XDG_CACHE_HOME", fixture.cache())
-        .args(["run", "--tier", "all", "--offline", "--locked"])
-        .args(["--jobs", "1", "--ui", "quiet"])
-        .args(["--root", &fixture.root().to_string_lossy()])
-        .output()
-        .expect("rust-mutants runs");
+    let root = fixture.root().to_string_lossy().into_owned();
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let code = rust_mutants_cli::run_from(
+        std::iter::once("rust-mutants")
+            .chain(["run", "--tier", "all", "--offline", "--locked"])
+            .chain(["--jobs", "1", "--ui", "quiet"])
+            .chain(["--root", root.as_str()])
+            .map(OsString::from),
+        &environment(&fixture),
+        &Cancel::new(),
+        Streams {
+            out: &mut out,
+            err: &mut err,
+        },
+    );
+    let output = mjutest_devkit::process::answered(code, out, err);
     assert!(
         output.status.code().is_some_and(|code| code <= 1),
         "{name}: {output:?}"
@@ -156,16 +165,23 @@ const CARGO_CEILING: u64 = 6;
 /// How many times a run started each program, read back from its own recording.
 fn programs(name: &str, extra: &[&str]) -> std::collections::BTreeMap<String, u64> {
     let fixture = Fixture::copy(name);
-    let output = mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")))
-        .env("NO_COLOR", "1")
-        .env("TMPDIR", fixture.temp())
-        .env("XDG_CACHE_HOME", fixture.cache())
-        .args(["run", "--tier", "all", "--offline", "--locked"])
-        .args(["--jobs", "1", "--ui", "quiet", "--trace"])
-        .args(extra)
-        .args(["--root", &fixture.root().to_string_lossy()])
-        .output()
-        .expect("rust-mutants runs");
+    let root = fixture.root().to_string_lossy().into_owned();
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let code = rust_mutants_cli::run_from(
+        std::iter::once("rust-mutants")
+            .chain(["run", "--tier", "all", "--offline", "--locked"])
+            .chain(["--jobs", "1", "--ui", "quiet", "--trace"])
+            .chain(extra.iter().copied())
+            .chain(["--root", root.as_str()])
+            .map(OsString::from),
+        &environment(&fixture),
+        &Cancel::new(),
+        Streams {
+            out: &mut out,
+            err: &mut err,
+        },
+    );
+    let output = mjutest_devkit::process::answered(code, out, err);
     assert!(
         output.status.code().is_some_and(|code| code <= 1),
         "{name}: {}",
@@ -210,22 +226,29 @@ fn a_second_run_of_a_tree_nothing_changed_measures_it_again_no_harder_than_the_f
 fn a_second_run_of_a_tree_nothing_changed_measures_nothing_again() {
     let fixture = Fixture::copy("fixture-coverage");
     let started = |fixture: &Fixture| -> u64 {
-        let output = mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")))
-            .env("NO_COLOR", "1")
-            .env("TMPDIR", fixture.temp())
-            .env("XDG_CACHE_HOME", fixture.cache())
-            .args([
-                "run",
-                "--tier",
-                "all",
-                "--offline",
-                "--locked",
-                "--coverage",
-            ])
-            .args(["--jobs", "1", "--ui", "quiet", "--trace"])
-            .args(["--root", &fixture.root().to_string_lossy()])
-            .output()
-            .expect("rust-mutants runs");
+        let root = fixture.root().to_string_lossy().into_owned();
+        let (mut out, mut err) = (Vec::new(), Vec::new());
+        let code = rust_mutants_cli::run_from(
+            std::iter::once("rust-mutants")
+                .chain([
+                    "run",
+                    "--tier",
+                    "all",
+                    "--offline",
+                    "--locked",
+                    "--coverage",
+                ])
+                .chain(["--jobs", "1", "--ui", "quiet", "--trace"])
+                .chain(["--root", root.as_str()])
+                .map(OsString::from),
+            &environment(fixture),
+            &Cancel::new(),
+            Streams {
+                out: &mut out,
+                err: &mut err,
+            },
+        );
+        let output = mjutest_devkit::process::answered(code, out, err);
         assert!(
             output.status.code().is_some_and(|code| code <= 1),
             "{}",
@@ -262,22 +285,29 @@ fn a_second_run_of_a_tree_nothing_changed_measures_nothing_again() {
 fn a_tree_that_changed_is_measured_again_rather_than_remembered() {
     let fixture = Fixture::copy("fixture-coverage");
     let run = |fixture: &Fixture| -> u64 {
-        let output = mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")))
-            .env("NO_COLOR", "1")
-            .env("TMPDIR", fixture.temp())
-            .env("XDG_CACHE_HOME", fixture.cache())
-            .args([
-                "run",
-                "--tier",
-                "all",
-                "--offline",
-                "--locked",
-                "--coverage",
-            ])
-            .args(["--jobs", "1", "--ui", "quiet", "--trace"])
-            .args(["--root", &fixture.root().to_string_lossy()])
-            .output()
-            .expect("rust-mutants runs");
+        let root = fixture.root().to_string_lossy().into_owned();
+        let (mut out, mut err) = (Vec::new(), Vec::new());
+        let code = rust_mutants_cli::run_from(
+            std::iter::once("rust-mutants")
+                .chain([
+                    "run",
+                    "--tier",
+                    "all",
+                    "--offline",
+                    "--locked",
+                    "--coverage",
+                ])
+                .chain(["--jobs", "1", "--ui", "quiet", "--trace"])
+                .chain(["--root", root.as_str()])
+                .map(OsString::from),
+            &environment(fixture),
+            &Cancel::new(),
+            Streams {
+                out: &mut out,
+                err: &mut err,
+            },
+        );
+        let output = mjutest_devkit::process::answered(code, out, err);
         assert!(
             output.status.code().is_some_and(|code| code <= 1),
             "{}",
@@ -314,4 +344,16 @@ fn a_tree_that_changed_is_measured_again_rather_than_remembered() {
         "a measurement is only the same measurement while the tree is the same tree; this one \
          changed and was remembered anyway"
     );
+}
+
+fn environment(fixture: &Fixture) -> Environment {
+    Environment {
+        vars: mjutest_devkit::paths::environment_for_a_run(),
+        temp_directory: fixture.temp().to_path_buf(),
+        cache_directory: fixture.cache().to_path_buf(),
+        working_directory: fixture.root().to_path_buf(),
+        no_color: true,
+        stdout_is_terminal: false,
+        paints: false,
+    }
 }

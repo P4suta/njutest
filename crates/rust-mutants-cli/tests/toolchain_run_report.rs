@@ -9,29 +9,47 @@
     reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
 )]
 
+use std::ffi::OsString;
+
 use mjutest_devkit::fixture::{Fixture, copy_tree};
+use rust_mutants::runner::Cancel;
+use rust_mutants_cli::{Environment, Streams};
 use std::path::{Path, PathBuf};
 use std::process::Output;
 
 fn against(fixture: &Fixture, args: &[&str]) -> Output {
-    let mut command = mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")));
-    command.env("NO_COLOR", "1");
-    command.env("TMPDIR", fixture.temp());
-    command.env("XDG_CACHE_HOME", fixture.cache());
-    command.args(args);
-    command.args(["--root", &fixture.root().to_string_lossy()]);
-    command.output().expect("rust-mutants runs")
+    let root = fixture.root().to_string_lossy().into_owned();
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let code = rust_mutants_cli::run_from(
+        std::iter::once("rust-mutants")
+            .chain(args.iter().copied())
+            .chain(["--root", root.as_str()])
+            .map(OsString::from),
+        &environment(fixture),
+        &Cancel::new(),
+        Streams {
+            out: &mut out,
+            err: &mut err,
+        },
+    );
+    mjutest_devkit::process::answered(code, out, err)
 }
 
 /// A command that takes no workspace, so no `--root` is added to it.
 fn rootless(fixture: &Fixture, args: &[&str]) -> Output {
-    mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")))
-        .args(args)
-        .env("NO_COLOR", "1")
-        .env("TMPDIR", fixture.temp())
-        .env("XDG_CACHE_HOME", fixture.cache())
-        .output()
-        .expect("rust-mutants runs")
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let code = rust_mutants_cli::run_from(
+        std::iter::once("rust-mutants")
+            .chain(args.iter().copied())
+            .map(OsString::from),
+        &environment(fixture),
+        &Cancel::new(),
+        Streams {
+            out: &mut out,
+            err: &mut err,
+        },
+    );
+    mjutest_devkit::process::answered(code, out, err)
 }
 
 fn stdout(output: &Output) -> String {
@@ -252,19 +270,20 @@ fn an_expectation_the_run_confirms_stops_being_a_finding_and_a_stale_one_starts(
 #[test]
 fn a_process_that_already_selects_a_mutant_is_refused_before_anything_runs() {
     let fixture = Fixture::copy("fixture-simple");
-    let output = mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")))
-        .args(["list", "--root", &fixture.root().to_string_lossy()])
-        .env("NO_COLOR", "1")
-        .env("TMPDIR", fixture.temp())
-        .env("RUST_MUTANTS_ACTIVE", "0".repeat(64))
-        .output()
-        .expect("rust-mutants runs");
+    let mut inherited = environment(&fixture);
+    inherited.vars.push((
+        OsString::from("RUST_MUTANTS_ACTIVE"),
+        OsString::from("0".repeat(64)),
+    ));
+    let output = asked(
+        &inherited,
+        &["list", "--root", &fixture.root().to_string_lossy()],
+    );
     assert_eq!(output.status.code(), Some(2));
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("RM0006"), "{stderr}");
     assert!(stderr.contains("RUST_MUTANTS_ACTIVE"), "{stderr}");
 }
-
 #[test]
 fn init_writes_a_configuration_that_changes_nothing_and_refuses_to_overwrite() {
     let fixture = Fixture::copy("fixture-simple");
@@ -313,27 +332,27 @@ fn cache_says_what_a_run_left_in_the_temporary_directory_and_gc_reclaims_it() {
         &root,
     );
     let temp = dir.path().join("temp");
-    std::fs::create_dir_all(&temp).expect("mkdir");
+    let cache = dir.path().join("cache");
+    for made in [&temp, &cache] {
+        std::fs::create_dir_all(made).expect("mkdir");
+    }
+    let at = environment_at(&root, &temp, &cache);
+    let named = root.to_string_lossy().into_owned();
 
-    let against_temp = |args: &[&str]| {
-        mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")))
-            .args(args)
-            .args(["--root", &root.to_string_lossy()])
-            .env("NO_COLOR", "1")
-            .env("TMPDIR", &temp)
-            .output()
-            .expect("rust-mutants runs")
-    };
-
-    let run = against_temp(&["run", "--offline", "--locked", "--no-report"]);
+    let run = asked(
+        &at,
+        &[
+            "run",
+            "--offline",
+            "--locked",
+            "--no-report",
+            "--root",
+            &named,
+        ],
+    );
     assert_eq!(run.status.code(), Some(1), "{}", stdout(&run));
 
-    let listed = mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")))
-        .arg("cache")
-        .env("NO_COLOR", "1")
-        .env("TMPDIR", &temp)
-        .output()
-        .expect("rust-mutants runs");
+    let listed = asked(&at, &["cache"]);
     let text = String::from_utf8_lossy(&listed.stdout).into_owned();
     assert_eq!(listed.status.code(), Some(0), "{text}");
     assert!(text.contains("caches      1 reclaimable"), "{text}");
@@ -342,12 +361,7 @@ fn cache_says_what_a_run_left_in_the_temporary_directory_and_gc_reclaims_it() {
         "a finished run removes its snapshot and keeps its cache: {text}"
     );
 
-    let swept = mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")))
-        .args(["cache", "--gc"])
-        .env("NO_COLOR", "1")
-        .env("TMPDIR", &temp)
-        .output()
-        .expect("rust-mutants runs");
+    let swept = asked(&at, &["cache", "--gc"]);
     let text = String::from_utf8_lossy(&swept.stdout).into_owned();
     assert!(
         text.contains("caches      0 removed") && text.contains("1 kept for the next run"),
@@ -355,12 +369,7 @@ fn cache_says_what_a_run_left_in_the_temporary_directory_and_gc_reclaims_it() {
          is still fast: {text}"
     );
 
-    let collected = mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")))
-        .args(["cache", "--gc", "--all"])
-        .env("NO_COLOR", "1")
-        .env("TMPDIR", &temp)
-        .output()
-        .expect("rust-mutants runs");
+    let collected = asked(&at, &["cache", "--gc", "--all"]);
     let text = String::from_utf8_lossy(&collected.stdout).into_owned();
     assert!(text.contains("caches      1 removed"), "{text}");
     let left: Vec<PathBuf> = std::fs::read_dir(&temp)
@@ -1144,5 +1153,47 @@ fn a_proof_removing_a_mutation_and_nothing_reaching_it_are_two_answers() {
             kinds.contains(&finding),
             "and the finding a reader acts on says the same: {kinds:?}"
         );
+    }
+}
+
+fn environment(fixture: &Fixture) -> Environment {
+    Environment {
+        vars: mjutest_devkit::paths::environment_for_a_run(),
+        temp_directory: fixture.temp().to_path_buf(),
+        cache_directory: fixture.cache().to_path_buf(),
+        working_directory: fixture.root().to_path_buf(),
+        no_color: true,
+        stdout_is_terminal: false,
+        paints: false,
+    }
+}
+
+/// One command, driven in this process against an environment a test composed.
+fn asked(environment: &Environment, args: &[&str]) -> Output {
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let code = rust_mutants_cli::run_from(
+        std::iter::once("rust-mutants")
+            .chain(args.iter().copied())
+            .map(OsString::from),
+        environment,
+        &Cancel::new(),
+        Streams {
+            out: &mut out,
+            err: &mut err,
+        },
+    );
+    mjutest_devkit::process::answered(code, out, err)
+}
+
+/// The environment of a tree a test laid out itself rather than copied as a fixture.
+fn environment_at(root: &Path, temp: &Path, cache: &Path) -> Environment {
+    Environment {
+        vars: mjutest_devkit::paths::environment_for_a_run(),
+        temp_directory: temp.to_path_buf(),
+        cache_directory: cache.to_path_buf(),
+        working_directory: root.to_path_buf(),
+        no_color: true,
+        stdout_is_terminal: false,
+        paints: false,
     }
 }
