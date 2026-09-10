@@ -28,7 +28,7 @@ use crate::{Environment, cli, report, run};
 mod bundle;
 mod doctor;
 mod estimate;
-mod stored;
+pub mod stored;
 mod sweep;
 
 use bundle::{Gathering, bundle};

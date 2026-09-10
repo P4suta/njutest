@@ -14,9 +14,14 @@ use crate::report::run as run_report;
 
 /// The name this run goes by, which is what its report directory is called.
 ///
+/// The name becomes a path under the report directory, so `.` and `..` are
+/// refused along with everything a separator could hide in: a run named `..`
+/// writes its report over the directory that holds every other run, and reads
+/// back as this run's when the next person asks about it.
+///
 /// # Errors
 /// [`CliError::InvalidValue`] for a name that is not one a directory can be.
-pub(super) fn named(command: &cli::Command, now: Timestamp) -> Result<String, CliError> {
+pub fn named(command: &cli::Command, now: Timestamp) -> Result<String, CliError> {
     let cli::Command::Run {
         run_id: Some(name), ..
     } = command
@@ -25,6 +30,7 @@ pub(super) fn named(command: &cli::Command, now: Timestamp) -> Result<String, Cl
     };
     let shaped = !name.is_empty()
         && name.len() <= 64
+        && !matches!(name.as_str(), "." | "..")
         && name
             .chars()
             .all(|one| one.is_ascii_alphanumeric() || matches!(one, '.' | '_' | '-'));
@@ -34,7 +40,8 @@ pub(super) fn named(command: &cli::Command, now: Timestamp) -> Result<String, Cl
         Err(CliError::InvalidValue {
             flag: "--run-id".to_owned(),
             value: name.clone(),
-            expected: "1 to 64 of letters, digits, `.`, `_` and `-`".to_owned(),
+            expected: "1 to 64 of letters, digits, `.`, `_` and `-`, and not `.` or `..`"
+                .to_owned(),
         })
     }
 }
@@ -50,7 +57,12 @@ pub fn run_id(now: Timestamp) -> String {
 }
 
 /// Writes the report under `directory/<id>/`, and the pointer that names the newest run.
-pub(super) fn store(
+///
+/// # Errors
+/// [`CliError::Writing`] when either the report or the pointer cannot be
+/// written. A report stored under a pointer that still names the run before it
+/// is read as that run's, so both are written or the run says it failed.
+pub fn store(
     directory: &Path,
     id: &str,
     document: &run_report::RunDocument,
@@ -75,7 +87,7 @@ pub(super) fn store(
 /// A directory that holds no run report is not a run and never costs a run its
 /// place: `traces/` sorts after every run name, and counting it would leave
 /// `keep - 1` runs stored.
-pub(super) fn prune(directory: &Path, keep: u32) {
+pub fn prune(directory: &Path, keep: u32) {
     if keep == 0 {
         return;
     }
@@ -88,12 +100,13 @@ pub(super) fn prune(directory: &Path, keep: u32) {
     );
 }
 
+#[must_use]
 /// The stored runs and, apart from them, the directories a run that wrote no report left a recording in.
 ///
 /// A run asked to record and not to report still names itself and still keeps
 /// what it recorded, so those directories are bounded by `keep` of their own
 /// rather than either counting against the stored runs or growing forever.
-fn kept(directory: &Path) -> (Vec<PathBuf>, Vec<PathBuf>) {
+pub fn kept(directory: &Path) -> (Vec<PathBuf>, Vec<PathBuf>) {
     let mut runs = Vec::new();
     let mut recordings = Vec::new();
     for path in subdirectories(directory) {
@@ -113,7 +126,7 @@ fn kept(directory: &Path) -> (Vec<PathBuf>, Vec<PathBuf>) {
 }
 
 /// Removes everything but the newest `keep` of `directories`.
-fn oldest(directories: &[PathBuf], keep: u32) {
+pub fn oldest(directories: &[PathBuf], keep: u32) {
     let excess = directories
         .len()
         .saturating_sub(usize::try_from(keep).unwrap_or(usize::MAX));
@@ -123,7 +136,7 @@ fn oldest(directories: &[PathBuf], keep: u32) {
 }
 
 /// Every directory directly under `directory`, in name order.
-fn subdirectories(directory: &Path) -> Vec<PathBuf> {
+pub fn subdirectories(directory: &Path) -> Vec<PathBuf> {
     let Ok(entries) = std::fs::read_dir(directory) else {
         return Vec::new();
     };
@@ -137,7 +150,11 @@ fn subdirectories(directory: &Path) -> Vec<PathBuf> {
 }
 
 /// The newest stored run, by the pointer the last run wrote, or by name when there is no pointer.
-pub(super) fn newest(directory: &Path) -> Result<PathBuf, CliError> {
+///
+/// # Errors
+/// [`CliError::ReportMissing`] when `directory` holds no run report at all,
+/// which is what a person asking about a run they never made is told.
+pub fn newest(directory: &Path) -> Result<PathBuf, CliError> {
     let missing = || CliError::ReportMissing {
         message: format!("no run report is stored under {}", directory.display()),
     };
