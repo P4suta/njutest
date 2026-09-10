@@ -34,8 +34,8 @@ Options:
           Print version
 
 Exit codes:
-  0    ASSURED, CHANGE_ASSURED, SCOPE_ASSURED, RESOLVED, or COMPLETED
-  1    DEFECT or REPRODUCED
+  0    ASSURED, CHANGE_ASSURED, SCOPE_ASSURED, PARTIAL, RESOLVED
+  1    DEFECT, REPRODUCED
   2    INSUFFICIENT
   3    ERROR, invalid input, or an infrastructure failure
   130  interrupted

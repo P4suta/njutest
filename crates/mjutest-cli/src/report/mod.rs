@@ -44,6 +44,31 @@ pub enum Verdict {
 }
 
 impl Verdict {
+    /// Every verdict, in declaration order.
+    pub const ALL: [Self; 7] = [
+        Self::Assured,
+        Self::ChangeAssured,
+        Self::ScopeAssured,
+        Self::Defect,
+        Self::Insufficient,
+        Self::Partial,
+        Self::Error,
+    ];
+
+    /// The word a report carries and a person reads.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Assured => "ASSURED",
+            Self::ChangeAssured => "CHANGE_ASSURED",
+            Self::ScopeAssured => "SCOPE_ASSURED",
+            Self::Defect => "DEFECT",
+            Self::Insufficient => "INSUFFICIENT",
+            Self::Partial => "PARTIAL",
+            Self::Error => "ERROR",
+        }
+    }
+
     /// Whether this verdict says the code was assured, in whatever scope.
     #[must_use]
     pub const fn is_assurance(self) -> bool {

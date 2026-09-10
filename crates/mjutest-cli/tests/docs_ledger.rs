@@ -105,3 +105,55 @@ fn every_key_the_configuration_page_shows_is_one_the_reader_accepts() {
         parsed.err()
     );
 }
+
+#[test]
+fn the_exit_codes_the_page_lists_are_the_ones_a_run_can_carry() {
+    let printed = mjutest_cli::cli::exit_codes();
+    let text = page("docs/report-v1.md");
+    let table: String = text
+        .lines()
+        .skip_while(|line| !line.starts_with("| Code |"))
+        .take_while(|line| line.starts_with('|'))
+        .collect::<Vec<&str>>()
+        .join("\n");
+    assert!(
+        !table.is_empty(),
+        "docs/report-v1.md has no exit code table"
+    );
+
+    for line in printed.lines().skip(1) {
+        let (code, names) = line.trim().split_once(' ').expect("a code and its names");
+        let listed = table
+            .lines()
+            .find(|row| row.starts_with(&format!("| {code} |")))
+            .unwrap_or_else(|| panic!("docs/report-v1.md has no row for exit code {code}"));
+        for name in names
+            .split(',')
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+        {
+            let quoted = format!("`{name}`");
+            assert!(
+                listed.contains(&quoted) || listed.contains(name),
+                "a run exits {code} carrying {name}, and the page's row for {code} does \
+                 not say so. The help a person reads is printed from the verdicts \
+                 themselves; a page written beside it is the copy that goes wrong: \
+                 {listed}"
+            );
+        }
+    }
+
+    let named: Vec<&str> = table
+        .lines()
+        .flat_map(|row| row.split('`').skip(1).step_by(2))
+        .collect();
+    let invented: Vec<&&str> = named
+        .iter()
+        .filter(|name| !printed.contains(**name))
+        .collect();
+    assert!(
+        invented.is_empty(),
+        "and a name the page lists that no run carries is a promise nothing keeps: a \
+         reader waits for an exit that never comes. {invented:?}"
+    );
+}

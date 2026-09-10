@@ -186,9 +186,13 @@ stored answer and a whole never reads back a part's.
 
 | Code | Meaning |
 | ---: | --- |
-| 0 | `ASSURED`, `CHANGE_ASSURED`, `SCOPE_ASSURED`, `PARTIAL`, `RESOLVED`, or `COMPLETED` |
-| 1 | `DEFECT` or `REPRODUCED` |
+| 0 | `ASSURED`, `CHANGE_ASSURED`, `SCOPE_ASSURED`, `PARTIAL`, `RESOLVED` |
+| 1 | `DEFECT`, `REPRODUCED` |
 | 2 | `INSUFFICIENT` |
-| 3 | `ERROR`, invalid input, or infrastructure failure |
+| 3 | `ERROR`, invalid input, or an infrastructure failure |
 | 130 | interrupted |
 | 143 | terminated |
+
+`mjutest --help` prints this table, and it prints it from the verdicts
+themselves rather than from a copy: a run that has no verdict for a code has
+no line for it. This page is held to what that prints.

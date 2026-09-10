@@ -37,6 +37,9 @@ pub enum Outcome {
 }
 
 impl Outcome {
+    /// Both of them, in declaration order.
+    pub const ALL: [Self; 2] = [Self::Reproduced, Self::Resolved];
+
     /// The word a reader sees.
     #[must_use]
     pub const fn name(self) -> &'static str {

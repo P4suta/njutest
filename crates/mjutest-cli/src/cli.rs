@@ -8,11 +8,13 @@ use std::path::PathBuf;
 
 use rust_mutants::runner::Cancel;
 
+use std::fmt::Write as _;
+
 use clap::{Parser, Subcommand, ValueEnum};
 
-/// `ASSURED`, `CHANGE_ASSURED`, `SCOPE_ASSURED`, `RESOLVED`, or `COMPLETED`.
+/// The code every verdict that establishes something earns; [`exit_codes`] says which.
 pub const EXIT_ASSURED: u8 = 0;
-/// `DEFECT` or `REPRODUCED`.
+/// The code a run that found something earns; [`exit_codes`] says which.
 pub const EXIT_DEFECT: u8 = 1;
 /// `INSUFFICIENT`.
 pub const EXIT_INSUFFICIENT: u8 = 2;
@@ -25,6 +27,48 @@ pub const EXIT_TERMINATED: u8 = 143;
 
 /// The program name every diagnostic line starts with.
 pub const PROGRAM: &str = "mjutest";
+
+/// What a person reads at the foot of `--help`: every exit code, with the names that earn it.
+///
+/// The help a person reads, the page a consumer reads, and the code that
+/// decides are three statements of one thing, and a third written by hand is
+/// one of them wrong. This is the one, read out of the verdicts themselves, so
+/// a verdict that arrives arrives here too. `docs/report-v1.md` is held to it
+/// by `docs_ledger.rs` rather than written beside it.
+///
+/// The last three lines name no verdict: a run that could not start, one a
+/// person stopped, and one the machine stopped are outcomes no report was
+/// written for.
+#[must_use]
+pub fn exit_codes() -> String {
+    let mut named: std::collections::BTreeMap<u8, Vec<&'static str>> =
+        std::collections::BTreeMap::new();
+    for verdict in crate::report::Verdict::ALL {
+        named
+            .entry(verdict.exit_code())
+            .or_default()
+            .push(verdict.name());
+    }
+    for outcome in crate::assure::replay::Outcome::ALL {
+        named
+            .entry(outcome.exit_code())
+            .or_default()
+            .push(outcome.name());
+    }
+    let mut said = String::from("Exit codes:");
+    for (code, names) in named {
+        let mut line = names.join(", ");
+        if code == EXIT_ERROR {
+            line.push_str(", invalid input, or an infrastructure failure");
+        }
+        let _written = write!(said, "\n  {code:<4} {line}");
+    }
+    let _written = write!(
+        said,
+        "\n  {EXIT_INTERRUPTED:<4} interrupted\n  {EXIT_TERMINATED:<4} terminated"
+    );
+    said
+}
 
 /// What the machine is, as an argument.
 #[derive(Debug, Clone, Default)]
@@ -78,13 +122,7 @@ impl Environment {
         rust-mutants, paired kill confirmation, a soundness phase, targeted fuzzing, explicit \
         integration resources, and reviewable repair candidates. It reports a verdict — \
         ASSURED, DEFECT, INSUFFICIENT, ERROR — and never a percentage.",
-    after_help = "Exit codes:\n  \
-        0    ASSURED, CHANGE_ASSURED, SCOPE_ASSURED, RESOLVED, or COMPLETED\n  \
-        1    DEFECT or REPRODUCED\n  \
-        2    INSUFFICIENT\n  \
-        3    ERROR, invalid input, or an infrastructure failure\n  \
-        130  interrupted\n  \
-        143  terminated",
+    after_help = exit_codes(),
     term_width = 100,
     color = clap::ColorChoice::Never
 )]
