@@ -208,9 +208,19 @@ fn an_acceptance_is_written_where_the_next_run_reads_it() {
             &survivor,
             "--reason",
             "reviewed: the two forms compile to one",
+            "--owner",
+            "quality-team",
+            "--ticket",
+            "QA-123",
         ],
     );
     assert_eq!(accepted.code, 0, "{}{}", accepted.out, accepted.err);
+    assert!(
+        accepted.out.contains("accepted") && accepted.out.contains(mjutest_cli::config::FILE_NAME),
+        "it says what it did and where, because an acceptance written somewhere a person \
+         is not looking is one they record twice: {}",
+        accepted.out
+    );
     let written = std::fs::read_to_string(it.root.join(mjutest_cli::config::FILE_NAME))
         .expect("the configuration the acceptance was written into");
     assert!(
@@ -221,19 +231,103 @@ fn an_acceptance_is_written_where_the_next_run_reads_it() {
          no reason is a mutant nobody looked at: {written}"
     );
     let config = mjutest_cli::config::Config::load(&it.root).expect("a configuration it can read");
+    let recorded = config
+        .acceptance
+        .iter()
+        .find(|one| {
+            one.id
+                .starts_with(survivor.split_whitespace().next().unwrap_or(&survivor))
+                || survivor.starts_with(&one.id)
+        })
+        .expect("the acceptance, as the reader reads it back");
+    assert_eq!(
+        (recorded.owner.as_deref(), recorded.ticket.as_deref()),
+        (Some("quality-team"), Some("QA-123")),
+        "and who decided and where the decision is written down are carried with it: an \
+         acceptance a reader cannot trace back to a person is one nobody can ask about"
+    );
+
+    let again = ask(
+        &it.root,
+        &["accept", &survivor, "--reason", "reviewed twice"],
+    );
+    assert_eq!(again.code, 0, "{}{}", again.out, again.err);
     assert!(
-        config.acceptance.iter().any(|one| one
-            .id
-            .starts_with(survivor.split_whitespace().next().unwrap_or(&survivor))
-            || survivor.starts_with(&one.id)),
-        "and it is one the reader accepts, naming the mutation a person accepted: {:?}",
-        config.acceptance
+        again.out.contains("already accepted"),
+        "accepting one twice says so rather than writing a second line: two acceptances \
+         of one mutation are two reasons, and the run would have to pick one: {}",
+        again.out
+    );
+    let after = mjutest_cli::config::Config::load(&it.root).expect("a configuration it can read");
+    assert_eq!(
+        after.acceptance.len(),
+        config.acceptance.len(),
+        "and leaves the file with what it had"
+    );
+
+    refusals(&it, &survivor);
+}
+
+/// What `accept` refuses, which is every name that is not one survivor of this run.
+fn refusals(it: &Verified, survivor: &str) {
+    let document = ask(&it.root, &["report", "--format", "json"]);
+    let parsed: serde_json::Value =
+        serde_json::from_str(&document.out).expect("the report is a document");
+    let killed = parsed["mutants"]
+        .as_array()
+        .expect("mutants")
+        .iter()
+        .find(|one| one["outcome"] == "killed")
+        .and_then(|one| one["display_id"].as_str())
+        .expect("a mutation the tests noticed")
+        .to_owned();
+
+    let refused = ask(&it.root, &["accept", &killed, "--reason", "why not"]);
+    assert_eq!(
+        refused.code, 3,
+        "only a mutation nothing noticed is a decision to accept: accepting one the \
+         tests caught records a review of a gap that is not there, and hides the next \
+         one that is: {}{}",
+        refused.out, refused.err
+    );
+    assert!(refused.err.contains("killed"), "{}", refused.err);
+
+    let nobody = ask(&it.root, &["accept", "ffffffffffff", "--reason", "why not"]);
+    assert_eq!(
+        nobody.code, 3,
+        "a name no mutation of this run starts with is refused rather than written down: \
+         {}{}",
+        nobody.out, nobody.err
+    );
+
+    let several = ask(
+        &it.root,
+        &[
+            "accept",
+            &survivor.chars().take(1).collect::<String>(),
+            "--reason",
+            "why not",
+        ],
+    );
+    assert!(
+        several.code == 3 || several.out.contains("already accepted"),
+        "and a prefix that names more than one is refused, because which of them a \
+         person meant is not something to guess at: {}{}",
+        several.out,
+        several.err
     );
 }
 
 #[test]
 fn what_a_run_left_behind_is_listed_bundled_and_collected() {
     let it = verified();
+    bundled(&it);
+    stored(&it);
+    planned(&it.root);
+}
+
+/// What a bundle of one run holds, and what it refuses to bundle.
+fn bundled(it: &Verified) {
     let bundled = ask(&it.root, &["diagnostics", &it.run]);
     assert_eq!(bundled.code, 0, "{}{}", bundled.out, bundled.err);
     let directory = bundled
@@ -243,20 +337,76 @@ fn what_a_run_left_behind_is_listed_bundled_and_collected() {
         .find(|path| path.is_dir())
         .expect("the directory it says it wrote");
     assert!(
+        directory.starts_with(it.root.join(".mjutest/diagnostics")),
+        "a bundle goes where a run's own workings go, so a person collecting one to send \
+         somebody knows where to look and a `.gitignore` already covers it: {}",
+        directory.display()
+    );
+    let manifest =
+        std::fs::read_to_string(directory.join(mjutest_cli::app::diagnostics::MANIFEST_NAME))
+            .expect("a bundle says what is in it, or it is a directory somebody has to guess at");
+    assert!(
+        manifest.ends_with('\n'),
+        "and the manifest is a line, so a reader concatenating bundles gets lines: \
+         {manifest:?}"
+    );
+    let described: serde_json::Value =
+        serde_json::from_str(&manifest).expect("the manifest is a document");
+    assert_eq!(
+        described["run_id"].as_str(),
+        Some(it.run.as_str()),
+        "the manifest names the run it is about, because a bundle a person is sent is \
+         one they have to place: {manifest}"
+    );
+    assert!(
         directory
-            .join(mjutest_cli::app::diagnostics::MANIFEST_NAME)
+            .join(mjutest_cli::app::reports::DOCUMENT_NAME)
             .exists(),
-        "a bundle says what is in it, or it is a directory somebody has to guess at: \
-         {bundled:?}",
+        "and the report the run wrote is in it: a bundle without it is a directory of \
+         workings nobody can read the conclusion of"
+    );
+    assert!(
+        directory.join(mjutest_cli::trace::FILE_NAME).exists(),
+        "as is the recording, which is what an audit re-derives the proofs from"
     );
 
+    let nobody = ask(&it.root, &["diagnostics", "20200101T000000Z-000000"]);
+    assert_eq!(
+        nobody.code, 3,
+        "while a run that is not there is named rather than bundled as an empty \
+         directory: {}{}",
+        nobody.out, nobody.err
+    );
+}
+
+/// What the store says it holds, and what it carries between machines.
+fn stored(it: &Verified) {
     let held = ask(&it.root, &["cache"]);
     assert_eq!(held.code, 0, "{}{}", held.out, held.err);
+    for said in [
+        "root      ",
+        "holds     ",
+        "collected ",
+        "builds    ",
+        "kept      ",
+        "temp      ",
+    ] {
+        assert!(
+            held.out.lines().any(|line| line.starts_with(said)),
+            "a store says everything it holds, because the answer to a slow run is often \
+             that it holds nothing and the answer to a full disk is which of these it \
+             is. {said:?} is not in\n{}",
+            held.out
+        );
+    }
+    let swept = ask(&it.root, &["cache", "--gc"]);
+    assert_eq!(swept.code, 0, "{}{}", swept.out, swept.err);
     assert!(
-        !held.out.trim().is_empty(),
-        "a store says what it holds, because the answer to a slow run is often that it \
-         holds nothing: {}",
-        held.out
+        swept.out.lines().any(|line| line.starts_with("collected "))
+            && swept.out.contains("artifacts"),
+        "and a collection says what it took, or a person who ran it cannot tell it from \
+         one that took nothing: {}",
+        swept.out
     );
 
     let carried = it.root.join("carried.jsonl");
@@ -265,6 +415,12 @@ fn what_a_run_left_behind_is_listed_bundled_and_collected() {
         &["cache", "--export", &carried.display().to_string()],
     );
     assert_eq!(out.code, 0, "{}{}", out.out, out.err);
+    assert!(
+        out.out.contains("exported") && out.out.contains(&carried.display().to_string()),
+        "an export says how many answers went and where they went, because the file is \
+         the thing somebody has to carry: {}",
+        out.out
+    );
     let back = ask(
         &it.root,
         &["cache", "--import", &carried.display().to_string()],
@@ -275,6 +431,11 @@ fn what_a_run_left_behind_is_listed_bundled_and_collected() {
          store that cannot take back what it wrote is one nobody can carry: {}{}",
         back.out, back.err
     );
+    assert!(
+        back.out.contains("imported"),
+        "and an import says the same, the other way round: {}",
+        back.out
+    );
 
     let elsewhere = ask(&it.root, &["cache", "--import", "nowhere.jsonl"]);
     assert_eq!(
@@ -284,18 +445,88 @@ fn what_a_run_left_behind_is_listed_bundled_and_collected() {
          and reports that it did not: {}{}",
         elsewhere.out, elsewhere.err
     );
+}
 
-    let planned = ask(&it.root, &["plan", "--offline", "--locked"]);
+/// What saying what a run would measure says.
+fn planned(root: &Path) {
+    let plain = ask(root, &["plan", "--offline", "--locked"]);
     assert_eq!(
-        planned.code, 0,
+        plain.code, 0,
         "saying what a run would measure measures nothing, so it establishes nothing to \
          fail about: {}{}",
-        planned.out, planned.err
+        plain.out, plain.err
+    );
+    let targets: Vec<&str> = plain
+        .out
+        .lines()
+        .filter(|line| line.starts_with("TARGET\t"))
+        .collect();
+    assert!(
+        !targets.is_empty(),
+        "a plan names the binaries a run would measure, one to a line, or it is a number \
+         with nothing behind it: {}",
+        plain.out
     );
     assert!(
-        !planned.out.trim().is_empty(),
-        "and says it rather than saying nothing at all: {}",
-        planned.out
+        plain
+            .out
+            .lines()
+            .any(|line| line == format!("TARGETS\t{}", targets.len())),
+        "and counts them, so a person reading the tail of a long plan does not have to \
+         count the lines above it: {}",
+        plain.out
+    );
+    assert!(
+        !plain.out.contains("SCOPE\t"),
+        "a plan nobody asked to explain itself says what would run and not why: {}",
+        plain.out
+    );
+    assert_eq!(
+        targets
+            .iter()
+            .filter(|line| line.matches('\t').count() > 2)
+            .count(),
+        0,
+        "and each target line is the identity and the name, with nothing after: {targets:?}"
+    );
+
+    let asked_why = ask(root, &["plan", "--offline", "--locked", "--why"]);
+    assert_eq!(asked_why.code, 0, "{}{}", asked_why.out, asked_why.err);
+    assert!(
+        asked_why.out.contains("SCOPE\tevery workspace member"),
+        "a plan asked to explain itself says what put the targets in scope first, and a \
+         run nobody narrowed looked at every member: {}",
+        asked_why.out
+    );
+    assert!(
+        asked_why
+            .out
+            .lines()
+            .filter(|line| line.starts_with("TARGET\t"))
+            .all(|line| line.matches('\t').count() == 3),
+        "and every target carries the reason it is there, or the flag answered for some \
+         of them and not others: {}",
+        asked_why.out
+    );
+
+    let narrowed = ask(
+        root,
+        &[
+            "plan",
+            "--offline",
+            "--locked",
+            "--why",
+            "-p",
+            "fixture-baseline",
+        ],
+    );
+    assert!(
+        narrowed
+            .out
+            .contains("SCOPE\tthe packages asked for: fixture-baseline"),
+        "while a plan for named packages says which were asked for, because a scope a \
+         reader cannot see is a plan they cannot check: {}",
+        narrowed.out
     );
 }
 
