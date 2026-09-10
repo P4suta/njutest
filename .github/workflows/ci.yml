@@ -231,6 +231,39 @@ jobs:
       - name: build the book, which refuses a summary naming a page nobody holds
         run: mdbook build docs
 
+  soundness:
+    name: soundness
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+      - name: Install the interpreter the deep-v1 contract promises
+        run: rustup toolchain install nightly --component miri --profile minimal
+      - name: Fetch the locked dependency graph
+        env:
+          CARGO_NET_OFFLINE: "false"
+        run: cargo fetch --locked
+      - name: Build the mjutest this commit would ship
+        run: cargo build --locked --release --bin mjutest
+      # Every other job runs on a machine with no Miri, where the whole of
+      # deep-v1 is the refusal MJ7001. This is the only place the promise
+      # itself is kept: the suite interpreted, and what the interpreter would
+      # not follow stated rather than passed over.
+      - name: Verify a fixture under the contract that promises interpretation
+        run: |
+          cp -r fixtures/fixture-baseline "$RUNNER_TEMP/interpreted"
+          printf 'version = 1\ncontract = "deep-v1"\n' > "$RUNNER_TEMP/interpreted/.mjutest.toml"
+          ./target/release/mjutest verify \
+            --directory "$RUNNER_TEMP/interpreted" --offline --locked --no-cache --ui=plain \
+            || test $? -eq 2
+      - name: The run says it interpreted the suite
+        run: |
+          report="$RUNNER_TEMP/interpreted/$(jq -r .directory "$RUNNER_TEMP/interpreted/reports/latest-any.json")/mjutest-assurance-report-v1.json"
+          jq --exit-status '.contract == "deep-v1" and .accounting.soundness.executed == true' "$report"
+
   action-smoke:
     name: action-smoke
     runs-on: ubuntu-24.04
@@ -266,7 +299,8 @@ jobs:
   ci-success:
     name: ci-success
     if: always()
-    needs: [test, lint, deny, audit, coverage, package-install, book, action-smoke]
+    needs:
+      [test, lint, deny, audit, coverage, package-install, book, soundness, action-smoke]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

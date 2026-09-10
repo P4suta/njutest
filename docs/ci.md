@@ -41,7 +41,7 @@ on the verify step and upload `.mjutest/trace/` with the reports.
 
 | Workflow | Jobs | When |
 | --- | --- | --- |
-| `ci.yml` | the three-OS test matrix, lint (fmt, clippy, rustdoc, the `cargo xtask` gates, typos, taplo, actionlint, committed), cargo-deny, cargo-audit, the coverage ratchet, the `book` build, `action-smoke`, and `ci-success` which gathers them | every push and pull request |
+| `ci.yml` | the three-OS test matrix, lint (fmt, clippy, rustdoc, the `cargo xtask` gates, typos, taplo, actionlint, committed), cargo-deny, cargo-audit, the coverage ratchet, the `book` build, `soundness`, `action-smoke`, and `ci-success` which gathers them | every push and pull request |
 | `mutation.yml` | `cargo-mutants` over each package | weekly, and on request |
 | `dogfood.yml` | `shard` runs the engine over its own catalog in four parts, and `audit` puts the parts back together, checks each recording, and re-decides every part against the ledger | weekly, and on request |
 | `fuzz.yml` | every fuzz target for a fixed time | weekly, and on an engine pull request |
@@ -168,6 +168,19 @@ job's limit; the cache is not.
 **Narrow the pull-request leg.** `--changed` on a pull request measures only
 what differs, which is usually the difference between two minutes and two
 hours. Keep the whole catalog for the weekly run.
+
+## The contract that promises interpretation
+
+`soundness` is the only job with Miri on it. Everywhere else — every
+developer's machine that has not installed it, and every other job here — the
+whole of `deep-v1` is the refusal it is supposed to be (`MJ7001`), and a
+refusal is not the promise kept. So one job installs the interpreter, verifies
+a fixture under the contract, and reads back that the run says it interpreted
+the suite.
+
+It is a separate job rather than part of the matrix because Miri builds its own
+standard library the first time it runs, which costs about twenty seconds and
+has nothing to do with the three platforms.
 
 ## Carrying answers between machines
 

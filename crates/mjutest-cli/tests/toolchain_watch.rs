@@ -1351,6 +1351,67 @@ fn a_catalog_cut_into_parts_and_put_back_together_says_what_the_whole_would_have
     );
 }
 
+/// Whether this machine has the interpreter the `deep-v1` contract promises.
+fn interpreter() -> bool {
+    std::process::Command::new("cargo")
+        .args(["+nightly", "miri", "--version"])
+        .output()
+        .is_ok_and(|output| output.status.success())
+}
+
+#[test]
+fn the_contract_that_promises_the_suite_is_interpreted_interprets_it() {
+    let dir = tempfile::Builder::new()
+        .prefix("mjutest-deep-")
+        .tempdir()
+        .expect("a temporary directory");
+
+    if !interpreter() {
+        let missing = once(
+            "fixture-baseline",
+            dir.path(),
+            "without",
+            Some("version = 1\ncontract = \"deep-v1\"\n"),
+        );
+        assert_eq!(
+            missing["verdict"], "ERROR",
+            "a contract that promises the suite is interpreted cannot be answered by a \
+             toolchain that cannot interpret it, and a machine without the interpreter \
+             is where that has to hold: {missing}"
+        );
+        return;
+    }
+
+    let report = once(
+        "fixture-baseline",
+        dir.path(),
+        "interpreted",
+        Some("version = 1\ncontract = \"deep-v1\"\n"),
+    );
+    assert_eq!(
+        report["contract"], "deep-v1",
+        "the run answers to the contract it was given: {report}"
+    );
+    assert_eq!(
+        report["accounting"]["soundness"]["executed"],
+        serde_json::Value::Bool(true),
+        "and deep-v1 promises the suite is interpreted, so a run of it that did not \
+         interpret anything and still reached a verdict would be the promise unkept in \
+         the one place nobody looks: {report}"
+    );
+    let stated: Vec<&str> = report["limitations"]
+        .as_array()
+        .expect("limitations")
+        .iter()
+        .filter_map(|one| one["name"].as_str())
+        .collect();
+    assert!(
+        !stated.contains(&"miri-unsupported"),
+        "and what the interpreter could not follow is stated rather than passed over; \
+         this fixture holds nothing it cannot: {stated:?}"
+    );
+}
+
 /// A run in this process against `fixture`, and what it left behind.
 ///
 /// A `carrying` that is not empty also writes a configuration bounding one
