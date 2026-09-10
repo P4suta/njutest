@@ -11,9 +11,10 @@
 use std::path::PathBuf;
 
 use mjutest_cli::assure::identity::Evidence;
-use mjutest_cli::assure::run::{DIGEST_LIMITATION, Request, identity, opened};
+use mjutest_cli::assure::run::{Request, identity, opened};
 use mjutest_cli::build::Cargo;
 use mjutest_cli::config::Config;
+use mjutest_cli::limitation::WORKSPACE_DIGEST_NOT_COMPUTED;
 use mjutest_cli::report::{RunKind, UNAVAILABLE};
 
 fn asked(root: &str) -> Request {
@@ -101,7 +102,7 @@ fn a_tree_no_number_could_be_read_from_says_so_and_names_no_digest() {
         report
             .limitations
             .iter()
-            .any(|limitation| limitation.name == DIGEST_LIMITATION),
+            .any(|limitation| limitation.name == WORKSPACE_DIGEST_NOT_COMPUTED),
         "and the run says why, because a result nothing can be keyed to is one no later \
          run may reuse: {:?}",
         report.limitations
@@ -198,7 +199,7 @@ fn a_run_that_could_not_ask_git_says_so_before_it_compiles_anything() {
         report
             .limitations
             .iter()
-            .any(|limitation| limitation.name == mjutest_cli::git::UNAVAILABLE_LIMITATION),
+            .any(|limitation| limitation.name == mjutest_cli::limitation::GIT_METADATA_UNAVAILABLE),
         "and the run says so here, before it compiles anything, because a report that \
          cannot name the commit it verified is one nobody can go back to: {:?}",
         report.limitations
@@ -207,7 +208,7 @@ fn a_run_that_could_not_ask_git_says_so_before_it_compiles_anything() {
         !report
             .limitations
             .iter()
-            .any(|limitation| limitation.name == mjutest_cli::scratch::UNCLAIMED_LIMITATION),
+            .any(|limitation| limitation.name == mjutest_cli::limitation::TEMP_DIRECTORY_UNCLAIMED),
         "the directory it works in was claimed, so nothing is said about a sweep taking \
          it: {:?}",
         report.limitations
@@ -232,7 +233,7 @@ fn a_run_that_could_not_ask_git_says_so_before_it_compiles_anything() {
         !committed
             .limitations
             .iter()
-            .any(|limitation| limitation.name == mjutest_cli::git::UNAVAILABLE_LIMITATION),
+            .any(|limitation| limitation.name == mjutest_cli::limitation::GIT_METADATA_UNAVAILABLE),
         "and states nothing, because there is nothing it could not do: {:?}",
         committed.limitations
     );

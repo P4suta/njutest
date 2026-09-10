@@ -21,12 +21,6 @@ use crate::report::{Finding, FindingKind, Limitation};
 use crate::trace::ExecRecord;
 use crate::watch::Watch;
 
-/// The limitation a run states when Miri could not interpret something the suite does.
-pub const UNSUPPORTED_LIMITATION: &str = "miri-unsupported";
-
-/// The limitation a run states when the interpreter ran out of time.
-pub const TIMEOUT_LIMITATION: &str = "miri-timed-out";
-
 /// What Miri says when it will not interpret something.
 const UNSUPPORTED: [&str; 3] = [
     "unsupported operation",
@@ -167,7 +161,7 @@ fn read(said: &str, ending: Ending) -> Interpreted {
     if ending == Ending::TimedOut {
         interpreted.executed = false;
         interpreted.limitations.push(Limitation::new(
-            TIMEOUT_LIMITATION,
+            crate::limitation::MIRI_TIMED_OUT,
             "the interpreter ran out of time, so the suite was not interpreted whole",
         ));
         return interpreted;
@@ -187,7 +181,7 @@ fn read(said: &str, ending: Ending) -> Interpreted {
         .find_map(|marker| first_line(said, marker))
     {
         interpreted.limitations.push(Limitation::new(
-            UNSUPPORTED_LIMITATION,
+            crate::limitation::MIRI_UNSUPPORTED,
             &format!("the interpreter could not interpret the suite whole: {unsupported}"),
         ));
         interpreted.findings.push(Finding {

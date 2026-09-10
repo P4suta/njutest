@@ -238,10 +238,10 @@ fn environment(options: &BuildOptions, limitations: &mut Vec<String>) -> Vec<(Os
     }
     let configured = rustflags::configured(&options.root, &options.env);
     if configured.target_specific {
-        limitations.push(rustflags::TARGET_RUSTFLAGS_LIMITATION.to_owned());
+        limitations.push(crate::limitation::TARGET_RUSTFLAGS_NOT_MERGED.to_owned());
     }
     if configured.unreadable {
-        limitations.push(rustflags::UNREADABLE_CONFIG_LIMITATION.to_owned());
+        limitations.push(rust_mutants::limitation::CARGO_CONFIGURATION_UNREADABLE.to_owned());
     }
     if let Some(flags) = rustflags::encoded(&options.env, &configured, &[COVERAGE_FLAG]) {
         set(&mut env, "CARGO_ENCODED_RUSTFLAGS", flags);

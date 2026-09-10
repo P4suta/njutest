@@ -27,9 +27,6 @@ pub const PROFILES_DIR_NAME: &str = "profiles";
 /// Where preserved command output goes.
 pub const OUTPUT_DIR_NAME: &str = "output";
 
-/// The limitation a run states when it works in a directory it does not own.
-pub const UNCLAIMED_LIMITATION: &str = "temp-directory-unclaimed";
-
 /// Why a run has nowhere to work.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
@@ -126,7 +123,7 @@ impl Scratch {
         Ok(path)
     }
 
-    /// Whether this run holds the directory's lock. A run that does not still works here, and says so with [`UNCLAIMED_LIMITATION`].
+    /// Whether this run holds the directory's lock. A run that does not still works here, and says so with [`crate::limitation::TEMP_DIRECTORY_UNCLAIMED`].
     #[must_use]
     pub const fn is_claimed(&self) -> bool {
         self.owner.is_some()

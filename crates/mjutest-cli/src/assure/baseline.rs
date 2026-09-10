@@ -175,7 +175,7 @@ pub fn limitations(targets: &[TestTarget], touched: &[String]) -> Vec<String> {
         .iter()
         .any(|target| target.kind == rust_mutants::execute::TargetKind::ProcMacro)
     {
-        let _new = named.insert(PROC_MACRO_LIMITATION.to_owned());
+        let _new = named.insert(crate::limitation::PROC_MACRO_EXPANSION_NOT_MEASURED.to_owned());
     }
     named.into_iter().collect()
 }
@@ -294,18 +294,3 @@ pub fn failure(output: &str) -> Option<String> {
 
 /// What a target that answered and named no test of its own is recorded as having said.
 pub const RAN_NOTHING: &str = "the target ran nothing, so nothing was observed";
-
-/// The name a run states when a library's documentation was run: rustdoc compiles each example into a binary this run never sees, so the coverage it carries is the whole of every file its library is made of.
-pub const DOCTESTS_LIMITATION: &str = rust_mutants::limitation::DOCTESTS_ROUTED_BY_FILE;
-
-/// The name a run states when a test binary brings its own harness, which makes the whole binary one target rather than one target per test.
-pub const WHOLE_BINARY_LIMITATION: &str = rust_mutants::limitation::CUSTOM_HARNESS;
-
-/// The name a run states when a procedural macro is in scope: what the macro expands to is decided during the build, and this run does not measure it.
-pub const PROC_MACRO_LIMITATION: &str = "proc-macro-expansion-not-measured";
-
-/// The name a run states when a target's own tests do not pass, so no outcome against it would be about a mutation.
-pub const NOT_PASSING_LIMITATION: &str = rust_mutants::limitation::BASELINE_NOT_PASSING;
-
-/// The name a run states when a target's guards recorded nothing, so every test of it reaches every mutation in it.
-pub const UNRECORDED_LIMITATION: &str = rust_mutants::limitation::TOUCH_NOT_RECORDED;

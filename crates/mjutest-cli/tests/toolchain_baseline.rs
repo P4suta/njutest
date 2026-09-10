@@ -138,7 +138,7 @@ fn a_target_whose_own_tests_fail_is_a_row_and_a_finding_rather_than_a_refusal() 
         baseline
             .limitations
             .iter()
-            .any(|name| name.starts_with(mjutest_cli::assure::baseline::NOT_PASSING_LIMITATION)),
+            .any(|name| name.starts_with(rust_mutants::limitation::BASELINE_NOT_PASSING)),
         "and the run states why those targets answer nothing: {:?}",
         baseline.limitations
     );

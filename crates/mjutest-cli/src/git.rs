@@ -14,9 +14,6 @@ use crate::watch::Watch;
 
 pub use rust_mutants::git::{Change, DEFAULT_BASE};
 
-/// The limitation a report states when git could not be asked.
-pub const UNAVAILABLE_LIMITATION: &str = "git-metadata-unavailable";
-
 /// Asks git about the tree at `root`.
 #[must_use]
 pub fn describe(root: &Path, env: &[(OsString, OsString)], watch: Watch<'_>) -> Git {

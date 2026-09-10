@@ -19,12 +19,6 @@ use crate::report::{Finding, FindingKind, Limitation};
 use crate::trace::ExecRecord;
 use crate::watch::Watch;
 
-/// The limitation a run states when a sanitizer it was asked for could not be run.
-pub const UNAVAILABLE_LIMITATION: &str = "sanitizer-unavailable";
-
-/// The limitation every sanitizer run carries: the standard library the suite links is not the instrumented one.
-pub const UNINSTRUMENTED_STD_LIMITATION: &str = "sanitizer-standard-library-not-instrumented";
-
 /// What a sanitizer says when it has found something.
 const FOUND: [&str; 5] = [
     "ERROR: AddressSanitizer",
@@ -82,7 +76,7 @@ pub fn sanitize(sanitizing: &Sanitizing<'_>, watch: Watch<'_>) -> Sanitized {
     let mut done = Sanitized::default();
     if !sanitizing.sanitizers.is_empty() {
         done.limitations.push(Limitation::new(
-            UNINSTRUMENTED_STD_LIMITATION,
+            crate::limitation::SANITIZER_STANDARD_LIBRARY_NOT_INSTRUMENTED,
             "the standard library the suite links is not built with the sanitizer, so what \
              it holds is not what was checked",
         ));
@@ -163,7 +157,7 @@ fn one(done: &mut Sanitized, sanitizing: &Sanitizing<'_>, sanitizer: &str, watch
 /// A sanitizer that was asked for and could not be run: a gap somebody asked to close, stated as one.
 fn refuse(done: &mut Sanitized, sanitizer: &str, why: &str) {
     done.limitations.push(Limitation::new(
-        UNAVAILABLE_LIMITATION,
+        crate::limitation::SANITIZER_UNAVAILABLE,
         &format!("{sanitizer} was asked for and {why}"),
     ));
     done.findings.push(Finding {

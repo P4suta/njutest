@@ -274,6 +274,33 @@ below is stated fail-closed.
   configures them gets `target-rustflags-not-merged`, and a configuration
   file that cannot be parsed gets `cargo-configuration-unreadable`.
 
+## What a run says about itself
+
+Six of the names a report can carry are not about the code under test at all.
+They are what the run says about its own footing, and each is stated
+fail-closed:
+
+- Git could not be asked what the tree is (`git-metadata-unavailable`), so the
+  report carries `unavailable` rather than a guess. [The report
+  contract](report-v1.md) says what that sentinel means.
+- The run continued one that was interrupted (`resumed-from-checkpoint`), so
+  part of what it reports another run established. [The checkpoint
+  contract](checkpoint-v1.md) says what may be inherited and what is judged
+  again.
+- The run worked in a directory it does not own (`temp-directory-unclaimed`),
+  so what it left there is not its to remove. A run that cleaned up somebody
+  else's directory would be a run that deleted work nobody asked it to.
+- A resource the run started would not stop (`resource-not-stopped`).
+  Something it started is still running, and the run says so rather than
+  exiting as though the world were as it found it.
+- The interpreter ran out of the time it was given (`miri-timed-out`). This is
+  not a claim that it found nothing: a budget that expired is a question
+  nobody answered, which is why it is a limitation and never a pass.
+- A file the soundness inventory walked could not be read as Rust this release
+  understands (`soundness-source-unreadable`), so what it holds is not in the
+  count. A count taken over part of a tree and reported as a count over the
+  tree is the one number a reader cannot check.
+
 ## Survivors a suite cannot close
 
 A survivor is a test to write, and three kinds of them are not.

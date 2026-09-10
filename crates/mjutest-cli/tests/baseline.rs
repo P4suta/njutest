@@ -6,8 +6,9 @@
 use std::path::PathBuf;
 
 use mjutest_cli::assure::baseline::{
-    PROC_MACRO_LIMITATION, failure, limitations, named, refused, target_of, unmeasurable,
+    failure, limitations, named, refused, target_of, unmeasurable,
 };
+use mjutest_cli::limitation::PROC_MACRO_EXPANSION_NOT_MEASURED;
 use mjutest_cli::targets::UnitKind;
 use rust_mutants::execute::{TargetKind, TestTarget};
 use rust_mutants::limitation::{CUSTOM_HARNESS, DOCTESTS_NONE, DOCTESTS_ROUTED_BY_FILE};
@@ -79,12 +80,12 @@ fn a_proc_macro_in_the_workspace_is_a_limitation_of_the_run_and_not_of_a_target(
     ];
 
     assert!(
-        !limitations(&without, &[]).contains(&PROC_MACRO_LIMITATION.to_owned()),
+        !limitations(&without, &[]).contains(&PROC_MACRO_EXPANSION_NOT_MEASURED.to_owned()),
         "a workspace with no macro of its own expands nothing this run did not measure"
     );
     assert_eq!(
         limitations(&with, &[]),
-        vec![PROC_MACRO_LIMITATION.to_owned()],
+        vec![PROC_MACRO_EXPANSION_NOT_MEASURED.to_owned()],
         "and one macro crate is enough: what it expands is decided during the build, so \
          no target of any package carries it, and a run that said nothing would let a \
          reader take the score as covering code that was never mutated"

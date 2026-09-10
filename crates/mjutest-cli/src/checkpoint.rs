@@ -27,9 +27,6 @@ pub const SCHEMA: &str = "mjutest-assurance-checkpoint-v1";
 /// The file one identity's checkpoint is written to.
 pub const FILE_NAME: &str = "checkpoint-v1.json";
 
-/// The limitation a run states when it continued an interrupted one.
-pub const RESUMED_LIMITATION: &str = "resumed-from-checkpoint";
-
 /// Scheduling state for one interrupted run.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

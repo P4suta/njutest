@@ -20,18 +20,11 @@ use crate::report::{
     Finding, FindingKind, Limitation, MutantRecord, Report, RunKind, SoundnessAccounting,
     TargetRecord, TargetStatus, Toolchain, UNAVAILABLE,
 };
-use crate::rustflags;
-use crate::scratch::{self, Scratch};
+use crate::scratch::Scratch;
 use crate::soundness;
 use crate::ui::Notes;
 use crate::watch::Watch;
 use rust_mutants::cargo::Metadata;
-
-/// The limitation a run states when the tree could not be read as one number.
-pub const DIGEST_LIMITATION: &str = "workspace-digest-not-computed";
-
-/// The limitation a run states when a test wrote into the tree it was being measured in.
-pub const DRIFT_LIMITATION: &str = "tree-written-during-measurement";
 
 /// What one run was asked to do.
 #[derive(Debug, Clone)]
@@ -258,7 +251,7 @@ pub fn opened(
     );
     if !report.repository.git.available {
         report.limitations.push(Limitation::new(
-            git::UNAVAILABLE_LIMITATION,
+            crate::limitation::GIT_METADATA_UNAVAILABLE,
             "git could not be asked, so the run cannot name the commit it verified",
         ));
     }
@@ -343,7 +336,7 @@ fn kept(report: &mut Report, request: &Request, crash: &super::fuzz::Crash) {
     };
     if crate::repair::keep(&request.root, &proposal).is_err() {
         report.limitations.push(Limitation::new(
-            super::fuzz::UNAVAILABLE_LIMITATION,
+            crate::limitation::CARGO_FUZZ_UNAVAILABLE,
             &format!(
                 "the input that crashed {} could not be kept, so it cannot be promoted",
                 crash.target
@@ -365,18 +358,13 @@ fn kept(report: &mut Report, request: &Request, crash: &super::fuzz::Crash) {
     });
 }
 
-/// The limitation a run states when a generation provider could not be asked, or said something this release cannot read.
-pub const GENERATION_LIMITATION: &str = "generation-provider-unavailable";
-
 /// The limitation a run states when a candidate held up and could not be stored.
 ///
-/// A different name from [`GENERATION_LIMITATION`] because it is a different
+/// A different name from [`crate::limitation::GENERATION_PROVIDER_UNAVAILABLE`] because it is a different
 /// thing to do about: a provider nobody could ask is a provider to fix, and a
 /// candidate that held up and could not be kept is a disk to make room on.
 /// `fix --apply` writes what was checked rather than asking again, so a
 /// candidate whose content is gone is an offer nothing can take up.
-pub const GENERATION_NOT_KEPT_LIMITATION: &str = "generation-candidate-not-kept";
-
 /// Asks the generation provider, when the configuration names one.
 fn proposed(
     report: &mut Report,
@@ -430,7 +418,7 @@ fn propose(report: &mut Report, request: &Request, environment: &Environment, wa
             Ok(said) => said,
             Err(refusal) => {
                 report.limitations.push(Limitation::new(
-                    GENERATION_LIMITATION,
+                    crate::limitation::GENERATION_PROVIDER_UNAVAILABLE,
                     &format!("the generation provider could not be asked: {refusal}"),
                 ));
                 return;
@@ -443,7 +431,7 @@ fn propose(report: &mut Report, request: &Request, environment: &Environment, wa
                 }
             }
             Err(refusal) => report.limitations.push(Limitation::new(
-                GENERATION_LIMITATION,
+                crate::limitation::GENERATION_PROVIDER_UNAVAILABLE,
                 &format!("a candidate for {mutant} was not read: {refusal}"),
             )),
         }
@@ -517,7 +505,7 @@ fn considered(
     };
     if verdict.accepted && crate::repair::keep(&request.root, proposal).is_err() {
         report.limitations.push(Limitation::new(
-            GENERATION_NOT_KEPT_LIMITATION,
+            crate::limitation::GENERATION_CANDIDATE_NOT_KEPT,
             &format!("a candidate for {mutant} could not be kept, so it cannot be applied"),
         ));
         return;
@@ -536,14 +524,11 @@ fn considered(
     });
 }
 
-/// The limitation a run states when a resource it held would not stop.
-pub const RESOURCE_UNSTOPPED_LIMITATION: &str = "resource-not-stopped";
-
 /// Stops everything the run held, and says what would not stop.
 fn released(resources: &mut crate::resource::Manager, report: &mut Report) {
     for refusal in resources.release() {
         report.limitations.push(Limitation::new(
-            RESOURCE_UNSTOPPED_LIMITATION,
+            crate::limitation::RESOURCE_NOT_STOPPED,
             &format!("a resource would not stop: {refusal}"),
         ));
     }
@@ -658,7 +643,7 @@ pub fn identity(request: &Request) -> Report {
         .clone_from(&request.config.project.exclude);
     if !request.evidence.is_known() {
         report.limitations.push(Limitation::new(
-            DIGEST_LIMITATION,
+            crate::limitation::WORKSPACE_DIGEST_NOT_COMPUTED,
             "the tree could not be read as one number, so no result of this run can be \
              reused by another",
         ));
@@ -684,7 +669,7 @@ fn resume_state(request: &Request, report: &mut Report) -> Option<crate::checkpo
         return None;
     }
     report.limitations.push(Limitation::new(
-        crate::checkpoint::RESUMED_LIMITATION,
+        crate::limitation::RESUMED_FROM_CHECKPOINT,
         &format!(
             "an interrupted run had already measured {} targets and established {} mutants; \
              a restored target carries the files it reached and not the regions inside them, \
@@ -775,7 +760,7 @@ fn open_phase(report: &mut Report, opening: &Opening<'_>, watch: Watch<'_>) {
     } = *opening;
     if !scratch.is_claimed() {
         report.limitations.push(Limitation::new(
-            scratch::UNCLAIMED_LIMITATION,
+            crate::limitation::TEMP_DIRECTORY_UNCLAIMED,
             "the run works in a directory it could not claim, so a sweep may remove it \
              while the run is still using it",
         ));
@@ -796,12 +781,6 @@ fn open_phase(report: &mut Report, opening: &Opening<'_>, watch: Watch<'_>) {
         .clone_from(&change.files);
 }
 
-/// The limitation a run states when it counted the places the compiler stops vouching for and did not execute any of them.
-pub const SOUNDNESS_LIMITATION: &str = "soundness-not-executed";
-
-/// The limitation a run states when a file it inventoried could not be read as Rust.
-pub const SOUNDNESS_UNREADABLE_LIMITATION: &str = "soundness-source-unreadable";
-
 /// Counts every place a selected package steps outside what the compiler guarantees.
 ///
 /// `standard-v1` does not execute any of them: a non-empty inventory is a
@@ -810,7 +789,7 @@ fn take_inventory(report: &mut Report, request: &Request, metadata: &Metadata) -
     let selected = selected(&report.scope.resolved_packages, metadata);
     let Ok(taken) = soundness::inventory(&request.root, &selected) else {
         report.limitations.push(Limitation::new(
-            SOUNDNESS_UNREADABLE_LIMITATION,
+            crate::limitation::SOUNDNESS_SOURCE_UNREADABLE,
             "the tree could not be walked for the places the compiler stops vouching for, so \
              the run makes no claim about them",
         ));
@@ -864,7 +843,7 @@ pub fn stated(taken: &soundness::Inventory) -> Vec<Limitation> {
     let mut stated = Vec::new();
     if !taken.unreadable.is_empty() {
         stated.push(Limitation::new(
-            SOUNDNESS_UNREADABLE_LIMITATION,
+            crate::limitation::SOUNDNESS_SOURCE_UNREADABLE,
             &format!(
                 "{} files could not be read as Rust this release understands, so what they \
                  hold is not in the inventory: {}",
@@ -875,7 +854,7 @@ pub fn stated(taken: &soundness::Inventory) -> Vec<Limitation> {
     }
     if !taken.is_empty() {
         stated.push(Limitation::new(
-            SOUNDNESS_LIMITATION,
+            crate::limitation::SOUNDNESS_NOT_EXECUTED,
             &format!(
                 "{} places in {} packages step outside what the compiler guarantees, and this \
                  contract counts them rather than executing them",
@@ -1018,7 +997,7 @@ fn run_mutation(
     let tree_written = !session.changes()?.is_empty();
     if tree_written {
         mutating.report.limitations.push(Limitation::new(
-            DRIFT_LIMITATION,
+            crate::limitation::TREE_WRITTEN_DURING_MEASUREMENT,
             "a test wrote into the tree while it was being measured, so every later \
              mutation was measured against what it wrote",
         ));
@@ -1398,16 +1377,16 @@ pub fn first_line(text: &str) -> String {
 pub fn limitation_detail(name: &str) -> String {
     let named = name.split_once(':').map_or(name, |(head, _target)| head);
     match named {
-        rustflags::TARGET_RUSTFLAGS_LIMITATION
+        crate::limitation::TARGET_RUSTFLAGS_NOT_MERGED
         | rust_mutants::limitation::COVERAGE_REFUSED_CONFIGURED_RUSTFLAGS => {
             "the project configures compiler flags for a target, and the instrumented build \
              does not merge them: which of them apply is cargo's decision"
         }
-        rustflags::UNREADABLE_CONFIG_LIMITATION => {
+        rust_mutants::limitation::CARGO_CONFIGURATION_UNREADABLE => {
             "a cargo configuration file could not be read, so the flags it asks for are not \
              in the instrumented build"
         }
-        baseline::DOCTESTS_LIMITATION => {
+        rust_mutants::limitation::DOCTESTS_ROUTED_BY_FILE => {
             "rustdoc compiles a documented example into a binary this run never sees, so no \
              measurement names it: it reaches every mutation in the files its library is \
              made of and narrows none of them"
@@ -1416,22 +1395,22 @@ pub fn limitation_detail(name: &str) -> String {
             "the library documents no example, so its documentation target has nothing to \
              run and no mutation is routed to it"
         }
-        baseline::PROC_MACRO_LIMITATION => {
+        crate::limitation::PROC_MACRO_EXPANSION_NOT_MEASURED => {
             "a procedural macro decides what it expands to during the build, and a mutation \
              is activated for a test process: the two never meet, and cargo does not rebuild \
              for an environment variable, so what the macro emits is not measured and is not \
              claimed. Its own unit tests are measured like any others"
         }
-        baseline::WHOLE_BINARY_LIMITATION => {
+        rust_mutants::limitation::CUSTOM_HARNESS => {
             "a test binary brings its own harness, so it cannot be asked for one of its \
              tests and is measured whole"
         }
-        baseline::NOT_PASSING_LIMITATION => {
+        rust_mutants::limitation::BASELINE_NOT_PASSING => {
             "the target's own tests do not pass with nothing active, so every mutation put \
              to it would come back killed and not one of those kills would be about a \
              mutation"
         }
-        baseline::UNRECORDED_LIMITATION => {
+        rust_mutants::limitation::TOUCH_NOT_RECORDED => {
             "the target's guards recorded nothing this run can route by, so every test of \
              it reaches every mutation in it and none of them is narrowed"
         }

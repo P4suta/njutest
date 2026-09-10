@@ -57,3 +57,59 @@ fn a_name_from_a_later_engine_still_says_it_came_from_a_phase() {
          cannot look up is better than one they never hear about"
     );
 }
+
+#[test]
+fn the_limitations_page_names_every_limitation_the_runner_can_state() {
+    let text = std::fs::read_to_string(
+        mjutest_devkit::paths::workspace_root().join("docs/limitations.md"),
+    )
+    .expect("the limitations page");
+    let missing: Vec<&str> = mjutest_cli::limitation::ALL
+        .into_iter()
+        .filter(|name| !text.contains(&format!("`{name}`")))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "a limitation is what a run says when it could not establish something, and a \
+         name a reader cannot look up is one they cannot act on. Six of these had \
+         reached a report without ever reaching the page. {missing:?}"
+    );
+}
+
+#[test]
+fn the_names_a_run_states_are_the_names_the_register_holds() {
+    let root = mjutest_devkit::paths::workspace_root().join("crates/mjutest-cli/src");
+    let held: std::collections::BTreeSet<&str> = mjutest_cli::limitation::ALL.into_iter().collect();
+    let mut loose = Vec::new();
+    let mut stack = vec![root];
+    while let Some(directory) = stack.pop() {
+        for entry in std::fs::read_dir(&directory).expect("the source").flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if path.file_name().is_some_and(|name| name == "limitation.rs")
+                || path.extension().is_none_or(|kind| kind != "rs")
+            {
+                continue;
+            }
+            let source = std::fs::read_to_string(&path).unwrap_or_default();
+            for line in source.lines() {
+                if line.contains("LIMITATION: &str") || line.contains("_LIMITATION:") {
+                    loose.push(format!("{}: {}", path.display(), line.trim()));
+                }
+            }
+        }
+    }
+    assert!(
+        loose.is_empty(),
+        "a limitation named beside the code that states it is one the page test cannot \
+         see, which is how six of them reached a report and no reader: {loose:#?}"
+    );
+    assert_eq!(
+        held.len(),
+        mjutest_cli::limitation::ALL.len(),
+        "and no name is in the register twice"
+    );
+}

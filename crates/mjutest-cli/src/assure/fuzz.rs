@@ -26,12 +26,6 @@ pub const ARTIFACTS: &str = "fuzz/artifacts";
 /// Where an input that is worth keeping goes.
 pub const CORPUS: &str = "fuzz/corpus";
 
-/// The limitation a run states when a tree holds fuzz targets it was not asked to drive.
-pub const NOT_EXECUTED_LIMITATION: &str = "fuzz-not-executed";
-
-/// The limitation a run states when it was asked to drive them and could not.
-pub const UNAVAILABLE_LIMITATION: &str = "cargo-fuzz-unavailable";
-
 /// What the toolchain says when it has no cargo-fuzz.
 const ABSENT: [&str; 3] = [
     "no such command",
@@ -105,7 +99,7 @@ pub fn targets_of(root: &Path) -> Vec<String> {
 #[must_use]
 pub fn found(targets: &[String]) -> Limitation {
     Limitation::new(
-        NOT_EXECUTED_LIMITATION,
+        crate::limitation::FUZZ_NOT_EXECUTED,
         &format!(
             "{} fuzz targets are here and were not driven, so nothing is claimed about what \
              they would find: {}",
@@ -175,7 +169,7 @@ fn one(done: &mut Fuzzed, fuzzing: &Fuzzing<'_>, target: &str, watch: Watch<'_>)
         || (!ran.timed_out && ran.exit_code != 0 && left.is_empty());
     if undriven {
         done.limitations.push(Limitation::new(
-            UNAVAILABLE_LIMITATION,
+            crate::limitation::CARGO_FUZZ_UNAVAILABLE,
             &format!("{target} was to be driven and cargo-fuzz could not be run"),
         ));
         done.findings.push(Finding {
@@ -190,7 +184,7 @@ fn one(done: &mut Fuzzed, fuzzing: &Fuzzing<'_>, target: &str, watch: Watch<'_>)
     done.ran.push(target.to_owned());
     if ran.timed_out {
         done.limitations.push(Limitation::new(
-            UNAVAILABLE_LIMITATION,
+            crate::limitation::CARGO_FUZZ_UNAVAILABLE,
             &format!("{target} ran out of time before it was driven for as long as it was asked"),
         ));
     }
