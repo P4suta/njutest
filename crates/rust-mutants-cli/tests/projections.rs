@@ -23,7 +23,8 @@ use rust_mutants_cli::report::run::{
 use rust_mutants_cli::report::sources::Held;
 use rust_mutants_cli::report::stryker::Thresholds;
 use rust_mutants_cli::report::{
-    PlatformDocument, SelectionDocument, WorkspaceDocument, html, sarif, stryker,
+    PlatformDocument, RejectionDocument, SelectionDocument, SkipDocument, WorkspaceDocument, html,
+    sarif, stryker,
 };
 
 /// The source every mutation in the fixture is in.
@@ -621,4 +622,85 @@ fn the_sarif_log_is_the_document_that_was_reviewed() {
         format!("{text}\n").as_bytes(),
     )
     .expect("the log a reviewer read");
+}
+
+/// A run whose report carries every side of itself: what nothing reached, what was
+/// refused, what discovery passed over, a file the tests noticed every mutation in, and
+/// text with the characters a page has to escape.
+fn everything() -> RunDocument {
+    let mut document = document();
+    let mut unreached = outcome(2, "not_run", true);
+    "src/other.rs".clone_into(&mut unreached.path);
+    let mut not_run = outcome(3, "not_run", false);
+    "src/other.rs".clone_into(&mut not_run.path);
+    let mut clean = outcome(4, "killed", false);
+    "src/clean.rs".clone_into(&mut clean.path);
+    document.mutants.extend([unreached, not_run, clean]);
+    document.rejections = vec![RejectionDocument {
+        index: 9,
+        id: format!("{:064x}", 9),
+        display_id: format!("{:020x}", 9),
+        path: "src/lib.rs".to_owned(),
+        rule: "gt-to-ge".to_owned(),
+        code: Some("E0308".to_owned()),
+        diagnostic: "expected `bool`, found `&str` in \"wide\" & elsewhere".to_owned(),
+        isolated: true,
+    }];
+    document.skips = vec![SkipDocument {
+        reason: "macro-invocation".to_owned(),
+        path: "src/lib.rs".to_owned(),
+        count: 3,
+        explanation: "what a macro expands to is decided during the build".to_owned(),
+    }];
+    document
+}
+
+fn everything_sources() -> BTreeMap<String, Held> {
+    BTreeMap::from([
+        ("src/lib.rs".to_owned(), Held::Measured(SOURCE.to_owned())),
+        ("src/other.rs".to_owned(), Held::Changed),
+        (
+            "src/clean.rs".to_owned(),
+            Held::Measured("pub fn clean() {}\n".to_owned()),
+        ),
+    ])
+}
+
+#[test]
+fn the_page_of_a_run_with_every_side_to_it_is_the_page_that_was_reviewed() {
+    let page = html::document(&everything(), &everything_sources());
+    mjutest_devkit::golden::golden(&recorded("report-everything.golden.html"), page.as_bytes())
+        .expect("the page a reviewer read");
+}
+
+#[test]
+fn the_page_of_a_run_that_cataloged_nothing_says_so_in_every_section() {
+    let mut nothing = document();
+    nothing.score = None;
+    nothing.mutants = Vec::new();
+    nothing.findings = Vec::new();
+    let page = html::document(&nothing, &BTreeMap::new());
+    mjutest_devkit::golden::golden(&recorded("report-nothing.golden.html"), page.as_bytes())
+        .expect("the page a reviewer read");
+}
+
+#[test]
+fn the_stryker_projection_of_a_run_with_every_side_to_it_is_the_one_reviewed() {
+    let mut document = everything();
+    document
+        .mutants
+        .retain(|mutant| mutant.path == "src/lib.rs" || mutant.path == "src/clean.rs");
+    let projection = stryker::project(
+        &document,
+        std::path::Path::new("."),
+        Thresholds { high: 80, low: 60 },
+        &everything_sources(),
+    )
+    .expect("every mutated file is one the run measured");
+    let text = serde_json::to_string_pretty(&projection).expect("the projection is a document");
+    mjutest_devkit::golden::golden(
+        &recorded("stryker-everything.golden.json"),
+        format!("{text}\n").as_bytes(),
+    )
+    .expect("the projection a reviewer read");
 }
