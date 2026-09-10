@@ -9,27 +9,56 @@
     reason = "a test reports a setup failure by panicking and reads a document as a table"
 )]
 
+use std::ffi::OsString;
 use std::path::Path;
-use std::process::Output;
 
 use mjutest_devkit::fixture::Fixture;
+use rust_mutants::runner::Cancel;
+use rust_mutants_cli::{Environment, Streams};
 
 const SECRET: &str = "a-value-nobody-meant-to-publish";
 
-fn against(fixture: &Fixture, args: &[&str]) -> Output {
-    mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")))
-        .env("NO_COLOR", "1")
-        .env("TMPDIR", fixture.temp())
-        .env("XDG_CACHE_HOME", fixture.cache())
-        .env("RUST_MUTANTS_NOTHING", SECRET)
-        .args(args)
-        .args(["--root", &fixture.root().to_string_lossy()])
-        .output()
-        .expect("rust-mutants runs")
+/// What one command said, driven in this process.
+#[derive(Debug)]
+struct Said {
+    code: u8,
+    out: String,
+    err: String,
 }
 
-fn stdout(output: &Output) -> String {
-    String::from_utf8_lossy(&output.stdout).into_owned()
+fn against(fixture: &Fixture, args: &[&str]) -> Said {
+    let mut vars = mjutest_devkit::paths::environment_for_a_run();
+    vars.push((
+        OsString::from("RUST_MUTANTS_NOTHING"),
+        OsString::from(SECRET),
+    ));
+    let environment = Environment {
+        vars,
+        temp_directory: fixture.temp().to_path_buf(),
+        cache_directory: fixture.cache().to_path_buf(),
+        working_directory: fixture.root().to_path_buf(),
+        no_color: true,
+        stdout_is_terminal: false,
+        paints: false,
+    };
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let code = rust_mutants_cli::run_from(
+        std::iter::once("rust-mutants")
+            .chain(args.iter().copied())
+            .chain(["--root", &fixture.root().to_string_lossy()])
+            .map(OsString::from),
+        &environment,
+        &Cancel::new(),
+        Streams {
+            out: &mut out,
+            err: &mut err,
+        },
+    );
+    Said {
+        code,
+        out: String::from_utf8_lossy(&out).into_owned(),
+        err: String::from_utf8_lossy(&err).into_owned(),
+    }
 }
 
 fn measured() -> Fixture {
@@ -39,8 +68,10 @@ fn measured() -> Fixture {
         &["run", "--offline", "--locked", "--trace", "--coverage"],
     );
     assert!(
-        ran.status.code().is_some_and(|code| code <= 1),
-        "the run establishes something: {ran:?}"
+        ran.code <= 1,
+        "the run establishes something: {}{}",
+        ran.out,
+        ran.err
     );
     fixture
 }
@@ -50,9 +81,8 @@ fn manifest(bundle: &Path) -> serde_json::Value {
     serde_json::from_str(&text).expect("the manifest is JSON")
 }
 
-fn bundle_of(output: &Output) -> std::path::PathBuf {
-    let text = stdout(output);
-    let first = text.lines().next().expect("the bundle is named first");
+fn bundle_of(said: &Said) -> std::path::PathBuf {
+    let first = said.out.lines().next().expect("the bundle is named first");
     std::path::PathBuf::from(first)
 }
 
@@ -60,7 +90,7 @@ fn bundle_of(output: &Output) -> std::path::PathBuf {
 fn a_bundle_holds_the_report_the_evidence_the_recording_and_the_state_of_the_machine() {
     let fixture = measured();
     let gathered = against(&fixture, &["diagnostics"]);
-    assert_eq!(gathered.status.code(), Some(0), "{gathered:?}");
+    assert_eq!(gathered.code, 0, "{}{}", gathered.out, gathered.err);
     let bundle = bundle_of(&gathered);
     assert!(bundle.is_dir(), "{}", bundle.display());
     for name in [
@@ -93,7 +123,7 @@ fn a_bundle_holds_the_report_the_evidence_the_recording_and_the_state_of_the_mac
 fn what_the_run_did_not_leave_is_named_rather_than_passed_over() {
     let fixture = Fixture::copy("fixture-simple");
     let ran = against(&fixture, &["run", "--offline", "--locked", "--no-coverage"]);
-    assert!(ran.status.code().is_some_and(|code| code <= 1), "{ran:?}");
+    assert!(ran.code <= 1, "{}{}", ran.out, ran.err);
     let gathered = against(&fixture, &["diagnostics"]);
     let bundle = bundle_of(&gathered);
     let document = manifest(&bundle);
@@ -107,11 +137,7 @@ fn what_the_run_did_not_leave_is_named_rather_than_passed_over() {
         absent.contains(&"trace"),
         "a run that recorded nothing left no recording, and a reader is told so: {absent:?}"
     );
-    assert!(
-        stdout(&gathered).contains("absent\ttrace"),
-        "{}",
-        stdout(&gathered)
-    );
+    assert!(gathered.out.contains("absent\ttrace"), "{}", gathered.out);
     assert!(!bundle.join("trace").exists());
 }
 
@@ -167,9 +193,127 @@ fn the_measurement_a_coverage_run_kept_validates_against_the_schema_it_answers_t
 fn a_run_nothing_stored_is_named_rather_than_bundled_empty() {
     let fixture = Fixture::copy("fixture-simple");
     let gathered = against(&fixture, &["diagnostics", "no-such-run"]);
-    assert_eq!(gathered.status.code(), Some(2), "{gathered:?}");
-    let said = String::from_utf8_lossy(&gathered.stderr).into_owned();
-    assert!(said.contains("no-such-run"), "{said}");
+    assert_eq!(gathered.code, 2, "{}{}", gathered.out, gathered.err);
+    assert!(gathered.err.contains("no-such-run"), "{}", gathered.err);
+}
+
+#[test]
+fn a_bundle_goes_where_it_was_asked_to_go_and_holds_the_same_thing_there() {
+    let fixture = measured();
+    let elsewhere = fixture.temp().join("to-send");
+    let gathered = against(
+        &fixture,
+        &["diagnostics", "--output", &elsewhere.to_string_lossy()],
+    );
+    assert_eq!(gathered.code, 0, "{}{}", gathered.out, gathered.err);
+    assert_eq!(
+        bundle_of(&gathered),
+        elsewhere,
+        "a person sending a bug report says where to put it, and a bundle written \
+         beside the run instead is one they have to go and find: {}",
+        gathered.out
+    );
+    assert!(
+        elsewhere.join("bundle.json").is_file() && elsewhere.join("run-report-v1.json").is_file(),
+        "and it holds what a bundle holds wherever it is: {}",
+        gathered.out
+    );
+    assert!(
+        !fixture
+            .root()
+            .join("reports/mutation")
+            .join(
+                manifest(&elsewhere)["run_id"]
+                    .as_str()
+                    .expect("the run it is about")
+            )
+            .join("diagnostics")
+            .exists(),
+        "and nothing was written beside the run as well, or the value nobody published \
+         is in two places instead of one"
+    );
+}
+
+#[test]
+fn a_bundle_accounts_for_every_part_it_was_gathered_from() {
+    let fixture = measured();
+    let gathered = against(&fixture, &["diagnostics"]);
+    let bundle = bundle_of(&gathered);
+    let document = manifest(&bundle);
+    let named: Vec<&str> = ["held", "absent"]
+        .iter()
+        .flat_map(|key| {
+            document[*key]
+                .as_array()
+                .expect("a manifest says both")
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+        })
+        .collect();
+    for part in [
+        "run-report-v1.json",
+        "catalog-v1.json",
+        "reached-v1.json",
+        "trace",
+        ".rust-mutants.toml",
+        "doctor-v1.json",
+        "toolchain.txt",
+        "environment.txt",
+    ] {
+        assert!(
+            named.contains(&part),
+            "every part a bundle is gathered from is either held or named absent, and \
+             one that is neither is one a reader cannot tell from a part this release \
+             stopped gathering: {part} is in neither of {named:?}"
+        );
+    }
+    assert!(
+        !named.contains(&"bundle.json"),
+        "the manifest does not list itself: {named:?}"
+    );
+    for name in &named {
+        assert_eq!(
+            bundle.join(name).exists(),
+            document["held"]
+                .as_array()
+                .expect("what it holds")
+                .iter()
+                .any(|held| held == name),
+            "and what the manifest says is held is what is on the disk: {name}"
+        );
+    }
+}
+
+#[test]
+fn the_run_a_bundle_is_about_is_the_one_that_was_named() {
+    let fixture = measured();
+    let second = against(
+        &fixture,
+        &[
+            "run",
+            "--offline",
+            "--locked",
+            "--run-id",
+            "the-earlier-one",
+        ],
+    );
+    assert!(second.code <= 1, "{}{}", second.out, second.err);
+
+    let newest = manifest(&bundle_of(&against(&fixture, &["diagnostics"])));
+    assert_eq!(
+        newest["run_id"], "the-earlier-one",
+        "with nothing named, a bundle is about the run that just happened: {newest}"
+    );
+
+    let named = manifest(&bundle_of(&against(
+        &fixture,
+        &["diagnostics", "the-earlier-one"],
+    )));
+    assert_eq!(
+        named["run_id"], "the-earlier-one",
+        "and naming one is how a person sends the run they are talking about rather \
+         than the one they made while working out how to send it: {named}"
+    );
 }
 
 fn checked(document: &serde_json::Value, name: &str) {
