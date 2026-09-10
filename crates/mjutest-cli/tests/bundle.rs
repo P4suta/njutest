@@ -77,3 +77,29 @@ fn a_directory_is_carried_whole_and_an_empty_one_is_not_carried_at_all() {
         "and one that is not there is not there"
     );
 }
+
+#[test]
+fn a_tree_that_holds_only_directories_is_carried_as_nothing() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let from = dir.path().join("shells");
+    std::fs::create_dir_all(from.join("one/two")).expect("directories and no files");
+
+    assert!(
+        !copy_tree(&from, &dir.path().join("bundle/shells")),
+        "a tree of empty directories held nothing, however deep it goes: a bundle that \
+         said it carried this would send a reader through three levels to find out it \
+         was empty"
+    );
+
+    std::fs::write(from.join("one/two/deep.txt"), "deep\n").expect("one file, three levels down");
+    assert!(
+        copy_tree(&from, &dir.path().join("bundle/again")),
+        "while one file anywhere in it makes the whole tree worth carrying, and the \
+         answer has to come back up from wherever it was"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("bundle/again/one/two/deep.txt"))
+            .expect("the file three levels down"),
+        "deep\n"
+    );
+}

@@ -150,6 +150,51 @@ fn every_command_that_reads_a_run_reads_the_one_that_ran() {
     );
 
     kept(&it);
+    unreadable(&it);
+}
+
+/// What `report` says about a run directory whose document is not one.
+fn unreadable(it: &Verified) {
+    let hollow = "20270101T000000Z-hollow";
+    std::fs::create_dir_all(it.root.join("reports/runs").join(hollow))
+        .expect("a run directory with nothing in it");
+    let empty = ask(&it.root, &["report", hollow]);
+    assert!(
+        empty.code == 3 && empty.err.contains(hollow),
+        "a run directory with no document in it is a run nobody can be told about, and \
+         printing nothing with a clean exit would read as a run that concluded nothing: \
+         {}{}",
+        empty.out,
+        empty.err
+    );
+
+    let broken = "20270101T000000Z-broken";
+    let directory = it.root.join("reports/runs").join(broken);
+    std::fs::create_dir_all(&directory).expect("a run directory");
+    std::fs::write(
+        directory.join(mjutest_cli::app::reports::DOCUMENT_NAME),
+        "{\"schema\":\"from a later release\"}\n",
+    )
+    .expect("a document this release does not understand");
+    let refused = ask(&it.root, &["report", broken]);
+    assert!(
+        refused.code == 3 && refused.err.contains(broken),
+        "and a document this release cannot read is refused by name rather than read as \
+         far as it goes: half a report is a verdict about half a run: {}{}",
+        refused.out,
+        refused.err
+    );
+
+    let as_json = ask(&it.root, &["report", broken, "--format", "json"]);
+    assert_eq!(
+        (as_json.code, as_json.out.trim()),
+        (0, "{\"schema\":\"from a later release\"}"),
+        "while the document shape hands back what the run wrote, byte for byte: a \
+         program piping it wants the document a later release stored and not this \
+         release's opinion of it. Only the shape this release has to read for itself \
+         refuses: {}",
+        as_json.err
+    );
 }
 
 /// What a run leaves in its own directory, and where the pointers point.
@@ -599,6 +644,29 @@ fn stored(it: &Verified) {
         back.out
     );
 
+    preserved_and_named(it);
+}
+
+/// What the store says about a directory a run preserved.
+fn preserved_and_named(it: &Verified) {
+    let preserved = it.root.join("kept-snapshot");
+    std::fs::create_dir_all(&preserved).expect("a directory a run preserved");
+    let _written = mjutest_cli::kept::record(
+        &it.root,
+        &it.run,
+        jiff::Timestamp::now(),
+        std::slice::from_ref(&preserved),
+    );
+    let listed = ask(&it.root, &["cache"]);
+    assert!(
+        listed.out.contains("kept      1 directories")
+            && listed.out.contains(&format!("({})", it.run)),
+        "a directory a run preserved outlives the run, so the store names it and says \
+         which run kept it: an unnamed directory on a full disk is one nobody dares \
+         remove: {}",
+        listed.out
+    );
+
     let elsewhere = ask(&it.root, &["cache", "--import", "nowhere.jsonl"]);
     assert_eq!(
         elsewhere.code, 3,
@@ -606,6 +674,25 @@ fn stored(it: &Verified) {
          import that quietly carried nothing is a machine that does all the work again \
          and reports that it did not: {}{}",
         elsewhere.out, elsewhere.err
+    );
+    assert!(
+        elsewhere.err.contains("nowhere.jsonl"),
+        "naming the file, not the store: the store is where it was going and the file is \
+         what a person has to go and find: {}",
+        elsewhere.err
+    );
+
+    let nowhere = it.root.join("no/such/directory/out.jsonl");
+    let refused = ask(
+        &it.root,
+        &["cache", "--export", &nowhere.display().to_string()],
+    );
+    assert!(
+        refused.code == 3 && refused.err.contains("out.jsonl"),
+        "and an export with nowhere to write says so rather than reporting that it \
+         carried what it could not: {}{}",
+        refused.out,
+        refused.err
     );
 }
 
@@ -828,5 +915,55 @@ fn the_parts_of_one_catalog_are_put_back_together_and_the_parts_of_two_refused()
         refused.err.contains("nonsense.json"),
         "and names the file, because which of several parts it was is the question: {}",
         refused.err
+    );
+
+    two_trees_and_nowhere_to_write(&it, &one);
+}
+
+/// The two things `merge` refuses that a pipeline actually meets.
+fn two_trees_and_nowhere_to_write(it: &Verified, one: &Path) {
+    let elsewhere = it.root.join("elsewhere.json");
+    let mut other =
+        mjutest_cli::report::json::parse(&std::fs::read_to_string(one).expect("the part"))
+            .expect("a part");
+    other.repository.workspace_digest = "c".repeat(64);
+    std::fs::write(
+        &elsewhere,
+        mjutest_cli::report::json::document(&other).expect("a report a reader takes"),
+    )
+    .expect("a part of another tree");
+    let two_trees = ask(
+        &it.root,
+        &[
+            "merge",
+            &one.display().to_string(),
+            &elsewhere.display().to_string(),
+        ],
+    );
+    assert!(
+        two_trees.code == 3 && two_trees.err.contains("the tree"),
+        "two parts of two trees are not two parts of one: added up they would be a \
+         verdict about a tree neither of them measured, which is the one thing sharding \
+         may never buy: {}{}",
+        two_trees.out,
+        two_trees.err
+    );
+
+    let nowhere = it.root.join("no/such/place/whole.json");
+    let unwritable = ask(
+        &it.root,
+        &[
+            "merge",
+            &one.display().to_string(),
+            "--output",
+            &nowhere.display().to_string(),
+        ],
+    );
+    assert!(
+        unwritable.code == 3 && unwritable.err.contains("whole.json"),
+        "and a whole with nowhere to be written says so rather than exiting on the \
+         verdict of a report nobody will find: {}{}",
+        unwritable.out,
+        unwritable.err
     );
 }
