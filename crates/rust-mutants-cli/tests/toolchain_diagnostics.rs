@@ -10,14 +10,14 @@
 )]
 
 use std::path::Path;
-use std::process::{Command, Output};
+use std::process::Output;
 
 use mjutest_devkit::fixture::Fixture;
 
 const SECRET: &str = "a-value-nobody-meant-to-publish";
 
 fn against(fixture: &Fixture, args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_rust-mutants"))
+    mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")))
         .env("NO_COLOR", "1")
         .env("TMPDIR", fixture.temp())
         .env("XDG_CACHE_HOME", fixture.cache())

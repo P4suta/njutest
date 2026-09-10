@@ -10,7 +10,8 @@
 )]
 
 use mjutest_devkit::fixture::Fixture;
-use std::process::{Command, Output};
+use std::path::Path;
+use std::process::Output;
 
 /// Runs the binary against a fixture, with the environment a real run has.
 fn stdout(output: &Output) -> String {
@@ -18,7 +19,7 @@ fn stdout(output: &Output) -> String {
 }
 
 fn against(fixture: &Fixture, args: &[&str]) -> Output {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_rust-mutants"));
+    let mut command = mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")));
     command.env("NO_COLOR", "1");
     command.env("TMPDIR", fixture.temp());
     command.arg(args[0]);

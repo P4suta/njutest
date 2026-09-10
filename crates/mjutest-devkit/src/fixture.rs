@@ -168,7 +168,7 @@ pub fn fingerprint(root: &Path) -> Vec<(String, String)> {
 
 fn sorted(dir: &Path) -> Vec<std::fs::DirEntry> {
     let mut entries: Vec<std::fs::DirEntry> = std::fs::read_dir(dir)
-        .expect("the directory")
+        .unwrap_or_else(|error| panic!("reading {}: {error}", dir.display()))
         .map(|entry| entry.expect("the entry"))
         .collect();
     entries.sort_by_key(std::fs::DirEntry::file_name);

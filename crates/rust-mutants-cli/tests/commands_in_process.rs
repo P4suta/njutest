@@ -30,7 +30,7 @@ struct Said {
 
 fn environment(fixture: &Fixture) -> Environment {
     Environment {
-        vars: std::env::vars_os().collect(),
+        vars: mjutest_devkit::paths::environment_for_a_run(),
         temp_directory: fixture.temp().to_path_buf(),
         cache_directory: fixture.cache().to_path_buf(),
         working_directory: fixture.root().to_path_buf(),

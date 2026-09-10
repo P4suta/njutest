@@ -9,12 +9,13 @@
     reason = "a test reports a setup failure by panicking and reads a document as a table"
 )]
 
-use std::process::{Command, Output};
+use std::path::Path;
+use std::process::Output;
 
 use mjutest_devkit::fixture::Fixture;
 
 fn against(fixture: &Fixture, args: &[&str]) -> Output {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_rust-mutants"));
+    let mut command = mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")));
     command.env("NO_COLOR", "1");
     command.env("TMPDIR", fixture.temp());
     command.env("XDG_CACHE_HOME", fixture.cache());

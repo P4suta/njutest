@@ -46,7 +46,7 @@ fn environment(root: &Path) -> Environment {
         cache_directory: root.join("mjutest-cache"),
         working_directory: root.to_path_buf(),
         temp_directory: scratch,
-        vars: std::env::vars_os().collect(),
+        vars: mjutest_devkit::paths::environment_for_a_run(),
         cancel: Cancel::new(),
     }
 }

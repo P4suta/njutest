@@ -8,12 +8,13 @@
     reason = "a test reports a setup failure by panicking and asserts with panics"
 )]
 
-use std::process::{Command, Output};
+use std::path::Path;
+use std::process::Output;
 
 use mjutest_devkit::fixture::Fixture;
 
 fn against(fixture: &Fixture, args: &[&str]) -> Output {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_rust-mutants"));
+    let mut command = mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")));
     command.env("NO_COLOR", "1");
     command.env("TMPDIR", fixture.temp());
     command.env("XDG_CACHE_HOME", fixture.cache());
@@ -26,7 +27,7 @@ fn against(fixture: &Fixture, args: &[&str]) -> Output {
 #[test]
 fn a_reserved_variable_names_itself_and_says_what_to_do() {
     let fixture = Fixture::copy("fixture-simple");
-    let mut command = Command::new(env!("CARGO_BIN_EXE_rust-mutants"));
+    let mut command = mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")));
     let output = command
         .args(["list", "--root", &fixture.root().to_string_lossy()])
         .env("NO_COLOR", "1")

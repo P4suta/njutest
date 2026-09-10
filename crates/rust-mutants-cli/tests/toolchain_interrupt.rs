@@ -13,7 +13,7 @@
 use mjutest_devkit::fixture::copy_tree;
 use std::io::{BufRead as _, BufReader};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 /// Every process on this machine whose process group is `group`, which is the tree the engine puts a test process in.
@@ -90,7 +90,7 @@ fn a_run_that_is_interrupted_exits_130_and_leaves_no_process_and_no_snapshot_beh
     let cache = dir.path().join("cache");
     std::fs::create_dir_all(&cache).expect("mkdir");
 
-    let mut child = Command::new(env!("CARGO_BIN_EXE_rust-mutants"))
+    let mut child = mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")))
         .args(["run", "--offline", "--locked", "--tier", "all"])
         .args(["--root", &root.to_string_lossy()])
         .env("NO_COLOR", "1")
@@ -171,7 +171,7 @@ fn ctrl_c_during_a_compilation_exits_130_and_writes_no_rejection() {
     std::fs::create_dir_all(&cache).expect("mkdir");
     let marker = dir.path().join("compiling");
 
-    let child = Command::new(env!("CARGO_BIN_EXE_rust-mutants"))
+    let child = mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")))
         .args(["run", "--offline", "--locked", "--tier", "all"])
         .args(["--root", &root.to_string_lossy()])
         .env("NO_COLOR", "1")

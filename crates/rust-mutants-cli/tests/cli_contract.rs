@@ -11,10 +11,10 @@
 )]
 
 use std::path::Path;
-use std::process::{Command, Output};
+use std::process::Output;
 
 fn rust_mutants(args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_rust-mutants"))
+    mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")))
         .args(args)
         .env_clear()
         .env("NO_COLOR", "1")
@@ -146,10 +146,9 @@ fn every_subcommand_has_the_recorded_help_text() {
 
 #[test]
 fn the_command_line_page_and_the_help_texts_name_the_same_flags() {
-    let page = std::fs::read_to_string(
-        mjutest_devkit::paths::workspace_root().join("docs/engine/command-line.md"),
-    )
-    .expect("the command line page");
+    let at = mjutest_devkit::paths::workspace_root().join("docs/engine/command-line.md");
+    let page = std::fs::read_to_string(&at)
+        .unwrap_or_else(|error| panic!("the command line page at {}: {error}", at.display()));
     let mut helped: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     for name in SUBCOMMANDS.into_iter().chain(std::iter::once("")) {
         let output = if name.is_empty() {

@@ -28,7 +28,7 @@
 )]
 
 use std::collections::BTreeMap;
-use std::process::Command;
+use std::path::Path;
 
 use mjutest_devkit::fixture::Fixture;
 use rust_mutants::report::run::{RunDocument, RunMutantDocument};
@@ -58,7 +58,7 @@ struct Established {
 
 fn established(name: &str, extra: &[&str]) -> Established {
     let fixture = Fixture::copy(name);
-    let output = Command::new(env!("CARGO_BIN_EXE_rust-mutants"))
+    let output = mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")))
         .env("NO_COLOR", "1")
         .env("TMPDIR", fixture.temp())
         .env("XDG_CACHE_HOME", fixture.cache())
@@ -230,7 +230,7 @@ fn the_guards_put_a_mutation_to_fewer_tests_than_routing_by_target_can() {
 fn a_remembered_measurement_routes_a_run_exactly_as_a_fresh_one_would() {
     let fixture = Fixture::copy("fixture-coverage");
     let report = |fixture: &Fixture, extra: &[&str]| -> BTreeMap<String, String> {
-        let output = Command::new(env!("CARGO_BIN_EXE_rust-mutants"))
+        let output = mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")))
             .env("NO_COLOR", "1")
             .env("TMPDIR", fixture.temp())
             .env("XDG_CACHE_HOME", fixture.cache())
@@ -262,7 +262,7 @@ fn a_remembered_measurement_routes_a_run_exactly_as_a_fresh_one_would() {
             .collect()
     };
     let fresh = report(&fixture, &[]);
-    let cleared = Command::new(env!("CARGO_BIN_EXE_rust-mutants"))
+    let cleared = mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")))
         .env("NO_COLOR", "1")
         .env("TMPDIR", fixture.temp())
         .env("XDG_CACHE_HOME", fixture.cache())

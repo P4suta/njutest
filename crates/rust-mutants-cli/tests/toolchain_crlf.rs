@@ -63,7 +63,7 @@ fn rust_sources(root: &Path) -> Vec<String> {
 
 /// What one run of a tree establishes, and the full identity of every row.
 fn run(fixture: &Fixture) -> (Vec<Fate>, Vec<String>) {
-    let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_rust-mutants"));
+    let mut command = mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")));
     command.env("NO_COLOR", "1");
     command.env("TMPDIR", fixture.temp());
     command.env("XDG_CACHE_HOME", fixture.cache());

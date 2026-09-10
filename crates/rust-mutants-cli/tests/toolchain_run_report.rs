@@ -11,10 +11,10 @@
 
 use mjutest_devkit::fixture::{Fixture, copy_tree};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::Output;
 
 fn against(fixture: &Fixture, args: &[&str]) -> Output {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_rust-mutants"));
+    let mut command = mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")));
     command.env("NO_COLOR", "1");
     command.env("TMPDIR", fixture.temp());
     command.env("XDG_CACHE_HOME", fixture.cache());
@@ -25,7 +25,7 @@ fn against(fixture: &Fixture, args: &[&str]) -> Output {
 
 /// A command that takes no workspace, so no `--root` is added to it.
 fn rootless(fixture: &Fixture, args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_rust-mutants"))
+    mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")))
         .args(args)
         .env("NO_COLOR", "1")
         .env("TMPDIR", fixture.temp())
@@ -252,7 +252,7 @@ fn an_expectation_the_run_confirms_stops_being_a_finding_and_a_stale_one_starts(
 #[test]
 fn a_process_that_already_selects_a_mutant_is_refused_before_anything_runs() {
     let fixture = Fixture::copy("fixture-simple");
-    let output = Command::new(env!("CARGO_BIN_EXE_rust-mutants"))
+    let output = mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")))
         .args(["list", "--root", &fixture.root().to_string_lossy()])
         .env("NO_COLOR", "1")
         .env("TMPDIR", fixture.temp())
@@ -316,7 +316,7 @@ fn cache_says_what_a_run_left_in_the_temporary_directory_and_gc_reclaims_it() {
     std::fs::create_dir_all(&temp).expect("mkdir");
 
     let against_temp = |args: &[&str]| {
-        Command::new(env!("CARGO_BIN_EXE_rust-mutants"))
+        mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")))
             .args(args)
             .args(["--root", &root.to_string_lossy()])
             .env("NO_COLOR", "1")
@@ -328,7 +328,7 @@ fn cache_says_what_a_run_left_in_the_temporary_directory_and_gc_reclaims_it() {
     let run = against_temp(&["run", "--offline", "--locked", "--no-report"]);
     assert_eq!(run.status.code(), Some(1), "{}", stdout(&run));
 
-    let listed = Command::new(env!("CARGO_BIN_EXE_rust-mutants"))
+    let listed = mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")))
         .arg("cache")
         .env("NO_COLOR", "1")
         .env("TMPDIR", &temp)
@@ -342,7 +342,7 @@ fn cache_says_what_a_run_left_in_the_temporary_directory_and_gc_reclaims_it() {
         "a finished run removes its snapshot and keeps its cache: {text}"
     );
 
-    let swept = Command::new(env!("CARGO_BIN_EXE_rust-mutants"))
+    let swept = mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")))
         .args(["cache", "--gc"])
         .env("NO_COLOR", "1")
         .env("TMPDIR", &temp)
@@ -354,7 +354,7 @@ fn cache_says_what_a_run_left_in_the_temporary_directory_and_gc_reclaims_it() {
         "a sweep keeps the build caches, so the next run is still fast: {text}"
     );
 
-    let collected = Command::new(env!("CARGO_BIN_EXE_rust-mutants"))
+    let collected = mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")))
         .args(["cache", "--gc", "--all"])
         .env("NO_COLOR", "1")
         .env("TMPDIR", &temp)

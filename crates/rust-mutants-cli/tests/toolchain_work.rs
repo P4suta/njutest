@@ -17,7 +17,7 @@
     reason = "a test reports a setup failure by panicking and reads a ledger as a table"
 )]
 
-use std::process::Command;
+use std::path::Path;
 
 use mjutest_devkit::fixture::Fixture;
 use rust_mutants::work::Work;
@@ -59,7 +59,7 @@ fn ceilings() -> Vec<Ceiling> {
 
 fn measured(name: &str) -> Work {
     let fixture = Fixture::copy(name);
-    let output = Command::new(env!("CARGO_BIN_EXE_rust-mutants"))
+    let output = mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")))
         .env("NO_COLOR", "1")
         .env("TMPDIR", fixture.temp())
         .env("XDG_CACHE_HOME", fixture.cache())
@@ -156,7 +156,7 @@ const CARGO_CEILING: u64 = 6;
 /// How many times a run started each program, read back from its own recording.
 fn programs(name: &str, extra: &[&str]) -> std::collections::BTreeMap<String, u64> {
     let fixture = Fixture::copy(name);
-    let output = Command::new(env!("CARGO_BIN_EXE_rust-mutants"))
+    let output = mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")))
         .env("NO_COLOR", "1")
         .env("TMPDIR", fixture.temp())
         .env("XDG_CACHE_HOME", fixture.cache())
@@ -210,7 +210,7 @@ fn a_second_run_of_a_tree_nothing_changed_measures_it_again_no_harder_than_the_f
 fn a_second_run_of_a_tree_nothing_changed_measures_nothing_again() {
     let fixture = Fixture::copy("fixture-coverage");
     let started = |fixture: &Fixture| -> u64 {
-        let output = Command::new(env!("CARGO_BIN_EXE_rust-mutants"))
+        let output = mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")))
             .env("NO_COLOR", "1")
             .env("TMPDIR", fixture.temp())
             .env("XDG_CACHE_HOME", fixture.cache())
@@ -262,7 +262,7 @@ fn a_second_run_of_a_tree_nothing_changed_measures_nothing_again() {
 fn a_tree_that_changed_is_measured_again_rather_than_remembered() {
     let fixture = Fixture::copy("fixture-coverage");
     let run = |fixture: &Fixture| -> u64 {
-        let output = Command::new(env!("CARGO_BIN_EXE_rust-mutants"))
+        let output = mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")))
             .env("NO_COLOR", "1")
             .env("TMPDIR", fixture.temp())
             .env("XDG_CACHE_HOME", fixture.cache())

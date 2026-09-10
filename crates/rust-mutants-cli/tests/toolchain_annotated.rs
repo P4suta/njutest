@@ -9,12 +9,12 @@
     reason = "a test reports a setup failure by panicking and reads a document by the names its own fixture put there"
 )]
 
-use std::process::Command;
+use std::path::Path;
 
 use mjutest_devkit::fixture::Fixture;
 
 fn run(fixture: &Fixture, extra: &[&str]) -> std::process::Output {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_rust-mutants"));
+    let mut command = mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")));
     command.env("NO_COLOR", "1");
     command.env("TMPDIR", fixture.temp());
     command.env("XDG_CACHE_HOME", fixture.cache());

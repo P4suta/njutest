@@ -93,7 +93,7 @@ fn a_watch_verifies_the_tree_as_it_stands_and_carries_that_round_s_verdict() {
     let scratch = root.path().join("scratch");
     std::fs::create_dir_all(&scratch).expect("a scratch directory");
 
-    let vars: Vec<(OsString, OsString)> = std::env::vars_os().collect();
+    let vars: Vec<(OsString, OsString)> = mjutest_devkit::paths::environment_for_a_run();
     let environment = Environment {
         cache_directory: Environment::cache_directory_of(&vars),
         working_directory: root.path().to_owned(),
@@ -567,7 +567,7 @@ fn a_second_run_of_one_tree_reads_back_what_the_first_established_and_says_whose
     );
     let scratch = dir.path().join("scratch");
     std::fs::create_dir_all(&scratch).expect("a directory to work in");
-    let vars: Vec<(OsString, OsString)> = std::env::vars_os().collect();
+    let vars: Vec<(OsString, OsString)> = mjutest_devkit::paths::environment_for_a_run();
     let environment = Environment {
         cache_directory: dir.path().join("cache"),
         working_directory: root.clone(),
@@ -696,7 +696,7 @@ fn fuzz_targets_a_run_was_not_asked_to_drive_are_a_gap_it_states_rather_than_pas
 
     let scratch = dir.path().join("scratch");
     std::fs::create_dir_all(&scratch).expect("a directory to work in");
-    let vars: Vec<(OsString, OsString)> = std::env::vars_os().collect();
+    let vars: Vec<(OsString, OsString)> = mjutest_devkit::paths::environment_for_a_run();
     let environment = Environment {
         cache_directory: dir.path().join("cache"),
         working_directory: root.clone(),
@@ -752,7 +752,7 @@ fn a_mutation_the_compiler_renders_identically_is_only_equivalent_where_the_test
     .expect("a configuration that asks the compiler");
     let scratch = dir.path().join("scratch");
     std::fs::create_dir_all(&scratch).expect("a directory to work in");
-    let vars: Vec<(OsString, OsString)> = std::env::vars_os().collect();
+    let vars: Vec<(OsString, OsString)> = mjutest_devkit::paths::environment_for_a_run();
     let environment = Environment {
         cache_directory: dir.path().join("cache"),
         working_directory: root.clone(),
@@ -854,7 +854,7 @@ fn a_run_that_held_something_says_what_it_held_and_lets_go_of_it() {
     let scratch = dir.path().join("scratch");
     std::fs::create_dir_all(&scratch).expect("a directory to work in");
 
-    let mut vars: Vec<(OsString, OsString)> = std::env::vars_os().collect();
+    let mut vars: Vec<(OsString, OsString)> = mjutest_devkit::paths::environment_for_a_run();
     vars.push((
         OsString::from("FAKE_PROVIDER_READY"),
         OsString::from(
@@ -967,7 +967,7 @@ fn a_candidate_offered_for_a_gap_is_put_to_the_tests_before_it_is_recorded() {
     std::fs::create_dir_all(&scratch).expect("a directory to work in");
 
     let asked = dir.path().join("asked.jsonl");
-    let mut vars: Vec<(OsString, OsString)> = std::env::vars_os().collect();
+    let mut vars: Vec<(OsString, OsString)> = mjutest_devkit::paths::environment_for_a_run();
     vars.push((
         OsString::from("FAKE_GENERATOR_ASKED"),
         OsString::from(asked.display().to_string()),
@@ -1175,7 +1175,7 @@ fn a_run_that_was_stopped_leaves_what_it_established_for_the_next_one() {
     );
     let scratch = dir.path().join("scratch");
     std::fs::create_dir_all(&scratch).expect("a directory to work in");
-    let vars: Vec<(OsString, OsString)> = std::env::vars_os().collect();
+    let vars: Vec<(OsString, OsString)> = mjutest_devkit::paths::environment_for_a_run();
     let environment = Environment {
         cache_directory: dir.path().join("cache"),
         working_directory: root.clone(),
@@ -1288,7 +1288,7 @@ fn once(
     }
     let scratch = dir.join(format!("{name}-scratch"));
     std::fs::create_dir_all(&scratch).expect("a directory to work in");
-    let vars: Vec<(OsString, OsString)> = std::env::vars_os().collect();
+    let vars: Vec<(OsString, OsString)> = mjutest_devkit::paths::environment_for_a_run();
     let environment = Environment {
         cache_directory: dir.join(format!("{name}-cache")),
         working_directory: root.clone(),
@@ -1354,7 +1354,7 @@ fn a_run_of_one_tree_says_the_same_thing_however_many_times_and_however_widely_i
 fn part(root: &std::path::Path, dir: &std::path::Path, shard: &str) -> serde_json::Value {
     let scratch = dir.join(format!("part-{}-scratch", shard.replace('/', "-")));
     std::fs::create_dir_all(&scratch).expect("a directory to work in");
-    let vars: Vec<(OsString, OsString)> = std::env::vars_os().collect();
+    let vars: Vec<(OsString, OsString)> = mjutest_devkit::paths::environment_for_a_run();
     let environment = Environment {
         cache_directory: dir.join("parts-cache"),
         working_directory: root.to_path_buf(),
@@ -1522,7 +1522,7 @@ fn a_target_the_fuzzer_could_not_drive_is_a_gap_and_never_a_target_that_found_no
 
     let scratch = dir.path().join("scratch");
     std::fs::create_dir_all(&scratch).expect("a directory to work in");
-    let vars: Vec<(OsString, OsString)> = std::env::vars_os().collect();
+    let vars: Vec<(OsString, OsString)> = mjutest_devkit::paths::environment_for_a_run();
     let environment = Environment {
         cache_directory: dir.path().join("cache"),
         working_directory: root.clone(),
@@ -1599,7 +1599,7 @@ fn verified_in_process(
     let scratch = dir.join("scratch");
     std::fs::create_dir_all(&scratch).expect("a directory to work in");
 
-    let mut vars: Vec<(OsString, OsString)> = std::env::vars_os().collect();
+    let mut vars: Vec<(OsString, OsString)> = mjutest_devkit::paths::environment_for_a_run();
     vars.extend(
         carrying
             .iter()
@@ -1714,7 +1714,7 @@ fn a_run_in_this_process_writes_what_it_learned_before_it_compiled_anything() {
     let scratch = dir.path().join("scratch");
     std::fs::create_dir_all(&scratch).expect("a directory to work in");
 
-    let vars: Vec<(OsString, OsString)> = std::env::vars_os().collect();
+    let vars: Vec<(OsString, OsString)> = mjutest_devkit::paths::environment_for_a_run();
     let environment = Environment {
         cache_directory: Environment::cache_directory_of(&vars),
         working_directory: root.clone(),

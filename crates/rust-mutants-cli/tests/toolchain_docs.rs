@@ -8,7 +8,8 @@
     reason = "a test reports a setup failure by panicking and asserts with panics"
 )]
 
-use std::process::{Command, Output};
+use std::path::Path;
+use std::process::Output;
 
 use mjutest_devkit::fixture::Fixture;
 
@@ -16,7 +17,7 @@ use mjutest_devkit::fixture::Fixture;
 const DEMO: &str = "fixture-simple";
 
 fn against(fixture: &Fixture, args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_rust-mutants"))
+    mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")))
         .env("NO_COLOR", "1")
         .env("TMPDIR", fixture.temp())
         .env("XDG_CACHE_HOME", fixture.cache())
@@ -69,8 +70,7 @@ fn the_readme_sample_session_is_the_one_the_engine_prints() {
         &fixture,
     ));
 
-    let golden = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/testdata/readme-session.golden");
+    let golden = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testdata/readme-session.golden");
     mjutest_devkit::golden::golden(&golden, session.as_bytes())
         .expect("the session is the recorded one");
 

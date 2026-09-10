@@ -8,13 +8,14 @@
     reason = "a test reports a setup failure by panicking and asserts with panics"
 )]
 
-use std::process::{Command, Output};
+use std::path::Path;
+use std::process::Output;
 
 use mjutest_devkit::fixture::Fixture;
 use rust_mutants::report::stream::{Line, read};
 
 fn run(fixture: &Fixture, extra: &[&str]) -> Output {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_rust-mutants"));
+    let mut command = mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")));
     command.env("NO_COLOR", "1");
     command.env("TMPDIR", fixture.temp());
     command.env("XDG_CACHE_HOME", fixture.cache());
@@ -118,7 +119,7 @@ fn the_stream_opens_before_anything_is_prepared() {
     let fixture = Fixture::copy("fixture-simple");
     let path = fixture.temp().join("stream.jsonl");
     let file = std::fs::File::create(&path).expect("somewhere to stream to");
-    let mut child = Command::new(env!("CARGO_BIN_EXE_rust-mutants"))
+    let mut child = mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")))
         .env("NO_COLOR", "1")
         .env("TMPDIR", fixture.temp())
         .env("XDG_CACHE_HOME", fixture.cache())
@@ -151,7 +152,7 @@ fn the_stream_opens_before_anything_is_prepared() {
 #[test]
 fn a_run_started_from_inside_the_tree_still_names_the_tree() {
     let fixture = Fixture::copy("fixture-simple");
-    let output = Command::new(env!("CARGO_BIN_EXE_rust-mutants"))
+    let output = mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")))
         .env("NO_COLOR", "1")
         .env("TMPDIR", fixture.temp())
         .env("XDG_CACHE_HOME", fixture.cache())

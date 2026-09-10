@@ -12,7 +12,6 @@
 )]
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use mjutest_devkit::fixture::{Fate, Fixture};
 
@@ -59,7 +58,7 @@ fn resolved(fixture: &Fixture, args: &[String]) -> Vec<String> {
 
 /// What a run of one fixture establishes, in the order a block states it.
 fn recorded(fixture: &Fixture, args: &[String]) -> Vec<Fate> {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_rust-mutants"));
+    let mut command = mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")));
     command.env("NO_COLOR", "1");
     command.env("TMPDIR", fixture.temp());
     command.env("XDG_CACHE_HOME", fixture.cache());

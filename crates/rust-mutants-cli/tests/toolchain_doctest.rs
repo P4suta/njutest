@@ -11,9 +11,10 @@
 )]
 
 use mjutest_devkit::fixture::Fixture;
+use std::path::Path;
 
 fn against(fixture: &Fixture, args: &[&str]) -> std::process::Output {
-    let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_rust-mutants"));
+    let mut command = mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")));
     command.env("NO_COLOR", "1");
     command.env("TMPDIR", fixture.temp());
     command.env("XDG_CACHE_HOME", fixture.cache());

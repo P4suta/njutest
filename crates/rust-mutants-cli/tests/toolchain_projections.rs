@@ -10,10 +10,11 @@
 )]
 
 use mjutest_devkit::fixture::Fixture;
-use std::process::{Command, Output};
+use std::path::Path;
+use std::process::Output;
 
 fn against(fixture: &Fixture, args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_rust-mutants"))
+    mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")))
         .env("NO_COLOR", "1")
         .env("TMPDIR", fixture.temp())
         .env("XDG_CACHE_HOME", fixture.cache())
@@ -250,7 +251,7 @@ fn a_package_with_nothing_to_run_is_a_warning_that_names_it() {
 fn a_root_that_is_a_member_of_a_workspace_fails_and_names_the_root_to_use() {
     let fixture = Fixture::copy("fixture-workspace");
     let member = fixture.root().join("crates/core");
-    let asked = Command::new(env!("CARGO_BIN_EXE_rust-mutants"))
+    let asked = mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")))
         .env("NO_COLOR", "1")
         .env("TMPDIR", fixture.temp())
         .env("XDG_CACHE_HOME", fixture.cache())

@@ -9,10 +9,11 @@
 )]
 
 use mjutest_devkit::fixture::Fixture;
-use std::process::{Command, Output};
+use std::path::Path;
+use std::process::Output;
 
 fn against(fixture: &Fixture, args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_rust-mutants"))
+    mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")))
         .env("NO_COLOR", "1")
         .env("TMPDIR", fixture.temp())
         .args(args)
