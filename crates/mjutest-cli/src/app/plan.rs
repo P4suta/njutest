@@ -134,10 +134,14 @@ fn selected(
 }
 
 /// One binary a run would measure, and what it holds.
-struct Planned {
-    target: Target,
-    tests: usize,
-    ignored: usize,
+#[derive(Debug, Clone)]
+pub struct Planned {
+    /// The binary, as a report names it.
+    pub target: Target,
+    /// How many tests it holds that a run would start.
+    pub tests: usize,
+    /// How many of them are `#[ignore]`d, which a run does not start and a plan still counts.
+    pub ignored: usize,
 }
 
 /// Where a plan builds.
@@ -192,7 +196,14 @@ fn locate(
 }
 
 /// One target, and — when asked — what put it in scope.
-fn line(planned: &Planned, why: bool) -> String {
+///
+/// The three reasons are the three kinds of thing a run measures, and each of
+/// them is a different thing for a reader to do: a library's examples are a
+/// target a route cannot narrow, a binary that answers by exiting is one a
+/// route cannot narrow either but for another reason, and everything else is a
+/// count they can compare with what the suite says it has.
+#[must_use]
+pub fn line(planned: &Planned, why: bool) -> String {
     let head = format!("TARGET\t{}\t{}", planned.target.id, planned.target.name());
     if !why {
         return head;
