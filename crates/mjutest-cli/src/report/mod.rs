@@ -398,6 +398,33 @@ pub enum FindingKind {
 }
 
 impl FindingKind {
+    /// Every kind, in declaration order.
+    pub const ALL: [Self; 8] = [
+        Self::BuildFailure,
+        Self::FailingTest,
+        Self::TargetMissing,
+        Self::SurvivingMutant,
+        Self::Timeout,
+        Self::FlakyTest,
+        Self::NotMeasured,
+        Self::UndefinedBehaviour,
+    ];
+
+    /// The name this carries in a report, which is the one a person greps for.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::BuildFailure => "build-failure",
+            Self::FailingTest => "failing-test",
+            Self::TargetMissing => "target-missing",
+            Self::SurvivingMutant => "surviving-mutant",
+            Self::Timeout => "timeout",
+            Self::FlakyTest => "flaky-test",
+            Self::NotMeasured => "not-measured",
+            Self::UndefinedBehaviour => "undefined-behaviour",
+        }
+    }
+
     /// Whether this is a fault in the code under test rather than a gap in what was established.
     #[must_use]
     pub const fn is_defect(self) -> bool {

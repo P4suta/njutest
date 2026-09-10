@@ -67,10 +67,27 @@ additionally enforces arithmetic, scope/verdict, acceptance, cache, and
 unavailable-metadata invariants that JSON Schema alone cannot express
 (`report::audit::validate_for_persistence`).
 
-A **finding** is a claim about the project — a build that does not compile,
-a failing test, a target that could not be found, a surviving mutant, a
-timeout. A **limitation** is the opposite: a claim the run declines to make
-about itself. The audit holds the verdict and the findings to each other,
+A **finding** is a claim about the project. There are eight kinds, and a
+report carries the name rather than a number, because the name is what a
+person greps for and what a projection shows:
+
+| `kind` | what it says | a defect |
+| --- | --- | --- |
+| `build-failure` | the workspace does not compile | yes |
+| `failing-test` | a test of the workspace fails with nothing active | yes |
+| `flaky-test` | a test does not behave the same way twice | yes |
+| `undefined-behaviour` | the interpreter found unsoundness where the compiler stops vouching | yes |
+| `surviving-mutant` | every test that could notice a mutation passed with it active | no |
+| `target-missing` | a test target could not be found, so nothing was observed about it | no |
+| `timeout` | a target, or a mutation of one, ran out of the time it was given | no |
+| `not-measured` | something a run could not measure, so it claims nothing about it | no |
+
+The last column is the one a reader acts on first: a defect is a fault in the
+code under test, and the rest are gaps in what was established. Both are
+findings, and a report that carries either is not an assurance.
+
+A **limitation** is the opposite: a claim the run declines to make about
+itself. The audit holds the verdict and the findings to each other,
 because a report must not say two things at once: an assurance is the claim
 that nothing was found, so it carries no findings, and a `DEFECT` a reader
 cannot see named is not one they can act on, so it carries at least one.
