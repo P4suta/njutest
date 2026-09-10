@@ -68,7 +68,13 @@ pub fn file(path: &Path, bytes: &[u8]) -> Result<(), Failure> {
 }
 
 /// The directory a path is in, which for a bare name is the one the process is standing in.
-fn directory_of(path: &Path) -> &Path {
+///
+/// A bare name has a parent and it is the empty path, which names nothing a
+/// directory can be made at: the two ways of naming no directory are two
+/// cases, and answering the empty one with the empty path would put the staged
+/// file at the filesystem root on one platform and refuse on another.
+#[must_use]
+pub fn directory_of(path: &Path) -> &Path {
     match path.parent() {
         Some(parent) if !parent.as_os_str().is_empty() => parent,
         _ => Path::new("."),
@@ -81,7 +87,13 @@ fn directory_of(path: &Path) -> &Path {
 /// the write and the rename, so two replacements that could overlap are two
 /// that carry different names here and two that carry the same name cannot
 /// overlap.
-fn staging(path: &Path) -> String {
+///
+/// A destination with no file name of its own — a root, or a path ending in
+/// `..` — is staged under a name of this module's choosing rather than under
+/// nothing: a staged file called `..12345.ThreadId1.writing` is one nobody
+/// reading a directory could tell from a store entry.
+#[must_use]
+pub fn staging(path: &Path) -> String {
     let name = path
         .file_name()
         .and_then(std::ffi::OsStr::to_str)

@@ -100,3 +100,61 @@ fn an_answer_a_reader_takes_while_a_run_replaces_it_is_one_whole_answer() {
          with nothing to read"
     );
 }
+
+#[test]
+fn a_destination_whose_directory_cannot_be_made_names_the_directory() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let occupied = dir.path().join("occupied");
+    std::fs::write(&occupied, "a file where a directory goes").expect("the file");
+    let failure = rust_mutants::replace::file(&occupied.join("entry.json"), b"an answer")
+        .expect_err("a directory that cannot be made");
+    assert_eq!(
+        failure.path, occupied,
+        "a store takes its shape as it fills, so the run that fills it makes the \
+         directory; when it cannot, every later step fails for the same reason and \
+         names something else, and the path is the only thing that says which step this \
+         was"
+    );
+}
+
+#[test]
+fn a_bare_name_is_staged_beside_itself_and_never_at_the_root() {
+    assert_eq!(
+        rust_mutants::replace::directory_of(std::path::Path::new("entry.json")),
+        std::path::Path::new("."),
+        "a bare name has a parent and it is the empty path, which names nothing a \
+         directory can be made at: answering with it would stage the bytes at the \
+         filesystem root on one platform and refuse on another, and neither is beside \
+         the destination"
+    );
+    assert_eq!(
+        rust_mutants::replace::directory_of(std::path::Path::new("/store/entry.json")),
+        std::path::Path::new("/store"),
+        "while a name with a directory is staged in that directory, so the rename that \
+         follows stays on the filesystem the store is on"
+    );
+    assert_eq!(
+        rust_mutants::replace::directory_of(std::path::Path::new("/")),
+        std::path::Path::new("."),
+        "and a path with no parent at all is the other way of naming no directory"
+    );
+}
+
+#[test]
+fn a_staged_name_says_whose_it_is_and_is_never_the_destination() {
+    let staged = rust_mutants::replace::staging(std::path::Path::new("/store/entry.json"));
+    assert!(
+        staged.starts_with(".entry.json.")
+            && staged.ends_with(".writing")
+            && staged.contains(&std::process::id().to_string()),
+        "the bytes are staged beside the destination under a name that says which writer \
+         put them there, so two replacements that could overlap never share a path and a \
+         reader listing the store can tell a half-written file from an entry: {staged}"
+    );
+    let nameless = rust_mutants::replace::staging(std::path::Path::new("/"));
+    assert!(
+        nameless.starts_with(".entry.") && nameless.ends_with(".writing"),
+        "and a destination with no file name of its own is staged under one this module \
+         chose rather than under nothing at all: {nameless}"
+    );
+}
