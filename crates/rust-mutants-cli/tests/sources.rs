@@ -189,6 +189,17 @@ fn a_file_two_mutations_are_in_is_read_once() {
         dir.path(),
     )
     .expect("the file the run measured");
+    let two_files = read(
+        &document(vec![mutant("src/lib.rs", ""), mutant("src/other.rs", "")]),
+        dir.path(),
+    );
+    assert!(
+        two_files.is_err(),
+        "a report naming a second file this tree does not hold is refused on that file \
+         and not on the first: stopping at the first would hand back a projection of one \
+         file and call it the run"
+    );
+
     assert_eq!(
         held.len(),
         1,
@@ -201,5 +212,34 @@ fn a_file_two_mutations_are_in_is_read_once() {
         Some(&Held::Measured(SOURCE.to_owned())),
         "and the first mutation of it settles what it is, since they all name the bytes \
          one run read"
+    );
+
+    std::fs::write(dir.path().join("src/other.rs"), "pub fn other() {}\n").expect("a second file");
+    let both = read(
+        &document(vec![
+            mutant("src/lib.rs", &digest),
+            mutant("src/lib.rs", &digest),
+            mutant("src/other.rs", ""),
+        ]),
+        dir.path(),
+    )
+    .expect("both files the run measured");
+    assert_eq!(
+        both.len(),
+        2,
+        "a file already read is passed over and the ones after it are still read: \
+         stopping there would hand back a projection of the files before the first \
+         repeat, and a catalog repeats on its second mutation"
+    );
+}
+
+#[test]
+fn a_path_this_shape_cannot_be_written_down_is_a_failure_and_not_a_ledger() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let held = read(&document(Vec::new()), dir.path()).expect("a report naming no file");
+    assert!(
+        held.is_empty(),
+        "a report with no mutation in it names no file, and reading one would be reading \
+         a file nobody said anything about"
     );
 }

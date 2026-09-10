@@ -28,13 +28,31 @@ fn a_tree_with_no_ledger_has_kept_nothing() {
          failing: the answer to what a run left behind is usually nothing"
     );
 
-    std::fs::write(dir.path().join("kept-v1.json"), "not a ledger\n").expect("a file");
-    assert!(
-        Ledger::read(dir.path()).kept.is_empty(),
-        "and a ledger this release cannot read authorises nothing: removing a directory \
-         because a file nobody could parse seemed to name it is the one thing a \
-         collection may never do"
-    );
+    let path = dir.path().join(rust_mutants_cli::kept::FILE_NAME);
+    for wrong in [
+        "not a ledger\n".to_owned(),
+        serde_json::json!({
+            "document_type": "somebody-else/kept",
+            "schema_version": 1,
+            "kept": [{"path": "/somewhere", "run_id": "20260101T000000000Z"}],
+        })
+        .to_string(),
+        serde_json::json!({
+            "document_type": "rust-mutants/kept",
+            "schema_version": 2,
+            "kept": [{"path": "/somewhere", "run_id": "20260101T000000000Z"}],
+        })
+        .to_string(),
+    ] {
+        std::fs::write(&path, &wrong).expect("a file that is not this ledger");
+        assert!(
+            Ledger::read(dir.path()).kept.is_empty(),
+            "a ledger this release cannot read authorises nothing: removing a directory \
+             because a file nobody could parse seemed to name it is the one thing a \
+             collection may never do, and a document from another program or another \
+             shape is one nobody parsed. It read {wrong}"
+        );
+    }
 }
 
 #[test]
@@ -63,15 +81,35 @@ fn what_a_run_kept_is_named_with_the_run_that_kept_it() {
         "and what one run wrote is what the next one reads"
     );
 
-    let again = Ledger::record(
+    let second = made(dir.path(), "second");
+    let both = Ledger::record(
         dir.path(),
         "20260102T000000000Z",
+        &[snapshot.clone(), second.clone()],
+    )
+    .expect("the ledger");
+    assert_eq!(
+        both.kept.len(),
+        2,
+        "a run that kept two directories has both named: stopping at the first would \
+         leave the second on the disk with nothing to look it up by"
+    );
+    assert_eq!(
+        both.kept.last().map(|entry| entry.path.clone()),
+        Some(second),
+        "in the order they were kept, oldest first, because that is the order a person \
+         removes them in"
+    );
+
+    let again = Ledger::record(
+        dir.path(),
+        "20260103T000000000Z",
         std::slice::from_ref(&snapshot),
     )
     .expect("the ledger");
     assert_eq!(
         again.kept.len(),
-        1,
+        2,
         "the same directory recorded twice is named once: a person reading two lines for \
          one directory would remove it and find the second line still there"
     );
@@ -137,4 +175,62 @@ fn clearing_removes_what_the_ledger_names_and_says_how_many() {
         "and what it wrote back is what the next run reads: a ledger still naming \
          directories that are gone sends the next person looking for them"
     );
+}
+
+#[test]
+fn a_ledger_that_cannot_be_written_is_a_failure_and_never_a_silent_one() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let snapshot = made(dir.path(), "snapshot");
+    let nowhere = dir.path().join("occupied");
+    std::fs::write(&nowhere, "a file where a directory goes").expect("the file");
+
+    let refused = Ledger::record(
+        &nowhere,
+        "20260101T000000000Z",
+        std::slice::from_ref(&snapshot),
+    )
+    .expect_err("a ledger with nowhere to go");
+    assert!(
+        !refused.to_string().is_empty(),
+        "a directory kept and not written down is one nobody will ever remove, so a \
+         ledger that could not be written is a failure the run reports rather than one \
+         it swallows: {refused}"
+    );
+
+    let cleared = Ledger::clear(&nowhere).expect_err("a ledger with nowhere to go");
+    assert!(
+        !cleared.to_string().is_empty(),
+        "and a clearing that removed the directories and could not say it had is worse: \
+         the next run reads a ledger naming directories that are gone: {cleared}"
+    );
+}
+
+#[test]
+fn a_path_no_document_can_hold_is_a_refusal_and_never_a_ledger_that_lost_it() {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt as _;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let odd = dir.path().join(std::ffi::OsStr::from_bytes(b"not\xffutf8"));
+        std::fs::create_dir_all(&odd).expect("a directory whose name is not text");
+
+        let refused = Ledger::record(
+            dir.path(),
+            "20260101T000000000Z",
+            std::slice::from_ref(&odd),
+        )
+        .expect_err("a path this document cannot carry");
+        assert!(
+            !refused.to_string().is_empty(),
+            "a filesystem takes a name that is not text and this document does not, so a \
+             run that kept such a directory is told rather than handed a ledger with the \
+             directory missing from it: {refused}"
+        );
+        assert!(
+            Ledger::read(dir.path()).kept.is_empty(),
+            "and nothing is written: half a ledger names some of what a run kept and \
+             reads as all of it"
+        );
+    }
 }

@@ -300,3 +300,19 @@ item = "said"
 rule = "lt-to-le"
 original = "<"
 reason = "the line is cut to the width and marked whichever side of it the loop stopped on, so both render the same line; a_command_is_shown_by_its_own_name_and_cut_where_it_stops_being_readable holds the width, the mark and the beginning"
+
+# Turning an empty ledger into text, which cannot fail.
+#
+# `clear` writes `Ledger::default()` back: a document type, a version number,
+# and an empty list. `serde_json` refuses a map whose keys are not strings or a
+# `Serialize` that returns an error of its own, and neither is reachable from
+# those three fields. The sibling `?` in `record` is a different matter and is
+# killed — that one serialises the paths a run kept, and a filesystem takes a
+# name that is not text. `kept_ledger.rs::a_path_no_document_can_hold_is_a_refusal_and_never_a_ledger_that_lost_it`
+# holds the failure that does exist, and this is the one that does not.
+[[mutation.expect]]
+path = "crates/rust-mutants-cli/src/kept.rs"
+item = "Ledger::clear"
+rule = "question-to-unwrap"
+original = "?"
+reason = "an empty ledger is a document type, a version and an empty list, so rendering it as JSON has no failure arm; the sibling ? in record carries the paths and is killed by a_path_no_document_can_hold_is_a_refusal_and_never_a_ledger_that_lost_it"
