@@ -12,8 +12,12 @@
 
 use mjutest_devkit::fixture::copy_tree;
 use std::collections::BTreeSet;
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::Output;
+
+use mjutest_cli::cli::Environment;
+use rust_mutants::runner::Cancel;
 
 /// A throwaway copy of a fixture, so the run writes its reports somewhere nothing else is reading.
 struct Fixture {
@@ -35,27 +39,50 @@ fn fixture(name: &str) -> Fixture {
 fn verify(fixture: &Fixture, extra: &[&str]) -> Output {
     let mut args = vec!["verify", "--offline", "--locked"];
     args.extend_from_slice(extra);
-    Command::new(env!("CARGO_BIN_EXE_mjutest"))
-        .args(args)
-        .current_dir(&fixture.root)
-        .env_clear()
-        .env("NO_COLOR", "1")
-        .env(
-            "XDG_CACHE_HOME",
-            mjutest_devkit::paths::cache_beside(&fixture.root).expect("a cache directory"),
-        )
-        .env(
-            "TMPDIR",
-            mjutest_devkit::paths::temp_beside(&fixture.root).expect("a temporary directory"),
-        )
-        .envs(std::env::vars_os().filter(|(key, _)| {
+    asked(&of(&fixture.root, &[]), &args)
+}
+
+/// One command, driven in this process against an environment a test composed.
+fn asked(environment: &Environment, args: &[&str]) -> Output {
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let code = mjutest_cli::run_from(
+        std::iter::once("mjutest")
+            .chain(args.iter().copied())
+            .map(OsString::from),
+        environment,
+        &mut out,
+        &mut err,
+    );
+    mjutest_devkit::process::answered(code, out, err)
+}
+
+/// The environment a run of this suite composes: the four variables a toolchain needs, what a test named, and nothing else.
+fn environment(root: &Path, cache: &Path, named: &[(&str, &str)]) -> Environment {
+    let mut vars: Vec<(OsString, OsString)> = mjutest_devkit::paths::environment_for_a_run()
+        .into_iter()
+        .filter(|(name, _)| {
             matches!(
-                key.to_string_lossy().as_ref(),
+                name.to_string_lossy().as_ref(),
                 "PATH" | "HOME" | "RUSTUP_HOME" | "CARGO_HOME"
             )
-        }))
-        .output()
-        .expect("mjutest runs")
+        })
+        .collect();
+    for (name, value) in named {
+        vars.push((OsString::from(*name), OsString::from(*value)));
+    }
+    Environment {
+        cache_directory: cache.to_path_buf(),
+        working_directory: root.to_path_buf(),
+        temp_directory: mjutest_devkit::paths::temp_beside(root).expect("a temporary directory"),
+        vars,
+        cancel: Cancel::new(),
+    }
+}
+
+/// The environment of a fixture, with the cache and the scratch beside its root.
+fn of(root: &Path, named: &[(&str, &str)]) -> Environment {
+    let cache = mjutest_devkit::paths::cache_beside(root).expect("a cache directory");
+    environment(root, &cache, named)
 }
 
 /// Where the latest run wrote its report.
@@ -1046,16 +1073,10 @@ fn the_parts_of_one_catalog_merge_into_the_verdict_neither_of_them_could_say() {
     let two = latest(&fixture);
     assert_ne!(one, two, "two runs, two reports");
 
-    let merged = Command::new(env!("CARGO_BIN_EXE_mjutest"))
-        .args([
-            std::ffi::OsStr::new("merge"),
-            one.as_os_str(),
-            two.as_os_str(),
-        ])
-        .env_clear()
-        .env("NO_COLOR", "1")
-        .output()
-        .expect("mjutest runs");
+    let merged = asked(
+        &of(&fixture.root, &[]),
+        &["merge", &one.to_string_lossy(), &two.to_string_lossy()],
+    );
     assert_eq!(
         merged.status.code(),
         Some(0),

@@ -3,32 +3,59 @@
 
 //! The command-line contract of the `mjutest` binary: what `--version` and `--help` print, and the exit code of a usage error, which is `3` — the code of invalid input — and not clap's default.
 
-#![expect(
-    clippy::expect_used,
-    reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
-)]
-
+use std::ffi::OsString;
 use std::path::Path;
-use std::process::{Command, Output};
+use std::process::Output;
+
+use mjutest_cli::cli::Environment;
+use rust_mutants::runner::Cancel;
 
 fn mjutest(args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_mjutest"))
-        .args(args)
-        .env_clear()
-        .env("NO_COLOR", "1")
-        .output()
-        .expect("mjutest runs")
+    let here = std::env::current_dir().unwrap_or_else(|_error| Path::new(".").to_path_buf());
+    asked(&environment(&here, &[]), args)
 }
 
 /// The same, in a directory of its own, for a command that writes.
 fn mjutest_in(dir: &Path, args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_mjutest"))
-        .args(args)
-        .current_dir(dir)
-        .env_clear()
-        .env("NO_COLOR", "1")
-        .output()
-        .expect("mjutest runs")
+    asked(&environment(dir, &[]), args)
+}
+
+/// One command, driven in this process against an environment a test composed.
+fn asked(environment: &Environment, args: &[&str]) -> Output {
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let code = mjutest_cli::run_from(
+        std::iter::once("mjutest")
+            .chain(args.iter().copied())
+            .map(OsString::from),
+        environment,
+        &mut out,
+        &mut err,
+    );
+    mjutest_devkit::process::answered(code, out, err)
+}
+
+/// The environment a run of this suite composes: the four variables a toolchain needs, and nothing else.
+fn environment(directory: &Path, named: &[(&str, &str)]) -> Environment {
+    let mut vars: Vec<(OsString, OsString)> = mjutest_devkit::paths::environment_for_a_run()
+        .into_iter()
+        .filter(|(name, _)| {
+            matches!(
+                name.to_string_lossy().as_ref(),
+                "PATH" | "HOME" | "RUSTUP_HOME" | "CARGO_HOME"
+            )
+        })
+        .collect();
+    for (name, value) in named {
+        vars.retain(|(held, _)| held != OsString::from(name).as_os_str());
+        vars.push((OsString::from(name), OsString::from(value)));
+    }
+    Environment {
+        cache_directory: directory.join("mjutest-cache"),
+        working_directory: directory.to_path_buf(),
+        temp_directory: directory.join("mjutest-temp"),
+        vars,
+        cancel: Cancel::new(),
+    }
 }
 
 fn golden_path(name: &str) -> std::path::PathBuf {
@@ -160,12 +187,7 @@ fn a_subcommand_given_a_flag_it_does_not_know_is_invalid_input() {
 #[test]
 fn doctor_names_every_tool_a_run_needs_and_whether_it_is_there() {
     let dir = tempfile::tempdir().expect("a temporary directory");
-    let output = Command::new(env!("CARGO_BIN_EXE_mjutest"))
-        .args(["doctor"])
-        .current_dir(dir.path())
-        .env("NO_COLOR", "1")
-        .output()
-        .expect("mjutest runs");
+    let output = asked(&environment(dir.path(), &[]), &["doctor"]);
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     for tool in ["cargo", "rustc", "llvm-profdata", "llvm-cov", "git"] {
@@ -185,14 +207,10 @@ fn doctor_names_every_tool_a_run_needs_and_whether_it_is_there() {
 #[test]
 fn doctor_without_a_toolchain_says_so_and_refuses_rather_than_guessing() {
     let dir = tempfile::tempdir().expect("a temporary directory");
-    let output = Command::new(env!("CARGO_BIN_EXE_mjutest"))
-        .args(["doctor"])
-        .current_dir(dir.path())
-        .env_clear()
-        .env("NO_COLOR", "1")
-        .env("PATH", "/nonexistent")
-        .output()
-        .expect("mjutest runs");
+    let output = asked(
+        &environment(dir.path(), &[("PATH", "/nonexistent")]),
+        &["doctor"],
+    );
     assert_eq!(
         output.status.code(),
         Some(3),
@@ -268,13 +286,13 @@ fn cargo_mjutest_drops_the_word_cargo_gave_it_and_reads_the_rest() {
     let asked = mjutest_cli::cli::parse(
         ["cargo-mjutest", "mjutest", "verify", "--offline"]
             .into_iter()
-            .map(std::ffi::OsString::from),
+            .map(OsString::from),
     )
     .expect("cargo calls its subcommands with their own name in argv[1]");
     let direct = mjutest_cli::cli::parse(
         ["mjutest", "verify", "--offline"]
             .into_iter()
-            .map(std::ffi::OsString::from),
+            .map(OsString::from),
     )
     .expect("and a person calls it without");
 
@@ -290,7 +308,7 @@ fn a_binary_that_is_not_a_cargo_subcommand_keeps_every_argument_it_was_given() {
     let refused = mjutest_cli::cli::parse(
         ["mjutest", "mjutest", "verify"]
             .into_iter()
-            .map(std::ffi::OsString::from),
+            .map(OsString::from),
     );
     assert!(
         refused.is_err(),

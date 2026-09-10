@@ -11,8 +11,12 @@
 )]
 
 use mjutest_devkit::fixture::copy_tree;
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::Output;
+
+use mjutest_cli::cli::Environment;
+use rust_mutants::runner::Cancel;
 
 /// The test the provider offers: the one the `#[ignore]` left out.
 const OFFERED: &str = "Ly8gU1BEWC1GaWxlQ29weXJpZ2h0VGV4dDogMjAyNiBtanV0ZXN0IGNvbnRyaWJ1dG9ycwovLyBTUERYLUxpY2Vuc2UtSWRlbnRpZmllcjogTUlUIE9SIEFwYWNoZS0yLjAKCi8vISBPZmZlcmVkIGJ5IGEgZ2VuZXJhdGlvbiBwcm92aWRlciB0byBjbG9zZSB0aGUgZ2FwIHRoZSBpZ25vcmVkIHRlc3QgbGVmdC4KCiNbdGVzdF0KZm4gemVyb19oYXNfYV9zaWduX29mX2l0c19vd24oKSB7CiAgICBhc3NlcnRfZXEhKGZpeHR1cmVfYmFzZWxpbmU6OnNpZ24oMCksICJ6ZXJvIik7Cn0K";
@@ -51,28 +55,47 @@ fn declaring(fixture: &Fixture) {
 }
 
 fn mjutest(fixture: &Fixture, args: &[&str], offers: &str) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_mjutest"))
-        .args(args)
-        .current_dir(&fixture.root)
-        .env_clear()
-        .env("NO_COLOR", "1")
-        .env("FAKE_GENERATOR_OFFERS", offers)
-        .env(
-            "XDG_CACHE_HOME",
-            mjutest_devkit::paths::cache_beside(&fixture.root).expect("a cache directory"),
-        )
-        .env(
-            "TMPDIR",
-            mjutest_devkit::paths::temp_beside(&fixture.root).expect("a temporary directory"),
-        )
-        .envs(std::env::vars_os().filter(|(key, _)| {
+    asked(
+        &of(&fixture.root, &[("FAKE_GENERATOR_OFFERS", offers)]),
+        args,
+    )
+}
+
+/// One command, driven in this process against an environment a test composed.
+fn asked(environment: &Environment, args: &[&str]) -> Output {
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let code = mjutest_cli::run_from(
+        std::iter::once("mjutest")
+            .chain(args.iter().copied())
+            .map(OsString::from),
+        environment,
+        &mut out,
+        &mut err,
+    );
+    mjutest_devkit::process::answered(code, out, err)
+}
+
+/// The environment a run of this suite composes: the four variables a toolchain needs, what a test named, and nothing else.
+fn environment(root: &Path, cache: &Path, named: &[(&str, &str)]) -> Environment {
+    let mut vars: Vec<(OsString, OsString)> = mjutest_devkit::paths::environment_for_a_run()
+        .into_iter()
+        .filter(|(name, _)| {
             matches!(
-                key.to_string_lossy().as_ref(),
+                name.to_string_lossy().as_ref(),
                 "PATH" | "HOME" | "RUSTUP_HOME" | "CARGO_HOME"
             )
-        }))
-        .output()
-        .expect("mjutest runs")
+        })
+        .collect();
+    for (name, value) in named {
+        vars.push((OsString::from(*name), OsString::from(*value)));
+    }
+    Environment {
+        cache_directory: cache.to_path_buf(),
+        working_directory: root.to_path_buf(),
+        temp_directory: mjutest_devkit::paths::temp_beside(root).expect("a temporary directory"),
+        vars,
+        cancel: Cancel::new(),
+    }
 }
 
 fn document(fixture: &Fixture) -> serde_json::Value {
@@ -178,4 +201,10 @@ fn a_candidate_that_does_not_close_the_gap_is_recorded_and_not_offered() {
         !fixture.root.join("tests/useless.rs").exists(),
         "nothing that did not hold up is written: {applied:?}"
     );
+}
+
+/// The environment of a fixture, with the cache and the scratch beside its root.
+fn of(root: &Path, named: &[(&str, &str)]) -> Environment {
+    let cache = mjutest_devkit::paths::cache_beside(root).expect("a cache directory");
+    environment(root, &cache, named)
 }

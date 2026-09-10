@@ -11,8 +11,12 @@
 )]
 
 use mjutest_devkit::fixture::copy_tree;
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::Output;
+
+use mjutest_cli::cli::Environment;
+use rust_mutants::runner::Cancel;
 
 struct Fixture {
     root: PathBuf,
@@ -45,29 +49,53 @@ const UNWILLING: &str = r#"{"version":1,"status":"error","message":"no docker he
 const STOPPED: &str = r#"{"version":1,"status":"stopped","instance":"pg-1"}"#;
 
 fn verify(fixture: &Fixture, ready: &str) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_mjutest"))
-        .args(["verify", "--offline", "--locked"])
-        .current_dir(&fixture.root)
-        .env_clear()
-        .env("NO_COLOR", "1")
-        .env("FAKE_PROVIDER_READY", ready)
-        .env("FAKE_PROVIDER_STOPPED", STOPPED)
-        .env(
-            "XDG_CACHE_HOME",
-            mjutest_devkit::paths::cache_beside(&fixture.root).expect("a cache directory"),
-        )
-        .env(
-            "TMPDIR",
-            mjutest_devkit::paths::temp_beside(&fixture.root).expect("a temporary directory"),
-        )
-        .envs(std::env::vars_os().filter(|(key, _)| {
+    asked(
+        &of(
+            &fixture.root,
+            &[
+                ("FAKE_PROVIDER_READY", ready),
+                ("FAKE_PROVIDER_STOPPED", STOPPED),
+            ],
+        ),
+        &["verify", "--offline", "--locked"],
+    )
+}
+
+/// One command, driven in this process against an environment a test composed.
+fn asked(environment: &Environment, args: &[&str]) -> Output {
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let code = mjutest_cli::run_from(
+        std::iter::once("mjutest")
+            .chain(args.iter().copied())
+            .map(OsString::from),
+        environment,
+        &mut out,
+        &mut err,
+    );
+    mjutest_devkit::process::answered(code, out, err)
+}
+
+/// The environment a run of this suite composes: the four variables a toolchain needs, what a test named, and nothing else.
+fn environment(root: &Path, cache: &Path, named: &[(&str, &str)]) -> Environment {
+    let mut vars: Vec<(OsString, OsString)> = mjutest_devkit::paths::environment_for_a_run()
+        .into_iter()
+        .filter(|(name, _)| {
             matches!(
-                key.to_string_lossy().as_ref(),
+                name.to_string_lossy().as_ref(),
                 "PATH" | "HOME" | "RUSTUP_HOME" | "CARGO_HOME"
             )
-        }))
-        .output()
-        .expect("mjutest runs")
+        })
+        .collect();
+    for (name, value) in named {
+        vars.push((OsString::from(*name), OsString::from(*value)));
+    }
+    Environment {
+        cache_directory: cache.to_path_buf(),
+        working_directory: root.to_path_buf(),
+        temp_directory: mjutest_devkit::paths::temp_beside(root).expect("a temporary directory"),
+        vars,
+        cancel: Cancel::new(),
+    }
 }
 
 fn document(fixture: &Fixture) -> serde_json::Value {
@@ -153,4 +181,10 @@ fn a_run_that_cannot_start_what_it_was_told_to_start_does_not_run_the_tests_with
     );
     assert!(complaint.contains("MJ5004"), "{complaint}");
     assert!(complaint.contains("no docker here"), "{complaint}");
+}
+
+/// The environment of a fixture, with the cache and the scratch beside its root.
+fn of(root: &Path, named: &[(&str, &str)]) -> Environment {
+    let cache = mjutest_devkit::paths::cache_beside(root).expect("a cache directory");
+    environment(root, &cache, named)
 }
