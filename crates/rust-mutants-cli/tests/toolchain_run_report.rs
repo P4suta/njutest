@@ -350,8 +350,9 @@ fn cache_says_what_a_run_left_in_the_temporary_directory_and_gc_reclaims_it() {
         .expect("rust-mutants runs");
     let text = String::from_utf8_lossy(&swept.stdout).into_owned();
     assert!(
-        text.contains("caches      1 reclaimable"),
-        "a sweep keeps the build caches, so the next run is still fast: {text}"
+        text.contains("caches      0 removed") && text.contains("1 kept for the next run"),
+        "a sweep keeps the build caches a later run can still look up, so the next run \
+         is still fast: {text}"
     );
 
     let collected = mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")))

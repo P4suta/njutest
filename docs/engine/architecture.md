@@ -313,8 +313,10 @@ remove, and writes them into `kept-v1.json` under the report directory, with
 the run that kept them. `cache` lists what is there: the snapshots, the build
 caches, the outcome store with its size, and every kept directory with the run
 that kept it. `cache --gc` removes what is abandoned and leaves the build
-caches, so the next run is still fast; `--gc --all` takes them too; `--gc
---kept` takes what was kept on purpose. `--clear-outcomes` empties the store
+caches, so the next run is still fast — except the ones no run can look up
+again, which every run already sweeps on its way past: a cache is keyed to a
+source tree, and one whose tree is gone will never make anything fast.
+`--gc --all` takes the rest too; `--gc --kept` takes what was kept on purpose. `--clear-outcomes` empties the store
 and says how much was in it, and `--cache-dir` says where the store is. A
 ledger this release cannot read authorises nothing: it is read as empty, so a
 sweep never removes a directory on the strength of a document it did not

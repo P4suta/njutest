@@ -1315,7 +1315,7 @@ Options:
           The workspace root, whose report directory holds the ledger of what was kept
 
       --gc
-          Remove every abandoned snapshot, and the build caches nothing owns
+          Remove every abandoned snapshot, and the build caches no run can look up again
 
       --all
           With `--gc`, remove every build cache no live run has locked, not only the unowned ones

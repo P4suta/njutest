@@ -190,7 +190,9 @@ is `not_run` with reason `unselected`, and one `--fail-fast` never reached is
 `stopped-early`; neither is a finding. `--dry-run` prepares, verifies, and
 prints the estimate without executing a mutant.
 
-**`cache --gc` keeps the build caches.** It used to remove them. `--gc --all`
+**`cache --gc` keeps the build caches.** It used to remove them, and now keeps
+every one a later run can still look up; a cache keyed to a source tree that is
+gone is removed, as every run already removes it. `--gc --all`
 removes every build cache no live run has locked, and `--gc --kept` removes
 what `--keep-temp` was asked to preserve. If a script relied on `--gc`
 reclaiming everything, it wants `--gc --all` now.

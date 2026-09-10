@@ -278,7 +278,7 @@ pub enum Command {
         /// The workspace root, whose report directory holds the ledger of what was kept.
         #[arg(long, value_name = "DIR")]
         root: Option<PathBuf>,
-        /// Remove every abandoned snapshot, and the build caches nothing owns.
+        /// Remove every abandoned snapshot, and the build caches no run can look up again.
         #[arg(long)]
         gc: bool,
         /// With `--gc`, remove every build cache no live run has locked, not only the unowned ones.

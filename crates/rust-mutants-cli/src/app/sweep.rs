@@ -2,6 +2,14 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What the engine left in the temporary directory, and what a sweep may take back.
+//!
+//! There are three answers rather than two. Saying what is there removes
+//! nothing. `--gc` removes the snapshots nothing owns and the build caches
+//! nothing can look up any more — a cache is keyed to a source tree, so one
+//! whose tree is gone is one no run will ever hit, and sparing it is how a
+//! temporary directory grows without bound. `--gc --all` removes every build
+//! cache no live run holds, which is what a person means when the disk is
+//! full and the next run being slow is the price.
 
 use std::fmt::Write as _;
 use std::io::Write;
@@ -70,7 +78,7 @@ pub(super) fn cache(
         ),
         (true, false) => (
             tempowner::sweep(parent, &scratch, now),
-            tempowner::reclaim_with(parent, &caches, now, &nothing),
+            tempowner::sweep(parent, &caches, now),
         ),
         (false, _) => (
             tempowner::sweep_with(parent, &scratch, now, &nothing),
@@ -82,19 +90,15 @@ pub(super) fn cache(
     let (records, bytes) = store.size();
     let mut text = String::new();
     let verb = if asked.gc { "removed" } else { "reclaimable" };
-    let caches_verb = if asked.gc && asked.all {
-        "removed"
-    } else {
-        "reclaimable"
-    };
     let written = write!(
         text,
-        "temp        {}\ncaches      {} {}, {} bytes; {} still in use\nsnapshots   {} {}, {} bytes; {} still in use, {} preserved on purpose\noutcomes    {} records, {} bytes, at {}\nmeasurements {}\nfailures    {}\n",
+        "temp        {}\ncaches      {} {}, {} bytes; {} still in use, {} kept for the next run\nsnapshots   {} {}, {} bytes; {} still in use, {} preserved on purpose\noutcomes    {} records, {} bytes, at {}\nmeasurements {}\nfailures    {}\n",
         parent.display(),
         taken.removed.len(),
-        caches_verb,
+        verb,
         taken.removed_bytes,
         taken.live,
+        taken.cached,
         left.removed.len(),
         verb,
         left.removed_bytes,

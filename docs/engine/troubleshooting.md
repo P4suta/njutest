@@ -21,7 +21,7 @@ it: an error carries the next step, and `doctor` carries one per check.
 | Survivors appear after an upgrade | New operators ask new questions | [upgrading](upgrading.md) names what each release added; `operators = [...]` pins the set |
 | A run says `unmatched-skip` | A `rust-mutants: skip` marker or a `[[mutation.skip]]` entry hides nothing | remove it, or move it to the line it was meant for; a skip nobody can point at is one nobody can review |
 | Two shards will not merge | `RM0011`: they are not parts of one catalog | merge the parts of one run — the same tree, the same catalog, one report per `--shard` |
-| The temporary directory fills up | Snapshots and build caches an interrupted run left | `rust-mutants cache` says what is there, `cache --gc` removes what is abandoned, `--gc --all` the build caches too |
+| The temporary directory fills up | Snapshots and build caches an interrupted run left | `rust-mutants cache` says what is there, `cache --gc` removes what is abandoned and the build caches no run can look up again, `--gc --all` the rest of the build caches too |
 | `explain` shows no diff | The file is not the one the mutation was taken from | pass `--root` at the tree the run measured (`RM0012`), or re-run |
 
 ## By error code
