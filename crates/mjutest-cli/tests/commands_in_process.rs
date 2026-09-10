@@ -148,6 +148,43 @@ fn every_command_that_reads_a_run_reads_the_one_that_ran() {
          another run's verdict believing it is this one's: {}",
         missing.err
     );
+
+    kept(&it);
+}
+
+/// What a run leaves in its own directory, and where the pointers point.
+fn kept(it: &Verified) {
+    let directory = it.root.join("reports/runs").join(&it.run);
+    for name in [
+        mjutest_cli::app::reports::DOCUMENT_NAME,
+        mjutest_cli::app::reports::HTML_NAME,
+        mjutest_cli::app::reports::SARIF_NAME,
+        mjutest_cli::app::reports::JUNIT_NAME,
+        mjutest_cli::report::lines::FILE_NAME,
+    ] {
+        assert!(
+            directory.join(name).exists(),
+            "a run writes every projection beside its own document, because the surface \
+             a team already reads is the one it will read this on, and one that has to \
+             be generated later is one nobody generates: {name} is not in {}",
+            directory.display()
+        );
+    }
+
+    for index in [
+        mjutest_cli::app::reports::LATEST_ANY,
+        mjutest_cli::app::reports::LATEST_FULL,
+    ] {
+        let text = std::fs::read_to_string(it.root.join(index)).expect("the index");
+        let pointer: serde_json::Value = serde_json::from_str(&text).expect("the index is JSON");
+        assert_eq!(
+            pointer["run_id"].as_str(),
+            Some(it.run.as_str()),
+            "and points both indexes at it: this run looked at the whole project, so it \
+             is the latest of any kind and the latest full one, and an index left behind \
+             names a run whose directory the next collection may take: {index}"
+        );
+    }
 }
 
 #[test]
@@ -163,11 +200,54 @@ fn a_mutant_is_explained_by_the_run_that_judged_it_and_never_by_a_guess() {
 
     let explained = ask(&it.root, &["explain", &mutant]);
     assert_eq!(explained.code, 0, "{}{}", explained.out, explained.err);
-    assert!(
-        explained.out.contains(&mutant),
-        "what a run recorded about one mutation is shown against the name a person \
-         typed: {}",
+    let said: std::collections::BTreeMap<&str, &str> = explained
+        .out
+        .lines()
+        .filter_map(|line| line.split_once('\t'))
+        .collect();
+    assert_eq!(
+        said.get("RUN"),
+        Some(&it.run.as_str()),
+        "an explanation says which run recorded this, because a mutation is judged by a \
+         run and not by a tree: {}",
         explained.out
+    );
+    assert!(
+        said.get("MUTANT").is_some_and(|it| it.contains(&mutant)),
+        "and names the mutation both ways, so the short name a person typed and the \
+         identity a report carries are visibly the same thing: {}",
+        explained.out
+    );
+    let placed = said.get("WHERE").copied().unwrap_or_default();
+    assert!(
+        placed.contains(".rs:") && placed.matches(':').count() == 2,
+        "and where it is, as a file and a line and a column, which is what an editor \
+         takes: {placed:?}"
+    );
+    for named in ["RULE", "OUTCOME"] {
+        assert!(
+            said.get(named).is_some_and(|it| !it.is_empty()),
+            "and what was done to the code and what came of it: {named} is not in\n{}",
+            explained.out
+        );
+    }
+    let killed = parsed["mutants"]
+        .as_array()
+        .expect("mutants")
+        .iter()
+        .find(|one| one["outcome"] == "killed")
+        .and_then(|one| one["display_id"].as_str())
+        .expect("a mutation the tests noticed")
+        .to_owned();
+    let caught = ask(&it.root, &["explain", &killed]);
+    assert!(
+        caught
+            .out
+            .lines()
+            .any(|line| line.starts_with("DECIDED-BY\t")),
+        "a mutation something noticed names what noticed it, or a kill is a number with \
+         nothing behind it: {}",
+        caught.out
     );
 
     let nobody = ask(&it.root, &["explain", "ffffffffffffffff"]);
@@ -540,6 +620,12 @@ fn a_configuration_is_written_once_and_never_over_one_somebody_wrote() {
 
     let written = ask(&root, &["init"]);
     assert_eq!(written.code, 0, "{}{}", written.out, written.err);
+    assert!(
+        written.out.contains(mjutest_cli::config::FILE_NAME),
+        "it says which file it wrote, because a command that writes in silence is one a \
+         person runs again: {}",
+        written.out
+    );
     let path = root.join(mjutest_cli::config::FILE_NAME);
     assert_eq!(
         std::fs::read_to_string(&path).expect("the skeleton"),
@@ -550,6 +636,11 @@ fn a_configuration_is_written_once_and_never_over_one_somebody_wrote() {
 
     std::fs::write(&path, "version = 1\n# mine\n").expect("a configuration somebody wrote");
     let refused = ask(&root, &["init"]);
+    assert!(
+        refused.err.contains("MJ1005"),
+        "and a refusal carries the code a person greps for and says how to mean it: {}",
+        refused.err
+    );
     assert_eq!(
         refused.code, 3,
         "a second init does not write over a configuration somebody has edited: the \
@@ -572,5 +663,65 @@ fn a_configuration_is_written_once_and_never_over_one_somebody_wrote() {
     assert_eq!(
         std::fs::read_to_string(&path).expect("the skeleton"),
         mjutest_cli::config::skeleton()
+    );
+}
+
+#[test]
+fn the_parts_of_one_catalog_are_put_back_together_and_the_parts_of_two_refused() {
+    let it = verified();
+    let one = it
+        .root
+        .join("reports/runs")
+        .join(&it.run)
+        .join(mjutest_cli::app::reports::DOCUMENT_NAME);
+
+    let whole = ask(&it.root, &["merge", &one.display().to_string()]);
+    let combined =
+        mjutest_cli::report::json::parse(&whole.out).expect("the whole is a report a reader takes");
+    assert_eq!(
+        whole.code,
+        combined.verdict.exit_code(),
+        "with nowhere named to write it, the whole goes to the stream a pipe reads, and \
+         the code is the verdict's: {}",
+        whole.err
+    );
+
+    let elsewhere = it.root.join("whole.json");
+    let written = ask(
+        &it.root,
+        &[
+            "merge",
+            &one.display().to_string(),
+            "--output",
+            &elsewhere.display().to_string(),
+        ],
+    );
+    assert!(
+        written.out.trim().is_empty() && elsewhere.exists(),
+        "while a person who named a file gets the file and not the stream as well: a \
+         pipeline that redirects one and reads the other would have it twice: {}",
+        written.out
+    );
+
+    let nonsense = it.root.join("nonsense.json");
+    std::fs::write(&nonsense, "this is not a report\n").expect("a file that is not one");
+    let refused = ask(
+        &it.root,
+        &[
+            "merge",
+            &one.display().to_string(),
+            &nonsense.display().to_string(),
+        ],
+    );
+    assert_eq!(
+        refused.code, 3,
+        "a part that is not a report is refused rather than skipped: the whole would be \
+         the rest of the catalog wearing the name of all of it: {}{}",
+        refused.out, refused.err
+    );
+    assert!(
+        refused.err.contains("nonsense.json"),
+        "and names the file, because which of several parts it was is the question: {}",
+        refused.err
     );
 }
