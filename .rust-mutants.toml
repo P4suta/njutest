@@ -260,3 +260,43 @@ item = "run_resuming"
 rule = "delete-call-statement"
 original = "phase.end();"
 reason = "the runner's Phase ends its phase on Drop, so the explicit end at the tail of run_resuming changes no recording; a_phase_guard_ends_its_phase_once_with_its_duration_and_phases_nest holds that"
+
+# The code `mjutest trace` exits with when it has nothing to complain about,
+# which is the same number either way.
+#
+# `EXIT_ASSURED` is zero and zero is what `u8::default()` is, so a summary of a
+# recording that holds together and a difference between two of them exit with
+# the same status whichever of the two the code names. The constant is there so
+# a reader of the line sees which of the four codes this is rather than a bare
+# literal, and `trace_command.rs::a_summary_says_what_the_recording_holds_and_whether_it_holds_together`
+# and `a_difference_says_what_moved_and_leaves_out_what_did_not` each assert the
+# number for a recording with nothing wrong with it.
+[[mutation.expect]]
+path = "crates/mjutest-cli/src/app/trace.rs"
+item = "summary"
+rule = "return-default"
+original = "EXIT_ASSURED"
+reason = "EXIT_ASSURED is zero and so is u8::default(), so a summary with no problems exits with the same status either way; a_summary_says_what_the_recording_holds_and_whether_it_holds_together holds that number"
+
+[[mutation.expect]]
+path = "crates/mjutest-cli/src/app/trace.rs"
+item = "diff"
+rule = "return-default"
+original = "EXIT_ASSURED"
+reason = "EXIT_ASSURED is zero and so is u8::default(), so a difference exits with the same status either way; a_difference_says_what_moved_and_leaves_out_what_did_not holds that number"
+
+# How much of a command fits on the line, which is the same line either way.
+#
+# The loop stops when the line has reached the width, and whatever it did not
+# show is then cut to exactly that width and marked. Letting one more argument
+# on before cutting makes the line longer and the first `COMMAND_WIDTH`
+# characters of it the same, and the mark goes on either way — because
+# something was left over in one case and the characters ran over in the other.
+# `trace_command.rs::a_command_is_shown_by_its_own_name_and_cut_where_it_stops_being_readable`
+# holds the width, the mark, and the beginning that survives the cut.
+[[mutation.expect]]
+path = "crates/mjutest-cli/src/app/trace.rs"
+item = "said"
+rule = "lt-to-le"
+original = "<"
+reason = "the line is cut to the width and marked whichever side of it the loop stopped on, so both render the same line; a_command_is_shown_by_its_own_name_and_cut_where_it_stops_being_readable holds the width, the mark and the beginning"

@@ -133,19 +133,15 @@ pub fn said(argv: &[String]) -> String {
         .first()
         .and_then(|path| Path::new(path).file_name())
         .map_or_else(String::new, |name| name.to_string_lossy().into_owned());
-    let mut cut = false;
-    for argument in argv.iter().skip(1) {
-        if line.chars().count() >= COMMAND_WIDTH {
-            cut = true;
+    let mut rest = argv.iter().skip(1);
+    while line.chars().count() < COMMAND_WIDTH {
+        let Some(argument) = rest.next() else {
             break;
-        }
+        };
         line.push(' ');
         line.push_str(argument);
     }
-    if line.chars().count() > COMMAND_WIDTH {
-        cut = true;
-    }
-    if cut {
+    if rest.next().is_some() || line.chars().count() > COMMAND_WIDTH {
         line = line.chars().take(COMMAND_WIDTH).collect();
         line.push_str(" …");
     }

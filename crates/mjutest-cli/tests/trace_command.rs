@@ -8,6 +8,13 @@
 //! measurement of what a run's own tests reach does not follow a guard across
 //! that boundary: the rules below were 98 mutations nothing was ever routed to.
 
+#![expect(
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    reason = "the helpers that build a recording are not themselves tests, and one that \
+              cannot be written is a setup failure to report by panicking"
+)]
+
 use std::collections::BTreeMap;
 
 use mjutest_cli::app::trace::{
@@ -157,10 +164,34 @@ fn a_command_is_shown_by_its_own_name_and_cut_where_it_stops_being_readable() {
         "and so is a program whose own name is longer than the line: {wide:?}"
     );
     let exact = said(&["cargo".to_owned(), "x".repeat(COMMAND_WIDTH - 6)]);
+    assert_eq!(
+        exact.chars().count(),
+        COMMAND_WIDTH,
+        "a command that fills the line exactly is not one that ran over it: {exact:?}"
+    );
     assert!(
         !exact.ends_with('…'),
         "while one that fits is not marked as cut, or every line carries a mark and none \
          of them means anything: {exact:?}"
+    );
+
+    let filled = said(&[
+        "cargo".to_owned(),
+        "x".repeat(COMMAND_WIDTH - 6),
+        "--and-one-more".to_owned(),
+    ]);
+    assert!(
+        filled.ends_with('…') && filled.starts_with("cargo x"),
+        "and one that fills the line exactly and has an argument left over was cut, \
+         whether or not the characters ran over: what a reader is not shown is what the \
+         mark is about. It said {filled:?}"
+    );
+
+    let long = said(&["cargo".to_owned(), "y".repeat(COMMAND_WIDTH * 2)]);
+    assert!(
+        long.starts_with("cargo y"),
+        "a line that was cut kept its beginning, because the program and its first \
+         arguments are what a reader is looking for: {long:?}"
     );
 }
 
@@ -184,6 +215,13 @@ fn what_a_recording_holds_is_counted_by_type_by_phase_and_by_program() {
         BTreeMap::from([("cargo".to_owned(), 2), ("rustc".to_owned(), 1)]),
         "and a program is one program however it was reached: counting the path would \
          make one cargo two"
+    );
+    assert_eq!(
+        commands(&[ran(1, &[], 1)]),
+        BTreeMap::from([("?".to_owned(), 1)]),
+        "while a command with no program at all is counted under a name that says so: an \
+         empty one puts a blank row in the table, which reads as a program whose name the \
+         run lost rather than an execution nobody gave one"
     );
     assert_eq!(
         phases(&events),
@@ -266,5 +304,283 @@ fn every_problem_a_recording_can_have_is_said_in_a_line_that_names_it() {
         "and a phase that opened twice is named, because a reader summing the table has \
          to know which row is the sum of two: {}",
         describe(&problems[4])
+    );
+}
+
+/// A recording of `run` under `root`, written where the command looks for one.
+fn recorded(root: &std::path::Path, run: &str, events: &[Event]) {
+    let directory = root.join(".mjutest/trace").join(run);
+    std::fs::create_dir_all(&directory).expect("a directory for the recording");
+    let mut stream = String::new();
+    for event in events {
+        stream.push_str(&serde_json::to_string(event).expect("an event is a document"));
+        stream.push('\n');
+    }
+    std::fs::write(directory.join(mjutest_cli::trace::FILE_NAME), stream).expect("the recording");
+}
+
+/// A whole recording, from a run-start to a run-end, with something in between.
+fn whole(run: &str) -> Vec<Event> {
+    vec![
+        at(
+            1,
+            Payload::RunStart {
+                start: mjutest_cli::trace::StartRecord::of(
+                    run,
+                    mjutest_cli::report::RunKind::Full,
+                    mjutest_cli::config::Contract::StandardV1,
+                ),
+            },
+        ),
+        ended(2, "baseline", 120),
+        ran(3, &["/usr/bin/cargo", "test"], 90),
+        discharging(4, &["never-infected"]),
+        at(
+            5,
+            Payload::RunEnd {
+                run: mjutest_cli::trace::RunRecord {
+                    verdict: "ASSURED".to_owned(),
+                    accounting: None,
+                    error: None,
+                    events_emitted: 4,
+                    events_dropped: 0,
+                },
+            },
+        ),
+    ]
+}
+
+/// What the command says, driven in this process rather than in one of its own.
+fn asked(root: &std::path::Path, args: &[&str]) -> (u8, String, String) {
+    let scratch = root.join("scratch");
+    std::fs::create_dir_all(&scratch).expect("a directory to work in");
+    let environment = mjutest_cli::cli::Environment {
+        cache_directory: root.join("cache"),
+        working_directory: root.to_path_buf(),
+        temp_directory: scratch,
+        vars: Vec::new(),
+        cancel: rust_mutants::runner::Cancel::new(),
+    };
+    let (mut said, mut complaints) = (Vec::new(), Vec::new());
+    let code = mjutest_cli::run_from(
+        std::iter::once("mjutest")
+            .chain(args.iter().copied())
+            .map(std::ffi::OsString::from),
+        &environment,
+        &mut said,
+        &mut complaints,
+    );
+    (
+        code,
+        String::from_utf8_lossy(&said).into_owned(),
+        String::from_utf8_lossy(&complaints).into_owned(),
+    )
+}
+
+#[test]
+fn a_summary_says_what_the_recording_holds_and_whether_it_holds_together() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    recorded(
+        dir.path(),
+        "20270115T080000Z-aaaaaa",
+        &whole("20270115T080000Z-aaaaaa"),
+    );
+    let (code, said, complained) =
+        asked(dir.path(), &["trace", "summary", "20270115T080000Z-aaaaaa"]);
+    assert_eq!(
+        code, 0,
+        "a recording with nothing wrong with it: {complained}"
+    );
+    for line in [
+        "RUN\t20270115T080000Z-aaaaaa",
+        "EVENTS\t5",
+        "TYPE\texec\t1",
+        "PHASE\tbaseline\t120ms",
+        "COMMAND\tcargo\t1",
+        "PROOF\tnever-infected\t1",
+        "SLOWEST\t90ms\tcargo test",
+        "PROBLEMS\tno problems",
+    ] {
+        assert!(
+            said.contains(line),
+            "a summary is what somebody reads instead of the recording, so every count \
+             it took is on it: {line:?} is not in\n{said}"
+        );
+    }
+
+    let mut broken = whole("20270115T080000Z-bbbbbb");
+    let _lost = broken.remove(1);
+    recorded(dir.path(), "20270115T080000Z-bbbbbb", &broken);
+    let (code, said, _complained) =
+        asked(dir.path(), &["trace", "summary", "20270115T080000Z-bbbbbb"]);
+    assert_eq!(
+        code, 2,
+        "while a recording with a hole in it is one nothing was established from, and \
+         the code says so rather than leaving it to whoever reads the lines: {said}"
+    );
+    assert!(said.contains("PROBLEM\t"), "{said}");
+}
+
+#[test]
+fn a_recording_that_is_not_there_is_named_rather_than_answered_about() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (code, _said, complained) =
+        asked(dir.path(), &["trace", "summary", "20200101T000000Z-000000"]);
+    assert_eq!(code, 3, "{complained}");
+    assert!(
+        complained.contains("20200101T000000Z-000000") && complained.contains(".mjutest/trace"),
+        "a run nobody recorded is named with the path that would have held it, because \
+         the answer is usually that the run was somewhere else: {complained}"
+    );
+
+    let (code, _said, complained) = asked(dir.path(), &["trace", "summary"]);
+    assert_eq!(
+        code, 3,
+        "and a directory where no run has finished has no latest run to summarise \
+         either: {complained}"
+    );
+    assert!(
+        complained.contains("no run has completed here yet"),
+        "which it says, rather than failing without a word: a command that exits 3 in \
+         silence is one a person runs again to see what happened: {complained:?}"
+    );
+}
+
+#[test]
+fn a_difference_says_what_moved_and_leaves_out_what_did_not() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    recorded(
+        dir.path(),
+        "20270115T080000Z-aaaaaa",
+        &whole("20270115T080000Z-aaaaaa"),
+    );
+    let mut slower = whole("20270115T080000Z-bbbbbb");
+    slower[1] = ended(2, "baseline", 300);
+    slower.push(ran(6, &["/usr/bin/rustc", "--version"], 4));
+    recorded(dir.path(), "20270115T080000Z-bbbbbb", &slower);
+
+    let (code, said, complained) = asked(
+        dir.path(),
+        &[
+            "trace",
+            "diff",
+            "20270115T080000Z-aaaaaa",
+            "20270115T080000Z-bbbbbb",
+        ],
+    );
+    assert_eq!(code, 0, "{complained}");
+    assert!(
+        said.contains("A\t20270115T080000Z-aaaaaa\t5 events")
+            && said.contains("B\t20270115T080000Z-bbbbbb\t6 events"),
+        "a difference names both recordings and how much each holds, or a reader has two \
+         columns of numbers and no way to tell which run is which: {said}"
+    );
+    assert!(
+        said.contains("PHASE\tbaseline\t120ms\t300ms\t+180ms"),
+        "a phase that got slower says by how much and which way, because that is the \
+         whole question: {said}"
+    );
+    assert!(
+        said.contains("TYPE\texec\t1\t2"),
+        "and a type there is more of says both numbers: {said}"
+    );
+    assert!(
+        !said.contains("TYPE\trun-start"),
+        "while what did not move is left out: a diff that lists everything is the two \
+         recordings again: {said}"
+    );
+}
+
+#[test]
+fn a_summary_carries_what_the_engine_recorded_beside_it() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let run = "20270115T080000Z-cccccc";
+    recorded(dir.path(), run, &whole(run));
+
+    let beside = dir
+        .path()
+        .join(".mjutest/trace")
+        .join(run)
+        .join(mjutest_cli::app::trace::ENGINE_DIRECTORY);
+    std::fs::create_dir_all(&beside).expect("a directory for the engine's own");
+    let engine = rust_mutants::testkit::trace::memory_recorder();
+    engine.note("snapshot", "one");
+    engine.note("snapshot", "two");
+    let mut stream = String::new();
+    for event in engine.events() {
+        stream.push_str(&serde_json::to_string(&event).expect("an event is a document"));
+        stream.push('\n');
+    }
+    std::fs::write(beside.join(rust_mutants::trace::FILE_NAME), &stream)
+        .expect("the engine's recording");
+
+    let (_code, said, complained) = asked(dir.path(), &["trace", "summary", run]);
+    assert!(
+        said.lines().any(|line| line.starts_with("ENGINE\t")),
+        "the engine does most of a run — the snapshot, the instrumentation, the \
+         validation rounds, the builds — and keeps its own recording beside this one. A \
+         summary that read only the runner's leaves the larger part of every run \
+         unaccounted for, and a person looking for the minutes finds them nowhere: \
+         {said}{complained}"
+    );
+
+    std::fs::write(
+        beside.join(rust_mutants::trace::FILE_NAME),
+        "not a recording\n",
+    )
+    .expect("a recording that is not one");
+    let (_code, said, _complained) = asked(dir.path(), &["trace", "summary", run]);
+    assert!(
+        said.contains("ENGINE\tunreadable"),
+        "and one it cannot read is said to be unreadable rather than passed over: a \
+         summary with no ENGINE lines reads as a run the engine did not record, which \
+         is a different thing to go and look for: {said}"
+    );
+}
+
+#[test]
+fn a_recording_that_cannot_be_read_is_a_refusal_and_never_an_empty_run() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let run = "20270115T080000Z-dddddd";
+    let directory = dir.path().join(".mjutest/trace").join(run);
+    std::fs::create_dir_all(&directory).expect("a directory for the recording");
+    std::fs::write(
+        directory.join(mjutest_cli::trace::FILE_NAME),
+        "{\"seq\":1,\"type\":\"nothing-of-the-sort\"}\n",
+    )
+    .expect("a recording that is not one");
+
+    let (code, said, complained) = asked(dir.path(), &["trace", "summary", run]);
+    assert_eq!(
+        code, 3,
+        "a recording this release cannot read is not a run that recorded nothing: \
+         summarising it as an empty one hands a person a table of zeroes and no reason \
+         to doubt it: {said}"
+    );
+    assert!(
+        complained.contains("MJ6005"),
+        "and says so with the code a person greps for: {complained:?}"
+    );
+}
+
+#[test]
+fn a_difference_against_a_recording_that_is_not_there_establishes_nothing() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let run = "20270115T080000Z-eeeeee";
+    recorded(dir.path(), run, &whole(run));
+
+    let (code, said, complained) = asked(
+        dir.path(),
+        &["trace", "diff", run, "20200101T000000Z-000000"],
+    );
+    assert_eq!(
+        code, 3,
+        "a difference is about two recordings, so one of them missing is nothing to \
+         answer with: reporting the half that is there as the difference would say every \
+         phase of it appeared out of nowhere: {said}{complained}"
+    );
+    assert!(
+        said.is_empty(),
+        "and it says nothing at all rather than the beginning of a table: {said:?}"
     );
 }
