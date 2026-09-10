@@ -205,6 +205,105 @@ fn the_stryker_projection_is_the_shape_that_reader_accepts() {
     );
 }
 
+/// One finding, about `mutant` or about nothing.
+fn found(kind: &str, mutant: Option<&str>) -> FindingDocument {
+    FindingDocument {
+        kind: kind.to_owned(),
+        mutant: mutant.map(ToOwned::to_owned),
+        detail: format!("what {kind} means here"),
+    }
+}
+
+#[test]
+fn a_sarif_alert_carries_the_level_its_kind_earns_and_the_place_it_is_about() {
+    let mut document = document();
+    document.findings = vec![
+        found("surviving-mutant", Some(&format!("{:064x}", 1))),
+        found("unreached-mutant", Some(&format!("{:064x}", 0))),
+        found("build-failure", None),
+        found("surviving-mutant", Some("a mutation this run never judged")),
+    ];
+    let json = serde_json::to_value(sarif::log(&document)).expect("the log is a document");
+    let results = json["runs"][0]["results"]
+        .as_array()
+        .expect("the results")
+        .clone();
+    assert_eq!(
+        results.len(),
+        4,
+        "every finding is one alert, including the one about no mutation and the one \
+         naming a mutation this run never judged: a finding a log drops is a finding the \
+         surface a team reads never shows: {json}"
+    );
+    assert_eq!(
+        results
+            .iter()
+            .map(|one| one["level"].as_str().unwrap_or_default())
+            .collect::<Vec<&str>>(),
+        vec!["warning", "note", "error", "warning"],
+        "and each carries the level its kind earns: a gap in the tests is a warning, \
+         something nobody measured is a note, and a fault in the code under test is an \
+         error. A log that called them all one thing would be one a team filters by \
+         nothing: {json}"
+    );
+    assert!(
+        results[2]["locations"]
+            .as_array()
+            .is_some_and(Vec::is_empty)
+            && results[3]["locations"]
+                .as_array()
+                .is_some_and(Vec::is_empty),
+        "a finding about no place carries no place, rather than one the reader would \
+         open: {json}"
+    );
+    assert_eq!(
+        results[0]["partialFingerprints"]["rustMutantsMutantId/v1"].as_str(),
+        Some(format!("{:064x}", 1).as_str()),
+        "an alert about a mutation carries that mutation's identity under the name the \
+         reader groups by, or every run of the same gap is a new alert somebody has to \
+         triage again: {json}"
+    );
+    assert_eq!(
+        json["runs"][0]["tool"]["driver"]["rules"]
+            .as_array()
+            .map(Vec::len),
+        Some(1),
+        "and one descriptor per rule, however many findings that rule accounts for: {json}"
+    );
+}
+
+#[test]
+fn a_region_ends_where_the_original_does_when_the_original_is_one_line() {
+    let mut document = document();
+    document.mutants[0].original = ">".to_owned();
+    document.findings = vec![found("surviving-mutant", Some(&format!("{:064x}", 0)))];
+    let json = serde_json::to_value(sarif::log(&document)).expect("the log is a document");
+    let region =
+        json["runs"][0]["results"][0]["locations"][0]["physicalLocation"]["region"].clone();
+    assert_eq!(
+        (
+            region["startColumn"].as_u64(),
+            region["endColumn"].as_u64(),
+            region["snippet"]["text"].as_str()
+        ),
+        (Some(7), Some(8), Some(">")),
+        "a region ends one column past what the mutation replaced, and carries it, so \
+         the surface underlines the code and not the line: {region}"
+    );
+
+    let mut spanning = document.clone();
+    spanning.mutants[0].original = "if a {\n    b\n}".to_owned();
+    let json = serde_json::to_value(sarif::log(&spanning)).expect("the log is a document");
+    let region =
+        json["runs"][0]["results"][0]["locations"][0]["physicalLocation"]["region"].clone();
+    assert!(
+        region["endColumn"].is_null(),
+        "while one whose original runs over more than a line has no end column on that \
+         line: counting its bytes would underline into the middle of the next one: \
+         {region}"
+    );
+}
+
 #[test]
 fn the_sarif_log_carries_every_finding_where_a_reader_can_open_it() {
     let log = sarif::log(&document());
