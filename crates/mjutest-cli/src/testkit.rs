@@ -94,3 +94,136 @@ pub fn every_failure() -> Vec<RunnerError> {
     }
     failures
 }
+
+/// One refusal of every shape the evidence layer can record.
+///
+/// Held to the enum by the `match` below, which names every variant and has
+/// no catch-all. What this is for — checking that every word a route can
+/// carry is one [`docs/trace-v1.md`](../../../docs/trace-v1.md) lists — is
+/// only as good as the list being every one.
+#[must_use]
+pub fn every_refusal() -> Vec<crate::evidence::store::Refusal> {
+    use crate::evidence::store::Refusal;
+    let refusals = vec![
+        Refusal::Nothing,
+        Refusal::Unreadable {
+            message: "the record does not parse".to_owned(),
+        },
+        Refusal::TargetUnknown {
+            target: "core/lib/core".to_owned(),
+        },
+        Refusal::NotRouted {
+            target: "core/lib/core".to_owned(),
+        },
+        Refusal::KeyChanged {
+            target: "core/lib/core".to_owned(),
+        },
+        Refusal::NotPassing {
+            target: "core/lib/core".to_owned(),
+        },
+        Refusal::TargetEntered {
+            target: "core/lib/core".to_owned(),
+        },
+        Refusal::NothingRouted,
+    ];
+    for one in &refusals {
+        match one {
+            Refusal::Nothing
+            | Refusal::Unreadable { .. }
+            | Refusal::TargetUnknown { .. }
+            | Refusal::NotRouted { .. }
+            | Refusal::KeyChanged { .. }
+            | Refusal::NotPassing { .. }
+            | Refusal::TargetEntered { .. }
+            | Refusal::NothingRouted => {}
+        }
+    }
+    refusals
+}
+
+/// One event of every shape a recording can hold.
+///
+/// Held to the enum the same way. A recording is what an audit re-derives a
+/// run's proofs from, and a shape the page does not list is one a reader
+/// meets with nothing to look it up by.
+#[must_use]
+pub fn every_payload() -> Vec<crate::trace::Payload> {
+    use crate::trace::{
+        ArtifactRecord, ExecRecord, MutantExecRecord, NoteRecord, Payload, PhaseRecord,
+        ProbeExecRecord, ProgressRecord, RouteRecord, RunRecord, StartRecord,
+    };
+    let phase = PhaseRecord {
+        name: "baseline".to_owned(),
+        duration_ms: Some(1),
+    };
+    let payloads = vec![
+        Payload::RunStart {
+            start: StartRecord::of(
+                "20270115T080000Z-aaaaaa",
+                crate::report::RunKind::Full,
+                crate::config::Contract::StandardV1,
+            ),
+        },
+        Payload::PhaseStart {
+            phase: phase.clone(),
+        },
+        Payload::PhaseEnd { phase },
+        Payload::Exec {
+            exec: ExecRecord::default(),
+        },
+        Payload::Progress {
+            progress: ProgressRecord {
+                message: "measuring".to_owned(),
+                done: Some(1),
+                total: Some(2),
+            },
+        },
+        Payload::Artifact {
+            artifact: ArtifactRecord {
+                kind: "snapshot".to_owned(),
+                path: "nowhere".to_owned(),
+                bytes: Some(1),
+            },
+        },
+        Payload::Route {
+            route: RouteRecord::default(),
+        },
+        Payload::MutantExec {
+            mutant: MutantExecRecord::default(),
+        },
+        Payload::ProbeExec {
+            probe: ProbeExecRecord::default(),
+        },
+        Payload::Note {
+            note: NoteRecord {
+                kind: "a".to_owned(),
+                detail: "one".to_owned(),
+            },
+        },
+        Payload::RunEnd {
+            run: RunRecord {
+                verdict: "ASSURED".to_owned(),
+                accounting: None,
+                error: None,
+                events_emitted: 10,
+                events_dropped: 0,
+            },
+        },
+    ];
+    for one in &payloads {
+        match one {
+            Payload::RunStart { .. }
+            | Payload::PhaseStart { .. }
+            | Payload::PhaseEnd { .. }
+            | Payload::Exec { .. }
+            | Payload::Progress { .. }
+            | Payload::Artifact { .. }
+            | Payload::Route { .. }
+            | Payload::MutantExec { .. }
+            | Payload::ProbeExec { .. }
+            | Payload::Note { .. }
+            | Payload::RunEnd { .. } => {}
+        }
+    }
+    payloads
+}

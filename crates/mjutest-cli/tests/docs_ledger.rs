@@ -157,3 +157,35 @@ fn the_exit_codes_the_page_lists_are_the_ones_a_run_can_carry() {
          reader waits for an exit that never comes. {invented:?}"
     );
 }
+
+#[test]
+fn every_shape_a_recording_can_hold_is_a_row_on_the_page_that_documents_it() {
+    let text = page("docs/trace-v1.md");
+    let missing: Vec<&str> = mjutest_cli::testkit::every_payload()
+        .iter()
+        .map(mjutest_cli::trace::Payload::type_name)
+        .filter(|name| !text.contains(&format!("`{name}`")))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "a recording is what an audit re-derives a run's proofs from, and a shape the \
+         page does not list is one a reader meets with nothing to look it up by: \
+         {missing:?}"
+    );
+}
+
+#[test]
+fn every_reason_a_route_can_give_for_believing_nothing_is_on_that_page_too() {
+    let text = page("docs/trace-v1.md");
+    let missing: Vec<&'static str> = mjutest_cli::testkit::every_refusal()
+        .iter()
+        .map(mjutest_cli::evidence::store::Refusal::name)
+        .filter(|name| !text.contains(&format!("`{name}`")))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "reuse is a layer, and a run that did the work again says which of these is why. \
+         A word the page does not carry is one a reader counts and cannot name: \
+         {missing:?}"
+    );
+}
