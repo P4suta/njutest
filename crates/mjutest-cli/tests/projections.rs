@@ -102,12 +102,18 @@ fn report() -> Report {
 #[test]
 fn the_page_is_self_contained() {
     let page = html::document(&report());
-    for outside in ["http://", "https://", "src=", "@import", "<script"] {
-        assert!(
-            !page.contains(outside),
-            "a page that fetches anything is a page that stops working offline: {outside}"
-        );
-    }
+    let outside = mjutest_devkit::report::reaches_outside(&page);
+    assert!(
+        outside.is_empty(),
+        "a page that fetches anything is a page that stops working offline, and a report \
+         is read from a build artefact as often as from a desk: {outside:?}"
+    );
+    assert!(
+        !page.contains("<script"),
+        "and this one runs nothing of its own either: everything on it is a fact the run \
+         established, laid out, so there is nothing for a script to do and nothing for \
+         one to be wrong about"
+    );
     assert!(page.starts_with("<!doctype html>"), "{page}");
     assert!(page.trim_end().ends_with("</html>"));
 }

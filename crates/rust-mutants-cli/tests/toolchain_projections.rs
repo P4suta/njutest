@@ -103,12 +103,11 @@ fn a_page_needs_nothing_from_the_network_to_be_read() {
     let text = stdout(&page);
     assert!(text.starts_with("<!doctype html>"), "{text}");
     assert!(text.contains("</html>"), "{text}");
-    for outside in ["http://", "https://", "src=", "@import", "<link", "<iframe"] {
-        assert!(
-            !text.contains(outside),
-            "a page that fetches {outside} is not one that opens offline"
-        );
-    }
+    let outside = mjutest_devkit::report::reaches_outside(&text);
+    assert!(
+        outside.is_empty(),
+        "a page that fetches anything is not one that opens offline: {outside:?}"
+    );
     assert_eq!(
         text.matches("<script").count(),
         1,

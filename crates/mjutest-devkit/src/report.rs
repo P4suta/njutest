@@ -1,9 +1,27 @@
 // SPDX-FileCopyrightText: 2026 mjutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Making a report comparable with the one a run made yesterday.
+//! Making a report comparable with the one a run made yesterday, and holding a page to opening without a network.
 
 use std::collections::BTreeSet;
+
+/// Every way a document can ask for something that is not in it.
+///
+/// Both products project a report to one HTML file, and both say in the same
+/// words that it carries no external resource of any kind: a report is read
+/// from a build artefact on a machine with no network as often as from a
+/// desk. Two products stating one rule wrote two lists of it, each missing
+/// what the other had — one looked for `<link` and `<iframe`, the other did
+/// not; the other looked for `<script`, which is not this rule at all, since
+/// a page may carry its own.
+///
+/// `url(` covers the stylesheet, `src=` and `srcset=` every element that
+/// loads one, and `<base` the trick that makes every relative path in the
+/// document point somewhere else.
+pub const OUTSIDE: [&str; 10] = [
+    "http://", "https://", "src=", "srcset=", "@import", "url(", "<link", "<iframe", "<object",
+    "<base",
+];
 
 /// What a normalized field is replaced with.
 pub const PLACEHOLDER: &str = "<volatile>";
@@ -86,4 +104,13 @@ fn placeholder(value: &serde_json::Value) -> serde_json::Value {
     } else {
         serde_json::json!(PLACEHOLDER)
     }
+}
+
+/// Every way `page` asks for something that is not in it, which for a report is none.
+#[must_use]
+pub fn reaches_outside(page: &str) -> Vec<&'static str> {
+    OUTSIDE
+        .into_iter()
+        .filter(|marker| page.contains(marker))
+        .collect()
 }
