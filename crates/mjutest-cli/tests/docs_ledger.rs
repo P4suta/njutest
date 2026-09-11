@@ -189,3 +189,43 @@ fn every_reason_a_route_can_give_for_believing_nothing_is_on_that_page_too() {
          {missing:?}"
     );
 }
+
+#[test]
+fn every_finding_kind_a_report_can_carry_is_one_some_code_makes() {
+    let root = mjutest_devkit::paths::workspace_root();
+    let mut production = String::new();
+    let mut pending = vec![root.join("crates")];
+    while let Some(directory) = pending.pop() {
+        let Ok(entries) = std::fs::read_dir(&directory) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                pending.push(path);
+            } else if path.extension().is_some_and(|one| one == "rs")
+                && !path.ends_with("report/mod.rs")
+            {
+                production.push_str(&std::fs::read_to_string(&path).unwrap_or_default());
+                production.push('\n');
+            }
+        }
+    }
+    assert!(
+        production.len() > 100_000,
+        "the sources are read: {}",
+        production.len()
+    );
+
+    let unmade: Vec<&str> = FindingKind::ALL
+        .into_iter()
+        .filter(|kind| !production.contains(&format!("FindingKind::{kind:?}")))
+        .map(FindingKind::name)
+        .collect();
+    assert!(
+        unmade.is_empty(),
+        "a kind a report cannot carry is a row in the reader's table that never appears, \
+         and one classed as a defect promises a verdict no run can reach: {unmade:?} is \
+         declared, named, documented and made by nothing"
+    );
+}

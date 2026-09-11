@@ -414,8 +414,6 @@ pub enum FindingKind {
     SurvivingMutant,
     /// A target, or a mutation of one, that ran out of time.
     Timeout,
-    /// A test that does not behave the same way twice.
-    FlakyTest,
     /// Something a run could not measure, so it claims nothing about it.
     NotMeasured,
     /// The interpreter found unsoundness in what the compiler cannot check.
@@ -424,13 +422,12 @@ pub enum FindingKind {
 
 impl FindingKind {
     /// Every kind, in declaration order.
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 7] = [
         Self::BuildFailure,
         Self::FailingTest,
         Self::TargetMissing,
         Self::SurvivingMutant,
         Self::Timeout,
-        Self::FlakyTest,
         Self::NotMeasured,
         Self::UndefinedBehaviour,
     ];
@@ -444,7 +441,6 @@ impl FindingKind {
             Self::TargetMissing => "target-missing",
             Self::SurvivingMutant => "surviving-mutant",
             Self::Timeout => "timeout",
-            Self::FlakyTest => "flaky-test",
             Self::NotMeasured => "not-measured",
             Self::UndefinedBehaviour => "undefined-behaviour",
         }
@@ -454,9 +450,7 @@ impl FindingKind {
     #[must_use]
     pub const fn is_defect(self) -> bool {
         match self {
-            Self::BuildFailure | Self::FailingTest | Self::FlakyTest | Self::UndefinedBehaviour => {
-                true
-            }
+            Self::BuildFailure | Self::FailingTest | Self::UndefinedBehaviour => true,
             Self::TargetMissing | Self::SurvivingMutant | Self::Timeout | Self::NotMeasured => {
                 false
             }

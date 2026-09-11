@@ -67,7 +67,7 @@ additionally enforces arithmetic, scope/verdict, acceptance, cache, and
 unavailable-metadata invariants that JSON Schema alone cannot express
 (`report::audit::validate_for_persistence`).
 
-A **finding** is a claim about the project. There are eight kinds, and a
+A **finding** is a claim about the project. There are seven kinds, and a
 report carries the name rather than a number, because the name is what a
 person greps for and what a projection shows:
 
@@ -75,7 +75,6 @@ person greps for and what a projection shows:
 | --- | --- | --- |
 | `build-failure` | the workspace does not compile | yes |
 | `failing-test` | a test of the workspace fails with nothing active | yes |
-| `flaky-test` | a test does not behave the same way twice | yes |
 | `undefined-behaviour` | the interpreter found unsoundness where the compiler stops vouching | yes |
 | `surviving-mutant` | every test that could notice a mutation passed with it active | no |
 | `target-missing` | a test target could not be found, so nothing was observed about it | no |

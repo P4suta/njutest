@@ -667,7 +667,6 @@
             "target-missing",
             "surviving-mutant",
             "timeout",
-            "flaky-test",
             "not-measured",
             "undefined-behaviour"
           ]
