@@ -560,6 +560,7 @@ pub fn prepare(
     build_phase.end();
     phase.end();
     let (packages, items) = attributed(&discovery);
+    let verified = narrowed(verified, narrowing);
     Ok(Session {
         catalog: discovery.catalog,
         files: discovery.files,
@@ -573,13 +574,7 @@ pub fn prepare(
         validated,
         targets,
         scratch,
-        verified: Verified {
-            touched: crate::touch::Touched {
-                narrowing,
-                ..verified.touched
-            },
-            ..verified
-        },
+        verified,
         filtered: std::sync::Mutex::new(BTreeMap::new()),
         established: std::sync::atomic::AtomicU64::new(0),
         written_by_a_test,
@@ -587,8 +582,20 @@ pub fn prepare(
         manifests,
         executions: std::sync::atomic::AtomicU64::new(0),
         mutant_timeout: options.mutant_timeout,
+        harness_args: options.harness_args.clone(),
         workspace,
     })
+}
+
+/// The verification with what the instrumented tree can say about a mutant it never named folded in.
+fn narrowed(verified: Verified, narrowing: crate::touch::Narrowing) -> Verified {
+    Verified {
+        touched: crate::touch::Touched {
+            narrowing,
+            ..verified.touched
+        },
+        ..verified
+    }
 }
 
 /// What instrumenting and validating the tree established, which is everything a run needs about the tree it will start.

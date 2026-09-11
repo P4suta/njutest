@@ -172,6 +172,20 @@ pub struct PrepareOptions {
     pub doctests: bool,
     /// What the project is compiled as: its features, target, profile, and how many jobs cargo may use.
     pub build: crate::cargo::BuildConfig,
+    /// The arguments every test binary of this session is started with, the baseline included.
+    ///
+    /// A harness flag is how this project's suite runs — one thread, the
+    /// ignored tests included, output shown — and the baseline is one run of
+    /// that suite. A baseline taken one way and mutations measured another
+    /// compares two suites: a mutation could be noticed by a test the
+    /// baseline never ran, which is a kill nothing vouched for, and a
+    /// mutation's budget is a multiple of a duration measured under other
+    /// flags.
+    ///
+    /// An execution that names its own arguments runs with those instead, so
+    /// a caller asking one question of one mutant is not fighting the
+    /// session; an execution that names none runs with these.
+    pub harness_args: Vec<String>,
     /// Targets never to start, by the id a report names them with.
     ///
     /// A target whose tests are about the text of what the compiler said —
@@ -193,6 +207,7 @@ impl Default for PrepareOptions {
             packages: Vec::new(),
             skips: Vec::new(),
             measurements: None,
+            harness_args: Vec::new(),
             verify: true,
             touch: true,
             failing: Failing::Refuse,
@@ -280,6 +295,8 @@ pub struct Session {
     /// How many executions this session has started, which is what names each one's own temporary directory.
     executions: std::sync::atomic::AtomicU64,
     mutant_timeout: Timeout,
+    /// The arguments every test binary of this session is started with, unless one execution names its own.
+    harness_args: Vec<String>,
     /// The files as they were before instrumentation, so a position can be counted in the file a person would open rather than in the rewrite.
     sources: BTreeMap<String, Vec<u8>>,
     /// Which package each mutant belongs to.
@@ -1192,7 +1209,7 @@ impl Session {
         for target in targets {
             let (timeout, source) = self.timeout_for(request, &target.id);
             let mut exec = ExecRequest::new(target)
-                .with_args(request.args.clone())
+                .with_args(self.arguments(request))
                 .with_timeout(Some(timeout))
                 .with_scratch(self.exec_scratch());
             if let Some(test) = &request.test {
@@ -1231,6 +1248,19 @@ impl Session {
         })
     }
 
+    /// The arguments one execution's test binary is started with.
+    ///
+    /// A request that names its own runs with those, so a caller asking one
+    /// question of one mutant is not fighting the session; one that names
+    /// none runs with the session's, which is what the baseline ran with.
+    fn arguments(&self, request: &Request) -> Vec<String> {
+        if request.args.is_empty() {
+            self.harness_args.clone()
+        } else {
+            request.args.clone()
+        }
+    }
+
     /// Runs one target with no mutant active: the original control.
     ///
     /// # Errors
@@ -1250,7 +1280,7 @@ impl Session {
         for target in targets {
             let (timeout, source) = self.timeout_for(request, &target.id);
             let mut exec = ExecRequest::new(target)
-                .with_args(request.args.clone())
+                .with_args(self.arguments(request))
                 .with_timeout(Some(timeout))
                 .with_scratch(self.exec_scratch());
             if let Some(test) = &request.test {

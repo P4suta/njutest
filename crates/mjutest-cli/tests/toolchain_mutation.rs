@@ -748,3 +748,43 @@ fn a_plan_is_about_the_run_the_configuration_describes() {
         "and it still names the package that is in scope: {text}"
     );
 }
+
+#[test]
+fn the_harness_arguments_the_configuration_writes_are_the_ones_the_suite_runs_with() {
+    let plain = fixture("fixture-ignored");
+    verify(&plain, &[]);
+    let before = document(&plain);
+    assert!(
+        before["accounting"]["mutants"]["unreached"]
+            .as_u64()
+            .unwrap_or_default()
+            > 0,
+        "every test of this fixture is `#[ignore]`d, so its target runs nothing and its \
+         mutations reach nothing: {}",
+        before["accounting"]["mutants"]
+    );
+
+    let fixture = fixture("fixture-ignored");
+    std::fs::write(
+        fixture.root.join(".mjutest.toml"),
+        "version = 1\n\n[execution]\ntest_binary_args = [\"--include-ignored\"]\n",
+    )
+    .expect("a configuration");
+    let output = verify(&fixture, &[]);
+    let mutants = &document(&fixture)["accounting"]["mutants"];
+
+    assert_eq!(
+        mutants["unreached"],
+        0,
+        "and the one argument this configuration writes is the one that runs them. The \
+         baseline is one run of this project's suite, so it runs the suite the way the \
+         project does: a baseline taken one way and mutations measured another compares \
+         two suites, and a mutation noticed by a test the baseline never ran is a kill \
+         nothing vouched for: {mutants} (exit {:?})",
+        output.status.code()
+    );
+    assert!(
+        mutants["killed"].as_u64().unwrap_or_default() > 0,
+        "with the tests that notice them now running: {mutants}"
+    );
+}

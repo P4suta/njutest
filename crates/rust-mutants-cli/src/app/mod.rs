@@ -371,6 +371,19 @@ const fn watching(command: &cli::Command) -> bool {
     )
 }
 
+/// What every test binary of this run is started with: what a person typed after `--`, or what the file holds when they typed nothing.
+///
+/// They are the same run either way, so one takes the place of the other
+/// rather than adding to it: two spellings of `--test-threads` on one command
+/// line is a contradiction nobody wrote on purpose.
+fn harness(command: &cli::Command, options: &mut session::PrepareOptions) {
+    if let cli::Command::Run { args, .. } = command
+        && !args.is_empty()
+    {
+        options.harness_args.clone_from(args);
+    }
+}
+
 /// Everything a workspace command needs beyond what it prints.
 ///
 /// The run is named before the workspace is opened, so a recording of the
@@ -405,6 +418,7 @@ fn measured(
     let workspace = Workspace::open(&settings.root, open.clone(), cancel)?;
     let mut options = settings.prepare_options()?;
     options.measurements = remembered_measurements(command, environment);
+    harness(command, &mut options);
     if let Some(base) = base_of(scope) {
         options.include = selected(running, base, cancel)?;
     }

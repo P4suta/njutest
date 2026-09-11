@@ -173,7 +173,7 @@ fn establish(establishing: &Establishing<'_>, streams: Streams<'_>) -> u8 {
         root: root.to_path_buf(),
         config: establishing.config.clone(),
         packages: arguments.packages.clone(),
-        test_args: arguments.test_args.clone(),
+        test_args: harness_args(arguments, &establishing.config),
         cargo: Cargo {
             offline: arguments.offline,
             locked: arguments.locked,
@@ -332,13 +332,13 @@ fn evidence_of(
         environment: identity::inputs(
             &asked,
             mode.clone(),
-            &arguments.test_args,
+            &harness_args(arguments, config),
             arguments.shard.clone(),
         )
         .map(|read| read.environment)
         .unwrap_or_default(),
         contract: format!("{:?}", config.contract).to_lowercase(),
-        test_args: arguments.test_args.clone(),
+        test_args: harness_args(arguments, config),
         features: config.execution.features.clone(),
         timeout_ms: u64::try_from(config.execution.timeout.as_millis()).unwrap_or(u64::MAX),
         versions: vec![
@@ -540,6 +540,21 @@ fn reuse(asking: &Asking<'_>, stdout: &mut dyn Write, stderr: &mut dyn Write) ->
 /// How many run directories to keep.
 const fn request_keep(request: &Request) -> u32 {
     request.config.reports.keep
+}
+
+/// The arguments every test binary of this run is started with.
+///
+/// The command line takes the place of the configuration rather than adding
+/// to it, which is the rule `[project] packages` already follows: two
+/// spellings of `--test-threads` on one command line is a contradiction
+/// nobody wrote on purpose, and a reader overriding a file means the file to
+/// stop applying.
+fn harness_args(arguments: &Verify, config: &Config) -> Vec<String> {
+    if arguments.test_args.is_empty() {
+        config.execution.test_binary_args.clone()
+    } else {
+        arguments.test_args.clone()
+    }
 }
 
 /// The configuration this run answers to.

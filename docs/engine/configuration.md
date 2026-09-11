@@ -112,6 +112,15 @@ finding about the machine. A target nothing verified has no baseline to be a
 multiple of, and the budget falls back to five minutes. A duration pins it,
 and the report and the recording say which of the two a run used.
 
+`[execution] test_binary_args` and the arguments after `--` are how this
+project's suite runs, and every test process of the run is started with them,
+the baseline included. They are the same run either way, so the arguments a
+person gives take the place of the ones the file holds rather than adding to
+them. A baseline taken one way and mutations measured another compares two
+suites: a mutation could be noticed by a test the baseline never ran, which
+is a kill nothing vouched for, and a mutation's budget is a multiple of a
+duration measured under other flags.
+
 `[execution] jobs` is how many mutants a run measures at once, and `--jobs`
 or `-j` says the same on the command line. Zero is as many as the machine has,
 capped at four: each test binary already runs its own tests on as many threads

@@ -131,6 +131,7 @@ impl Settings {
             operators: self.config.mutation.operators.clone(),
             include: compile(&self.config.project.include)?,
             exclude: compile(&self.config.project.exclude)?,
+            harness_args: self.config.execution.test_binary_args.clone(),
             packages: self.config.project.packages.clone(),
             verify: self.config.mutation.verify,
             coverage: self.config.mutation.coverage,

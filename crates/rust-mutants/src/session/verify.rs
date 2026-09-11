@@ -158,7 +158,9 @@ fn ran(
         }),
         profile: None,
     };
-    let request = ExecRequest::new(target).with_scratch(scratch);
+    let request = ExecRequest::new(target)
+        .with_args(building.options.harness_args.clone())
+        .with_scratch(scratch);
     execute::exec(&request, &context, cancel, &workspace.trace)
 }
 

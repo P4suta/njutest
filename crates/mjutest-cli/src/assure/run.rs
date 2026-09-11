@@ -1119,6 +1119,7 @@ fn prepare(
             include: within(request.changed.as_ref()),
             exclude: request.config.project.excluded(),
             build: request.config.execution.build(),
+            harness_args: request.test_args.clone(),
             verify: true,
             failing: rust_mutants::session::Failing::Exclude,
             build_timeout: Some(request.config.execution.timeout),

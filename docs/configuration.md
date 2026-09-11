@@ -76,6 +76,12 @@ owner = "quality-team"
 ticket = "QA-123"
 ```
 
+`[execution] test_binary_args` is how this project's suite runs, and every
+test process of a run is started with those arguments, the baseline included:
+a baseline taken one way and mutations measured another compares two suites.
+Arguments given after `--` take the place of the ones the file holds rather
+than adding to them.
+
 `[execution] features`, `all_features` and `no_default_features` are the words
 cargo would have been given, and every command of a run is given them: the
 baseline, the mutation phase, the equivalence layer, `plan`, `replay` and
