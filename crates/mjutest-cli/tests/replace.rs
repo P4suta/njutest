@@ -125,6 +125,9 @@ fn put_report(root: &Path, round: u64) -> Option<String> {
         "the tree a test builds is not a git repository",
     ));
     report.verdict = Verdict::Assured;
+    report.accounting.mutants.cataloged = 1;
+    report.accounting.mutants.executed = 1;
+    report.accounting.mutants.killed = 1;
     report.accounting.targets.selected = u32::try_from(MEMBERS).unwrap_or(u32::MAX);
     report.accounting.targets.passed = u32::try_from(MEMBERS).unwrap_or(u32::MAX);
     report.targets = (0..MEMBERS)

@@ -10,8 +10,8 @@
 
 use mjutest_cli::report::audit::{Violation, validate_for_persistence};
 use mjutest_cli::report::{
-    Finding, FindingKind, Git, Limitation, Position, Report, RunKind, SCHEMA, TargetAccounting,
-    TargetRecord, TargetStatus, UNAVAILABLE, Verdict,
+    Finding, FindingKind, Git, Limitation, MutantAccounting, Position, Report, RunKind, SCHEMA,
+    TargetAccounting, TargetRecord, TargetStatus, UNAVAILABLE, Verdict,
 };
 
 /// A report that satisfies every invariant, for a test to break one thing in.
@@ -42,6 +42,12 @@ fn sound() -> Report {
         failed: 0,
         skipped: 1,
         missing: 0,
+    };
+    report.accounting.mutants = MutantAccounting {
+        cataloged: 1,
+        executed: 1,
+        killed: 1,
+        ..MutantAccounting::default()
     };
     report.targets = vec![
         target("a1", "core/lib/core one", TargetStatus::Passed, 30),
@@ -228,6 +234,24 @@ fn a_report_that_says_nothing_ran_cannot_say_it_is_assured() {
         "no-targets",
         "the workspace builds no test target",
     ));
+    assert_eq!(validate_for_persistence(&report), Vec::<Violation>::new());
+}
+
+#[test]
+fn a_report_that_put_no_mutation_to_a_test_cannot_say_it_is_assured() {
+    let mut report = sound();
+    report.accounting.mutants = MutantAccounting::default();
+    let violations = validate_for_persistence(&report);
+    assert!(
+        violations
+            .iter()
+            .any(|violation| matches!(violation, Violation::VerdictUnsupported { .. })),
+        "an assurance is the claim that every mutation was noticed; with none put to a \
+         test it is a claim about nothing, and the emptiness reads exactly like a suite \
+         that noticed everything: {violations:?}"
+    );
+
+    report.verdict = Verdict::Insufficient;
     assert_eq!(validate_for_persistence(&report), Vec::<Violation>::new());
 }
 

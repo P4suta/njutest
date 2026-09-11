@@ -298,6 +298,12 @@ fn check_verdict(report: &Report, violations: &mut Vec<Violation>) {
     {
         unsupported("a target record says it failed or was missing while the accounting does not");
     }
+    if report.accounting.mutants.executed == 0 {
+        unsupported(
+            "not one mutation was put to a test; an assurance is the claim that every \
+             mutation was noticed, and a run that made none says nothing about the suite",
+        );
+    }
     if report.accounting.mutants.survived > report.accounting.mutants.accepted {
         unsupported(&format!(
             "{} mutants survived and {} were accepted with a reason; a surviving mutant nobody \
