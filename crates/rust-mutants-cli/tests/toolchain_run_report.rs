@@ -1203,3 +1203,97 @@ fn environment_at(root: &Path, temp: &Path, cache: &Path) -> Environment {
         paints: false,
     }
 }
+
+#[test]
+fn the_parts_of_a_catalog_can_be_named_by_a_glob_against_the_report_directory() {
+    let fixture = Fixture::copy("fixture-simple");
+    let ran = against(&fixture, &["run", "--offline", "--locked"]);
+    assert!(
+        ran.status.code().is_some_and(|code| code <= 1),
+        "{}",
+        String::from_utf8_lossy(&ran.stderr)
+    );
+    let reports = fixture.root().join("reports/mutation");
+    let stored_id = std::fs::read_dir(&reports)
+        .expect("the report directory")
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .find(|name| name.starts_with("2026"))
+        .expect("the run that just happened");
+
+    let one = against(&fixture, &["merge", "--runs", &stored_id]);
+    assert!(
+        one.status.code().is_some_and(|code| code <= 1),
+        "a name that matches one stored run is that run: a person sharding by day names \
+         the day: {}",
+        String::from_utf8_lossy(&one.stderr)
+    );
+    let merged: serde_json::Value =
+        serde_json::from_str(&stdout(&one)).expect("the merge answers with a document");
+    assert_eq!(
+        merged["accounting"],
+        stored(&fixture)["accounting"],
+        "and the parts of one part are the whole of it"
+    );
+
+    let nothing = against(&fixture, &["merge", "--runs", "20240101*"]);
+    assert_eq!(
+        nothing.status.code(),
+        Some(2),
+        "a pattern that matches no stored run is not an empty merge: a report of nothing \
+         reads as a catalog with nothing in it: {}",
+        stdout(&nothing)
+    );
+    let said = String::from_utf8_lossy(&nothing.stderr).into_owned();
+    assert!(
+        said.contains("20240101*") && said.contains("reports"),
+        "and the refusal says which pattern found nothing and where it looked, because \
+         the usual cause is a report directory somewhere else: {said}"
+    );
+
+    let malformed = against(&fixture, &["merge", "--runs", "/absolute"]);
+    assert_eq!(
+        malformed.status.code(),
+        Some(2),
+        "and a pattern that is not one is refused rather than matched literally: {}",
+        stdout(&malformed)
+    );
+    assert!(
+        String::from_utf8_lossy(&malformed.stderr).contains("--runs"),
+        "naming the flag it was given to: {}",
+        String::from_utf8_lossy(&malformed.stderr)
+    );
+}
+
+#[test]
+fn a_glob_that_names_the_same_part_twice_is_still_the_same_part_twice() {
+    let fixture = Fixture::copy("fixture-simple");
+    let ran = against(&fixture, &["run", "--offline", "--locked"]);
+    assert!(
+        ran.status.code().is_some_and(|code| code <= 1),
+        "{}",
+        String::from_utf8_lossy(&ran.stderr)
+    );
+    let reports = fixture.root().join("reports/mutation");
+    let document = serde_json::to_string(&stored(&fixture)).expect("renders");
+    for name in ["20260101T000000000Z", "20260102T000000000Z"] {
+        let directory = reports.join(name);
+        std::fs::create_dir_all(&directory).expect("a second name for the same part");
+        std::fs::write(directory.join("run-report-v1.json"), &document).expect("write");
+    }
+
+    let merged = against(&fixture, &["merge", "--runs", "2026010*"]);
+    assert_eq!(
+        merged.status.code(),
+        Some(2),
+        "a glob is a way of naming parts and not a way of excusing one named twice: a \
+         merge that took this would count every mutant of the shard twice and report a \
+         catalog twice its size: {}",
+        stdout(&merged)
+    );
+    assert!(
+        String::from_utf8_lossy(&merged.stderr).contains("more than one"),
+        "{}",
+        String::from_utf8_lossy(&merged.stderr)
+    );
+}
