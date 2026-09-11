@@ -97,9 +97,11 @@ below is stated fail-closed.
   one the run named: nothing composed `RUST_MUTANTS_TOUCH` for it, so what its
   guards reached is written nowhere. What only ran there is `not_run` with
   `unreached`, which says the measurement never asked - not that no test
-  covers it. Measured on the runner, four hundred of six hundred and thirty
-  nine mutations of its orchestration came back that way, because
-  orchestration is what runs in the child. This is the same boundary as the
+  covers it. Measured on the runner before its own command suites were driven
+  in this process, four hundred of six hundred and thirty nine mutations of its
+  orchestration came back that way, because orchestration is what runs in the
+  child. Moving a suite into the process the run measures is what changes that
+  number, and [the development page](development.md) says how. This is the same boundary as the
   one above seen from the other side: there, a test that spawns the engine
   cannot be verified; here, a line that only the spawned process runs cannot
   be reached.
