@@ -146,6 +146,44 @@ fn a_page_written_to_a_file_says_where_it_put_it() {
     assert!(stdout(&written).contains("report.html"), "{written:?}");
     let text = std::fs::read_to_string(&path).expect("the page");
     assert!(text.starts_with("<!doctype html>"), "{text}");
+    assert!(
+        !stdout(&written).contains("<!doctype html>"),
+        "and the page went to the file rather than to both: a person who asked for a \
+         file and got the page on the terminal as well has to scroll past what they \
+         asked to be spared: {}",
+        stdout(&written)
+    );
+}
+
+#[test]
+fn a_page_that_could_not_be_written_is_a_refusal_naming_the_path() {
+    let fixture = measured();
+    let occupied = fixture.root().join("a-directory-where-the-page-goes");
+    std::fs::create_dir_all(&occupied).expect("a directory where the file would go");
+
+    let refused = against(
+        &fixture,
+        &[
+            "report",
+            "--format",
+            "html",
+            "--output",
+            &occupied.to_string_lossy(),
+        ],
+    );
+    assert_ne!(
+        refused.status.code(),
+        Some(0),
+        "a page nobody could write is not a page written: a pipeline that read the exit \
+         code would upload the file that is not there: {}",
+        stdout(&refused)
+    );
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("a-directory-where-the-page-goes"),
+        "and the refusal names the path, because the usual cause is a directory that is \
+         not there or one that is: {}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
 }
 
 #[test]
