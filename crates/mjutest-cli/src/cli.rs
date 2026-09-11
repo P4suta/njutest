@@ -4,7 +4,7 @@
 //! Argument parsing, the environment a run is given, and the exit codes.
 
 use std::ffi::{OsStr, OsString};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use rust_mutants::runner::Cancel;
 
@@ -86,6 +86,21 @@ pub struct Environment {
 }
 
 impl Environment {
+    /// The workspace a command was pointed at: what it named, or where it was started.
+    ///
+    /// A name that is not an absolute path is resolved against the working
+    /// directory the command was given rather than against the process's own.
+    /// The two are the same for the binary, which composes one from the other,
+    /// and they are not the same for anything else that calls the entry point:
+    /// a caller that says where it is and then gets an answer about somewhere
+    /// else has been told about a tree it did not name.
+    #[must_use]
+    pub fn rooted(&self, named: Option<&Path>) -> PathBuf {
+        named.map_or_else(
+            || self.working_directory.clone(),
+            |path| self.working_directory.join(path),
+        )
+    }
     /// The value of `name`, if the environment has one.
     #[must_use]
     pub fn var(&self, name: &str) -> Option<&OsStr> {
@@ -448,7 +463,7 @@ pub struct Usage {
 fn subcommand(mut args: Vec<OsString>) -> Vec<OsString> {
     let called_by_cargo = args
         .first()
-        .and_then(|name| std::path::Path::new(name).file_stem())
+        .and_then(|name| Path::new(name).file_stem())
         .is_some_and(|stem| stem == "cargo-mjutest");
     if called_by_cargo && args.get(1).is_some_and(|word| word == "mjutest") {
         let _repeated = args.remove(1);

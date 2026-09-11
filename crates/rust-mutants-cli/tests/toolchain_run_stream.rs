@@ -3,28 +3,55 @@
 
 //! The run as a program reads it: one JSON object per line, as it happens.
 
-#![expect(
-    clippy::expect_used,
-    reason = "a test reports a setup failure by panicking and asserts with panics"
-)]
-
+use std::ffi::OsString;
 use std::path::Path;
 use std::process::Output;
 
 use mjutest_devkit::fixture::Fixture;
 use rust_mutants::report::stream::{Line, read};
+use rust_mutants::runner::Cancel;
+use rust_mutants_cli::{Environment, Streams};
 
 fn run(fixture: &Fixture, extra: &[&str]) -> Output {
-    let mut command = mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")));
-    command.env("NO_COLOR", "1");
-    command.env("TMPDIR", fixture.temp());
-    command.env("XDG_CACHE_HOME", fixture.cache());
-    command.arg("run");
-    command.args(["--root", &fixture.root().to_string_lossy()]);
-    command.args(["--tier", "all"]);
-    command.args(["--offline", "--locked", "--no-coverage", "--jobs", "1"]);
-    command.args(extra);
-    command.output().expect("rust-mutants runs")
+    let root = fixture.root().to_string_lossy().into_owned();
+    asked(
+        fixture,
+        &std::iter::once("run")
+            .chain(["--root", root.as_str()])
+            .chain(["--tier", "all"])
+            .chain(["--offline", "--locked", "--no-coverage", "--jobs", "1"])
+            .chain(extra.iter().copied())
+            .collect::<Vec<&str>>(),
+    )
+}
+
+/// One command, driven in this process against the fixture's own directories.
+fn asked(fixture: &Fixture, args: &[&str]) -> Output {
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let code = rust_mutants_cli::run_from(
+        std::iter::once("rust-mutants")
+            .chain(args.iter().copied())
+            .map(OsString::from),
+        &environment(fixture),
+        &Cancel::new(),
+        Streams {
+            out: &mut out,
+            err: &mut err,
+        },
+    );
+    mjutest_devkit::process::answered(code, out, err)
+}
+
+fn environment(fixture: &Fixture) -> Environment {
+    Environment {
+        vars: mjutest_devkit::paths::environment_for_a_run(),
+        temp_directory: fixture.temp().to_path_buf(),
+        cache_directory: fixture.cache().to_path_buf(),
+        working_directory: fixture.root().to_path_buf(),
+        no_color: true,
+        stdout_is_terminal: false,
+        paints: false,
+    }
 }
 
 #[test]
@@ -152,15 +179,18 @@ fn the_stream_opens_before_anything_is_prepared() {
 #[test]
 fn a_run_started_from_inside_the_tree_still_names_the_tree() {
     let fixture = Fixture::copy("fixture-simple");
-    let output = mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")))
-        .env("NO_COLOR", "1")
-        .env("TMPDIR", fixture.temp())
-        .env("XDG_CACHE_HOME", fixture.cache())
-        .current_dir(fixture.root())
-        .args(["run", "--json", "--offline", "--locked", "--no-coverage"])
-        .args(["--root", "."])
-        .output()
-        .expect("rust-mutants runs");
+    let output = asked(
+        &fixture,
+        &[
+            "run",
+            "--json",
+            "--offline",
+            "--locked",
+            "--no-coverage",
+            "--root",
+            ".",
+        ],
+    );
     let text = String::from_utf8_lossy(&output.stdout).into_owned();
     let first = text.lines().next().expect("the stream opens");
     let line: serde_json::Value = serde_json::from_str(first).expect("the first line is JSON");

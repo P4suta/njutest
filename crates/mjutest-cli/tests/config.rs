@@ -348,3 +348,42 @@ fn a_missing_file_is_the_defaults_and_a_present_one_is_read() {
         "the error names the file: {error}"
     );
 }
+
+#[test]
+fn a_directory_a_command_names_is_resolved_against_where_the_command_was_told_it_is() {
+    use std::path::{Path, PathBuf};
+
+    use mjutest_cli::cli::Environment;
+    use rust_mutants::runner::Cancel;
+
+    let environment = Environment {
+        vars: Vec::new(),
+        working_directory: PathBuf::from("/somewhere/a/caller/named"),
+        temp_directory: PathBuf::from("/tmp"),
+        cache_directory: PathBuf::from("/tmp/cache"),
+        cancel: Cancel::new(),
+    };
+
+    assert_eq!(
+        environment.rooted(None),
+        Path::new("/somewhere/a/caller/named"),
+        "a command that names no directory is about the one it was told it is in"
+    );
+    assert_eq!(
+        environment.rooted(Some(Path::new("."))),
+        Path::new("/somewhere/a/caller/named/."),
+        "and a dot is that directory rather than the process's own: a caller that says \
+         where it is and then gets an answer about somewhere else has been told about a \
+         tree it did not name"
+    );
+    assert_eq!(
+        environment.rooted(Some(Path::new("crates/core"))),
+        Path::new("/somewhere/a/caller/named/crates/core"),
+        "a relative name is relative to that one"
+    );
+    assert_eq!(
+        environment.rooted(Some(Path::new("/elsewhere/entirely"))),
+        Path::new("/elsewhere/entirely"),
+        "and an absolute name is the tree it names, wherever the caller is"
+    );
+}

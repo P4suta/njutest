@@ -18,10 +18,7 @@ pub fn run(
     stdout: &mut dyn Write,
     stderr: &mut dyn Write,
 ) -> u8 {
-    let root = arguments
-        .directory
-        .clone()
-        .unwrap_or_else(|| environment.working_directory.clone());
+    let root = environment.rooted(arguments.directory.as_deref());
     let cancel = environment.cancel.clone();
     let trace = Recorder::disabled();
     let watch = Watch::new(&cancel, &trace);

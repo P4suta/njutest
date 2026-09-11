@@ -28,13 +28,20 @@ pub struct Settings {
 impl Settings {
     /// Reads the configuration a scope names and folds the flags into it. A flag given on the command line wins over the file; a list given on the command line replaces the file's list rather than adding to it.
     ///
+    /// A `--root` that is not an absolute path is resolved against the working
+    /// directory the command was given rather than against the process's own.
+    /// The two are the same for the binary, which composes one from the other,
+    /// and they are not the same for anything else that calls this: a caller
+    /// that says where it is and then gets an answer about somewhere else has
+    /// been told about a tree it did not name.
+    ///
     /// # Errors
     /// Returns what is wrong with the configuration, or with a duration a flag spells.
     pub fn resolve(scope: &cli::Scope, environment: &Environment) -> Result<Self, CliError> {
-        let root = scope
-            .root
-            .clone()
-            .unwrap_or_else(|| environment.working_directory.clone());
+        let root = scope.root.as_ref().map_or_else(
+            || environment.working_directory.clone(),
+            |named| environment.working_directory.join(named),
+        );
         let (source, mut config) = read(scope, &root)?;
         if let Some(tier) = scope.tier {
             config.mutation.tier = tier.tier();

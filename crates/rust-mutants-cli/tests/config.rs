@@ -437,3 +437,63 @@ fn a_count_says_how_many_mutations_one_reason_was_written_for() {
         "an identity is one mutation, so counting what it names says two different things"
     );
 }
+
+#[test]
+fn a_root_a_command_names_is_resolved_against_where_the_command_was_told_it_is() {
+    use std::path::{Path, PathBuf};
+
+    use rust_mutants_cli::cli;
+    use rust_mutants_cli::settings::Settings;
+
+    let here = tempfile::tempdir().expect("a directory");
+    let inside = here.path().join("tree");
+    std::fs::create_dir_all(&inside).expect("a tree below it");
+    let environment = rust_mutants_cli::Environment {
+        vars: Vec::new(),
+        temp_directory: PathBuf::from("/tmp"),
+        cache_directory: PathBuf::from("/tmp/cache"),
+        working_directory: here.path().to_path_buf(),
+        no_color: true,
+        stdout_is_terminal: false,
+        paints: false,
+    };
+
+    let named = |root: Option<&str>| {
+        let mut parsed = cli::parse(
+            ["rust-mutants", "list"]
+                .into_iter()
+                .map(std::ffi::OsString::from),
+        )
+        .expect("`list` with nothing else on it parses");
+        if let cli::Command::List { scope, .. } = &mut parsed.command {
+            scope.root = root.map(PathBuf::from);
+            return Settings::resolve(scope, &environment)
+                .map(|settings| settings.root)
+                .expect("a scope with nothing wrong in it");
+        }
+        panic!("`list` parses as List")
+    };
+
+    assert_eq!(
+        named(None),
+        here.path(),
+        "a command that names no root is about the directory it was told it is in"
+    );
+    assert_eq!(
+        named(Some("tree")),
+        inside,
+        "and a relative root is relative to that one rather than to the process's own: a \
+         caller that says where it is and then gets an answer about somewhere else has \
+         been told about a tree it did not name"
+    );
+    assert_eq!(
+        named(Some(&inside.to_string_lossy())),
+        inside,
+        "while an absolute root is the tree it names, wherever the caller is"
+    );
+    assert_eq!(
+        named(Some(".")),
+        Path::new(here.path()).join("."),
+        "a dot is the directory the command was told it is in"
+    );
+}

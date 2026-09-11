@@ -55,8 +55,13 @@ below is stated fail-closed.
   therefore fails verification under measurement, and the run refuses to judge
   against it. A test that builds a `Session` in its own process inherits
   nothing across a process boundary and is measured like any other: the line is
-  the boundary, not the engine. Measured on this workspace, twenty-eight
-  targets fall on the far side of it and every one of them spawns the binary.
+  the boundary, not the engine. Most of this workspace's own suites used to
+  fall on the far side of it and do not any more: a suite that drives the
+  entry point in this process is a suite about the same command against the
+  same tree, and it is measured. Nine still start one, and every one of them
+  is about something a process does — an interrupt, a hang, a panic, a stream
+  read while it is being written, the language server's stdio, and the three
+  whose subject is a variable a process inherits.
   Such a target is left out with `--skip-target` or `[execution] skip_targets`, and
   `target-skipped-by-configuration` says so. What that target's tests would
   have killed is a survivor for as long as it is left out, so a reader working

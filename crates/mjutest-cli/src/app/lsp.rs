@@ -311,10 +311,7 @@ fn notify(output: &mut dyn Write, method: &str, params: &Value) {
 /// Serves the protocol on this process's own streams.
 #[must_use]
 pub fn run(arguments: &crate::cli::Lsp, environment: &crate::cli::Environment) -> u8 {
-    let root = arguments
-        .directory
-        .clone()
-        .unwrap_or_else(|| environment.working_directory.clone());
+    let root = environment.rooted(arguments.directory.as_deref());
     serve(
         &mut std::io::stdin().lock(),
         &mut std::io::stdout().lock(),

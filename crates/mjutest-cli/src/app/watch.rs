@@ -99,11 +99,7 @@ pub fn run(
     stdout: &mut dyn Write,
     stderr: &mut dyn Write,
 ) -> u8 {
-    let root = arguments
-        .verify
-        .directory
-        .clone()
-        .unwrap_or_else(|| environment.working_directory.clone());
+    let root = environment.rooted(arguments.verify.directory.as_deref());
     let config = match Config::load(&root) {
         Ok(config) => config,
         Err(error) => {
