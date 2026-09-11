@@ -545,11 +545,7 @@ const fn request_keep(request: &Request) -> u32 {
 /// that reported one and measured the other made a narrow claim about a wide
 /// tree.
 fn packages(arguments: &Verify, config: &Config) -> Vec<String> {
-    if arguments.packages.is_empty() {
-        config.project.packages.clone()
-    } else {
-        arguments.packages.clone()
-    }
+    run::asked_for(&arguments.packages, config)
 }
 
 /// The arguments every test binary of this run is started with.

@@ -1335,10 +1335,21 @@ fn describe(toolchain: &rust_mutants::cargo::Toolchain) -> Toolchain {
 /// The packages the command line asked for, or the configuration's.
 #[must_use]
 pub fn requested(request: &Request) -> Vec<String> {
-    if request.packages.is_empty() {
-        request.config.project.packages.clone()
+    asked_for(&request.packages, &request.config)
+}
+
+/// The packages a run is about: the ones a reader named, or the ones the configuration names when they named none.
+///
+/// The command line takes the place of the file rather than adding to it, and
+/// this is the one place that says so. The scope a run reports and the scope
+/// it measures are one thing: a run that read the file for one and the command
+/// line for the other made a narrow claim about a wide tree.
+#[must_use]
+pub fn asked_for(named: &[String], config: &Config) -> Vec<String> {
+    if named.is_empty() {
+        config.project.packages.clone()
     } else {
-        request.packages.clone()
+        named.to_vec()
     }
 }
 
