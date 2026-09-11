@@ -123,10 +123,25 @@ the temporary directory, and `docs/ci.md` says how a matrix caches it.
 A test that starts this engine inherits the activation the run composed and
 is refused (`RM0006`), and a test that inspects the tree it is being measured
 in reads a tree carrying the guards rather than the one a person wrote. Both
-refusals are correct, and `docs/limitations.md` says so. The cost is that the
-targets covering the engine's own wiring are exactly the ones a run of it
-cannot start, so what they would have killed is a survivor for as long as
-they are skipped, and a reader counting survivors has to count the skips too.
+refusals are correct, and `docs/limitations.md` says so.
+
+Most of the cost turned out to be avoidable, and for a reason that had nothing
+to do with either refusal: **a guard records what it reached in its own
+process.** A suite that starts the binary is measured by nothing whatever the
+binary then does, so the whole command layer of both products — every suite
+that drove `rust-mutants` or `mjutest` as a child — was reached by no mutation
+at all. Those suites drive `run_from` in this process now, which is the same
+command against the same tree and is measured. What kept them starting a
+process for so long after the reason to stop was known is that they were
+written against `std::process::Output`;
+`mjutest_devkit::process::answered` hands that shape back for a command driven
+here, so each suite changed in one function.
+
+What still starts a process is what is about a process: an interrupt, a hang, a
+panic, a stream read while it is still being written, the language server's
+stdio, and the two suites whose subject is a variable a process inherits. Those
+are the skips a reader counting survivors still has to count, and there are six
+of them rather than seventy.
 
 The first of the two is worth revisiting. What makes an inherited activation
 dangerous is the catalog matching, and where it matches, this binary **is**
