@@ -229,3 +229,45 @@ fn the_url_a_sarif_result_sends_a_reader_to_is_this_project() {
         rust_mutants_cli::report::sarif::INFORMATION
     );
 }
+
+#[test]
+fn every_schema_this_workspace_ships_is_one_a_test_holds_a_real_document_to() {
+    let root = mjutest_devkit::paths::workspace_root();
+    let entries =
+        std::fs::read_dir(root.join("schema")).unwrap_or_else(|error| panic!("schema: {error}"));
+    let shipped: BTreeSet<String> = entries
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| {
+            std::path::Path::new(name)
+                .extension()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("json"))
+        })
+        .collect();
+    assert!(!shipped.is_empty(), "this workspace ships schemas");
+
+    let mut suites = Vec::new();
+    for crate_name in ["mjutest-cli", "rust-mutants-cli", "rust-mutants", "mjutest"] {
+        let directory = root.join("crates").join(crate_name).join("tests");
+        let Ok(entries) = std::fs::read_dir(&directory) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            if entry.path().extension().is_some_and(|one| one == "rs") {
+                suites.push(std::fs::read_to_string(entry.path()).unwrap_or_default());
+            }
+        }
+    }
+    assert!(suites.len() > 20, "the suites are read: {}", suites.len());
+
+    let unheld: Vec<&String> = shipped
+        .iter()
+        .filter(|name| !suites.iter().any(|suite| suite.contains(name.as_str())))
+        .collect();
+    assert!(
+        unheld.is_empty(),
+        "a schema nothing validates a document against is a promise nobody keeps: a \
+         reader writing a parser for it finds out what it really says from the first \
+         document that will not fit. {unheld:?} is named by no test in this workspace"
+    );
+}
