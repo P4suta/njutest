@@ -3,6 +3,12 @@
 
 //! The command-line contract of the `mjutest` binary: what `--version` and `--help` print, and the exit code of a usage error, which is `3` — the code of invalid input — and not clap's default.
 
+#![expect(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "a test reports a setup failure by panicking and asserts with panics"
+)]
+
 use std::ffi::OsString;
 use std::path::Path;
 use std::process::Output;
@@ -228,6 +234,54 @@ fn doctor_reads_the_configuration_a_run_would_read() {
     );
 }
 
+/// A directory holding only what a run requires, so every optional tool is out of reach.
+///
+/// The two required programs are symlinked from wherever this machine keeps
+/// them, which the doctor has just said; `llvm-profdata` and `llvm-cov` come
+/// from the toolchain's own sysroot and are found whatever `PATH` says.
+fn only_what_is_required(dir: &Path, said: &str) -> std::path::PathBuf {
+    let bin = dir.join("bin");
+    std::fs::create_dir_all(&bin).expect("a directory");
+    for tool in ["cargo", "rustc"] {
+        let found = said
+            .lines()
+            .find(|line| line.contains(&format!(" {tool} ")))
+            .and_then(|line| line.split_whitespace().next_back())
+            .unwrap_or_else(|| panic!("the doctor says where {tool} is: {said}"));
+        std::os::unix::fs::symlink(found, bin.join(tool)).expect("a link");
+    }
+    bin
+}
+
+#[test]
+fn doctor_says_a_run_can_go_ahead_when_only_the_optional_tools_are_missing() {
+    let dir = tempfile::tempdir().expect("a temporary directory");
+    let found = asked(&environment(dir.path(), &[]), &["doctor"]);
+    let bin = only_what_is_required(dir.path(), &String::from_utf8_lossy(&found.stdout));
+
+    let output = asked(
+        &environment(dir.path(), &[("PATH", &bin.to_string_lossy())]),
+        &["doctor"],
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "an optional tool is one a run says a limitation about rather than one it needs,          so a machine with every required tool and no optional one can still verify:          {stdout}"
+    );
+    assert!(
+        stdout.ends_with("\n\na standard-v1 run can go ahead on this machine\n"),
+        "and the doctor says so in the last line, set off from the table by a blank one: \
+         {stdout:?}"
+    );
+    assert!(
+        stdout
+            .lines()
+            .any(|line| line.starts_with("optional") && line.contains("missing")),
+        "with the ones that are not there named as missing: {stdout}"
+    );
+}
+
 #[test]
 fn doctor_without_a_toolchain_says_so_and_refuses_rather_than_guessing() {
     let dir = tempfile::tempdir().expect("a temporary directory");
@@ -243,6 +297,11 @@ fn doctor_without_a_toolchain_says_so_and_refuses_rather_than_guessing() {
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("missing"), "{stdout}");
+    assert!(
+        stdout.contains("a run cannot go ahead: cargo is missing"),
+        "and says which of them a run needs, because that is the line a reader acts on: \
+         {stdout}"
+    );
 }
 
 #[test]

@@ -62,3 +62,32 @@ fn a_file_the_configuration_excludes_from_the_mutations_is_still_part_of_what_th
          other bytes"
     );
 }
+
+#[test]
+fn a_plan_compiles_what_the_configuration_says_to_compile() {
+    let repo = Repo::new();
+    repo.package("demo").lib("pub fn f() {}\n");
+    repo.write(
+        ".mjutest.toml",
+        "version = 1\n\n[execution]\nfeatures = [\"imperial\"]\nall_features = true\nno_default_features = true\n",
+    );
+    let arguments = mjutest_cli::cli::Plan {
+        directory: None,
+        packages: Vec::new(),
+        why: false,
+        offline: true,
+        locked: true,
+    };
+
+    let selection =
+        mjutest_cli::app::plan::compiled(repo.root(), &arguments).expect("the configuration reads");
+
+    assert_eq!(selection.features, ["imperial"]);
+    assert!(selection.all_features);
+    assert!(
+        !selection.default_features,
+        "the file says the default features are off, and the field says whether they are \
+         on: a plan that read the negation the other way would describe a build cargo \
+         would never do"
+    );
+}

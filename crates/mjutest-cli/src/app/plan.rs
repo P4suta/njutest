@@ -223,7 +223,7 @@ pub fn line(planned: &Planned, why: bool) -> String {
 ///
 /// # Errors
 /// Returns the configuration's own refusal, rendered.
-fn compiled(root: &std::path::Path, arguments: &Arguments) -> Result<Selection, String> {
+pub fn compiled(root: &std::path::Path, arguments: &Arguments) -> Result<Selection, String> {
     let config = crate::config::Config::load(root).map_err(|error| error.to_string())?;
     Ok(Selection {
         packages: if arguments.packages.is_empty() {
