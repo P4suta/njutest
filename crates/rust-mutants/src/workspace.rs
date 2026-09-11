@@ -162,6 +162,19 @@ pub enum SessionError {
         /// The targets there are, which is what a reader has to choose between.
         available: Vec<String>,
     },
+    /// A target a run was told to leave out is not one the workspace declares.
+    #[error(
+        "{}: no test target is named {name:?}, so leaving it out leaves nothing out; this \
+         workspace declares {}",
+        error::SESSION_UNKNOWN_TARGET.code,
+        if available.is_empty() { String::from("none") } else { available.join(", ") }
+    )]
+    SkippedTargetUnknown {
+        /// The name that was asked to be left out.
+        name: String,
+        /// Every target the workspace declares, which is more than a narrowed run builds.
+        available: Vec<String>,
+    },
     /// The workspace has no test target at all, so nothing can be measured.
     #[error(
         "{}: the workspace builds no test target, so no mutant can be measured; {} {} selected",
@@ -192,7 +205,9 @@ impl SessionError {
             Self::PristineBroken { .. } => error::SESSION_PRISTINE_BROKEN,
             Self::VerifyFailed { .. } => error::SESSION_VERIFY_FAILED,
             Self::UnknownMutant { .. } => error::SESSION_UNKNOWN_MUTANT,
-            Self::UnknownTarget { .. } => error::SESSION_UNKNOWN_TARGET,
+            Self::UnknownTarget { .. } | Self::SkippedTargetUnknown { .. } => {
+                error::SESSION_UNKNOWN_TARGET
+            }
             Self::NoTargets { .. } => error::SESSION_NO_TARGETS,
             Self::WriteFailed { .. } => error::SESSION_WRITE_FAILED,
             Self::ReachesOutside { .. } => error::WORKSPACE_REACHES_OUTSIDE,

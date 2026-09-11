@@ -82,6 +82,64 @@ fn a_reserved_variable_names_itself_and_says_what_to_do() {
 }
 
 #[test]
+fn a_target_left_out_by_a_name_that_is_not_one_lists_the_targets_there_are() {
+    let fixture = Fixture::copy("fixture-simple");
+    let output = against(
+        &fixture,
+        &[
+            "run",
+            "--tier",
+            "all",
+            "--skip-target",
+            "fixture-simple/lib/no-such-target",
+            "--ui",
+            "quiet",
+        ],
+    );
+    let complaint = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "a target nobody builds is not a target left out: the run measured everything \
+         the reader meant to leave out and said nothing. {complaint}"
+    );
+    assert!(complaint.contains("RM5004"), "{complaint}");
+    assert!(
+        complaint.contains("no-such-target")
+            && complaint.contains("fixture-simple/lib/fixture_simple"),
+        "naming what was asked for and the targets there are, which is what --target \
+         already does with the same names: {complaint}"
+    );
+}
+
+#[test]
+fn a_target_this_run_did_not_build_is_still_one_the_workspace_declares() {
+    let fixture = Fixture::copy("fixture-workspace");
+    let output = against(
+        &fixture,
+        &[
+            "run",
+            "--tier",
+            "all",
+            "--package",
+            "fixture-core",
+            "--skip-target",
+            "fixture-app/test/cli",
+            "--ui",
+            "quiet",
+        ],
+    );
+    assert_ne!(
+        output.status.code(),
+        Some(2),
+        "a configuration is written once and a run is narrowed every day, so a name the \
+         workspace declares is a name this run may be told to leave out even when it \
+         built no such target: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn an_unknown_target_lists_the_targets_there_are() {
     let fixture = Fixture::copy("fixture-simple");
     let listed =

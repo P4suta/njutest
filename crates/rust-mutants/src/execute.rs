@@ -880,6 +880,28 @@ pub fn targets_of(
     targets
 }
 
+/// Every test target the members declare, as ids, without building one of them.
+///
+/// What a run builds is narrowed by the packages it was asked for; what the
+/// workspace declares is not. A name that is in neither is a name that is not
+/// a target's, which is the only thing a run can tell a reader about a name
+/// they typed.
+#[must_use]
+pub fn declared_targets(members: &[&Package]) -> std::collections::BTreeSet<String> {
+    let mut ids = std::collections::BTreeSet::new();
+    for package in members {
+        for target in &package.targets {
+            if let Some(kind) = TargetKind::of(target) {
+                let _added = ids.insert(target_id(&package.name, kind, &target.name));
+            }
+            if target.is_lib() && !target.is_proc_macro() && target.doctest {
+                let _added = ids.insert(target_id(&package.name, TargetKind::Doc, &target.name));
+            }
+        }
+    }
+    ids
+}
+
 /// One target for each library whose documentation cargo would run, which is a target this engine does not start itself.
 ///
 /// A documentation example is compiled by rustdoc while cargo runs it, so

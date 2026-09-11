@@ -46,7 +46,7 @@ touch = true                   # ask the guards which tests reached them, and ru
 offline = false
 locked = false
 doctests = true                # run a library's documented examples as a target
-skip_targets = []              # target ids never to start, as pkg/kind/name
+skip_targets = []              # target ids never to start, as pkg/kind/name; a name no target has is refused
 jobs = 0                       # mutants measured at once; 0 = the machine, capped at 4
 test_binary_args = []          # --test-threads, --include-ignored, --nocapture, --show-output
 

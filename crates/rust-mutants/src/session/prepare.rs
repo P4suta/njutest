@@ -240,11 +240,7 @@ fn built(building: &Building<'_>) -> Result<Built, EngineError> {
             limitations: target.limitations.clone(),
         })
         .collect();
-    let skipped: Vec<String> = targets
-        .iter()
-        .filter(|target| options.skip_targets.iter().any(|one| one == &target.id))
-        .map(|target| target.id.clone())
-        .collect();
+    let skipped = left_out(workspace, &targets, &options.skip_targets)?;
     targets.retain(|target| !skipped.contains(&target.id));
     let mut details = built;
     for detail in &mut details {
@@ -276,6 +272,33 @@ fn built(building: &Building<'_>) -> Result<Built, EngineError> {
         Verified::default()
     };
     Ok((targets, scratch, verified))
+}
+
+/// Which of the built targets a run was told never to start, refusing a name no target of the workspace has.
+///
+/// The name is held to what the workspace declares rather than to what this
+/// run built, because a configuration is written once and a run is narrowed
+/// every day: a name that is a target's is one a narrowed run may be told to
+/// leave out without having built it. A name that is no target's narrows
+/// nothing, and a run that passed over it in silence would measure what a
+/// reader believed was left out.
+fn left_out(
+    workspace: &Workspace,
+    targets: &[TestTarget],
+    named: &[String],
+) -> Result<Vec<String>, EngineError> {
+    let declared = execute::declared_targets(&workspace.metadata.members().collect::<Vec<_>>());
+    if let Some(unknown) = named.iter().find(|one| !declared.contains(one.as_str())) {
+        return Err(EngineError::from(SessionError::SkippedTargetUnknown {
+            name: unknown.clone(),
+            available: declared.into_iter().collect(),
+        }));
+    }
+    Ok(targets
+        .iter()
+        .filter(|target| named.iter().any(|one| one == &target.id))
+        .map(|target| target.id.clone())
+        .collect())
 }
 
 /// Leaves out every target whose own baseline did not pass, where the run asked for that rather than for a refusal.
