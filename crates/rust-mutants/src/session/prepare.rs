@@ -539,6 +539,7 @@ pub fn prepare(
     let (packages, items) = attributed(&discovery);
     Ok(Session {
         catalog: discovery.catalog,
+        files: discovery.files,
         skips: discovery.skips,
         claims: discovery.claims,
         sources,

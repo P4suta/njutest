@@ -206,10 +206,16 @@ fn instrument_prints_one_file_as_the_engine_rewrites_it() {
 
     let missing = against(&fixture, &["instrument", "--file", "src/nope.rs"]);
     assert_eq!(missing.status.code(), Some(2));
+    let refusal = String::from_utf8_lossy(&missing.stderr).into_owned();
     assert!(
-        String::from_utf8_lossy(&missing.stderr).contains("RM5006"),
-        "{}",
-        String::from_utf8_lossy(&missing.stderr)
+        refusal.contains("RM0004") && refusal.contains("src/nope.rs"),
+        "a path the workspace does not hold is a value the flag cannot take, which is \
+         what a person mistyping a name needs to read; it used to be reported as a tree \
+         that could not be written, which sends them looking at the disk: {refusal}"
+    );
+    assert!(
+        refusal.contains("--file"),
+        "and the flag is named: {refusal}"
     );
 }
 #[test]

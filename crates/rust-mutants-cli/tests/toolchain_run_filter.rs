@@ -220,3 +220,59 @@ fn environment(fixture: &Fixture) -> Environment {
         paints: false,
     }
 }
+
+#[test]
+fn a_file_the_workspace_does_not_hold_is_refused_rather_than_measured_as_empty() {
+    let fixture = Fixture::copy("fixture-simple");
+
+    let narrowed = run(&fixture, &["--file", "src/nosuch.rs", "--dry-run"]);
+    assert_ne!(
+        narrowed.status.code(),
+        Some(0),
+        "a run narrowed to a name nobody wrote measures nothing and reports that nothing \
+         was missed, which is the one answer a person cannot tell from a clean one: {}",
+        said(&narrowed)
+    );
+    let refusal = String::from_utf8_lossy(&narrowed.stderr).into_owned();
+    assert!(
+        refusal.contains("src/nosuch.rs") && refusal.contains("--file"),
+        "and the refusal names the path and the flag: {refusal}"
+    );
+
+    let held = run(&fixture, &["--file", "src/lib.rs", "--dry-run"]);
+    assert_eq!(
+        held.status.code(),
+        Some(0),
+        "while a file the workspace holds is measured: {}",
+        String::from_utf8_lossy(&held.stderr)
+    );
+
+    let lines = run(&fixture, &["--file", "src/nosuch.rs:1-3", "--dry-run"]);
+    assert_ne!(
+        lines.status.code(),
+        Some(0),
+        "and naming lines of a file that is not there is the same mistake: {}",
+        said(&lines)
+    );
+}
+
+#[test]
+fn a_file_the_walk_found_nothing_in_is_still_a_file_it_read() {
+    let fixture = Fixture::copy("fixture-simple");
+    let empty = "// SPDX-FileCopyrightText: 2026 mjutest contributors\n\
+                 // SPDX-License-Identifier: MIT OR Apache-2.0\n\n\
+                 //! Nothing here for a rule to target.\n";
+    std::fs::write(fixture.root().join("src/nothing.rs"), empty).expect("a file with no candidate");
+    let lib = fixture.root().join("src/lib.rs");
+    let source = std::fs::read_to_string(&lib).expect("the library");
+    std::fs::write(&lib, format!("{source}\npub mod nothing;\n")).expect("the module declared");
+
+    let narrowed = run(&fixture, &["--file", "src/nothing.rs", "--dry-run"]);
+    assert_eq!(
+        narrowed.status.code(),
+        Some(0),
+        "a file that is there and yields no candidate is not a mistake: the walk read it, \
+         and `no candidate here` is a true answer about it: {}",
+        String::from_utf8_lossy(&narrowed.stderr)
+    );
+}

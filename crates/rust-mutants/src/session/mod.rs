@@ -22,7 +22,7 @@ use std::time::Duration;
 
 use crate::EngineError;
 use crate::catalog::{Catalog, Mutant};
-use crate::discover::{self, DiscoverOptions, SkipClaim};
+use crate::discover::{self, DiscoverOptions, FileReport, SkipClaim};
 use crate::execute::{self, Context, ExecRequest, MutantResult, TargetKind, TestTarget, target_id};
 use crate::glob::Pattern;
 use crate::rule::Tier;
@@ -270,6 +270,8 @@ impl Request {
 pub struct Session {
     workspace: Workspace,
     catalog: Catalog,
+    /// Every file the walk considered, in path order.
+    files: Vec<FileReport>,
     skips: Vec<Skip>,
     claims: Vec<SkipClaim>,
     validated: Validated,
@@ -332,6 +334,17 @@ impl Session {
     #[must_use]
     pub fn skips(&self) -> &[Skip] {
         &self.skips
+    }
+
+    /// Every file the walk considered, in path order, whatever it yielded.
+    ///
+    /// A file with no candidate in it is here and a file that is not in the
+    /// workspace is not, which is the difference a command narrowing to a path
+    /// has to be able to tell: a run narrowed to a name nobody wrote measures
+    /// nothing and reports that nothing was missed.
+    #[must_use]
+    pub fn files(&self) -> &[FileReport] {
+        &self.files
     }
 
     /// Every `rust-mutants: skip` marker of a file this session measures, in (path, line) order.

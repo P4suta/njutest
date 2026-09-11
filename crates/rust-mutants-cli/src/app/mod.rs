@@ -544,22 +544,65 @@ fn selected(
 }
 
 /// What a command that only needs discovery prints.
+/// Refuses a `--file` that names no file the walk considered.
+///
+/// A path nobody wrote is not a file with nothing in it. A run narrowed to a
+/// misspelled name measures nothing and reports that nothing was missed, which
+/// is the one answer a person cannot tell from a clean one, and a listing of it
+/// is silence that reads as a file the rules found nothing in.
+///
+/// A file that is there and yields no candidate is not refused: the walk
+/// considered it, and "no candidate here" is a true answer about it.
+///
+/// # Errors
+/// [`CliError::InvalidValue`] naming the path and how many files there are.
+fn narrowed(considered: &[String], named: &[String]) -> Result<(), CliError> {
+    for one in named {
+        let path = one
+            .rsplit_once(':')
+            .map_or(one.as_str(), |(head, _lines)| head);
+        if !considered.iter().any(|held| held == path) {
+            return Err(CliError::InvalidValue {
+                flag: "--file".to_owned(),
+                value: one.clone(),
+                expected: format!(
+                    "a workspace-relative path of one of the {} files this run reads",
+                    considered.len()
+                ),
+            });
+        }
+    }
+    Ok(())
+}
+
 fn previewed(
     command: &cli::Command,
     workspace: &Workspace,
     discovery: &rust_mutants::discover::Discovery,
 ) -> Result<String, CliError> {
+    let considered: Vec<String> = discovery
+        .files
+        .iter()
+        .map(|file| file.path.clone())
+        .collect();
     match command {
-        cli::Command::List { file, .. } => Ok(report::list(
-            discovery,
-            &read_sources(workspace.snapshot_root(), discovery),
-            file.as_deref(),
-        )),
-        cli::Command::WhySkipped { file, line, .. } => Ok(file.as_ref().map_or_else(
-            || report::why_skipped(&discovery.skips),
-            |path| report::decisions(discovery, path, *line),
-        )),
+        cli::Command::List { file, .. } => {
+            narrowed(&considered, file.as_slice())?;
+            Ok(report::list(
+                discovery,
+                &read_sources(workspace.snapshot_root(), discovery),
+                file.as_deref(),
+            ))
+        }
+        cli::Command::WhySkipped { file, line, .. } => {
+            narrowed(&considered, file.as_slice())?;
+            Ok(file.as_ref().map_or_else(
+                || report::why_skipped(&discovery.skips),
+                |path| report::decisions(discovery, path, *line),
+            ))
+        }
         cli::Command::Instrument { file, mutant, .. } => {
+            narrowed(&considered, std::slice::from_ref(file))?;
             instrumented(workspace, discovery, (file, mutant.as_deref()))
         }
         _ => Ok(String::new()),
@@ -652,7 +695,7 @@ fn prepared(
                         fail_fast: *fail_fast,
                         dry_run: *dry_run,
                     },
-                    filter: filter(command, prepared.settings)?,
+                    filter: filter(command, prepared.settings, session)?,
                     phases: prepared.phases,
                     environment: prepared.environment,
                     id: prepared.id,
@@ -889,7 +932,11 @@ fn keyed(session: &Session, settings: &Settings, args: &[String]) -> crate::outc
 ///
 /// # Errors
 /// A `--file` whose lines are not a range.
-fn filter(command: &cli::Command, settings: &Settings) -> Result<run::Filter, CliError> {
+fn filter(
+    command: &cli::Command,
+    settings: &Settings,
+    session: &Session,
+) -> Result<run::Filter, CliError> {
     let cli::Command::Run {
         rules,
         families,
@@ -904,6 +951,14 @@ fn filter(command: &cli::Command, settings: &Settings) -> Result<run::Filter, Cl
     else {
         return Ok(run::Filter::default());
     };
+    narrowed(
+        &session
+            .files()
+            .iter()
+            .map(|file| file.path.clone())
+            .collect::<Vec<String>>(),
+        files,
+    )?;
     let mut named_ids = (!ids.is_empty()).then(|| ids.clone());
     if let Some(named) = from_report {
         named_ids
