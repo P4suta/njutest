@@ -29,6 +29,41 @@ fn every_finding_kind_is_named_on_the_page_that_documents_the_report() {
 }
 
 #[test]
+fn every_kind_the_page_names_is_a_finding_a_run_can_raise() {
+    let text = page("docs/engine/json-schema.md");
+    let sentence = text
+        .split("A `finding` is one of ")
+        .nth(1)
+        .and_then(|rest| rest.split('.').next())
+        .unwrap_or_else(|| panic!("the page says what a finding is one of"));
+    let held: BTreeSet<&str> = rust_mutants_cli::run::FindingKind::ALL
+        .into_iter()
+        .map(rust_mutants_cli::run::FindingKind::name)
+        .collect();
+    let listed: Vec<String> = sentence
+        .split('`')
+        .skip(1)
+        .step_by(2)
+        .map(ToOwned::to_owned)
+        .collect();
+    assert_eq!(
+        listed.len(),
+        held.len(),
+        "the sentence names one kind per kind there is: {listed:?}"
+    );
+    let invented: Vec<&String> = listed
+        .iter()
+        .filter(|name| !held.contains(name.as_str()))
+        .collect();
+    assert!(
+        invented.is_empty(),
+        "a kind the page names that no run raises is a word a consumer writes a branch \
+         for and never reaches, and the page is the only place a consumer learns the \
+         set from: {invented:?}"
+    );
+}
+
+#[test]
 fn every_configuration_key_a_reader_may_write_is_on_the_configuration_page() {
     let text = page("docs/engine/configuration.md");
     let default = toml::to_string(&rust_mutants_cli::config::Config::default())
