@@ -175,6 +175,38 @@ fn every_shape_a_recording_can_hold_is_a_row_on_the_page_that_documents_it() {
 }
 
 #[test]
+fn every_type_the_page_lists_is_a_shape_a_recording_can_hold() {
+    let text = page("docs/trace-v1.md");
+    let held: std::collections::BTreeSet<&str> = mjutest_cli::testkit::every_payload()
+        .iter()
+        .map(mjutest_cli::trace::Payload::type_name)
+        .collect();
+    let listed: Vec<String> = text
+        .lines()
+        .skip_while(|line| !line.starts_with("| Type |"))
+        .skip(2)
+        .take_while(|line| line.starts_with('|'))
+        .filter_map(|line| line.split('|').nth(1).map(str::trim))
+        .flat_map(|cell| {
+            cell.split(',')
+                .map(|name| name.trim().trim_matches('`').to_owned())
+                .collect::<Vec<String>>()
+        })
+        .collect();
+    assert!(listed.len() >= 10, "the table of types is read: {listed:?}");
+    let invented: Vec<&String> = listed
+        .iter()
+        .filter(|name| !held.contains(name.as_str()))
+        .collect();
+    assert!(
+        invented.is_empty(),
+        "a type the page lists that no recording can hold is a shape a reader waits for \
+         and an audit looks for: the page is what says a recording is complete, so a row \
+         nothing writes is a hole nobody sees. {invented:?}"
+    );
+}
+
+#[test]
 fn every_reason_a_route_can_give_for_believing_nothing_is_on_that_page_too() {
     let text = page("docs/trace-v1.md");
     let missing: Vec<&'static str> = mjutest_cli::testkit::every_refusal()
