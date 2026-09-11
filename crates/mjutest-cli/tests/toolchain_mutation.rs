@@ -536,3 +536,107 @@ fn a_suite_that_writes_nothing_says_nothing_about_a_tree_that_was_written_to() {
          {named:?}"
     );
 }
+
+#[test]
+fn recording_an_acceptance_keeps_the_configuration_a_person_wrote() {
+    let fixture = fixture("fixture-baseline");
+    verify(&fixture, &[]);
+    let path = fixture.root.join(".mjutest.toml");
+    std::fs::write(
+        &path,
+        "version = 1\n\n# the contract this project promises\n[contract]\nname = \"standard-v1\"\n",
+    )
+    .expect("a configuration somebody wrote");
+
+    let survivor = document(&fixture)["mutants"]
+        .as_array()
+        .expect("mutants")
+        .iter()
+        .find(|mutant| mutant["outcome"] == "survived" || mutant["outcome"] == "unreached")
+        .and_then(|mutant| mutant["id"].as_str())
+        .expect("a survivor")
+        .to_owned();
+
+    let recorded = mjutest(&fixture, &["accept", &survivor, "--reason", "reviewed"]);
+    assert_eq!(
+        recorded.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&recorded.stderr)
+    );
+
+    let after = std::fs::read_to_string(&path).expect("the configuration");
+    assert!(
+        after.contains("# the contract this project promises"),
+        "a command that rewrote the file would take the comments with it, and the \
+         comments are the reviews of every survivor this project has looked at: {after}"
+    );
+    assert!(
+        after.contains("standard-v1"),
+        "and everything else the file said: {after}"
+    );
+    assert!(
+        after.contains(&survivor) && after.contains("reviewed"),
+        "with the acceptance appended: {after}"
+    );
+
+    let again = mjutest(
+        &fixture,
+        &["accept", &survivor, "--reason", "reviewed again"],
+    );
+    assert_eq!(
+        again.status.code(),
+        Some(0),
+        "accepting what is already accepted is not a failure: a script that records a \
+         decision twice has recorded it: {}",
+        String::from_utf8_lossy(&again.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&again.stdout).contains("already accepted"),
+        "and says so rather than saying it wrote one: {}",
+        String::from_utf8_lossy(&again.stdout)
+    );
+    let twice = std::fs::read_to_string(&path).expect("the configuration");
+    assert_eq!(
+        twice.matches(&survivor).count(),
+        1,
+        "and the file holds one, because two acceptances of one mutation are two \
+         reviewers disagreeing with themselves: {twice}"
+    );
+    assert!(
+        !twice.contains("reviewed again"),
+        "the first reason stands: it is the one somebody wrote when they looked: {twice}"
+    );
+}
+
+#[test]
+fn a_configuration_nobody_can_parse_is_refused_rather_than_rewritten() {
+    let fixture = fixture("fixture-baseline");
+    verify(&fixture, &[]);
+    let path = fixture.root.join(".mjutest.toml");
+    let broken = "version = 1\n[contract\nname = ]\n";
+    std::fs::write(&path, broken).expect("a configuration nobody can parse");
+
+    let survivor = document(&fixture)["mutants"]
+        .as_array()
+        .expect("mutants")
+        .iter()
+        .find(|mutant| mutant["outcome"] == "survived" || mutant["outcome"] == "unreached")
+        .and_then(|mutant| mutant["id"].as_str())
+        .expect("a survivor")
+        .to_owned();
+
+    let refused = mjutest(&fixture, &["accept", &survivor, "--reason", "reviewed"]);
+    assert_ne!(
+        refused.status.code(),
+        Some(0),
+        "a file this release could not read is one it must not write: appending to what \
+         it could not parse would lose whatever it did not understand: {}",
+        String::from_utf8_lossy(&refused.stdout)
+    );
+    assert_eq!(
+        std::fs::read_to_string(&path).expect("the configuration"),
+        broken,
+        "and the file is exactly as it was"
+    );
+}
