@@ -986,6 +986,23 @@ fn filter(
     else {
         return Ok(run::Filter::default());
     };
+    let removed_a_file = session
+        .files()
+        .iter()
+        .any(|file| file.whole_file == Some(rust_mutants::syntax::SkipReason::Excluded));
+    if removed_a_file && session.catalog().mutants().is_empty() {
+        return Err(CliError::InvalidValue {
+            flag: "--include/--exclude".to_owned(),
+            value: format!(
+                "include {:?}, exclude {:?}",
+                settings.config.project.include, settings.config.project.exclude
+            ),
+            expected: "patterns that leave at least one file to read; a selection that \
+                       leaves none measures nothing and scores as though nothing was \
+                       missed"
+                .to_owned(),
+        });
+    }
     for prefix in ids {
         if !session
             .catalog()

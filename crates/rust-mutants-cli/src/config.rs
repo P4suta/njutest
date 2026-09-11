@@ -75,7 +75,13 @@ pub struct Project {
     pub packages: Vec<String>,
     /// Workspace-relative globs a file must match to be mutable.
     pub include: Vec<String>,
-    /// Workspace-relative globs that remove a file again.
+    /// Workspace-relative globs that remove a file again, from the snapshot as well as from what is mutated.
+    ///
+    /// The file is not copied into the tree a run builds, so a pattern that
+    /// names a file the crate declares as a module leaves a tree that does not
+    /// compile and the run refuses before it instruments anything. That is the
+    /// price of the snapshot being smaller than the workspace; to keep a file
+    /// in the tree and out of the mutations, narrow `include` instead.
     pub exclude: Vec<String>,
     /// Directories outside the root the workspace may read code from.
     ///

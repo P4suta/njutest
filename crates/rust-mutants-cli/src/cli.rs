@@ -337,7 +337,7 @@ pub struct Scope {
     /// Only mutate files matching this pattern. Repeatable.
     #[arg(long = "include", value_name = "GLOB")]
     pub include: Vec<String>,
-    /// Never mutate files matching this pattern. Repeatable.
+    /// Keep files matching this pattern out of the run entirely: the snapshot does not carry them and nothing in them is mutated. Repeatable.
     #[arg(long = "exclude", value_name = "GLOB")]
     pub exclude: Vec<String>,
     /// Mutate only the files that differ from `HEAD`, committed and not. Narrows `--include` rather than widening it.

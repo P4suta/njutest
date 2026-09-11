@@ -21,7 +21,7 @@ version = 1
 [project]
 packages = []                  # cargo package names; empty = every member
 include = []                   # workspace-relative globs a file must match
-exclude = []                   # workspace-relative globs that remove a file
+exclude = []                   # globs removing a file from the snapshot and from mutation
 allow_outside = []             # directories outside the root the build may read
 
 [build]

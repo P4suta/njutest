@@ -353,3 +353,38 @@ fn an_identity_that_names_no_mutation_of_the_catalog_is_refused() {
         String::from_utf8_lossy(&narrowed.stderr)
     );
 }
+
+#[test]
+fn patterns_that_leave_no_file_to_read_are_refused() {
+    let fixture = Fixture::copy("fixture-simple");
+
+    let refused = run(&fixture, &["--include", "src/nosuch/**", "--dry-run"]);
+    assert_ne!(
+        refused.status.code(),
+        Some(0),
+        "a selection that removed every file measures nothing and scores as though \
+         nothing was missed, which is what a mistyped pattern in a configuration looks \
+         like for as long as nobody reads the file count: {}",
+        said(&refused)
+    );
+    let refusal = String::from_utf8_lossy(&refused.stderr).into_owned();
+    assert!(
+        refusal.contains("src/nosuch/**"),
+        "and the refusal says which patterns left nothing: {refusal}"
+    );
+
+    let kept = run(&fixture, &["--include", "src/**", "--dry-run"]);
+    assert_eq!(
+        kept.status.code(),
+        Some(0),
+        "while patterns that leave a file are the narrowing a person asked for: {}",
+        String::from_utf8_lossy(&kept.stderr)
+    );
+    let excluded = run(&fixture, &["--exclude", "tests/**", "--dry-run"]);
+    assert_eq!(
+        excluded.status.code(),
+        Some(0),
+        "and so is one that removes some files and leaves the rest: {}",
+        String::from_utf8_lossy(&excluded.stderr)
+    );
+}

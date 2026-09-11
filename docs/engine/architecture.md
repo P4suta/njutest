@@ -94,7 +94,10 @@ every byte under `tree` came from the source. A directory found under the
 stable name is swept and copied into again, never adopted; a live, kept, or
 young unowned one makes the run fall back to a fresh name (reported through
 `Snapshot::stable_dir`). `.git` at any depth and `reports/mutation` are
-always excluded; a symbolic link, reparse point, device, or backslash-named
+always excluded, and so is everything `[project] exclude` names — which is why
+excluding a file the crate declares as a module leaves a tree that does not
+compile, and why a pattern that is meant to keep code out of the mutations
+rather than out of the tree belongs in `include`; a symbolic link, reparse point, device, or backslash-named
 entry is refused with the first offending path in sorted order.
 
 The manifest is sorted by path and hashed under the domain

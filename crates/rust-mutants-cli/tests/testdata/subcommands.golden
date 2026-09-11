@@ -42,7 +42,8 @@ Options:
           Only mutate files matching this pattern. Repeatable
 
       --exclude <GLOB>
-          Never mutate files matching this pattern. Repeatable
+          Keep files matching this pattern out of the run entirely: the snapshot does not carry them
+          and nothing in them is mutated. Repeatable
 
       --changed
           Mutate only the files that differ from `HEAD`, committed and not. Narrows `--include`
@@ -234,7 +235,8 @@ Options:
           Only mutate files matching this pattern. Repeatable
 
       --exclude <GLOB>
-          Never mutate files matching this pattern. Repeatable
+          Keep files matching this pattern out of the run entirely: the snapshot does not carry them
+          and nothing in them is mutated. Repeatable
 
       --changed
           Mutate only the files that differ from `HEAD`, committed and not. Narrows `--include`
@@ -358,7 +360,8 @@ Options:
           Only mutate files matching this pattern. Repeatable
 
       --exclude <GLOB>
-          Never mutate files matching this pattern. Repeatable
+          Keep files matching this pattern out of the run entirely: the snapshot does not carry them
+          and nothing in them is mutated. Repeatable
 
       --changed
           Mutate only the files that differ from `HEAD`, committed and not. Narrows `--include`
@@ -489,7 +492,8 @@ Options:
           Only mutate files matching this pattern. Repeatable
 
       --exclude <GLOB>
-          Never mutate files matching this pattern. Repeatable
+          Keep files matching this pattern out of the run entirely: the snapshot does not carry them
+          and nothing in them is mutated. Repeatable
 
       --changed
           Mutate only the files that differ from `HEAD`, committed and not. Narrows `--include`
@@ -616,7 +620,8 @@ Options:
           Only mutate files matching this pattern. Repeatable
 
       --exclude <GLOB>
-          Never mutate files matching this pattern. Repeatable
+          Keep files matching this pattern out of the run entirely: the snapshot does not carry them
+          and nothing in them is mutated. Repeatable
 
       --changed
           Mutate only the files that differ from `HEAD`, committed and not. Narrows `--include`
@@ -743,7 +748,8 @@ Options:
           Only mutate files matching this pattern. Repeatable
 
       --exclude <GLOB>
-          Never mutate files matching this pattern. Repeatable
+          Keep files matching this pattern out of the run entirely: the snapshot does not carry them
+          and nothing in them is mutated. Repeatable
 
       --changed
           Mutate only the files that differ from `HEAD`, committed and not. Narrows `--include`
@@ -874,7 +880,8 @@ Options:
           Only mutate files matching this pattern. Repeatable
 
       --exclude <GLOB>
-          Never mutate files matching this pattern. Repeatable
+          Keep files matching this pattern out of the run entirely: the snapshot does not carry them
+          and nothing in them is mutated. Repeatable
 
       --changed
           Mutate only the files that differ from `HEAD`, committed and not. Narrows `--include`
@@ -998,7 +1005,8 @@ Options:
           Only mutate files matching this pattern. Repeatable
 
       --exclude <GLOB>
-          Never mutate files matching this pattern. Repeatable
+          Keep files matching this pattern out of the run entirely: the snapshot does not carry them
+          and nothing in them is mutated. Repeatable
 
       --changed
           Mutate only the files that differ from `HEAD`, committed and not. Narrows `--include`
