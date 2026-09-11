@@ -342,3 +342,45 @@ fn a_cache_that_names_no_tree_is_spared_as_it_always_was() {
     );
     assert_eq!(swept.cached, 1);
 }
+
+#[test]
+fn the_size_of_a_directory_is_every_regular_file_below_it() {
+    use rust_mutants::tempowner::directory_size;
+
+    let root = tempfile::tempdir().expect("a directory");
+    let nested = root.path().join("one").join("two");
+    fs::create_dir_all(&nested).expect("directories below it");
+    fs::write(root.path().join("top"), b"1234567890").expect("a file at the top");
+    fs::write(nested.join("deep"), b"12345").expect("a file two levels down");
+
+    assert_eq!(
+        directory_size(root.path()),
+        15,
+        "a sweep says how much room it gave back, and a directory it walked only the top \
+         of says a number smaller than the room"
+    );
+    assert_eq!(
+        directory_size(&nested),
+        5,
+        "and the same question about a directory below it is about that one"
+    );
+}
+
+#[test]
+fn a_directory_with_nothing_in_it_and_one_that_is_not_there_are_both_nothing() {
+    use rust_mutants::tempowner::directory_size;
+
+    let root = tempfile::tempdir().expect("a directory");
+    assert_eq!(
+        directory_size(root.path()),
+        0,
+        "a directory with nothing in it gave back nothing"
+    );
+    assert_eq!(
+        directory_size(&root.path().join("was-never-made")),
+        0,
+        "and a directory that is not there is the same answer rather than a failure: \
+         both a sweep and a cache ask this while something else is removing what they \
+         are counting, and neither may stop because the answer moved"
+    );
+}

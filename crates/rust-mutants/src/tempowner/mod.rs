@@ -553,8 +553,17 @@ fn legacy(entry: &fs::DirEntry, now: Timestamp) -> io::Result<Verdict> {
     }
 }
 
-/// Adds up the regular files under `dir`, best effort: the number is for a person reading a log line, and a sweep must not fail to reclaim a directory because it could not measure one file inside it.
-fn directory_size(dir: &Path) -> u64 {
+/// Adds up the regular files under `dir`, best effort.
+///
+/// The number is for a person reading a line, and every failure to read one
+/// entry is passed over: a sweep must not fail to reclaim a directory because
+/// it could not measure one file inside it, and a cache must not fail to
+/// report its size because one layer of it went away while being counted.
+/// Both products ask this, so it is asked in one place; a directory that is
+/// not there at all is nothing rather than a failure, which is the same
+/// answer as a directory with nothing in it and is the right one for both.
+#[must_use]
+pub fn directory_size(dir: &Path) -> u64 {
     let mut total = 0u64;
     let mut pending = vec![dir.to_path_buf()];
     while let Some(current) = pending.pop() {

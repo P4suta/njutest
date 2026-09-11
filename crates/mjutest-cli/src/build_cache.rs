@@ -307,7 +307,10 @@ impl BuildCache {
     /// that must be exact.
     #[must_use]
     pub fn size(&self) -> u64 {
-        self.layers().iter().map(|dir| size_of(dir)).sum()
+        self.layers()
+            .iter()
+            .map(|dir| rust_mutants::tempowner::directory_size(dir))
+            .sum()
     }
 
     /// Removes the least recently used artifacts until every layer together holds at most `max_bytes`.
@@ -321,7 +324,9 @@ impl BuildCache {
         let mut swept = Swept::default();
         let mut artifacts: Vec<(std::time::SystemTime, u64, PathBuf)> = Vec::new();
         for dir in self.layers() {
-            swept.before = swept.before.saturating_add(size_of(&dir));
+            swept.before = swept
+                .before
+                .saturating_add(rust_mutants::tempowner::directory_size(&dir));
             if is_busy(&dir) {
                 swept.busy.push(dir);
                 continue;
@@ -417,28 +422,4 @@ fn collectable(dir: &Path) -> Vec<(std::time::SystemTime, u64, PathBuf)> {
         }
     }
     found
-}
-
-/// Every regular file under `dir`, added up. Best effort: the number is for a person reading a line.
-fn size_of(dir: &Path) -> u64 {
-    let mut total = 0u64;
-    let mut pending = vec![dir.to_path_buf()];
-    while let Some(current) = pending.pop() {
-        let Ok(entries) = fs::read_dir(&current) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let Ok(kind) = entry.file_type() else {
-                continue;
-            };
-            if kind.is_dir() {
-                pending.push(entry.path());
-            } else if kind.is_file()
-                && let Ok(metadata) = entry.metadata()
-            {
-                total = total.saturating_add(metadata.len());
-            }
-        }
-    }
-    total
 }
