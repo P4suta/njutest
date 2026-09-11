@@ -348,3 +348,32 @@ fn walk(directory: &Path) -> Vec<std::path::PathBuf> {
     }
     found
 }
+
+#[test]
+fn a_part_the_bundle_does_not_hold_is_not_a_directory_in_it_either() {
+    let fixture = Fixture::copy("fixture-simple");
+    let ran = against(&fixture, &["run", "--offline", "--locked", "--no-coverage"]);
+    assert!(ran.code <= 1, "{}{}", ran.out, ran.err);
+
+    let gathered = against(&fixture, &["diagnostics"]);
+    let bundle = bundle_of(&gathered);
+    let document = manifest(&bundle);
+    let absent: Vec<&str> = document["absent"]
+        .as_array()
+        .expect("what it does not hold")
+        .iter()
+        .filter_map(serde_json::Value::as_str)
+        .collect();
+    assert!(
+        absent.contains(&"trace"),
+        "a run that recorded nothing left no recording: {absent:?}"
+    );
+    for name in &absent {
+        assert!(
+            !bundle.join(name).exists(),
+            "and nothing of it is in the bundle: a directory that is there beside a \
+             manifest that says it is absent is two answers to one question, and the one \
+             a person opening the bundle reads first is the directory: {name}"
+        );
+    }
+}

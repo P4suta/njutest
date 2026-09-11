@@ -116,7 +116,10 @@ pub fn copy(from: &Path, to: &PathBuf) -> bool {
 /// Copies a directory, answering whether it was there and held anything.
 ///
 /// A directory that is there and empty held nothing, and saying it was there
-/// would put a name in the bundle with nothing behind it.
+/// would put a name in the bundle with nothing behind it. Nothing is left
+/// behind either: a directory named in the bundle and named absent in the
+/// manifest is two answers to one question, and the one a person opening the
+/// bundle reads first is the directory.
 #[must_use]
 pub fn copy_tree(from: &Path, to: &Path) -> bool {
     let Ok(entries) = std::fs::read_dir(from) else {
@@ -134,6 +137,9 @@ pub fn copy_tree(from: &Path, to: &Path) -> bool {
             copy(&entry.path(), &target)
         };
         copied = copied || done;
+    }
+    if !copied {
+        let _removed = std::fs::remove_dir_all(to);
     }
     copied
 }

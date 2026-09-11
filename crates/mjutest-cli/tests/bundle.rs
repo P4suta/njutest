@@ -63,11 +63,18 @@ fn a_directory_is_carried_whole_and_an_empty_one_is_not_carried_at_all() {
 
     let empty = dir.path().join("empty");
     std::fs::create_dir_all(&empty).expect("a directory with nothing in it");
+    let carried = dir.path().join("bundle/empty");
     assert!(
-        !copy_tree(&empty, &dir.path().join("bundle/empty")),
+        !copy_tree(&empty, &carried),
         "while a directory that is there and holds nothing held nothing: saying it was \
          there would put a name in the manifest with nothing behind it, and a reader \
          would go looking for what it holds"
+    );
+    assert!(
+        !carried.exists(),
+        "and nothing of it is left in the bundle: a directory that is there beside a \
+         manifest that says it is absent is two answers to one question, and the one a \
+         person opening the bundle reads first is the directory"
     );
     assert!(
         !copy_tree(
@@ -84,11 +91,16 @@ fn a_tree_that_holds_only_directories_is_carried_as_nothing() {
     let from = dir.path().join("shells");
     std::fs::create_dir_all(from.join("one/two")).expect("directories and no files");
 
+    let carried = dir.path().join("bundle/shells");
     assert!(
-        !copy_tree(&from, &dir.path().join("bundle/shells")),
+        !copy_tree(&from, &carried),
         "a tree of empty directories held nothing, however deep it goes: a bundle that \
          said it carried this would send a reader through three levels to find out it \
          was empty"
+    );
+    assert!(
+        !carried.exists(),
+        "and none of those levels is left behind to send them"
     );
 
     std::fs::write(from.join("one/two/deep.txt"), "deep\n").expect("one file, three levels down");
