@@ -38,10 +38,7 @@ impl Settings {
     /// # Errors
     /// Returns what is wrong with the configuration, or with a duration a flag spells.
     pub fn resolve(scope: &cli::Scope, environment: &Environment) -> Result<Self, CliError> {
-        let root = scope.root.as_ref().map_or_else(
-            || environment.working_directory.clone(),
-            |named| environment.working_directory.join(named),
-        );
+        let root = environment.rooted(scope.root.as_deref());
         let (source, mut config) = read(scope, &root)?;
         if let Some(tier) = scope.tier {
             config.mutation.tier = tier.tier();

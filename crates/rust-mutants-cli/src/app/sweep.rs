@@ -140,9 +140,7 @@ fn measurements(environment: &Environment) -> String {
 
 /// The directories runs were asked to keep, listed or removed.
 fn preserved(asked: &Sweeping<'_>, environment: &Environment) -> Result<String, CliError> {
-    let root = asked
-        .root
-        .map_or_else(|| environment.working_directory.clone(), Path::to_path_buf);
+    let root = environment.rooted(asked.root);
     let directory = root.join(crate::config::DEFAULT_REPORTS_DIRECTORY);
     if asked.kept {
         let (removed, _empty) = crate::kept::Ledger::clear(&directory)

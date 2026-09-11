@@ -43,9 +43,7 @@ pub(super) fn doctor_document(
     cancel: &Cancel,
 ) -> doctor_report::DoctorDocument {
     use doctor_report::Standing::{Fail, Ok as Well};
-    let root = asked
-        .root
-        .map_or_else(|| environment.working_directory.clone(), Path::to_path_buf);
+    let root = environment.rooted(asked.root);
     let mut checks: Vec<doctor_report::Check> = Vec::new();
 
     let toolchain = rust_mutants::cargo::Toolchain::locate(&locating(environment), &root, cancel);

@@ -546,3 +546,34 @@ fn a_reserved_variable_whose_value_is_empty_is_not_one_that_is_set() {
         ran.err
     );
 }
+
+#[test]
+fn a_root_spelled_as_a_relative_path_is_relative_to_where_the_command_was_told_it_is() {
+    let fixture = Fixture::copy("fixture-workspace");
+    let mut environment = environment(&fixture);
+    environment.working_directory = fixture.root().to_path_buf();
+
+    let said = asked(&environment, &["doctor", "--json", "--root", "crates/core"]);
+    let document: serde_json::Value = serde_json::from_str(&said.out)
+        .unwrap_or_else(|error| panic!("the doctor answers as a document: {error}\n{}", said.err));
+    assert_eq!(
+        standing(&document, "workspace"),
+        "fail",
+        "a relative root is relative to the directory the command was told it is in, not \
+         to the one the process happens to be in: a caller that says where it is and \
+         then gets an answer about somewhere else has been told about a tree it did not \
+         name: {}{}",
+        said.out,
+        said.err
+    );
+    let detail = check(&document, "workspace")["detail"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
+    assert!(
+        detail.contains("member of") && detail.contains("crates/core"),
+        "and the answer is about the member it was asked about rather than about a \
+         directory of that name below wherever the process happens to be, which is a \
+         different tree and usually is not there at all: {detail}"
+    );
+}

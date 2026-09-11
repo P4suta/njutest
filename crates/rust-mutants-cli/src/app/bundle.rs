@@ -44,9 +44,7 @@ pub(super) fn bundle(
     stdout: &mut dyn Write,
     cancel: &Cancel,
 ) -> Result<u8, CliError> {
-    let root = asked
-        .root
-        .map_or_else(|| environment.working_directory.clone(), Path::to_path_buf);
+    let root = environment.rooted(asked.root);
     let reports = root.join(crate::config::DEFAULT_REPORTS_DIRECTORY);
     let directory = match asked.run {
         Some(named) => {

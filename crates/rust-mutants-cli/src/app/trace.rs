@@ -282,7 +282,7 @@ fn stored(wanted: &Where<'_>, environment: &Environment) -> Result<(String, Path
 
 /// Where stored runs and recordings are kept.
 fn reports_directory(root: Option<&Path>, environment: &Environment) -> Result<PathBuf, CliError> {
-    let root = root.map_or_else(|| environment.working_directory.clone(), Path::to_path_buf);
+    let root = environment.rooted(root);
     let config = crate::config::Config::load(&root)?;
     Ok(root.join(&config.reports.directory))
 }

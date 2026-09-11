@@ -25,7 +25,7 @@ pub mod ui;
 use std::ffi::OsString;
 use std::fmt::Write as _;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use rust_mutants::runner::Cancel;
 
@@ -49,6 +49,24 @@ pub struct Environment {
     pub stdout_is_terminal: bool,
     /// Whether what the command writes is painted, which `--color` settles from the two above.
     pub paints: bool,
+}
+
+impl Environment {
+    /// The workspace a command was pointed at: what it named, or where it was started.
+    ///
+    /// A name that is not an absolute path is resolved against the working
+    /// directory the command was given rather than against the process's own.
+    /// The two are the same for the binary, which composes one from the other,
+    /// and they are not the same for anything else that calls the entry point:
+    /// a caller that says where it is and then gets an answer about somewhere
+    /// else has been told about a tree it did not name.
+    #[must_use]
+    pub fn rooted(&self, named: Option<&Path>) -> PathBuf {
+        named.map_or_else(
+            || self.working_directory.clone(),
+            |path| self.working_directory.join(path),
+        )
+    }
 }
 
 /// The exit code of a run that was interrupted.

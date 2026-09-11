@@ -1223,7 +1223,7 @@ fn init(
     environment: &Environment,
     stdout: &mut dyn Write,
 ) -> Result<u8, CliError> {
-    let root = root.map_or_else(|| environment.working_directory.clone(), Path::to_path_buf);
+    let root = environment.rooted(root);
     let path = root.join(crate::config::FILE_NAME);
     if path.exists() && !force {
         return Err(CliError::FileExists { path });
@@ -1347,7 +1347,7 @@ fn report_back(
         output,
         tui,
     } = wanted;
-    let root = root.map_or_else(|| environment.working_directory.clone(), Path::to_path_buf);
+    let root = environment.rooted(root);
     let config = crate::config::Config::load(&root)?;
     let directory = root.join(&config.reports.directory);
     let path = match run {
@@ -1493,7 +1493,7 @@ fn parts(
     if runs.is_empty() {
         return Ok(reports.to_vec());
     }
-    let root = root.map_or_else(|| environment.working_directory.clone(), Path::to_path_buf);
+    let root = environment.rooted(root);
     let directory = root.join(crate::config::DEFAULT_REPORTS_DIRECTORY);
     let mut found: Vec<PathBuf> = reports.to_vec();
     for named in runs {
