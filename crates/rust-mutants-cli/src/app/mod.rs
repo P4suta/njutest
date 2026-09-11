@@ -932,6 +932,41 @@ fn keyed(session: &Session, settings: &Settings, args: &[String]) -> crate::outc
 ///
 /// # Errors
 /// A `--file` whose lines are not a range.
+/// Refuses a rule or family name this release does not know.
+///
+/// A name that names nothing narrows a run to nothing and the run reports that
+/// nothing was missed, or widens a skip to nothing and the rule a person meant
+/// to pass over runs anyway. Both are answers they cannot tell from the ones
+/// they asked for, and the set of names is compiled into the release, so
+/// nothing has to be built to say which it is.
+///
+/// # Errors
+/// [`CliError::InvalidValue`] naming the flag, the value, and where the names
+/// are.
+fn known(flag: &str, named: &[String], rules: bool) -> Result<(), CliError> {
+    let registry = rust_mutants::rule::Registry::canonical();
+    for one in named {
+        let held = if rules {
+            registry.lookup(one).is_some()
+        } else {
+            rust_mutants::rule::Family::ALL
+                .iter()
+                .any(|family| family.name() == one)
+        };
+        if !held {
+            return Err(CliError::InvalidValue {
+                flag: flag.to_owned(),
+                value: one.clone(),
+                expected: format!(
+                    "one of the {} this release knows, which `rust-mutants rules` lists",
+                    if rules { "operators" } else { "families" }
+                ),
+            });
+        }
+    }
+    Ok(())
+}
+
 fn filter(
     command: &cli::Command,
     settings: &Settings,
@@ -951,6 +986,10 @@ fn filter(
     else {
         return Ok(run::Filter::default());
     };
+    known("--rule", rules, true)?;
+    known("--skip-rule", skip_rules, true)?;
+    known("--family", families, false)?;
+    known("--skip-family", skip_families, false)?;
     narrowed(
         &session
             .files()

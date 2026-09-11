@@ -276,3 +276,45 @@ fn a_file_the_walk_found_nothing_in_is_still_a_file_it_read() {
         String::from_utf8_lossy(&narrowed.stderr)
     );
 }
+
+#[test]
+fn a_rule_or_family_this_release_does_not_know_is_refused() {
+    let fixture = Fixture::copy("fixture-simple");
+
+    for (flag, value) in [
+        ("--rule", "nosuch-rule"),
+        ("--skip-rule", "nosuch-rule"),
+        ("--family", "nosuch-family"),
+        ("--skip-family", "nosuch-family"),
+    ] {
+        let refused = run(&fixture, &[flag, value, "--dry-run"]);
+        assert_ne!(
+            refused.status.code(),
+            Some(0),
+            "{flag} {value} names nothing: narrowing to it measures nothing and reports \
+             that nothing was missed, and skipping by it runs the rule a person meant to \
+             pass over: {}",
+            said(&refused)
+        );
+        let refusal = String::from_utf8_lossy(&refused.stderr).into_owned();
+        assert!(
+            refusal.contains(value) && refusal.contains(flag) && refusal.contains("rules"),
+            "and the refusal names the flag, the value, and where the names are: {refusal}"
+        );
+    }
+
+    let held = run(&fixture, &["--rule", "gt-to-ge", "--dry-run"]);
+    assert_eq!(
+        held.status.code(),
+        Some(0),
+        "while a rule this release knows narrows the run: {}",
+        String::from_utf8_lossy(&held.stderr)
+    );
+    let by_family = run(&fixture, &["--family", "comparison", "--dry-run"]);
+    assert_eq!(
+        by_family.status.code(),
+        Some(0),
+        "and so does a family: {}",
+        String::from_utf8_lossy(&by_family.stderr)
+    );
+}
