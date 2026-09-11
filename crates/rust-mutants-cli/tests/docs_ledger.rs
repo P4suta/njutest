@@ -305,3 +305,41 @@ fn every_schema_this_workspace_ships_is_one_a_test_holds_a_real_document_to() {
          document that will not fit. {unheld:?} is named by no test in this workspace"
     );
 }
+
+#[test]
+fn every_finding_kind_a_report_can_carry_is_one_a_test_names() {
+    use rust_mutants_cli::run::FindingKind;
+
+    let suites = suites();
+    let unnamed: Vec<&str> = FindingKind::ALL
+        .into_iter()
+        .filter(|kind| !suites.contains(kind.name()) && !suites.contains(&format!("{kind:?}")))
+        .map(FindingKind::name)
+        .collect();
+    assert!(
+        unnamed.is_empty(),
+        "a kind no test names is one no run has ever been seen to report, and a kind no \
+         run can report is a row in the reader's table that never appears — declared, \
+         named, documented, and made by nothing: {unnamed:?}"
+    );
+}
+
+/// Every test of this workspace, as one text.
+fn suites() -> String {
+    let root = mjutest_devkit::paths::workspace_root();
+    let mut read = String::new();
+    for crate_name in ["mjutest-cli", "rust-mutants-cli", "rust-mutants", "mjutest"] {
+        let directory = root.join("crates").join(crate_name).join("tests");
+        let Ok(entries) = std::fs::read_dir(&directory) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            if entry.path().extension().is_some_and(|one| one == "rs") {
+                read.push_str(&std::fs::read_to_string(entry.path()).unwrap_or_default());
+                read.push('\n');
+            }
+        }
+    }
+    assert!(read.len() > 100_000, "the suites are read: {}", read.len());
+    read
+}
