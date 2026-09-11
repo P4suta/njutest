@@ -299,3 +299,100 @@ fn a_tree_with_no_stored_run_explains_a_mutation_by_preparing_one_when_asked() {
          word here would be read as one that had: {said}"
     );
 }
+
+#[test]
+fn one_guard_is_shown_with_the_line_of_the_file_it_landed_on() {
+    let fixture = Fixture::copy("fixture-simple");
+    let listed = String::from_utf8_lossy(
+        &against(&fixture, &["list", "--tier", "all", "--file", "src/lib.rs"]).stdout,
+    )
+    .into_owned();
+    let short = listed
+        .lines()
+        .find(|line| line.contains("gt-to-ge"))
+        .and_then(|line| line.split_whitespace().next())
+        .expect("a gt-to-ge mutant")
+        .to_owned();
+
+    let shown = String::from_utf8_lossy(
+        &against(
+            &fixture,
+            &[
+                "instrument",
+                "--tier",
+                "all",
+                "--file",
+                "src/lib.rs",
+                "--mutant",
+                &short,
+            ],
+        )
+        .stdout,
+    )
+    .into_owned();
+
+    for named in ["MUTANT", "FORM", "SITE"] {
+        assert!(
+            shown.contains(named),
+            "a reader asking what one guard is gets its identity, the shape it was \
+             written in, and where it sits: {named} is missing from {shown}"
+        );
+    }
+    let rewrite = String::from_utf8_lossy(
+        &against(
+            &fixture,
+            &["instrument", "--tier", "all", "--file", "src/lib.rs"],
+        )
+        .stdout,
+    )
+    .into_owned();
+    let landed = shown
+        .lines()
+        .last()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .expect("the line it landed on");
+    assert!(
+        rewrite.lines().any(|line| line.trim() == landed),
+        "and the whole line of the rewrite the guard's branch sits on — the rewrite \
+         rather than the file a person wrote, because what is being asked about is the \
+         guard and a guard out of context is a string nobody can place: {landed:?} is in \
+         no line of the rewrite"
+    );
+    assert!(
+        landed.contains("::active("),
+        "which is a line with the guard in it: {landed:?}"
+    );
+}
+
+#[test]
+fn a_guard_nothing_answers_to_is_said_rather_than_shown_as_an_empty_one() {
+    let fixture = Fixture::copy("fixture-simple");
+    let shown = String::from_utf8_lossy(
+        &against(
+            &fixture,
+            &[
+                "instrument",
+                "--tier",
+                "all",
+                "--file",
+                "src/lib.rs",
+                "--mutant",
+                "ffffffffffff",
+            ],
+        )
+        .stdout,
+    )
+    .into_owned();
+    assert!(
+        shown.contains("ffffffffffff") && shown.contains("src/lib.rs"),
+        "a prefix that names no guard of the file names both, because the usual cause is \
+         a mutant of another file and the answer has to say which file was searched: \
+         {shown}"
+    );
+    assert!(
+        !shown.contains("FORM"),
+        "and nothing of a guard is printed, or a reader reads an empty one as the guard \
+         they asked for: {shown}"
+    );
+}
