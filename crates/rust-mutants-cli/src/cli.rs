@@ -150,6 +150,9 @@ pub enum Command {
         /// The mutant, by identity or by any prefix that names exactly one.
         #[arg(value_name = "PREFIX")]
         mutant: String,
+        /// The run to read it from. The newest when none is named.
+        #[arg(long, value_name = "RUN")]
+        run: Option<String>,
         /// Prepare the tree again rather than reading what the last run stored.
         #[arg(long)]
         fresh: bool,

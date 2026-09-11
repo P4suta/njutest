@@ -6,6 +6,7 @@
 #![expect(
     clippy::expect_used,
     clippy::indexing_slicing,
+    clippy::panic,
     reason = "a test reports a setup failure by panicking and reads a document as a table"
 )]
 
@@ -281,5 +282,169 @@ fn an_edit_to_a_file_a_target_compiled_is_an_answer_that_stops_answering() {
         reused(&fixture),
         0,
         "the file the tests run is the file that decides; nothing about it is remembered"
+    );
+}
+
+/// The stored report of the run a test named, as a document a test can rewrite.
+fn stored(fixture: &Fixture) -> (std::path::PathBuf, serde_json::Value) {
+    let path = fixture
+        .root()
+        .join("reports/mutation/monday/run-report-v1.json");
+    let text = std::fs::read_to_string(&path).expect("the run this test named");
+    (path, serde_json::from_str(&text).expect("a report is JSON"))
+}
+
+fn rewritten(path: &std::path::Path, document: &serde_json::Value) {
+    std::fs::write(path, serde_json::to_string(document).expect("JSON")).expect("the report");
+}
+
+fn row_of(document: &serde_json::Value, id: &str) -> usize {
+    document["mutants"]
+        .as_array()
+        .expect("mutants")
+        .iter()
+        .position(|mutant| mutant["id"] == id)
+        .expect("the row this test just read an id from")
+}
+
+fn one_with(document: &serde_json::Value, outcome: &str) -> String {
+    document["mutants"]
+        .as_array()
+        .expect("mutants")
+        .iter()
+        .find(|mutant| mutant["outcome"] == outcome)
+        .and_then(|mutant| mutant["id"].as_str())
+        .unwrap_or_else(|| panic!("a mutant the run reported as {outcome}"))
+        .to_owned()
+}
+
+#[test]
+fn a_replay_says_what_the_stored_answer_was_and_never_more_than_it_knows() {
+    let fixture = Fixture::copy("fixture-simple");
+    let _measured = against(
+        &fixture,
+        &[
+            "run",
+            "--offline",
+            "--locked",
+            "--tier",
+            "all",
+            "--no-coverage",
+            "--ui",
+            "quiet",
+            "--run-id",
+            "monday",
+        ],
+    );
+    let (path, document) = stored(&fixture);
+    let killed = one_with(&document, "killed");
+
+    let mut without = document.clone();
+    without["mutants"] = serde_json::json!([]);
+    rewritten(&path, &without);
+    let text = said(&against(
+        &fixture,
+        &["replay", "--offline", "--locked", "--tier", "all", &killed],
+    ));
+    assert!(
+        text.contains("was nothing, now killed"),
+        "a replay of a mutation no stored run answered for says the run said nothing, \
+         because \"still killed\" would put a claim in a run's mouth: {text}"
+    );
+
+    let mut disagreeing = document;
+    let at = row_of(&disagreeing, &killed);
+    disagreeing["mutants"][at]["outcome"] = serde_json::json!("survived");
+    rewritten(&path, &disagreeing);
+    let text = said(&against(
+        &fixture,
+        &["replay", "--offline", "--locked", "--tier", "all", &killed],
+    ));
+    assert!(
+        text.contains("was survived, now killed"),
+        "an answer that moved is reported as having moved, both halves named: {text}"
+    );
+
+    let mut proven = disagreeing;
+    proven["mutants"][at]["not_run_reason"] = serde_json::json!("discharged");
+    rewritten(&path, &proven);
+    let output = against(
+        &fixture,
+        &["replay", "--offline", "--locked", "--tier", "all", &killed],
+    );
+    let text = said(&output);
+    assert!(
+        text.contains("killed, and a proof discharged it: the proof is wrong"),
+        "a proof said no test could notice this mutation and a test noticed it. That is \
+         a fact about this engine and not about the project's tests, and the replay is \
+         the one place that says so: {text}"
+    );
+}
+
+#[test]
+fn a_replay_told_to_read_a_run_that_is_not_there_says_so_rather_than_reading_nothing() {
+    let fixture = Fixture::copy("fixture-simple");
+    let _measured = against(
+        &fixture,
+        &[
+            "run",
+            "--offline",
+            "--locked",
+            "--tier",
+            "all",
+            "--no-coverage",
+            "--ui",
+            "quiet",
+            "--run-id",
+            "monday",
+        ],
+    );
+    let (path, document) = stored(&fixture);
+    let killed = one_with(&document, "killed");
+
+    let output = against(
+        &fixture,
+        &[
+            "replay",
+            "--offline",
+            "--locked",
+            "--tier",
+            "all",
+            "--run",
+            "tuesday",
+            &killed,
+        ],
+    );
+    let message = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "a run nobody stored is not a run that said nothing about this mutation: {}",
+        said(&output)
+    );
+    assert!(
+        message.contains("tuesday") && message.contains("reports/mutation"),
+        "and the refusal names what was asked for and where runs are kept: {message}"
+    );
+
+    std::fs::write(&path, "{ not a report ").expect("the report");
+    let unreadable = against(
+        &fixture,
+        &[
+            "replay",
+            "--offline",
+            "--locked",
+            "--tier",
+            "all",
+            "--run",
+            "monday",
+            &killed,
+        ],
+    );
+    assert_eq!(
+        unreadable.status.code(),
+        Some(2),
+        "a stored run that cannot be read is not a stored run that answered nothing: {}",
+        said(&unreadable)
     );
 }

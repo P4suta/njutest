@@ -16,7 +16,7 @@ use std::path::Path;
 use rust_mutants::runner::Cancel;
 
 use super::doctor::{Asked, doctor_document};
-use super::stored::newest;
+use super::stored::report_of;
 use super::{json_line, locating, trace, write};
 use crate::Environment;
 use crate::error::CliError;
@@ -46,23 +46,12 @@ pub(super) fn bundle(
 ) -> Result<u8, CliError> {
     let root = environment.rooted(asked.root);
     let reports = root.join(crate::config::DEFAULT_REPORTS_DIRECTORY);
-    let directory = match asked.run {
-        Some(named) => {
-            let directory = reports.join(named);
-            if !directory.join(run_report::FILE_NAME).is_file() {
-                return Err(CliError::ReportMissing {
-                    message: format!("{named:?} names no stored run under {}", reports.display()),
-                });
-            }
-            directory
-        }
-        None => newest(&reports)?
-            .parent()
-            .map(Path::to_path_buf)
-            .ok_or_else(|| CliError::ReportMissing {
-                message: format!("no run report is stored under {}", reports.display()),
-            })?,
-    };
+    let directory = report_of(&reports, asked.run)?
+        .parent()
+        .map(Path::to_path_buf)
+        .ok_or_else(|| CliError::ReportMissing {
+            message: format!("no run report is stored under {}", reports.display()),
+        })?;
     let run_id = directory
         .file_name()
         .map_or_else(String::new, |name| name.to_string_lossy().into_owned());

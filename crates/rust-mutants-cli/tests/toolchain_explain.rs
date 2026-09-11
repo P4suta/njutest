@@ -396,3 +396,44 @@ fn a_guard_nothing_answers_to_is_said_rather_than_shown_as_an_empty_one() {
          they asked for: {shown}"
     );
 }
+
+#[test]
+fn explain_reads_the_run_it_is_told_to_and_refuses_a_name_nobody_stored() {
+    let fixture = Fixture::copy("fixture-simple");
+    let named = against(
+        &fixture,
+        &[
+            "run",
+            "--tier",
+            "all",
+            "--no-coverage",
+            "--jobs",
+            "1",
+            "--ui",
+            "quiet",
+            "--run-id",
+            "monday",
+        ],
+    );
+    assert_eq!(named.status.code(), Some(1), "{named:?}");
+
+    let output = against(&fixture, &["explain", "e5e8", "--run", "monday"]);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("WHERE     src/lib.rs:11:10"),
+        "a run a person named is a run they can read one mutant out of: {output:?}"
+    );
+
+    let wrong = against(&fixture, &["explain", "e5e8", "--run", "tuesday"]);
+    assert_eq!(
+        wrong.status.code(),
+        Some(2),
+        "and a name nobody stored is refused rather than answered from another run: {}",
+        String::from_utf8_lossy(&wrong.stdout)
+    );
+    let message = String::from_utf8_lossy(&wrong.stderr);
+    assert!(
+        message.contains("tuesday") && message.contains("reports/mutation"),
+        "naming what was asked for and where runs are kept: {message}"
+    );
+}

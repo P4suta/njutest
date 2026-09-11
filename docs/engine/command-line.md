@@ -57,7 +57,7 @@ read them too, so what those preview is what a run would do.
 | `--timeout DURATION` | a mutant's own bound; five times the target's baseline when absent |
 | `--no-verify` | do not run the instrumented baseline first |
 | `--no-doctests` | leave a library's documented examples out |
-| `--skip-target ID` | never start this target, as `pkg/kind/name` |
+| `--skip-target ID` | never start this target, as `pkg/kind/name`; a name the workspace declares no target for is refused (`RM5004`) |
 | `--test NAME`, `--target NAME` | one test, one test target |
 | `--mutant PREFIX` | one mutant |
 | `--coverage`, `--no-coverage` | build once with LLVM coverage instrumentation, and route by what it measured |
@@ -90,6 +90,12 @@ read them too, so what those preview is what a run would do.
 | `doctor` | `--json` |
 | `init` | `--force` |
 | `cache` | `--gc`, `--all`, `--kept`, `--clear-outcomes`, `--cache-dir DIR` |
+
+`--run` names a stored run, and the newest is read when nothing is named. A
+name no directory answers to is refused (`RM0007`) rather than answered from
+another run: a reader who mistyped it would otherwise be told confidently
+about a run they did not ask for, and `replay` would report the stored answer
+as having changed when what changed was which run it read.
 
 ## What a run's exit code says
 

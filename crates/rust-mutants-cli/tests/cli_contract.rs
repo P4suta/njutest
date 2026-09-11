@@ -200,6 +200,70 @@ fn the_command_line_page_and_the_help_texts_name_the_same_flags() {
     );
 }
 
+#[test]
+fn the_flags_the_page_lists_beside_a_command_are_that_command_s_own() {
+    let at = mjutest_devkit::paths::workspace_root().join("docs/engine/command-line.md");
+    let page = std::fs::read_to_string(&at)
+        .unwrap_or_else(|error| panic!("the command line page at {}: {error}", at.display()));
+    let rows = beside_a_command(&page);
+    assert!(
+        rows.len() > 5,
+        "the table that lists a command and its flags is read: {rows:?}"
+    );
+    let mut wrong: Vec<String> = Vec::new();
+    for (command, listed) in rows {
+        let helped = flags(&String::from_utf8_lossy(
+            &rust_mutants(&[command.as_str(), "--help"]).stdout,
+        ));
+        wrong.extend(
+            listed
+                .into_iter()
+                .filter(|flag| !helped.contains(flag))
+                .map(|flag| format!("{command} {flag}")),
+        );
+    }
+    assert!(
+        wrong.is_empty(),
+        "docs/engine/command-line.md lists these beside a command that does not take them: \
+         {wrong:?}. A flag that exists on some other command is not this one's, and a \
+         reader who types what the row says is answered with a usage error"
+    );
+}
+
+/// Every row of the page's one table of commands and their flags, as the command and what it lists.
+fn beside_a_command(page: &str) -> Vec<(String, std::collections::BTreeSet<String>)> {
+    let mut rows = Vec::new();
+    let mut reading = false;
+    for line in page.lines() {
+        if line.starts_with("| Command ") {
+            reading = true;
+            continue;
+        }
+        if reading && !line.starts_with('|') {
+            reading = false;
+            continue;
+        }
+        if !reading || line.starts_with("| ---") {
+            continue;
+        }
+        let mut cells = line.split('|').skip(1);
+        let (Some(named), Some(listed)) = (cells.next(), cells.next()) else {
+            continue;
+        };
+        let Some(command) = named
+            .trim()
+            .trim_matches('`')
+            .split_whitespace()
+            .next()
+            .map(ToOwned::to_owned)
+        else {
+            continue;
+        };
+        rows.push((command, flags(listed)));
+    }
+    rows
+}
+
 /// Every long flag a text spells, as `--name`.
 fn flags(text: &str) -> std::collections::BTreeSet<String> {
     let mut found = std::collections::BTreeSet::new();

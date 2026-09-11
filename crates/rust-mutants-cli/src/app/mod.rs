@@ -79,9 +79,10 @@ pub fn dispatch(
         cli::Command::Explain {
             scope,
             mutant,
+            run,
             fresh: false,
             json,
-        } => stored_explain((scope, mutant, *json), environment, stdout),
+        } => stored_explain((scope, mutant, run.as_deref(), *json), environment, stdout),
         cli::Command::Report {
             root,
             run,
@@ -1127,7 +1128,7 @@ fn replay(
     let (prefix, run) = asked;
     let session = prepared.session;
     let found = session.resolve(prefix)?.clone();
-    let stored = recorded(prepared.settings, run, &found.id);
+    let stored = recorded(prepared.settings, run, &found.id)?;
     let mut request = Request::new(found.display_id.clone());
     if let Some(row) = &stored {
         if !row.target.is_empty() {
@@ -1179,19 +1180,35 @@ fn verdict(stored: Option<&run_report::RunMutantDocument>, now: &str) -> String 
 }
 
 /// What a stored run said about one mutant, when a stored run said anything.
+///
+/// Nothing is what a tree with no run stored under it says, and it is the only
+/// thing that may read as nothing here. A run a caller named and no directory
+/// holds, and a report that is there and cannot be read, are refusals: a
+/// replay that answered "was nothing" to either would put a claim in the mouth
+/// of a run nobody read, and the reader who mistyped `--run` would be told the
+/// stored answer had changed.
+///
+/// # Errors
+/// [`CliError::ReportMissing`] when `run` names no stored run, or when the
+/// report a name resolves to cannot be read as one.
 fn recorded(
     settings: &Settings,
     run: Option<&str>,
     id: &str,
-) -> Option<run_report::RunMutantDocument> {
+) -> Result<Option<run_report::RunMutantDocument>, CliError> {
     let directory = settings.report_directory();
-    let path = match run {
-        Some(named) => directory.join(named).join(run_report::FILE_NAME),
-        None => newest(&directory).ok()?,
+    let path = match stored::report_of(&directory, run) {
+        Ok(path) => path,
+        Err(refusal) if run.is_some() => return Err(refusal),
+        Err(_nothing_stored) => return Ok(None),
     };
-    let text = std::fs::read_to_string(path).ok()?;
-    let document: run_report::RunDocument = serde_json::from_str(&text).ok()?;
-    document.mutants.into_iter().find(|one| one.id == id)
+    let unreadable = |why: &str| CliError::ReportMissing {
+        message: format!("{} is not a run report: {why}", path.display()),
+    };
+    let text = std::fs::read_to_string(&path).map_err(|error| unreadable(&error.to_string()))?;
+    let document: run_report::RunDocument =
+        serde_json::from_str(&text).map_err(|error| unreadable(&error.to_string()))?;
+    Ok(document.mutants.into_iter().find(|one| one.id == id))
 }
 
 /// One mutant, explained from a tree prepared for the purpose.
@@ -1229,14 +1246,14 @@ fn fresh_explain(
 /// instrumented, which is what makes it a thing a person runs while reading a
 /// report rather than a thing they wait for.
 fn stored_explain(
-    asked: (&cli::Scope, &str, bool),
+    asked: (&cli::Scope, &str, Option<&str>, bool),
     environment: &Environment,
     stdout: &mut dyn Write,
 ) -> Result<u8, CliError> {
-    let (scope, prefix, json) = asked;
+    let (scope, prefix, run, json) = asked;
     let settings = Settings::resolve(scope, environment)?;
     let directory = settings.report_directory();
-    let report = newest(&directory)?;
+    let report = stored::report_of(&directory, run)?;
     let run = report.parent().map(Path::to_path_buf).unwrap_or_default();
     let catalog: rust_mutants::report::catalog::CatalogDocument =
         read_document(&run.join(rust_mutants::report::evidence::CATALOG))?;

@@ -59,7 +59,7 @@ pub fn run_id(now: Timestamp) -> String {
 /// Writes the report under `directory/<id>/`, and the pointer that names the newest run.
 ///
 /// # Errors
-/// [`CliError::Writing`] when either the report or the pointer cannot be
+/// [`CliError::WriteFailed`] when either the report or the pointer cannot be
 /// written. A report stored under a pointer that still names the run before it
 /// is read as that run's, so both are written or the run says it failed.
 pub fn store(
@@ -147,6 +147,33 @@ pub fn subdirectories(directory: &Path) -> Vec<PathBuf> {
         .collect();
     found.sort();
     found
+}
+
+/// The report of the run a command was told to read, or of the newest when it was told nothing.
+///
+/// A name is a name a person typed, so one no directory answers to is a
+/// refusal rather than a fall back to the newest: a command that read another
+/// run than the one it was asked for would answer confidently about the wrong
+/// one.
+///
+/// # Errors
+/// [`CliError::ReportMissing`] when `named` is not a stored run under
+/// `directory`, and whatever [`newest`] refuses when nothing is named.
+pub fn report_of(directory: &Path, named: Option<&str>) -> Result<PathBuf, CliError> {
+    let Some(named) = named else {
+        return newest(directory);
+    };
+    let path = directory.join(named).join(run_report::FILE_NAME);
+    if path.is_file() {
+        Ok(path)
+    } else {
+        Err(CliError::ReportMissing {
+            message: format!(
+                "{named:?} names no stored run under {}",
+                directory.display()
+            ),
+        })
+    }
 }
 
 /// The newest stored run, by the pointer the last run wrote, or by name when there is no pointer.
