@@ -208,3 +208,83 @@ fn of(root: &Path, named: &[(&str, &str)]) -> Environment {
     let cache = mjutest_devkit::paths::cache_beside(root).expect("a cache directory");
     environment(root, &cache, named)
 }
+
+#[test]
+fn a_generation_provider_that_cannot_be_asked_is_a_limitation_and_not_a_silence() {
+    let fixture = fixture();
+    std::fs::write(
+        fixture.root.join(".mjutest.toml"),
+        "version = 1\n\n[generation]\ncommand = [\"/nonexistent/generator\"]\n",
+    )
+    .expect("write");
+
+    let verified = mjutest(&fixture, &["verify", "--offline", "--locked"], "");
+    assert_eq!(
+        verified.status.code(),
+        Some(2),
+        "the gap is still there, and a provider that could not answer closes nothing: \
+         {verified:?}"
+    );
+
+    let report = document(&fixture);
+    let named: Vec<&str> = report["limitations"]
+        .as_array()
+        .expect("a report says what it could not do")
+        .iter()
+        .filter_map(|one| one["name"].as_str())
+        .collect();
+    assert!(
+        named.contains(&mjutest_cli::limitation::GENERATION_PROVIDER_UNAVAILABLE),
+        "a person who configured a generator and got no candidates would read the report \
+         as one where the generator had nothing to offer, which is the opposite of what \
+         happened: {named:?}"
+    );
+    let detail = report["limitations"]
+        .as_array()
+        .and_then(|all| {
+            all.iter()
+                .find(|one| one["name"] == mjutest_cli::limitation::GENERATION_PROVIDER_UNAVAILABLE)
+        })
+        .and_then(|one| one["detail"].as_str())
+        .unwrap_or_default();
+    assert!(
+        detail.contains("could not be asked"),
+        "and the sentence says the provider was not asked rather than that it declined: \
+         {detail}"
+    );
+    assert!(
+        report["candidates"].as_array().is_none_or(Vec::is_empty),
+        "and nothing was offered: {report}"
+    );
+}
+
+#[test]
+fn a_provider_whose_answer_is_not_one_is_a_limitation_that_names_the_finding() {
+    let fixture = fixture();
+    declaring(&fixture);
+
+    let verified = mjutest(
+        &fixture,
+        &["verify", "--offline", "--locked"],
+        "not a document at all",
+    );
+    assert_eq!(verified.status.code(), Some(2), "{verified:?}");
+
+    let report = document(&fixture);
+    let detail: Vec<&str> = report["limitations"]
+        .as_array()
+        .expect("a report says what it could not do")
+        .iter()
+        .filter(|one| one["name"] == mjutest_cli::limitation::GENERATION_PROVIDER_UNAVAILABLE)
+        .filter_map(|one| one["detail"].as_str())
+        .collect();
+    assert!(
+        !detail.is_empty(),
+        "an answer nobody could read is not an answer of no candidates: {report}"
+    );
+    assert!(
+        detail.iter().any(|said| said.contains("was not read")),
+        "and the sentence says which finding the unreadable answer was about, because a \
+         provider that answers for one and not another is the usual case: {detail:?}"
+    );
+}
