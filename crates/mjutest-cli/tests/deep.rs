@@ -472,3 +472,51 @@ fn a_toolchain_without_an_interpreter_says_what_it_was_told_rather_than_what_it_
          something to read rather than an empty refusal: {quiet}"
     );
 }
+
+#[test]
+fn an_interpreter_that_ran_out_of_time_interpreted_nothing_whole() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let cancel = Cancel::new();
+    let trace = Recorder::disabled();
+    let cargo = cargo();
+    let mut env = saying("test result: ok. 1 passed; 0 failed; 0 ignored", 0);
+    env.push((
+        std::ffi::OsString::from("FAKE_CARGO_SLEEP"),
+        std::ffi::OsString::from("5"),
+    ));
+    let done = interpret(
+        &Interpreting {
+            root: dir.path(),
+            cargo: &cargo,
+            env,
+            packages: &[],
+            flags: &[],
+            timeout: Some(Duration::from_millis(300)),
+            offline: true,
+            locked: true,
+        },
+        Watch::new(&cancel, &trace),
+    )
+    .expect("the interpreter was started");
+
+    assert!(
+        !done.executed,
+        "an interpretation that ran out of time is not one that happened, and a contract \
+         that promises soundness cannot be answered by a suite nobody finished \
+         interpreting: {done:?}"
+    );
+    assert_eq!(
+        done.limitations
+            .first()
+            .map(|one| one.name.clone())
+            .as_deref(),
+        Some(mjutest_cli::limitation::MIRI_TIMED_OUT),
+        "and the reason is the time rather than anything about the code, which is the \
+         difference between a run to give more time to and a defect to go and fix: {done:?}"
+    );
+    assert!(
+        done.findings.is_empty(),
+        "a suite the interpreter never finished says nothing about the program, and a \
+         finding here would be one nobody can act on: {done:?}"
+    );
+}

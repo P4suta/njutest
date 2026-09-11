@@ -3,13 +3,16 @@
 
 //! Every limitation that can reach a report says what a reader can do about it.
 
+use std::collections::BTreeMap;
+use std::path::Path;
+
 use mjutest_cli::assure::run::limitation_detail;
 
 const GENERIC: &str = "stated by a phase of the run";
 
 #[test]
 fn every_limitation_the_engine_can_state_has_a_sentence_of_its_own() {
-    let mut said: std::collections::BTreeMap<String, &str> = std::collections::BTreeMap::new();
+    let mut said: BTreeMap<String, &str> = BTreeMap::new();
     for name in rust_mutants::limitation::ALL {
         let detail = limitation_detail(name);
         assert_ne!(
@@ -112,4 +115,122 @@ fn the_names_a_run_states_are_the_names_the_register_holds() {
         mjutest_cli::limitation::ALL.len(),
         "and no name is in the register twice"
     );
+}
+
+/// The limitations nothing puts to a run, and why.
+///
+/// Both are decided inside a function that builds a tree with instrumentation
+/// and runs a toolchain over it, so nothing can ask them without paying for all
+/// of it: a coverage build that fails where the ordinary one succeeded, and a
+/// toolchain whose sysroot holds no `llvm-profdata`. Neither is a state a
+/// fixture can be written into. The list is here so that the next limitation
+/// added is one somebody has to put on it on purpose.
+const UNREACHED: [&str; 2] = [
+    rust_mutants::limitation::COVERAGE_BUILD_FAILED,
+    rust_mutants::limitation::COVERAGE_TOOLS_MISSING,
+];
+
+/// The name of the constant a limitation is held in, which is how a test usually names it.
+fn shouted(name: &str) -> String {
+    name.to_uppercase().replace('-', "_")
+}
+
+/// Every other name a limitation is exported under, which is how the module that states it names it.
+///
+/// A layer re-exports the limitation it can state under a name that reads in
+/// its own terms — `reach::UNMEASURED`, `touch::UNREADABLE` — and a test of
+/// that layer names it the way the layer does. Reading the re-exports rather
+/// than listing them keeps the next one from being a gap nobody sees.
+fn aliases(root: &Path) -> BTreeMap<String, Vec<String>> {
+    let mut found: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut pending = vec![root.join("crates")];
+    while let Some(directory) = pending.pop() {
+        let Ok(entries) = std::fs::read_dir(&directory) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                pending.push(path);
+                continue;
+            }
+            if path.extension().is_none_or(|one| one != "rs") {
+                continue;
+            }
+            for line in std::fs::read_to_string(&path).unwrap_or_default().lines() {
+                let Some(rest) = line.trim().strip_prefix("pub use ") else {
+                    continue;
+                };
+                let Some((path_part, alias)) = rest.trim_end_matches(';').split_once(" as ") else {
+                    continue;
+                };
+                let Some(held) = path_part.rsplit("::").next() else {
+                    continue;
+                };
+                if path_part.contains("limitation::") {
+                    found
+                        .entry(held.to_owned())
+                        .or_default()
+                        .push(alias.to_owned());
+                }
+            }
+        }
+    }
+    found
+}
+
+#[test]
+fn every_limitation_either_product_can_state_is_one_a_test_puts_to_something() {
+    let root = mjutest_devkit::paths::workspace_root();
+    let mut suites = String::new();
+    for crate_name in ["mjutest-cli", "rust-mutants-cli", "rust-mutants", "mjutest"] {
+        let directory = root.join("crates").join(crate_name).join("tests");
+        let Ok(entries) = std::fs::read_dir(&directory) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            if entry.path().extension().is_some_and(|one| one == "rs") {
+                suites.push_str(&std::fs::read_to_string(entry.path()).unwrap_or_default());
+                suites.push('\n');
+            }
+        }
+    }
+    assert!(
+        suites.len() > 100_000,
+        "the suites are read: {}",
+        suites.len()
+    );
+
+    let every: Vec<&str> = rust_mutants::limitation::ALL
+        .into_iter()
+        .chain(mjutest_cli::limitation::ALL)
+        .collect();
+    let named = aliases(&root);
+    let unheld: Vec<&&str> = every
+        .iter()
+        .filter(|name| !UNREACHED.contains(name))
+        .filter(|name| {
+            let held = shouted(name);
+            let others = named.get(&held).map(Vec::as_slice).unwrap_or_default();
+            !suites.contains(**name)
+                && !suites.contains(&held)
+                && !others.iter().any(|alias| suites.contains(alias))
+        })
+        .collect();
+    assert!(
+        unheld.is_empty(),
+        "a limitation nothing puts to anything is a sentence a reader may never see and \
+         nobody would know: the condition that states it can stop holding and every gate \
+         stays green. {unheld:?} is named by no test. Put it to a run, or add it to \
+         UNREACHED with the reason nothing can"
+    );
+
+    for named in UNREACHED {
+        assert!(
+            every.contains(&named),
+            "{named} is on the list of what nothing reaches and is not a limitation \
+             either product states any more: a waiver nobody needs is one that hides the \
+             next real gap"
+        );
+    }
 }

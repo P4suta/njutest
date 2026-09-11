@@ -377,8 +377,9 @@ fn a_record_that_is_not_there_is_a_process_that_wrote_nothing_and_one_that_will_
         assert!(
             appended(Err(Error::from(kind))).is_err(),
             "a file that is there and did not come back is not a record of nothing; reading \
-             the two as one turns every mutant of that target into one nothing could notice: \
-             {kind:?}"
+             the two as one turns every mutant of that target into one nothing could notice, \
+             so it is the {} limitation and never the empty record: {kind:?}",
+            rust_mutants::limitation::TOUCH_LOG_UNREADABLE
         );
     }
 }
