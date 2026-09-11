@@ -9,6 +9,31 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 already running the release before it, and what to do about it. A change that
 needs nothing is not listed.
 
+## Unreleased
+
+**`cargo rust-mutants` works.** The engine ships a second binary under the name
+cargo looks for, as the runner has since M13, so `cargo rust-mutants run` is
+`rust-mutants run` wherever the binary is on the path. The word cargo repeats is
+dropped once and only when cargo is the caller: `rust-mutants rust-mutants run`
+is still a mistake and is still said to be one. `cargo binstall rust-mutants-cli`
+takes the archive a release published, which now carries all four binaries; it
+carried two, so an install asked binstall for a file the archive did not hold.
+
+**`--help` ends with the exit codes, and there are five of them.** The table is
+rendered from the codes rather than written beside them. The fifth is 143, which
+a run returns when it is terminated: every composition root adds 128 to the
+signal, and a continuous integration job that cancels a run sends `SIGTERM`
+rather than an interrupt, so a person reads 143 more often than they read 130.
+Both the command-line page and the schema page carry it now.
+
+**`cache --gc` removes the build caches no run can look up again.** It still
+keeps every cache a later run can hit — that is what makes the next run fast,
+and `--gc --all` is still the word for taking those too. What it no longer
+spares is a cache keyed to a source tree that is gone: no run will ever look
+that one up, every run already sweeps them on its way past, and `cache --gc` was
+the one path that left them. The caches line says both numbers, so a person can
+see whether there is anything left for `--all` to take.
+
 ## Upgrading to E11
 
 **`never-infected` no longer needs the probe tree for a mutation inside an
@@ -190,9 +215,7 @@ is `not_run` with reason `unselected`, and one `--fail-fast` never reached is
 `stopped-early`; neither is a finding. `--dry-run` prepares, verifies, and
 prints the estimate without executing a mutant.
 
-**`cache --gc` keeps the build caches.** It used to remove them, and now keeps
-every one a later run can still look up; a cache keyed to a source tree that is
-gone is removed, as every run already removes it. `--gc --all`
+**`cache --gc` keeps the build caches.** It used to remove them. `--gc --all`
 removes every build cache no live run has locked, and `--gc --kept` removes
 what `--keep-temp` was asked to preserve. If a script relied on `--gc`
 reclaiming everything, it wants `--gc --all` now.
