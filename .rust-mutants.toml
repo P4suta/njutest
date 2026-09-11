@@ -26,6 +26,30 @@ tier = "all"
 [execution]
 offline = true
 locked = true
+# Three targets a run of this workspace may not start, for two reasons.
+#
+# The first two put a reserved variable into the environment of a process they
+# start, to read back the diagnostic it earns. Under measurement that child is
+# instrumented too, so it meets an activation it was not built for and refuses
+# (`RM0006`) before it reaches the assertion, and the run stops with `RM5002`.
+# That is the limitation `docs/limitations.md` states under "a test that starts
+# this engine in a process of its own". A suite that drives the entry point in
+# this process inherits nothing across a process boundary and is measured like
+# any other, which is why there are two of these and not forty.
+#
+# `xtask/test/gates` is the other reason, and it is not about processes: the
+# gates are assertions about this repository, reached through
+# `env!("CARGO_MANIFEST_DIR")`, which under measurement names the snapshot. The
+# snapshot is this repository as the engine rewrote it, guards and runtime and
+# all, and the runtime carries the one `#[allow]` in the tree, which
+# `cargo xtask lints` exists to refuse. So the gate fails on the instrumentation
+# and would fail on it identically under every mutation. A test whose subject is
+# the tree it is compiled from cannot be measured by copying the tree.
+skip_targets = [
+  "rust-mutants-cli/test/toolchain_errors",
+  "rust-mutants-cli/test/toolchain_run_report",
+  "xtask/test/gates",
+]
 
 # A place the tests answer for by construction rather than by running.
 #

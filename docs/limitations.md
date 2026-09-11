@@ -71,6 +71,19 @@ below is stated fail-closed.
   where the catalog a nested process inherits is its own, the binary is the
   mutant the outer run activated, and the guards already refuse every other
   case.
+- **A test whose subject is the tree it was compiled from cannot be measured
+  by copying the tree.** A run works in a snapshot, and a test that reaches its
+  own repository through `env!("CARGO_MANIFEST_DIR")` reaches that snapshot
+  rather than the repository: the same tree as the engine rewrote it, guards
+  and generated runtime and all. This workspace has one such target,
+  `xtask/test/gates`, whose gates refuse exactly what instrumentation adds —
+  the runtime carries the one `#[allow]` the tree is allowed to hold, and
+  `cargo xtask lints` exists to refuse an `#[allow]`. It fails on the
+  instrumentation and would fail on it identically under every mutation, so it
+  is left out in `.rust-mutants.toml` with the reason written beside it. The
+  gates are not unmeasured for it: `cargo xtask` applies them to the
+  repository on every run of the check task, which is where an assertion about
+  a tree belongs.
 - **A guard against a failure that reappears downstream is a survivor no
   deterministic suite can decide.** A `?` on an I/O call whose failure is
   reported again by a later call on the same resource - a write that is put
@@ -307,6 +320,61 @@ fail-closed:
   understands (`soundness-source-unreadable`), so what it holds is not in the
   count. A count taken over part of a tree and reported as a count over the
   tree is the one number a reader cannot check.
+
+## Places a run passed over
+
+Every place a rule targets gets a decision: a candidate, or a skip with the
+reason for it. A run reports its skips as one limitation per reason —
+`skipped-<reason>`, with how many places it covers — because a place nothing
+was put to is a place the suite was never asked about, and a tally of them is
+the difference between "the tests noticed every mutation" and "the tests
+noticed every mutation somebody proposed". The engine's [architecture
+page](engine/architecture.md) says how each decision is reached; what follows
+is what the name in a report means.
+
+Five are about a whole file, decided from cargo's metadata rather than by
+reading it:
+
+- `skipped-excluded` — `[project] exclude` names the file. The only one of
+  these a reader chose, and [the configuration page](configuration.md) says
+  what it does and does not narrow.
+- `skipped-test-only-file` — only a test unit compiles the file, so a mutation
+  of it would be a mutation of the tests.
+- `skipped-no-std-crate` — the crate is `#![no_std]`, and this release's guards
+  need the standard library.
+- `skipped-generated-outside-workspace` — a build script wrote the file outside
+  the tree, which the run does not hold and cannot rewrite.
+- `skipped-forbidden-lints` — the crate `forbid`s a lint the guards' own
+  attribute turns off, which `forbid` does not let an `allow` override, so
+  every mutant of it would be refused with nothing saying why.
+
+Eleven are about a place inside a file, decided by the walk:
+
+- `skipped-const-context` and `skipped-const-fn-body` — the compiler may
+  evaluate the code before the program runs, where a runtime guard cannot live.
+- `skipped-macro-invocation` — the body is tokens the walker does not parse,
+  counted once for the whole invocation.
+- `skipped-cfg-attribute` — the place is behind a `#[cfg(...)]`, so what the
+  build compiles is not what the walk read.
+- `skipped-test-code` — a `#[test]` function or anything behind `#[cfg(test)]`.
+- `skipped-unsupported-site` — no guard form can express the two versions at
+  that position.
+- `skipped-included-expression` — another file pastes this one in at expression
+  position, which is a fragment rather than a program.
+- `skipped-let-condition` — the condition binds with `let`, and a guard cannot
+  rearrange it without moving the binding out of scope.
+- `skipped-open-range` — a range with no end has no other form to become.
+- `skipped-unstated-return-type` — the syntax cannot say the return type has a
+  default, so there is no value to return instead.
+- `skipped-loop-value` — the loop decides the jump's value by what it breaks
+  with, so the other jump has no value to carry.
+
+Two are what a person wrote, and are the two to read first:
+
+- `skipped-annotated` — a `rust-mutants: skip <reason>` marker in the source.
+- `skipped-configured` — a `[[mutation.skip]]` entry in the engine's
+  configuration. A marker or an entry that hid nothing is an `unmatched-skip`
+  finding rather than a line nobody notices.
 
 ## Survivors a suite cannot close
 

@@ -80,6 +80,26 @@ fn the_limitations_page_names_every_limitation_the_runner_can_state() {
 }
 
 #[test]
+fn the_limitations_page_names_every_skip_a_run_can_report() {
+    let text = std::fs::read_to_string(
+        mjutest_devkit::paths::workspace_root().join("docs/limitations.md"),
+    )
+    .expect("the limitations page");
+    let missing: Vec<String> = rust_mutants::syntax::SkipReason::ALL
+        .into_iter()
+        .map(|reason| format!("skipped-{}", reason.name()))
+        .filter(|name| !text.contains(&format!("`{name}`")))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "a place the walk passed over reaches the report as a limitation of its own, one \
+         row per reason, and the reason is in the name. The register the page test reads \
+         holds none of them, so eighteen names a reader can meet are eighteen a reader \
+         cannot look up. {missing:?}"
+    );
+}
+
+#[test]
 fn the_names_a_run_states_are_the_names_the_register_holds() {
     let root = mjutest_devkit::paths::workspace_root().join("crates/mjutest-cli/src");
     let held: std::collections::BTreeSet<&str> = mjutest_cli::limitation::ALL.into_iter().collect();
