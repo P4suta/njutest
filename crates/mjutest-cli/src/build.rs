@@ -225,6 +225,31 @@ fn arguments(toolchain: &Toolchain, options: &BuildOptions) -> Vec<OsString> {
 /// Where the profiles an instrumented build script writes go. They are the build's, not any test's, and no target's coverage is ever merged from them; naming a directory inside the scratch keeps them out of the tree under verification, which would otherwise be a different tree after every run.
 pub const BUILD_PROFILES: &str = "build-profiles";
 
+/// What a cargo configuration costs an instrumented build, which is what the build says it could not honour.
+///
+/// An instrumented build compiles with a flag of its own, which it can only
+/// add by writing every flag the project configured back in one place. Two
+/// kinds of flag do not survive that. A `target.*` table says flags whose
+/// application is cargo's decision about the target being built rather than
+/// this build's, so they are left out. A file this release could not read
+/// faithfully says nothing about what it asks for, so nothing of it is written
+/// back.
+///
+/// Both are stated when both apply: a reader told only one of them would go
+/// looking for the wrong file, and the coverage a run routes by was taken from
+/// a build that differs from the project's in both ways rather than in one.
+#[must_use]
+pub fn configured_limitations(configured: &rustflags::Configured) -> Vec<&'static str> {
+    let mut named = Vec::new();
+    if configured.target_specific {
+        named.push(crate::limitation::TARGET_RUSTFLAGS_NOT_MERGED);
+    }
+    if configured.unreadable {
+        named.push(rust_mutants::limitation::CARGO_CONFIGURATION_UNREADABLE);
+    }
+    named
+}
+
 /// The environment the build runs with: the run's own, the scratch layer for anything it starts, and the flags the flavour needs.
 fn environment(options: &BuildOptions, limitations: &mut Vec<String>) -> Vec<(OsString, OsString)> {
     let mut env = options.env.clone();
@@ -237,12 +262,11 @@ fn environment(options: &BuildOptions, limitations: &mut Vec<String>) -> Vec<(Os
         return env;
     }
     let configured = rustflags::configured(&options.root, &options.env);
-    if configured.target_specific {
-        limitations.push(crate::limitation::TARGET_RUSTFLAGS_NOT_MERGED.to_owned());
-    }
-    if configured.unreadable {
-        limitations.push(rust_mutants::limitation::CARGO_CONFIGURATION_UNREADABLE.to_owned());
-    }
+    limitations.extend(
+        configured_limitations(&configured)
+            .into_iter()
+            .map(str::to_owned),
+    );
     if let Some(flags) = rustflags::encoded(&options.env, &configured, &[COVERAGE_FLAG]) {
         set(&mut env, "CARGO_ENCODED_RUSTFLAGS", flags);
         env.retain(|(key, _)| key != OsStr::new("RUSTFLAGS"));

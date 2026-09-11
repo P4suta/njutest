@@ -198,3 +198,76 @@ fn the_old_extensionless_name_is_read_too() {
     );
     assert_eq!(configured(root.path(), &env(&[])).build, ["--cfg", "old"]);
 }
+
+#[test]
+fn a_target_table_costs_the_instrumented_build_the_flags_it_cannot_merge() {
+    use mjutest_cli::build::configured_limitations;
+    use mjutest_cli::rustflags::Configured;
+
+    assert_eq!(
+        configured_limitations(&Configured {
+            target_specific: true,
+            ..Configured::default()
+        }),
+        [mjutest_cli::limitation::TARGET_RUSTFLAGS_NOT_MERGED],
+        "which `target.*` table applies is cargo's decision about the target being built \
+         rather than this build's, so the flags are left out and the run says so"
+    );
+}
+
+#[test]
+fn a_configuration_nothing_could_read_costs_the_build_everything_it_asked_for() {
+    use mjutest_cli::build::configured_limitations;
+    use mjutest_cli::rustflags::Configured;
+
+    assert_eq!(
+        configured_limitations(&Configured {
+            unreadable: true,
+            ..Configured::default()
+        }),
+        [rust_mutants::limitation::CARGO_CONFIGURATION_UNREADABLE],
+        "a file this release could not read faithfully says nothing about what it asks \
+         for, so nothing of it is written back into the instrumented build"
+    );
+}
+
+#[test]
+fn a_configuration_that_is_both_costs_both_and_says_both() {
+    use mjutest_cli::build::configured_limitations;
+    use mjutest_cli::rustflags::Configured;
+
+    assert_eq!(
+        configured_limitations(&Configured {
+            target_specific: true,
+            unreadable: true,
+            build: Vec::new(),
+        }),
+        [
+            mjutest_cli::limitation::TARGET_RUSTFLAGS_NOT_MERGED,
+            rust_mutants::limitation::CARGO_CONFIGURATION_UNREADABLE,
+        ],
+        "a reader told only one of them would go looking for the wrong file, and the \
+         coverage a run routes by was taken from a build that differs from the project's \
+         in both ways rather than in one"
+    );
+}
+
+#[test]
+fn flags_the_project_sets_for_every_target_cost_the_build_nothing() {
+    use mjutest_cli::build::configured_limitations;
+    use mjutest_cli::rustflags::Configured;
+
+    assert!(
+        configured_limitations(&Configured {
+            build: vec!["--cfg".to_owned(), "tree".to_owned()],
+            ..Configured::default()
+        })
+        .is_empty(),
+        "those are written back in one place along with the instrumentation's own, so \
+         there is nothing the build could not honour and nothing to say"
+    );
+    assert!(
+        configured_limitations(&Configured::default()).is_empty(),
+        "and a tree that configures nothing says nothing"
+    );
+}

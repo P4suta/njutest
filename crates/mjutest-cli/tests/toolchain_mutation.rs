@@ -474,3 +474,65 @@ fn of(root: &Path, named: &[(&str, &str)]) -> Environment {
     let cache = mjutest_devkit::paths::cache_beside(root).expect("a cache directory");
     environment(root, &cache, named)
 }
+
+#[test]
+fn a_test_that_writes_into_the_tree_while_it_is_measured_is_said_to_have_done_so() {
+    let fixture = fixture("fixture-writes-tree");
+    let output = verify(&fixture, &[]);
+    assert!(
+        output.status.code().is_some_and(|code| code <= 2),
+        "the run establishes something: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let report = document(&fixture);
+    let named: Vec<&str> = report["limitations"]
+        .as_array()
+        .expect("a report says what it could not do")
+        .iter()
+        .filter_map(|one| one["name"].as_str())
+        .collect();
+    assert!(
+        named.contains(&mjutest_cli::limitation::TREE_WRITTEN_DURING_MEASUREMENT),
+        "a test wrote into the tree, so every mutation measured after it was measured \
+         against what it wrote rather than against the tree the report names: a run that \
+         did not say so reads as a measurement of the workspace. {named:?}"
+    );
+    let detail = report["limitations"]
+        .as_array()
+        .and_then(|all| {
+            all.iter()
+                .find(|one| one["name"] == mjutest_cli::limitation::TREE_WRITTEN_DURING_MEASUREMENT)
+        })
+        .and_then(|one| one["detail"].as_str())
+        .unwrap_or_default();
+    assert!(
+        detail.contains("wrote into the tree"),
+        "and says what it means, because the name alone tells a reader nothing to do: \
+         {detail}"
+    );
+}
+
+#[test]
+fn a_suite_that_writes_nothing_says_nothing_about_a_tree_that_was_written_to() {
+    let fixture = fixture("fixture-assured");
+    let output = verify(&fixture, &[]);
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report = document(&fixture);
+    let named: Vec<&str> = report["limitations"]
+        .as_array()
+        .expect("a report says what it could not do")
+        .iter()
+        .filter_map(|one| one["name"].as_str())
+        .collect();
+    assert!(
+        !named.contains(&mjutest_cli::limitation::TREE_WRITTEN_DURING_MEASUREMENT),
+        "a limitation stated where it does not apply is one a reader stops believing: \
+         {named:?}"
+    );
+}
