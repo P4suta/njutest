@@ -27,6 +27,15 @@ pub fn run(
         locked: arguments.locked,
     };
 
+    let selection = match compiled(&root, arguments) {
+        Ok(selection) => selection,
+        Err(message) => {
+            super::diagnose(stderr, &message);
+            return EXIT_ERROR;
+        }
+    };
+    let packages = selection.packages.clone();
+
     let located = locate(&root, environment, cargo, &cancel);
     let (toolchain, metadata) = match located {
         Ok(pair) => pair,
@@ -36,7 +45,7 @@ pub fn run(
         }
     };
 
-    if let Some(refusal) = unknown_package(&arguments.packages, &metadata.packages) {
+    if let Some(refusal) = unknown_package(&packages, &metadata.packages) {
         super::diagnose(stderr, &refusal);
         return EXIT_ERROR;
     }
@@ -50,10 +59,7 @@ pub fn run(
     };
     let options = BuildOptions {
         root,
-        selection: Selection {
-            packages: arguments.packages.clone(),
-            ..Selection::default()
-        },
+        selection,
         flavour: Flavour::Native,
         target_dir: scratch.dir().join("layer"),
         scratch_build_dir: scratch.build_dir(),
@@ -81,12 +87,7 @@ pub fn run(
     };
 
     if arguments.why {
-        let scope = if arguments.packages.is_empty() {
-            "every workspace member".to_owned()
-        } else {
-            format!("the packages asked for: {}", arguments.packages.join(", "))
-        };
-        super::say(stdout, &format!("SCOPE\t{scope}"));
+        super::say(stdout, &format!("SCOPE\t{}", scope(arguments, &packages)));
     }
 
     let selected = match selected(&built.units, watch) {
@@ -214,7 +215,42 @@ pub fn line(planned: &Planned, why: bool) -> String {
     format!("{head}\t{reason}")
 }
 
-/// The first `--package` that names no member of the workspace, if one does.
+/// What a run of this tree would compile: the packages the reader or the configuration named, and the features the configuration turns on.
+///
+/// A plan says what a run would measure, so it answers to the same
+/// configuration the run answers to. One that read none of it would describe a
+/// run nobody asked for, and be believed, because describing is all it does.
+///
+/// # Errors
+/// Returns the configuration's own refusal, rendered.
+fn compiled(root: &std::path::Path, arguments: &Arguments) -> Result<Selection, String> {
+    let config = crate::config::Config::load(root).map_err(|error| error.to_string())?;
+    Ok(Selection {
+        packages: if arguments.packages.is_empty() {
+            config.project.packages
+        } else {
+            arguments.packages.clone()
+        },
+        features: config.execution.features,
+        all_features: config.execution.all_features,
+        default_features: !config.execution.no_default_features,
+    })
+}
+
+/// What put the targets in scope, in the words the reader would recognise.
+fn scope(arguments: &Arguments, packages: &[String]) -> String {
+    if packages.is_empty() {
+        return "every workspace member".to_owned();
+    }
+    let from = if arguments.packages.is_empty() {
+        "the packages the configuration names"
+    } else {
+        "the packages asked for"
+    };
+    format!("{from}: {}", packages.join(", "))
+}
+
+/// The first package named that is no member of the workspace, if one is.
 ///
 /// A verification refuses this and says so; a plan used to answer `TARGETS 0`
 /// and exit zero, which reads as a package with nothing to run in it. A plan is

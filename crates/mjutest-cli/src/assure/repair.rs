@@ -35,6 +35,8 @@ pub struct Checking<'a> {
     pub environment: &'a Environment,
     /// How cargo is bounded.
     pub cargo: Cargo,
+    /// What the tree is compiled as, which must be what the run compiled: a candidate held to another build is held to another program.
+    pub build: rust_mutants::cargo::BuildConfig,
     /// How long one execution may take.
     pub timeout: Duration,
 }
@@ -105,6 +107,7 @@ pub fn check(
     let session = workspace.prepare(
         &PrepareOptions {
             verify: false,
+            build: checking.build.clone(),
             build_timeout: Some(checking.timeout),
             mutant_timeout: Timeout::Fixed(checking.timeout),
             ..PrepareOptions::default()

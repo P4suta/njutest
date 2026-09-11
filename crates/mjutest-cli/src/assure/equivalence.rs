@@ -100,6 +100,8 @@ pub struct Proving<'a> {
     pub root: &'a std::path::Path,
     /// How that copy is opened and which cargo builds it.
     pub open: rust_mutants::workspace::OpenOptions,
+    /// What the copy is compiled as, which must be what the run measured: two programs built with different features are not the pair this layer is about.
+    pub build: rust_mutants::cargo::BuildConfig,
     /// How long one build may take.
     pub timeout: Option<std::time::Duration>,
     /// Every package this run's soundness inventory found `unsafe` in.
@@ -162,7 +164,7 @@ pub fn prove(
     let mut prover = rust_mutants::equivalence::Prover::open(
         proving.root,
         &rust_mutants::equivalence::ProveOptions {
-            build: rust_mutants::cargo::BuildConfig::default(),
+            build: proving.build.clone(),
             open: proving.open.clone(),
             timeout: proving.timeout,
         },

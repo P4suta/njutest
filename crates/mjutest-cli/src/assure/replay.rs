@@ -64,7 +64,7 @@ impl Outcome {
     missing_debug_implementations,
     reason = "an environment is a handle on the outside world; there is nothing to print about one"
 )]
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct Replaying<'a> {
     /// The tree the finding is about, which is only ever read.
     pub root: &'a Path,
@@ -72,6 +72,8 @@ pub struct Replaying<'a> {
     pub environment: &'a Environment,
     /// How cargo is bounded.
     pub cargo: Cargo,
+    /// What the tree is compiled as, which must be what the run that found the finding compiled: a replay of another build is a replay of another program.
+    pub build: rust_mutants::cargo::BuildConfig,
     /// How long one execution may take.
     pub timeout: Option<Duration>,
 }
@@ -112,6 +114,7 @@ pub fn replay(
     let session = workspace.prepare(
         &PrepareOptions {
             verify: false,
+            build: replaying.build.clone(),
             mutant_timeout: replaying.timeout.map_or(Timeout::Auto, Timeout::Fixed),
             ..PrepareOptions::default()
         },

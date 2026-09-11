@@ -693,3 +693,58 @@ fn a_file_the_configuration_excludes_is_not_mutated_and_is_still_built_and_run()
          nothing was put to is not a place the tests noticed everything about: {stated:?}"
     );
 }
+
+#[test]
+fn the_features_the_configuration_turns_on_are_the_features_the_run_compiles() {
+    let fixture = fixture("fixture-features");
+    std::fs::write(
+        fixture.root.join(".mjutest.toml"),
+        "version = 1\n\n[execution]\nfeatures = [\"imperial\"]\n",
+    )
+    .expect("a configuration");
+
+    let output = verify(&fixture, &[]);
+    let report = document(&fixture);
+    let unreached = report["accounting"]["mutants"]["unreached"]
+        .as_u64()
+        .unwrap_or_default();
+
+    assert_eq!(
+        unreached,
+        0,
+        "the second conversion is tested only by a module behind the `imperial` feature, \
+         so a run that turned it on reaches every mutation and one that did not reaches \
+         half of them. A configuration that names features and a build that compiles \
+         without them measure two different programs: {} (exit {:?})",
+        report["accounting"]["mutants"],
+        output.status.code()
+    );
+}
+
+#[test]
+fn a_plan_is_about_the_run_the_configuration_describes() {
+    let fixture = fixture("fixture-workspace");
+    std::fs::write(
+        fixture.root.join(".mjutest.toml"),
+        "version = 1\n\n[project]\npackages = [\"fixture-core\"]\n",
+    )
+    .expect("a configuration");
+
+    let output = asked(&of(&fixture.root, &[]), &["plan", "--offline", "--locked"]);
+    let text = String::from_utf8_lossy(&output.stdout);
+    let targets: Vec<&str> = text
+        .lines()
+        .filter(|line| line.starts_with("TARGET\t"))
+        .collect();
+
+    assert!(
+        !targets.iter().any(|line| line.contains("fixture-app/")),
+        "a plan says what a run would measure, and a run of this tree measures one \
+         package because the configuration says so. A plan that reads none of the \
+         configuration is a plan for a run nobody asked for: {text}"
+    );
+    assert!(
+        targets.iter().any(|line| line.contains("fixture-core/")),
+        "and it still names the package that is in scope: {text}"
+    );
+}

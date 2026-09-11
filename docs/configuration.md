@@ -76,6 +76,13 @@ owner = "quality-team"
 ticket = "QA-123"
 ```
 
+`[execution] features`, `all_features` and `no_default_features` are the words
+cargo would have been given, and every command of a run is given them: the
+baseline, the mutation phase, the equivalence layer, `plan`, `replay` and
+`fix`. Cargo compiles a different program for a different feature set, so a
+run that measured the default build while the project ships another would put
+a verdict on a program nobody runs.
+
 `[project] exclude` says which files are mutated and nothing else. Every file
 it names is still copied into the tree, still compiled, and still run, so the
 patterns never turn a workspace that builds into one that does not, and a run

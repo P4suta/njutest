@@ -130,6 +130,13 @@ fn apply(
     } = *applying;
     let trace = Recorder::disabled();
     let watch = Watch::new(&environment.cancel, &trace);
+    let config = match crate::config::Config::load(root) {
+        Ok(config) => config,
+        Err(error) => {
+            super::diagnose(stderr, &error.to_string());
+            return EXIT_ERROR;
+        }
+    };
     let checking = Checking {
         root,
         environment,
@@ -137,6 +144,7 @@ fn apply(
             offline: arguments.offline,
             locked: arguments.locked,
         },
+        build: config.execution.build(),
         timeout: std::time::Duration::from_secs(300),
     };
     let mut written = 0u32;

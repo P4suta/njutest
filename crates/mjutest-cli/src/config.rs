@@ -152,6 +152,24 @@ pub struct Execution {
     pub jobs: u32,
 }
 
+impl Execution {
+    /// What a build of this project is, beyond the tree itself.
+    ///
+    /// Cargo compiles a different program for a different feature set, so a
+    /// run that measures the default build while the project ships another
+    /// measures a program nobody runs: the features a configuration names are
+    /// the features every command of the run compiles with.
+    #[must_use]
+    pub fn build(&self) -> rust_mutants::cargo::BuildConfig {
+        rust_mutants::cargo::BuildConfig {
+            features: self.features.clone(),
+            all_features: self.all_features,
+            no_default_features: self.no_default_features,
+            ..rust_mutants::cargo::BuildConfig::default()
+        }
+    }
+}
+
 impl Default for Execution {
     fn default() -> Self {
         Self {

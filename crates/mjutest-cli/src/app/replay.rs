@@ -9,6 +9,7 @@ use crate::app::runs;
 use crate::assure::replay::{Outcome, Replaying, replay};
 use crate::build::Cargo;
 use crate::cli::{EXIT_ERROR, Environment, Replay as Arguments};
+use crate::config::Config;
 use crate::report::FindingKind;
 use crate::trace::Recorder;
 use crate::watch::Watch;
@@ -28,6 +29,13 @@ pub fn run(
             return EXIT_ERROR;
         }
     };
+    let config = match Config::load(root) {
+        Ok(config) => config,
+        Err(error) => {
+            super::diagnose(stderr, &error.to_string());
+            return EXIT_ERROR;
+        }
+    };
     let cancel = environment.cancel.clone();
     let trace = Recorder::disabled();
     let watch = Watch::new(&cancel, &trace);
@@ -39,6 +47,7 @@ pub fn run(
                 offline: arguments.offline,
                 locked: arguments.locked,
             },
+            build: config.execution.build(),
             timeout: None,
         },
         &found.subject,
