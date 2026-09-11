@@ -109,8 +109,26 @@ impl Default for Config {
 pub struct Project {
     /// The cargo packages to verify. Empty is every workspace member.
     pub packages: Vec<String>,
-    /// Workspace-relative globs to leave out, which the report carries as an explicit limitation.
+    /// Workspace-relative globs whose files are left out of the mutations, which the report carries as an explicit limitation.
     pub exclude: Vec<String>,
+}
+
+impl Project {
+    /// The exclusions, compiled.
+    ///
+    /// They say which files are mutated and nothing else: the tree is copied
+    /// whole, every package still builds, and every test still runs, so a file
+    /// left out of the mutations is still one the run is a function of. A
+    /// pattern that does not compile cannot reach here, because
+    /// [`Config::parse`] refuses it; one that somehow does is left out, which
+    /// mutates more rather than less.
+    #[must_use]
+    pub fn excluded(&self) -> Vec<rust_mutants::glob::Pattern> {
+        self.exclude
+            .iter()
+            .filter_map(|pattern| rust_mutants::glob::Pattern::compile(pattern).ok())
+            .collect()
+    }
 }
 
 /// How tests are built and run.
@@ -406,6 +424,10 @@ impl Config {
                 ),
             ));
         }
+        for pattern in &self.project.exclude {
+            rust_mutants::glob::Pattern::compile(pattern)
+                .map_err(|error| invalid(format!("exclude names an {error}")))?;
+        }
         for argument in &self.execution.test_binary_args {
             if !allowed_test_arg(argument) {
                 return Err(invalid(format!(
@@ -533,7 +555,7 @@ contract = \"standard-v1\"        # \"standard-v1\" | \"deep-v1\"
 
 [project]
 # packages = []                  # cargo package names; empty = every member
-# exclude = []                   # workspace-relative globs; an explicit limitation
+# exclude = []                   # workspace-relative globs; the files are not mutated
 
 [execution]
 # features = []

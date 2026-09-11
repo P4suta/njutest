@@ -25,7 +25,7 @@ contract = "standard-v1"        # "standard-v1" | "deep-v1"
 
 [project]
 packages = []                   # cargo package names; empty = every workspace member
-exclude = ["**/generated/**"]   # workspace-relative globs; an explicit limitation in the report
+exclude = ["**/generated/**"]   # workspace-relative globs; the files are not mutated
 
 [execution]
 features = []                   # cargo features
@@ -75,6 +75,21 @@ expires = "2026-12-31T00:00:00Z"
 owner = "quality-team"
 ticket = "QA-123"
 ```
+
+`[project] exclude` says which files are mutated and nothing else. Every file
+it names is still copied into the tree, still compiled, and still run, so the
+patterns never turn a workspace that builds into one that does not, and a run
+is a function of their bytes whether or not a mutation was put to them: the
+evidence a run leaves behind is keyed on the whole tree, and `mjutest watch`
+starts a round when one of them changes. What the exclusion removes is
+findings, which is why the report carries the patterns in `scope.excluded` and
+why a run left with no mutation to put to a test concludes `INSUFFICIENT`
+rather than assuring what it did not ask. A pattern that is not a pattern —
+a leading or trailing `/`, an empty string — is refused when the file is read,
+so a typo narrows nothing silently. The engine spells the same key
+differently: `rust-mutants`' `[project] exclude` removes a path from the
+snapshot as well, which is a decision a tool that only mutates can take and an
+assurance runner cannot.
 
 There is no `profile` key — `cargo test`'s `test` profile is the one under
 verification — and no `toolchain` key: `rust-toolchain.toml` is the idiomatic

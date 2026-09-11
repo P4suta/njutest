@@ -1774,7 +1774,7 @@ fn a_run_in_this_process_writes_what_it_learned_before_it_compiled_anything() {
     assert!(
         skipped["detail"]
             .as_str()
-            .is_some_and(|detail| detail.starts_with("1 places were not mutated")),
+            .is_some_and(|detail| detail.starts_with("1 place was not mutated")),
         "and how much of the tree it did not mutate, with the number: a run that says \
          it skipped something without saying how much reads as a footnote, and the \
          difference between one place and four hundred is the difference between a \

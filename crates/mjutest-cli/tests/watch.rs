@@ -16,7 +16,6 @@ use std::time::Duration;
 
 use mjutest_cli::app::watch::{POLL, Seen, look, until};
 use mjutest_cli::cli::{EXIT_ERROR, Environment};
-use mjutest_cli::config::Config;
 use rust_mutants::runner::Cancel;
 
 /// An environment whose watch has already been stopped, so nothing it starts runs a round.
@@ -298,7 +297,7 @@ fn looking_reads_every_file_under_verification_and_none_of_what_a_run_writes() {
     std::fs::write(root.path().join("target/debug"), "x").expect("something a build wrote");
     std::fs::write(root.path().join("reports/latest.json"), "{}").expect("something a run wrote");
 
-    let seen = look(root.path(), &Config::default()).expect("a directory that can be walked");
+    let seen = look(root.path()).expect("a directory that can be walked");
 
     assert_eq!(
         seen.get("src/lib.rs").map(|(_when, held)| *held),
@@ -320,10 +319,10 @@ fn looking_reads_every_file_under_verification_and_none_of_what_a_run_writes() {
 fn a_file_that_grows_is_a_file_that_changed() {
     let root = tempfile::tempdir().expect("a directory");
     std::fs::write(root.path().join("one.rs"), "fn f() {}\n").expect("a source file");
-    let before = look(root.path(), &Config::default()).expect("a walk");
+    let before = look(root.path()).expect("a walk");
 
     std::fs::write(root.path().join("one.rs"), "fn f() { g() }\n").expect("an edit");
-    let after = look(root.path(), &Config::default()).expect("a walk");
+    let after = look(root.path()).expect("a walk");
 
     assert_ne!(
         before, after,
@@ -338,7 +337,7 @@ fn a_directory_that_cannot_be_walked_is_not_a_tree_that_changed() {
     let path = gone.path().join("never-made");
 
     assert!(
-        look(&path, &Config::default()).is_err(),
+        look(&path).is_err(),
         "a path that is not there is a question this cannot answer, and answering it \
          with an empty tree would read as every file having been deleted"
     );

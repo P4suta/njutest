@@ -83,6 +83,12 @@ pub struct Machine<'a> {
 
 /// Everything the identity is computed from, read from the tree and the process.
 ///
+/// The whole tree counts, `[project] exclude` included. That configuration
+/// says which files are mutated; every one of them is still compiled and still
+/// run, so a run is a function of its bytes whether or not a mutation was put
+/// to it, and an identity that passed over it would hand the next run an
+/// answer measured against bytes that are no longer there.
+///
 /// # Errors
 /// Returns what could not be read about the tree.
 pub fn inputs(
@@ -98,8 +104,7 @@ pub fn inputs(
         vars,
         elsewhere,
     } = *asked;
-    let exclude = compiled(config);
-    let scanned = scan(root, &exclude, elsewhere)?;
+    let scanned = scan(root, &[], elsewhere)?;
     Ok(Inputs {
         tree: scanned.tree,
         corpus: scanned.corpus,
@@ -125,8 +130,7 @@ pub fn of(
     common: Common,
     shard: Option<String>,
 ) -> Result<Evidence, ScanError> {
-    let exclude = compiled(asked.config);
-    let scanned = scan(asked.root, &exclude, asked.elsewhere)?;
+    let scanned = scan(asked.root, &[], asked.elsewhere)?;
     let dependencies = dependencies_of(asked.root)?;
     let read = Inputs {
         tree: scanned.tree.clone(),
@@ -150,16 +154,6 @@ pub fn of(
             common,
         }),
     })
-}
-
-/// A pattern the configuration writes that does not compile cannot reach here: the configuration refuses it when it is read. One that somehow does is left out of the exclusions, which widens what the identity covers rather than narrowing it.
-fn compiled(config: &Config) -> Vec<rust_mutants::glob::Pattern> {
-    config
-        .project
-        .exclude
-        .iter()
-        .filter_map(|pattern| rust_mutants::glob::Pattern::compile(pattern).ok())
-        .collect()
 }
 
 /// The environment the run is a function of: the variables that change what the compiler produces, plus whatever the configuration named.

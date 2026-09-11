@@ -1115,6 +1115,7 @@ fn prepare(
         &rust_mutants::session::PrepareOptions {
             packages: request.packages.clone(),
             include: within(request.changed.as_ref()),
+            exclude: request.config.project.excluded(),
             verify: true,
             failing: rust_mutants::session::Failing::Exclude,
             build_timeout: Some(request.config.execution.timeout),
@@ -1224,7 +1225,14 @@ pub fn record(report: &mut Report, mutation: &mutation::Mutation, accepted: &BTr
     for (reason, count) in &mutation.skips {
         report.limitations.push(Limitation::new(
             &format!("skipped-{reason}"),
-            &format!("{count} places were not mutated: {reason}"),
+            &format!(
+                "{count} {} not mutated: {reason}",
+                if *count == 1 {
+                    "place was"
+                } else {
+                    "places were"
+                }
+            ),
         ));
     }
 }

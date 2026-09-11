@@ -640,3 +640,56 @@ fn a_configuration_nobody_can_parse_is_refused_rather_than_rewritten() {
         "and the file is exactly as it was"
     );
 }
+
+#[test]
+fn a_file_the_configuration_excludes_is_not_mutated_and_is_still_built_and_run() {
+    let fixture = fixture("fixture-workspace");
+    std::fs::write(
+        fixture.root.join(".mjutest.toml"),
+        "version = 1\n\n[project]\nexclude = [\"crates/core/src/util.rs\"]\n",
+    )
+    .expect("a configuration");
+
+    let output = verify(&fixture, &[]);
+    let report = document(&fixture);
+    let paths: Vec<&str> = report["mutants"]
+        .as_array()
+        .expect("mutants")
+        .iter()
+        .filter_map(|mutant| mutant["path"].as_str())
+        .collect();
+
+    assert!(
+        !paths.contains(&"crates/core/src/util.rs"),
+        "a pattern the configuration excludes takes the file out of the mutations, or it \
+         narrows nothing and says it did: {paths:?} (exit {:?}, {})",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        paths.contains(&"crates/core/src/lib.rs"),
+        "and takes out nothing else: {paths:?}"
+    );
+    assert_eq!(
+        report["scope"]["excluded"],
+        serde_json::json!(["crates/core/src/util.rs"]),
+        "the report says what was left out"
+    );
+    assert!(
+        paths.contains(&"crates/app/src/main.rs"),
+        "the excluded file is still compiled and still run — `total` calls into it, and a \
+         tree without it would not have built at all: {paths:?}"
+    );
+
+    let stated: Vec<&str> = report["limitations"]
+        .as_array()
+        .expect("limitations")
+        .iter()
+        .filter_map(|limitation| limitation["name"].as_str())
+        .collect();
+    assert!(
+        stated.contains(&"skipped-excluded"),
+        "and the report says how many places went unasked and why, because a place \
+         nothing was put to is not a place the tests noticed everything about: {stated:?}"
+    );
+}

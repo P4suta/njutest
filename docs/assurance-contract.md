@@ -23,6 +23,13 @@ targeted receives `CHANGE_ASSURED`; an explicit package run receives
 scope broadens to `full`, and the report records both requested and resolved
 scope.
 
+`[project] exclude` narrows the file scope and nothing else: the files it
+names are copied, compiled, and run like every other, and what a run is
+keyed on is the whole tree, so the exclusion removes findings rather than
+work or evidence. A run left with no mutation to put to a test concludes
+`INSUFFICIENT` whatever narrowed it away, because an assurance is the claim
+that every mutation was noticed and a run that made none has not made it.
+
 Replay is an operation, not a new project assurance. It returns `REPRODUCED`
 when the selected finding remains observable or `RESOLVED` when it does not.
 It reads no evidence, no cache, and no coverage: the finding says nothing

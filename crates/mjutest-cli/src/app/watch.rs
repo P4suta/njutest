@@ -38,17 +38,16 @@ pub type Seen = BTreeMap<String, (Option<SystemTime>, u64)>;
 
 /// What one look at the tree found, without reading any of it.
 ///
+/// Every file counts, the ones `[project] exclude` leaves out of the mutations
+/// included: a file a run still compiles and still runs is a file whose change
+/// changes the answer, and a watch that passed over it would sit still while
+/// the verdict on screen went stale.
+///
 /// # Errors
 /// See [`ScanError`].
-pub fn look(root: &Path, config: &Config) -> Result<Seen, ScanError> {
-    let exclude: Vec<rust_mutants::glob::Pattern> = config
-        .project
-        .exclude
-        .iter()
-        .filter_map(|pattern| rust_mutants::glob::Pattern::compile(pattern).ok())
-        .collect();
+pub fn look(root: &Path) -> Result<Seen, ScanError> {
     let mut seen = Seen::new();
-    walk(root, &exclude, &[], |relative, entry| {
+    walk(root, &[], &[], |relative, entry| {
         if let Entry::File(path) = entry
             && let Ok(held) = std::fs::metadata(&path)
         {
@@ -100,13 +99,10 @@ pub fn run(
     stderr: &mut dyn Write,
 ) -> u8 {
     let root = environment.rooted(arguments.verify.directory.as_deref());
-    let config = match Config::load(&root) {
-        Ok(config) => config,
-        Err(error) => {
-            super::diagnose(stderr, &error.to_string());
-            return EXIT_ERROR;
-        }
-    };
+    if let Err(error) = Config::load(&root) {
+        super::diagnose(stderr, &error.to_string());
+        return EXIT_ERROR;
+    }
     let poll = arguments.poll_ms.map_or(POLL, Duration::from_millis);
     let cancel = environment.cancel.clone();
     super::say(
@@ -116,7 +112,7 @@ pub fn run(
     until(
         &cancel,
         poll,
-        || look(&root, &config).ok(),
+        || look(&root).ok(),
         || {
             let code = super::verify::run(&arguments.verify, environment, stdout, stderr);
             super::say(stdout, "waiting\tfor the next change");

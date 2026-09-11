@@ -387,3 +387,26 @@ fn a_directory_a_command_names_is_resolved_against_where_the_command_was_told_it
         "and an absolute name is the tree it names, wherever the caller is"
     );
 }
+
+#[test]
+fn an_exclude_pattern_that_is_not_a_pattern_is_refused() {
+    let good = load("[project]\nexclude = [\"vendor/**\", \"**/generated/**\"]\n")
+        .expect("two patterns that compile");
+    assert_eq!(good.project.exclude, ["vendor/**", "**/generated/**"]);
+
+    for (refused, why) in [
+        (
+            "vendor/",
+            "a trailing slash is the spelling a person reaches for first",
+        ),
+        ("/vendor/**", "a leading slash is the second"),
+        ("", "and an empty pattern narrows nothing at all"),
+    ] {
+        let error = expect_error(&format!("[project]\nexclude = [{refused:?}]\n"));
+        assert_eq!(error.kind(), ConfigErrorKind::Invalid, "{why}: {refused:?}");
+        assert!(
+            error.to_string().contains("exclude"),
+            "a refusal names the key it is about: {error}"
+        );
+    }
+}

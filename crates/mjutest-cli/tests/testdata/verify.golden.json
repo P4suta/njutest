@@ -73,7 +73,7 @@
       "name": "touch-not-recorded"
     },
     {
-      "detail": "1 places were not mutated: test-code",
+      "detail": "1 place was not mutated: test-code",
       "name": "skipped-test-code"
     }
   ],
