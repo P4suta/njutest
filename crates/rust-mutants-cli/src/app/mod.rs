@@ -986,6 +986,23 @@ fn filter(
     else {
         return Ok(run::Filter::default());
     };
+    for prefix in ids {
+        if !session
+            .catalog()
+            .mutants()
+            .iter()
+            .any(|mutant| mutant.id.starts_with(prefix) || mutant.display_id.starts_with(prefix))
+        {
+            return Err(CliError::InvalidValue {
+                flag: "--id".to_owned(),
+                value: prefix.clone(),
+                expected: format!(
+                    "a prefix of one of the {} mutations this catalog holds",
+                    session.catalog().mutants().len()
+                ),
+            });
+        }
+    }
     known("--rule", rules, true)?;
     known("--skip-rule", skip_rules, true)?;
     known("--family", families, false)?;

@@ -318,3 +318,38 @@ fn a_rule_or_family_this_release_does_not_know_is_refused() {
         String::from_utf8_lossy(&by_family.stderr)
     );
 }
+
+#[test]
+fn an_identity_that_names_no_mutation_of_the_catalog_is_refused() {
+    let fixture = Fixture::copy("fixture-simple");
+
+    let refused = run(&fixture, &["--id", "ffffffffffffffffffff", "--dry-run"]);
+    assert_ne!(
+        refused.status.code(),
+        Some(0),
+        "a run narrowed to an identity nothing holds measures nothing and reports that \
+         nothing was missed, which is the answer a person who pasted a stale identity \
+         cannot tell from the one they wanted: {}",
+        said(&refused)
+    );
+    let refusal = String::from_utf8_lossy(&refused.stderr).into_owned();
+    assert!(
+        refusal.contains("ffffffffffffffffffff") && refusal.contains("--id"),
+        "and the refusal names the flag and the value: {refusal}"
+    );
+
+    let listed = run(&fixture, &["--dry-run"]);
+    let held = said(&listed)
+        .lines()
+        .find(|line| line.starts_with('#'))
+        .and_then(|line| line.split_whitespace().nth(1))
+        .expect("a dry run names each mutation it would ask about")
+        .to_owned();
+    let narrowed = run(&fixture, &["--id", &held, "--dry-run"]);
+    assert_eq!(
+        narrowed.status.code(),
+        Some(0),
+        "while an identity the catalog holds narrows the run: {}",
+        String::from_utf8_lossy(&narrowed.stderr)
+    );
+}
