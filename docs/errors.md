@@ -30,7 +30,7 @@ first digit names an area:
 | `RM0001` | The caller cancelled the operation before it completed. | — |
 | `RM0002` | A configuration file that could not be read. | — |
 | `RM0003` | A configuration file that is not the document this version understands: an unknown key, a malformed value, a duration that is not a duration. | — |
-| `RM0004` | A configuration that parses but says something a run cannot honour: an expectation without a reason, a harness flag the engine owns, a report directory outside the workspace. | — |
+| `RM0004` | A configuration or a flag that parses but says something a run cannot honour: an expectation without a reason, a harness flag the engine owns, a report directory outside the workspace, a shard that is not a part of something, a line range that addresses no line, a run name a directory cannot be, a `--file` this run does not read, a `--rule` or `--family` this release does not know. | — |
 | `RM0005` | A configuration whose `version` is not one this release understands. | — |
 | `RM0006` | A process environment that already selects a mutant or names a catalog, so nothing a test process said would be about this run. | unset the RUST_MUTANTS_ variable the message names and run again |
 | `RM0007` | A stored run report or recording that is not there or cannot be read. | — |
