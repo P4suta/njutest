@@ -69,16 +69,7 @@ impl Environment {
     /// Where a user's caches belong, from `vars` alone: `XDG_CACHE_HOME`, then `HOME/.cache`, then `LOCALAPPDATA` on Windows.
     #[must_use]
     pub fn cache_directory_of(vars: &[(OsString, OsString)]) -> PathBuf {
-        let value = |name: &str| -> Option<PathBuf> {
-            vars.iter()
-                .find(|(key, _)| key == name)
-                .map(|(_, value)| PathBuf::from(value))
-                .filter(|path| path.is_absolute())
-        };
-        value("XDG_CACHE_HOME")
-            .or_else(|| value("HOME").map(|home| home.join(".cache")))
-            .or_else(|| value("LOCALAPPDATA"))
-            .unwrap_or_else(|| PathBuf::from(".rust-mutants-cache"))
+        rust_mutants::userdirs::cache_directory(vars, ".rust-mutants-cache")
     }
 
     /// Whether `vars` asks for no colour, which one variable being set at all says.

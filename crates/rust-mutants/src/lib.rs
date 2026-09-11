@@ -40,6 +40,7 @@ pub mod tempowner;
 pub mod testkit;
 pub mod touch;
 pub mod trace;
+pub mod userdirs;
 pub mod validate;
 pub mod work;
 pub mod workspace;

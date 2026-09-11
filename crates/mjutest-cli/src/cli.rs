@@ -98,16 +98,7 @@ impl Environment {
     /// Where a user's caches belong, from `vars` alone: `XDG_CACHE_HOME`, then `HOME/.cache`, then `LOCALAPPDATA` on Windows.
     #[must_use]
     pub fn cache_directory_of(vars: &[(OsString, OsString)]) -> PathBuf {
-        let of = |name: &str| {
-            vars.iter()
-                .find(|(key, _)| key == OsStr::new(name))
-                .map(|(_, value)| PathBuf::from(value))
-                .filter(|path| path.is_absolute())
-        };
-        of("XDG_CACHE_HOME")
-            .or_else(|| of("HOME").map(|home| home.join(".cache")))
-            .or_else(|| of("LOCALAPPDATA"))
-            .unwrap_or_else(|| PathBuf::from(".mjutest-cache"))
+        rust_mutants::userdirs::cache_directory(vars, ".mjutest-cache")
     }
 }
 
