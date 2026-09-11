@@ -246,8 +246,16 @@ fn what_a_run_was_asked_to_keep_is_listed_and_never_swept() {
     let reports = fixture
         .root()
         .join(rust_mutants_cli::config::DEFAULT_REPORTS_DIRECTORY);
-    let preserved = fixture.temp().join("kept-on-purpose");
-    std::fs::create_dir_all(&preserved).expect("a directory a run was asked to keep");
+    let preserved = fixture.temp().join(format!(
+        "{}kept-on-purpose",
+        rust_mutants::snapshot::DIR_PREFIX
+    ));
+    owned(
+        &preserved,
+        rust_mutants::tempowner::Role::Scratch,
+        true,
+        None,
+    );
     rust_mutants_cli::kept::Ledger::record(
         &reports,
         "20260101T000000000Z",
@@ -258,8 +266,14 @@ fn what_a_run_was_asked_to_keep_is_listed_and_never_swept() {
     let said = asked(&environment, &["cache", "--gc", "--all"]);
     assert!(
         preserved.is_dir(),
-        "a directory somebody asked for is the one thing a sweep never takes: they \
-         asked for it in order to look at it: {}",
+        "a directory somebody asked for has the name a sweep looks at and is the one \
+         thing it never takes: they asked for it in order to look at it: {}",
+        said.out
+    );
+    assert!(
+        line(&said.out, "snapshots").contains("1 preserved on purpose"),
+        "and the sweep counted it rather than passing over a name it did not recognise, \
+         which is how this reads as spared when nothing spared it: {}",
         said.out
     );
     assert!(
@@ -282,8 +296,16 @@ fn collecting_what_was_kept_removes_it_and_says_how_many() {
     let reports = fixture
         .root()
         .join(rust_mutants_cli::config::DEFAULT_REPORTS_DIRECTORY);
-    let preserved = fixture.temp().join("kept-on-purpose");
-    std::fs::create_dir_all(&preserved).expect("a directory a run was asked to keep");
+    let preserved = fixture.temp().join(format!(
+        "{}kept-on-purpose",
+        rust_mutants::snapshot::DIR_PREFIX
+    ));
+    owned(
+        &preserved,
+        rust_mutants::tempowner::Role::Scratch,
+        true,
+        None,
+    );
     rust_mutants_cli::kept::Ledger::record(
         &reports,
         "20260101T000000000Z",
