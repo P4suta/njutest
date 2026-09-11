@@ -21,10 +21,13 @@ use std::fmt::Write as _;
 use criterion::Criterion;
 use rust_mutants::cargo::config::configured;
 use rust_mutants::catalog::Builder;
-use rust_mutants::coverage::parse_export;
+use rust_mutants::coverage::{Block, Point, parse_export};
 use rust_mutants::instrument::{Instrumenting, instrument_file, plan_file};
+use rust_mutants::reach::Reached;
 use rust_mutants::rule::Tier;
+use rust_mutants::session::{Route, Routing};
 use rust_mutants::syntax::{Selection, discover_file};
+use rust_mutants::touch::{Seen, TargetTouches, Touched};
 
 /// A file of `functions` functions, each with a comparison, a branch, and an arithmetic tail.
 fn source(functions: usize) -> String {
@@ -174,6 +177,7 @@ fn benchmarks(criterion: &mut Criterion) {
     criterion.bench_function("cargo_config/configured over 10 nested dirs", |bencher| {
         bencher.iter(|| configured(std::hint::black_box(&deepest), None));
     });
+    routes(criterion);
 }
 
 /// A tree `depth` directories deep, every level configuring its own flags.
@@ -191,6 +195,103 @@ fn nested(depth: usize) -> tempfile::TempDir {
         .expect("the file");
     }
     root
+}
+
+/// What deciding one mutant's route costs, by the guards' record and by a coverage measurement.
+fn routes(criterion: &mut Criterion) {
+    let record = recorded(16, 8, 2000);
+    let names: Vec<String> = record.targets.keys().cloned().collect();
+    let targets: Vec<&str> = names.iter().map(String::as_str).collect();
+    criterion.bench_function("route/by-touch over 16 targets of 8 tests", |bencher| {
+        bencher.iter(|| {
+            let among = Routing {
+                targets: &targets,
+                measurable: &targets,
+                also_reaching: &[],
+            };
+            for index in 0..200u32 {
+                let route = Route::by_touch(
+                    std::hint::black_box(&record),
+                    std::hint::black_box(index),
+                    &among,
+                );
+                let _reaching = std::hint::black_box(route.reaching().len());
+            }
+        });
+    });
+
+    let measurement = coverage(16, 2000);
+    criterion.bench_function("route/decide over 16 targets of 2000 blocks", |bencher| {
+        bencher.iter(|| {
+            let among = Routing {
+                targets: &targets,
+                measurable: &targets,
+                also_reaching: &[],
+            };
+            for line in 1..=200u32 {
+                let route = Route::decide(
+                    std::hint::black_box(&measurement),
+                    std::path::Path::new("src/lib.rs"),
+                    Point { line, column: 5 },
+                    &among,
+                );
+                let _reaching = std::hint::black_box(route.reaching().len());
+            }
+        });
+    });
+}
+
+/// A record of what the guards of `targets` tests reached, with `mutants` sites each.
+///
+/// Routing is the one decision made once per mutant of the catalog, so its cost
+/// is multiplied by everything a run measures: a route that got slower here is
+/// a run that got slower for every mutation, including the ones no proof
+/// removed.
+fn recorded(targets: usize, tests: usize, mutants: u32) -> Touched {
+    let mut held = Touched::default();
+    held.narrowing.compared = (0..mutants).collect();
+    for target in 0..targets {
+        let mut reached = Seen::default();
+        let mut ran = Vec::with_capacity(tests);
+        for test in 0..tests {
+            let name = format!("reaches_{target}_{test}");
+            let first = u32::try_from(test).unwrap_or(0);
+            let seen: BTreeSet<u32> = (first..mutants).step_by(tests.max(1)).collect();
+            drop(reached.tests.insert(name.clone(), seen));
+            ran.push(name);
+        }
+        let mut touches = TargetTouches::default();
+        touches.reached = reached;
+        touches.ran = ran;
+        drop(held.targets.insert(format!("demo/test/t{target}"), touches));
+    }
+    held
+}
+
+/// A coverage measurement of `targets` targets over `blocks` instrumented regions each.
+fn coverage(targets: usize, blocks: u32) -> Reached {
+    let block = |line: u32| Block {
+        file: "src/lib.rs".into(),
+        start: Point { line, column: 1 },
+        end: Point { line, column: 80 },
+    };
+    let mut reached = Reached {
+        instrumented: (1..=blocks).map(block).collect(),
+        ..Reached::default()
+    };
+    for target in 0..targets {
+        let first = u32::try_from(target).unwrap_or(0).saturating_add(1);
+        let covered: BTreeSet<Block> = (first..=blocks)
+            .step_by(targets.max(1))
+            .map(block)
+            .collect();
+        drop(
+            reached
+                .targets
+                .insert(format!("demo/test/t{target}"), covered),
+        );
+    }
+    reached
 }
 
 /// `harness = false`, so this is the whole program.

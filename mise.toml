@@ -149,12 +149,14 @@ description = "Run every local gate, the ones that answer quickest first"
 run = ["mise run fmt:check", "mise run build", "mise run lint", "mise run test", "mise run deny"]
 
 [tasks.bench]
-description = "Observe what the byte foundation and the report cost. Numbers, never gates"
+description = "Observe what every stage costs. Numbers, never gates"
 shell = "bash -c"
 run = """
 set -euo pipefail
 cargo bench -p rust-mutants --bench foundation -- "$@"
+cargo bench -p rust-mutants --bench pipeline -- "$@"
 cargo bench -p mjutest-cli --bench report -- "$@"
+cargo bench -p mjutest-cli --bench evidence -- "$@"
 """
 
 [tasks.dogfood]

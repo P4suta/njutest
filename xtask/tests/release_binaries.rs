@@ -154,3 +154,52 @@ fn what_binstall_looks_in_is_the_archive_the_release_builds() {
         );
     }
 }
+
+#[test]
+fn every_benchmark_the_workspace_declares_is_one_the_task_runs() {
+    let mut declared: BTreeSet<(String, String)> = BTreeSet::new();
+    for member in [
+        "crates/mjutest-cli",
+        "crates/rust-mutants",
+        "crates/mjutest",
+    ] {
+        let manifest = read(&format!("{member}/Cargo.toml"));
+        let package = member
+            .rsplit('/')
+            .next()
+            .unwrap_or_else(|| panic!("{member} names a package"));
+        for stanza in manifest.split("[[bench]]").skip(1) {
+            let Some(name) = stanza
+                .lines()
+                .find_map(|line| line.strip_prefix("name = \""))
+                .and_then(|value| value.split('"').next())
+            else {
+                continue;
+            };
+            let _added = declared.insert((package.to_owned(), name.to_owned()));
+        }
+    }
+    assert!(
+        declared.len() >= 4,
+        "the workspace declares benchmarks: {declared:?}"
+    );
+
+    let task = read("mise.toml");
+    let block = task
+        .find("[tasks.bench]")
+        .and_then(|at| task.get(at..))
+        .unwrap_or_else(|| panic!("mise.toml no longer has a bench task"));
+    let block = block
+        .find("\n[tasks.")
+        .map_or(block, |end| block.get(..end).unwrap_or(block));
+    let unrun: Vec<&(String, String)> = declared
+        .iter()
+        .filter(|(package, name)| !block.contains(&format!("-p {package} --bench {name}")))
+        .collect();
+    assert!(
+        unrun.is_empty(),
+        "a benchmark nobody runs is a number nobody reads: the stage it measures can get \
+         slower every release and the file it lives in still compiles. {unrun:?} is \
+         declared and `mise run bench` never asks for it"
+    );
+}
