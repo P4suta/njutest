@@ -267,18 +267,24 @@ fn an_expectation_the_run_confirms_stops_being_a_finding_and_a_stale_one_starts(
     );
 }
 
+/// An activation a process already carries is about the environment it inherits, so this one starts a process.
+///
+/// Driven in this process instead, the variable reaches every child the
+/// command starts, and under a measurement of this workspace this target's
+/// baseline failed: what came back on the command's own stderr was the
+/// instrumented runtime refusing an activation with no catalog beside it,
+/// rather than the run refusing to inherit one.
 #[test]
 fn a_process_that_already_selects_a_mutant_is_refused_before_anything_runs() {
     let fixture = Fixture::copy("fixture-simple");
-    let mut inherited = environment(&fixture);
-    inherited.vars.push((
-        OsString::from("RUST_MUTANTS_ACTIVE"),
-        OsString::from("0".repeat(64)),
-    ));
-    let output = asked(
-        &inherited,
-        &["list", "--root", &fixture.root().to_string_lossy()],
-    );
+    let output = mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")))
+        .args(["list", "--root", &fixture.root().to_string_lossy()])
+        .env("NO_COLOR", "1")
+        .env("TMPDIR", fixture.temp())
+        .env("XDG_CACHE_HOME", fixture.cache())
+        .env("RUST_MUTANTS_ACTIVE", "0".repeat(64))
+        .output()
+        .expect("rust-mutants runs");
     assert_eq!(output.status.code(), Some(2));
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("RM0006"), "{stderr}");

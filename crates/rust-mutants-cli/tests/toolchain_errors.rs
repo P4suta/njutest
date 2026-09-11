@@ -4,6 +4,7 @@
 //! What a failure says, and what it says to do about it.
 
 use std::ffi::OsString;
+use std::path::Path;
 use std::process::Output;
 
 use mjutest_devkit::fixture::Fixture;
@@ -52,18 +53,26 @@ fn environment(fixture: &Fixture) -> Environment {
     }
 }
 
+/// A reserved variable is about the environment a process inherits, so this one starts a process.
+///
+/// Driven in this process instead, the variable reaches every child the
+/// command starts, and under a measurement of this workspace this target's
+/// baseline failed: what came back on the command's own stderr was the
+/// instrumented runtime refusing an activation with no catalog beside it,
+/// rather than the run refusing to inherit one. The rule was no longer the
+/// rule under test. The environment a process is given is `main.rs`'s to
+/// compose, and this is the one claim that is about that.
 #[test]
 fn a_reserved_variable_names_itself_and_says_what_to_do() {
     let fixture = Fixture::copy("fixture-simple");
-    let mut inherited = environment(&fixture);
-    inherited.vars.push((
-        OsString::from("RUST_MUTANTS_ACTIVE"),
-        OsString::from("0".repeat(64)),
-    ));
-    let output = asked(
-        &inherited,
-        &["list", "--root", &fixture.root().to_string_lossy()],
-    );
+    let output = mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")))
+        .args(["list", "--root", &fixture.root().to_string_lossy()])
+        .env("NO_COLOR", "1")
+        .env("TMPDIR", fixture.temp())
+        .env("XDG_CACHE_HOME", fixture.cache())
+        .env("RUST_MUTANTS_ACTIVE", "0".repeat(64))
+        .output()
+        .expect("rust-mutants runs");
     let complaint = String::from_utf8_lossy(&output.stderr);
     assert!(complaint.contains("RM0006"), "{complaint}");
     assert!(
