@@ -184,3 +184,31 @@ fn a_marker_without_a_reason_says_how_to_write_one() {
         "{complaint}"
     );
 }
+
+#[test]
+fn the_harness_arguments_the_configuration_holds_reach_the_baseline() {
+    let fixture = Fixture::copy("fixture-ignored");
+    let plain = against(&fixture, &["run", "--tier", "all", "--ui", "quiet"]);
+    assert!(
+        String::from_utf8_lossy(&plain.stdout).contains("not_run=4"),
+        "every test of this fixture is `#[ignore]`d, so its one target runs nothing and \
+         its four mutations reach nothing: {}",
+        String::from_utf8_lossy(&plain.stdout)
+    );
+
+    let told = Fixture::copy("fixture-ignored");
+    std::fs::write(
+        told.root().join(".rust-mutants.toml"),
+        "version = 1\n\n[execution]\ntest_binary_args = [\"--include-ignored\"]\n",
+    )
+    .expect("a configuration");
+    let output = against(&told, &["run", "--tier", "all", "--ui", "quiet"]);
+    let said = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        said.contains("killed=4"),
+        "and the one argument this configuration holds is the one that runs them. The \
+         baseline is one run of this project's suite, and a mutation put to a test the \
+         baseline never ran is a kill nothing vouched for: {said}{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
