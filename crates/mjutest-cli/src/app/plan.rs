@@ -7,7 +7,7 @@ use std::io::Write;
 
 use crate::build::{BuildOptions, Cargo, Flavour, Selection, build};
 use crate::cli::{EXIT_ASSURED, EXIT_ERROR, Environment, Plan as Arguments};
-use crate::targets::{Target, UnitKind, WHOLE_BINARY, enumerate, target_id};
+use crate::targets::{Target, UnitKind, enumerate};
 use crate::trace::Recorder;
 use crate::watch::Watch;
 
@@ -112,17 +112,7 @@ fn selected(
     for unit in units {
         let held = enumerate(unit, watch)?;
         selected.push(Planned {
-            target: Target {
-                id: target_id(&unit.package, unit.kind, &unit.name, WHOLE_BINARY),
-                package: unit.package.clone(),
-                unit: unit.kind,
-                unit_name: unit.name.clone(),
-                path: WHOLE_BINARY.to_owned(),
-                ignored: false,
-                executable: unit.executable.clone(),
-                cwd: unit.cwd.clone(),
-                env: unit.env.clone(),
-            },
+            target: crate::targets::whole_binary(unit),
             tests: held.iter().filter(|one| !one.ignored).count(),
             ignored: held.iter().filter(|one| one.ignored).count(),
         });

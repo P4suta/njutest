@@ -222,3 +222,39 @@ fn a_built_binary_names_every_test_it_holds_with_its_own_identity() {
         ]
     );
 }
+
+#[test]
+fn a_plan_and_a_run_name_a_whole_binary_the_same_way() {
+    use mjutest_cli::targets::whole_binary;
+
+    let unit = Unit {
+        package: "core".to_owned(),
+        kind: UnitKind::Test,
+        name: "harnessed".to_owned(),
+        executable: std::path::PathBuf::from("/tmp/harnessed"),
+        cwd: std::path::PathBuf::from("/tmp"),
+        env: Vec::new(),
+    };
+    let named = whole_binary(&unit);
+
+    assert_eq!(
+        named.id,
+        target_id("core", UnitKind::Test, "harnessed", WHOLE_BINARY),
+        "the identity a run puts a mutation to is the identity a plan says it would: a \
+         plan that named it any other way is about a run nobody made"
+    );
+    assert_eq!(named.path, WHOLE_BINARY);
+    assert!(
+        named.is_whole_binary(),
+        "and it is the one target the binary has rather than one test of it"
+    );
+    assert!(
+        !named.ignored,
+        "a binary with its own harness is never `#[ignore]`d, because nothing here read \
+         an attribute: the harness is asked to run and it runs"
+    );
+    assert_eq!(named.package, unit.package);
+    assert_eq!(named.unit_name, unit.name);
+    assert_eq!(named.executable, unit.executable);
+    assert_eq!(named.cwd, unit.cwd);
+}

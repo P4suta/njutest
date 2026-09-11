@@ -329,7 +329,12 @@ pub fn enumerate(unit: &Unit, watch: Watch<'_>) -> Result<Vec<Target>, TargetErr
 }
 
 /// The one target a binary with its own harness has.
-fn whole_binary(unit: &Unit) -> Target {
+///
+/// A run and a plan must name it the same way or the plan is about a run
+/// nobody made, so the name is built here and asked for rather than written
+/// twice.
+#[must_use]
+pub fn whole_binary(unit: &Unit) -> Target {
     Target {
         id: target_id(&unit.package, unit.kind, &unit.name, WHOLE_BINARY),
         package: unit.package.clone(),
