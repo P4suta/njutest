@@ -288,3 +288,54 @@ fn a_provider_whose_answer_is_not_one_is_a_limitation_that_names_the_finding() {
          provider that answers for one and not another is the usual case: {detail:?}"
     );
 }
+
+#[test]
+fn a_digest_that_names_no_candidate_is_not_a_run_that_was_offered_none() {
+    let fixture = fixture();
+    declaring(&fixture);
+    let offers = offering("tests/zero.rs", OFFERED);
+
+    let verified = mjutest(&fixture, &["verify", "--offline", "--locked"], &offers);
+    assert_eq!(verified.status.code(), Some(2), "{verified:?}");
+    let listed = mjutest(&fixture, &["fix"], &offers);
+    let said = String::from_utf8_lossy(&listed.stdout).into_owned();
+    let digest = said
+        .lines()
+        .next()
+        .and_then(|line| line.split_whitespace().next())
+        .expect("a candidate is listed with its digest")
+        .to_owned();
+
+    let one = mjutest(&fixture, &["fix", "--candidate", &digest], &offers);
+    assert_eq!(
+        one.status.code(),
+        Some(0),
+        "a digest that names a candidate names it: {}",
+        String::from_utf8_lossy(&one.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&one.stdout).contains(&digest),
+        "{}",
+        String::from_utf8_lossy(&one.stdout)
+    );
+
+    let nothing = mjutest(&fixture, &["fix", "--candidate", "ffffffffffff"], &offers);
+    assert_ne!(
+        nothing.status.code(),
+        Some(0),
+        "a digest that names none of the candidates a run was offered is not a run that \
+         was offered none: a person who mistyped a digest would read that the run had \
+         nothing to propose, and a script would read success: {}",
+        String::from_utf8_lossy(&nothing.stdout)
+    );
+    let refusal = String::from_utf8_lossy(&nothing.stderr).into_owned();
+    assert!(
+        refusal.contains("ffffffffffff") && refusal.contains("no candidate"),
+        "and the refusal says which digest found nothing: {refusal}"
+    );
+    assert!(
+        refusal.contains(" 1") || refusal.contains("offered"),
+        "and how many there were to choose from, because that is what tells a person \
+         whether to look again or to stop looking: {refusal}"
+    );
+}

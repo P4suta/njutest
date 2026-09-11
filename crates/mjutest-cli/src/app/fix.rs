@@ -52,6 +52,20 @@ pub fn run(
                 .is_none_or(|prefix| candidate.digest.starts_with(prefix))
         })
         .collect();
+    if let Some(prefix) = arguments.candidate.as_deref()
+        && selected.is_empty()
+        && !report.candidates.is_empty()
+    {
+        super::diagnose(
+            stderr,
+            &format!(
+                "{}: no candidate of {run} starts with {prefix}; it was offered {}",
+                crate::error::RUN_NOT_FOUND.code,
+                report.candidates.len()
+            ),
+        );
+        return EXIT_ERROR;
+    }
     if selected.is_empty() {
         super::say(stdout, &format!("{run} was offered no repair"));
         return EXIT_ASSURED;
