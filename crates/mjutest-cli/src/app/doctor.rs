@@ -32,20 +32,54 @@ impl Need {
     }
 }
 
-/// One thing that is either there or not.
+/// What was found out about one thing a run needs.
+enum State {
+    /// It is there, and this is what it is.
+    Found(String),
+    /// It is not there at all.
+    Missing,
+    /// It is there and a run will not have it: the reason, in the words the run would use.
+    Refused(String),
+}
+
+impl State {
+    const fn word(&self) -> &'static str {
+        match self {
+            Self::Found(_) => "ok",
+            Self::Missing => "missing",
+            Self::Refused(_) => "refused",
+        }
+    }
+
+    const fn held(&self) -> bool {
+        matches!(self, Self::Found(_))
+    }
+
+    fn detail(&self) -> String {
+        match self {
+            Self::Found(said) | Self::Refused(said) => format!("  {said}"),
+            Self::Missing => String::new(),
+        }
+    }
+}
+
+/// One thing a run needs, and what was found out about it.
 struct Finding {
-    tool: &'static str,
+    /// What it is called, which is a tool's name or the word for what it is.
+    named: &'static str,
     need: Need,
-    detail: Option<String>,
+    detail: State,
 }
 
 impl Finding {
     fn line(&self) -> String {
-        let (state, detail) = self.detail.as_ref().map_or_else(
-            || ("missing", String::new()),
-            |detail| ("ok", format!("  {detail}")),
-        );
-        format!("{:<8} {:<14} {state}{detail}", self.need.name(), self.tool)
+        format!(
+            "{:<8} {:<14} {}{}",
+            self.need.name(),
+            self.named,
+            self.detail.word(),
+            self.detail.detail()
+        )
     }
 }
 
@@ -60,19 +94,19 @@ pub fn run(
     for finding in &findings {
         super::say(stdout, &finding.line());
     }
-    let missing: Vec<&str> = findings
+    let wanting: Vec<String> = findings
         .iter()
-        .filter(|finding| finding.need == Need::Required && finding.detail.is_none())
-        .map(|finding| finding.tool)
+        .filter(|finding| finding.need == Need::Required && !finding.detail.held())
+        .map(|finding| format!("{} is {}", finding.named, finding.detail.word()))
         .collect();
     super::say(stdout, "");
-    if missing.is_empty() {
+    if wanting.is_empty() {
         super::say(stdout, "a standard-v1 run can go ahead on this machine");
         return EXIT_ASSURED;
     }
     super::say(
         stdout,
-        &format!("a run cannot go ahead: {} is missing", missing.join(", ")),
+        &format!("a run cannot go ahead: {}", wanting.join(", ")),
     );
     EXIT_ERROR
 }
@@ -101,17 +135,22 @@ fn examine(environment: &Environment) -> Vec<Finding> {
         cancel: &cancel,
     };
 
-    let required = |tool, detail| Finding {
-        tool,
+    let required = |named, detail: Option<String>| Finding {
+        named,
         need: Need::Required,
-        detail,
+        detail: detail.map_or(State::Missing, State::Found),
     };
-    let optional = |tool, detail| Finding {
-        tool,
+    let optional = |named, detail: Option<String>| Finding {
+        named,
         need: Need::Optional,
-        detail,
+        detail: detail.map_or(State::Missing, State::Found),
     };
     vec![
+        Finding {
+            named: "configuration",
+            need: Need::Required,
+            detail: configuration(&dir),
+        },
         required(
             "cargo",
             toolchain
@@ -148,6 +187,23 @@ fn examine(environment: &Environment) -> Vec<Finding> {
             probe.version_of("cargo", &["fuzz", "--version"]),
         ),
     ]
+}
+
+/// What a run in this directory would make of the configuration beside it.
+///
+/// A doctor says whether a run can go ahead here, and a run reads this file
+/// before it does anything else. One that answered about the tools alone would
+/// say a run can go ahead and be contradicted by the next command.
+fn configuration(root: &Path) -> State {
+    let path = root.join(crate::config::FILE_NAME);
+    match crate::config::Config::load(root) {
+        Ok(_read) if path.is_file() => State::Found(path.display().to_string()),
+        Ok(_defaults) => State::Found(format!(
+            "none; the defaults apply. `mjutest init` writes {}",
+            crate::config::FILE_NAME
+        )),
+        Err(error) => State::Refused(error.to_string()),
+    }
 }
 
 /// Asking one tool whether it is there, in the machine the run was given.

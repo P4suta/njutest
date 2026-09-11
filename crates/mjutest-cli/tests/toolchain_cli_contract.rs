@@ -205,6 +205,30 @@ fn doctor_names_every_tool_a_run_needs_and_whether_it_is_there() {
 }
 
 #[test]
+fn doctor_reads_the_configuration_a_run_would_read() {
+    let dir = tempfile::tempdir().expect("a temporary directory");
+    std::fs::write(
+        dir.path().join(".mjutest.toml"),
+        "version = 1\n\n[project]\nexclude = [\"vendor/\"]\n",
+    )
+    .expect("a configuration");
+
+    let output = asked(&environment(dir.path(), &[]), &["doctor"]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_ne!(
+        output.status.code(),
+        Some(0),
+        "a doctor says whether a run can go ahead here, and a run in this directory \
+         refuses the configuration before it does anything else. Saying a run can go \
+         ahead is a claim the next command contradicts: {stdout}"
+    );
+    assert!(
+        stdout.contains(".mjutest.toml"),
+        "and it names the file it could not read: {stdout}"
+    );
+}
+
+#[test]
 fn doctor_without_a_toolchain_says_so_and_refuses_rather_than_guessing() {
     let dir = tempfile::tempdir().expect("a temporary directory");
     let output = asked(
