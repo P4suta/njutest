@@ -127,6 +127,31 @@ pub fn establish(
     reached
 }
 
+/// The limitation a cargo configuration refuses a coverage measurement with, before a build is attempted.
+///
+/// A coverage build has to compile the tree with flags of its own, and it can
+/// only do that by putting back the flags the project configured. A file this
+/// release could not read faithfully says nothing about what those are, and a
+/// `target.*` table says flags whose application is cargo's decision about the
+/// target being built rather than this one's. Measuring under flags that are
+/// not the project's would route mutations by a coverage profile of a
+/// different program, so the measurement is refused and every mutation is
+/// routed by its file instead: sound, and none of the saving.
+///
+/// The unreadable file is answered first. A file nobody could read may also
+/// hold a `target.*` table, and the more serious fact about it is that nothing
+/// in it is known.
+#[must_use]
+pub const fn refusal(flags: &Configured) -> Option<&'static str> {
+    if flags.unreadable {
+        return Some(UNREADABLE_CONFIGURATION);
+    }
+    if flags.target_specific {
+        return Some(CONFIGURED_FLAGS);
+    }
+    None
+}
+
 fn measure(
     workspace: &Workspace,
     options: &PrepareOptions,
@@ -135,11 +160,8 @@ fn measure(
 ) -> Result<Reached, EngineError> {
     let root = workspace.snapshot_root();
     let flags = config::configured(root, config::home(&workspace.base_env).as_deref());
-    if flags.unreadable {
-        return Ok(refused(UNREADABLE_CONFIGURATION, trace));
-    }
-    if flags.target_specific {
-        return Ok(refused(CONFIGURED_FLAGS, trace));
+    if let Some(named) = refusal(&flags) {
+        return Ok(refused(named, trace));
     }
     let target_dir = workspace.target_dir.join("coverage");
     let built = compile(

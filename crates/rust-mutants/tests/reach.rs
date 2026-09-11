@@ -382,3 +382,77 @@ fn a_record_that_is_not_there_is_a_process_that_wrote_nothing_and_one_that_will_
         );
     }
 }
+
+#[test]
+fn a_configuration_this_release_cannot_read_refuses_a_coverage_measurement() {
+    use rust_mutants::cargo::config::Configured;
+    use rust_mutants::reach::refusal;
+
+    assert_eq!(
+        refusal(&Configured {
+            unreadable: true,
+            ..Configured::default()
+        }),
+        Some("cargo-configuration-unreadable"),
+        "a coverage build compiles the tree with flags of its own and can only do that by \
+         putting back the flags the project configured; a file nothing could read says \
+         nothing about what those are, so measuring would route mutations by a coverage \
+         profile of a different program"
+    );
+}
+
+#[test]
+fn flags_a_target_table_configures_refuse_a_coverage_measurement() {
+    use rust_mutants::cargo::config::Configured;
+    use rust_mutants::reach::refusal;
+
+    assert_eq!(
+        refusal(&Configured {
+            target_specific: true,
+            ..Configured::default()
+        }),
+        Some("coverage-refused-configured-rustflags"),
+        "which `target.*` table applies is cargo's decision about the target being built \
+         rather than this one's, so the flags a coverage build would put back are not the \
+         flags the project compiles under"
+    );
+}
+
+#[test]
+fn flags_the_project_configures_for_every_target_are_flags_a_coverage_build_puts_back() {
+    use rust_mutants::cargo::config::Configured;
+    use rust_mutants::reach::refusal;
+
+    assert_eq!(
+        refusal(&Configured {
+            build: vec!["--cfg".to_owned(), "tree".to_owned()],
+            ..Configured::default()
+        }),
+        None,
+        "a measurement that refused here would route every mutation by its file for a \
+         configuration it could have honoured, which is the whole saving given away"
+    );
+    assert_eq!(
+        refusal(&Configured::default()),
+        None,
+        "and a tree that configures nothing is measured"
+    );
+}
+
+#[test]
+fn a_configuration_that_is_both_unreadable_and_target_specific_is_said_to_be_unreadable() {
+    use rust_mutants::cargo::config::Configured;
+    use rust_mutants::reach::refusal;
+
+    assert_eq!(
+        refusal(&Configured {
+            unreadable: true,
+            target_specific: true,
+            build: Vec::new(),
+        }),
+        Some("cargo-configuration-unreadable"),
+        "a file nobody could read may also hold a target table, and the more serious fact \
+         about it is that nothing in it is known: a reader told the flags were \
+         target-specific would go looking for a table that may not be the reason"
+    );
+}
