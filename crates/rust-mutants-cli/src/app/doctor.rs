@@ -280,7 +280,12 @@ const fn free_space(_path: &Path) -> Option<u64> {
 }
 
 /// Bytes as a person reads them.
-fn rendered_bytes(bytes: u64) -> String {
+///
+/// The value is truncated rather than rounded, in the unit and in the tenth:
+/// the number is read where a person is deciding whether a sweep gave back
+/// enough room, and one that overstated it would send them away satisfied.
+#[must_use]
+pub fn rendered_bytes(bytes: u64) -> String {
     const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
     let mut whole = bytes;
     let mut remainder: u64 = 0;

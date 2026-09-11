@@ -1911,6 +1911,7 @@ dependencies = [
  "jiff",
  "jsonschema",
  "mjutest-devkit",
+ "proptest",
  "ratatui",
  "rust-mutants",
  "rustix",

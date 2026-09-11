@@ -26,7 +26,7 @@ use crate::settings::Settings;
 use crate::{Environment, cli, report, run};
 
 mod bundle;
-mod doctor;
+pub mod doctor;
 pub mod estimate;
 pub mod stored;
 mod sweep;
@@ -960,9 +960,13 @@ fn stored_outcomes(
 
 /// One `--file` value: a path, and the lines of it the run is about.
 ///
+/// A path with no line after the colon addresses no line rather than the whole
+/// file: a person who wrote one meant to narrow, and measuring everything
+/// while they believe one line was selected is the answer they cannot check.
+///
 /// # Errors
 /// [`CliError::InvalidValue`] for lines that are not a range.
-fn addressed(text: &str) -> Result<(String, Option<(u32, u32)>), CliError> {
+pub fn addressed(text: &str) -> Result<(String, Option<(u32, u32)>), CliError> {
     let Some((path, lines)) = text.rsplit_once(':') else {
         return Ok((text.to_owned(), None));
     };

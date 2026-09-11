@@ -52,6 +52,7 @@ signal-hook = { workspace = true }
 
 [dev-dependencies]
 jsonschema = { workspace = true }
+proptest = { workspace = true }
 # The engine's own testkit, for the tests that need a source in a shape they
 # would otherwise commit a second copy of.
 rust-mutants = { workspace = true, features = ["testkit"] }
