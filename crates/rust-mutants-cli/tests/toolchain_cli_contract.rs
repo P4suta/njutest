@@ -320,3 +320,68 @@ fn environment(fixture: &Fixture) -> Environment {
         paints: false,
     }
 }
+
+#[test]
+fn cargo_rust_mutants_drops_the_word_cargo_gave_it_and_reads_the_rest() {
+    let asked = rust_mutants_cli::cli::parse(
+        ["cargo-rust-mutants", "rust-mutants", "list", "--offline"]
+            .into_iter()
+            .map(OsString::from),
+    )
+    .expect("cargo calls its subcommands with their own name in argv[1]");
+    let direct = rust_mutants_cli::cli::parse(
+        ["rust-mutants", "list", "--offline"]
+            .into_iter()
+            .map(OsString::from),
+    )
+    .expect("and a person calls it without");
+
+    assert_eq!(
+        format!("{asked:?}"),
+        format!("{direct:?}"),
+        "`cargo rust-mutants list` and `rust-mutants list` are one command asked for two \
+         ways"
+    );
+}
+
+#[test]
+fn a_binary_that_is_not_a_cargo_subcommand_keeps_every_argument_it_was_given() {
+    let refused = rust_mutants_cli::cli::parse(
+        ["rust-mutants", "rust-mutants", "list"]
+            .into_iter()
+            .map(OsString::from),
+    );
+    assert!(
+        refused.is_err(),
+        "dropping a repeated word is cargo's convention and not this program's: called \
+         directly, `rust-mutants rust-mutants list` is a mistake and is said to be one"
+    );
+}
+
+#[test]
+fn the_word_cargo_repeats_is_dropped_once_and_only_where_it_is_the_subcommand() {
+    let twice = rust_mutants_cli::cli::parse(
+        ["cargo-rust-mutants", "rust-mutants", "rust-mutants", "list"]
+            .into_iter()
+            .map(OsString::from),
+    );
+    assert!(
+        twice.is_err(),
+        "one repeat is cargo's; a second is a mistake, and dropping both would run a \
+         command nobody asked for"
+    );
+
+    let elsewhere = rust_mutants_cli::cli::parse(
+        ["cargo-rust-mutants", "list", "--offline"]
+            .into_iter()
+            .map(OsString::from),
+    )
+    .expect("cargo may be called without the repeat, and the rest is still the command");
+    let direct = rust_mutants_cli::cli::parse(
+        ["rust-mutants", "list", "--offline"]
+            .into_iter()
+            .map(OsString::from),
+    )
+    .expect("which is this command");
+    assert_eq!(format!("{elsewhere:?}"), format!("{direct:?}"));
+}

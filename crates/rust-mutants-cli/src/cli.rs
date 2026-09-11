@@ -498,6 +498,23 @@ pub struct Usage {
     pub exit_code: u8,
 }
 
+/// The same arguments, less the word cargo repeats when it calls a subcommand.
+///
+/// `cargo rust-mutants run` runs `cargo-rust-mutants rust-mutants run`, so the
+/// subcommand's own name arrives twice. Dropping it is cargo's convention and
+/// not this program's: called directly, `rust-mutants rust-mutants run` is a
+/// mistake, and saying so is more use than guessing what was meant.
+fn subcommand(mut args: Vec<OsString>) -> Vec<OsString> {
+    let called_by_cargo = args
+        .first()
+        .and_then(|name| std::path::Path::new(name).file_stem())
+        .is_some_and(|stem| stem == "cargo-rust-mutants");
+    if called_by_cargo && args.get(1).is_some_and(|word| word == "rust-mutants") {
+        let _repeated = args.remove(1);
+    }
+    args
+}
+
 /// Parses `args`, program name first.
 ///
 /// # Errors
@@ -506,7 +523,7 @@ pub fn parse<I>(args: I) -> Result<Cli, Usage>
 where
     I: IntoIterator<Item = OsString>,
 {
-    Cli::try_parse_from(args).map_err(|error| {
+    Cli::try_parse_from(subcommand(args.into_iter().collect())).map_err(|error| {
         let to_stderr = error.use_stderr();
         Usage {
             text: error.render().to_string(),

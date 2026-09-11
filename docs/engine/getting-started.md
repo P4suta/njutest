@@ -17,9 +17,14 @@ whole idea; everything below is about making it cheap and honest.
 ## Install
 
 ```console
-$ cargo install --path crates/rust-mutants-cli   # binary: rust-mutants
+$ cargo install --path crates/rust-mutants-cli   # binaries: rust-mutants, cargo-rust-mutants
 $ rust-mutants doctor
 ```
+
+`cargo binstall rust-mutants-cli` takes the archive a release published rather
+than compiling this workspace again, and `cargo rust-mutants doctor` works
+wherever the binary is on the path: the same program answers to the name cargo
+looks for.
 
 `doctor` answers about this machine rather than about your code: whether cargo
 and rustc are here, whether the root is a workspace, whether the packages you

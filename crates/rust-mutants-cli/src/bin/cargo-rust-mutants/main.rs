@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mjutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! The `rust-mutants` binary: the composition root, and the only place that reads the process's arguments, streams, environment, and signals.
+//! The `cargo-rust-mutants` binary: the same program under the name cargo looks for, so `cargo rust-mutants` is `rust-mutants`.
 
 #![forbid(unsafe_code)]
 

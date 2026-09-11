@@ -145,8 +145,8 @@ says how it differs from the tool most Rust projects reach for, and why.
 ## Try it
 
 ```console
-cargo install --path crates/mjutest-cli      # binary: mjutest
-cargo install --path crates/rust-mutants-cli # binary: rust-mutants
+cargo install --path crates/mjutest-cli      # mjutest, cargo-mjutest
+cargo install --path crates/rust-mutants-cli # rust-mutants, cargo-rust-mutants
 mjutest --help
 rust-mutants --help
 ```

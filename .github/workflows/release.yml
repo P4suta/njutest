@@ -48,7 +48,7 @@ jobs:
             exit 1
           fi
           cargo build --locked --release --workspace
-          for binary in mjutest cargo-mjutest rust-mutants; do
+          for binary in mjutest cargo-mjutest rust-mutants cargo-rust-mutants; do
             said="$("target/release/${binary}" --version)"
             case "${said}" in
               *"${version}"*) ;;
@@ -89,7 +89,7 @@ jobs:
           set -euo pipefail
           name="mjutest-${VERSION}-${TARGET}"
           mkdir -p "dist/${name}"
-          for binary in mjutest rust-mutants; do
+          for binary in mjutest cargo-mjutest rust-mutants cargo-rust-mutants; do
             if [ -f "target/release/${binary}.exe" ]; then
               cp "target/release/${binary}.exe" "dist/${name}/"
             else

@@ -112,6 +112,15 @@ fn abandoned(temp: &Path, tree: &Path) -> (std::path::PathBuf, std::path::PathBu
     (snapshot, cache)
 }
 
+/// The byte count a sweep line carries.
+fn bytes(line: &str) -> u64 {
+    line.split(" bytes")
+        .next()
+        .and_then(|before| before.split_whitespace().last())
+        .and_then(|number| number.parse().ok())
+        .unwrap_or_else(|| panic!("a sweep says how many bytes went: {line}"))
+}
+
 /// The line of `text` that starts with `name`.
 fn line<'a>(text: &'a str, name: &str) -> &'a str {
     text.lines()
@@ -213,13 +222,13 @@ fn everything_is_counted_in_bytes_as_well_as_in_directories() {
     for name in ["snapshots", "caches"] {
         let counted = line(&said.out, name);
         assert!(
-            counted.contains("1 removed") && counted.contains(" bytes"),
-            "one directory removed is not how much room it gave back, and the number a \
-             person is deciding by is the second one: {counted}"
+            counted.contains("1 removed"),
+            "one directory went: {counted}"
         );
         assert!(
-            !counted.contains("0 bytes"),
-            "and a directory with a file in it is not nothing: {counted}"
+            bytes(counted) > 0,
+            "and how much room it gave back is the number a person is deciding by, so a \
+             directory with a file in it is not nothing: {counted}"
         );
     }
     assert!(

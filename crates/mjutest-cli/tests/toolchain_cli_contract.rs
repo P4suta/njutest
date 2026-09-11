@@ -316,3 +316,31 @@ fn a_binary_that_is_not_a_cargo_subcommand_keeps_every_argument_it_was_given() {
          directly, `mjutest mjutest verify` is a mistake and is said to be one"
     );
 }
+
+#[test]
+fn the_word_cargo_repeats_is_dropped_once_and_only_where_it_is_the_subcommand() {
+    let twice = mjutest_cli::cli::parse(
+        ["cargo-mjutest", "mjutest", "mjutest", "verify"]
+            .into_iter()
+            .map(OsString::from),
+    );
+    assert!(
+        twice.is_err(),
+        "one repeat is cargo's; a second is a mistake, and dropping both would run a \
+         command nobody asked for"
+    );
+
+    let elsewhere = mjutest_cli::cli::parse(
+        ["cargo-mjutest", "verify", "--offline"]
+            .into_iter()
+            .map(OsString::from),
+    )
+    .expect("cargo may be called without the repeat, and the rest is still the command");
+    let direct = mjutest_cli::cli::parse(
+        ["mjutest", "verify", "--offline"]
+            .into_iter()
+            .map(OsString::from),
+    )
+    .expect("which is this command");
+    assert_eq!(format!("{elsewhere:?}"), format!("{direct:?}"));
+}

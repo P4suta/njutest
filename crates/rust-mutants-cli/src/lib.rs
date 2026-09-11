@@ -89,6 +89,38 @@ impl Environment {
     }
 }
 
+/// A cancellation flag the process raises on `SIGINT` and `SIGTERM`, and the number of the signal that raised it.
+///
+/// Both binaries of this crate are composition roots and both want this, and
+/// neither of them is where the duplication should live: registering a handler
+/// reads nothing of the process, so it belongs beside the code it cancels
+/// rather than beside the code that reads `argv`.
+#[must_use]
+pub fn interruptible() -> (Cancel, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+    let cancel = Cancel::new();
+    let signalled = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    for signal in [signal_hook::consts::SIGINT, signal_hook::consts::SIGTERM] {
+        drop(signal_hook::flag::register(signal, cancel.flag()));
+        drop(signal_hook::flag::register_usize(
+            signal,
+            std::sync::Arc::clone(&signalled),
+            usize::try_from(signal).unwrap_or(0),
+        ));
+    }
+    (cancel, signalled)
+}
+
+/// The status a process ends with: what the run concluded, unless a signal ended it first.
+#[must_use]
+pub fn ended(code: u8, signalled: &std::sync::atomic::AtomicUsize) -> std::process::ExitCode {
+    std::process::ExitCode::from(match signalled.load(std::sync::atomic::Ordering::SeqCst) {
+        0 => code,
+        signal => u8::try_from(signal)
+            .ok()
+            .map_or(code, |number| 128u8.saturating_add(number)),
+    })
+}
+
 /// Runs the command line described by `args` (program name first) and returns its exit code, writing to the two streams it was given. `cancel` is raised by whoever owns the process's signals; every command stops at the first place it can and leaves nothing behind.
 pub fn run_from<I>(args: I, environment: &Environment, cancel: &Cancel, streams: Streams<'_>) -> u8
 where
