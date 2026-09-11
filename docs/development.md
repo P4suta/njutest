@@ -178,6 +178,18 @@ providers, and a `fuzz/fuzz_targets` directory reaches the gap a run states
 about targets nobody asked it to drive. Each of those was measured as unreached
 until a run in this process was configured into it.
 
+A suite already written against a spawned process does not have to be rewritten
+to move here. `mjutest_devkit::process::answered(code, out, err)` hands back a
+`std::process::Output` for a command driven through the entry point, so a file
+changes in one function and every assertion in it stays as it was. Both
+products' command suites were moved that way on 2026-09-11; what still starts a
+process is what is about one — an interrupt, a hang, a panic, a stream read
+while it is being written, the language server's stdio, and the three suites
+whose subject is a variable a process inherits. That last kind must stay: the
+variable reaches every child the command starts, and under a measurement of
+this workspace one of those children answers about it, so the rule under test
+stops being the rule under test.
+
 ### The scripted toolchain
 
 `mjutest_devkit::fake_cargo` writes a script of invocations —
