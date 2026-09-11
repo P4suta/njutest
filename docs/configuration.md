@@ -76,6 +76,12 @@ owner = "quality-team"
 ticket = "QA-123"
 ```
 
+`[project] packages` is what a run is about, and `--package` on the command
+line takes its place rather than adding to it. A package no member answers to
+is refused, the way `mjutest plan` has always refused one: a run narrowed to a
+name nobody wrote would measure the whole workspace and report the narrow
+verdict `SCOPE_ASSURED` over it.
+
 `[execution] test_binary_args` is how this project's suite runs, and every
 test process of a run is started with those arguments, the baseline included:
 a baseline taken one way and mutations measured another compares two suites.

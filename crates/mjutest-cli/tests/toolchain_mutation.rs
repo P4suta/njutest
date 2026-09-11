@@ -788,3 +788,60 @@ fn the_harness_arguments_the_configuration_writes_are_the_ones_the_suite_runs_wi
         "with the tests that notice them now running: {mutants}"
     );
 }
+
+#[test]
+fn the_packages_the_configuration_names_are_the_packages_the_run_measures() {
+    let fixture = fixture("fixture-workspace");
+    std::fs::write(
+        fixture.root.join(".mjutest.toml"),
+        "version = 1\n\n[project]\npackages = [\"fixture-core\"]\n",
+    )
+    .expect("a configuration");
+
+    let output = verify(&fixture, &[]);
+    let report = document(&fixture);
+    let paths: Vec<&str> = report["mutants"]
+        .as_array()
+        .expect("mutants")
+        .iter()
+        .filter_map(|mutant| mutant["path"].as_str())
+        .collect();
+
+    assert!(
+        !paths.iter().any(|path| path.starts_with("crates/app/")),
+        "a run narrowed to one package measures that package. The verdict already reads \
+         SCOPE_ASSURED because the configuration named a scope, so a run that measured \
+         everything and said so is a narrower claim than the evidence, made about a \
+         wider tree than the one it names: {paths:?} (exit {:?})",
+        output.status.code()
+    );
+    assert!(
+        paths.iter().any(|path| path.starts_with("crates/core/")),
+        "and it does measure the one it names: {paths:?}"
+    );
+    assert_eq!(
+        report["scope"]["resolved_packages"],
+        serde_json::json!(["fixture-core"]),
+        "which is what the report says it settled on"
+    );
+}
+
+#[test]
+fn a_package_the_configuration_names_that_nobody_wrote_is_refused() {
+    let fixture = fixture("fixture-assured");
+    std::fs::write(
+        fixture.root.join(".mjutest.toml"),
+        "version = 1\n\n[project]\npackages = [\"nosuch\"]\n",
+    )
+    .expect("a configuration");
+
+    let output = verify(&fixture, &[]);
+    assert_ne!(
+        output.status.code(),
+        Some(0),
+        "a run narrowed to a package nobody wrote measured everything and called it \
+         SCOPE_ASSURED, which is a green answer to a question about a package that is \
+         not there. `mjutest plan` has refused the same mistake all along: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+}

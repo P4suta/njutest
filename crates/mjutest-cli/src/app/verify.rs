@@ -172,7 +172,7 @@ fn establish(establishing: &Establishing<'_>, streams: Streams<'_>) -> u8 {
     let request = Request {
         root: root.to_path_buf(),
         config: establishing.config.clone(),
-        packages: arguments.packages.clone(),
+        packages: packages(arguments, &establishing.config),
         test_args: harness_args(arguments, &establishing.config),
         cargo: Cargo {
             offline: arguments.offline,
@@ -274,16 +274,11 @@ fn mode_of(arguments: &Verify, config: &Config, changed: Option<&crate::git::Cha
             base: change.base.clone(),
         };
     }
-    if arguments.packages.is_empty() && config.project.packages.is_empty() {
+    let named = packages(arguments, config);
+    if named.is_empty() {
         return Mode::Full;
     }
-    Mode::Scoped {
-        packages: if arguments.packages.is_empty() {
-            config.project.packages.clone()
-        } else {
-            arguments.packages.clone()
-        },
-    }
+    Mode::Scoped { packages: named }
 }
 
 /// What this run is, as numbers, or nothing when the tree could not be read. A tree that cannot be measured is a limitation the report states, not a reason to refuse to verify it.
@@ -540,6 +535,21 @@ fn reuse(asking: &Asking<'_>, stdout: &mut dyn Write, stderr: &mut dyn Write) ->
 /// How many run directories to keep.
 const fn request_keep(request: &Request) -> u32 {
     request.config.reports.keep
+}
+
+/// The packages this run is about: the ones a reader named, or the ones the configuration names when they named none.
+///
+/// The command line takes the place of the configuration rather than adding
+/// to it, which is what `mode_of` has always done with the same two lists:
+/// the scope a run reports and the scope it measures are one thing, and a run
+/// that reported one and measured the other made a narrow claim about a wide
+/// tree.
+fn packages(arguments: &Verify, config: &Config) -> Vec<String> {
+    if arguments.packages.is_empty() {
+        config.project.packages.clone()
+    } else {
+        arguments.packages.clone()
+    }
 }
 
 /// The arguments every test binary of this run is started with.
