@@ -10,5 +10,6 @@ Options:
                          looked at
       --owner <OWNER>    Who decided
       --ticket <TICKET>  Where the decision is recorded
+      --expires <WHEN>   When to look again, as RFC3339. An acceptance with none never lapses
       --run <RUN>        The run that measured it. The latest by default
   -h, --help             Print help

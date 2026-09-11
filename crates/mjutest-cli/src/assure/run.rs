@@ -975,6 +975,7 @@ fn run_mutation(
         .config
         .acceptance
         .iter()
+        .filter(|acceptance| acceptance.holds(mutating.request.started))
         .map(|acceptance| acceptance.id.clone())
         .collect();
     let mutation = mutation::run_resuming(

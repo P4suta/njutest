@@ -845,3 +845,81 @@ fn a_package_the_configuration_names_that_nobody_wrote_is_refused() {
         String::from_utf8_lossy(&output.stdout)
     );
 }
+
+#[test]
+fn an_acceptance_whose_expiry_has_passed_answers_for_nothing() {
+    let fixture = fixture("fixture-baseline");
+    verify(&fixture, &[]);
+    let survivors: Vec<String> = document(&fixture)["mutants"]
+        .as_array()
+        .expect("mutants")
+        .iter()
+        .filter(|mutant| mutant["outcome"] == "survived" || mutant["outcome"] == "unreached")
+        .filter_map(|mutant| mutant["id"].as_str().map(ToOwned::to_owned))
+        .collect();
+    assert_eq!(survivors.len(), 3);
+
+    let mut configuration = String::from("version = 1\n");
+    for id in &survivors {
+        let _written = write!(
+            configuration,
+            "\n[[acceptance]]\nid = \"{id}\"\nreason = \"the boundary is checked by an ignored test\"\nexpires = \"2020-01-01T00:00:00Z\"\n"
+        );
+    }
+    std::fs::write(fixture.root.join(".mjutest.toml"), configuration).expect("a configuration");
+
+    let output = verify(&fixture, &[]);
+    let report = document(&fixture);
+    assert_eq!(
+        report["accounting"]["mutants"]["accepted"],
+        0,
+        "an acceptance is a person saying they looked, and the expiry is when they said \
+         to look again. One that has passed answers for nothing, or the date is a \
+         comment: {} (exit {:?})",
+        report["accounting"]["mutants"],
+        output.status.code()
+    );
+    assert_eq!(
+        report["findings"].as_array().expect("findings").len(),
+        3,
+        "and the findings it was hiding are back"
+    );
+}
+
+#[test]
+fn accept_writes_the_expiry_it_is_given_and_a_run_reads_it() {
+    let fixture = fixture("fixture-baseline");
+    verify(&fixture, &[]);
+    let survivor = document(&fixture)["mutants"]
+        .as_array()
+        .expect("mutants")
+        .iter()
+        .find(|mutant| mutant["outcome"] == "survived")
+        .and_then(|mutant| mutant["id"].as_str())
+        .expect("a survivor")
+        .to_owned();
+
+    let output = asked(
+        &of(&fixture.root, &[]),
+        &[
+            "accept",
+            &survivor,
+            "--reason",
+            "the boundary is checked by an ignored test",
+            "--expires",
+            "2020-01-01T00:00:00Z",
+        ],
+    );
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "an acceptance carries an expiry, and the command that writes acceptances is \
+         where a person writes one: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let written = std::fs::read_to_string(fixture.root.join(".mjutest.toml")).expect("the file");
+    assert!(
+        written.contains("expires = \"2020-01-01T00:00:00Z\""),
+        "written where the next run reads it: {written}"
+    );
+}

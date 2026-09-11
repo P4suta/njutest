@@ -73,6 +73,9 @@ pub fn run(
     if let Some(ticket) = &arguments.ticket {
         table.insert("ticket", toml_edit::value(ticket.clone()));
     }
+    if let Some(expires) = &arguments.expires {
+        table.insert("expires", toml_edit::value(expires.to_string()));
+    }
     array.push(table);
 
     if let Err(error) = std::fs::write(&path, document.to_string()) {

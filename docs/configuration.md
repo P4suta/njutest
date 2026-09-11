@@ -114,7 +114,10 @@ There is no `profile` key — `cargo test`'s `test` profile is the one under
 verification — and no `toolchain` key: `rust-toolchain.toml` is the idiomatic
 pin and `rustc -vV` is recorded. Environment entries are names, never
 `KEY=value`; values are not written to reports. `mjutest accept` appends an
-`[[acceptance]]` table while preserving the comments of the file.
+`[[acceptance]]` table while preserving the comments of the file, and writes
+every field one can carry. An acceptance whose `expires` has passed answers
+for nothing and the findings it was hiding are raised again; one that names no
+date never lapses.
 
 mjutest owns the libtest flags that alter routing, repetition, selection,
 output protocol, or completeness — positional filters, `--exact`, `--list`,

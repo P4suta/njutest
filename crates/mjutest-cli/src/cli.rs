@@ -365,6 +365,9 @@ pub struct Accept {
     /// Where the decision is recorded.
     #[arg(long)]
     pub ticket: Option<String>,
+    /// When to look again, as RFC3339. An acceptance with none never lapses.
+    #[arg(long, value_name = "WHEN")]
+    pub expires: Option<jiff::Timestamp>,
     /// The run that measured it. The latest by default.
     #[arg(long, value_name = "RUN")]
     pub run: Option<String>,

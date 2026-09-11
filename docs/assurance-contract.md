@@ -448,9 +448,14 @@ of the run reading it.
 ## Acceptances
 
 An acceptance is human authorization, not a mutation result. It requires a
-finding ID, non-empty reason, future RFC3339 expiry, and may carry owner and
-ticket. Every mutation marked `accepted` must reference a matching record.
-Expired acceptances are ignored.
+finding ID and a non-empty reason, and may carry an RFC3339 expiry, an owner
+and a ticket; `mjutest accept` writes all of them. Every mutation marked
+`accepted` must reference a matching record. An acceptance whose expiry has
+passed answers for nothing, and the findings it was hiding are raised again:
+the expiry is when the reviewer said to look again, and a run that read it as
+a comment would go on exempting a mutation on the strength of a decision its
+author had already put an end to. One that names no date never lapses, which
+is what a reviewer who wrote none asked for.
 
 ## Parts of one catalog
 

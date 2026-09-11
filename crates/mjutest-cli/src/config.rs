@@ -318,7 +318,7 @@ pub struct Acceptance {
     pub id: String,
     /// Why it was accepted. Required: an acceptance without a reason is a suppression, and a report cannot audit one.
     pub reason: String,
-    /// When the acceptance lapses.
+    /// When the acceptance lapses, after which it answers for nothing.
     #[serde(default)]
     pub expires: Option<jiff::Timestamp>,
     /// Who accepted it.
@@ -327,6 +327,19 @@ pub struct Acceptance {
     /// The ticket the decision lives in.
     #[serde(default)]
     pub ticket: Option<String>,
+}
+
+impl Acceptance {
+    /// Whether this acceptance still answers for anything at `now`.
+    ///
+    /// An acceptance is a person saying they looked, and the expiry is when
+    /// they said to look again. One that has passed answers for nothing, or
+    /// the date is a comment. One that names no date never lapses, which is
+    /// what a reviewer who wrote none asked for.
+    #[must_use]
+    pub fn holds(&self, now: jiff::Timestamp) -> bool {
+        self.expires.is_none_or(|when| when > now)
+    }
 }
 
 /// The failure modes of this module, each with a stable code.
