@@ -18,6 +18,53 @@ fn page(relative: &str) -> String {
 }
 
 #[test]
+fn the_kinds_the_page_lists_are_the_kinds_there_are_and_it_says_which_are_defects() {
+    let text = page("docs/report-v1.md");
+    let listed: Vec<(String, bool)> = text
+        .lines()
+        .skip_while(|line| !line.starts_with("| `kind` |"))
+        .skip(2)
+        .take_while(|line| line.starts_with('|'))
+        .filter_map(|line| {
+            let mut cells = line.split('|').skip(1);
+            let name = cells.next()?.trim().trim_matches('`').to_owned();
+            let defect = cells.nth(1)?.trim() == "yes";
+            Some((name, defect))
+        })
+        .collect();
+    assert_eq!(
+        listed.len(),
+        FindingKind::ALL.len(),
+        "the table of kinds is read and holds one row per kind: {listed:?}"
+    );
+    let mut wrong = Vec::new();
+    for (name, defect) in listed {
+        let Some(kind) = FindingKind::ALL.into_iter().find(|one| one.name() == name) else {
+            wrong.push(format!("{name} is no kind a report can carry"));
+            continue;
+        };
+        if kind.is_defect() != defect {
+            wrong.push(format!(
+                "{name}: the page says {}, the report says {}",
+                if defect { "a defect" } else { "not a defect" },
+                if kind.is_defect() {
+                    "a defect"
+                } else {
+                    "not a defect"
+                }
+            ));
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "the last column is the one a reader acts on first -- a defect is a fault in \
+         their code and the rest are gaps in what was established -- and a verdict is \
+         decided from the same answer. A page that says one and a run that says the \
+         other sends a reader to the wrong half of their work: {wrong:?}"
+    );
+}
+
+#[test]
 fn a_kind_a_report_carries_is_the_name_it_is_written_under() {
     for kind in FindingKind::ALL {
         assert_eq!(
