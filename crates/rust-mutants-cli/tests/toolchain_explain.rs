@@ -243,3 +243,59 @@ fn explain_names_the_tests_a_route_put_the_mutation_to() {
         "a reader asking why a mutation went where it did is asking which tests: {text}"
     );
 }
+
+#[test]
+fn a_tree_with_no_stored_run_explains_a_mutation_by_preparing_one_when_asked() {
+    let fixture = Fixture::copy("fixture-simple");
+    let listed = against(&fixture, &["list"]);
+    assert_eq!(
+        listed.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&listed.stderr)
+    );
+    let text = String::from_utf8_lossy(&listed.stdout).into_owned();
+    let id = text
+        .lines()
+        .next()
+        .and_then(|line| line.split_whitespace().next())
+        .expect("a candidate")
+        .to_owned();
+    assert!(
+        !fixture.root().join("reports/mutation").exists(),
+        "nothing has stored a run in this tree"
+    );
+
+    let refused = against(&fixture, &["explain", &id]);
+    assert_ne!(
+        refused.status.code(),
+        Some(0),
+        "with nothing stored there is nothing to read back, and an explanation invented \
+         from a tree the reader did not ask about would be about a catalog no run used"
+    );
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("RM0007"),
+        "and says which report it looked for: {}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+
+    let explained = against(&fixture, &["explain", &id, "--fresh"]);
+    assert_eq!(
+        explained.status.code(),
+        Some(0),
+        "`--fresh` is the word for preparing the tree again, which is how a person \
+         reading code asks what a mutation is before any run has judged it: {}",
+        String::from_utf8_lossy(&explained.stderr)
+    );
+    let said = String::from_utf8_lossy(&explained.stdout).into_owned();
+    assert!(
+        said.contains(&id) && said.contains("src/lib.rs"),
+        "the explanation is about the mutation that was named, and says where it is: \
+         {said}"
+    );
+    assert!(
+        !said.contains("killed") && !said.contains("survived"),
+        "and says nothing about an outcome, because no run has established one and a \
+         word here would be read as one that had: {said}"
+    );
+}
