@@ -529,3 +529,40 @@ fn fixture_changed(fixture: &Fixture) {
     let source = std::fs::read_to_string(&path).expect("the library");
     std::fs::write(&path, format!("{source}\npub const ADDED: u8 = 1;\n")).expect("a change");
 }
+
+#[test]
+fn a_plan_refuses_a_package_that_is_not_one_the_same_way_a_verification_does() {
+    let fixture = fixture("fixture-workspace");
+
+    let refused = mjutest(
+        &fixture,
+        &["plan", "--package", "nosuch", "--offline", "--locked"],
+    );
+    assert_ne!(
+        refused.status.code(),
+        Some(0),
+        "a plan is what a person asks before a run to find out what will happen, so it \
+         cannot answer a mistyped package with a plan of nothing: {}",
+        String::from_utf8_lossy(&refused.stdout)
+    );
+    let said = String::from_utf8_lossy(&refused.stderr).into_owned();
+    assert!(
+        said.contains("nosuch") && said.contains("not a workspace member"),
+        "and the refusal is the one a verification gives, in the same words: {said}"
+    );
+    assert!(
+        said.contains("RM2007"),
+        "with the code a person greps for: {said}"
+    );
+
+    let planned = mjutest(
+        &fixture,
+        &["plan", "--package", "fixture-core", "--offline", "--locked"],
+    );
+    assert_eq!(
+        planned.status.code(),
+        Some(0),
+        "while a package the workspace holds is planned: {}",
+        String::from_utf8_lossy(&planned.stderr)
+    );
+}

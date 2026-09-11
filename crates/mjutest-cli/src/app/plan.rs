@@ -36,6 +36,11 @@ pub fn run(
         }
     };
 
+    if let Some(refusal) = unknown_package(&arguments.packages, &metadata.packages) {
+        super::diagnose(stderr, &refusal);
+        return EXIT_ERROR;
+    }
+
     let scratch = match workplace(environment) {
         Ok(scratch) => scratch,
         Err(error) => {
@@ -207,4 +212,19 @@ pub fn line(planned: &Planned, why: bool) -> String {
         )
     };
     format!("{head}\t{reason}")
+}
+
+/// The first `--package` that names no member of the workspace, if one does.
+///
+/// A verification refuses this and says so; a plan used to answer `TARGETS 0`
+/// and exit zero, which reads as a package with nothing to run in it. A plan is
+/// what a person asks before a run to find out what will happen, so the two
+/// must give the same answer to the same mistake.
+fn unknown_package(named: &[String], members: &[rust_mutants::cargo::Package]) -> Option<String> {
+    named
+        .iter()
+        .find(|name| !members.iter().any(|member| member.name == **name))
+        .map(|name| {
+            rust_mutants::discover::DiscoverError::UnknownPackage { name: name.clone() }.to_string()
+        })
 }
