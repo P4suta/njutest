@@ -36,6 +36,7 @@ pub fn run(
             return EXIT_ERROR;
         }
     };
+    let build = config.execution.build();
     let cancel = environment.cancel.clone();
     let trace = Recorder::disabled();
     let watch = Watch::new(&cancel, &trace);
@@ -47,7 +48,8 @@ pub fn run(
                 offline: arguments.offline,
                 locked: arguments.locked,
             },
-            build: config.execution.build(),
+            build,
+            harness_args: config.execution.test_binary_args,
             timeout: None,
         },
         &found.subject,

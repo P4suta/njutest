@@ -137,6 +137,7 @@ fn apply(
             return EXIT_ERROR;
         }
     };
+    let build = config.execution.build();
     let checking = Checking {
         root,
         environment,
@@ -144,7 +145,8 @@ fn apply(
             offline: arguments.offline,
             locked: arguments.locked,
         },
-        build: config.execution.build(),
+        build,
+        harness_args: config.execution.test_binary_args,
         timeout: std::time::Duration::from_secs(300),
     };
     let mut written = 0u32;

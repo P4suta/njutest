@@ -490,6 +490,7 @@ fn considered(
             environment,
             cargo: request.cargo,
             build: request.config.execution.build(),
+            harness_args: request.test_args.clone(),
             timeout: request.config.execution.timeout,
         },
         proposal,

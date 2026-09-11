@@ -74,6 +74,8 @@ pub struct Replaying<'a> {
     pub cargo: Cargo,
     /// What the tree is compiled as, which must be what the run that found the finding compiled: a replay of another build is a replay of another program.
     pub build: rust_mutants::cargo::BuildConfig,
+    /// The arguments the test binaries are started with, which must be the ones the run used: a finding put back to a suite running another way is put to another suite.
+    pub harness_args: Vec<String>,
     /// How long one execution may take.
     pub timeout: Option<Duration>,
 }
@@ -115,6 +117,7 @@ pub fn replay(
         &PrepareOptions {
             verify: false,
             build: replaying.build.clone(),
+            harness_args: replaying.harness_args.clone(),
             mutant_timeout: replaying.timeout.map_or(Timeout::Auto, Timeout::Fixed),
             ..PrepareOptions::default()
         },
