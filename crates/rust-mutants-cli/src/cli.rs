@@ -19,6 +19,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
         compilable mutant of the selected files once, builds the test binaries once, and \
         activates one mutant per test process through an environment variable. The source \
         workspace is never modified.",
+    after_help = crate::exit_codes(),
     arg_required_else_help = true,
     term_width = 100,
     color = clap::ColorChoice::Never

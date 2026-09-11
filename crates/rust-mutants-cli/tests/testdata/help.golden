@@ -48,3 +48,10 @@ Options:
 
   -V, --version
           Print version
+
+Exit codes:
+  0    every mutant the run decided, the tests noticed
+  1    there is a finding: a survivor, a stale claim, something the run could not decide
+  2    the run itself failed, or the command was used wrongly
+  130  interrupted
+  143  terminated

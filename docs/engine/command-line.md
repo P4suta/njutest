@@ -99,6 +99,7 @@ read them too, so what those preview is what a run would do.
 | 1 | there is a finding: a survivor, a stale claim, something the run could not decide |
 | 2 | the run itself failed, or the command was used wrongly |
 | 130 | it was interrupted |
+| 143 | it was terminated, which is what a cancelled job sends |
 
 An exit code is about what was established, never about a percentage. There
 is no threshold flag; see

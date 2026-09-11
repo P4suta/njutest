@@ -115,22 +115,56 @@ fn the_engine_ledger_of_this_repository_is_one_the_reader_accepts() {
 
 #[test]
 fn the_exit_codes_the_page_documents_are_the_ones_the_run_returns() {
-    let text = page("docs/engine/json-schema.md");
-    let documented: BTreeSet<&str> = ["`0`", "`1`", "`2`", "`130`"]
-        .into_iter()
-        .filter(|code| text.contains(code))
+    let printed = rust_mutants_cli::exit_codes();
+    let returned: BTreeSet<u8> = printed
+        .lines()
+        .skip(1)
+        .filter_map(|line| line.split_whitespace().next())
+        .filter_map(|code| code.parse().ok())
         .collect();
-    assert_eq!(documented.len(), 4, "the page leaves out an exit code");
-    for code in [
-        rust_mutants_cli::run::EXIT_DETECTED,
-        rust_mutants_cli::run::EXIT_UNDETECTED,
-        rust_mutants_cli::EXIT_USAGE,
-        rust_mutants_cli::run::EXIT_INTERRUPTED,
+    assert_eq!(
+        returned.len(),
+        5,
+        "every code a run can end with is in the table `--help` prints: {printed}"
+    );
+
+    for (page_name, anchor) in [
+        (
+            "docs/engine/json-schema.md",
+            "`exit_code` is the one the process returned",
+        ),
+        (
+            "docs/engine/command-line.md",
+            "## What a run's exit code says",
+        ),
     ] {
-        assert!(
-            documented.contains(&format!("`{code}`").as_str()),
-            "the page does not document exit {code}"
-        );
+        let text = page(page_name);
+        let from = text
+            .find(anchor)
+            .unwrap_or_else(|| panic!("{page_name} no longer says {anchor:?}"));
+        let rest = text.get(from..).unwrap_or_default();
+        let to = rest
+            .get(anchor.len()..)
+            .and_then(|after| after.find("\n## "));
+        let table = to.map_or(rest, |end| {
+            rest.get(..end.saturating_add(anchor.len())).unwrap_or(rest)
+        });
+        for code in &returned {
+            assert!(
+                table.contains(&format!("`{code}`")) || table.contains(&format!("| {code} |")),
+                "{page_name} does not document exit {code}, which a run returns: a person \
+                 whose script saw it has nowhere to look it up"
+            );
+        }
+        for invented in [3u8, 4, 5, 101, 131, 142] {
+            let named = table.contains(&format!("`{invented}`"))
+                || table.contains(&format!("| {invented} |"));
+            assert!(
+                !named,
+                "{page_name} documents exit {invented} and no run returns it, so a reader \
+                 waits for an exit that never comes"
+            );
+        }
     }
 }
 

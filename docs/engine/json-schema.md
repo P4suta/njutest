@@ -107,7 +107,8 @@ retry timed out again; one that did not reproduce is `inconclusive`, which is
 a hole rather than a detection.
 
 `exit_code` is the one the process returned: `0` every mutant was noticed,
-`1` something was not, `2` the run itself failed, `130` it was interrupted.
+`1` something was not, `2` the run itself failed, `130` it was interrupted, `143` it
+was terminated.
 
 A `finding` is one of `surviving-mutant`, `inconclusive-mutant`,
 `errored-mutant`, `not-run-mutant`, `unreached-mutant`, `discharged-mutant`,

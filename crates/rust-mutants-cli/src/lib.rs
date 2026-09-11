@@ -23,6 +23,7 @@ pub mod tui;
 pub mod ui;
 
 use std::ffi::OsString;
+use std::fmt::Write as _;
 use std::io::Write;
 use std::path::PathBuf;
 
@@ -52,6 +53,43 @@ pub struct Environment {
 
 /// The exit code of a run that was interrupted.
 pub const EXIT_INTERRUPTED: u8 = 130;
+
+/// The exit code of a run that was terminated, which is `SIGTERM` by the convention every shell reports.
+///
+/// A continuous integration job that cancels a run sends this one rather than
+/// an interrupt, so a person reading a log sees it more often than they see
+/// 130, and a table that named only 130 left them to guess.
+pub const EXIT_TERMINATED: u8 = 143;
+
+/// What every exit code of this program means, as the lines `--help` ends with.
+///
+/// The table is rendered from the codes rather than written beside them: a
+/// person reads it to decide what their script does next, and one that named a
+/// code no run returns has them waiting for an exit that never comes.
+#[must_use]
+pub fn exit_codes() -> String {
+    let mut said = String::from("Exit codes:");
+    for (code, meaning) in [
+        (
+            run::EXIT_DETECTED,
+            "every mutant the run decided, the tests noticed",
+        ),
+        (
+            run::EXIT_UNDETECTED,
+            "there is a finding: a survivor, a stale claim, something the run could not decide",
+        ),
+        (
+            EXIT_USAGE,
+            "the run itself failed, or the command was used wrongly",
+        ),
+        (EXIT_INTERRUPTED, "interrupted"),
+        (EXIT_TERMINATED, "terminated"),
+    ] {
+        let written = write!(said, "\n  {code:<4} {meaning}");
+        debug_assert!(written.is_ok(), "writing to a String cannot fail");
+    }
+    said
+}
 
 /// The two streams a command writes to.
 #[expect(
