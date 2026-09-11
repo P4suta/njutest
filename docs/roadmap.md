@@ -154,6 +154,43 @@ catalog is the one active would let a run measure the tests that start it. It
 is a change to make on its own, with its own falsification: done wrongly, the
 guard stops protecting a person whose environment still names an old run.
 
+## What the configuration audit closed
+
+A configuration key is a promise: the file says what the run will do, and the
+run does it. Reading the two against each other found **five keys the file
+promised and no run kept**, every one of them on one page, and one
+command that read none of it.
+
+`[project] exclude` reached the report, the evidence identity and `watch`, and
+never the engine, so a tree that said "do not mutate the generated code"
+mutated it and reported the findings. `[project] packages` narrowed the
+evidence key and nothing else, so a tree that named one member measured every
+member and called it `SCOPE_ASSURED` — a narrow claim over a wide tree, and
+with a name nobody wrote it exited zero. `[execution] features` reached the
+key alone, so two runs configured differently were told apart and both
+measured the same program. `[execution] test_binary_args` was validated by
+both products and read by neither. An acceptance's `expires` was a comment: a
+suppression a reviewer put an end date on went on hiding its finding for ever.
+And `mjutest plan`, which exists to say what a run would measure, read none of
+the configuration that decides it.
+
+Two of those turned out to be about more than the key. The arguments a run
+gives the harness reached the mutation executions and never the **baseline**,
+in both products, including the ones that did work — and the baseline is what
+every result is held against, so a mutation could be noticed by a test the
+baseline never ran, which is a kill nothing vouched for. And the equivalence
+layer built its tree with the defaults, so "the compiler renders these
+identically" was a claim about a pair of programs the run had not measured.
+
+The shape was the same every time: **a narrowing whose empty answer is spelled
+the same way as an honest empty answer.** The same reading found the flags that
+narrow nothing and say nothing — `--skip-target` naming no target, `--run`
+naming no stored run — and one gate that had the shape itself: the ledger test
+holding the command-line page to the help texts pooled every flag of every
+command into one set, so a flag that exists on some other command counted as
+existing on this one, and `explain --run` was on the page and not on the
+command for as long as that test had been green.
+
 ## What E11 closed
 
 The infection question — the test ran the mutation and the mutation computed
