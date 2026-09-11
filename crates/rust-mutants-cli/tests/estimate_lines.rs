@@ -167,7 +167,7 @@ fn work_shorter_than_a_second_is_a_second_rather_than_none() {
 }
 
 #[test]
-fn one_line_names_each_mutant_the_run_would_ask_about() {
+fn the_tally_is_five_lines_a_reader_finds_by_its_shape() {
     let counted = Estimated {
         cataloged: 3,
         selected: 1,
