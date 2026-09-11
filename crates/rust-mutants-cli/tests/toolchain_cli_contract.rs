@@ -297,6 +297,32 @@ fn equivalence_says_what_the_compiler_renders_identically_and_never_says_equival
 }
 
 #[test]
+fn the_equivalence_tally_counts_the_rows_it_printed() {
+    let fixture = Fixture::copy("fixture-equivalent");
+    let output = against(&fixture, &["equivalence"]);
+    let text = stdout(&output);
+    let rows: Vec<Vec<&str>> = text
+        .lines()
+        .filter(|line| line.contains('\t') && !line.starts_with("EQUIVALENCE"))
+        .map(|line| line.split('\t').collect())
+        .collect();
+    let identical = rows
+        .iter()
+        .filter(|columns| columns.get(1) == Some(&"identical"))
+        .count();
+    assert!(
+        identical > 0,
+        "this fixture is built at an optimisation level where the compiler renders \
+         `x + 0` and `x - 0` the same, which is the whole reason it exists: {text}"
+    );
+    assert!(
+        text.contains(&format!("asked={}\tidentical={identical}", rows.len())),
+        "the tally is the count of the rows above it, and a tally that counted none \
+         would read exactly like a tree the compiler renders every mutation of: {text}"
+    );
+}
+
+#[test]
 fn equivalence_asks_about_at_most_the_limit_it_was_given() {
     let fixture = Fixture::copy("fixture-equivalent");
     let output = against(&fixture, &["equivalence", "--limit", "2"]);

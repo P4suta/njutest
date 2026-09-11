@@ -1606,7 +1606,15 @@ fn instrumented(
 }
 
 /// The whole line of `text` that `offset` sits on, which is what a reader of one guard wants.
-fn line_around(text: &str, offset: u32) -> Option<String> {
+///
+/// The line is what a person reads, so the ending is not part of it: a `\r`
+/// carried into a terminal sends the cursor back to the start of the line and
+/// the next thing written takes its place, which is a reader of a CRLF tree
+/// losing the one line the command was asked about. An offset that is not a
+/// character boundary, or is past the end, has no line rather than a guessed
+/// one.
+#[must_use]
+pub fn line_around(text: &str, offset: u32) -> Option<String> {
     let at = usize::try_from(offset).ok()?;
     let before = text.get(..at)?;
     let from = before
@@ -1614,7 +1622,8 @@ fn line_around(text: &str, offset: u32) -> Option<String> {
         .map_or(0, |newline| newline.saturating_add(1));
     let rest = text.get(at..)?;
     let to = at.saturating_add(rest.find('\n').unwrap_or(rest.len()));
-    text.get(from..to).map(ToOwned::to_owned)
+    text.get(from..to)
+        .map(|line| line.strip_suffix('\r').unwrap_or(line).to_owned())
 }
 
 fn json_line<T: serde::Serialize>(value: &T) -> String {
@@ -1804,11 +1813,15 @@ fn equivalence(asking: &Asking<'_>, cancel: &Cancel) -> Result<Vec<Rendered>, Cl
 }
 
 /// One line per mutant, and a count of each answer.
+///
+/// The tally reads the answer's name from the engine rather than spelling it
+/// again: a word that stopped matching would count nothing, and a tally of
+/// none is what an honest run of a tree with no identical mutation says too.
 fn rendered(said: &[Rendered]) -> String {
     let mut text = String::new();
     let mut identical = 0usize;
     for one in said {
-        if one.answer == "identical" {
+        if one.answer == rust_mutants::equivalence::Identity::Identical.name() {
             identical = identical.saturating_add(1);
         }
         let written = writeln!(
