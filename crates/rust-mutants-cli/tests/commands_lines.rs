@@ -9,7 +9,6 @@
 //! naming what it expected is a refusal nobody can act on.
 
 use std::ffi::OsString;
-use std::path::PathBuf;
 
 use mjutest_devkit::fixture::Fixture;
 use rust_mutants::runner::Cancel;
@@ -52,27 +51,6 @@ fn asked(fixture: &Fixture, args: &[&str]) -> Said {
         out: String::from_utf8_lossy(&out).into_owned(),
         err: String::from_utf8_lossy(&err).into_owned(),
     }
-}
-
-fn testdata(name: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests")
-        .join("testdata")
-        .join(name)
-}
-
-#[test]
-fn the_operator_table_is_the_one_a_person_reads_before_they_trust_a_score() {
-    let fixture = Fixture::copy("fixture-simple");
-    let listed = asked(&fixture, &["rules"]);
-    assert_eq!(listed.code, 0, "{}{}", listed.out, listed.err);
-    mjutest_devkit::golden::golden(&testdata("rules.golden.txt"), listed.out.as_bytes())
-        .expect("the operator table is what it was");
-
-    let document = asked(&fixture, &["rules", "--json"]);
-    assert_eq!(document.code, 0, "{}{}", document.out, document.err);
-    mjutest_devkit::golden::golden(&testdata("rules.golden.json"), document.out.as_bytes())
-        .expect("and the document form of it");
 }
 
 #[test]

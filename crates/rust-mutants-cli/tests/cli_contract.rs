@@ -4,22 +4,44 @@
 //! The command-line contract of the `rust-mutants` binary: what `--version` and `--help` print, and the exit codes of usage errors.
 
 #![expect(
-    clippy::expect_used,
     clippy::indexing_slicing,
-    reason = "the helpers that start the binary are not themselves tests, and a test reads a \
-              document as a table"
+    reason = "a test reads a document as a table"
 )]
 
-use std::path::Path;
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
 use std::process::Output;
 
+use rust_mutants::runner::Cancel;
+use rust_mutants_cli::{Environment, Streams};
+
 fn rust_mutants(args: &[&str]) -> Output {
-    mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")))
-        .args(args)
-        .env_clear()
-        .env("NO_COLOR", "1")
-        .output()
-        .expect("rust-mutants runs")
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let code = rust_mutants_cli::run_from(
+        std::iter::once("rust-mutants")
+            .chain(args.iter().copied())
+            .map(OsString::from),
+        &environment(),
+        &Cancel::new(),
+        Streams {
+            out: &mut out,
+            err: &mut err,
+        },
+    );
+    mjutest_devkit::process::answered(code, out, err)
+}
+
+/// The environment a command that reads no tree is answered in.
+fn environment() -> Environment {
+    Environment {
+        vars: mjutest_devkit::paths::environment_for_a_run(),
+        temp_directory: std::env::temp_dir(),
+        cache_directory: std::env::temp_dir(),
+        working_directory: std::env::current_dir().unwrap_or_else(|_error| PathBuf::from(".")),
+        no_color: true,
+        stdout_is_terminal: false,
+        paints: false,
+    }
 }
 
 #[test]
@@ -219,6 +241,9 @@ fn rules_answers_as_a_document_when_it_is_asked_to() {
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     let document: serde_json::Value =
         serde_json::from_slice(&output.stdout).expect("the answer is JSON");
+    let golden = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testdata/rules.golden.json");
+    mjutest_devkit::golden::golden(&golden, &output.stdout)
+        .expect("the document form of the operator table is the recorded one");
     let rules = document["rules"].as_array().expect("the rules");
     assert_eq!(rules.len(), rust_mutants::rule::CANONICAL_RULE_COUNT);
     for rule in rules {
