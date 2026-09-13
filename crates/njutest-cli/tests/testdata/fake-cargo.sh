@@ -6,6 +6,12 @@
 # written by the test that uses it: a file this process has just opened for
 # writing is a file another thread's fork may still hold open, and exec'ing it
 # then fails with ETXTBSY. Nothing writes to this one.
+# Asked whether it is an interpreter, it says yes and records nothing: what a
+# machine with Miri installed answers, and a question about the toolchain
+# rather than about the suite.
+case " $* " in
+  *" miri --version "*) exit 0 ;;
+esac
 if [ -n "${FAKE_CARGO_ARTIFACT:-}" ]; then
   mkdir -p "$(dirname "${FAKE_CARGO_ARTIFACT}")"
   printf '%s' "${FAKE_CARGO_ARTIFACT_CONTENT:-bad input}" >"${FAKE_CARGO_ARTIFACT}"

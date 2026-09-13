@@ -116,6 +116,12 @@ pub fn interpret(
             message: absence(&said, ran.error.as_ref()),
         });
     }
+    if !ran.timed_out
+        && ran.exit_code != 0
+        && let Some(absence) = missing(interpreting, watch)
+    {
+        return Err(RunnerError::MiriMissing { message: absence });
+    }
     let ending = if ran.timed_out {
         Ending::TimedOut
     } else if ran.exit_code == 0 {
@@ -124,6 +130,35 @@ pub fn interpret(
         Ending::Failed
     };
     Ok(read(&said, ending))
+}
+
+/// What the toolchain says when it has no interpreter, asked once the run it was given has failed.
+///
+/// A failed `miri test` is two different things wearing one exit code: a suite
+/// the interpreter found fault with, and no interpreter at all. Telling them
+/// apart by reading the message means trusting a wording — a toolchain that is
+/// not installed and a component that is not installed for one are worded
+/// differently, and a wording this does not know leaves a run that interpreted
+/// nothing reporting that a test failed under an interpreter which never ran.
+/// So the question is put plainly instead, and only when there is something to
+/// tell apart: a run whose suite passed under the interpreter asks nothing
+/// extra.
+fn missing(interpreting: &Interpreting<'_>, watch: Watch<'_>) -> Option<String> {
+    let mut spec = Spec::new([
+        interpreting.cargo.as_os_str().to_owned(),
+        OsString::from("+nightly"),
+        OsString::from("miri"),
+        OsString::from("--version"),
+    ]);
+    spec.dir = Some(interpreting.root.to_path_buf());
+    spec.env = Some(environment(interpreting));
+    let asked = run(&spec, watch.cancel);
+    watch.trace.exec(ExecRecord::of(&spec, &asked));
+    if asked.error.is_none() && asked.exit_code == 0 {
+        return None;
+    }
+    let said = String::from_utf8_lossy(&asked.output).into_owned();
+    Some(absence(&said, asked.error.as_ref()))
 }
 
 /// What Miri's own environment is: the run's, plus what the configuration passes to the interpreter.
