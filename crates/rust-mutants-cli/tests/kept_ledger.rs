@@ -205,32 +205,29 @@ fn a_ledger_that_cannot_be_written_is_a_failure_and_never_a_silent_one() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn a_path_no_document_can_hold_is_a_refusal_and_never_a_ledger_that_lost_it() {
-    #[cfg(unix)]
-    {
-        use std::os::unix::ffi::OsStrExt as _;
+    use std::os::unix::ffi::OsStrExt as _;
 
-        let dir = tempfile::tempdir().expect("tempdir");
-        let odd = dir.path().join(std::ffi::OsStr::from_bytes(b"not\xffutf8"));
-        std::fs::create_dir_all(&odd).expect("a directory whose name is not text");
+    let dir = tempfile::tempdir().expect("tempdir");
+    let odd = dir.path().join(std::ffi::OsStr::from_bytes(b"not\xffutf8"));
 
-        let refused = Ledger::record(
-            dir.path(),
-            "20260101T000000000Z",
-            std::slice::from_ref(&odd),
-        )
-        .expect_err("a path this document cannot carry");
-        assert!(
-            !refused.to_string().is_empty(),
-            "a filesystem takes a name that is not text and this document does not, so a \
-             run that kept such a directory is told rather than handed a ledger with the \
-             directory missing from it: {refused}"
-        );
-        assert!(
-            Ledger::read(dir.path()).kept.is_empty(),
-            "and nothing is written: half a ledger names some of what a run kept and \
-             reads as all of it"
-        );
-    }
+    let refused = Ledger::record(
+        dir.path(),
+        "20260101T000000000Z",
+        std::slice::from_ref(&odd),
+    )
+    .expect_err("a path this document cannot carry");
+    assert!(
+        !refused.to_string().is_empty(),
+        "an OS path takes a name that is not text and this document does not, so a run \
+         that kept such a directory is told rather than handed a ledger with the \
+         directory missing from it: {refused}"
+    );
+    assert!(
+        Ledger::read(dir.path()).kept.is_empty(),
+        "and nothing is written: half a ledger names some of what a run kept and reads \
+         as all of it"
+    );
 }

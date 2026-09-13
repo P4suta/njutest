@@ -9,6 +9,10 @@ const ACTIVE: &str = "RUST_MUTANTS_ACTIVE";
 const CATALOG: &str = "RUST_MUTANTS_CATALOG";
 const TOUCH: &str = "RUST_MUTANTS_TOUCH";
 const PROFILE: &str = "LLVM_PROFILE_FILE";
+const COVERAGE: &str = "CARGO_LLVM_COV";
+const COVERAGE_TARGET: &str = "CARGO_LLVM_COV_TARGET_DIR";
+const COVERAGE_PRIVATE: &str = "__CARGO_LLVM_COV_RUSTC_WRAPPER";
+const RUSTC_WRAPPER: &str = "RUSTC_WRAPPER";
 const EXPECTED_ACTIVE: &str = "NJUTEST_DEVKIT_EXPECTED_ACTIVE";
 const EXPECTED_CATALOG: &str = "NJUTEST_DEVKIT_EXPECTED_CATALOG";
 const EXPECTED_TOUCH: &str = "NJUTEST_DEVKIT_EXPECTED_TOUCH";
@@ -54,18 +58,38 @@ fn cargo_binary_is_the_cargo_that_built_the_tests() {
 #[test]
 fn an_in_process_inner_run_receives_none_of_the_outer_measurement() {
     const STAGE: &str = "NJUTEST_DEVKIT_INNER_RUN_STAGE";
-    if std::env::var_os(STAGE).is_some() {
-        let names: Vec<std::ffi::OsString> = njutest_devkit::paths::environment_for_a_run()
-            .into_iter()
-            .map(|(name, _)| name)
-            .collect();
-        for removed in [ACTIVE, CATALOG, TOUCH, PROFILE] {
-            assert!(
-                !names.iter().any(|name| name == removed),
-                "an inner run inherited {removed}"
-            );
+    match std::env::var(STAGE).as_deref() {
+        Ok("coverage") => {
+            let names: Vec<std::ffi::OsString> = njutest_devkit::paths::environment_for_a_run()
+                .into_iter()
+                .map(|(name, _)| name)
+                .collect();
+            for removed in [
+                ACTIVE,
+                CATALOG,
+                TOUCH,
+                PROFILE,
+                COVERAGE,
+                COVERAGE_TARGET,
+                COVERAGE_PRIVATE,
+                RUSTC_WRAPPER,
+            ] {
+                assert!(
+                    !names.iter().any(|name| name == removed),
+                    "an inner run inherited {removed}"
+                );
+            }
+            return;
         }
-        return;
+        Ok("ordinary-wrapper") => {
+            let environment = njutest_devkit::paths::environment_for_a_run();
+            assert!(environment.iter().any(|(name, value)| {
+                name == RUSTC_WRAPPER && value == "callers-own-rustc-wrapper"
+            }));
+            return;
+        }
+        Ok(other) => panic!("unknown test stage {other}"),
+        Err(_) => {}
     }
 
     let profiles = tempfile::tempdir().expect("a profile directory");
@@ -77,10 +101,34 @@ fn an_in_process_inner_run_receives_none_of_the_outer_measurement() {
             "an_in_process_inner_run_receives_none_of_the_outer_measurement",
         ])
         .current_dir(profiles.path())
-        .env(STAGE, "inspect")
-        .env(PROFILE, profiles.path().join("profiles-%p.profraw"));
+        .env(STAGE, "coverage")
+        .env(PROFILE, profiles.path().join("profiles-%p.profraw"))
+        .env(COVERAGE, "1")
+        .env(COVERAGE_TARGET, profiles.path().join("outer-target"))
+        .env(COVERAGE_PRIVATE, "1")
+        .env(RUSTC_WRAPPER, "outer-coverage-wrapper");
     add_synthetic_mutation_identity(&mut command);
     let output = command.output().expect("the nested test runs");
+    assert!(
+        output.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let output = std::process::Command::new(std::env::current_exe().expect("this test binary"))
+        .args([
+            "--exact",
+            "an_in_process_inner_run_receives_none_of_the_outer_measurement",
+        ])
+        .current_dir(profiles.path())
+        .env(STAGE, "ordinary-wrapper")
+        .env_remove(COVERAGE)
+        .env_remove(COVERAGE_TARGET)
+        .env_remove(COVERAGE_PRIVATE)
+        .env(RUSTC_WRAPPER, "callers-own-rustc-wrapper")
+        .output()
+        .expect("the ordinary-wrapper test runs");
     assert!(
         output.status.success(),
         "{}{}",

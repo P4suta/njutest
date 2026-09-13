@@ -48,25 +48,18 @@ fn an_explicit_cargo_path_must_exist_and_a_bare_name_is_searched_on_the_given_pa
     let real = njutest_devkit::paths::cargo_binary();
     assert_eq!(resolve_executable(&real, None).expect("exists"), real);
 
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt as _;
-        let bin = temp.path().join("bin");
-        std::fs::create_dir_all(&bin).expect("mkdir");
-        let fake = bin.join("cargo");
-        std::fs::write(&fake, "#!/bin/sh\nexit 0\n").expect("write");
-        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).expect("chmod");
-        let mut search = OsString::from(temp.path().join("empty"));
-        search.push(":");
-        search.push(&bin);
-        assert_eq!(
-            resolve_executable(Path::new("cargo"), Some(search.as_os_str())).expect("found"),
-            fake
-        );
-        let none = resolve_executable(Path::new("cargo"), Some(OsString::from("").as_os_str()))
-            .unwrap_err();
-        assert_eq!(none.kind(), CargoErrorKind::ToolchainNotFound);
-    }
+    let bin = temp.path().join("bin");
+    std::fs::create_dir_all(&bin).expect("mkdir");
+    let fake = bin.join(format!("cargo{}", std::env::consts::EXE_SUFFIX));
+    std::fs::write(&fake, "not run by this lookup\n").expect("write");
+    let search = std::env::join_paths([temp.path().join("empty"), bin]).expect("a search path");
+    assert_eq!(
+        resolve_executable(Path::new("cargo"), Some(search.as_os_str())).expect("found"),
+        fake
+    );
+    let none =
+        resolve_executable(Path::new("cargo"), Some(OsString::from("").as_os_str())).unwrap_err();
+    assert_eq!(none.kind(), CargoErrorKind::ToolchainNotFound);
     let bare_without_path = resolve_executable(Path::new("no-such-tool-xyz"), None).unwrap_err();
     assert_eq!(bare_without_path.kind(), CargoErrorKind::ToolchainNotFound);
 }

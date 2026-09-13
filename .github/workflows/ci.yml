@@ -51,11 +51,11 @@ jobs:
         run: cargo build --locked --examples -p rust-mutants
       - name: Test every target
         run: |
-          cargo nextest run --locked --workspace --all-targets --all-features --status-level fail -E 'not binary(/^toolchain_/)'
+          cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast --status-level fail -E 'not binary(/^toolchain_/)'
           # Each test in these binaries drives its own Cargo. Two outer tests
           # keep hosted runners busy without multiplying their build jobs into
           # resource exhaustion; the ordinary suite above remains fully parallel.
-          cargo nextest run --locked --workspace --all-targets --all-features --status-level fail --test-threads 2 -E 'binary(/^toolchain_/)'
+          cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast --status-level fail --test-threads 2 -E 'binary(/^toolchain_/)'
       - name: Doctests
         run: cargo test --locked --workspace --doc
 
@@ -171,10 +171,10 @@ jobs:
           cargo llvm-cov show-env --export-prefix > "$RUNNER_TEMP/coverage-env.sh"
           . "$RUNNER_TEMP/coverage-env.sh"
           cargo build --locked --examples -p rust-mutants
-          cargo nextest run --locked --workspace --all-targets --all-features -E 'not binary(/^toolchain_/)'
+          cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast -E 'not binary(/^toolchain_/)'
           # Coverage makes every nested build heavier. Bound only the suites
           # that start those builds, preserving full parallelism everywhere else.
-          cargo nextest run --locked --workspace --all-targets --all-features --test-threads 2 -E 'binary(/^toolchain_/)'
+          cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast --test-threads 2 -E 'binary(/^toolchain_/)'
       - name: Report (lcov + HTML + summary)
         run: |
           cargo llvm-cov report --lcov --output-path lcov.info

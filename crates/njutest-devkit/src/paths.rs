@@ -70,7 +70,11 @@ fn beside(root: &Path, name: &str) -> std::io::Result<PathBuf> {
 /// So a test composes the environment it gives a run rather than passing its
 /// own along. `LLVM_PROFILE_FILE` goes for the same reason from the other end:
 /// a measurement sets it, and a child that inherited it writes over the
-/// measurement that started it.
+/// measurement that started it. When the suite itself is under
+/// `cargo-llvm-cov`, that harness's private Cargo variables and wrapper go as
+/// well. They describe the outer workspace and would otherwise override the
+/// inner run's isolated target directory. An ordinary caller's
+/// `RUSTC_WRAPPER` is retained.
 #[must_use]
 pub fn environment_for_a_run() -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
     let composed: [&str; 4] = [
@@ -79,13 +83,27 @@ pub fn environment_for_a_run() -> Vec<(std::ffi::OsString, std::ffi::OsString)> 
         "RUST_MUTANTS_TOUCH",
         "LLVM_PROFILE_FILE",
     ];
-    std::env::vars_os()
+    let vars: Vec<(std::ffi::OsString, std::ffi::OsString)> = std::env::vars_os().collect();
+    let outer_coverage = vars
+        .iter()
+        .any(|(name, _value)| name == std::ffi::OsStr::new("CARGO_LLVM_COV"));
+    vars.into_iter()
         .filter(|(name, _value)| {
-            !composed
+            let reserved = composed
                 .iter()
-                .any(|reserved| name.as_os_str() == std::ffi::OsStr::new(reserved))
+                .any(|reserved| name.as_os_str() == std::ffi::OsStr::new(reserved));
+            !(reserved || (outer_coverage && cargo_llvm_cov_owns(name)))
         })
         .collect()
+}
+
+fn cargo_llvm_cov_owns(name: &std::ffi::OsStr) -> bool {
+    name == std::ffi::OsStr::new("RUSTC_WRAPPER")
+        || name.to_str().is_some_and(|name| {
+            name == "CARGO_LLVM_COV"
+                || name.starts_with("CARGO_LLVM_COV_")
+                || name.starts_with("__CARGO_LLVM_COV_")
+        })
 }
 
 /// A command for `program`, preserving mutation identity while isolating coverage output.
