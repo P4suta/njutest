@@ -52,27 +52,10 @@ fn interrupted_by(signal: rustix::process::Signal, expected: i32) {
         &njutest_devkit::paths::fixtures_dir().join("fixture-baseline"),
         &root,
     );
-    let mut child = Command::new(env!("CARGO_BIN_EXE_njutest"))
-        .args(["verify", "--offline", "--locked", "--ui=plain"])
-        .current_dir(&root)
-        .env_clear()
-        .env("NO_COLOR", "1")
-        .env(
-            "XDG_CACHE_HOME",
-            njutest_devkit::paths::cache_beside(&root).expect("a cache directory"),
-        )
-        .env(
-            "TMPDIR",
-            njutest_devkit::paths::temp_beside(&root).expect("a temporary directory"),
-        )
-        .envs(njutest_devkit::paths::environment_for_a_toolchain_run(&[]))
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("njutest starts");
+    let mut child = verify_in(&root, &[]);
     let pid = child.id();
 
-    std::thread::sleep(Duration::from_millis(400));
+    measuring(&mut child);
     rustix::process::kill_process(
         rustix::process::Pid::from_raw(pid.try_into().expect("a pid fits")).expect("a live pid"),
         signal,
@@ -112,6 +95,32 @@ fn an_interrupted_verification_exits_130_and_leaves_no_process_behind() {
 #[test]
 fn a_terminated_verification_exits_143_and_leaves_no_process_behind() {
     interrupted_by(rustix::process::Signal::TERM, 143);
+}
+
+/// Waits until `child` says it has begun measuring.
+///
+/// A run installs what answers a signal while it is starting, so a test that
+/// signalled after a fixed wait would be asking how quickly this machine
+/// schedules a new process: where the answer is "not within that wait", the
+/// signal arrives before anything is there to answer it and the default
+/// action kills the run — which reads as the contract broken rather than as
+/// the race it is. What the run prints when it reaches the baseline is the
+/// evidence that it is there to be asked.
+fn measuring(child: &mut std::process::Child) {
+    let mut reader = BufReader::new(child.stderr.take().expect("stderr is piped"));
+    let mut line = String::new();
+    let deadline = Instant::now()
+        .checked_add(Duration::from_secs(300))
+        .expect("a deadline five minutes out");
+    loop {
+        line.clear();
+        let read = reader.read_line(&mut line).expect("read");
+        assert!(read > 0, "the run ended before it measured anything");
+        if line.contains("== baseline") {
+            return;
+        }
+        assert!(Instant::now() < deadline, "the run never began measuring");
+    }
 }
 
 fn verify_in(root: &Path, extra: &[&str]) -> std::process::Child {
@@ -174,20 +183,7 @@ fn an_interrupted_run_leaves_what_an_earlier_one_established_rather_than_clearin
 
     let mut interrupted = verify_in(&root, &[]);
     let pid = interrupted.id();
-    let mut reader = BufReader::new(interrupted.stderr.take().expect("stderr is piped"));
-    let mut line = String::new();
-    let deadline = Instant::now()
-        .checked_add(Duration::from_secs(300))
-        .expect("a deadline five minutes out");
-    loop {
-        line.clear();
-        let read = reader.read_line(&mut line).expect("read");
-        assert!(read > 0, "the run ended before it measured anything");
-        if line.contains("== baseline") {
-            break;
-        }
-        assert!(Instant::now() < deadline, "the run never began measuring");
-    }
+    measuring(&mut interrupted);
     rustix::process::kill_process(
         rustix::process::Pid::from_raw(pid.try_into().expect("a pid fits")).expect("a live pid"),
         rustix::process::Signal::INT,
