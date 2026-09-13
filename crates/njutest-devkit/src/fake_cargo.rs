@@ -295,7 +295,9 @@ fn build_the_example(profile: &Path) {
 ///
 /// Placeholders expanded in `stdout`, `stderr`, and every write: `{{bin}}` for
 /// the program directory, `{{script_dir}}` for the directory the script is in,
-/// and, at run time, `{{cwd}}`, `{{target_dir}}`, `{{pid}}`, and `{{now_ms}}`.
+/// `{{bin_json}}` and `{{script_dir_json}}` for the same two written into a
+/// document the script itself carries, and, at run time, `{{cwd}}`,
+/// `{{target_dir}}`, `{{pid}}`, and `{{now_ms}}`.
 ///
 /// The first two are put into the rendered document rather than into the
 /// values it is rendered from, so what replaces them is escaped the way a JSON
@@ -329,6 +331,8 @@ pub fn install(script: &Script) -> Installed {
     let path = dir.path().join("script.json");
     let rendered = serde_json::to_string_pretty(script)
         .expect("the script renders")
+        .replace("{{bin_json}}", &nested(&bin))
+        .replace("{{script_dir_json}}", &nested(dir.path()))
         .replace("{{bin}}", &crate::paths::in_json(&bin))
         .replace("{{script_dir}}", &crate::paths::in_json(dir.path()));
     std::fs::write(&path, rendered).expect("the script");
@@ -338,6 +342,17 @@ pub fn install(script: &Script) -> Installed {
         log: dir.path().join("script.json.answered"),
         _dir: dir,
     }
+}
+
+/// `path` escaped for a JSON string that is itself inside a JSON string.
+///
+/// A scripted `stdout` is often a document of its own — the message stream a
+/// build prints — and the script holding it is a document too. A path written
+/// into the inner one is escaped twice on the way out and unescaped twice on
+/// the way back, and a path escaped only once arrives at the inner reader with
+/// bare separators it cannot read.
+fn nested(path: &Path) -> String {
+    crate::paths::in_json(Path::new(&crate::paths::in_json(path)))
 }
 
 #[cfg(unix)]

@@ -40,13 +40,16 @@ struct Said {
     err: String,
 }
 
+/// The environment a run of the tree at `root` is given, with what it writes beside the tree rather than in it.
+///
+/// A cache inside the tree under verification changes that tree's own digest
+/// every time a run writes to it, and the run that holds a lock in there is a
+/// run whose own snapshot cannot copy the file it is holding.
 fn environment(root: &Path) -> Environment {
-    let scratch = root.join("njutest-scratch");
-    std::fs::create_dir_all(&scratch).expect("a directory to work in");
     Environment {
-        cache_directory: root.join("njutest-cache"),
+        cache_directory: njutest_devkit::paths::cache_beside(root).expect("a cache directory"),
         working_directory: root.to_path_buf(),
-        temp_directory: scratch,
+        temp_directory: njutest_devkit::paths::temp_beside(root).expect("a temporary directory"),
         vars: njutest_devkit::paths::environment_for_a_run(),
         cancel: Cancel::new(),
     }

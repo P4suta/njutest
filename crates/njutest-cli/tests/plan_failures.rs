@@ -426,7 +426,7 @@ fn target_enumeration_failure_is_an_error_and_not_a_panic() {
 #[test]
 fn a_plan_counts_started_and_ignored_tests_separately() {
     let repo = project();
-    let suite = format!("{{{{bin}}}}/{}", executable("suite"));
+    let suite = format!("{{{{bin_json}}}}/{}", executable("suite"));
     let build = Invocation::new(
         "cargo",
         &[

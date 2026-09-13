@@ -125,16 +125,21 @@ fn dropping_a_lock_releases_it() {
 #[cfg(windows)]
 const BACKUP_SEMANTICS: u32 = 0x0200_0000;
 
+/// The access Windows wants before it will let a handle's timestamps be written.
+#[cfg(windows)]
+const ATTRIBUTES: u32 = 0x0080 | 0x0100;
+
 /// Opens `dir` as a handle its timestamps can be set through.
 ///
-/// A directory is not a file to Windows unless the open says so, and without
-/// the flag the call is refused rather than answered: `Access is denied`.
+/// A directory is not a file to Windows unless the open says so, and reading
+/// its attributes is not permission to write them; asked for neither, the call
+/// is refused rather than answered: `Access is denied`.
 fn opened(dir: &Path) -> fs::File {
     #[cfg(windows)]
     {
         use std::os::windows::fs::OpenOptionsExt as _;
         fs::OpenOptions::new()
-            .read(true)
+            .access_mode(ATTRIBUTES)
             .custom_flags(BACKUP_SEMANTICS)
             .open(dir)
             .expect("open")
