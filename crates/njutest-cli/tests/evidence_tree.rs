@@ -121,6 +121,7 @@ fn a_pattern_the_configuration_excludes_is_left_out_too() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn a_symbolic_link_is_read_as_the_link_it_is_and_never_followed() {
     let repo = repo();

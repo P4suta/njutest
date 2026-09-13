@@ -16,6 +16,7 @@ use std::time::Duration;
 
 use njutest_cli::app::watch::{POLL, Seen, look, until};
 use njutest_cli::cli::{EXIT_ERROR, Environment};
+use njutest_cli::testkit::watch_until_with_wait;
 use rust_mutants::runner::Cancel;
 
 /// An environment whose watch has already been stopped, so nothing it starts runs a round.
@@ -347,12 +348,11 @@ fn a_directory_that_cannot_be_walked_is_not_a_tree_that_changed() {
 fn the_loop_waits_between_looks_and_stops_waiting_once_it_is_cancelled() {
     let cancel = Cancel::new();
     let looks = Cell::new(0u64);
-    let waited = std::time::Instant::now();
+    let waits = Cell::new(0u64);
 
     let poll = Duration::from_millis(200);
-    let code = until(
+    let code = watch_until_with_wait(
         &cancel,
-        poll,
         || {
             looks.set(looks.get().saturating_add(1));
             if looks.get() >= 3 {
@@ -361,23 +361,21 @@ fn the_loop_waits_between_looks_and_stops_waiting_once_it_is_cancelled() {
             Some(seen(&[("src/lib.rs", 10)]))
         },
         || 0,
+        (poll, |duration| {
+            assert_eq!(duration, poll, "the configured interval is the one waited");
+            waits.set(waits.get().saturating_add(1));
+        }),
     );
 
     assert_eq!(
         code, 0,
         "nothing ran after the first round, so nothing changed it"
     );
-    assert!(
-        waited.elapsed() >= poll,
+    assert_eq!(
+        waits.get(),
+        1,
         "the tree did not change between the first look and the second, so the loop \
          waited once; one that did not would spin a core while nothing was happening"
-    );
-    assert!(
-        waited.elapsed() < poll.saturating_add(poll / 2),
-        "and it waited once and not twice: the look that cancelled the watch must not \
-         be followed by another wait, or a person who stopped a watch waits for it: \
-         {:?}",
-        waited.elapsed()
     );
 }
 
@@ -385,12 +383,11 @@ fn the_loop_waits_between_looks_and_stops_waiting_once_it_is_cancelled() {
 fn a_watch_cancelled_while_it_would_have_waited_does_not_wait() {
     let cancel = Cancel::new();
     let looks = Cell::new(0u64);
+    let waits = Cell::new(0u64);
     let poll = Duration::from_millis(200);
-    let waited = std::time::Instant::now();
 
-    let code = until(
+    let code = watch_until_with_wait(
         &cancel,
-        poll,
         || {
             looks.set(looks.get().saturating_add(1));
             if looks.get() >= 2 {
@@ -399,17 +396,18 @@ fn a_watch_cancelled_while_it_would_have_waited_does_not_wait() {
             Some(seen(&[("src/lib.rs", 10)]))
         },
         || 0,
+        (poll, |_duration| waits.set(waits.get().saturating_add(1))),
     );
 
     assert_eq!(code, 0);
     assert_eq!(looks.get(), 2, "the tree was read twice and changed once");
-    assert!(
-        waited.elapsed() < poll,
+    assert_eq!(
+        waits.get(),
+        0,
         "the only look that found nothing new is the one that was cancelled, so there \
          was never a moment to wait through: a watch that waits on its way out keeps a \
          person waiting for one it has already stopped, and waiting once at some other \
-         moment is not the same rule: {:?}",
-        waited.elapsed()
+         moment is not the same rule"
     );
 }
 

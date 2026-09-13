@@ -14,6 +14,25 @@ use std::path::Path;
 
 use crate::error::RunnerError;
 
+/// Drives the watch loop with a caller-controlled wait.
+///
+/// Production always waits with [`std::thread::sleep`]. Tests supply an
+/// observable wait instead, so they prove exactly where the loop waits without
+/// depending on how promptly a hosted operating system schedules the thread.
+pub fn watch_until_with_wait<L, R, W>(
+    cancel: &rust_mutants::runner::Cancel,
+    look: L,
+    round: R,
+    waiting: (std::time::Duration, W),
+) -> u8
+where
+    L: FnMut() -> Option<crate::app::watch::Seen>,
+    R: FnMut() -> u8,
+    W: FnMut(std::time::Duration),
+{
+    crate::app::watch::until_with_wait(cancel, look, round, waiting)
+}
+
 /// One failure of every shape this runner reports.
 ///
 /// The list is held to the enum by the `match` below, which names every

@@ -75,13 +75,27 @@ where
     L: FnMut() -> Option<Seen>,
     R: FnMut() -> u8,
 {
+    until_with_wait(cancel, &mut look, &mut round, (poll, std::thread::sleep))
+}
+
+pub(crate) fn until_with_wait<L, R, W>(
+    cancel: &Cancel,
+    mut look: L,
+    mut round: R,
+    (poll, mut wait): (Duration, W),
+) -> u8
+where
+    L: FnMut() -> Option<Seen>,
+    R: FnMut() -> u8,
+    W: FnMut(Duration),
+{
     let mut last: Option<Seen> = None;
     let mut code = 0;
     while !cancel.is_cancelled() {
         let seen = look();
         if seen.is_none() || seen == last {
             if !cancel.is_cancelled() {
-                std::thread::sleep(poll);
+                wait(poll);
             }
             continue;
         }

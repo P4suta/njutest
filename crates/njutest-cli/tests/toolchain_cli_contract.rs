@@ -236,9 +236,9 @@ fn doctor_reads_the_configuration_a_run_would_read() {
 
 /// A directory holding only what a run requires, so every optional tool is out of reach.
 ///
-/// The two required programs are symlinked from wherever this machine keeps
-/// them, which the doctor has just said; `llvm-profdata` and `llvm-cov` come
-/// from the toolchain's own sysroot and are found whatever `PATH` says.
+/// The two required programs are placed from wherever this machine keeps them,
+/// which the doctor has just said; `llvm-profdata` and `llvm-cov` come from the
+/// toolchain's own sysroot and are found whatever `PATH` says.
 fn only_what_is_required(dir: &Path, said: &str) -> std::path::PathBuf {
     let bin = dir.join("bin");
     std::fs::create_dir_all(&bin).expect("a directory");
@@ -248,9 +248,20 @@ fn only_what_is_required(dir: &Path, said: &str) -> std::path::PathBuf {
             .find(|line| line.contains(&format!(" {tool} ")))
             .and_then(|line| line.split_whitespace().next_back())
             .unwrap_or_else(|| panic!("the doctor says where {tool} is: {said}"));
-        std::os::unix::fs::symlink(found, bin.join(tool)).expect("a link");
+        place_tool(found, &bin, tool);
     }
     bin
+}
+
+#[cfg(unix)]
+fn place_tool(found: &str, bin: &Path, tool: &str) {
+    std::os::unix::fs::symlink(found, bin.join(tool)).expect("a link");
+}
+
+#[cfg(not(unix))]
+fn place_tool(found: &str, bin: &Path, tool: &str) {
+    let name = format!("{tool}{}", std::env::consts::EXE_SUFFIX);
+    let _copied = std::fs::copy(found, bin.join(name)).expect("a copy");
 }
 
 #[test]
