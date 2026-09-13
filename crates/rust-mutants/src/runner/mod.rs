@@ -12,7 +12,7 @@ mod windows;
 
 use std::ffi::OsString;
 use std::io::{self, Read as _};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -370,6 +370,25 @@ fn start(spec: &Spec, program: &OsString) -> Result<Started, Failed> {
     })
 }
 
+/// The program to start, found on the search path the spec's own environment names.
+///
+/// A spec that names an environment names all of it, and what a bare program
+/// name means is part of that. Windows does not read it that way: it resolves
+/// a bare name against the environment of the process doing the starting, so a
+/// run handed a search path with nothing on it would start the caller's
+/// program anyway and report what somebody else's machine has. Resolving here
+/// makes the answer the same everywhere. A name that is already a path is
+/// left alone, and so is a spec that asked to inherit this process's own
+/// environment; a name that is nowhere is left alone too, so that not finding
+/// it is reported by the start rather than by a different error here.
+fn resolved(spec: &Spec, program: &OsString) -> OsString {
+    let Some(env) = &spec.env else {
+        return program.clone();
+    };
+    crate::cargo::resolve_executable(Path::new(program), crate::vars::search_path(env).as_deref())
+        .map_or_else(|_unfound| program.clone(), PathBuf::into_os_string)
+}
+
 /// A command with its pipes attached: the merged reader, and the structured stdout reader with its cap when the spec asked for one.
 struct Wired {
     command: Command,
@@ -380,7 +399,7 @@ struct Wired {
 /// Builds the command and the pipes it writes to. No stdin: a test binary that reads from the terminal would hang. One pipe for both streams unless stdout is wanted whole, so the interleaving is the child's own.
 fn wire(spec: &Spec, program: &OsString) -> io::Result<Wired> {
     let (merged, stderr) = io::pipe()?;
-    let mut command = Command::new(program);
+    let mut command = Command::new(resolved(spec, program));
     command.args(spec.argv.iter().skip(1));
     if let Some(dir) = &spec.dir {
         command.current_dir(dir);

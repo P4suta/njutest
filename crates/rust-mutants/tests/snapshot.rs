@@ -675,9 +675,25 @@ fn cleanup_succeeds_on_a_later_attempt_without_reporting_the_earlier_ones() {
     assert!(!dir.exists());
 }
 
+/// A path that is absolute on the machine the test runs on, from a slash-separated tail.
+///
+/// A leading slash alone is not an absolute path on Windows, and a guard that
+/// asks whether a directory is one would refuse the case the test means to
+/// accept: the suite would pass by taking the branch it meant to prove is not
+/// taken.
+fn absolute(tail: &str) -> PathBuf {
+    if cfg!(windows) {
+        PathBuf::from(format!("C:\\{}", tail.replace('/', "\\")))
+    } else {
+        PathBuf::from(format!("/{tail}"))
+    }
+}
+
 #[test]
 fn the_cleanup_guard_refuses_anything_that_does_not_look_like_a_snapshot_directory() {
-    let parent = Path::new("/tmp/parent");
+    let elsewhere = absolute("somewhere/else");
+    let parent = absolute("tmp/parent");
+    let parent = parent.as_path();
     let ok = parent.join("rust-mutants-snap-0123456789abcdef");
     cleanup_guard(&ok, parent).expect("a snapshot directory in its parent");
 
@@ -691,7 +707,7 @@ fn the_cleanup_guard_refuses_anything_that_does_not_look_like_a_snapshot_directo
         ("wrong prefix", parent.join("project"), DIR_PREFIX),
         (
             "wrong parent",
-            Path::new("/somewhere/else").join("rust-mutants-snap-0123456789abcdef"),
+            elsewhere.join("rust-mutants-snap-0123456789abcdef"),
             "parent",
         ),
     ];
