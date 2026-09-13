@@ -143,7 +143,11 @@ weekly.
 writes a marker at the first statement of every body a claim names — in the
 witness tree first, so the one `cargo check` that sifts the type witnesses
 sifts the markers too, and a body a call cannot go into (a `const` context,
-a body inside a guard's own site) simply carries none. The marker is exact
+a body inside a guard's own site) simply carries none. That check caps every
+lint at a warning: the tree it compiles is written by this engine to ask about
+types, and an ordinary warning somewhere else in the workspace would otherwise
+stop it, leaving nothing vouched for and no way to tell a proof that was
+refused from one that was never made. The marker is exact
 where a coverage region is inferred from where regions begin, and it needs no
 coverage build. A body with no marker keeps the region as its only premise,
 and the record says which markers the tree carries so that a body without one

@@ -19,7 +19,7 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use crate::EngineError;
-use crate::cargo::config::Configured;
+use crate::cargo::config::{Configured, ENCODED_RUSTFLAGS, RUSTFLAGS};
 use crate::cargo::{CompileKind, CompileOptions, compile, config};
 use crate::coverage::{
     Block, Point, Tools, covered, instrumented, profile_pattern, written_profiles,
@@ -40,12 +40,6 @@ pub use crate::limitation::COVERAGE_NOT_MEASURED as UNMEASURED;
 pub use crate::limitation::COVERAGE_REFUSED_CONFIGURED_RUSTFLAGS as CONFIGURED_FLAGS;
 /// The limitation a session states when the LLVM tools are not installed.
 pub use crate::limitation::COVERAGE_TOOLS_MISSING as TOOLS_MISSING;
-
-/// The variable a coverage build's flags are put in, which is the encoded form so a value with a space cannot become two flags.
-const ENCODED_RUSTFLAGS: &str = "CARGO_ENCODED_RUSTFLAGS";
-
-/// The plain form, which cargo ignores when the encoded one is set.
-const RUSTFLAGS: &str = "RUSTFLAGS";
 
 /// What each target reached, and what the measurement could not establish.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

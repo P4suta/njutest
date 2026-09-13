@@ -14,6 +14,7 @@
 //! workspace, which costs time and never correctness.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::ffi::OsString;
 use std::path::Path;
 
 use crate::EngineError;
@@ -417,6 +418,18 @@ struct Rests {
 /// artifacts do not displace the run's. Both trees name the same crates, so
 /// one target directory would hold whichever was compiled last, and every
 /// build after a witness pass would be a build of everything again.
+///
+/// It is compiled with every lint capped at a warning. The witness tree is not
+/// the project's code: it is the project's code with a statement written in
+/// front of each condition, put there by this engine to ask the compiler one
+/// question about the types. Whether the project's own lints are satisfied is
+/// not that question, and a caller who denies warnings for their own build —
+/// which is what every continuous integration job does — is not asking for
+/// every proof of their tree to go unmade. Without the cap, one ordinary
+/// warning anywhere in the workspace stops the check, no rewrite accounts for
+/// the failure, and the pass returns what it returns when it has nothing:
+/// silence. A proof that was never made is indistinguishable from one that was
+/// refused, and the run does more work for the same answer.
 fn checking(workspace: &Workspace, options: &PrepareOptions) -> CompileOptions {
     CompileOptions {
         kind: CompileKind::Check,
@@ -425,9 +438,38 @@ fn checking(workspace: &Workspace, options: &PrepareOptions) -> CompileOptions {
         locked: workspace.locked,
         offline: workspace.offline,
         timeout: Workspace::timeout(options.build_timeout),
-        env: Vec::new(),
+        env: capping(workspace),
         build: options.build.clone(),
     }
+}
+
+/// The flag that holds every lint to a warning, spelled without a space so it survives every form of the variable.
+const CAP_LINTS: &str = "--cap-lints=warn";
+
+/// The compiler flags the witness check adds to what the workspace is otherwise compiled with.
+///
+/// The project's own `.cargo/config.toml` is read back and put in front of the
+/// cap, because `CARGO_ENCODED_RUSTFLAGS` replaces that configuration rather
+/// than adding to it: a tree that does not compile without its configured
+/// flags would not compile here either, and a witness tree that did not build
+/// vouches for nothing.
+fn capping(workspace: &Workspace) -> Vec<(OsString, OsString)> {
+    let flags = crate::cargo::config::configured(
+        workspace.snapshot_root(),
+        crate::cargo::config::home(&workspace.base_env).as_deref(),
+    );
+    let encoded = crate::cargo::config::encoded(&workspace.base_env, &flags, &[CAP_LINTS])
+        .unwrap_or_default();
+    vec![
+        (
+            OsString::from(crate::cargo::config::ENCODED_RUSTFLAGS),
+            encoded,
+        ),
+        (
+            OsString::from(crate::cargo::config::RUSTFLAGS),
+            OsString::new(),
+        ),
+    ]
 }
 
 /// Writes the witness tree over the pristine sources.

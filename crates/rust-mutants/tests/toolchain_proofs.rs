@@ -40,6 +40,39 @@ fn prepared(fixture: &Fixture, coverage: bool) -> rust_mutants::session::Session
 }
 
 #[test]
+fn a_tree_whose_own_warnings_are_denied_still_earns_the_proofs_its_conditions_carry() {
+    let fixture = Fixture::copy("fixture-coverage");
+    let cancel = Cancel::new();
+    let mut options = opening(&njutest_devkit::paths::cargo_binary(), fixture.temp());
+    options.env.push((
+        std::ffi::OsString::from("RUSTFLAGS"),
+        std::ffi::OsString::from("-D warnings"),
+    ));
+    let workspace = Workspace::open(fixture.root(), options, &cancel).expect("the workspace opens");
+    let session = workspace
+        .prepare(
+            &PrepareOptions {
+                tier: Tier::All,
+                branch_proofs: true,
+                ..PrepareOptions::default()
+            },
+            &cancel,
+        )
+        .expect("the session prepares");
+
+    let proven: Vec<u32> = session
+        .accepted()
+        .iter()
+        .filter(|index| session.branch(**index).is_some())
+        .copied()
+        .collect();
+    assert!(
+        !proven.is_empty(),
+        "the witness tree is code this engine writes to ask the compiler a question, not          code anybody wrote to a project's own standard; a caller who denies warnings for          their own build is not asking for every proof of their tree to go unmade, and a          layer that answered nothing here would say so by being silent rather than by          failing: {proven:?}"
+    );
+}
+
+#[test]
 fn the_compiler_vouches_for_a_condition_of_primitives_and_refuses_the_rest() {
     let fixture = Fixture::copy("fixture-coverage");
     let cancel = Cancel::new();

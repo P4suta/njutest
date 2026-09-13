@@ -261,6 +261,15 @@ below is stated fail-closed.
   compile something other than the project's binaries. A project that
   configures them gets `target-rustflags-not-merged`, and a configuration
   file that cannot be parsed gets `cargo-configuration-unreadable`.
+- The witness tree the branch proofs check is compiled with every lint capped
+  at a warning. That tree is not the project's code: it is the project's code
+  with a statement written in front of each condition, put there to ask the
+  compiler one question about the types, and whether the project's own lints
+  are satisfied is not that question. A caller who denies warnings for their
+  own build — which is what a continuous integration job does — is therefore
+  not asking for every proof of their tree to go unmade. The project's own
+  `.cargo/config.toml` flags are still put back in front of the cap, because a
+  tree that does not compile without them would not compile here either.
 
 ## What a run says about itself
 
