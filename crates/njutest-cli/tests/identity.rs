@@ -176,7 +176,7 @@ fn a_run_that_could_not_ask_git_says_so_before_it_compiles_anything() {
     let cancel = rust_mutants::runner::Cancel::new();
     let trace = njutest_cli::trace::Recorder::disabled();
     let environment = njutest_cli::cli::Environment {
-        vars: Vec::new(),
+        vars: njutest_devkit::paths::environment_for_a_run(),
         working_directory: root.path().to_owned(),
         temp_directory: parent.path().to_owned(),
         cache_directory: parent.path().to_owned(),
