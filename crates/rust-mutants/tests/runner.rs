@@ -121,9 +121,9 @@ fn a_death_by_signal_is_reported_as_128_plus_the_signal() {
 }
 
 #[test]
-fn the_environment_and_the_directory_are_exactly_what_the_spec_says() {
+fn the_environment_a_spec_names_is_the_whole_of_the_child_s_own() {
     let temp = tempfile::tempdir().expect("tempdir");
-    let mut spec = sh("echo \"$RM_TEST_VAR|$HOME|$(pwd)\"");
+    let mut spec = sh("echo \"$RM_TEST_VAR|$CARGO_PKG_NAME\"");
     spec.env = Some(vec![
         (OsString::from("RM_TEST_VAR"), OsString::from("value")),
         (
@@ -133,17 +133,37 @@ fn the_environment_and_the_directory_are_exactly_what_the_spec_says() {
     ]);
     spec.dir = Some(temp.path().to_path_buf());
     let result = run(&spec, &Cancel::new());
-    let output = String::from_utf8_lossy(&result.output);
-    let canonical = temp.path().canonicalize().expect("canonical");
     assert_eq!(
-        output.trim(),
-        format!("value||{}", canonical.display()),
-        "HOME is not inherited"
+        String::from_utf8_lossy(&result.output).trim(),
+        "value|",
+        "a spec that names an environment names all of it: what it lists arrives, and \
+         what this process has and it does not list stays here. `CARGO_PKG_NAME` is one \
+         the harness always has and no shell invents for itself"
     );
     let inherited = run(&sh("echo \"$RM_TEST_VAR|$PATH\""), &Cancel::new());
     assert!(
         String::from_utf8_lossy(&inherited.output).starts_with('|'),
         "a None env inherits ours, which has no RM_TEST_VAR"
+    );
+}
+
+/// The directory a spec names is where the child runs.
+///
+/// Asked of a POSIX shell, because `pwd` is how a shell says where it is and
+/// the one on a Windows machine answers in its own spelling rather than the
+/// platform's: a suite that compared the two would be comparing shells.
+#[cfg(unix)]
+#[test]
+fn the_directory_a_spec_names_is_the_one_the_child_runs_in() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let mut spec = sh("pwd");
+    spec.dir = Some(temp.path().to_path_buf());
+    let result = run(&spec, &Cancel::new());
+    let canonical = temp.path().canonicalize().expect("canonical");
+    assert_eq!(
+        String::from_utf8_lossy(&result.output).trim(),
+        canonical.display().to_string(),
+        "a child started somewhere else would measure somewhere else"
     );
 }
 

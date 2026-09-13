@@ -16,14 +16,28 @@ fn given(named: &[(&str, &str)]) -> Vec<(OsString, OsString)> {
         .collect()
 }
 
+/// A path that is absolute on the machine the test runs on, from a slash-separated tail.
+///
+/// What counts as an absolute path is the platform's question, not a shape:
+/// Windows wants a volume in front of it and a leading slash alone does not
+/// give one. A suite that spelled a unix path would be asking a unix question
+/// there, and would pass by taking the branch it meant to prove is not taken.
+fn absolute(tail: &str) -> String {
+    if cfg!(windows) {
+        format!("C:\\{}", tail.replace('/', "\\"))
+    } else {
+        format!("/{tail}")
+    }
+}
+
 #[test]
 fn the_directory_the_platform_names_is_the_one_used() {
     assert_eq!(
         cache_directory(
-            &given(&[("XDG_CACHE_HOME", "/var/cache/mine")]),
+            &given(&[("XDG_CACHE_HOME", &absolute("var/cache/mine"))]),
             ".fallback"
         ),
-        PathBuf::from("/var/cache/mine"),
+        PathBuf::from(absolute("var/cache/mine")),
         "a person who moved their cache moved it, and a tool that kept its own place \
          would fill a disk they had made room on"
     );
@@ -32,8 +46,8 @@ fn the_directory_the_platform_names_is_the_one_used() {
 #[test]
 fn a_home_directory_gives_the_place_below_it_every_other_tool_uses() {
     assert_eq!(
-        cache_directory(&given(&[("HOME", "/home/somebody")]), ".fallback"),
-        Path::new("/home/somebody").join(".cache"),
+        cache_directory(&given(&[("HOME", &absolute("home/somebody"))]), ".fallback"),
+        Path::new(&absolute("home/somebody")).join(".cache"),
         "with nothing naming the cache, the convention every tool on the platform \
          follows is where a person will look for it"
     );
@@ -44,25 +58,25 @@ fn the_variable_that_names_the_cache_wins_over_the_one_that_names_a_home() {
     assert_eq!(
         cache_directory(
             &given(&[
-                ("HOME", "/home/somebody"),
-                ("XDG_CACHE_HOME", "/var/cache/mine"),
-                ("LOCALAPPDATA", "/c/Users/somebody/AppData/Local"),
+                ("HOME", &absolute("home/somebody")),
+                ("XDG_CACHE_HOME", &absolute("var/cache/mine")),
+                ("LOCALAPPDATA", &absolute("Users/somebody/AppData/Local")),
             ]),
             ".fallback"
         ),
-        PathBuf::from("/var/cache/mine"),
+        PathBuf::from(absolute("var/cache/mine")),
         "the three are asked in the order they are specific, and one that named the \
          cache itself said the most"
     );
     assert_eq!(
         cache_directory(
             &given(&[
-                ("LOCALAPPDATA", "/c/Users/somebody/AppData/Local"),
-                ("HOME", "/home/somebody"),
+                ("LOCALAPPDATA", &absolute("Users/somebody/AppData/Local")),
+                ("HOME", &absolute("home/somebody")),
             ]),
             ".fallback"
         ),
-        Path::new("/home/somebody").join(".cache"),
+        Path::new(&absolute("home/somebody")).join(".cache"),
         "and a home says more than the place a Windows program keeps its own, which is \
          the last one asked because it is the one a unix machine also sets under wine"
     );
@@ -73,10 +87,13 @@ fn a_place_that_is_not_an_absolute_path_is_not_a_place() {
     for relative in ["relative/cache", ".", "", "~/cache"] {
         assert_eq!(
             cache_directory(
-                &given(&[("XDG_CACHE_HOME", relative), ("HOME", "/home/somebody")]),
+                &given(&[
+                    ("XDG_CACHE_HOME", relative),
+                    ("HOME", &absolute("home/somebody"))
+                ]),
                 ".fallback"
             ),
-            Path::new("/home/somebody").join(".cache"),
+            Path::new(&absolute("home/somebody")).join(".cache"),
             "{relative:?} resolves against the working directory, which is the tree a run \
              measures: the run's own writes would change the tree it is measuring, and the \
              sweep that empties the cache would take somebody's source with it"
@@ -104,9 +121,9 @@ fn a_variable_of_another_name_is_not_one_of_these() {
     assert_eq!(
         cache_directory(
             &given(&[
-                ("XDG_CACHE_HOME_OLD", "/var/cache/mine"),
-                ("CACHE_HOME", "/var/cache/other"),
-                ("HOMEPATH", "/home/somebody"),
+                ("XDG_CACHE_HOME_OLD", &absolute("var/cache/mine")),
+                ("CACHE_HOME", &absolute("var/cache/other")),
+                ("HOMEPATH", &absolute("home/somebody")),
             ]),
             ".fallback"
         ),
@@ -121,12 +138,12 @@ fn the_first_of_a_repeated_variable_is_the_one_read() {
     assert_eq!(
         cache_directory(
             &given(&[
-                ("XDG_CACHE_HOME", "/var/cache/first"),
-                ("XDG_CACHE_HOME", "/var/cache/second"),
+                ("XDG_CACHE_HOME", &absolute("var/cache/first")),
+                ("XDG_CACHE_HOME", &absolute("var/cache/second")),
             ]),
             ".fallback"
         ),
-        PathBuf::from("/var/cache/first"),
+        PathBuf::from(absolute("var/cache/first")),
         "an environment is a list and a shell may hand over the same name twice; reading \
          the first is what a process does with `getenv`, and answering differently would \
          put the cache somewhere the run's own children do not look"

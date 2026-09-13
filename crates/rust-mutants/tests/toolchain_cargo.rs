@@ -38,6 +38,19 @@ fn scratch_target(name: &str) -> tempfile::TempDir {
         .tempdir()
         .expect("tempdir")
 }
+/// Where `path` is below `root`, spelled the one way a catalog spells a path.
+///
+/// The compiler reports a source with the separator its own platform uses, and
+/// the engine records one with a slash wherever it runs, so a test that
+/// compared what came back against what it wrote would be a test about the
+/// machine rather than about the units.
+fn under(root: &Path, path: &Path) -> String {
+    path.strip_prefix(root)
+        .expect("under the root")
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
 #[test]
 fn an_explicit_cargo_path_must_exist_and_a_bare_name_is_searched_on_the_given_path() {
     let temp = tempfile::tempdir().expect("tempdir");
@@ -177,15 +190,7 @@ fn units_from_a_check_name_exactly_the_files_each_unit_compiled() {
                 unit.target.name.clone(),
                 unit.target.kind.clone(),
                 unit.test,
-                unit.sources
-                    .iter()
-                    .map(|p| {
-                        p.strip_prefix(&dir)
-                            .expect("under the root")
-                            .to_string_lossy()
-                            .into_owned()
-                    })
-                    .collect(),
+                unit.sources.iter().map(|p| under(&dir, p)).collect(),
             )
         })
         .collect();
@@ -243,12 +248,7 @@ fn units_of_a_nested_member_resolve_against_the_workspace_root() {
         .iter()
         .filter(|u| u.target.name == "fixture_core" && !u.test)
         .flat_map(|u| u.sources.iter())
-        .map(|p| {
-            p.strip_prefix(&dir)
-                .expect("under the root")
-                .to_string_lossy()
-                .into_owned()
-        })
+        .map(|p| under(&dir, p))
         .collect();
     assert_eq!(
         core,

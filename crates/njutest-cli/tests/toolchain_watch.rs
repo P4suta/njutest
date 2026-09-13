@@ -1419,6 +1419,33 @@ fn a_catalog_cut_into_parts_and_put_back_together_says_what_the_whole_would_have
     );
 }
 
+/// One run of `fixture` in this process under `configured`, and what it exited with rather than the report it did not write.
+///
+/// A run that fails closed writes no report to read back, so a test about
+/// refusing has to ask the run itself rather than ask for a verdict.
+fn refused(fixture: &str, dir: &std::path::Path, name: &str, configured: &str) -> (u8, String) {
+    let root = dir.join(name);
+    copy_tree(&njutest_devkit::paths::fixtures_dir().join(fixture), &root);
+    std::fs::write(root.join(".njutest.toml"), configured).expect("a configuration");
+    let scratch = dir.join(format!("{name}-scratch"));
+    std::fs::create_dir_all(&scratch).expect("a directory to work in");
+    let environment = Environment {
+        cache_directory: dir.join(format!("{name}-cache")),
+        working_directory: root,
+        temp_directory: scratch,
+        vars: njutest_devkit::paths::environment_for_a_run(),
+        cancel: Cancel::new(),
+    };
+    let (mut said, mut complaints) = (Vec::new(), Vec::new());
+    let code = njutest_cli::run_from(
+        ["njutest", "verify", "--offline", "--locked", "--no-cache"].map(OsString::from),
+        &environment,
+        &mut said,
+        &mut complaints,
+    );
+    (code, String::from_utf8_lossy(&complaints).into_owned())
+}
+
 /// Whether this machine has the interpreter the `deep-v1` contract promises.
 fn interpreter() -> bool {
     std::process::Command::new("cargo")
@@ -1435,17 +1462,23 @@ fn the_contract_that_promises_the_suite_is_interpreted_interprets_it() {
         .expect("a temporary directory");
 
     if !interpreter() {
-        let missing = once(
+        let (code, complaints) = refused(
             "fixture-baseline",
             dir.path(),
             "without",
-            Some("version = 1\ncontract = \"deep-v1\"\n"),
+            "version = 1\ncontract = \"deep-v1\"\n",
         );
         assert_eq!(
-            missing["verdict"], "ERROR",
+            code, EXIT_ERROR,
             "a contract that promises the suite is interpreted cannot be answered by a \
              toolchain that cannot interpret it, and a machine without the interpreter \
-             is where that has to hold: {missing}"
+             is where that has to hold: {complaints}"
+        );
+        assert!(
+            complaints.contains("NJ7001"),
+            "and it says which of the things a run needs is the one that is not here, \
+             because a reader who is told only that the run failed has to guess: \
+             {complaints}"
         );
         return;
     }
