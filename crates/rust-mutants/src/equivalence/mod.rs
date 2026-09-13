@@ -18,6 +18,7 @@
 
 pub mod artifacts;
 
+use std::ffi::{OsStr, OsString};
 use std::path::Path;
 use std::time::Duration;
 
@@ -44,6 +45,18 @@ pub const DOES_NOT_BUILD: &str =
 
 /// The reason a control that stopped matching withdraws the layer.
 pub const CONTROL_DRIFTED: &str = "the original tree stopped building to the bytes it built to, so nothing here compares two programs";
+
+/// The variable that takes the build history out of what a build emits.
+///
+/// The lemma here is byte identity, and incremental compilation is the one
+/// feature that makes what a compiler emits depend on what it emitted before
+/// rather than only on the source it was given. A tree built once from nothing
+/// and once from a cache comes out as two byte sequences for one program, so
+/// every mutation would read as one the compiler renders and the layer would
+/// establish nothing while saying something. The tree is this layer's own and
+/// is built from nothing to begin with, so asking for the whole of it each
+/// time costs the run nothing it was keeping.
+const WHOLE_BUILDS: (&str, &str) = ("CARGO_INCREMENTAL", "0");
 
 /// What to prove equivalence with: how to open a tree of this layer's own, and how long one build may take.
 #[derive(Debug, Clone, Default)]
@@ -86,6 +99,12 @@ impl Prover {
     ) -> Result<Self, EngineError> {
         let mut open = options.open.clone();
         open.trace = trace.clone();
+        open.env
+            .retain(|(name, _value)| !crate::vars::same_name(name, OsStr::new(WHOLE_BUILDS.0)));
+        open.env.push((
+            OsString::from(WHOLE_BUILDS.0),
+            OsString::from(WHOLE_BUILDS.1),
+        ));
         let workspace = Workspace::open(root, open, cancel)?;
         let mut prover = Self {
             workspace,
