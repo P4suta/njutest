@@ -294,11 +294,7 @@ fn evidence_of(
     let toolchain = rust_mutants::cargo::Toolchain::locate(
         &rust_mutants::cargo::LocateOptions {
             cargo: None,
-            search_path: environment
-                .vars
-                .iter()
-                .find(|(name, _)| name == "PATH")
-                .map(|(_, value)| value.clone()),
+            search_path: rust_mutants::vars::search_path(&environment.vars),
             env: Some(environment.vars.clone()),
         },
         root,

@@ -104,10 +104,7 @@ impl Environment {
     /// The value of `name`, if the environment has one.
     #[must_use]
     pub fn var(&self, name: &str) -> Option<&OsStr> {
-        self.vars
-            .iter()
-            .find(|(key, _)| key == OsStr::new(name))
-            .map(|(_, value)| value.as_os_str())
+        rust_mutants::vars::var(&self.vars, name)
     }
 
     /// Where a user's caches belong, from `vars` alone: `XDG_CACHE_HOME`, then `HOME/.cache`, then `LOCALAPPDATA` on Windows.

@@ -19,7 +19,7 @@
 //! is the lowest precedence of all. So the order here is `$CARGO_HOME` first,
 //! then the outermost ancestor, and the directory itself last.
 
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 /// The directory cargo reads configuration from, in every ancestor and in `CARGO_HOME`.
@@ -27,6 +27,12 @@ pub const DIRECTORY: &str = ".cargo";
 
 /// The two file names cargo accepts in that directory, the newer one first.
 pub const FILE_NAMES: [&str; 2] = ["config.toml", "config"];
+
+/// The variable a composed set of flags is put in, which is the encoded form so a value with a space cannot become two flags.
+pub const ENCODED_RUSTFLAGS: &str = "CARGO_ENCODED_RUSTFLAGS";
+
+/// The plain form, which cargo ignores when the encoded one is set.
+pub const RUSTFLAGS: &str = "RUSTFLAGS";
 
 /// What separates arguments inside `CARGO_ENCODED_RUSTFLAGS`.
 pub const SEPARATOR: char = '\u{1f}';
@@ -99,9 +105,8 @@ pub fn read(text: &str) -> Configured {
 #[must_use]
 pub fn home(env: &[(OsString, OsString)]) -> Option<PathBuf> {
     let of = |name: &str| {
-        env.iter()
-            .find(|(key, _)| key == OsStr::new(name))
-            .map(|(_, value)| PathBuf::from(value))
+        crate::vars::var(env, name)
+            .map(PathBuf::from)
             .filter(|path| !path.as_os_str().is_empty())
     };
     of("CARGO_HOME").or_else(|| {
@@ -148,11 +153,8 @@ fn as_flags(value: &toml::Value) -> Vec<String> {
 
 /// What cargo takes from the environment instead of the configuration, in cargo's order.
 fn inherited(env: &[(OsString, OsString)]) -> Option<Vec<String>> {
-    let of = |name: &str| {
-        env.iter()
-            .find(|(key, _)| key == OsStr::new(name))
-            .map(|(_, value)| value.to_string_lossy().into_owned())
-    };
+    let of =
+        |name: &str| crate::vars::var(env, name).map(|value| value.to_string_lossy().into_owned());
     if let Some(encoded) = of("CARGO_ENCODED_RUSTFLAGS") {
         return Some(
             encoded

@@ -9,7 +9,7 @@
 //! than the one the configuration describes.
 
 use std::collections::BTreeMap;
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -221,8 +221,10 @@ impl Manager {
 pub fn visible(env: &[(OsString, OsString)], allowed: &[String]) -> Vec<(OsString, OsString)> {
     env.iter()
         .filter(|(name, _)| {
-            let name = name.to_string_lossy();
-            name == "PATH" || allowed.iter().any(|wanted| *wanted == name.as_ref())
+            rust_mutants::vars::same_name(name, OsStr::new("PATH"))
+                || allowed
+                    .iter()
+                    .any(|wanted| rust_mutants::vars::same_name(name, OsStr::new(wanted)))
         })
         .cloned()
         .collect()

@@ -542,11 +542,7 @@ fn library_path(sysroot: &Path, base: &[(OsString, OsString)]) -> (OsString, OsS
         value.push(&separator);
         value.push(triple.into_os_string());
     }
-    if let Some((_, existing)) = base
-        .iter()
-        .find(|(key, _)| key == OsStr::new(name))
-        .filter(|(_, existing)| !existing.is_empty())
-    {
+    if let Some(existing) = crate::vars::var(base, name).filter(|existing| !existing.is_empty()) {
         value.push(&separator);
         value.push(existing);
     }

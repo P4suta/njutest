@@ -1574,11 +1574,7 @@ fn listed(selected: &[rust_mutants::rule::Rule]) -> String {
 fn locating(environment: &Environment) -> rust_mutants::cargo::LocateOptions {
     rust_mutants::cargo::LocateOptions {
         cargo: None,
-        search_path: environment
-            .vars
-            .iter()
-            .find(|(name, _)| name == "PATH")
-            .map(|(_, value)| value.clone()),
+        search_path: rust_mutants::vars::search_path(&environment.vars),
         env: Some(environment.vars.clone()),
     }
 }

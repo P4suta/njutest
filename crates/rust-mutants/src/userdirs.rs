@@ -9,7 +9,7 @@
 //! other established and the other doing the work again, and the only visible
 //! sign would be a run that was slower than it should have been.
 
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsString;
 use std::path::PathBuf;
 
 /// The directory below which a run keeps what it establishes between runs, from the environment it was given.
@@ -24,9 +24,8 @@ use std::path::PathBuf;
 #[must_use]
 pub fn cache_directory(vars: &[(OsString, OsString)], fallback: &str) -> PathBuf {
     let named = |name: &str| -> Option<PathBuf> {
-        vars.iter()
-            .find(|(key, _)| key.as_os_str() == OsStr::new(name))
-            .map(|(_, value)| PathBuf::from(value))
+        crate::vars::var(vars, name)
+            .map(PathBuf::from)
             .filter(|path| path.is_absolute())
     };
     named("XDG_CACHE_HOME")

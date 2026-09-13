@@ -97,11 +97,7 @@ impl Settings {
     ) -> Result<OpenOptions, EngineError> {
         Ok(OpenOptions {
             cargo: None,
-            search_path: environment
-                .vars
-                .iter()
-                .find(|(name, _)| name == "PATH")
-                .map(|(_, value)| value.clone()),
+            search_path: rust_mutants::vars::search_path(&environment.vars),
             env: environment.vars.clone(),
             temp_directory: environment.temp_directory.clone(),
             report_directory: Some(self.config.reports.directory.to_string_lossy().into_owned()),
