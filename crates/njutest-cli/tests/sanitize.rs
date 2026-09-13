@@ -25,7 +25,7 @@ fn cargo() -> PathBuf {
 /// What that cargo is told to say, and how it is told to end.
 fn saying(said: &str, code: i32) -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
     let mut env: Vec<(std::ffi::OsString, std::ffi::OsString)> = std::env::vars_os()
-        .filter(|(name, _)| name == "PATH")
+        .filter(|(name, _)| njutest_devkit::paths::same_name(name, std::ffi::OsStr::new("PATH")))
         .collect();
     env.push((
         std::ffi::OsString::from("FAKE_CARGO_SAYS"),

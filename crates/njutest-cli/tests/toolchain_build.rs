@@ -290,7 +290,7 @@ fn the_build_says_what_it_did_into_the_trace_without_saying_what_the_variables_h
 fn path_of() -> OsString {
     env()
         .into_iter()
-        .find(|(key, _)| key == "PATH")
+        .find(|(key, _)| njutest_devkit::paths::same_name(key, std::ffi::OsStr::new("PATH")))
         .map(|(_, value)| value)
         .unwrap_or_default()
 }

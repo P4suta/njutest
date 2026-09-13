@@ -65,7 +65,9 @@ mod driving {
     /// What that cargo is told to say, what it is told to leave behind, and how it is told to end.
     fn saying(said: &str, code: i32, artifact: Option<&str>) -> Vec<(OsString, OsString)> {
         let mut env: Vec<(OsString, OsString)> = std::env::vars_os()
-            .filter(|(name, _)| name == "PATH")
+            .filter(|(name, _)| {
+                njutest_devkit::paths::same_name(name, std::ffi::OsStr::new("PATH"))
+            })
             .collect();
         env.push((OsString::from("FAKE_CARGO_SAYS"), OsString::from(said)));
         env.push((

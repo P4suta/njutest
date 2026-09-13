@@ -23,10 +23,9 @@ fn recorder() -> &'static Recorder {
 fn environment() -> Vec<(OsString, OsString)> {
     std::env::vars_os()
         .filter(|(key, _)| {
-            matches!(
-                key.to_string_lossy().as_ref(),
-                "PATH" | "HOME" | "USER" | "TMPDIR"
-            )
+            ["PATH", "HOME", "USER", "TMPDIR"]
+                .iter()
+                .any(|name| rust_mutants::vars::same_name(key, std::ffi::OsStr::new(name)))
         })
         .collect()
 }

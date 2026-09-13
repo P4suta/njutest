@@ -20,7 +20,11 @@ use rust_mutants::runner::Cancel;
 
 fn env() -> Vec<(OsString, OsString)> {
     std::env::vars_os()
-        .filter(|(key, _)| matches!(key.to_string_lossy().as_ref(), "PATH" | "HOME"))
+        .filter(|(key, _)| {
+            ["PATH", "HOME"]
+                .iter()
+                .any(|name| njutest_devkit::paths::same_name(key, std::ffi::OsStr::new(name)))
+        })
         .collect()
 }
 

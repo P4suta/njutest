@@ -14,10 +14,9 @@ fn seen(repo: &Repo, base: &str) -> Option<njutest_cli::git::Change> {
     let trace = Recorder::disabled();
     let env: Vec<(std::ffi::OsString, std::ffi::OsString)> = std::env::vars_os()
         .filter(|(key, _)| {
-            matches!(
-                key.to_string_lossy().as_ref(),
-                "PATH" | "HOME" | "USER" | "TMPDIR"
-            )
+            ["PATH", "HOME", "USER", "TMPDIR"]
+                .iter()
+                .any(|name| njutest_devkit::paths::same_name(key, std::ffi::OsStr::new(name)))
         })
         .collect();
     changed(repo.root(), &env, base, Watch::new(&cancel, &trace))
