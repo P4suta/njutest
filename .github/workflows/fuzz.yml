@@ -66,11 +66,9 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
-      # Fuzzing needs nightly for the sanitizer; the `toolchain` input
-      # overrides the pinned action's branch default.
-      - uses: dtolnay/rust-toolchain@f133eefe930d61f0d9371efd474daf0125ed3dd1 # stable branch
-        with:
-          toolchain: nightly
+      # Fuzzing needs nightly for the sanitizer. Each rust-toolchain action
+      # branch bakes in its toolchain, so pin the nightly branch itself.
+      - uses: dtolnay/rust-toolchain@be39649afda95dbf70f87cce95f68b8d5797b296 # nightly branch
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: fuzz
