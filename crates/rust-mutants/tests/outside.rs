@@ -21,9 +21,10 @@ fn document(root: &Path, dependencies: &[(&str, &str)]) -> Metadata {
         .map(|(name, path)| format!(r#"{{"name":"{name}","kind":null,"path":"{path}"}}"#))
         .collect();
     let json = format!(
-        r#"{{"packages":[{{"name":"a","version":"0.1.0","id":"a 0.1.0","manifest_path":"{manifest}","targets":[],"dependencies":[{deps}]}}],"workspace_members":["a 0.1.0"],"workspace_root":"{root}","target_directory":"{root}/target","version":1,"resolve":null}}"#,
-        manifest = manifest.display(),
-        root = root.display(),
+        r#"{{"packages":[{{"name":"a","version":"0.1.0","id":"a 0.1.0","manifest_path":"{manifest}","targets":[],"dependencies":[{deps}]}}],"workspace_members":["a 0.1.0"],"workspace_root":"{root}","target_directory":"{target}","version":1,"resolve":null}}"#,
+        manifest = njutest_devkit::paths::in_json(&manifest),
+        root = njutest_devkit::paths::in_json(root),
+        target = njutest_devkit::paths::in_json(&root.join("target")),
         deps = deps.join(","),
     );
     Metadata::parse(json.as_bytes()).expect("the document parses")

@@ -717,11 +717,12 @@ impl Config {
                 "the report directory is empty; name one relative to the workspace root".to_owned(),
             ));
         }
-        if directory.is_absolute()
-            || directory
-                .components()
-                .any(|part| part == std::path::Component::ParentDir)
-        {
+        if !directory.components().all(|part| {
+            matches!(
+                part,
+                std::path::Component::Normal(_) | std::path::Component::CurDir
+            )
+        }) {
             return Err(invalid(format!(
                 "the report directory {} leaves the workspace; name one relative to its root",
                 directory.display()

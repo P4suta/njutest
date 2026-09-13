@@ -189,7 +189,7 @@ fn what_a_target_links_is_read_from_the_resolved_graph() {
             ]
           }}
         }}"#,
-        root = repo.root().display()
+        root = njutest_devkit::paths::in_json(repo.root())
     );
     let metadata = Metadata::parse(document.as_bytes()).expect("the document parses");
     let dependencies = "b".repeat(64);
@@ -274,7 +274,7 @@ fn keyed(repo: &Repo) -> String {
             "nodes": [{{ "id": "demo 0.1.0 (path+file://{root})", "deps": [] }}]
           }}
         }}"#,
-        root = repo.root().display()
+        root = njutest_devkit::paths::in_json(repo.root())
     );
     let metadata = Metadata::parse(document.as_bytes()).expect("the document parses");
     let dependencies = "b".repeat(64);
@@ -378,7 +378,7 @@ fn four_kinds(repo: &Repo) -> Metadata {
     );
     repo.write("crates/quiet/src/lib.rs", "pub fn g() {}\n");
 
-    let root = repo.root().display().to_string();
+    let root = njutest_devkit::paths::in_json(repo.root());
     let document = format!(
         r#"{{
           "version": 1,

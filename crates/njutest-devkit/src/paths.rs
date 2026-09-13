@@ -59,6 +59,30 @@ fn beside(root: &Path, name: &str) -> std::io::Result<PathBuf> {
     Ok(dir)
 }
 
+/// `path`, escaped the way a JSON string escapes its contents, without the quotes.
+///
+/// A suite that writes the document a real `cargo metadata` would print has to
+/// write it the way a real one does. A Windows path separator is the escape
+/// character inside a JSON string, so a path written plainly between quotes
+/// makes a document that does not parse:
+///
+/// ```text
+/// cargo metadata did not print its document: invalid escape at line 1 column 86
+/// ```
+///
+/// The quotes are left to the caller because a path is not always the whole of
+/// a string: a package identity holds one after `path+file://`, and a document
+/// that quoted it there would say something else entirely.
+#[must_use]
+pub fn in_json(path: &Path) -> String {
+    let quoted = serde_json::to_string(&path.to_string_lossy()).unwrap_or_default();
+    quoted
+        .strip_prefix('"')
+        .and_then(|rest| rest.strip_suffix('"'))
+        .unwrap_or_default()
+        .to_owned()
+}
+
 /// The parent's environment for a new in-process run, with the variables that run must compose for itself taken out.
 ///
 /// A nested run must not inherit `RUST_MUTANTS_ACTIVE`,

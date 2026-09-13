@@ -31,12 +31,15 @@ const UNSUPPORTED: [&str; 3] = [
 /// What Miri says when it has found unsoundness.
 const UNDEFINED: &str = "Undefined Behavior";
 
-/// What Miri says when it is not installed.
-const ABSENT: [&str; 3] = [
-    "no such command",
-    "no such subcommand",
-    "is not installed for the toolchain",
-];
+/// What a toolchain says when there is nothing to interpret with.
+///
+/// Two things can be missing and they read differently: the component, which
+/// rustup reports as not installed *for* a toolchain, and the toolchain
+/// itself, which it reports as not installed at all. Both are the same thing
+/// to a run — there is no interpreter — and reading only the first leaves a
+/// machine with no nightly looking like a suite whose tests failed under an
+/// interpreter that never ran.
+const ABSENT: [&str; 3] = ["no such command", "no such subcommand", "is not installed"];
 
 /// What the phase is asked to interpret, and how it is bounded.
 #[derive(Debug, Clone)]

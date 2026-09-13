@@ -259,6 +259,26 @@ fn a_report_directory_stays_inside_the_workspace() {
         kind("[reports]\ndirectory = \"\"\n"),
         ConfigErrorKind::Invalid
     );
+    let leaving: &[&str] = if cfg!(windows) {
+        &[
+            "/tmp/elsewhere",
+            "\\\\server\\share\\elsewhere",
+            "C:\\elsewhere",
+            "C:elsewhere",
+        ]
+    } else {
+        &["/tmp/elsewhere"]
+    };
+    for named in leaving {
+        assert_eq!(
+            kind(&format!("[reports]\ndirectory = '{named}'\n")),
+            ConfigErrorKind::Invalid,
+            "{named} names somewhere the workspace root does not reach on the machine this \
+             runs on, and a run that took it would write its reports where nobody said. \
+             Which spellings those are is the platform's answer: a volume and a share are \
+             names of their own on a unix machine, and places of their own on Windows"
+        );
+    }
 }
 
 #[test]

@@ -260,10 +260,11 @@ fn metadata_document(root: &std::path::Path) -> String {
     let manifest = root.join("Cargo.toml");
     let source = root.join("src/lib.rs");
     format!(
-        r#"{{"packages":[{{"name":"demo","version":"0.1.0","id":"demo 0.1.0","manifest_path":"{manifest}","targets":[{{"kind":["lib"],"crate_types":["lib"],"name":"demo","src_path":"{source}","edition":"2024","test":true,"doctest":true,"harness":true}}]}}],"workspace_members":["demo 0.1.0"],"workspace_root":"{root}","target_directory":"{root}/target","version":1,"resolve":null}}"#,
-        manifest = manifest.display(),
-        source = source.display(),
-        root = root.display(),
+        r#"{{"packages":[{{"name":"demo","version":"0.1.0","id":"demo 0.1.0","manifest_path":"{manifest}","targets":[{{"kind":["lib"],"crate_types":["lib"],"name":"demo","src_path":"{source}","edition":"2024","test":true,"doctest":true,"harness":true}}]}}],"workspace_members":["demo 0.1.0"],"workspace_root":"{root}","target_directory":"{target}","version":1,"resolve":null}}"#,
+        manifest = njutest_devkit::paths::in_json(&manifest),
+        source = njutest_devkit::paths::in_json(&source),
+        root = njutest_devkit::paths::in_json(root),
+        target = njutest_devkit::paths::in_json(&root.join("target")),
     )
 }
 
@@ -350,8 +351,8 @@ fn compiler_message(root: &std::path::Path, said: &str) -> String {
     let source = root.join("src/lib.rs");
     format!(
         r#"{{"reason":"compiler-message","package_id":"demo 0.1.0","manifest_path":"{manifest}","target":{{"kind":["lib"],"crate_types":["lib"],"name":"demo","src_path":"{source}","edition":"2024"}},"message":{{"message":"{said}","code":null,"level":"error","spans":[],"children":[],"rendered":"error: {said}\n"}}}}"#,
-        manifest = root.join("Cargo.toml").display(),
-        source = source.display(),
+        manifest = njutest_devkit::paths::in_json(&root.join("Cargo.toml")),
+        source = njutest_devkit::paths::in_json(&source),
     )
 }
 

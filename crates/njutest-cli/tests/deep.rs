@@ -139,6 +139,23 @@ fn a_toolchain_with_no_interpreter_cannot_answer_a_contract_that_promises_one() 
 }
 
 #[test]
+fn a_machine_with_no_nightly_at_all_is_a_toolchain_with_no_interpreter() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let said = "error: toolchain 'nightly-x86_64-unknown-linux-gnu' is not installed\n\
+                help: run `rustup toolchain install nightly-x86_64-unknown-linux-gnu` to install it";
+    let refused = interpreted(said, 1, dir.path()).expect_err("no interpreter");
+    assert_eq!(
+        refused.code().code,
+        "NJ7001",
+        "a toolchain that is not there and a component that is not there are one thing \
+         to the run: there is nothing to interpret with. Reading only the second leaves \
+         the first as a suite that failed, and a contract promising interpretation then \
+         answers without having interpreted anything: {refused}"
+    );
+    assert!(matches!(refused, RunnerError::MiriMissing { .. }));
+}
+
+#[test]
 fn a_cargo_that_is_not_there_is_a_toolchain_with_no_interpreter() {
     let dir = tempfile::tempdir().expect("tempdir");
     let cancel = Cancel::new();
