@@ -377,16 +377,23 @@ fn start(spec: &Spec, program: &OsString) -> Result<Started, Failed> {
 /// a bare name against the environment of the process doing the starting, so a
 /// run handed a search path with nothing on it would start the caller's
 /// program anyway and report what somebody else's machine has. Resolving here
-/// makes the answer the same everywhere. A name that is already a path is
-/// left alone, and so is a spec that asked to inherit this process's own
-/// environment; a name that is nowhere is left alone too, so that not finding
-/// it is reported by the start rather than by a different error here.
-fn resolved(spec: &Spec, program: &OsString) -> OsString {
+/// makes the answer the same everywhere, including the answer "there is no
+/// such program": a name the search path does not hold is refused here rather
+/// than handed on, because handing it on is exactly what lets the platform
+/// answer in this one's place.
+///
+/// A name that is already a path is left alone, and so is a spec that asked to
+/// inherit this process's own environment.
+///
+/// # Errors
+/// The name is bare and the environment's search path does not hold it.
+fn resolved(spec: &Spec, program: &OsString) -> io::Result<OsString> {
     let Some(env) = &spec.env else {
-        return program.clone();
+        return Ok(program.clone());
     };
     crate::cargo::resolve_executable(Path::new(program), crate::vars::search_path(env).as_deref())
-        .map_or_else(|_unfound| program.clone(), PathBuf::into_os_string)
+        .map(PathBuf::into_os_string)
+        .map_err(|unfound| io::Error::new(io::ErrorKind::NotFound, unfound.to_string()))
 }
 
 /// A command with its pipes attached: the merged reader, and the structured stdout reader with its cap when the spec asked for one.
@@ -399,7 +406,7 @@ struct Wired {
 /// Builds the command and the pipes it writes to. No stdin: a test binary that reads from the terminal would hang. One pipe for both streams unless stdout is wanted whole, so the interleaving is the child's own.
 fn wire(spec: &Spec, program: &OsString) -> io::Result<Wired> {
     let (merged, stderr) = io::pipe()?;
-    let mut command = Command::new(resolved(spec, program));
+    let mut command = Command::new(resolved(spec, program)?);
     command.args(spec.argv.iter().skip(1));
     if let Some(dir) = &spec.dir {
         command.current_dir(dir);
