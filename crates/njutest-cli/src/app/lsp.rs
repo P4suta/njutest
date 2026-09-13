@@ -276,12 +276,28 @@ fn publish(output: &mut dyn Write, root: &Path, encoding: Encoding) {
         return;
     };
     for reported in diagnostics(&report, root, encoding) {
-        let uri = format!("file://{}", root.join(&reported.path).display());
+        let uri = uri_of(&root.join(&reported.path));
         notify(
             output,
             "textDocument/publishDiagnostics",
             &json!({ "uri": uri, "diagnostics": reported.diagnostics }),
         );
+    }
+}
+
+/// `path` as the URI an editor holds the document under.
+///
+/// An editor matches a diagnostic to a document by the URI it is published
+/// against, so a second spelling of one file is a diagnostic about a file
+/// nobody has open. A URI separates with `/` whatever the platform separates
+/// with, and a path that begins at a volume rather than at a root needs the
+/// root the form puts before it.
+fn uri_of(path: &Path) -> String {
+    let text = rust_mutants::id::slashed(path);
+    if text.starts_with('/') {
+        format!("file://{text}")
+    } else {
+        format!("file:///{text}")
     }
 }
 

@@ -647,6 +647,7 @@ fn the_whole_exchange_an_editor_has_with_this_server_is_recorded() {
         let text = serde_json::to_string(&said).expect("one line");
         lines.extend_from_slice(
             text.replace(&root.path().display().to_string(), "<root>")
+                .replace(&rust_mutants::id::slashed(root.path()), "<root>")
                 .as_bytes(),
         );
         lines.push(b'\n');
