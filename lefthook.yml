@@ -46,7 +46,7 @@ pre-push:
     rust-clippy:
       run: cargo clippy --workspace --all-targets --all-features -- -D warnings
     rust-test:
-      run: cargo test --workspace --all-targets
+      run: mise run test
     rust-doc:
       run: cargo doc --workspace --no-deps --document-private-items
       env:
