@@ -288,8 +288,10 @@ fn every_failed_projection_and_index_names_the_path_that_was_not_kept() {
         let error = keep(dir.path(), &keepable(run, RunKind::Full))
             .expect_err("one output path refused the report");
         assert!(
-            matches!(&error, StoreError::NotKept { path: named, .. } if named == &path.display().to_string()),
-            "{relative} failed as {error}"
+            matches!(&error, StoreError::NotKept { path: named, .. } if Path::new(named) == path),
+            "{relative} failed as {error}. The two are compared as paths because a run \
+             builds one a component at a time and a test writes one out, and on a platform \
+             with two separators those are two spellings of the same place"
         );
     }
 }

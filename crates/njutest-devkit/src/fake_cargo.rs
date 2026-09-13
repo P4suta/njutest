@@ -297,6 +297,12 @@ fn build_the_example(profile: &Path) {
 /// the program directory, `{{script_dir}}` for the directory the script is in,
 /// and, at run time, `{{cwd}}`, `{{target_dir}}`, `{{pid}}`, and `{{now_ms}}`.
 ///
+/// The first two are put into the rendered document rather than into the
+/// values it is rendered from, so what replaces them is escaped the way a JSON
+/// string escapes its contents. A Windows path written in plainly would end
+/// the document at its first separator, and the fake would refuse every
+/// command with `is not the script`.
+///
 /// # Panics
 /// When the script cannot be written or the fake cannot be placed.
 #[must_use]
@@ -323,8 +329,8 @@ pub fn install(script: &Script) -> Installed {
     let path = dir.path().join("script.json");
     let rendered = serde_json::to_string_pretty(script)
         .expect("the script renders")
-        .replace("{{bin}}", &bin.to_string_lossy())
-        .replace("{{script_dir}}", &dir.path().to_string_lossy());
+        .replace("{{bin}}", &crate::paths::in_json(&bin))
+        .replace("{{script_dir}}", &crate::paths::in_json(dir.path()));
     std::fs::write(&path, rendered).expect("the script");
     Installed {
         bin,

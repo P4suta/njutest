@@ -121,12 +121,33 @@ fn dropping_a_lock_releases_it() {
     assert!(acquire(&path).expect("opens").is_some());
 }
 
+/// The flag Windows wants before it will open a directory as a handle.
+#[cfg(windows)]
+const BACKUP_SEMANTICS: u32 = 0x0200_0000;
+
+/// Opens `dir` as a handle its timestamps can be set through.
+///
+/// A directory is not a file to Windows unless the open says so, and without
+/// the flag the call is refused rather than answered: `Access is denied`.
+fn opened(dir: &Path) -> fs::File {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt as _;
+        fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(BACKUP_SEMANTICS)
+            .open(dir)
+            .expect("open")
+    }
+    #[cfg(not(windows))]
+    {
+        fs::File::open(dir).expect("open")
+    }
+}
+
 fn age(dir: &Path, by: Duration) {
     let past = SystemTime::now().checked_sub(by).expect("in range");
-    fs::File::open(dir)
-        .expect("open")
-        .set_modified(past)
-        .expect("set mtime");
+    opened(dir).set_modified(past).expect("set mtime");
 }
 
 #[test]

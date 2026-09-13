@@ -830,8 +830,8 @@ fn every_source_of_this_repository_still_parses_once_it_is_instrumented() {
             let relative = path
                 .strip_prefix(&root)
                 .unwrap_or(&path)
-                .display()
-                .to_string();
+                .to_string_lossy()
+                .replace('\\', "/");
             let Some((text, _)) = instrumented(&relative, &source) else {
                 continue;
             };
