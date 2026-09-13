@@ -27,14 +27,7 @@ struct Built0 {
 }
 
 fn env() -> Vec<(OsString, OsString)> {
-    std::env::vars_os()
-        .filter(|(key, _)| {
-            matches!(
-                key.to_string_lossy().as_ref(),
-                "PATH" | "HOME" | "RUSTUP_HOME" | "CARGO_HOME" | "TMPDIR"
-            )
-        })
-        .collect()
+    njutest_devkit::paths::environment_for_a_toolchain_run(&["TMPDIR"])
 }
 
 fn build_fixture(fixture: &str, flavour: Flavour, packages: &[&str]) -> Built0 {

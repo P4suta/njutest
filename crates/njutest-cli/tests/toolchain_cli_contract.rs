@@ -42,15 +42,8 @@ fn asked(environment: &Environment, args: &[&str]) -> Output {
 
 /// The environment a run of this suite composes: the four variables a toolchain needs, and nothing else.
 fn environment(directory: &Path, named: &[(&str, &str)]) -> Environment {
-    let mut vars: Vec<(OsString, OsString)> = njutest_devkit::paths::environment_for_a_run()
-        .into_iter()
-        .filter(|(name, _)| {
-            matches!(
-                name.to_string_lossy().as_ref(),
-                "PATH" | "HOME" | "RUSTUP_HOME" | "CARGO_HOME"
-            )
-        })
-        .collect();
+    let mut vars: Vec<(OsString, OsString)> =
+        njutest_devkit::paths::environment_for_a_toolchain_run(&[]);
     for (name, value) in named {
         vars.retain(|(held, _)| held != OsString::from(name).as_os_str());
         vars.push((OsString::from(name), OsString::from(value)));

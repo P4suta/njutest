@@ -65,12 +65,7 @@ fn interrupted_by(signal: rustix::process::Signal, expected: i32) {
             "TMPDIR",
             njutest_devkit::paths::temp_beside(&root).expect("a temporary directory"),
         )
-        .envs(std::env::vars_os().filter(|(key, _)| {
-            matches!(
-                key.to_string_lossy().as_ref(),
-                "PATH" | "HOME" | "RUSTUP_HOME" | "CARGO_HOME"
-            )
-        }))
+        .envs(njutest_devkit::paths::environment_for_a_toolchain_run(&[]))
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -135,12 +130,7 @@ fn verify_in(root: &Path, extra: &[&str]) -> std::process::Child {
             "TMPDIR",
             njutest_devkit::paths::temp_beside(root).expect("a temporary directory"),
         )
-        .envs(std::env::vars_os().filter(|(key, _)| {
-            matches!(
-                key.to_string_lossy().as_ref(),
-                "PATH" | "HOME" | "RUSTUP_HOME" | "CARGO_HOME"
-            )
-        }))
+        .envs(njutest_devkit::paths::environment_for_a_toolchain_run(&[]))
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()

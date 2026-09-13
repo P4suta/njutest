@@ -75,30 +75,109 @@ fn beside(root: &Path, name: &str) -> std::io::Result<PathBuf> {
 /// well. They describe the outer workspace and would otherwise override the
 /// inner run's isolated target directory. An ordinary caller's
 /// `RUSTC_WRAPPER` is retained.
+///
+/// The compiler flags go as well. `RUSTFLAGS`, `RUSTDOCFLAGS`, and
+/// `CARGO_ENCODED_RUSTFLAGS` say how this workspace is compiled — under
+/// continuous integration, with warnings denied — and a fixture built under
+/// them is built with a posture nobody wrote it for. An ordinary warning in a
+/// sample project becomes the error that stops the run, and a suite that only
+/// failed on the machines setting them is a suite about the machine rather
+/// than about the product.
 #[must_use]
 pub fn environment_for_a_run() -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
-    let composed: [&str; 4] = [
+    let composed: [&str; 7] = [
         "RUST_MUTANTS_ACTIVE",
         "RUST_MUTANTS_CATALOG",
         "RUST_MUTANTS_TOUCH",
         "LLVM_PROFILE_FILE",
+        "RUSTFLAGS",
+        "RUSTDOCFLAGS",
+        "CARGO_ENCODED_RUSTFLAGS",
     ];
     let vars: Vec<(std::ffi::OsString, std::ffi::OsString)> = std::env::vars_os().collect();
     let outer_coverage = vars
         .iter()
-        .any(|(name, _value)| name == std::ffi::OsStr::new("CARGO_LLVM_COV"));
+        .any(|(name, _value)| same_name(name, std::ffi::OsStr::new("CARGO_LLVM_COV")));
     vars.into_iter()
         .filter(|(name, _value)| {
             let reserved = composed
                 .iter()
-                .any(|reserved| name.as_os_str() == std::ffi::OsStr::new(reserved));
+                .any(|reserved| same_name(name, std::ffi::OsStr::new(reserved)));
             !(reserved || (outer_coverage && cargo_llvm_cov_owns(name)))
         })
         .collect()
 }
 
+/// Whether two environment variable names are one name on this platform.
+///
+/// The engine answers the same question in `rust_mutants::vars`, and the
+/// dependency direction `cargo xtask deps` holds has this crate below every
+/// other rather than above the engine, so the rule is stated again here for
+/// the suites rather than borrowed.
+#[must_use]
+pub fn same_name(one: &std::ffi::OsStr, other: &std::ffi::OsStr) -> bool {
+    if cfg!(windows) {
+        one.eq_ignore_ascii_case(other)
+    } else {
+        one == other
+    }
+}
+
+/// The names a nested toolchain run needs from the parent beyond the four every suite asks for.
+///
+/// A Windows process that is handed an environment without `SystemRoot` does
+/// not start: the loader reads it to find the system libraries every program
+/// links. The rest are what cargo and rustc look up on that platform for the
+/// same reasons `HOME` and `TMPDIR` serve on a unix one, and a child given
+/// none of them fails in ways that read as anything but a missing variable.
+#[cfg(windows)]
+pub const ALSO_ON_THIS_PLATFORM: [&str; 13] = [
+    "SystemRoot",
+    "SystemDrive",
+    "windir",
+    "ComSpec",
+    "PATHEXT",
+    "TEMP",
+    "TMP",
+    "USERPROFILE",
+    "LOCALAPPDATA",
+    "APPDATA",
+    "ProgramData",
+    "PROCESSOR_ARCHITECTURE",
+    "NUMBER_OF_PROCESSORS",
+];
+
+/// The names a nested toolchain run needs from the parent beyond the four every suite asks for.
+#[cfg(not(windows))]
+pub const ALSO_ON_THIS_PLATFORM: [&str; 0] = [];
+
+/// The least of the parent's environment a nested run of either product needs, and the names `also` adds.
+///
+/// A suite that drives a real toolchain wants to prove the product works with
+/// what a machine actually has to provide and nothing else, so this is an
+/// allowed list rather than a refused one. Which names those are is not the
+/// same question on every platform, and a suite that spelled one list would be
+/// asking a unix question on a Windows machine: the answer there is a run that
+/// cannot find cargo, reported as `RM1012`.
+#[must_use]
+pub fn environment_for_a_toolchain_run(
+    also: &[&str],
+) -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
+    let wanted: [&str; 4] = ["PATH", "HOME", "RUSTUP_HOME", "CARGO_HOME"];
+    environment_for_a_run()
+        .into_iter()
+        .filter(|(name, _value)| {
+            wanted
+                .iter()
+                .chain(ALSO_ON_THIS_PLATFORM.iter())
+                .chain(also.iter())
+                .any(|wanted| same_name(name, std::ffi::OsStr::new(wanted)))
+        })
+        .collect()
+}
+
 fn cargo_llvm_cov_owns(name: &std::ffi::OsStr) -> bool {
-    name == std::ffi::OsStr::new("RUSTC_WRAPPER")
+    same_name(name, std::ffi::OsStr::new("RUSTC_WRAPPER"))
         || name.to_str().is_some_and(|name| {
             name == "CARGO_LLVM_COV"
                 || name.starts_with("CARGO_LLVM_COV_")

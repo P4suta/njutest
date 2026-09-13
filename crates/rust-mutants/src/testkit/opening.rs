@@ -11,6 +11,13 @@
 //! offline because a fixture has no dependencies and locked because it commits
 //! its lock file, and a suite that reached the network would be a suite whose
 //! failures are about somebody else's server.
+//!
+//! What it does not pass along is how this workspace is compiled. `RUSTFLAGS`,
+//! `RUSTDOCFLAGS`, and `CARGO_ENCODED_RUSTFLAGS` say that warnings are denied
+//! here; a fixture is not written under that posture, and one built under it
+//! anyway stops on an ordinary warning. The witness tree the branch proofs
+//! check would be the first thing to stop, and a proof that nothing vouched
+//! for is a proof silently not made.
 
 use std::path::Path;
 
@@ -22,10 +29,17 @@ use crate::workspace::OpenOptions;
 /// `OpenOptions { trace, ..opening(&cargo, fixture.temp()) }`.
 #[must_use]
 pub fn opening(cargo: &Path, temp: &Path) -> OpenOptions {
+    let composed: [&str; 3] = ["RUSTFLAGS", "RUSTDOCFLAGS", "CARGO_ENCODED_RUSTFLAGS"];
     OpenOptions {
         cargo: Some(cargo.to_path_buf()),
         temp_directory: temp.to_path_buf(),
-        env: std::env::vars_os().collect(),
+        env: std::env::vars_os()
+            .filter(|(name, _value)| {
+                !composed
+                    .iter()
+                    .any(|reserved| crate::vars::same_name(name, std::ffi::OsStr::new(reserved)))
+            })
+            .collect(),
         locked: true,
         offline: true,
         ..OpenOptions::default()
