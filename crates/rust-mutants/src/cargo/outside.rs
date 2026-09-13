@@ -70,7 +70,7 @@ pub fn reaching_outside(metadata: &Metadata, root: &Path, patches: &[Patch]) -> 
 
 /// The path with every `.` and `..` it can resolve resolved, and the rest as written.
 fn resolved(path: &Path) -> PathBuf {
-    path.canonicalize().unwrap_or_else(|_error| cleaned(path))
+    crate::canonical::canonical(path).unwrap_or_else(|_error| cleaned(path))
 }
 
 /// The path with `.` removed and `..` folded, without asking the filesystem.

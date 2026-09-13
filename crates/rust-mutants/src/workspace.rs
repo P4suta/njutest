@@ -241,9 +241,7 @@ impl Workspace {
                 offline: options.offline,
             },
         )?;
-        let workspace_root = metadata
-            .workspace_root
-            .canonicalize()
+        let workspace_root = crate::canonical::canonical(&metadata.workspace_root)
             .unwrap_or_else(|_error| metadata.workspace_root.clone());
         if workspace_root != root {
             return Err(SessionError::RootIsNotTheWorkspace {
@@ -255,7 +253,7 @@ impl Workspace {
         let allowed: Vec<PathBuf> = options
             .allow_outside
             .iter()
-            .map(|path| path.canonicalize().unwrap_or_else(|_error| path.clone()))
+            .map(|path| crate::canonical::canonical(path).unwrap_or_else(|_error| path.clone()))
             .collect();
         let patches = crate::cargo::manifest::patches(root);
         for outside in crate::cargo::reaching_outside(&metadata, root, &patches) {
@@ -284,9 +282,7 @@ impl Workspace {
         cancel: &Cancel,
     ) -> Result<Self, crate::EngineError> {
         let phase = options.trace.phase("open");
-        let root = root
-            .canonicalize()
-            .unwrap_or_else(|_error| root.to_path_buf());
+        let root = crate::canonical::canonical(root).unwrap_or_else(|_error| root.to_path_buf());
         let parent = options.temp_directory.clone();
         let now = jiff::Timestamp::now();
         let swept =

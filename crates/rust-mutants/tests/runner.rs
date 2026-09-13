@@ -323,11 +323,29 @@ fn a_windows_child_that_fails_is_data_not_an_error() {
 fn a_windows_process_tree_is_killed_on_timeout() {
     let temp = tempfile::tempdir().expect("tempdir");
     let marker = temp.path().join("still-here.txt");
-    let script = format!(
-        "start /b cmd /C \"timeout /t 30 /nobreak > nul & echo alive > {}\" & timeout /t 30 /nobreak > nul",
-        marker.display()
-    );
-    let mut spec = shell(&script);
+    let outliving = temp.path().join("outliving.bat");
+    std::fs::write(
+        &outliving,
+        format!(
+            "@echo off\r\nping -n 31 127.0.0.1 > nul\r\necho alive > {}\r\n",
+            marker.display()
+        ),
+    )
+    .expect("the script a descendant runs");
+    let script = temp.path().join("tree.bat");
+    std::fs::write(
+        &script,
+        format!(
+            "@echo off\r\nstart /b cmd /C {}\r\nping -n 31 127.0.0.1 > nul\r\n",
+            outliving.display()
+        ),
+    )
+    .expect("the script the run starts");
+    let mut spec = Spec::new([
+        std::ffi::OsString::from("cmd"),
+        std::ffi::OsString::from("/C"),
+        script.clone().into_os_string(),
+    ]);
     spec.timeout = Some(Duration::from_millis(500));
     let started = Instant::now();
     let result = run(&spec, &Cancel::new());

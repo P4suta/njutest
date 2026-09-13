@@ -325,9 +325,7 @@ fn assigned<'a>(
     let members = selected_members(input.metadata, &options.packages)?;
     let mut assigner = Assigner {
         root: input.root,
-        physical_root: input
-            .root
-            .canonicalize()
+        physical_root: crate::canonical::canonical(input.root)
             .unwrap_or_else(|_error| input.root.to_path_buf()),
         units: input.units,
         workspace_manifest: input
@@ -708,7 +706,7 @@ fn relative(root: &Path, physical_root: &Path, path: &Path) -> Result<String, Di
     let rel = if let Ok(rel) = path.strip_prefix(root) {
         rel.to_path_buf()
     } else {
-        let physical_path = path.canonicalize().map_err(|_error| outside())?;
+        let physical_path = crate::canonical::canonical(path).map_err(|_error| outside())?;
         physical_path
             .strip_prefix(physical_root)
             .map(Path::to_path_buf)

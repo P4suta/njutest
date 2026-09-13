@@ -238,12 +238,27 @@ fn path_of(open: &[String], name: &str) -> String {
     path.join("/")
 }
 
-/// The program a command line starts with, by file name.
+/// The program a command line starts with, by file name, without the suffix a platform puts on an executable.
+///
+/// What a run cost is the same question on every machine, and a summary that
+/// counted `cargo` on one and `cargo.exe` on another would answer it twice.
+/// Only the platform's own suffix goes: a program genuinely named `build.sh`
+/// keeps its name, because that is its name rather than a spelling of one.
 fn program_of(argv: &[String]) -> String {
     argv.first().map_or_else(String::new, |first| {
-        std::path::Path::new(first)
+        let name = std::path::Path::new(first)
             .file_name()
-            .map_or_else(|| first.clone(), |name| name.to_string_lossy().into_owned())
+            .map_or_else(|| first.clone(), |name| name.to_string_lossy().into_owned());
+        let suffix = std::env::consts::EXE_SUFFIX;
+        if suffix.is_empty() || name.len() <= suffix.len() {
+            return name;
+        }
+        let (stem, end) = name.split_at(name.len().saturating_sub(suffix.len()));
+        if end.eq_ignore_ascii_case(suffix) {
+            stem.to_owned()
+        } else {
+            name
+        }
     })
 }
 
