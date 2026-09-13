@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What somebody else's program offers to write into your tree.
@@ -16,7 +16,7 @@
 use std::path::Path;
 
 use libfuzzer_sys::fuzz_target;
-use mjutest_cli::repair;
+use njutest_cli::repair;
 
 fuzz_target!(|said: &str| {
     let root = Path::new("/workspace");

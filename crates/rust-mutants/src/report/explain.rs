@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Everything one run established about one mutant, from what the run stored rather than from a tree it prepares again.

@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! A target that answers by exiting, and a target somebody said never to start.
@@ -12,7 +12,7 @@
 
 use std::ffi::OsString;
 
-use mjutest_devkit::fixture::Fixture;
+use njutest_devkit::fixture::Fixture;
 use rust_mutants::runner::Cancel;
 use rust_mutants_cli::{Environment, Streams};
 
@@ -33,12 +33,12 @@ fn against(fixture: &Fixture, args: &[&str]) -> std::process::Output {
             err: &mut err,
         },
     );
-    mjutest_devkit::process::answered(code, out, err)
+    njutest_devkit::process::answered(code, out, err)
 }
 
 fn environment(fixture: &Fixture) -> Environment {
     Environment {
-        vars: mjutest_devkit::paths::environment_for_a_run(),
+        vars: njutest_devkit::paths::environment_for_a_run(),
         temp_directory: fixture.temp().to_path_buf(),
         cache_directory: fixture.cache().to_path_buf(),
         working_directory: fixture.root().to_path_buf(),
@@ -49,7 +49,7 @@ fn environment(fixture: &Fixture) -> Environment {
 }
 
 fn report(fixture: &Fixture) -> serde_json::Value {
-    serde_json::from_str(&mjutest_devkit::fixture::stored_report(fixture.root()))
+    serde_json::from_str(&njutest_devkit::fixture::stored_report(fixture.root()))
         .expect("the report is a document")
 }
 

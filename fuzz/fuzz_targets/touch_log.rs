@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The log the guards append to, which is what routing by test and a discharge by non-infection both rest on. A truncated line or a header naming another catalog read as though it were this run's would take tests out of a route on evidence about something else, so it is read fail-closed: it never panics, it yields no facts at all where it yields an error, and every index it accepts is one this catalog holds.

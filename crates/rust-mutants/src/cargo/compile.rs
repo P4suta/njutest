@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Compiling the tree and reading what the compiler said: the pristine gate, the source of every unit's file set, and the build validation and execution both stand on.

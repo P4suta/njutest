@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The engine trace: diagnostic exhaust under the rules of ADR 0002. Never a claim, never a failure, honest about drops.
@@ -339,10 +339,10 @@ fn a_recording_writes_one_json_line_per_event_and_the_reader_round_trips() {
         ]
     );
     assert!(check(&events).is_empty(), "{:?}", check(&events));
-    let golden = mjutest_devkit::paths::workspace_root()
+    let golden = njutest_devkit::paths::workspace_root()
         .join("crates/rust-mutants/tests/testdata/trace/basic.golden");
     let stable = text.replace(rust_mutants::VERSION, "<version>");
-    mjutest_devkit::golden::golden(&golden, stable.as_bytes()).expect("golden");
+    njutest_devkit::golden::golden(&golden, stable.as_bytes()).expect("golden");
 }
 
 #[test]
@@ -630,7 +630,7 @@ fn every_event_type_has_one_golden_line_and_validates_against_the_schema() {
 
     let schema: serde_json::Value = serde_json::from_str(
         &fs::read_to_string(
-            mjutest_devkit::paths::workspace_root().join("schema/rust-mutants-trace-v1.json"),
+            njutest_devkit::paths::workspace_root().join("schema/rust-mutants-trace-v1.json"),
         )
         .expect("the schema file"),
     )
@@ -643,17 +643,17 @@ fn every_event_type_has_one_golden_line_and_validates_against_the_schema() {
         }
     }
 
-    let golden = mjutest_devkit::paths::workspace_root()
+    let golden = njutest_devkit::paths::workspace_root()
         .join("crates/rust-mutants/tests/testdata/trace/events.golden");
     let stable = text.replace(rust_mutants::VERSION, "<version>");
-    mjutest_devkit::golden::golden(&golden, stable.as_bytes()).expect("golden");
+    njutest_devkit::golden::golden(&golden, stable.as_bytes()).expect("golden");
 }
 
 #[test]
 fn the_schema_and_the_vocabulary_name_the_same_types() {
     let schema: serde_json::Value = serde_json::from_str(
         &fs::read_to_string(
-            mjutest_devkit::paths::workspace_root().join("schema/rust-mutants-trace-v1.json"),
+            njutest_devkit::paths::workspace_root().join("schema/rust-mutants-trace-v1.json"),
         )
         .expect("the schema file"),
     )
@@ -892,7 +892,7 @@ fn a_summary_counts_how_many_times_each_program_was_started() {
 fn the_schema_names_every_granularity_and_every_fallback_a_route_can_carry() {
     let schema: serde_json::Value = serde_json::from_str(
         &fs::read_to_string(
-            mjutest_devkit::paths::workspace_root().join("schema/rust-mutants-trace-v1.json"),
+            njutest_devkit::paths::workspace_root().join("schema/rust-mutants-trace-v1.json"),
         )
         .expect("the schema file"),
     )

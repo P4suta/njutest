@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Instrumentation: every compilable mutant of a file lives in the file at once, dormant behind a guard, and the file keeps its line numbering.
@@ -76,7 +76,7 @@ fn offered(discovery: &rust_mutants::syntax::FileDiscovery, catalog: &Catalog) -
 }
 
 fn golden_path(name: &str) -> PathBuf {
-    mjutest_devkit::paths::workspace_root()
+    njutest_devkit::paths::workspace_root()
         .join("crates/rust-mutants/tests/testdata/instrument")
         .join(name)
 }
@@ -93,7 +93,7 @@ fn golden_case(name: &str) {
         count_lines(source.as_bytes()),
         "{name}: the body kept its line count"
     );
-    mjutest_devkit::golden::golden(&golden_path(&format!("{name}.golden")), text.as_bytes())
+    njutest_devkit::golden::golden(&golden_path(&format!("{name}.golden")), text.as_bytes())
         .expect("golden");
 }
 
@@ -803,7 +803,7 @@ fn a_match_arm_whose_body_is_a_block_still_parses_after_the_guard_goes_in() {
 
 #[test]
 fn every_source_of_this_repository_still_parses_once_it_is_instrumented() {
-    let root = mjutest_devkit::paths::workspace_root();
+    let root = njutest_devkit::paths::workspace_root();
     let mut checked = 0_u32;
     let mut stack = vec![root.join("crates"), root.join("xtask")];
     while let Some(directory) = stack.pop() {

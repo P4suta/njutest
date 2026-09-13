@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Dependency direction between the workspace crates.
@@ -36,23 +36,23 @@ impl fmt::Display for Edge {
 }
 
 /// The rule, for the failure message.
-pub const RULE: &str = "The allowed direction is: mjutest-cli -> rust-mutants, mjutest-cli -> mjutest, \
-    rust-mutants-cli -> rust-mutants, mjutest -> mjutest-macros; every crate may dev-depend on \
-    mjutest-devkit; xtask depends on no workspace crate. Nothing else, in particular nothing from \
+pub const RULE: &str = "The allowed direction is: njutest-cli -> rust-mutants, njutest-cli -> njutest, \
+    rust-mutants-cli -> rust-mutants, njutest -> njutest-macros; every crate may dev-depend on \
+    njutest-devkit; xtask depends on no workspace crate. Nothing else, in particular nothing from \
     the engine towards the runner.";
 
 const ALLOWED_NORMAL: [(&str, &str); 4] = [
-    ("mjutest-cli", "rust-mutants"),
-    ("mjutest-cli", "mjutest"),
+    ("njutest-cli", "rust-mutants"),
+    ("njutest-cli", "njutest"),
     ("rust-mutants-cli", "rust-mutants"),
-    ("mjutest", "mjutest-macros"),
+    ("njutest", "njutest-macros"),
 ];
 
 fn allowed(edge: &Edge) -> bool {
     match edge.kind {
         EdgeKind::Normal => ALLOWED_NORMAL.contains(&(edge.from.as_str(), edge.to.as_str())),
         EdgeKind::Dev => {
-            edge.to == "mjutest-devkit"
+            edge.to == "njutest-devkit"
                 || edge.from == edge.to
                 || ALLOWED_NORMAL.contains(&(edge.from.as_str(), edge.to.as_str()))
         }

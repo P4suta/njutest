@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Opening a tree: what the engine asks the toolchain, and what it says when the answer is not one it can use.
@@ -8,8 +8,8 @@
 
 use std::path::PathBuf;
 
-use mjutest_devkit::fake_cargo::{Installed, Invocation, Script, install};
-use mjutest_devkit::fixture::Fixture;
+use njutest_devkit::fake_cargo::{Installed, Invocation, Script, install};
+use njutest_devkit::fixture::Fixture;
 use rust_mutants::runner::Cancel;
 use rust_mutants::session::PrepareOptions;
 use rust_mutants::workspace::{OpenOptions, Workspace};

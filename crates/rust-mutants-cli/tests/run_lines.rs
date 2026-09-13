@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What a run report looks like to a person. The document is the contract a program reads; these lines are the contract a reader reads, and both are fixed.
@@ -129,7 +129,7 @@ fn document() -> RunDocument {
 #[test]
 fn a_run_report_reads_as_the_recorded_lines() {
     let golden = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testdata/run-lines.golden");
-    mjutest_devkit::golden::golden(
+    njutest_devkit::golden::golden(
         &golden,
         rust_mutants_cli::report::lines(&document()).as_bytes(),
     )

@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What a run costs, counted in pairs, held to a ceiling that may fall and never rise.
@@ -19,7 +19,7 @@
 
 use std::ffi::OsString;
 
-use mjutest_devkit::fixture::Fixture;
+use njutest_devkit::fixture::Fixture;
 use rust_mutants::runner::Cancel;
 use rust_mutants::work::Work;
 use rust_mutants_cli::{Environment, Streams};
@@ -35,7 +35,7 @@ struct Ceiling {
 }
 
 fn ceilings() -> Vec<Ceiling> {
-    let path = mjutest_devkit::paths::workspace_root().join("xtask/work_ceiling.txt");
+    let path = njutest_devkit::paths::workspace_root().join("xtask/work_ceiling.txt");
     let text = std::fs::read_to_string(&path)
         .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
     text.lines()
@@ -76,12 +76,12 @@ fn measured(name: &str) -> Work {
             err: &mut err,
         },
     );
-    let output = mjutest_devkit::process::answered(code, out, err);
+    let output = njutest_devkit::process::answered(code, out, err);
     assert!(
         output.status.code().is_some_and(|code| code <= 1),
         "{name}: {output:?}"
     );
-    let directory = mjutest_devkit::fixture::newest_run(fixture.root());
+    let directory = njutest_devkit::fixture::newest_run(fixture.root());
     let text = std::fs::read_to_string(directory.join("run-report-v1.json")).expect("the report");
     let document: rust_mutants::report::run::RunDocument =
         serde_json::from_str(&text).expect("the report reads back");
@@ -181,7 +181,7 @@ fn programs(name: &str, extra: &[&str]) -> std::collections::BTreeMap<String, u6
             err: &mut err,
         },
     );
-    let output = mjutest_devkit::process::answered(code, out, err);
+    let output = njutest_devkit::process::answered(code, out, err);
     assert!(
         output.status.code().is_some_and(|code| code <= 1),
         "{name}: {}",
@@ -248,7 +248,7 @@ fn a_second_run_of_a_tree_nothing_changed_measures_nothing_again() {
                 err: &mut err,
             },
         );
-        let output = mjutest_devkit::process::answered(code, out, err);
+        let output = njutest_devkit::process::answered(code, out, err);
         assert!(
             output.status.code().is_some_and(|code| code <= 1),
             "{}",
@@ -307,7 +307,7 @@ fn a_tree_that_changed_is_measured_again_rather_than_remembered() {
                 err: &mut err,
             },
         );
-        let output = mjutest_devkit::process::answered(code, out, err);
+        let output = njutest_devkit::process::answered(code, out, err);
         assert!(
             output.status.code().is_some_and(|code| code <= 1),
             "{}",
@@ -348,7 +348,7 @@ fn a_tree_that_changed_is_measured_again_rather_than_remembered() {
 
 fn environment(fixture: &Fixture) -> Environment {
     Environment {
-        vars: mjutest_devkit::paths::environment_for_a_run(),
+        vars: njutest_devkit::paths::environment_for_a_run(),
         temp_directory: fixture.temp().to_path_buf(),
         cache_directory: fixture.cache().to_path_buf(),
         working_directory: fixture.root().to_path_buf(),

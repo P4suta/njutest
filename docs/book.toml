@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2026 mjutest contributors
+# SPDX-FileCopyrightText: 2026 njutest contributors
 # SPDX-License-Identifier: MIT OR Apache-2.0
 
 # The documentation as a book. The pages are the ones this repository already
@@ -11,9 +11,9 @@
 # the directory of written ones, and the next build would read its own output.
 
 [book]
-title = "mjutest"
+title = "njutest"
 description = "An audit-oriented assurance runner for Rust, and the mutation engine underneath it"
-authors = ["mjutest contributors"]
+authors = ["njutest contributors"]
 language = "en"
 src = "."
 
@@ -22,5 +22,5 @@ build-dir = "../target/book"
 create-missing = false
 
 [output.html]
-git-repository-url = "https://github.com/yasunobu/mjutest"
-edit-url-template = "https://github.com/yasunobu/mjutest/edit/main/docs/{path}"
+git-repository-url = "https://github.com/yasunobu/njutest"
+edit-url-template = "https://github.com/yasunobu/njutest/edit/main/docs/{path}"

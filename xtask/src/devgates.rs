@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The seam ratchet (ADR 0001).
@@ -296,7 +296,7 @@ impl<'ast> Visit<'ast> for Scanner<'_> {
         use_paths(&item.tree, &mut Vec::new(), &mut paths);
         for path in paths {
             let segments: Vec<&str> = path.split("::").collect();
-            if segments.first() == Some(&"mjutest_devkit") || segments.contains(&"testkit") {
+            if segments.first() == Some(&"njutest_devkit") || segments.contains(&"testkit") {
                 self.record(SeamKind::TestkitImport, path);
             }
         }

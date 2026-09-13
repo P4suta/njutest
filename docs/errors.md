@@ -7,10 +7,10 @@ code is the searchable name of the failure: grep this file, the issue tracker,
 and a trace for it. A test in each crate keeps this table and the code's own
 list equal in both directions, so a code is either here or it does not exist.
 
-Codes are `RM` (rust-mutants) or `MJ` (mjutest) followed by four digits. The
+Codes are `RM` (rust-mutants) or `NJ` (njutest) followed by four digits. The
 first digit names an area:
 
-| Digit | rust-mutants | mjutest |
+| Digit | rust-mutants | njutest |
 | ---: | --- | --- |
 | 0 | the engine's own contract | the command line and its contract |
 | 1 | workspace and snapshot | configuration |
@@ -90,39 +90,39 @@ first digit names an area:
 | `RM9002` | A pattern the caller gave is not a pattern. | — |
 | `RM9003` | A duration the caller gave is not a duration: an empty text, a number without a unit, a unit without a number, an unknown unit, or a number no duration can hold. | write a duration as 30s, 5m, or 1h30m |
 
-## mjutest
+## njutest
 
 | Code | Meaning | Remedy |
 | --- | --- | --- |
-| `MJ0001` | The caller cancelled the operation before it completed. |
-| `MJ1001` | The configuration file could not be read. |
-| `MJ1002` | The configuration file is not the document this version understands: an unknown key, a malformed value. |
-| `MJ1003` | The configuration says something a run cannot honour: a harness flag mjutest owns, an environment assignment, a resource that is both shared and exclusive, an acceptance without a reason. |
-| `MJ1004` | The configuration names a version this release does not understand. |
-| `MJ1005` | A configuration file is already there, and `init` was not told to replace it. |
-| `MJ2001` | The tree a run is about could not be read: a directory that cannot be listed, a file that cannot be read, a lock file that is not the document cargo writes. |
-| `MJ3001` | A test binary could not be asked what tests it holds. |
-| `MJ3002` | The build could not be run: cargo would not start, or was stopped. A workspace that does not *compile* is a finding in the report, not this. |
-| `MJ3003` | The build's output is not the message stream this version understands. |
-| `MJ4001` | A coverage export could not be read. |
-| `MJ4002` | The LLVM tools the toolchain ships are not installed (`rustup component add llvm-tools`). |
-| `MJ4003` | `llvm-profdata` or `llvm-cov` failed. |
-| `MJ4004` | A test process wrote no coverage profile at all: the build was not instrumented, or the process did not exit normally. |
-| `MJ5001` | A provider could not be started: the command is empty, or the operating system refused it. |
-| `MJ5002` | A provider said nothing in the time it was given, so the run cannot say what its resources were. |
-| `MJ5003` | A provider said something this version does not understand: another protocol version, an unknown field, an answer without an instance. |
-| `MJ5004` | A provider said it could not do what it was asked. |
-| `MJ5005` | A provider offered an environment variable a run composes itself, which would decide what every test process measures. |
-| `MJ5006` | A generation provider said something this version does not understand: another protocol version, an unknown field, more candidates than are read, content that is not base64. |
-| `MJ5007` | A generation provider would write where it may not: outside the allowed paths, out of the tree, or a path that is absolute. |
-| `MJ5008` | The file a candidate patches is not the file the provider saw, so applying it would overwrite something nobody read. |
-| `MJ6001` | The report could not be written as JSON, which is an invariant failure rather than anything about the code under test. |
-| `MJ6002` | A document is not the assurance report this version understands: an unknown field, a missing field, a value of the wrong shape. |
-| `MJ6004` | The report could not be written where a reader will look for it. |
-| `MJ6005` | There is no such run to answer about, or none at all. A command never answers about a different run than the one it was asked about. |
-| `MJ8003` | The store of earlier answers could not be used, a report was offered for storage that must not be stored, or the stream answers were being carried on or off this machine stopped. |
-| `MJ8004` | A stored answer is not the answer it claims to be, or a line offered to this machine is not an answer at all: a document that does not parse, that does not carry the identity it is filed under, or that does not satisfy the audit every durable report must. |
-| `MJ7001` | The toolchain has no `cargo miri`, and the `deep-v1` contract promises the suite is interpreted. Install it (`rustup +nightly component add miri`) or verify under `standard-v1`. |
-| `MJ8001` | The run has nowhere to work: its scratch directory could not be made. Failing to *claim* one is a limitation, not an error. |
-| `MJ9001` | The reports offered to `mjutest merge` are neither one whole report nor one complete division of one catalog: none were offered; a `K/N` label is missing, repeated, malformed, mixed with an unsharded report, or uses another N; the reports disagree about the tree, configuration, contract, effective scope, or tool versions; or two judged the same mutant. A partial union cannot be relabelled as the whole. |
-| `MJ6003` | The report contradicts itself — the numbers do not add up, the verdict is more than what ran supports, a fact recorded as unavailable is also present — so nothing was written. |
+| `NJ0001` | The caller cancelled the operation before it completed. |
+| `NJ1001` | The configuration file could not be read. |
+| `NJ1002` | The configuration file is not the document this version understands: an unknown key, a malformed value. |
+| `NJ1003` | The configuration says something a run cannot honour: a harness flag njutest owns, an environment assignment, a resource that is both shared and exclusive, an acceptance without a reason. |
+| `NJ1004` | The configuration names a version this release does not understand. |
+| `NJ1005` | A configuration file is already there, and `init` was not told to replace it. |
+| `NJ2001` | The tree a run is about could not be read: a directory that cannot be listed, a file that cannot be read, a lock file that is not the document cargo writes. |
+| `NJ3001` | A test binary could not be asked what tests it holds. |
+| `NJ3002` | The build could not be run: cargo would not start, or was stopped. A workspace that does not *compile* is a finding in the report, not this. |
+| `NJ3003` | The build's output is not the message stream this version understands. |
+| `NJ4001` | A coverage export could not be read. |
+| `NJ4002` | The LLVM tools the toolchain ships are not installed (`rustup component add llvm-tools`). |
+| `NJ4003` | `llvm-profdata` or `llvm-cov` failed. |
+| `NJ4004` | A test process wrote no coverage profile at all: the build was not instrumented, or the process did not exit normally. |
+| `NJ5001` | A provider could not be started: the command is empty, or the operating system refused it. |
+| `NJ5002` | A provider said nothing in the time it was given, so the run cannot say what its resources were. |
+| `NJ5003` | A provider said something this version does not understand: another protocol version, an unknown field, an answer without an instance. |
+| `NJ5004` | A provider said it could not do what it was asked. |
+| `NJ5005` | A provider offered an environment variable a run composes itself, which would decide what every test process measures. |
+| `NJ5006` | A generation provider said something this version does not understand: another protocol version, an unknown field, more candidates than are read, content that is not base64. |
+| `NJ5007` | A generation provider would write where it may not: outside the allowed paths, out of the tree, or a path that is absolute. |
+| `NJ5008` | The file a candidate patches is not the file the provider saw, so applying it would overwrite something nobody read. |
+| `NJ6001` | The report could not be written as JSON, which is an invariant failure rather than anything about the code under test. |
+| `NJ6002` | A document is not the assurance report this version understands: an unknown field, a missing field, a value of the wrong shape. |
+| `NJ6004` | The report could not be written where a reader will look for it. |
+| `NJ6005` | There is no such run to answer about, or none at all. A command never answers about a different run than the one it was asked about. |
+| `NJ8003` | The store of earlier answers could not be used, a report was offered for storage that must not be stored, or the stream answers were being carried on or off this machine stopped. |
+| `NJ8004` | A stored answer is not the answer it claims to be, or a line offered to this machine is not an answer at all: a document that does not parse, that does not carry the identity it is filed under, or that does not satisfy the audit every durable report must. |
+| `NJ7001` | The toolchain has no `cargo miri`, and the `deep-v1` contract promises the suite is interpreted. Install it (`rustup +nightly component add miri`) or verify under `standard-v1`. |
+| `NJ8001` | The run has nowhere to work: its scratch directory could not be made. Failing to *claim* one is a limitation, not an error. |
+| `NJ9001` | The reports offered to `njutest merge` are neither one whole report nor one complete division of one catalog: none were offered; a `K/N` label is missing, repeated, malformed, mixed with an unsharded report, or uses another N; the reports disagree about the tree, configuration, contract, effective scope, or tool versions; or two judged the same mutant. A partial union cannot be relabelled as the whole. |
+| `NJ6003` | The report contradicts itself — the numbers do not add up, the verdict is more than what ran supports, a fact recorded as unavailable is also present — so nothing was written. |

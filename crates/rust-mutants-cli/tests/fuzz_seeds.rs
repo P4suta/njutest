@@ -1,9 +1,9 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The seeds whose readers live on this side of the workspace.
 //!
-//! `crates/mjutest-cli/tests/fuzz_seeds.rs` puts every other committed seed to
+//! `crates/njutest-cli/tests/fuzz_seeds.rs` puts every other committed seed to
 //! the reader its target uses, and names these three as checked here: the
 //! runner may not depend on the engine's command line, and the engine's own
 //! recording is read by the engine. A seed a reader refuses is not a seed —
@@ -18,7 +18,7 @@
 use std::path::{Path, PathBuf};
 
 fn seeds(target: &str) -> Vec<PathBuf> {
-    let directory = mjutest_devkit::paths::workspace_root()
+    let directory = njutest_devkit::paths::workspace_root()
         .join("fuzz/seeds")
         .join(target);
     let held: Vec<PathBuf> = std::fs::read_dir(&directory)

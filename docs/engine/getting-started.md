@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: 2026 mjutest contributors
+SPDX-FileCopyrightText: 2026 njutest contributors
 SPDX-License-Identifier: MIT OR Apache-2.0
 -->
 
@@ -73,8 +73,8 @@ run itself failed, `130` when it was interrupted.
 ## Killing a survivor
 
 ```console
-$ rust-mutants explain e5e872bfbcb2
-$ rust-mutants replay e5e872bfbcb2
+$ rust-mutants explain 16b072bfbcb2
+$ rust-mutants replay 16b072bfbcb2
 ```
 
 `explain` reads what the run stored — no rebuild — and shows the mutation as a

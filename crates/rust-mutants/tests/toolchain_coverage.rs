@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What a real coverage build measures, in the tools' own units.
@@ -32,13 +32,13 @@ fn measure(fixture: &str, test: &str) -> Measured {
     use rust_mutants::runner::{Cancel, Spec, Watched, run};
     use rust_mutants::trace::Recorder;
 
-    let root = mjutest_devkit::paths::fixtures_dir().join(fixture);
+    let root = njutest_devkit::paths::fixtures_dir().join(fixture);
     let target = tempfile::Builder::new()
-        .prefix("mjutest-coverage-")
+        .prefix("njutest-coverage-")
         .tempdir()
         .expect("tempdir");
     let profiles = tempfile::Builder::new()
-        .prefix("mjutest-profiles-")
+        .prefix("njutest-profiles-")
         .tempdir()
         .expect("tempdir");
     let cancel = Cancel::new();
@@ -55,7 +55,7 @@ fn measure(fixture: &str, test: &str) -> Measured {
 
     let toolchain = Toolchain::locate(
         &LocateOptions {
-            cargo: Some(mjutest_devkit::paths::cargo_binary()),
+            cargo: Some(njutest_devkit::paths::cargo_binary()),
             env: Some(env.clone()),
             ..LocateOptions::default()
         },

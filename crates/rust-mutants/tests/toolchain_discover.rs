@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Whole-workspace discovery over the fixtures: which files are mutable, which are skipped as a whole and why, and the catalog that results.
@@ -34,9 +34,9 @@ struct Prepared {
 }
 
 fn prepare(name: &str) -> Prepared {
-    let dir = mjutest_devkit::paths::fixtures_dir().join(name);
+    let dir = njutest_devkit::paths::fixtures_dir().join(name);
     let options = LocateOptions {
-        cargo: Some(mjutest_devkit::paths::cargo_binary()),
+        cargo: Some(njutest_devkit::paths::cargo_binary()),
         ..LocateOptions::default()
     };
     let cancel = Cancel::new();
@@ -415,9 +415,9 @@ fn a_unit_source_outside_the_root_is_a_whole_file_skip_not_an_error() {
 
 #[test]
 fn the_check_records_an_exec_event_and_keeps_the_messages() {
-    let dir = mjutest_devkit::paths::fixtures_dir().join("fixture-simple");
+    let dir = njutest_devkit::paths::fixtures_dir().join("fixture-simple");
     let options = LocateOptions {
-        cargo: Some(mjutest_devkit::paths::cargo_binary()),
+        cargo: Some(njutest_devkit::paths::cargo_binary()),
         ..LocateOptions::default()
     };
     let cancel = Cancel::new();

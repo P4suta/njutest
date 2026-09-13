@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2026 mjutest contributors
+# SPDX-FileCopyrightText: 2026 njutest contributors
 # SPDX-License-Identifier: MIT OR Apache-2.0
 
 # rust-mutants against this repository. `mise run dogfood:engine:audit` runs
@@ -18,7 +18,7 @@
 version = 1
 
 [project]
-packages = ["rust-mutants", "rust-mutants-cli", "mjutest-cli", "xtask"]
+packages = ["rust-mutants", "rust-mutants-cli", "njutest-cli", "xtask"]
 
 [mutation]
 tier = "all"
@@ -47,7 +47,7 @@ skip_targets = ["xtask/test/gates"]
 # `Encoding::default()` is too. An acceptance whose reason is that two names
 # hold one value is only as good as the test on the value.
 [[mutation.expect]]
-path = "crates/mjutest-cli/src/app/lsp.rs"
+path = "crates/njutest-cli/src/app/lsp.rs"
 item = "Encoding::asked"
 rule = "return-default"
 original = "Self::Utf16"
@@ -58,14 +58,14 @@ reason = "Utf16 is what Encoding derives Default as, because it is what the prot
 # is. Both tests that drive `serve` assert the code is zero, so the constant is
 # held to its value rather than assumed.
 [[mutation.expect]]
-path = "crates/mjutest-cli/src/app/lsp.rs"
+path = "crates/njutest-cli/src/app/lsp.rs"
 item = "serve"
 rule = "return-default"
 original = "EXIT_ASSURED"
 reason = "reading a report is not a verdict, so this server exits assured; EXIT_ASSURED is zero and every test that drives serve asserts the code it carries"
 
 [[mutation.expect]]
-path = "crates/mjutest-cli/src/app/lsp.rs"
+path = "crates/njutest-cli/src/app/lsp.rs"
 item = "run"
 rule = "return-default"
 original = '''serve(
@@ -144,7 +144,7 @@ reason = "a locator with no count names one mutation and one with a count was na
 # which writes a state and reads the same one back; if the type ever grows a
 # field that can refuse, that test is where it shows.
 [[mutation.expect]]
-path = "crates/mjutest-cli/src/checkpoint.rs"
+path = "crates/njutest-cli/src/checkpoint.rs"
 item = "write"
 rule = "question-to-unwrap"
 original = "?"
@@ -156,7 +156,7 @@ reason = "serialising a State cannot fail: it is strings, numbers and vectors of
 # same variant by construction, and `report.rs::a_new_report_names_the_schema_the_run_and_what_it_ran_on`
 # holds the value itself.
 [[mutation.expect]]
-path = "crates/mjutest-cli/src/assure/run.rs"
+path = "crates/njutest-cli/src/assure/run.rs"
 item = "kind_of"
 rule = "return-default"
 original = "RunKind::Full"
@@ -224,7 +224,7 @@ reason = "serially and the pool are two ways of doing one thing and a catalog an
 # renders both shapes of `Outcome` and reads them back, which is the invariant
 # this rests on.
 [[mutation.expect]]
-path = "crates/mjutest-cli/src/evidence/store.rs"
+path = "crates/njutest-cli/src/evidence/store.rs"
 item = "write"
 rule = "question-to-unwrap"
 original = "?"
@@ -232,17 +232,17 @@ line = 260
 reason = "a Record is strings and an enum of strings, so rendering it as JSON has no failure arm; a_record_says_what_shape_it_is_and_what_established_it renders both of its shapes and reads them back"
 
 # The mutation phase's `Phase` is the third of the same design and the same
-# acceptance. `crates/mjutest-cli/tests/trace.rs` drops a phase without calling
+# acceptance. `crates/njutest-cli/tests/trace.rs` drops a phase without calling
 # `end` and still finds the `phase-end`, which is the invariant all three rest
 # on.
 [[mutation.expect]]
-path = "crates/mjutest-cli/src/assure/mutation.rs"
+path = "crates/njutest-cli/src/assure/mutation.rs"
 item = "run_resuming"
 rule = "delete-call-statement"
 original = "phase.end();"
 reason = "the runner's Phase ends its phase on Drop, so the explicit end at the tail of run_resuming changes no recording; a_phase_guard_ends_its_phase_once_with_its_duration_and_phases_nest holds that"
 
-# The code `mjutest trace` exits with when it has nothing to complain about,
+# The code `njutest trace` exits with when it has nothing to complain about,
 # which is the same number either way.
 #
 # `EXIT_ASSURED` is zero and zero is what `u8::default()` is, so a summary of a
@@ -253,14 +253,14 @@ reason = "the runner's Phase ends its phase on Drop, so the explicit end at the 
 # and `a_difference_says_what_moved_and_leaves_out_what_did_not` each assert the
 # number for a recording with nothing wrong with it.
 [[mutation.expect]]
-path = "crates/mjutest-cli/src/app/trace.rs"
+path = "crates/njutest-cli/src/app/trace.rs"
 item = "summary"
 rule = "return-default"
 original = "EXIT_ASSURED"
 reason = "EXIT_ASSURED is zero and so is u8::default(), so a summary with no problems exits with the same status either way; a_summary_says_what_the_recording_holds_and_whether_it_holds_together holds that number"
 
 [[mutation.expect]]
-path = "crates/mjutest-cli/src/app/trace.rs"
+path = "crates/njutest-cli/src/app/trace.rs"
 item = "diff"
 rule = "return-default"
 original = "EXIT_ASSURED"
@@ -276,7 +276,7 @@ reason = "EXIT_ASSURED is zero and so is u8::default(), so a difference exits wi
 # `trace_command.rs::a_command_is_shown_by_its_own_name_and_cut_where_it_stops_being_readable`
 # holds the width, the mark, and the beginning that survives the cut.
 [[mutation.expect]]
-path = "crates/mjutest-cli/src/app/trace.rs"
+path = "crates/njutest-cli/src/app/trace.rs"
 item = "said"
 rule = "lt-to-le"
 original = "<"

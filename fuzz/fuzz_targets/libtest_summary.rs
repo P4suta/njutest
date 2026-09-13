@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What a target printed is read for a line to show a person, and never for the answer: only the outcome of the execution says whether the target passed. A target that prints its own `test result:` line is the attack, and a hostile line must neither panic the reader nor turn any other outcome into a pass.
@@ -6,8 +6,8 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use mjutest_cli::assure::baseline::status_of;
-use mjutest_cli::report::TargetStatus;
+use njutest_cli::assure::baseline::status_of;
+use njutest_cli::report::TargetStatus;
 use rust_mutants::execute::parse_summary;
 use rust_mutants::outcome::Outcome;
 

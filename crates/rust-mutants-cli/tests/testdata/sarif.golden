@@ -7,7 +7,7 @@
         "driver": {
           "name": "rust-mutants",
           "version": "<version>",
-          "informationUri": "https://github.com/P4suta/mjutest",
+          "informationUri": "https://github.com/P4suta/njutest",
           "rules": [
             {
               "id": "le-to-lt",
@@ -24,7 +24,7 @@
           "ruleId": "le-to-lt",
           "level": "error",
           "message": {
-            "text": "discharged-mutant: every target that could have noticed aceffa6a7e2a2e0c4fb2 was removed by a proof, so no test could have: the mutation is in code the tests run and never observe"
+            "text": "discharged-mutant: every target that could have noticed d8a9939330496216a17d was removed by a proof, so no test could have: the mutation is in code the tests run and never observe"
           },
           "locations": [
             {
@@ -44,14 +44,14 @@
             }
           ],
           "partialFingerprints": {
-            "rustMutantsMutantId/v1": "aceffa6a7e2a2e0c4fb281a9f986feae566d60d36cb66f4f0a6a52e0430d90dc"
+            "rustMutantsMutantId/v1": "d8a9939330496216a17d27bab570a74d23823587e4ab6d7ef2fc6763645d45fe"
           }
         },
         {
           "ruleId": "le-to-lt",
           "level": "warning",
           "message": {
-            "text": "surviving-mutant: no test noticed 4ec926d27bd1b17fcd37; 1 test ran and passed"
+            "text": "surviving-mutant: no test noticed 27e9c3f2d6bb568e5ef3; 1 test ran and passed"
           },
           "locations": [
             {
@@ -71,14 +71,14 @@
             }
           ],
           "partialFingerprints": {
-            "rustMutantsMutantId/v1": "4ec926d27bd1b17fcd373749d83061cbc468b6bc6dffc4dad54bde57326ae0f1"
+            "rustMutantsMutantId/v1": "27e9c3f2d6bb568e5ef3e92a982827a60c58c8d1775fb26e8ed863c00ff7681e"
           }
         },
         {
           "ruleId": "le-to-lt",
           "level": "error",
           "message": {
-            "text": "discharged-mutant: every target that could have noticed 3b95a1d51748a373fc05 was removed by a proof, so no test could have: the mutation is in code the tests run and never observe"
+            "text": "discharged-mutant: every target that could have noticed 7cfdea86ac571b743bd0 was removed by a proof, so no test could have: the mutation is in code the tests run and never observe"
           },
           "locations": [
             {
@@ -98,14 +98,14 @@
             }
           ],
           "partialFingerprints": {
-            "rustMutantsMutantId/v1": "3b95a1d51748a373fc059ecdafa5d86a0fc6ee853d27f2c8383feeef2d4cb977"
+            "rustMutantsMutantId/v1": "7cfdea86ac571b743bd04a4bc0cf3d49466e64fd5910421f03389d50d6d1b260"
           }
         },
         {
           "ruleId": "le-to-lt",
           "level": "error",
           "message": {
-            "text": "discharged-mutant: every target that could have noticed e5c73ebd900e221f3bd8 was removed by a proof, so no test could have: the mutation is in code the tests run and never observe"
+            "text": "discharged-mutant: every target that could have noticed 0a8ab9771954a24f9d25 was removed by a proof, so no test could have: the mutation is in code the tests run and never observe"
           },
           "locations": [
             {
@@ -125,7 +125,7 @@
             }
           ],
           "partialFingerprints": {
-            "rustMutantsMutantId/v1": "e5c73ebd900e221f3bd8c59cc022e0a02aa33d7a893cd8a451a69cf9e5103192"
+            "rustMutantsMutantId/v1": "0a8ab9771954a24f9d25c1a5e4a83ee27f3994e896fac072c546be017f2173c2"
           }
         }
       ]

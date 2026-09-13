@@ -1,7 +1,0 @@
-Serve what the latest run found to an editor, over the language server protocol
-
-Usage: mjutest lsp [OPTIONS]
-
-Options:
-      --directory <DIR>  The workspace whose reports are served. The working directory by default
-  -h, --help             Print help

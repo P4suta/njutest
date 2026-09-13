@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! `.rust-mutants.toml` decides what a run mutates and what it believes. A document this parser *accepts* must be one every later stage can honour, so what it accepts is checked here against the same rules the reader states, and no document may make it panic.

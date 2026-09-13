@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What a failure says, and what it says to do about it.
@@ -7,7 +7,7 @@ use std::ffi::OsString;
 use std::path::Path;
 use std::process::Output;
 
-use mjutest_devkit::fixture::Fixture;
+use njutest_devkit::fixture::Fixture;
 use rust_mutants::runner::Cancel;
 use rust_mutants_cli::{Environment, Streams};
 
@@ -38,12 +38,12 @@ fn asked(environment: &Environment, args: &[&str]) -> Output {
             err: &mut err,
         },
     );
-    mjutest_devkit::process::answered(code, out, err)
+    njutest_devkit::process::answered(code, out, err)
 }
 
 fn environment(fixture: &Fixture) -> Environment {
     Environment {
-        vars: mjutest_devkit::paths::environment_for_a_run(),
+        vars: njutest_devkit::paths::environment_for_a_run(),
         temp_directory: fixture.temp().to_path_buf(),
         cache_directory: fixture.cache().to_path_buf(),
         working_directory: fixture.root().to_path_buf(),
@@ -62,7 +62,7 @@ fn environment(fixture: &Fixture) -> Environment {
 #[test]
 fn a_reserved_variable_names_itself_and_says_what_to_do() {
     let fixture = Fixture::copy("fixture-simple");
-    let output = mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")))
+    let output = njutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")))
         .args(["list", "--root", &fixture.root().to_string_lossy()])
         .env("NO_COLOR", "1")
         .env("TMPDIR", fixture.temp())

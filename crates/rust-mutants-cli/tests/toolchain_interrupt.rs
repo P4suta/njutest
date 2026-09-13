@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What a run leaves behind when it is interrupted: an exit code that says so, no descendant process, and no temporary tree.
@@ -10,7 +10,7 @@
     reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
 )]
 
-use mjutest_devkit::fixture::copy_tree;
+use njutest_devkit::fixture::copy_tree;
 use std::io::{BufRead as _, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -82,7 +82,7 @@ fn a_run_that_is_interrupted_exits_130_and_leaves_no_process_and_no_snapshot_beh
         .expect("tempdir");
     let root = dir.path().join("fixture-simple");
     copy_tree(
-        &mjutest_devkit::paths::fixtures_dir().join("fixture-simple"),
+        &njutest_devkit::paths::fixtures_dir().join("fixture-simple"),
         &root,
     );
     let temp = dir.path().join("temp");
@@ -90,7 +90,7 @@ fn a_run_that_is_interrupted_exits_130_and_leaves_no_process_and_no_snapshot_beh
     let cache = dir.path().join("cache");
     std::fs::create_dir_all(&cache).expect("mkdir");
 
-    let mut child = mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")))
+    let mut child = njutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")))
         .args(["run", "--offline", "--locked", "--tier", "all"])
         .args(["--root", &root.to_string_lossy()])
         .env("NO_COLOR", "1")
@@ -162,7 +162,7 @@ fn ctrl_c_during_a_compilation_exits_130_and_writes_no_rejection() {
         .expect("tempdir");
     let root = dir.path().join("fixture-build-script");
     copy_tree(
-        &mjutest_devkit::paths::fixtures_dir().join("fixture-build-script"),
+        &njutest_devkit::paths::fixtures_dir().join("fixture-build-script"),
         &root,
     );
     let temp = dir.path().join("temp");
@@ -171,7 +171,7 @@ fn ctrl_c_during_a_compilation_exits_130_and_writes_no_rejection() {
     std::fs::create_dir_all(&cache).expect("mkdir");
     let marker = dir.path().join("compiling");
 
-    let child = mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")))
+    let child = njutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")))
         .args(["run", "--offline", "--locked", "--tier", "all"])
         .args(["--root", &root.to_string_lossy()])
         .env("NO_COLOR", "1")

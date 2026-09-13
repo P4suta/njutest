@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! A workspace for the runner's baseline: two functions that no single test reaches together, one test that libtest ignores, and an integration target, so a baseline has something to route with and something to refuse to call a pass.

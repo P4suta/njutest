@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The per-test lines of a harness say which test noticed a mutation, which is the sentence a report hands a person. A reader that invents a name, or reads one test as two, credits a test that never ran. It never panics, every name it reports is text that was there, and no name is counted twice for one line.

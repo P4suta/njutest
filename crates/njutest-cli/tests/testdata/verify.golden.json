@@ -1,0 +1,299 @@
+{
+  "accounting": {
+    "mutants": {
+      "accepted": 0,
+      "cataloged": 10,
+      "equivalent": 0,
+      "executed": 9,
+      "killed": 7,
+      "rejected": 0,
+      "reused_killed": 0,
+      "reused_survived": 0,
+      "survived": 2,
+      "timed_out": 0,
+      "unreached": 1
+    },
+    "soundness": {
+      "executed": false,
+      "packages_with_unsafe": 0,
+      "unsafe_items": 0
+    },
+    "targets": {
+      "failed": 0,
+      "missing": 0,
+      "passed": 2,
+      "selected": 2,
+      "skipped": 0
+    }
+  },
+  "candidates": [],
+  "contract": "standard-v1",
+  "findings": [
+    {
+      "detail": "no test could have noticed gt-to-ge@1 at src/lib.rs:8: every one of the 1 targets that reach it was removed without being run, by never-infected",
+      "kind": "surviving-mutant",
+      "path": "src/lib.rs",
+      "position": {
+        "character_column": 10,
+        "column": 10,
+        "line": 8
+      },
+      "subject": "7590b327de928142a7d4"
+    },
+    {
+      "detail": "no test could have noticed lt-to-le@1 at src/lib.rs:10: every one of the 1 targets that reach it was removed without being run, by never-infected",
+      "kind": "surviving-mutant",
+      "path": "src/lib.rs",
+      "position": {
+        "character_column": 17,
+        "column": 17,
+        "line": 10
+      },
+      "subject": "57a197f6d1d0e560e888"
+    },
+    {
+      "detail": "no measured target reaches return-default@1 at src/lib.rs: each of them was measured, was asked, and answered that nothing of it executes the position",
+      "kind": "surviving-mutant",
+      "path": "src/lib.rs",
+      "position": {
+        "character_column": 9,
+        "column": 9,
+        "line": 13
+      },
+      "subject": "b6d893a120ece7625630"
+    }
+  ],
+  "limitations": [
+    {
+      "detail": "git could not be asked, so the run cannot name the commit it verified",
+      "name": "git-metadata-unavailable"
+    },
+    {
+      "detail": "the target's guards recorded nothing this run can route by, so every test of it reaches every mutation in it and none of them is narrowed (fixture-baseline/doc/fixture_baseline)",
+      "name": "touch-not-recorded"
+    },
+    {
+      "detail": "1 place was not mutated: test-code",
+      "name": "skipped-test-code"
+    }
+  ],
+  "mutants": [
+    {
+      "display_id": "00c6fea6140456f15a4f",
+      "id": "00c6fea6140456f15a4f31ce2f86f79482bf9f4766d0b2bf7c13e0e5d9015003",
+      "killed_by": "fixture-baseline/lib/fixture_baseline",
+      "outcome": "killed",
+      "path": "src/lib.rs",
+      "position": {
+        "character_column": 5,
+        "column": 5,
+        "line": 8
+      },
+      "reused": false,
+      "rule": "return-default@1",
+      "source_run_id": null
+    },
+    {
+      "display_id": "0e40ade9c35f30532907",
+      "id": "0e40ade9c35f305329070539a0fe711e321debd055c7cc986616594877bdeec9",
+      "killed_by": "fixture-baseline/lib/fixture_baseline",
+      "outcome": "killed",
+      "path": "src/lib.rs",
+      "position": {
+        "character_column": 9,
+        "column": 9,
+        "line": 11
+      },
+      "reused": false,
+      "rule": "return-default@1",
+      "source_run_id": null
+    },
+    {
+      "display_id": "13d60fff74f48ec22ca0",
+      "id": "13d60fff74f48ec22ca0586df4deea6de7232a5c7c97f13a7ae6d3cfc111e26d",
+      "killed_by": "fixture-baseline/lib/fixture_baseline",
+      "outcome": "killed",
+      "path": "src/lib.rs",
+      "position": {
+        "character_column": 15,
+        "column": 15,
+        "line": 10
+      },
+      "reused": false,
+      "rule": "negate-condition@1",
+      "source_run_id": null
+    },
+    {
+      "display_id": "43043104a9c81f823b18",
+      "id": "43043104a9c81f823b187962a0f7a09211269f74aaad22161f24e8ee9a8c2959",
+      "killed_by": "fixture-baseline/test/doubling",
+      "outcome": "killed",
+      "path": "src/lib.rs",
+      "position": {
+        "character_column": 7,
+        "column": 7,
+        "line": 19
+      },
+      "reused": false,
+      "rule": "mul-to-div@1",
+      "source_run_id": null
+    },
+    {
+      "display_id": "57a197f6d1d0e560e888",
+      "id": "57a197f6d1d0e560e888f4ccfabf8bf5afdc5104803c10ad734dc1e82f724c30",
+      "killed_by": null,
+      "outcome": "survived",
+      "path": "src/lib.rs",
+      "position": {
+        "character_column": 17,
+        "column": 17,
+        "line": 10
+      },
+      "reused": false,
+      "rule": "lt-to-le@1",
+      "source_run_id": null
+    },
+    {
+      "display_id": "7590b327de928142a7d4",
+      "id": "7590b327de928142a7d4e8cc4ae668248ee9ee2b4172df2e50f0b0f751fca283",
+      "killed_by": null,
+      "outcome": "survived",
+      "path": "src/lib.rs",
+      "position": {
+        "character_column": 10,
+        "column": 10,
+        "line": 8
+      },
+      "reused": false,
+      "rule": "gt-to-ge@1",
+      "source_run_id": null
+    },
+    {
+      "display_id": "7c995250658c8c7eed50",
+      "id": "7c995250658c8c7eed50b6bf7f149ca970a29efb30fd21f0ab0018549ee2621c",
+      "killed_by": "fixture-baseline/test/doubling",
+      "outcome": "killed",
+      "path": "src/lib.rs",
+      "position": {
+        "character_column": 5,
+        "column": 5,
+        "line": 19
+      },
+      "reused": false,
+      "rule": "return-default@1",
+      "source_run_id": null
+    },
+    {
+      "display_id": "916ac16c73c7c959f7e0",
+      "id": "916ac16c73c7c959f7e011fee78ff8913b4c111a32eada8a695c46cf8afe8431",
+      "killed_by": "fixture-baseline/lib/fixture_baseline",
+      "outcome": "killed",
+      "path": "src/lib.rs",
+      "position": {
+        "character_column": 9,
+        "column": 9,
+        "line": 9
+      },
+      "reused": false,
+      "rule": "return-default@1",
+      "source_run_id": null
+    },
+    {
+      "display_id": "aec569b677a2d793ec60",
+      "id": "aec569b677a2d793ec6034642dc4be3ef136f69a0adac8fd87d975fb7910f392",
+      "killed_by": "fixture-baseline/lib/fixture_baseline",
+      "outcome": "killed",
+      "path": "src/lib.rs",
+      "position": {
+        "character_column": 8,
+        "column": 8,
+        "line": 8
+      },
+      "reused": false,
+      "rule": "negate-condition@1",
+      "source_run_id": null
+    },
+    {
+      "display_id": "b6d893a120ece7625630",
+      "id": "b6d893a120ece7625630185b13789a952ae273852a039ef38db32a18b382a50e",
+      "killed_by": null,
+      "outcome": "unreached",
+      "path": "src/lib.rs",
+      "position": {
+        "character_column": 9,
+        "column": 9,
+        "line": 13
+      },
+      "reused": false,
+      "rule": "return-default@1",
+      "source_run_id": null
+    }
+  ],
+  "provenance": {
+    "cached": false,
+    "identity": "<volatile>",
+    "source_run_id": null
+  },
+  "repository": {
+    "configuration_digest": "<volatile>",
+    "git": {
+      "available": false,
+      "branch": "<volatile>",
+      "changed_files": [],
+      "commit": "<volatile>",
+      "dirty": false,
+      "merge_base": null
+    },
+    "packages": [
+      "fixture-baseline"
+    ],
+    "root_name": "<volatile>",
+    "workspace_digest": "<volatile>"
+  },
+  "resources": [],
+  "run_id": "<volatile>",
+  "run_kind": "full",
+  "schema": "njutest-assurance-report-v1",
+  "schema_version": 1,
+  "scope": {
+    "excluded": [],
+    "requested_packages": [],
+    "resolved_packages": [],
+    "shard": null
+  },
+  "targets": [
+    {
+      "duration_ms": 0,
+      "id": "5400eb3632f6b31a",
+      "message": null,
+      "name": "fixture-baseline/test/doubling",
+      "package": "fixture-baseline",
+      "status": "passed"
+    },
+    {
+      "duration_ms": 0,
+      "id": "b20a7336725aaa58",
+      "message": null,
+      "name": "fixture-baseline/lib/fixture_baseline",
+      "package": "fixture-baseline",
+      "status": "passed"
+    }
+  ],
+  "timing": {
+    "duration_ms": 0,
+    "finished": "<volatile>",
+    "started": "<volatile>"
+  },
+  "tool": {
+    "njutest": "<volatile>",
+    "rust_mutants": "<volatile>"
+  },
+  "toolchain": {
+    "arch": "<volatile>",
+    "cargo": "<volatile>",
+    "os": "<volatile>",
+    "rustc": "<volatile>",
+    "target": "<volatile>"
+  },
+  "verdict": "INSUFFICIENT"
+}

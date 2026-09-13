@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What a real cargo answers: the toolchain it names, the metadata it prints, and the dep-info it leaves behind.
@@ -13,7 +13,7 @@ use std::collections::BTreeSet;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-use mjutest_devkit::fixture::copy_tree;
+use njutest_devkit::fixture::copy_tree;
 use rust_mutants::cargo::{
     CargoErrorKind, Diagnostic, Driver, LocateOptions, Message, Metadata, MetadataOptions,
     Toolchain, parse_messages, resolve_executable, units_of,
@@ -22,12 +22,12 @@ use rust_mutants::runner::{Cancel, run};
 use rust_mutants::trace::Recorder;
 
 fn fixture(name: &str) -> PathBuf {
-    mjutest_devkit::paths::fixtures_dir().join(name)
+    njutest_devkit::paths::fixtures_dir().join(name)
 }
 
 fn toolchain(dir: &Path) -> Toolchain {
     let options = LocateOptions {
-        cargo: Some(mjutest_devkit::paths::cargo_binary()),
+        cargo: Some(njutest_devkit::paths::cargo_binary()),
         ..LocateOptions::default()
     };
     Toolchain::locate(&options, dir, &Cancel::new()).expect("locate")
@@ -45,7 +45,7 @@ fn an_explicit_cargo_path_must_exist_and_a_bare_name_is_searched_on_the_given_pa
     assert_eq!(missing.kind(), CargoErrorKind::ToolchainNotFound);
     assert!(missing.to_string().contains("RM1012"), "{missing}");
 
-    let real = mjutest_devkit::paths::cargo_binary();
+    let real = njutest_devkit::paths::cargo_binary();
     assert_eq!(resolve_executable(&real, None).expect("exists"), real);
 
     #[cfg(unix)]
@@ -74,7 +74,7 @@ fn an_explicit_cargo_path_must_exist_and_a_bare_name_is_searched_on_the_given_pa
 fn locating_reads_both_versions_from_inside_the_directory() {
     let dir = fixture("fixture-simple");
     let tc = toolchain(&dir);
-    assert_eq!(tc.cargo(), mjutest_devkit::paths::cargo_binary());
+    assert_eq!(tc.cargo(), njutest_devkit::paths::cargo_binary());
     assert!(!tc.cargo_version().release.is_empty());
     assert!(!tc.rustc_version().release.is_empty());
     assert_eq!(tc.host(), tc.rustc_version().host);

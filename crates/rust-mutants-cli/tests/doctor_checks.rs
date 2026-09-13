@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What the doctor answers, asked in this process about trees arranged to make it answer.
@@ -24,7 +24,7 @@
 
 use std::ffi::OsString;
 
-use mjutest_devkit::fixture::Fixture;
+use njutest_devkit::fixture::Fixture;
 use rust_mutants::runner::Cancel;
 use rust_mutants_cli::{Environment, Streams};
 
@@ -37,7 +37,7 @@ struct Said {
 
 fn environment(fixture: &Fixture) -> Environment {
     Environment {
-        vars: mjutest_devkit::paths::environment_for_a_run(),
+        vars: njutest_devkit::paths::environment_for_a_run(),
         temp_directory: fixture.temp().to_path_buf(),
         cache_directory: fixture.cache().to_path_buf(),
         working_directory: fixture.root().to_path_buf(),

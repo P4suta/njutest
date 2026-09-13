@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The JSON message stream cargo writes while it builds. Validation reads it to decide which mutant each compiler error is about, so a reader that misreads it condemns a mutant the compiler never refused. It never panics, and every diagnostic it accepts either names a primary span or names none at all rather than half of one.

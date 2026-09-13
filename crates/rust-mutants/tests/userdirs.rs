@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Where a run keeps what it establishes between runs, and what it refuses to keep it in.
@@ -94,7 +94,7 @@ fn an_environment_that_names_nowhere_falls_back_on_what_the_product_was_given() 
     );
     assert_ne!(
         cache_directory(&given(&[]), ".rust-mutants-cache"),
-        cache_directory(&given(&[]), ".mjutest-cache"),
+        cache_directory(&given(&[]), ".njutest-cache"),
         "which is the one thing the two products do not share"
     );
 }

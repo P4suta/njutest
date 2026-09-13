@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: 2026 mjutest contributors
+SPDX-FileCopyrightText: 2026 njutest contributors
 SPDX-License-Identifier: MIT OR Apache-2.0
 -->
 
@@ -23,11 +23,11 @@ It replies on one line:
 {"version":1,"status":"ready","instance":"pg-1","environment":{"DATABASE_URL":"postgres://127.0.0.1/test"}}
 ```
 
-On lease release mjutest sends a `stop` action with the same fields plus
+On lease release njutest sends a `stop` action with the same fields plus
 `instance`; the final response must be `{"version":1,"status":"stopped",…}`
 and the process must exit. Startup and shutdown are timeout- and
 process-tree-bounded. Returned environment cannot override toolchain,
-temporary-directory, `MJUTEST_*`, `RUST_MUTANTS_*`, or `CARGO_*` variables.
+temporary-directory, `NJUTEST_*`, `RUST_MUTANTS_*`, or `CARGO_*` variables.
 
 `shared=true` reuses one live instance while leases exist. `exclusive=true`
 serializes the capability and constrains mutation jobs.
@@ -47,8 +47,8 @@ Provider output never changes the worktree. Each candidate is written into a
 snapshot, where the patched tree must pass three times with nothing active and
 fail twice with the mutant it claims to close; the preimage on disk must be
 the one the provider says it saw. Only then is the content kept, under
-`.mjutest/candidates-v1/<digest>`, and recorded in the report. `mjutest fix`
-says what was offered and writes nothing; `mjutest fix --apply` repeats the
+`.njutest/candidates-v1/<digest>`, and recorded in the report. `njutest fix`
+says what was offered and writes nothing; `njutest fix --apply` repeats the
 whole check and the preimage comparison before writing, and says so rather
 than overwriting when the file already holds exactly what the candidate would
 write.

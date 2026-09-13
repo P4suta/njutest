@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What a run compiles decides what it can measure.
@@ -8,7 +8,7 @@
     reason = "a test reports a setup failure by panicking and asserts with panics"
 )]
 
-use mjutest_devkit::fixture::Fixture;
+use njutest_devkit::fixture::Fixture;
 use rust_mutants::cargo::BuildConfig;
 use rust_mutants::outcome::Outcome;
 use rust_mutants::rule::Tier;
@@ -20,7 +20,7 @@ use rust_mutants::workspace::Workspace;
 fn prepared(fixture: &Fixture, build: BuildConfig) -> Session {
     let workspace = Workspace::open(
         fixture.root(),
-        opening(&mjutest_devkit::paths::cargo_binary(), fixture.temp()),
+        opening(&njutest_devkit::paths::cargo_binary(), fixture.temp()),
         &Cancel::new(),
     )
     .expect("open");

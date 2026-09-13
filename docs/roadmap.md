@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: 2026 mjutest contributors
+SPDX-FileCopyrightText: 2026 njutest contributors
 SPDX-License-Identifier: MIT OR Apache-2.0
 -->
 
@@ -18,8 +18,8 @@ that lets it be seen, tested, and audited — and both are completion criteria.
 | --- | --- | --- | --- | --- |
 | M0 ✓ | Scaffold | workspace, lints, gates, CI, contracts, both command-line skeletons, the public API crate | devkit, error-code ledger, `xtask` gates from tests, `bacon`, `doctor`, `CLAUDE.md` | `mise run check` green |
 | M1 ✓ | rust-mutants engine | stable IDs, byte splicing, snapshot and owners, process supervision, syntactic discovery, guards and runtime, compiler-validated acceptance, execution, the library API, `list`/`catalog`/`run` | engine trace, goldens, property tests, fuzz targets, fixtures, explain commands, contract tests | every fixture's fates are fixed by tests |
-| M2 ✓ | `mjutest verify` baseline | configuration, targets, per-target baseline under coverage, regions, report v1, verdicts, `plan`/`doctor`/`init` | trace v1, diagnostics, testkit, `report-diff`, `trace summary`/`diff`, fuzz targets, benchmarks | a fixture yields a report with regions and a trace |
-| M3 ✓ | Mutation phase | routing, paired confirmation, accounting, acceptances, `explain`/`replay`/`accept`, HTML/SARIF/JUnit | scripted session, route events, dogfood | mjutest reaches a verdict on itself |
+| M2 ✓ | `njutest verify` baseline | configuration, targets, per-target baseline under coverage, regions, report v1, verdicts, `plan`/`doctor`/`init` | trace v1, diagnostics, testkit, `report-diff`, `trace summary`/`diff`, fuzz targets, benchmarks | a fixture yields a report with regions and a trace |
+| M3 ✓ | Mutation phase | routing, paired confirmation, accounting, acceptances, `explain`/`replay`/`accept`, HTML/SARIF/JUnit | scripted session, route events, dogfood | njutest reaches a verdict on itself |
 | E2 ✓ | rust-mutants standalone | `.rust-mutants.toml`, run report v1, exit policy, timeout retry, score, expectations | engine dogfood, report goldens, interrupt contract | rust-mutants scores itself |
 | M4 ✓ | Identity, cache, evidence | digests, behaviour keys, exact cache, checkpoint, evidence reuse, `--changed`, unsafe inventory, build-cache gc | interruption injection, reuse goldens | a second run reuses the first |
 | M5 ✓ | Proofs | probe tree, infection log, witness tree, branch proof, discharges, dashboard | `proofaudit` with zero violations on a dogfood recording | kill implies infection on `fixture-probeable` |
@@ -38,7 +38,7 @@ that lets it be seen, tested, and audited — and both are completion criteria.
 | E9 ✓ | Answering without running | a run is counted in pairs of one mutant and one target rather than in seconds, what removed each pair is named and labelled a proof, a sufficient answer, a remembered one or a narrower question, and a remembered answer is keyed on the sources the build compiled, the manifests that chose its dependencies and the toolchain that compiled it rather than on the digest of a whole tree | `rust_mutants::work::Work` derived from the stored report alone, the `work` audit layer that holds it to the recording, `xtask/work_ceiling.txt` as a ratchet that may shrink and never grow, and the differential harness that runs four fixtures with every layer on and every layer off and holds the two answers to each other | the engine does less for the same question every release, and a test says so |
 | E10 ✓ | The guards are the measurement | reach is recorded by the guards on the run that verifies the baseline, so a mutation goes to the tests that reached it and no coverage build is made | `touched-v1.json` and the audit layer that re-decides from it, `fixture-order-dependent`, `fixture-threaded`, the differential harness over every combination of the two measurements, ADR 0014 | the answer is the one a run with nothing removed gives, and the tests started fall from 46 to 18 on `fixture-coverage` |
 | E11 ✓ | The difference that never was | a guard whose condition the compiler vouched for evaluates both of its branches on the baseline and records where they parted, so `never-infected` is a default layer with no tree, no build and no run of its own | `narrowing` in `touched-v1.json` and the audit layer that re-derives both kinds of discharge from it, the instrumenter reporting which guards it actually wrote the call into, ADR 0015 | eight fixtures stop starting a process for a mutation nothing could have noticed, and the answer is still the one a run with nothing removed gives |
-| M13 ✓ | Where the code is being written | `mjutest watch` verifies again whenever the tree changes and says what moved, `mjutest lsp` shows a completed run's findings in the editor and hands back the acceptance to record without applying it, `cargo mjutest` answers to the name cargo looks for, and `.github/actions/mjutest` runs a verification in somebody else's repository and hands the findings to code scanning | the loop driven by a look and a round the test supplies, so every rule of it is asserted rather than waited on, the protocol exchange recorded as a golden, the action exercised against a fixture with this workspace's own build, and `docs/` built as a book with the summary and the pages held to each other in both directions | a save is a verdict, a survivor is a diagnostic where the mutation is, and every page of the documentation is one the book reaches |
+| M13 ✓ | Where the code is being written | `njutest watch` verifies again whenever the tree changes and says what moved, `njutest lsp` shows a completed run's findings in the editor and hands back the acceptance to record without applying it, `cargo njutest` answers to the name cargo looks for, and `.github/actions/njutest` runs a verification in somebody else's repository and hands the findings to code scanning | the loop driven by a look and a round the test supplies, so every rule of it is asserted rather than waited on, the protocol exchange recorded as a golden, the action exercised against a fixture with this workspace's own build, and `docs/` built as a book with the summary and the pages held to each other in both directions | a save is a verdict, a survivor is a diagnostic where the mutation is, and every page of the documentation is one the book reaches |
 | E12 ✓ | The tree nobody needed | a return replacement writes a constant, so the guard compares the value the branch that keeps the original produced against it, and the probe tree — a check loop, a build of the workspace and a run of every target — goes | `instrument::observable` as one sealed trait rendered into both generated modules, the probe question put to the witness tree in the shape the guard will hold, `Marker::keyed_to` so a build cache nobody can look up again is collected, ADR 0016 | `prepare` falls from 575s to 427s cold on this engine's own workspace, three more fixture survivors are discharged without an execution, and the differential harness still holds every answer to a run with nothing removed |
 
 ## What is left, and what is not there to be had
@@ -122,7 +122,7 @@ this is cargo. So the baseline is made cheaper by making the baseline cheaper,
 and by nothing else.
 
 M14 is done. A run is cut into parts with `--shard K/N` and put back together
-with `mjutest merge`; `mjutest cache` collects and expires the store, and
+with `njutest merge`; `njutest cache` collects and expires the store, and
 `--export`/`--import` carry its answers between machines, which is what lets a
 matrix reuse what one of its legs established. An answer that arrives is held
 to what a run of the receiving machine would keep it to, because that rule
@@ -140,12 +140,12 @@ Most of the cost turned out to be avoidable. Before subprocesses inherited
 the outer mutation identity, **a guard recorded only what its own process
 reached.** A suite that started the binary was therefore measured by nothing
 the binary then did, so the whole command layer of both products — every suite
-that drove `rust-mutants` or `mjutest` as a child — was reached by no mutation
+that drove `rust-mutants` or `njutest` as a child — was reached by no mutation
 at all. Those suites drive `run_from` in this process now, which is the same
 command against the same tree with test-level attribution. What kept them
 starting a process for so long after the reason to stop was known is that they
 were written against `std::process::Output`;
-`mjutest_devkit::process::answered` hands that shape back for a command driven
+`njutest_devkit::process::answered` hands that shape back for a command driven
 here, so each suite changed in one function.
 
 What still starts a process is what is about a process: an interrupt, a hang, a
@@ -175,7 +175,7 @@ key alone, so two runs configured differently were told apart and both
 measured the same program. `[execution] test_binary_args` was validated by
 both products and read by neither. An acceptance's `expires` was a comment: a
 suppression a reviewer put an end date on went on hiding its finding for ever.
-And `mjutest plan`, which exists to say what a run would measure, read none of
+And `njutest plan`, which exists to say what a run would measure, read none of
 the configuration that decides it.
 
 Two of those turned out to be about more than the key. The arguments a run

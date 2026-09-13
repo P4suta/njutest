@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: 2026 mjutest contributors
+SPDX-FileCopyrightText: 2026 njutest contributors
 SPDX-License-Identifier: MIT OR Apache-2.0
 -->
 
@@ -7,7 +7,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 **Status: implemented.** Every gate, task, and tool named here exists; the catalog near the end says which milestone each arrived in.
 
-This document describes the infrastructure for working on mjutest and
+This document describes the infrastructure for working on njutest and
 rust-mutants themselves. The other pages under `docs/` describe the tools;
 this one describes the tests, gates, and diagnostics that hold them to their
 contracts. Setup, pull request rules, and source conventions live in
@@ -59,7 +59,7 @@ the same things.
 
 `cargo xtask proofaudit <run-directory> [--trace <recording>]` stands apart from
 `all`, because it is about one completed run rather than about the tree. It reads that run's
-`mjutest-assurance-report-v1.json` and decides again, with code that never
+`njutest-assurance-report-v1.json` and decides again, with code that never
 calls the runner's, whether each verdict is the one the recorded evidence
 supports: whether the columns say what the records they summarise say and add
 up the way the [assurance contract](assurance-contract.md) states, whether
@@ -128,7 +128,7 @@ all.
 
 ## Test harness
 
-`crates/mjutest-devkit` is test-only support shared by every crate: the
+`crates/njutest-devkit` is test-only support shared by every crate: the
 golden-file comparison, the workspace and fixture paths, the `cargo` that
 built the test binary, a throwaway copy of a fixture project, and the scripted
 toolchain. Each crate's `testkit` module (behind `cfg(test)` or the `testkit`
@@ -167,9 +167,9 @@ be observed any other way. When a survivor's route names only `toolchain_*`
 targets, the question to ask first is not "what test is missing" but "is the
 test somewhere the measurement can see".
 
-A whole run in this process is `mjutest_cli::run_from` with an `Environment` the
+A whole run in this process is `njutest_cli::run_from` with an `Environment` the
 test builds, and it reaches every phase the configuration turns on. That is
-what `toolchain_watch.rs` does, and it is why a `.mjutest.toml` written into a
+what `toolchain_watch.rs` does, and it is why a `.njutest.toml` written into a
 copied fixture is the lever for a whole cluster of survivors rather than one:
 `[execution] timeout` with a fixture that is slow once reaches the bound that
 expires and the quiet measurement after it, `[mutation] equivalence` reaches
@@ -179,7 +179,7 @@ about targets nobody asked it to drive. Each of those was measured as unreached
 until a run in this process was configured into it.
 
 A suite already written against a spawned process does not have to be rewritten
-to move here. `mjutest_devkit::process::answered(code, out, err)` hands back a
+to move here. `njutest_devkit::process::answered(code, out, err)` hands back a
 `std::process::Output` for a command driven through the entry point, so a file
 changes in one function and every assertion in it stays as it was. Both
 products' command suites were moved that way on 2026-09-11; what still starts a
@@ -192,7 +192,7 @@ root, rather than a stale generated runtime, answers the question.
 
 ### The scripted toolchain
 
-`mjutest_devkit::fake_cargo` writes a script of invocations —
+`njutest_devkit::fake_cargo` writes a script of invocations —
 program, argument prefix, environment, and what to print, write, wait, and
 exit with — and `crates/rust-mutants/examples/fake_cargo.rs` is the program
 that answers it as `cargo`, as `rustc`, as a coverage tool, or as a test
@@ -210,7 +210,7 @@ a second and with no toolchain at all.
 
 ### A copy of a fixture
 
-`mjutest_devkit::fixture::Fixture::copy` is the tree a suite hands to the
+`njutest_devkit::fixture::Fixture::copy` is the tree a suite hands to the
 thing it is testing. The copy is canonical, because a path a run reports has
 to compare equal to the one the test holds; its temporary and cache
 directories sit beside the tree, because a cache under the root would change
@@ -333,7 +333,7 @@ the names of the variables that were set and none of their values. What to
 reach for when something is wrong is [engine
 troubleshooting](engine/troubleshooting.md).
 
-`mjutest trace summary` is where a person asks where a run went. It counts the
+`njutest trace summary` is where a person asks where a run went. It counts the
 events by type, times every stage the run said it had reached, counts the
 commands by program, says how many executions each proof removed, and names the
 slowest commands. A run records the engine's own trace in a directory beside
@@ -343,8 +343,8 @@ that read only the runner's would leave the larger part of every run
 unaccounted for. Both are read with one command:
 
 ```console
-mjutest verify --trace
-mjutest trace summary
+njutest verify --trace
+njutest trace summary
 ```
 
 The numbers are the ones to optimise against, and the rule for acting on them
@@ -360,8 +360,8 @@ The developer-facing infrastructure, and the milestone it arrives in:
 | --- | --- | --- |
 | devkit (golden, paths), error-code ledger, `cargo xtask` gates, `bacon`, `mise run doctor`, `CLAUDE.md` | the inner loop and the ratchets | M0 |
 | engine trace (every discovery decision, every validation round), goldens with CRLF variants, property tests, fuzz targets for every fail-closed parser, fixtures with fate tables, `rust-mutants explain` / `instrument --file` / `why-skipped`, runner contract tests, external-consumer contract test | seeing why the engine did what it did | M1 |
-| runner trace v1 with `trace summary` and `trace diff`, diagnostics bundle, `--keep-temp` ledger, testkit (fixture repository builder, scripted workspace, `normalize_report`, helper subprocesses), report and help goldens, `xtask report-diff`, `mjutest plan --why` | seeing why a run routed what it routed | M2 |
-| scripted session, route events, `mjutest explain`, accounting property tests, `mise run dogfood` | the runner on itself | M3 |
+| runner trace v1 with `trace summary` and `trace diff`, diagnostics bundle, `--keep-temp` ledger, testkit (fixture repository builder, scripted workspace, `normalize_report`, helper subprocesses), report and help goldens, `xtask report-diff`, `njutest plan --why` | seeing why a run routed what it routed | M2 |
+| scripted session, route events, `njutest explain`, accounting property tests, `mise run dogfood` | the runner on itself | M3 |
 | evidence-store goldens, interruption injection, concurrent cache tests | reuse and resumption | M4 |
 | `xtask proofaudit` (independent reimplementation of every proof layer), fixtures for probes and branch proofs, the kill-implies-infection soundness test | proofs before they ship | M5 |
 | provider fakes with failure injection, repair rollback tests | providers and repairs | M6 |

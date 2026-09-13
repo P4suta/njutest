@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: 2026 mjutest contributors
+SPDX-FileCopyrightText: 2026 njutest contributors
 SPDX-License-Identifier: MIT OR Apache-2.0
 -->
 
@@ -8,7 +8,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 ## Status
 
 Accepted, 2026-09-11. Supersedes
-[ADR 0005](0005-build-cache-mjutest-owns.md) and
+[ADR 0005](0005-build-cache-njutest-owns.md) and
 [ADR 0010](0010-target-directories-are-the-cache-layers.md).
 
 ## Context
@@ -30,12 +30,12 @@ does not identify their owner.
 1. rust-mutants' stable target directory is the only persistent compiled
    build cache used by a verification. Its lifecycle, locking, and collection
    belong to the engine.
-2. mjutest owns no persistent compiled layer. Its `[cache]` table controls
+2. njutest owns no persistent compiled layer. Its `[cache]` table controls
    only outcome answers: `max_bytes`, `ttl`, export, and import.
 3. Cargo started from a test process remains isolated with
    `CARGO_TARGET_DIR` under that run's `Scratch`. This is disposable process
    isolation, not a cache shared across runs.
-4. `mjutest cache` neither reports nor collects compiled artifacts. The
+4. `njutest cache` neither reports nor collects compiled artifacts. The
    retired `build_dir` and `build_max_bytes` keys are rejected as unknown
    fields, and an upgrade removes them.
 

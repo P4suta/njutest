@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What `--trace` records about a real run, and what `trace summary`, `trace check`, and `trace diff` say about a recording afterwards.
@@ -16,7 +16,7 @@ use std::process::Output;
 
 use std::ffi::OsString;
 
-use mjutest_devkit::fixture::Fixture;
+use njutest_devkit::fixture::Fixture;
 use rust_mutants::runner::Cancel;
 use rust_mutants_cli::{Environment, Streams};
 
@@ -37,7 +37,7 @@ fn against(fixture: &Fixture, args: &[&str]) -> Output {
             err: &mut err,
         },
     );
-    mjutest_devkit::process::answered(code, out, err)
+    njutest_devkit::process::answered(code, out, err)
 }
 
 /// A reading of a recording, which names its own root rather than taking one before the subcommand.
@@ -58,7 +58,7 @@ fn reading(fixture: &Fixture, args: &[&str]) -> Output {
             err: &mut err,
         },
     );
-    mjutest_devkit::process::answered(code, out, err)
+    njutest_devkit::process::answered(code, out, err)
 }
 
 /// Where a fixture's reports are stored.
@@ -582,7 +582,7 @@ fn a_mutation_a_run_puts_to_the_tests_leaves_the_execution_that_ran_it() {
 
 fn environment(fixture: &Fixture) -> Environment {
     Environment {
-        vars: mjutest_devkit::paths::environment_for_a_run(),
+        vars: njutest_devkit::paths::environment_for_a_run(),
         temp_directory: fixture.temp().to_path_buf(),
         cache_directory: fixture.cache().to_path_buf(),
         working_directory: fixture.root().to_path_buf(),

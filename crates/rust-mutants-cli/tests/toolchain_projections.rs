@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What a stored run becomes for other readers: a Stryker report, one page, and one doctor document.
@@ -10,7 +10,7 @@
 
 use std::ffi::OsString;
 
-use mjutest_devkit::fixture::Fixture;
+use njutest_devkit::fixture::Fixture;
 use rust_mutants::runner::Cancel;
 use rust_mutants_cli::{Environment, Streams};
 use std::process::Output;
@@ -30,7 +30,7 @@ fn against(fixture: &Fixture, args: &[&str]) -> Output {
             err: &mut err,
         },
     );
-    mjutest_devkit::process::answered(code, out, err)
+    njutest_devkit::process::answered(code, out, err)
 }
 
 fn stdout(output: &Output) -> String {
@@ -60,7 +60,7 @@ fn a_stryker_projection_validates_against_the_schema_it_answers_to() {
 
     let schema: serde_json::Value = serde_json::from_str(
         &std::fs::read_to_string(
-            mjutest_devkit::paths::workspace_root()
+            njutest_devkit::paths::workspace_root()
                 .join("test/vendor/mutation-testing-report-schema.json"),
         )
         .expect("the vendored schema"),
@@ -113,7 +113,7 @@ fn a_page_needs_nothing_from_the_network_to_be_read() {
     let text = stdout(&page);
     assert!(text.starts_with("<!doctype html>"), "{text}");
     assert!(text.contains("</html>"), "{text}");
-    let outside = mjutest_devkit::report::reaches_outside(&text);
+    let outside = njutest_devkit::report::reaches_outside(&text);
     assert!(
         outside.is_empty(),
         "a page that fetches anything is not one that opens offline: {outside:?}"
@@ -233,7 +233,7 @@ fn the_doctor_document_validates_against_the_schema_it_answers_to() {
         serde_json::from_str(&stdout(&asked)).expect("the answer is JSON");
     let schema: serde_json::Value = serde_json::from_str(
         &std::fs::read_to_string(
-            mjutest_devkit::paths::workspace_root().join("schema/rust-mutants-doctor-v1.json"),
+            njutest_devkit::paths::workspace_root().join("schema/rust-mutants-doctor-v1.json"),
         )
         .expect("the schema"),
     )
@@ -310,7 +310,7 @@ fn a_root_that_is_a_member_of_a_workspace_fails_and_names_the_root_to_use() {
             err: &mut err,
         },
     );
-    let asked = mjutest_devkit::process::answered(code, out, err);
+    let asked = njutest_devkit::process::answered(code, out, err);
     let text = String::from_utf8_lossy(&asked.stdout).into_owned();
     assert!(text.contains("FAIL workspace"), "{text}");
     assert!(
@@ -365,7 +365,7 @@ fn a_project_that_moved_its_reports_is_still_told_what_a_run_kept() {
 
 fn environment(fixture: &Fixture) -> Environment {
     Environment {
-        vars: mjutest_devkit::paths::environment_for_a_run(),
+        vars: njutest_devkit::paths::environment_for_a_run(),
         temp_directory: fixture.temp().to_path_buf(),
         cache_directory: fixture.cache().to_path_buf(),
         working_directory: fixture.root().to_path_buf(),

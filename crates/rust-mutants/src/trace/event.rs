@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The wire shape of one trace event: an envelope of sequence number and moment around a typed record. The vocabulary grows with every phase of the engine; the envelope and the run-start / run-end pair are frozen.

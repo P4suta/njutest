@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2026 mjutest contributors
+# SPDX-FileCopyrightText: 2026 njutest contributors
 # SPDX-License-Identifier: MIT OR Apache-2.0
 #
 # cargo-fuzz targets for the engine's fail-closed parsers and byte
@@ -18,7 +18,7 @@ cargo-fuzz = true
 [dependencies]
 arbitrary = { version = "1.4", features = ["derive"] }
 libfuzzer-sys = "0.4"
-mjutest-cli = { path = "../crates/mjutest-cli" }
+njutest-cli = { path = "../crates/njutest-cli" }
 rust-mutants = { path = "../crates/rust-mutants" }
 rust-mutants-cli = { path = "../crates/rust-mutants-cli" }
 serde_json = "1"

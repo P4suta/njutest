@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Version consistency: the workspace version, the release-please manifest, and every member manifest inheriting it must agree, so a release tag names one version everywhere.

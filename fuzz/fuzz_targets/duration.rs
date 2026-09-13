@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Every bound a person writes in a configuration file is a duration this parser read. A parse that silently rounds or overflows turns a two-minute bound into something else and every timeout after it is about the wrong thing. It never panics, and what it renders it reads back as the same duration.

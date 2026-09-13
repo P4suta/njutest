@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What a run decides about a mutant, including the one it has to ask twice about.
@@ -11,7 +11,7 @@
 
 use std::time::Duration;
 
-use mjutest_devkit::fixture::Fixture;
+use njutest_devkit::fixture::Fixture;
 use rust_mutants::outcome::Outcome;
 use rust_mutants::rule::Tier;
 use rust_mutants::run::Quiet;
@@ -30,7 +30,7 @@ fn prepared(fixture: &Fixture, env: &[(&str, String)]) -> Session {
     let workspace = Workspace::open(
         fixture.root(),
         OpenOptions {
-            cargo: Some(mjutest_devkit::paths::cargo_binary()),
+            cargo: Some(njutest_devkit::paths::cargo_binary()),
             temp_directory: fixture.temp().to_path_buf(),
             env: vars,
             locked: true,
@@ -238,7 +238,7 @@ fn the_budget_one_execution_gets_is_derived_from_what_that_target_cost() {
     let session = Workspace::open(
         fixture.root(),
         OpenOptions {
-            cargo: Some(mjutest_devkit::paths::cargo_binary()),
+            cargo: Some(njutest_devkit::paths::cargo_binary()),
             temp_directory: fixture.temp().to_path_buf(),
             env: std::env::vars_os().collect(),
             locked: true,

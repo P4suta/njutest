@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: 2026 mjutest contributors
+SPDX-FileCopyrightText: 2026 njutest contributors
 SPDX-License-Identifier: MIT OR Apache-2.0
 -->
 
@@ -52,7 +52,7 @@ run already collects can sometimes establish before any mutant is built.
    fallbacks are toward running more.
 3. **The lemma and the premise live on different sides.** rust-mutants states
    what it can prove about a mutant from the source and the compiler — the
-   branch proof, the probe form — and mjutest checks the premise against its
+   branch proof, the probe form — and njutest checks the premise against its
    per-target evidence. Neither side trusts the other beyond the contract
    that names the claim.
 4. **Every layer is visible.** A route records the granularity it was decided
@@ -90,5 +90,5 @@ run already collects can sometimes establish before any mutant is built.
   said was wrong.
 - The layers share one blind spot: they see the coverage a test left behind.
   The limitations document names it once per layer.
-- A reader who sees mjutest go faster may ask which proof did it. The answer
+- A reader who sees njutest go faster may ask which proof did it. The answer
   is always in the trace, never in a configuration file.

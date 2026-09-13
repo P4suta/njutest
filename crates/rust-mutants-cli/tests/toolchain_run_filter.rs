@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Narrowing a run: which mutants it is about, when it stops, and what it would cost.
@@ -6,7 +6,7 @@
 use std::ffi::OsString;
 use std::process::Output;
 
-use mjutest_devkit::fixture::Fixture;
+use njutest_devkit::fixture::Fixture;
 use rust_mutants::runner::Cancel;
 use rust_mutants_cli::{Environment, Streams};
 
@@ -28,7 +28,7 @@ fn run(fixture: &Fixture, extra: &[&str]) -> Output {
             err: &mut err,
         },
     );
-    mjutest_devkit::process::answered(code, out, err)
+    njutest_devkit::process::answered(code, out, err)
 }
 
 fn said(output: &Output) -> String {
@@ -233,7 +233,7 @@ fn from_report_that_names_nothing_measures_nothing_rather_than_everything() {
 
 fn environment(fixture: &Fixture) -> Environment {
     Environment {
-        vars: mjutest_devkit::paths::environment_for_a_run(),
+        vars: njutest_devkit::paths::environment_for_a_run(),
         temp_directory: fixture.temp().to_path_buf(),
         cache_directory: fixture.cache().to_path_buf(),
         working_directory: fixture.root().to_path_buf(),
@@ -281,7 +281,7 @@ fn a_file_the_workspace_does_not_hold_is_refused_rather_than_measured_as_empty()
 #[test]
 fn a_file_the_walk_found_nothing_in_is_still_a_file_it_read() {
     let fixture = Fixture::copy("fixture-simple");
-    let empty = "// SPDX-FileCopyrightText: 2026 mjutest contributors\n\
+    let empty = "// SPDX-FileCopyrightText: 2026 njutest contributors\n\
                  // SPDX-License-Identifier: MIT OR Apache-2.0\n\n\
                  //! Nothing here for a rule to target.\n";
     std::fs::write(fixture.root().join("src/nothing.rs"), empty).expect("a file with no candidate");

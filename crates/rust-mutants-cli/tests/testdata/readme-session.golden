@@ -10,12 +10,12 @@ SCORE     100.0%  (7 detected of 7 decided)
 WORK      started=7 of 24 pairs across 3 targets; 70.8% removed (unreached=16 never-infected=1)
           tests=7 of 24; 70.8% removed
 
-discharged-mutant      every target that could have noticed e5e872bfbcb2afbbf7a1 was removed by a proof, so no test could have: the mutation is in code the tests run and never observe
+discharged-mutant      every target that could have noticed 16b0cd40508fc0785477 was removed by a proof, so no test could have: the mutation is in code the tests run and never observe
 REPORT    ./reports/mutation/<run>/run-report-v1.json
 
-$ rust-mutants explain e5e8
-MUTANT    e5e872bfbcb2afbbf7a1bb35538af59465f5d53cd46b628ec028b80d7d169730
-SHORT     e5e872bfbcb2afbbf7a1
+$ rust-mutants explain 16b0
+MUTANT    16b0cd40508fc0785477d495daa14695fcff4d61ada9eb35a8c2c995eb1f881f
+SHORT     16b0cd40508fc0785477
 RULE      gt-to-ge@1 (comparison)
 WHERE     src/lib.rs:11:10
 EDIT      ">" => ">="
@@ -24,7 +24,7 @@ OUTCOME   not_run
 TIMING    <duration>
 ROUTE     discharged reaching [] executed []
 PROVED    fixture-simple/lib/fixture_simple: never-infected
-REPRODUCE rust-mutants run --mutant e5e872bfbcb2afbbf7a1
+REPRODUCE rust-mutants run --mutant 16b0cd40508fc0785477
 
 --- a/src/lib.rs
 +++ b/src/lib.rs

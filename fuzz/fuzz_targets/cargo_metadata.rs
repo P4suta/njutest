@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The document `cargo metadata` writes, which is where a run learns what the workspace holds. A reader that accepts a malformed one selects the wrong packages or the wrong targets, and a run measures something other than what was asked for. It never panics, and every package and target it accepts is named and rooted.

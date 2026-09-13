@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: 2026 mjutest contributors
+SPDX-FileCopyrightText: 2026 njutest contributors
 SPDX-License-Identifier: MIT OR Apache-2.0
 -->
 
@@ -221,7 +221,7 @@ says nothing about: it is routed to and never discharged, because a proof
 resting on its silence would rest on the measurement's failure.
 
 `prove::discharges(proof, path, covered)` is the pure function of the two. A
-caller with its own coverage — `mjutest` is one — discharges with its own
+caller with its own coverage — `njutest` is one — discharges with its own
 evidence by calling it, and an audit re-implements it rather than asking the
 engine.
 

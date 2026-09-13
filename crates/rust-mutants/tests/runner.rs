@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! One child, its whole tree, and what came back. These tests drive a real shell; they are the reason the runner can be trusted with somebody else's test binary.

@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The gates applied to this repository: each one reads the tree, hands it to the pure checker of its module, and renders the answer.
@@ -101,7 +101,7 @@ pub fn production_sources(root: &Path) -> Vec<PathBuf> {
 
 fn is_production(relative: &str) -> bool {
     let parts: Vec<&str> = relative.split('/').collect();
-    if parts.first() == Some(&"crates") && parts.get(1) == Some(&"mjutest-devkit") {
+    if parts.first() == Some(&"crates") && parts.get(1) == Some(&"njutest-devkit") {
         return false;
     }
     let inside_src = parts.iter().position(|part| *part == "src");
@@ -408,7 +408,7 @@ pub fn sbom(root: &Path, output: Option<&Path>) -> Result<String, GateFailure> {
         .ok_or_else(|| GateFailure("Cargo.toml has no [workspace.package].version".to_owned()))?;
     let bom = crate::sbom::of(
         &String::from_utf8_lossy(&asked.stdout),
-        ("mjutest", &version),
+        ("njutest", &version),
     )
     .map_err(GateFailure)?;
     let document = serde_json::to_string_pretty(&bom)

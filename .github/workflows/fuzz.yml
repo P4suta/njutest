@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2026 mjutest contributors
+# SPDX-FileCopyrightText: 2026 njutest contributors
 # SPDX-License-Identifier: MIT OR Apache-2.0
 #
 # cargo-fuzz against the fail-closed parsers and byte transformations of both
@@ -12,7 +12,7 @@ on:
   pull_request:
     paths:
       - "crates/rust-mutants/**"
-      - "crates/mjutest-cli/**"
+      - "crates/njutest-cli/**"
       - "fuzz/**"
       - ".github/workflows/fuzz.yml"
   schedule:

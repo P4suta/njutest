@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What a branch proof rests on: which edits get a claim, what the compiler is asked to vouch for, and everywhere the syntax refuses to claim anything.

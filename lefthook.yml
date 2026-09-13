@@ -1,4 +1,4 @@
-# mjutest — lefthook hooks. Runs straight on the host (cargo + typos).
+# njutest — lefthook hooks. Runs straight on the host (cargo + typos).
 #
 # Enable after clone:  `lefthook install` (bootstrap.sh does it)
 # Disable:             `lefthook uninstall`

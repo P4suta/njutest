@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Whether removing the work changed the answer.
@@ -31,7 +31,7 @@ use std::collections::BTreeMap;
 
 use std::ffi::OsString;
 
-use mjutest_devkit::fixture::Fixture;
+use njutest_devkit::fixture::Fixture;
 use rust_mutants::report::run::{RunDocument, RunMutantDocument};
 use rust_mutants::runner::Cancel;
 use rust_mutants::testkit::measuring::Measuring;
@@ -77,13 +77,13 @@ fn established(name: &str, extra: &[&str]) -> Established {
             err: &mut err,
         },
     );
-    let output = mjutest_devkit::process::answered(code, out, err);
+    let output = njutest_devkit::process::answered(code, out, err);
     assert!(
         output.status.code().is_some_and(|code| code <= 1),
         "{name} {extra:?}: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let directory = mjutest_devkit::fixture::newest_run(fixture.root());
+    let directory = njutest_devkit::fixture::newest_run(fixture.root());
     let text = std::fs::read_to_string(directory.join("run-report-v1.json")).expect("the report");
     let document: RunDocument = serde_json::from_str(&text).expect("the report reads back");
     Established {
@@ -256,13 +256,13 @@ fn a_remembered_measurement_routes_a_run_exactly_as_a_fresh_one_would() {
                 err: &mut err,
             },
         );
-        let output = mjutest_devkit::process::answered(code, out, err);
+        let output = njutest_devkit::process::answered(code, out, err);
         assert!(
             output.status.code().is_some_and(|code| code <= 1),
             "{}",
             String::from_utf8_lossy(&output.stderr)
         );
-        let directory = mjutest_devkit::fixture::newest_run(fixture.root());
+        let directory = njutest_devkit::fixture::newest_run(fixture.root());
         let text =
             std::fs::read_to_string(directory.join("run-report-v1.json")).expect("the report");
         let document: RunDocument = serde_json::from_str(&text).expect("the report reads back");
@@ -293,7 +293,7 @@ fn a_remembered_measurement_routes_a_run_exactly_as_a_fresh_one_would() {
             err: &mut err,
         },
     );
-    let cleared = mjutest_devkit::process::answered(code, out, err);
+    let cleared = njutest_devkit::process::answered(code, out, err);
     assert_eq!(cleared.status.code(), Some(0), "{cleared:?}");
     let remembered = report(&fixture, &[]);
     assert_eq!(
@@ -306,7 +306,7 @@ fn a_remembered_measurement_routes_a_run_exactly_as_a_fresh_one_would() {
 
 fn environment(fixture: &Fixture) -> Environment {
     Environment {
-        vars: mjutest_devkit::paths::environment_for_a_run(),
+        vars: njutest_devkit::paths::environment_for_a_run(),
         temp_directory: fixture.temp().to_path_buf(),
         cache_directory: fixture.cache().to_path_buf(),
         working_directory: fixture.root().to_path_buf(),

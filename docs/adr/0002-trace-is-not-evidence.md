@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: 2026 mjutest contributors
+SPDX-FileCopyrightText: 2026 njutest contributors
 SPDX-License-Identifier: MIT OR Apache-2.0
 -->
 
@@ -8,12 +8,12 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 ## Status
 
 Accepted, 2026-09-05, inherited from goatest ADR 0002. Implemented by the
-`trace` module of `mjutest-cli` and the `trace` sink of `rust-mutants` as the
+`trace` module of `njutest-cli` and the `trace` sink of `rust-mutants` as the
 milestones deliver them; the rule applies from the first event.
 
 ## Context
 
-mjutest is fail-closed about assurance: an input it cannot identify, a
+njutest is fail-closed about assurance: an input it cannot identify, a
 metadata field it cannot reach, or an output it cannot digest ends the run
 with an error rather than an optimistic verdict. Execution tracing has the
 opposite failure profile. A trace is diagnostic exhaust a developer reads to
@@ -36,7 +36,7 @@ A trace is diagnostic exhaust and is never evidence.
    directory that cannot be created costs one `trace-unavailable` note; the
    run continues untraced.
 3. **A directory the snapshot would read is refused as a trace**, except
-   `.mjutest/`, which the snapshot never reads.
+   `.njutest/`, which the snapshot never reads.
 4. **Honesty replaces fail-closed.** Every sink counts its drops, every
    recording ends with `events_emitted` and `events_dropped`, every line is
    flushed as written. A reader can tell a complete recording from a lossy

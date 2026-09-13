@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The snapshot: a disposable, byte-exact copy of a source tree at a stable name, with a manifest, a frozen workspace digest, drift detection, and a guarded cleanup.

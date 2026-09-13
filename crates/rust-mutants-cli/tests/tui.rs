@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Reading a run at the terminal: what is drawn, and what the keys do.
@@ -17,7 +17,7 @@ use rust_mutants_cli::report::sources::Held;
 use rust_mutants_cli::report::{PlatformDocument, SelectionDocument, WorkspaceDocument};
 use rust_mutants_cli::tui::{Browser, Flow, Key, Pane, draw, pressed};
 
-const SOURCE: &str = "// SPDX-FileCopyrightText: 2026 mjutest contributors\n\
+const SOURCE: &str = "// SPDX-FileCopyrightText: 2026 njutest contributors\n\
                       // SPDX-License-Identifier: MIT OR Apache-2.0\n\
                       \n\
                       //! A demo.\n\
@@ -176,7 +176,7 @@ fn recorded(name: &str, browser: &Browser) {
     let golden = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/testdata")
         .join(name);
-    mjutest_devkit::golden::golden(&golden, format!("{}\n", drawn(browser)).as_bytes())
+    njutest_devkit::golden::golden(&golden, format!("{}\n", drawn(browser)).as_bytes())
         .expect("the frame is the recorded one");
 }
 

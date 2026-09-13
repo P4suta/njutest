@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: 2026 mjutest contributors
+SPDX-FileCopyrightText: 2026 njutest contributors
 SPDX-License-Identifier: MIT OR Apache-2.0
 -->
 
@@ -12,7 +12,7 @@ prefers are the `testkit` modules; the recording it declines to consume is
 [trace v1](../trace-v1.md).
 
 *This record is about record/replay of process execution as a test
-technique. It is unrelated to `mjutest replay ID`, which re-runs a recorded
+technique. It is unrelated to `njutest replay ID`, which re-runs a recorded
 finding through the real toolchain.*
 
 ## Context

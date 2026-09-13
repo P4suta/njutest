@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What a real compiler refuses, mutant by mutant, in its own words.
@@ -13,7 +13,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
-use mjutest_devkit::fixture::copy_tree;
+use njutest_devkit::fixture::copy_tree;
 use rust_mutants::cargo::{
     CompileKind, CompileOptions, Driver, LocateOptions, Metadata, MetadataOptions, Toolchain,
     compile,
@@ -108,7 +108,7 @@ fn prepare_fixture(name: &str) -> CargoScripted {
         .tempdir()
         .expect("tempdir");
     let root = dir.path().join(name);
-    copy_tree(&mjutest_devkit::paths::fixtures_dir().join(name), &root);
+    copy_tree(&njutest_devkit::paths::fixtures_dir().join(name), &root);
     let target = tempfile::Builder::new()
         .prefix("rust-mutants-validate-target-")
         .tempdir()
@@ -117,7 +117,7 @@ fn prepare_fixture(name: &str) -> CargoScripted {
     let trace = Recorder::disabled();
     let toolchain = Toolchain::locate(
         &LocateOptions {
-            cargo: Some(mjutest_devkit::paths::cargo_binary()),
+            cargo: Some(njutest_devkit::paths::cargo_binary()),
             ..LocateOptions::default()
         },
         &root,

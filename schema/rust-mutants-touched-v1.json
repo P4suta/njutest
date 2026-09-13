@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://mjutest.dev/schema/rust-mutants-touched-v1.json",
+  "$id": "https://njutest.dev/schema/rust-mutants-touched-v1.json",
   "title": "rust-mutants touched v1",
   "description": "What the guards of an instrumented tree recorded on the run that verified its baseline: which of each target's tests reached which mutation, which sites were reached where nothing named a test, and which targets said nothing this run can route by. A target absent from `targets` and named in `limitations` is one every test of which reaches every mutation in it. `narrowing` says which mutants the tree could record anything about, without which an absence in `bodies` or `infected` says nothing at all.",
   "type": "object",

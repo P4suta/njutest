@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The run as a program reads it: one JSON object per line, as it happens.
@@ -7,7 +7,7 @@ use std::ffi::OsString;
 use std::path::Path;
 use std::process::Output;
 
-use mjutest_devkit::fixture::Fixture;
+use njutest_devkit::fixture::Fixture;
 use rust_mutants::report::stream::{Line, read};
 use rust_mutants::runner::Cancel;
 use rust_mutants_cli::{Environment, Streams};
@@ -39,12 +39,12 @@ fn asked(fixture: &Fixture, args: &[&str]) -> Output {
             err: &mut err,
         },
     );
-    mjutest_devkit::process::answered(code, out, err)
+    njutest_devkit::process::answered(code, out, err)
 }
 
 fn environment(fixture: &Fixture) -> Environment {
     Environment {
-        vars: mjutest_devkit::paths::environment_for_a_run(),
+        vars: njutest_devkit::paths::environment_for_a_run(),
         temp_directory: fixture.temp().to_path_buf(),
         cache_directory: fixture.cache().to_path_buf(),
         working_directory: fixture.root().to_path_buf(),
@@ -116,7 +116,7 @@ fn every_line_validates_against_the_schema_published_with_it() {
     let text = String::from_utf8_lossy(&output.stdout);
     let schema: serde_json::Value = serde_json::from_str(
         &std::fs::read_to_string(
-            mjutest_devkit::paths::workspace_root().join("schema/rust-mutants-run-stream-v1.json"),
+            njutest_devkit::paths::workspace_root().join("schema/rust-mutants-run-stream-v1.json"),
         )
         .expect("the schema"),
     )
@@ -146,7 +146,7 @@ fn the_stream_opens_before_anything_is_prepared() {
     let fixture = Fixture::copy("fixture-simple");
     let path = fixture.temp().join("stream.jsonl");
     let file = std::fs::File::create(&path).expect("somewhere to stream to");
-    let mut child = mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")))
+    let mut child = njutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")))
         .env("NO_COLOR", "1")
         .env("TMPDIR", fixture.temp())
         .env("XDG_CACHE_HOME", fixture.cache())

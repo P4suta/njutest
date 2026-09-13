@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The gates, applied to this repository. This is the ratchet inside `cargo test`: a seam without a ledger line, a dependency in the wrong direction, a fixture without its lock file, or a version that drifted fails the suite, not only `cargo xtask`.
@@ -55,7 +55,7 @@ fn production_sources_exclude_test_support() {
     assert!(
         files
             .iter()
-            .all(|f| !f.starts_with("crates/mjutest-devkit/")),
+            .all(|f| !f.starts_with("crates/njutest-devkit/")),
         "{files:?}"
     );
     assert!(files.iter().all(|f| !f.contains("/tests/")), "{files:?}");

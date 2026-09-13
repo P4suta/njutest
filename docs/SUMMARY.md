@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: 2026 mjutest contributors
+SPDX-FileCopyrightText: 2026 njutest contributors
 SPDX-License-Identifier: MIT OR Apache-2.0
 -->
 
@@ -43,7 +43,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 - [0002 Trace is not evidence](adr/0002-trace-is-not-evidence.md)
 - [0003 No replay engine](adr/0003-no-replay-engine.md)
 - [0004 Proof layers, not budgets](adr/0004-proof-layers-not-budgets.md)
-- [0005 The build cache mjutest owns](adr/0005-build-cache-mjutest-owns.md)
+- [0005 The build cache njutest owns](adr/0005-build-cache-njutest-owns.md)
 - [0006 Every temporary directory has an owner](adr/0006-every-temporary-directory-has-an-owner.md)
 - [0007 Survived evidence is universal](adr/0007-survived-evidence-is-universal.md)
 - [0008 Compiler-validated acceptance](adr/0008-compiler-validated-acceptance-and-the-type-witness-pass.md)

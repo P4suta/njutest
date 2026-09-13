@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: 2026 mjutest contributors
+SPDX-FileCopyrightText: 2026 njutest contributors
 SPDX-License-Identifier: MIT OR Apache-2.0
 -->
 
@@ -7,7 +7,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 **Status: implemented.** Every job named here exists in `.github/workflows/`.
 
-A repository will run mjutest from a tagged release or a checkout:
+A repository will run njutest from a tagged release or a checkout:
 
 ```yaml
 jobs:
@@ -20,22 +20,22 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: llvm-tools
-      - run: cargo install mjutest-cli --locked
+      - run: cargo install njutest-cli --locked
       - name: Pull-request scope
         if: github.event_name == 'pull_request'
-        run: mjutest verify --changed=origin/${{ github.base_ref }} --ui=plain
+        run: njutest verify --changed=origin/${{ github.base_ref }} --ui=plain
       - name: Full main scope
         if: github.event_name != 'pull_request'
-        run: mjutest verify --ui=plain
+        run: njutest verify --ui=plain
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: mjutest-reports
+          name: njutest-reports
           path: reports/
 ```
 
-To diagnose a run that only misbehaves on the runner, set `MJUTEST_TRACE: '1'`
-on the verify step and upload `.mjutest/trace/` with the reports.
+To diagnose a run that only misbehaves on the runner, set `NJUTEST_TRACE: '1'`
+on the verify step and upload `.njutest/trace/` with the reports.
 
 ## The workflows of this repository
 
@@ -173,7 +173,7 @@ hours. Keep the whole catalog for the weekly run.
 
 `soundness` is the only job with Miri on it. Everywhere else — every
 developer's machine that has not installed it, and every other job here — the
-whole of `deep-v1` is the refusal it is supposed to be (`MJ7001`), and a
+whole of `deep-v1` is the refusal it is supposed to be (`NJ7001`), and a
 refusal is not the promise kept. So one job installs the interpreter, verifies
 a fixture under the contract, and reads back that the run says it interpreted
 the suite.
@@ -185,9 +185,9 @@ has nothing to do with the three platforms.
 ## Carrying answers between machines
 
 The cache a run reads back lives on the machine that filled it, and a hosted
-runner is a fresh machine every time. `mjutest cache --export FILE` writes
+runner is a fresh machine every time. `njutest cache --export FILE` writes
 every answer this machine holds, one JSON document to a line, and
-`mjutest cache --import FILE` reads them into another machine's store. Both
+`njutest cache --import FILE` reads them into another machine's store. Both
 say how many moved, so a job that carried nothing says so rather than
 succeeding silently.
 
@@ -195,12 +195,12 @@ succeeding silently.
 - uses: actions/cache@v4
   with:
     path: answers.jsonl
-    key: mjutest-answers-${{ github.sha }}
-    restore-keys: mjutest-answers-
-- run: mjutest cache --import answers.jsonl || true
-- run: mjutest verify --locked
+    key: njutest-answers-${{ github.sha }}
+    restore-keys: njutest-answers-
+- run: njutest cache --import answers.jsonl || true
+- run: njutest verify --locked
   continue-on-error: true
-- run: mjutest cache --export answers.jsonl
+- run: njutest cache --export answers.jsonl
 ```
 
 The import is allowed to fail on the first run of a repository, when there is
@@ -209,7 +209,7 @@ held to exactly what a run of this one would keep it to — the identity it is
 filed under, and the audit every durable report must satisfy — because that
 rule lives in one place and a second copy of it would be a second chance to
 write it more loosely. A line that is not an answer refuses the import and
-names the line (`MJ8004`); an entry this machine cannot read back refuses the
+names the line (`NJ8004`); an entry this machine cannot read back refuses the
 export and names the entry, since copying an answer nobody can check makes one
 broken answer into two.
 
@@ -223,7 +223,7 @@ artifacts to be usable at all.
 
 ## Using it from another repository
 
-`.github/actions/mjutest` is a composite action that installs a published
+`.github/actions/njutest` is a composite action that installs a published
 release, verifies the workspace, and hands the findings to code scanning. It is
 what a project that is not this one runs.
 
@@ -237,12 +237,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: <owner>/mjutest/.github/actions/mjutest@v0.1.0
+      - uses: <owner>/njutest/.github/actions/njutest@v0.1.0
         with:
           args: --locked
 ```
 
-`version` pins the release, `args` is what follows `mjutest verify`,
+`version` pins the release, `args` is what follows `njutest verify`,
 `working-directory` picks a workspace inside the checkout, and `upload-sarif`
 turns the code-scanning step off for a repository that has no
 `security-events: write`. The action's outputs are `verdict` and `report`.
@@ -252,19 +252,19 @@ The step ends with the verdict's own exit code, so a `DEFECT` fails the job —
 upload first, or uploaded nothing because the status was non-zero, would leave
 a person reading a log instead of the findings themselves.
 
-`cargo binstall mjutest` is what installs it, from the archive `release.yml`
+`cargo binstall njutest` is what installs it, from the archive `release.yml`
 publishes, so the action does not compile this workspace inside somebody
-else's job. `cargo mjutest verify` works too, wherever the binary is on the
+else's job. `cargo njutest verify` works too, wherever the binary is on the
 path: the same program answers to the name cargo looks for.
 
-A workflow that has already put `mjutest` on the path keeps it: the action
+A workflow that has already put `njutest` on the path keeps it: the action
 installs nothing unless `version` names a release or the binary is absent. A
 job that built the commit under test, restored a cached binary, or installed
 from somewhere else has said which one it wants, and installing over it would
 answer a question nobody asked.
 
 That is also what makes the action testable here. `action-smoke` builds this
-workspace's own `mjutest`, puts it on the path, and runs the action against
+workspace's own `njutest`, puts it on the path, and runs the action against
 `fixtures/fixture-assured` the way another repository would, checking that the
 `verdict` output is the one the run reached and that `report` names a file
 that exists. What it does not exercise is the install itself, which needs a

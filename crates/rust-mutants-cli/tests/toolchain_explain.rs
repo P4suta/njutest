@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Everything one run established about one mutant, read back from what it stored.
@@ -12,7 +12,7 @@
 use std::ffi::OsString;
 use std::process::Output;
 
-use mjutest_devkit::fixture::Fixture;
+use njutest_devkit::fixture::Fixture;
 use rust_mutants::runner::Cancel;
 use rust_mutants_cli::{Environment, Streams};
 
@@ -32,12 +32,12 @@ fn against(fixture: &Fixture, args: &[&str]) -> Output {
             err: &mut err,
         },
     );
-    mjutest_devkit::process::answered(code, out, err)
+    njutest_devkit::process::answered(code, out, err)
 }
 
 fn environment(fixture: &Fixture) -> Environment {
     Environment {
-        vars: mjutest_devkit::paths::environment_for_a_run(),
+        vars: njutest_devkit::paths::environment_for_a_run(),
         temp_directory: fixture.temp().to_path_buf(),
         cache_directory: fixture.cache().to_path_buf(),
         working_directory: fixture.root().to_path_buf(),
@@ -68,7 +68,7 @@ fn measured(fixture: &Fixture) {
 fn explain_reads_the_stored_run_and_says_what_it_established() {
     let fixture = Fixture::copy("fixture-simple");
     measured(&fixture);
-    let output = against(&fixture, &["explain", "e5e8"]);
+    let output = against(&fixture, &["explain", "16b0"]);
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     let text = String::from_utf8_lossy(&output.stdout);
     for said in [
@@ -78,7 +78,7 @@ fn explain_reads_the_stored_run_and_says_what_it_established() {
         "OUTCOME   not_run",
         "ROUTE     discharged",
         "PROVED    fixture-simple/lib/fixture_simple: never-infected",
-        "REPRODUCE rust-mutants run --mutant e5e872bfbcb2afbbf7a1",
+        "REPRODUCE rust-mutants run --mutant 16b0cd40508fc0785477",
     ] {
         assert!(text.contains(said), "{said} in {text}");
     }
@@ -97,12 +97,12 @@ fn explain_reads_the_stored_run_and_says_what_it_established() {
 fn the_explanation_validates_against_the_schema_published_with_it() {
     let fixture = Fixture::copy("fixture-simple");
     measured(&fixture);
-    let output = against(&fixture, &["explain", "e5e8", "--json"]);
+    let output = against(&fixture, &["explain", "16b0", "--json"]);
     let document: serde_json::Value =
         serde_json::from_slice(&output.stdout).expect("the explanation is JSON");
     let schema: serde_json::Value = serde_json::from_str(
         &std::fs::read_to_string(
-            mjutest_devkit::paths::workspace_root().join("schema/rust-mutants-explain-v1.json"),
+            njutest_devkit::paths::workspace_root().join("schema/rust-mutants-explain-v1.json"),
         )
         .expect("the schema"),
     )
@@ -122,7 +122,7 @@ fn a_file_that_changed_since_the_run_is_said_rather_than_diffed_against() {
     let path = fixture.root().join("src/lib.rs");
     let source = std::fs::read_to_string(&path).expect("the source");
     std::fs::write(&path, format!("// a comment nobody measured\n{source}")).expect("write");
-    let output = against(&fixture, &["explain", "e5e8"]);
+    let output = against(&fixture, &["explain", "16b0"]);
     let text = String::from_utf8_lossy(&output.stdout);
     assert!(
         text.contains("DIFF      none: the file has changed since the run"),
@@ -225,7 +225,7 @@ fn explain_names_the_tests_a_route_put_the_mutation_to() {
         "{output:?}"
     );
     let document: serde_json::Value =
-        serde_json::from_str(&mjutest_devkit::fixture::stored_report(fixture.root()))
+        serde_json::from_str(&njutest_devkit::fixture::stored_report(fixture.root()))
             .expect("the report is a document");
     let narrowed = document["mutants"]
         .as_array()
@@ -417,14 +417,14 @@ fn explain_reads_the_run_it_is_told_to_and_refuses_a_name_nobody_stored() {
     );
     assert_eq!(named.status.code(), Some(1), "{named:?}");
 
-    let output = against(&fixture, &["explain", "e5e8", "--run", "monday"]);
+    let output = against(&fixture, &["explain", "16b0", "--run", "monday"]);
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     assert!(
         String::from_utf8_lossy(&output.stdout).contains("WHERE     src/lib.rs:11:10"),
         "a run a person named is a run they can read one mutant out of: {output:?}"
     );
 
-    let wrong = against(&fixture, &["explain", "e5e8", "--run", "tuesday"]);
+    let wrong = against(&fixture, &["explain", "16b0", "--run", "tuesday"]);
     assert_eq!(
         wrong.status.code(),
         Some(2),

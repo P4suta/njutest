@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Syntactic discovery: every candidate a file yields, with its guard site, and every place deliberately passed over, with its reason.
@@ -494,7 +494,7 @@ fn the_trace_record_lists_every_decision_in_source_order() {
 #[test]
 fn the_families_input_exercises_every_rule_and_matches_the_golden() {
     let root =
-        mjutest_devkit::paths::workspace_root().join("crates/rust-mutants/tests/testdata/syntax");
+        njutest_devkit::paths::workspace_root().join("crates/rust-mutants/tests/testdata/syntax");
     let src = std::fs::read_to_string(root.join("families.input")).expect("input");
     let d = discover(&src);
     assert_coherent(&src, &d);
@@ -513,13 +513,13 @@ fn the_families_input_exercises_every_rule_and_matches_the_golden() {
     }
     let mut text = lines.join("\n");
     text.push('\n');
-    mjutest_devkit::golden::golden(&root.join("families.golden"), text.as_bytes()).expect("golden");
+    njutest_devkit::golden::golden(&root.join("families.golden"), text.as_bytes()).expect("golden");
 }
 
 #[test]
 fn the_families_input_in_crlf_finds_the_same_candidates_at_the_same_places() {
     let root =
-        mjutest_devkit::paths::workspace_root().join("crates/rust-mutants/tests/testdata/syntax");
+        njutest_devkit::paths::workspace_root().join("crates/rust-mutants/tests/testdata/syntax");
     let src = std::fs::read_to_string(root.join("families.input")).expect("input");
     let with_crlf = rust_mutants::testkit::source::crlf(&src);
     let lf = discover(&src);

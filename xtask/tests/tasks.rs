@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! That the gates a person runs are the gates the pipeline runs, and that the inner loop is the fast half of the suite.
@@ -72,7 +72,7 @@ fn the_inner_loop_starts_no_toolchain_and_the_whole_suite_still_runs_everything(
 fn every_suite_that_starts_a_toolchain_says_so_in_its_name() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
     let mut wrong = Vec::new();
-    for crate_name in ["rust-mutants", "rust-mutants-cli", "mjutest-cli"] {
+    for crate_name in ["rust-mutants", "rust-mutants-cli", "njutest-cli"] {
         let tests = root.join("crates").join(crate_name).join("tests");
         let Ok(entries) = std::fs::read_dir(&tests) else {
             continue;

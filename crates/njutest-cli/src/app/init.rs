@@ -1,0 +1,48 @@
+// SPDX-FileCopyrightText: 2026 njutest contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! `njutest init`: write the annotated configuration skeleton.
+
+use std::io::Write;
+
+use crate::cli::{EXIT_ASSURED, EXIT_ERROR, Environment, Init};
+use crate::config;
+use crate::error;
+
+/// Writes `.njutest.toml` beside the working directory.
+pub fn run(
+    arguments: Init,
+    environment: &Environment,
+    stdout: &mut dyn Write,
+    stderr: &mut dyn Write,
+) -> u8 {
+    let path = environment.working_directory.join(config::FILE_NAME);
+    if path.exists() && !arguments.force {
+        super::diagnose(
+            stderr,
+            &format!(
+                "{}: {} is already there; --force replaces it",
+                error::CONFIG_EXISTS.code,
+                config::FILE_NAME
+            ),
+        );
+        return EXIT_ERROR;
+    }
+    match std::fs::write(&path, config::skeleton()) {
+        Ok(()) => {
+            super::say(stdout, &format!("wrote {}", config::FILE_NAME));
+            EXIT_ASSURED
+        }
+        Err(source) => {
+            super::diagnose(
+                stderr,
+                &format!(
+                    "{}: writing {}: {source}",
+                    error::CONFIG_UNREADABLE.code,
+                    path.display()
+                ),
+            );
+            EXIT_ERROR
+        }
+    }
+}

@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The ledgers the command line's own pages keep, against the code that is the ledger.
@@ -12,7 +12,7 @@
 use std::collections::BTreeSet;
 
 fn page(relative: &str) -> String {
-    let path = mjutest_devkit::paths::workspace_root().join(relative);
+    let path = njutest_devkit::paths::workspace_root().join(relative);
     std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display()))
 }
 
@@ -128,7 +128,7 @@ fn the_engine_ledger_of_this_repository_is_one_the_reader_accepts() {
         vec![
             "rust-mutants".to_owned(),
             "rust-mutants-cli".to_owned(),
-            "mjutest-cli".to_owned(),
+            "njutest-cli".to_owned(),
             "xtask".to_owned(),
         ],
         "the ledger measures every package of this workspace: the engine, the command line it \
@@ -205,7 +205,7 @@ fn the_exit_codes_the_page_documents_are_the_ones_the_run_returns() {
 
 #[test]
 fn every_schema_the_engine_ships_is_named_on_the_page_that_documents_them() {
-    let directory = mjutest_devkit::paths::workspace_root().join("schema");
+    let directory = njutest_devkit::paths::workspace_root().join("schema");
     let text = page("docs/engine/json-schema.md");
     let mut shipped = BTreeSet::new();
     let entries = std::fs::read_dir(&directory)
@@ -257,7 +257,7 @@ fn every_schema_the_engine_ships_is_named_on_the_page_that_documents_them() {
 #[test]
 fn every_reason_a_mutant_did_not_run_is_one_the_schema_and_the_pages_name() {
     let schema = std::fs::read_to_string(
-        mjutest_devkit::paths::workspace_root().join("schema/rust-mutants-run-report-v1.json"),
+        njutest_devkit::paths::workspace_root().join("schema/rust-mutants-run-report-v1.json"),
     )
     .unwrap_or_else(|error| panic!("the run report schema: {error}"));
     let started = page("docs/engine/getting-started.md");
@@ -282,7 +282,7 @@ fn every_reason_a_mutant_did_not_run_is_one_the_schema_and_the_pages_name() {
 #[test]
 fn the_url_a_sarif_result_sends_a_reader_to_is_this_project() {
     let manifest = std::fs::read_to_string(
-        mjutest_devkit::paths::workspace_root().join("crates/rust-mutants-cli/Cargo.toml"),
+        njutest_devkit::paths::workspace_root().join("crates/rust-mutants-cli/Cargo.toml"),
     )
     .unwrap_or_else(|error| panic!("the manifest: {error}"));
     assert!(
@@ -290,7 +290,7 @@ fn the_url_a_sarif_result_sends_a_reader_to_is_this_project() {
         "the crate takes its repository from somewhere: {manifest}"
     );
     let workspace =
-        std::fs::read_to_string(mjutest_devkit::paths::workspace_root().join("Cargo.toml"))
+        std::fs::read_to_string(njutest_devkit::paths::workspace_root().join("Cargo.toml"))
             .unwrap_or_else(|error| panic!("the workspace manifest: {error}"));
     assert!(
         workspace.contains(rust_mutants_cli::report::sarif::INFORMATION),
@@ -301,7 +301,7 @@ fn the_url_a_sarif_result_sends_a_reader_to_is_this_project() {
 
 #[test]
 fn every_schema_this_workspace_ships_is_one_a_test_holds_a_real_document_to() {
-    let root = mjutest_devkit::paths::workspace_root();
+    let root = njutest_devkit::paths::workspace_root();
     let entries =
         std::fs::read_dir(root.join("schema")).unwrap_or_else(|error| panic!("schema: {error}"));
     let shipped: BTreeSet<String> = entries
@@ -316,7 +316,7 @@ fn every_schema_this_workspace_ships_is_one_a_test_holds_a_real_document_to() {
     assert!(!shipped.is_empty(), "this workspace ships schemas");
 
     let mut suites = Vec::new();
-    for crate_name in ["mjutest-cli", "rust-mutants-cli", "rust-mutants", "mjutest"] {
+    for crate_name in ["njutest-cli", "rust-mutants-cli", "rust-mutants", "njutest"] {
         let directory = root.join("crates").join(crate_name).join("tests");
         let Ok(entries) = std::fs::read_dir(&directory) else {
             continue;
@@ -361,9 +361,9 @@ fn every_finding_kind_a_report_can_carry_is_one_a_test_names() {
 
 /// Every test of this workspace, as one text.
 fn suites() -> String {
-    let root = mjutest_devkit::paths::workspace_root();
+    let root = njutest_devkit::paths::workspace_root();
     let mut read = String::new();
-    for crate_name in ["mjutest-cli", "rust-mutants-cli", "rust-mutants", "mjutest"] {
+    for crate_name in ["njutest-cli", "rust-mutants-cli", "rust-mutants", "njutest"] {
         let directory = root.join("crates").join(crate_name).join("tests");
         let Ok(entries) = std::fs::read_dir(&directory) else {
             continue;

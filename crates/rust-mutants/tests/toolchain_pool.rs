@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Measuring several mutants at once establishes the same thing as measuring them one at a time.
@@ -8,7 +8,7 @@
     reason = "a test reports a setup failure by panicking and asserts with panics"
 )]
 
-use mjutest_devkit::fixture::Fixture;
+use njutest_devkit::fixture::Fixture;
 use rust_mutants::outcome::Outcome;
 use rust_mutants::rule::Tier;
 use rust_mutants::run::{Judged, NotRunReason, Observer, Options, Quiet, Run, run};
@@ -25,7 +25,7 @@ fn prepared(fixture: &Fixture) -> Session {
 fn prepared_within(fixture: &Fixture, timeout: Timeout) -> Session {
     let workspace = Workspace::open(
         fixture.root(),
-        opening(&mjutest_devkit::paths::cargo_binary(), fixture.temp()),
+        opening(&njutest_devkit::paths::cargo_binary(), fixture.temp()),
         &Cancel::new(),
     )
     .expect("open");
@@ -231,7 +231,7 @@ fn every_judged_mutant_leaves_one_route_record_from_the_engine() {
         fixture.root(),
         OpenOptions {
             trace: recorder.clone(),
-            ..opening(&mjutest_devkit::paths::cargo_binary(), fixture.temp())
+            ..opening(&njutest_devkit::paths::cargo_binary(), fixture.temp())
         },
         &Cancel::new(),
     )
@@ -284,7 +284,7 @@ fn the_equivalence_layer_asks_only_about_survivors_and_writes_identical_never_eq
         root: fixture.root(),
         options: rust_mutants::equivalence::ProveOptions {
             build: rust_mutants::cargo::BuildConfig::default(),
-            open: opening(&mjutest_devkit::paths::cargo_binary(), fixture.temp()),
+            open: opening(&njutest_devkit::paths::cargo_binary(), fixture.temp()),
             timeout: None,
         },
     };

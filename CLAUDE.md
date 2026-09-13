@@ -1,8 +1,8 @@
 # Working in this repository
 
-mjutest is two products in one workspace: `rust-mutants` (a mutation testing
-engine, `crates/rust-mutants`) and `mjutest` (an assurance runner on top of
-it, `crates/mjutest-cli`). Read `docs/architecture.md` first, then
+njutest is two products in one workspace: `rust-mutants` (a mutation testing
+engine, `crates/rust-mutants`) and `njutest` (an assurance runner on top of
+it, `crates/njutest-cli`). Read `docs/architecture.md` first, then
 `docs/adr/0004-proof-layers-not-budgets.md` and `docs/adr/0001-seam-policy.md`;
 they explain most of what looks unusual here.
 
@@ -70,5 +70,5 @@ cargo xtask report-diff A B   # what changed between two stored reports
 | Plan and milestones | the approved plan lives outside the repository; `docs/architecture.md` states the current shape |
 | Contracts | `docs/assurance-contract.md`, `docs/report-v1.md`, `docs/trace-v1.md`, `docs/engine/` |
 | Decisions | `docs/adr/` |
-| Developer tooling | `docs/development.md`, `xtask/`, `crates/mjutest-devkit/`, `scripts/doctor.sh` |
+| Developer tooling | `docs/development.md`, `xtask/`, `crates/njutest-devkit/`, `scripts/doctor.sh` |
 | Error codes | `docs/errors.md` |

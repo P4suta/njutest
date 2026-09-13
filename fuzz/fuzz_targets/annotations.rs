@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! A `rust-mutants: skip` marker is read out of the gaps between tokens, wherever an author puts one and whatever else the file holds. Reading them never panics, every marker the reader keeps names a reason, and a file whose markers hide nothing yields the candidates it would have without them.

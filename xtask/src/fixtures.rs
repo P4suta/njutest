@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Conventions of the fixture projects under `fixtures/`.
@@ -18,7 +18,7 @@ pub const RULE: &str = "A fixture is an independent cargo project: its Cargo.tom
 pub const FATES_FENCE: &str = "```fates";
 
 const SPDX_HEADER: [&str; 2] = [
-    "SPDX-FileCopyrightText: 2026 mjutest contributors",
+    "SPDX-FileCopyrightText: 2026 njutest contributors",
     "SPDX-License-Identifier: MIT OR Apache-2.0",
 ];
 

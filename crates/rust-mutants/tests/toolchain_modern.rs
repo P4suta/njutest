@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The shapes a crate written today is made of, and what the engine can say about each.
@@ -8,7 +8,7 @@
     reason = "a test reports a setup failure by panicking and asserts with panics"
 )]
 
-use mjutest_devkit::fixture::{Fixture, stated_fates};
+use njutest_devkit::fixture::{Fixture, stated_fates};
 use rust_mutants::rule::Tier;
 use rust_mutants::runner::Cancel;
 use rust_mutants::session::{PrepareOptions, Session};
@@ -19,7 +19,7 @@ use rust_mutants::workspace::Workspace;
 fn prepared(fixture: &Fixture) -> Session {
     let workspace = Workspace::open(
         fixture.root(),
-        opening(&mjutest_devkit::paths::cargo_binary(), fixture.temp()),
+        opening(&njutest_devkit::paths::cargo_binary(), fixture.temp()),
         &Cancel::new(),
     )
     .expect("open");

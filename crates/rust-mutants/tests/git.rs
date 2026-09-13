@@ -1,11 +1,11 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What git is asked, and what it is never allowed to say by silence.
 
 use std::ffi::OsString;
 
-use mjutest_devkit::repo::Repo;
+use njutest_devkit::repo::Repo;
 use rust_mutants::git::{Asking, Change, DEFAULT_BASE, Facts, changed, facts};
 use rust_mutants::runner::{Cancel, Watched};
 use rust_mutants::trace::Recorder;

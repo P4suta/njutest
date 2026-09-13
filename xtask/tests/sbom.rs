@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What a release is made of: what the document says, and what it leaves out.
@@ -16,20 +16,20 @@ const METADATA: &str = r#"{
 
 #[test]
 fn the_document_says_what_it_is_and_what_it_is_about() {
-    let bom = of(METADATA, ("mjutest", "0.1.0")).expect("a bill of materials");
+    let bom = of(METADATA, ("njutest", "0.1.0")).expect("a bill of materials");
     assert_eq!(bom.format, BOM_FORMAT);
     assert_eq!(bom.spec_version, SPEC_VERSION);
     assert_eq!(bom.version, 1);
-    assert_eq!(bom.metadata.component.name, "mjutest");
+    assert_eq!(bom.metadata.component.name, "njutest");
     assert_eq!(bom.metadata.component.version, "0.1.0");
-    assert_eq!(bom.metadata.component.purl, "pkg:cargo/mjutest@0.1.0");
+    assert_eq!(bom.metadata.component.purl, "pkg:cargo/njutest@0.1.0");
     assert_eq!(bom.metadata.component.kind, "application");
     assert_eq!(bom.metadata.tools.len(), 1);
 }
 
 #[test]
 fn a_workspace_member_is_what_is_released_rather_than_what_it_is_made_of() {
-    let bom = of(METADATA, ("mjutest", "0.1.0")).expect("a bill of materials");
+    let bom = of(METADATA, ("njutest", "0.1.0")).expect("a bill of materials");
     let names: Vec<&str> = bom
         .components
         .iter()
@@ -40,7 +40,7 @@ fn a_workspace_member_is_what_is_released_rather_than_what_it_is_made_of() {
 
 #[test]
 fn every_component_carries_an_identity_another_tool_can_look_up() {
-    let bom = of(METADATA, ("mjutest", "0.1.0")).expect("a bill of materials");
+    let bom = of(METADATA, ("njutest", "0.1.0")).expect("a bill of materials");
     for component in &bom.components {
         assert_eq!(
             component.purl,
@@ -52,7 +52,7 @@ fn every_component_carries_an_identity_another_tool_can_look_up() {
 
 #[test]
 fn a_package_that_names_no_licence_is_listed_without_one_rather_than_with_a_guess() {
-    let bom = of(METADATA, ("mjutest", "0.1.0")).expect("a bill of materials");
+    let bom = of(METADATA, ("njutest", "0.1.0")).expect("a bill of materials");
     let serde = bom
         .components
         .iter()
@@ -72,6 +72,6 @@ fn a_package_that_names_no_licence_is_listed_without_one_rather_than_with_a_gues
 
 #[test]
 fn metadata_that_is_not_metadata_is_refused() {
-    of("not json", ("mjutest", "0.1.0")).expect_err("not metadata");
-    of("{}", ("mjutest", "0.1.0")).expect_err("metadata without packages");
+    of("not json", ("njutest", "0.1.0")).expect_err("not metadata");
+    of("{}", ("njutest", "0.1.0")).expect_err("metadata without packages");
 }

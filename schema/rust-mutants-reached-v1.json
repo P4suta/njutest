@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://mjutest.dev/schema/rust-mutants-reached-v1.json",
+  "$id": "https://njutest.dev/schema/rust-mutants-reached-v1.json",
   "title": "rust-mutants reached v1",
   "description": "The measurement a coverage run kept: which blocks each target's own run covered, which blocks the coverage build instrumented at all, and what the measurement could not establish. A place outside `instrumented` is a place nothing may be concluded about.",
   "type": "object",

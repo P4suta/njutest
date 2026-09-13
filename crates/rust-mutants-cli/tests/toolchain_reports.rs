@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What a stored run becomes for the readers a team already has: a CI test report, a code-scanning document, a page, and a paragraph in a pull request.
@@ -13,7 +13,7 @@ use std::ffi::OsString;
 use std::path::Path;
 use std::process::Output;
 
-use mjutest_devkit::fixture::Fixture;
+use njutest_devkit::fixture::Fixture;
 use rust_mutants::runner::Cancel;
 use rust_mutants_cli::{Environment, Streams};
 
@@ -32,12 +32,12 @@ fn against(fixture: &Fixture, args: &[&str]) -> Output {
             err: &mut err,
         },
     );
-    mjutest_devkit::process::answered(code, out, err)
+    njutest_devkit::process::answered(code, out, err)
 }
 
 fn environment(fixture: &Fixture) -> Environment {
     Environment {
-        vars: mjutest_devkit::paths::environment_for_a_run(),
+        vars: njutest_devkit::paths::environment_for_a_run(),
         temp_directory: fixture.temp().to_path_buf(),
         cache_directory: fixture.cache().to_path_buf(),
         working_directory: fixture.root().to_path_buf(),
@@ -147,7 +147,7 @@ fn golden(name: &str, text: &str) {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/testdata")
         .join(name);
-    mjutest_devkit::golden::golden(&path, text.as_bytes()).expect("the recorded projection");
+    njutest_devkit::golden::golden(&path, text.as_bytes()).expect("the recorded projection");
 }
 
 #[test]
@@ -320,7 +320,7 @@ fn a_page_shows_a_file_that_changed_since_the_run_as_changed_rather_than_as_sour
     let fixture = measured();
     std::fs::write(
         fixture.root().join("src/lib.rs"),
-        "// SPDX-FileCopyrightText: 2026 mjutest contributors\n\
+        "// SPDX-FileCopyrightText: 2026 njutest contributors\n\
          // SPDX-License-Identifier: MIT OR Apache-2.0\n\npub fn nothing() {}\n",
     )
     .expect("the source changes");

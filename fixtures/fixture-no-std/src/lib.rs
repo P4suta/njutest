@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! A `#![no_std]` library whose tests run on the host, so the runtime module borrows `std` under a name of its own and the crate is measured like any other.

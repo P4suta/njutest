@@ -1,14 +1,14 @@
 <!--
-SPDX-FileCopyrightText: 2026 mjutest contributors
+SPDX-FileCopyrightText: 2026 njutest contributors
 SPDX-License-Identifier: MIT OR Apache-2.0
 -->
 
 # Assurance report v1
 
-**Status: implemented** (`mjutest_cli::report`) — the model, its audit, and
+**Status: implemented** (`njutest_cli::report`) — the model, its audit, and
 all five projections.
 
-The first public report contract is `mjutest-assurance-report-v1`. The
+The first public report contract is `njutest-assurance-report-v1`. The
 schema value names the toolchain so a reader never confuses it with goatest's
 `assurance-report-v1`, whose shape it shares.
 
@@ -19,14 +19,14 @@ exists:
 
 ```text
 reports/runs/<run-id>/
-  mjutest-assurance-report-v1.json
-  mjutest-assurance-report-v1.html
-  mjutest-assurance-report-v1.sarif
-  mjutest-assurance-report-v1.junit.xml
-  mjutest-assurance-report-v1.schema.json
+  njutest-assurance-report-v1.json
+  njutest-assurance-report-v1.html
+  njutest-assurance-report-v1.sarif
+  njutest-assurance-report-v1.junit.xml
+  njutest-assurance-report-v1.schema.json
 ```
 
-`reports/latest-any.json` and `.mjutest/latest-any.json` track the latest
+`reports/latest-any.json` and `.njutest/latest-any.json` track the latest
 completed run of any scope. `latest-full.json` exists in both locations and
 advances only when `run_kind` is `full`. The history is bounded by
 `[reports] keep`, twenty by default, plus the runs the `latest-*` indexes
@@ -41,7 +41,7 @@ A durable report must include:
 - repository package inventory and explicit Git availability, commit, dirty
   state, merge base, and changed files;
 - an effective configuration SHA-256;
-- `rustc -vV` (version, commit hash, host), the cargo version, the mjutest and
+- `rustc -vV` (version, commit hash, host), the cargo version, the njutest and
   rust-mutants versions, OS, architecture, and target triple;
 - RFC3339 start/finish times and duration;
 - cache-derived state and source run ID when applicable;
@@ -56,7 +56,7 @@ If Git is unavailable, the report uses the explicit `available=false` state
 and `unavailable` sentinels together with `git-metadata-unavailable`; an empty
 value is invalid.
 
-The JSON Schema is published at `schema/mjutest-assurance-report-v1.json`
+The JSON Schema is published at `schema/njutest-assurance-report-v1.json`
 and copied into each run directory. Every object is closed with
 `additionalProperties: false` and requires everything it declares, which is
 what holds it to the model in both directions: a field the model gained and
@@ -108,7 +108,7 @@ kind, the binary's name, and — for the shape a later release may take — the
 libtest path within it. The binary is part of it because two integration tests
 of one package can each hold a test called `works`, and an identity that left
 the binary out made those two rows one. The domain separator carries the
-recipe, so a recipe that changes says so: it reads `mjutest-target-v2`.
+recipe, so a recipe that changes says so: it reads `njutest-target-v2`.
 
 A target's `duration_ms` is the cost of running every test it holds, once,
 with nothing active. It is not divisible by the number of tests: a target that
@@ -167,7 +167,7 @@ made.
 
 ## Parts of one catalog
 
-`mjutest verify --shard K/N` judges one part of the catalog and measures the
+`njutest verify --shard K/N` judges one part of the catalog and measures the
 whole baseline, because a mutation cannot be judged against tests that were
 not run. The engine's rule decides which part holds which mutant — the dense
 catalog index modulo N, counting K from one — so two runs of the same tree
@@ -181,7 +181,7 @@ its own: the mutations it did not judge are not mutations nothing noticed, they
 are mutations nobody put to a test. A finding in a part is still a finding, so
 a part that found a defect says `DEFECT`.
 
-`mjutest merge <REPORT>...` writes the report the whole would have written. It
+`njutest merge <REPORT>...` writes the report the whole would have written. It
 passes one already unsharded report through, or requires exactly one report for
 every label `1/N` through `N/N`. It refuses a missing, repeated, malformed,
 mixed unsharded, or differently divided part. It also
@@ -208,6 +208,6 @@ stored answer and a whole never reads back a part's.
 | 130 | interrupted |
 | 143 | terminated |
 
-`mjutest --help` prints this table, and it prints it from the verdicts
+`njutest --help` prints this table, and it prints it from the verdicts
 themselves rather than from a copy: a run that has no verdict for a code has
 no line for it. This page is held to what that prints.

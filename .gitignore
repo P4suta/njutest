@@ -1,7 +1,7 @@
 /target/
 /docs/book/
 /dist/
-/.mjutest/
+/.njutest/
 /reports/
 /fuzz/target/
 fixtures/*/target/

@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What two real builds render, compared byte for byte.
@@ -8,7 +8,7 @@
     reason = "a test reports a setup failure by panicking"
 )]
 
-use mjutest_devkit::fixture::Fixture;
+use njutest_devkit::fixture::Fixture;
 use rust_mutants::catalog::Candidate;
 use rust_mutants::equivalence::artifacts::Identity;
 use rust_mutants::equivalence::{ProveOptions, Prover};
@@ -24,7 +24,7 @@ fn prover(fixture: &Fixture, cancel: &Cancel) -> Prover {
         fixture.root(),
         &ProveOptions {
             open: OpenOptions {
-                cargo: Some(mjutest_devkit::paths::cargo_binary()),
+                cargo: Some(njutest_devkit::paths::cargo_binary()),
                 env: std::env::vars_os().collect(),
                 temp_directory: fixture.temp().to_path_buf(),
                 locked: true,
@@ -85,7 +85,7 @@ fn a_mutation_whose_tree_does_not_build_is_not_established_for_that_reason() {
     let mut prover = Prover::open(
         fixture.root(),
         &ProveOptions {
-            open: opening(&mjutest_devkit::paths::cargo_binary(), fixture.temp()),
+            open: opening(&njutest_devkit::paths::cargo_binary(), fixture.temp()),
             ..ProveOptions::default()
         },
         &cancel,

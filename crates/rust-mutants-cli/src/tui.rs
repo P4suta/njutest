@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Reading a stored run at a terminal: the outcomes on the left, and on the right whichever of the mutant, its source, the findings, or the keys the reader asked for.

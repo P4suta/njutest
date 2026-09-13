@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://mjutest.dev/schema/rust-mutants-doctor-v1.json",
+  "$id": "https://njutest.dev/schema/rust-mutants-doctor-v1.json",
   "title": "rust-mutants doctor v1",
   "description": "What a run would find in this environment: one check per thing a run needs, each with how it stands and what to do about it.",
   "type": "object",

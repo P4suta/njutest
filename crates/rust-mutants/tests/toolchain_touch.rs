@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The guards as the measurement: what a prepared session knows about which test reached which mutant, and how it knows it.
@@ -9,7 +9,7 @@
     reason = "a test reports a setup failure by panicking and asserts with panics"
 )]
 
-use mjutest_devkit::fixture::Fixture;
+use njutest_devkit::fixture::Fixture;
 use rust_mutants::rule::Tier;
 use rust_mutants::runner::Cancel;
 use rust_mutants::session::{PrepareOptions, Session};
@@ -22,7 +22,7 @@ const LIBRARY: &str = "fixture-coverage/lib/fixture_coverage";
 fn prepared(fixture: &Fixture) -> Session {
     Workspace::open(
         fixture.root(),
-        opening(&mjutest_devkit::paths::cargo_binary(), fixture.temp()),
+        opening(&njutest_devkit::paths::cargo_binary(), fixture.temp()),
         &Cancel::new(),
     )
     .expect("open")
@@ -191,7 +191,7 @@ fn recorded(fixture: &Fixture) -> (Session, rust_mutants::trace::Recorder) {
         fixture.root(),
         OpenOptions {
             trace: trace.clone(),
-            ..opening(&mjutest_devkit::paths::cargo_binary(), fixture.temp())
+            ..opening(&njutest_devkit::paths::cargo_binary(), fixture.temp())
         },
         &Cancel::new(),
     )
@@ -285,7 +285,7 @@ fn a_process_that_cannot_record_costs_its_target_the_measurement_and_not_the_run
         fixture.root(),
         OpenOptions {
             trace: trace.clone(),
-            ..opening(&mjutest_devkit::paths::cargo_binary(), fixture.temp())
+            ..opening(&njutest_devkit::paths::cargo_binary(), fixture.temp())
         },
         &Cancel::new(),
     )

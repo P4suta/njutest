@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The `cargo-rust-mutants` binary: the same program under the name cargo looks for, so `cargo rust-mutants` is `rust-mutants`.

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://mjutest.dev/schema/rust-mutants-run-stream-v1.json",
+  "$id": "https://njutest.dev/schema/rust-mutants-run-stream-v1.json",
   "title": "rust-mutants run stream v1",
   "description": "One JSON object per line, written as a run happens. A reader takes a line at a time and ignores a type it does not know.",
   "oneOf": [

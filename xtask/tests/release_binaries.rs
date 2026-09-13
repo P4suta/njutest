@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The binaries the workspace declares, against the three places that decide what a person can install.
@@ -32,7 +32,7 @@ fn read(relative: &str) -> String {
 /// Every crate of the workspace that declares one, and the binaries it declares.
 fn declared() -> Vec<(String, BTreeSet<String>)> {
     let mut found = Vec::new();
-    for member in ["crates/mjutest-cli", "crates/rust-mutants-cli"] {
+    for member in ["crates/njutest-cli", "crates/rust-mutants-cli"] {
         let manifest = read(&format!("{member}/Cargo.toml"));
         let names: BTreeSet<String> = manifest
             .split("[[bin]]")
@@ -123,11 +123,11 @@ fn what_binstall_looks_in_is_the_archive_the_release_builds() {
     let archive = {
         let workflow = read(".github/workflows/release.yml");
         let at = workflow
-            .find("name=\"mjutest-${VERSION}-${TARGET}\"")
-            .map(|_found| "mjutest-{ version }-{ target }");
+            .find("name=\"njutest-${VERSION}-${TARGET}\"")
+            .map(|_found| "njutest-{ version }-{ target }");
         at.unwrap_or_else(|| panic!("release.yml no longer names the archive it builds"))
     };
-    for member in ["crates/mjutest-cli", "crates/rust-mutants-cli"] {
+    for member in ["crates/njutest-cli", "crates/rust-mutants-cli"] {
         let manifest = read(&format!("{member}/Cargo.toml"));
         let stanza = manifest
             .split("[package.metadata.binstall]")
@@ -159,9 +159,9 @@ fn what_binstall_looks_in_is_the_archive_the_release_builds() {
 fn every_benchmark_the_workspace_declares_is_one_the_task_runs() {
     let mut declared: BTreeSet<(String, String)> = BTreeSet::new();
     for member in [
-        "crates/mjutest-cli",
+        "crates/njutest-cli",
         "crates/rust-mutants",
-        "crates/mjutest",
+        "crates/njutest",
     ] {
         let manifest = read(&format!("{member}/Cargo.toml"));
         let package = member

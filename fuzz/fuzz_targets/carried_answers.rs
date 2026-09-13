@@ -1,9 +1,9 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What one machine hands another.
 //!
-//! `mjutest cache --import` reads a stream nobody in this repository wrote: it
+//! `njutest cache --import` reads a stream nobody in this repository wrote: it
 //! arrives over a network, out of a CI cache, from a machine on a different
 //! release. A reader of that has one job — refuse everything that is not an
 //! answer this machine may keep — and it must do it without panicking, because
@@ -16,7 +16,7 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 use libfuzzer_sys::fuzz_target;
-use mjutest_cli::cache::store::Store;
+use njutest_cli::cache::store::Store;
 
 /// One store for the whole process: a directory made per iteration would fuzz the operating system.
 fn store() -> &'static Store {

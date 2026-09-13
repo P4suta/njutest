@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2026 mjutest contributors
+# SPDX-FileCopyrightText: 2026 njutest contributors
 # SPDX-License-Identifier: MIT OR Apache-2.0
 name: release
 
@@ -42,13 +42,13 @@ jobs:
         run: |
           cargo xtask release-check
           version="$(cargo metadata --format-version 1 --no-deps --locked \
-            | jq --raw-output '.packages[] | select(.name == "mjutest-cli") | .version')"
+            | jq --raw-output '.packages[] | select(.name == "njutest-cli") | .version')"
           if [ "v${version}" != "${TAG}" ]; then
             echo "the tag ${TAG} does not name version ${version}" >&2
             exit 1
           fi
           cargo build --locked --release --workspace
-          for binary in mjutest cargo-mjutest rust-mutants cargo-rust-mutants; do
+          for binary in njutest cargo-njutest rust-mutants cargo-rust-mutants; do
             said="$("target/release/${binary}" --version)"
             case "${said}" in
               *"${version}"*) ;;
@@ -87,9 +87,9 @@ jobs:
           VERSION: ${{ needs.check.outputs.version }}
         run: |
           set -euo pipefail
-          name="mjutest-${VERSION}-${TARGET}"
+          name="njutest-${VERSION}-${TARGET}"
           mkdir -p "dist/${name}"
-          for binary in mjutest cargo-mjutest rust-mutants cargo-rust-mutants; do
+          for binary in njutest cargo-njutest rust-mutants cargo-rust-mutants; do
             if [ -f "target/release/${binary}.exe" ]; then
               cp "target/release/${binary}.exe" "dist/${name}/"
             else
@@ -119,7 +119,7 @@ jobs:
       - name: Write what the release is made of
         run: |
           mkdir -p dist
-          cargo xtask sbom --output "dist/mjutest-${{ needs.check.outputs.version }}.cdx.json"
+          cargo xtask sbom --output "dist/njutest-${{ needs.check.outputs.version }}.cdx.json"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: dist-sbom

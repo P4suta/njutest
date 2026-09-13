@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Three candidates the compiler refuses, and several it accepts. Which is which is a fact about the program, established by compiling it: nothing in the engine decides it in advance.

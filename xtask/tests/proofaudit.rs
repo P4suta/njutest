@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The gate that re-decides a recorded run without asking the runner whether it agrees with itself.
@@ -18,11 +18,11 @@ const EARLIER: &str = "20260905T090000Z-1a2b3c";
 const KILLED: &str = "aaaaaaaaaaaaaaaaaaaa";
 const SURVIVED: &str = "bbbbbbbbbbbbbbbbbbbb";
 const TARGET: &str = "pkg/test/lib";
-const REPORT: &str = "mjutest-assurance-report-v1.json";
+const REPORT: &str = "njutest-assurance-report-v1.json";
 
 fn base() -> serde_json::Value {
     serde_json::json!({
-        "schema": "mjutest-assurance-report-v1",
+        "schema": "njutest-assurance-report-v1",
         "schema_version": 1,
         "run_id": RUN,
         "run_kind": "scoped",
@@ -566,7 +566,7 @@ fn a_report_that_is_not_json_cannot_be_audited() {
 
 #[test]
 fn a_document_of_another_schema_cannot_be_audited() {
-    let document = with(serde_json::json!({ "schema": "mjutest-trace-v1" }));
+    let document = with(serde_json::json!({ "schema": "njutest-trace-v1" }));
     let directory = run_directory(&document);
     let error = gates::proofaudit(directory.path(), None).expect_err("nothing to re-decide");
     assert!(matches!(error, AuditError::Unrecognised { .. }), "{error}");

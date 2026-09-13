@@ -1,7 +1,7 @@
 # Fixture projects
 
 Each directory here is an independent cargo project the integration suites of
-`rust-mutants` and `mjutest-cli` drive with a real `cargo`. The conventions,
+`rust-mutants` and `njutest-cli` drive with a real `cargo`. The conventions,
 enforced by `cargo xtask fixtures`:
 
 - `Cargo.toml` carries an empty `[workspace]` table, so cargo never looks

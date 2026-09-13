@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The proof that instrumentation is honest: a real workspace, instrumented and built by a real cargo, behaves exactly as it did until a mutant is activated, and then behaves as that one edit says.
@@ -15,7 +15,7 @@ use std::collections::BTreeSet;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-use mjutest_devkit::fixture::copy_tree;
+use njutest_devkit::fixture::copy_tree;
 use rust_mutants::cargo::{
     CompileKind, CompileOptions, Driver, LocateOptions, Message, Metadata, MetadataOptions,
     Toolchain, compile,
@@ -44,7 +44,7 @@ struct Tree {
 fn toolchain(dir: &Path, cancel: &Cancel) -> Toolchain {
     Toolchain::locate(
         &LocateOptions {
-            cargo: Some(mjutest_devkit::paths::cargo_binary()),
+            cargo: Some(njutest_devkit::paths::cargo_binary()),
             ..LocateOptions::default()
         },
         dir,
@@ -60,7 +60,7 @@ fn prepare(fixture: &str) -> Tree {
         .tempdir()
         .expect("tempdir");
     let root = dir.path().join(fixture);
-    copy_tree(&mjutest_devkit::paths::fixtures_dir().join(fixture), &root);
+    copy_tree(&njutest_devkit::paths::fixtures_dir().join(fixture), &root);
     let target = tempfile::Builder::new()
         .prefix("rust-mutants-tree-target-")
         .tempdir()

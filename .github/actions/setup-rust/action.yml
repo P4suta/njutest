@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2026 mjutest contributors
+# SPDX-FileCopyrightText: 2026 njutest contributors
 # SPDX-License-Identifier: MIT OR Apache-2.0
 name: setup-rust
 description: Pinned Rust toolchain (from rust-toolchain.toml) + mold + cargo cache (+ optional tools), shared by every CI job.

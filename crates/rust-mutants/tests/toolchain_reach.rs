@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Coverage routing: a mutant is only ever run against a target that reached it.
@@ -11,7 +11,7 @@
 
 use std::path::Path;
 
-use mjutest_devkit::fixture::Fixture;
+use njutest_devkit::fixture::Fixture;
 use rust_mutants::outcome::Outcome;
 use rust_mutants::rule::Tier;
 use rust_mutants::runner::Cancel;
@@ -35,7 +35,7 @@ fn prepared(fixture: &Fixture, coverage: bool) -> Session {
 fn measuring(fixture: &Fixture, measuring: Measuring) -> Session {
     let workspace = Workspace::open(
         fixture.root(),
-        opening(&mjutest_devkit::paths::cargo_binary(), fixture.temp()),
+        opening(&njutest_devkit::paths::cargo_binary(), fixture.temp()),
         &Cancel::new(),
     )
     .expect("open");
@@ -201,7 +201,7 @@ fn a_configuration_nobody_can_parse_is_cargos_own_refusal_and_names_the_file() {
     fixture.write(".cargo/config.toml", b"[build\nrustflags = ]\n");
     let opened = Workspace::open(
         fixture.root(),
-        opening(&mjutest_devkit::paths::cargo_binary(), fixture.temp()),
+        opening(&njutest_devkit::paths::cargo_binary(), fixture.temp()),
         &Cancel::new(),
     );
     let error = opened.expect_err("a refusal");

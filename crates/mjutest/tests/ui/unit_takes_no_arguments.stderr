@@ -1,5 +1,0 @@
-error: mjutest::unit takes no arguments
- --> tests/ui/unit_takes_no_arguments.rs:1:17
-  |
-1 | #[mjutest::unit("postgres")]
-  |                 ^^^^^^^^^^

@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What the dogfood tasks must and must not do.
@@ -53,7 +53,7 @@ fn dogfood_runs_the_built_binary_and_never_cargo_run() {
 #[test]
 fn dogfood_verifies_rather_than_merely_building() {
     let body = task("dogfood");
-    assert!(body.contains("mjutest verify"), "{body}");
+    assert!(body.contains("njutest verify"), "{body}");
     assert!(
         body.contains("--ui=plain"),
         "the output is for a person reading a terminal: {body}"
@@ -94,7 +94,7 @@ fn the_engine_ledger_names_what_it_measures_and_asks_for_every_proof_layer() {
         .join("\n");
     assert!(
         ledger.contains(
-            "packages = [\"rust-mutants\", \"rust-mutants-cli\", \"mjutest-cli\", \"xtask\"]"
+            "packages = [\"rust-mutants\", \"rust-mutants-cli\", \"njutest-cli\", \"xtask\"]"
         ),
         "{ledger}"
     );

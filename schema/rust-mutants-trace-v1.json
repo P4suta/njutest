@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/P4suta/mjutest/schema/rust-mutants-trace-v1.json",
+  "$id": "https://github.com/P4suta/njutest/schema/rust-mutants-trace-v1.json",
   "title": "rust-mutants trace v1",
   "description": "One line of a recording: an envelope of sequence number and moment around a typed record. A trace is diagnostic exhaust and never evidence (ADR 0002); what it is for is telling a reader why a run behaved as it did.",
   "oneOf": [

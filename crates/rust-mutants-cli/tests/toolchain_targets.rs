@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The target kinds a run has to tell apart, and the path it has to carry.
@@ -12,7 +12,7 @@
 
 use std::ffi::OsString;
 
-use mjutest_devkit::fixture::Fixture;
+use njutest_devkit::fixture::Fixture;
 use rust_mutants::runner::Cancel;
 use rust_mutants_cli::{Environment, Streams};
 
@@ -32,13 +32,13 @@ fn report(fixture: &Fixture) -> serde_json::Value {
             err: &mut err,
         },
     );
-    let output = mjutest_devkit::process::answered(code, out, err);
+    let output = njutest_devkit::process::answered(code, out, err);
     assert!(
         output.status.code().is_some_and(|code| code < 2),
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    serde_json::from_str(&mjutest_devkit::fixture::stored_report(fixture.root()))
+    serde_json::from_str(&njutest_devkit::fixture::stored_report(fixture.root()))
         .expect("the report is a document")
 }
 
@@ -110,7 +110,7 @@ fn a_path_that_is_not_ascii_is_snapshotted_named_and_hashed() {
 
 fn environment(fixture: &Fixture) -> Environment {
     Environment {
-        vars: mjutest_devkit::paths::environment_for_a_run(),
+        vars: njutest_devkit::paths::environment_for_a_run(),
         temp_directory: fixture.temp().to_path_buf(),
         cache_directory: fixture.cache().to_path_buf(),
         working_directory: fixture.root().to_path_buf(),

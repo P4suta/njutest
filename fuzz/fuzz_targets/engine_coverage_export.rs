@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The engine's own coverage reader. Its answer decides which targets a mutation is run against, so a document it misreads narrows a route to targets that never reached the place and reports a mutation as surviving that nothing ran. It never panics, and every region it accepts is one `contains` can answer about: a region that ended before it began describes nothing.

@@ -16,7 +16,7 @@
 - **Every `.rs`, `.toml`, and `.yml` file starts with the SPDX header:**
 
   ```rust
-  // SPDX-FileCopyrightText: 2026 mjutest contributors
+  // SPDX-FileCopyrightText: 2026 njutest contributors
   // SPDX-License-Identifier: MIT OR Apache-2.0
   ```
 
@@ -84,6 +84,6 @@ the review. Compile-error goldens of the attribute macros are rewritten with
 
 ## License
 
-mjutest is dual-licensed under [MIT](LICENSE-MIT) or
+njutest is dual-licensed under [MIT](LICENSE-MIT) or
 [Apache-2.0](LICENSE-APACHE). By contributing you agree that your
 contributions are licensed under the same terms.

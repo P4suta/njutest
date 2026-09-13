@@ -1,6 +1,6 @@
 # cargo-mutants: the external mutation tester CI runs weekly against *this*
 # repository (mutation.yml). It is one of two independent measurements of how
-# strong this suite is; the other is `mise run dogfood`, which runs mjutest and
+# strong this suite is; the other is `mise run dogfood`, which runs njutest and
 # rust-mutants on themselves. A survivor here is a test to write or an
 # acceptance to record with a reason, never something to leave silently.
 

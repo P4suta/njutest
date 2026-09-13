@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What the pages promise, against what the binary prints.
@@ -7,7 +7,7 @@ use std::ffi::OsString;
 use std::path::Path;
 use std::process::Output;
 
-use mjutest_devkit::fixture::Fixture;
+use njutest_devkit::fixture::Fixture;
 use rust_mutants::runner::Cancel;
 use rust_mutants_cli::{Environment, Streams};
 
@@ -30,12 +30,12 @@ fn against(fixture: &Fixture, args: &[&str]) -> Output {
             err: &mut err,
         },
     );
-    mjutest_devkit::process::answered(code, out, err)
+    njutest_devkit::process::answered(code, out, err)
 }
 
 fn environment(fixture: &Fixture) -> Environment {
     Environment {
-        vars: mjutest_devkit::paths::environment_for_a_run(),
+        vars: njutest_devkit::paths::environment_for_a_run(),
         temp_directory: fixture.temp().to_path_buf(),
         cache_directory: fixture.cache().to_path_buf(),
         working_directory: fixture.root().to_path_buf(),
@@ -76,22 +76,22 @@ fn the_readme_sample_session_is_the_one_the_engine_prints() {
         &["run", "--no-coverage", "--jobs", "1", "--ui", "quiet"],
     );
     assert_eq!(ran.status.code(), Some(1), "{ran:?}");
-    let explained = against(&fixture, &["explain", "e5e8"]);
+    let explained = against(&fixture, &["explain", "16b0"]);
     assert_eq!(explained.status.code(), Some(0), "{explained:?}");
 
     let mut session = String::from("$ rust-mutants run\n");
     session.push_str(&steady(&String::from_utf8_lossy(&ran.stdout), &fixture));
-    session.push_str("\n$ rust-mutants explain e5e8\n");
+    session.push_str("\n$ rust-mutants explain 16b0\n");
     session.push_str(&steady(
         &String::from_utf8_lossy(&explained.stdout),
         &fixture,
     ));
 
     let golden = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testdata/readme-session.golden");
-    mjutest_devkit::golden::golden(&golden, session.as_bytes())
+    njutest_devkit::golden::golden(&golden, session.as_bytes())
         .expect("the session is the recorded one");
 
-    let readme = std::fs::read_to_string(mjutest_devkit::paths::workspace_root().join("README.md"))
+    let readme = std::fs::read_to_string(njutest_devkit::paths::workspace_root().join("README.md"))
         .expect("the README");
     assert!(
         readme.contains(session.trim_end()),

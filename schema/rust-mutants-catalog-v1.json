@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/P4suta/mjutest/schema/rust-mutants-catalog-v1.json",
+  "$id": "https://github.com/P4suta/njutest/schema/rust-mutants-catalog-v1.json",
   "title": "rust-mutants catalog v1",
   "description": "Everything one preparation of a workspace established: the mutants the compiler accepted, the candidates it refused with its own words, and the places discovery passed over with their reasons.",
   "type": "object",

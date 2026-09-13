@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/P4suta/mjutest/schema/rust-mutants-run-report-v1.json",
+  "$id": "https://github.com/P4suta/njutest/schema/rust-mutants-run-report-v1.json",
   "title": "rust-mutants run report v1",
   "description": "One completed mutation run: the complete candidate accounting, what was selected and compiler-validated, what the tests noticed, and every claim a reviewer declared in advance. A not_run/unselected row can be deliberately unvalidated. The score is a ratio over the mutants the run decided, never over the ones it could not.",
   "type": "object",

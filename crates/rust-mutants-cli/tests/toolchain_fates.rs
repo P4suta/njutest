@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Every fixture's README against a run of that fixture: what it says a mutation's fate is, and what one is.
@@ -14,7 +14,7 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-use mjutest_devkit::fixture::{Fate, Fixture};
+use njutest_devkit::fixture::{Fate, Fixture};
 use rust_mutants::runner::Cancel;
 use rust_mutants_cli::{Environment, Streams};
 
@@ -23,7 +23,7 @@ const UPDATE: &str = "UPDATE_FATES";
 
 fn fixtures() -> Vec<String> {
     let mut names: Vec<String> =
-        std::fs::read_dir(mjutest_devkit::paths::workspace_root().join("fixtures"))
+        std::fs::read_dir(njutest_devkit::paths::workspace_root().join("fixtures"))
             .expect("the fixtures")
             .flatten()
             .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
@@ -77,7 +77,7 @@ fn recorded(fixture: &Fixture, args: &[String]) -> Vec<Fate> {
             err: &mut err,
         },
     );
-    let output = mjutest_devkit::process::answered(code, out, err);
+    let output = njutest_devkit::process::answered(code, out, err);
     let code = output.status.code();
     let said = String::from_utf8_lossy(&output.stderr);
     let directory = fixture.root().join("reports/mutation");
@@ -152,13 +152,13 @@ fn rows(report: &Path) -> Vec<Fate> {
 
 /// Rewrites the block of one README, keeping everything around it.
 fn rewrite(name: &str, found: &[Fate]) {
-    let path = mjutest_devkit::paths::workspace_root()
+    let path = njutest_devkit::paths::workspace_root()
         .join("fixtures")
         .join(name)
         .join("README.md");
     let text = std::fs::read_to_string(&path).expect("the README");
     let (before, rest) = text
-        .split_once(mjutest_devkit::fixture::FATES_FENCE)
+        .split_once(njutest_devkit::fixture::FATES_FENCE)
         .expect("the block");
     let (fence, rest) = rest.split_once('\n').expect("the fence line");
     let (_old, after) = rest.split_once("```").expect("the end of the block");
@@ -171,7 +171,7 @@ fn rewrite(name: &str, found: &[Fate]) {
         &path,
         format!(
             "{before}{}{fence}\n{block}```{after}",
-            mjutest_devkit::fixture::FATES_FENCE
+            njutest_devkit::fixture::FATES_FENCE
         ),
     )
     .expect("rewriting the README");
@@ -182,7 +182,7 @@ fn every_fixture_readme_fate_is_the_recorded_one() {
     let updating = std::env::var_os(UPDATE).is_some();
     let mut wrong = Vec::new();
     for name in fixtures() {
-        let stated = mjutest_devkit::fixture::stated_fates(&name);
+        let stated = njutest_devkit::fixture::stated_fates(&name);
         assert!(
             stated.stated,
             "{name}: the README states no fates, which `cargo xtask fixtures` refuses"
@@ -213,14 +213,14 @@ fn every_fixture_readme_fate_is_the_recorded_one() {
 
 #[test]
 fn every_fixture_is_driven_by_a_test_that_names_it() {
-    let root = mjutest_devkit::paths::workspace_root();
+    let root = njutest_devkit::paths::workspace_root();
     let mut sources = String::new();
     for crate_name in [
         "rust-mutants",
         "rust-mutants-cli",
-        "mjutest-cli",
-        "mjutest",
-        "mjutest-devkit",
+        "njutest-cli",
+        "njutest",
+        "njutest-devkit",
     ] {
         for directory in ["tests", "src", "benches"] {
             let base = root.join("crates").join(crate_name).join(directory);
@@ -258,7 +258,7 @@ fn walk(base: &Path) -> Vec<PathBuf> {
 
 fn environment(fixture: &Fixture) -> Environment {
     Environment {
-        vars: mjutest_devkit::paths::environment_for_a_run(),
+        vars: njutest_devkit::paths::environment_for_a_run(),
         temp_directory: fixture.temp().to_path_buf(),
         cache_directory: fixture.cache().to_path_buf(),
         working_directory: fixture.root().to_path_buf(),

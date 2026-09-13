@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://mjutest.dev/schema/rust-mutants-diagnostics-v1.json",
+  "$id": "https://njutest.dev/schema/rust-mutants-diagnostics-v1.json",
   "title": "rust-mutants diagnostics v1",
   "description": "What one diagnostics bundle holds, and what the run it was gathered from did not leave. No environment variable's value is ever recorded.",
   "type": "object",

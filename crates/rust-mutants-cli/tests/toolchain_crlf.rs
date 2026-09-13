@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! A tree whose lines end the other way: the same program, the same fates, and identities of its own.
@@ -14,7 +14,7 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-use mjutest_devkit::fixture::{Fate, Fixture};
+use njutest_devkit::fixture::{Fate, Fixture};
 use rust_mutants::runner::Cancel;
 use rust_mutants_cli::{Environment, Streams};
 
@@ -81,7 +81,7 @@ fn run(fixture: &Fixture) -> (Vec<Fate>, Vec<String>) {
             err: &mut err,
         },
     );
-    let output = mjutest_devkit::process::answered(code, out, err);
+    let output = njutest_devkit::process::answered(code, out, err);
     assert!(
         output.status.code().is_some_and(|code| code < 2),
         "{}",
@@ -148,7 +148,7 @@ fn a_crlf_tree_mints_its_own_identities() {
 
 #[test]
 fn the_fates_a_crlf_tree_reaches_are_the_ones_its_readme_states() {
-    let stated = mjutest_devkit::fixture::stated_fates("fixture-simple");
+    let stated = njutest_devkit::fixture::stated_fates("fixture-simple");
     let (crlf, _) = run(&crlf_copy());
     assert_eq!(
         crlf, stated.rows,
@@ -159,7 +159,7 @@ fn the_fates_a_crlf_tree_reaches_are_the_ones_its_readme_states() {
 
 fn environment(fixture: &Fixture) -> Environment {
     Environment {
-        vars: mjutest_devkit::paths::environment_for_a_run(),
+        vars: njutest_devkit::paths::environment_for_a_run(),
         temp_directory: fixture.temp().to_path_buf(),
         cache_directory: fixture.cache().to_path_buf(),
         working_directory: fixture.root().to_path_buf(),

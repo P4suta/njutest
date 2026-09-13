@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: 2026 mjutest contributors
+SPDX-FileCopyrightText: 2026 njutest contributors
 SPDX-License-Identifier: MIT OR Apache-2.0
 -->
 
@@ -219,7 +219,7 @@ difference, and the discharge would remove the test that finds the defect.
 The question is put to the compiler before it is written into the tree that has
 to build, on the pass that already asks whether each mutation is accepted. A
 site the compiler will not vouch for loses its question and keeps its mutation:
-the mutant is executed and measured like any other. mjutest states nothing
+the mutant is executed and measured like any other. njutest states nothing
 about a site the engine did not claim, and holds what the engine does claim to
 the recorded kills of every dogfood run through the offline `proofaudit`
 infection layer.
@@ -396,7 +396,7 @@ given to it.
 
 An expired budget remains inconclusive under every bound. The record names the
 target time ran out under as the **last** of its executed targets, stored in
-execution order. `mjutest replay <finding-id>` bypasses
+execution order. `njutest replay <finding-id>` bypasses
 evidence entirely, which is how a timeout is deliberately re-run.
 
 #### The behaviour key
@@ -407,7 +407,7 @@ binary links (the package's own tests included, dependencies' tests excluded),
 the files beside those crates that `include_str!`, `include_bytes!`, and a
 build script's `rerun-if-changed` name, the manifests, the `Cargo.lock`
 checksums, the toolchain, the platform, the selected environment, the
-contract, the test arguments, the features, both timeouts, the mjutest and
+contract, the test arguments, the features, both timeouts, the njutest and
 rust-mutants versions, and a fuzz target's corpus. Diagnostics — tracing,
 kept temporaries — and parallelism are outside every key.
 
@@ -449,7 +449,7 @@ of the run reading it.
 
 An acceptance is human authorization, not a mutation result. It requires a
 finding ID and a non-empty reason, and may carry an RFC3339 expiry, an owner
-and a ticket; `mjutest accept` writes all of them. Every mutation marked
+and a ticket; `njutest accept` writes all of them. Every mutation marked
 `accepted` must reference a matching record. An acceptance whose expiry has
 passed answers for nothing, and the findings it was hiding are raised again:
 the expiry is when the reviewer said to look again, and a run that read it as
@@ -459,7 +459,7 @@ is what a reviewer who wrote none asked for.
 
 ## Parts of one catalog
 
-`mjutest verify --shard K/N` divides the judging. Every part measures the whole
+`njutest verify --shard K/N` divides the judging. Every part measures the whole
 baseline, because a mutation cannot be judged against tests that were not run;
 what a shard divides is which mutations are put to those tests. The rule is the
 engine's, so both products cut a catalog the same way: the dense catalog index
@@ -480,7 +480,7 @@ mutations nobody put to a test, and a report that called that an assurance would
 be claiming the one thing it did not look at. A finding in a part is a finding,
 so a part that found a defect says `DEFECT`.
 
-`mjutest merge <REPORT>…` writes the report the whole would have written. It
+`njutest merge <REPORT>…` writes the report the whole would have written. It
 passes one already unsharded report through, or requires exactly one report for
 every label `1/N` through `N/N`. It refuses no parts at all; a missing,
 repeated, malformed, mixed unsharded, or differently divided part; parts that

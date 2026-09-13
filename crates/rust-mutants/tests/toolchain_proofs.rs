@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The branch proofs a real workspace earns, and the ones it does not.
@@ -9,7 +9,7 @@
     reason = "a test reports a setup failure by panicking and asserts with panics"
 )]
 
-use mjutest_devkit::fixture::Fixture;
+use njutest_devkit::fixture::Fixture;
 use rust_mutants::rule::Tier;
 use rust_mutants::runner::Cancel;
 use rust_mutants::session::PrepareOptions;
@@ -22,7 +22,7 @@ fn prepared(fixture: &Fixture, coverage: bool) -> rust_mutants::session::Session
     let cancel = Cancel::new();
     let workspace = Workspace::open(
         fixture.root(),
-        opening(&mjutest_devkit::paths::cargo_binary(), fixture.temp()),
+        opening(&njutest_devkit::paths::cargo_binary(), fixture.temp()),
         &cancel,
     )
     .expect("the workspace opens");
@@ -45,7 +45,7 @@ fn the_compiler_vouches_for_a_condition_of_primitives_and_refuses_the_rest() {
     let cancel = Cancel::new();
     let workspace = Workspace::open(
         fixture.root(),
-        opening(&mjutest_devkit::paths::cargo_binary(), fixture.temp()),
+        opening(&njutest_devkit::paths::cargo_binary(), fixture.temp()),
         &cancel,
     )
     .expect("the workspace opens");
@@ -116,7 +116,7 @@ fn a_witnessed_tree_is_put_back_before_anything_is_instrumented() {
     let cancel = Cancel::new();
     let workspace = Workspace::open(
         fixture.root(),
-        opening(&mjutest_devkit::paths::cargo_binary(), fixture.temp()),
+        opening(&njutest_devkit::paths::cargo_binary(), fixture.temp()),
         &cancel,
     )
     .expect("the workspace opens");
@@ -300,7 +300,7 @@ fn measuring(fixture: &Fixture, measuring: Measuring) -> rust_mutants::session::
     let cancel = Cancel::new();
     let workspace = Workspace::open(
         fixture.root(),
-        opening(&mjutest_devkit::paths::cargo_binary(), fixture.temp()),
+        opening(&njutest_devkit::paths::cargo_binary(), fixture.temp()),
         &cancel,
     )
     .expect("the workspace opens");
@@ -389,7 +389,7 @@ fn a_file_the_witness_tree_does_not_hold_vouches_for_nothing() {
     let cancel = Cancel::new();
     let workspace = Workspace::open(
         fixture.root(),
-        opening(&mjutest_devkit::paths::cargo_binary(), fixture.temp()),
+        opening(&njutest_devkit::paths::cargo_binary(), fixture.temp()),
         &cancel,
     )
     .expect("the workspace opens");
@@ -436,7 +436,7 @@ fn a_condition_the_compiler_takes_is_one_the_pass_vouches_for() {
     let cancel = Cancel::new();
     let workspace = Workspace::open(
         fixture.root(),
-        opening(&mjutest_devkit::paths::cargo_binary(), fixture.temp()),
+        opening(&njutest_devkit::paths::cargo_binary(), fixture.temp()),
         &cancel,
     )
     .expect("the workspace opens");
@@ -476,7 +476,7 @@ fn a_widening_comparison_is_vouched_for_without_naming_a_body() {
     let fixture = Fixture::copy("fixture-ignored");
     let path = "src/lib.rs";
     let source = "\
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! A condition that proves nothing about the body it gates, and no value to probe.
@@ -523,7 +523,7 @@ mod tests {
         fixture.root(),
         rust_mutants::workspace::OpenOptions {
             trace: recorder.clone(),
-            ..opening(&mjutest_devkit::paths::cargo_binary(), fixture.temp())
+            ..opening(&njutest_devkit::paths::cargo_binary(), fixture.temp())
         },
         &cancel,
     )
@@ -627,7 +627,7 @@ fn recorded_over(
     let cancel = Cancel::new();
     let workspace = Workspace::open(
         fixture.root(),
-        opening(&mjutest_devkit::paths::cargo_binary(), fixture.temp()),
+        opening(&njutest_devkit::paths::cargo_binary(), fixture.temp()),
         &cancel,
     )
     .expect("the workspace opens");
@@ -662,7 +662,7 @@ fn recorded_over(
 #[test]
 fn a_claim_that_names_no_body_does_not_stop_the_pass_looking_at_the_rest() {
     let source = "\
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! A condition whose first comparison proves nothing and whose second proves something.
@@ -689,7 +689,7 @@ pub fn both(a: i32, b: i32, c: i32, d: i32, out: &mut i32) {
 #[test]
 fn a_file_the_pass_cannot_read_does_not_stop_it_writing_the_others() {
     let refusable = "\
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! A comparison between a type of the program's own, which the compiler refuses to vouch for.
@@ -707,7 +707,7 @@ pub fn under(a: Own, b: Own, out: &mut i32) {
 ";
     let fixture = Fixture::copy("fixture-ignored");
     let gone = "\
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! A file with a claim of its own, which no source is held for.
@@ -748,7 +748,7 @@ pub fn under(a: i32, b: i32, out: &mut i32) {
 #[test]
 fn a_proof_names_the_braces_of_the_body_and_the_byte_after_the_first() {
     let source = "\
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! One narrowing comparison over one body, whose braces are where they look.
@@ -806,7 +806,7 @@ pub fn under(a: i32, b: i32, out: &mut i32) {
 #[test]
 fn what_the_pass_says_it_claimed_is_every_file_added_up() {
     let one = "\
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! One condition, so one claim.
@@ -819,7 +819,7 @@ pub fn under(a: i32, b: i32, out: &mut i32) {
 }
 ";
     let two = "\
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Two conditions, so more than one claim, which is what tells a sum from a product.
@@ -862,7 +862,7 @@ pub fn both(a: i32, b: i32, c: i32, d: i32, out: &mut i32) {
 #[test]
 fn a_snapshot_the_pass_cannot_write_into_is_a_failure_rather_than_a_silence() {
     let source = "\
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! One condition, which the pass would witness if it could write.
@@ -883,7 +883,7 @@ pub fn under(a: i32, b: i32, out: &mut i32) {
     let cancel = Cancel::new();
     let workspace = Workspace::open(
         fixture.root(),
-        opening(&mjutest_devkit::paths::cargo_binary(), fixture.temp()),
+        opening(&njutest_devkit::paths::cargo_binary(), fixture.temp()),
         &cancel,
     )
     .expect("the workspace opens");
@@ -937,7 +937,7 @@ pub fn under(a: i32, b: i32, out: &mut i32) {
 #[test]
 fn a_file_no_source_is_held_for_does_not_stop_the_pass_vouching_for_the_rest() {
     let takeable = "\
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! A comparison between primitives, which the compiler vouches for.
@@ -968,7 +968,7 @@ pub fn under(a: i32, b: i32, out: &mut i32) {
 #[test]
 fn a_snapshot_the_pass_cannot_put_back_is_a_failure_rather_than_a_silence() {
     let claimed = "\
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! A condition the pass witnesses, in a file it can write.
@@ -989,7 +989,7 @@ pub fn under(a: i32, b: i32, out: &mut i32) {
     let cancel = Cancel::new();
     let workspace = Workspace::open(
         fixture.root(),
-        opening(&mjutest_devkit::paths::cargo_binary(), fixture.temp()),
+        opening(&njutest_devkit::paths::cargo_binary(), fixture.temp()),
         &cancel,
     )
     .expect("the workspace opens");
@@ -1029,7 +1029,7 @@ pub fn under(a: i32, b: i32, out: &mut i32) {
 #[test]
 fn a_claim_in_a_file_the_tree_could_not_be_given_is_refused_rather_than_vouched_for() {
     let asked = "\
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! A condition discovery found, at an offset a shorter source does not have.
@@ -1042,7 +1042,7 @@ pub fn under(a: i32, b: i32, out: &mut i32) {
 }
 ";
     let held = "\
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Nothing.
@@ -1061,7 +1061,7 @@ pub fn under(a: i32, b: i32, out: &mut i32) {
     let cancel = Cancel::new();
     let workspace = Workspace::open(
         fixture.root(),
-        opening(&mjutest_devkit::paths::cargo_binary(), fixture.temp()),
+        opening(&njutest_devkit::paths::cargo_binary(), fixture.temp()),
         &cancel,
     )
     .expect("the workspace opens");
@@ -1095,7 +1095,7 @@ pub fn under(a: i32, b: i32, out: &mut i32) {
 #[test]
 fn a_source_the_pass_cannot_write_stops_it_rather_than_letting_it_vouch() {
     let claimed = "\
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! A condition the pass would witness, in a file it may not write.
@@ -1114,7 +1114,7 @@ pub fn under(a: i32, b: i32, out: &mut i32) {
     let cancel = Cancel::new();
     let workspace = Workspace::open(
         fixture.root(),
-        opening(&mjutest_devkit::paths::cargo_binary(), fixture.temp()),
+        opening(&njutest_devkit::paths::cargo_binary(), fixture.temp()),
         &cancel,
     )
     .expect("the workspace opens");
@@ -1157,7 +1157,7 @@ pub fn under(a: i32, b: i32, out: &mut i32) {
 #[test]
 fn the_witness_check_builds_into_a_directory_of_its_own() {
     let claimed = "\
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! A condition the pass witnesses.
@@ -1176,7 +1176,7 @@ pub fn under(a: i32, b: i32, out: &mut i32) {
     let cancel = Cancel::new();
     let workspace = Workspace::open(
         fixture.root(),
-        opening(&mjutest_devkit::paths::cargo_binary(), fixture.temp()),
+        opening(&njutest_devkit::paths::cargo_binary(), fixture.temp()),
         &cancel,
     )
     .expect("the workspace opens");
@@ -1215,7 +1215,7 @@ pub fn under(a: i32, b: i32, out: &mut i32) {
 #[test]
 fn a_marker_names_the_lowest_claim_of_the_body_it_stands_in() {
     let claimed = "\
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! One body two claims gate, which one marker stands for.
@@ -1235,7 +1235,7 @@ pub fn both(a: i32, b: i32, c: i32, d: i32) -> i32 {
     let cancel = Cancel::new();
     let workspace = Workspace::open(
         fixture.root(),
-        opening(&mjutest_devkit::paths::cargo_binary(), fixture.temp()),
+        opening(&njutest_devkit::paths::cargo_binary(), fixture.temp()),
         &cancel,
     )
     .expect("the workspace opens");
@@ -1282,7 +1282,7 @@ pub fn both(a: i32, b: i32, c: i32, d: i32) -> i32 {
 #[test]
 fn a_file_the_tree_could_not_be_given_does_not_take_the_ones_after_it_with_it() {
     let asked = "\
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! A condition discovery found, at an offset the source held for it does not have.
@@ -1295,13 +1295,13 @@ pub fn under(a: i32, b: i32, out: &mut i32) {
 }
 ";
     let held = "\
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Nothing.
 ";
     let refused = "\
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! A condition whose operands are the program's own, which the compiler refuses to vouch for.
@@ -1319,7 +1319,7 @@ pub fn earlier(a: Version, b: Version) -> bool {
 }
 ";
     let root = "\
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Both of them.
@@ -1335,7 +1335,7 @@ pub mod b;
     let cancel = Cancel::new();
     let workspace = Workspace::open(
         fixture.root(),
-        opening(&mjutest_devkit::paths::cargo_binary(), fixture.temp()),
+        opening(&njutest_devkit::paths::cargo_binary(), fixture.temp()),
         &cancel,
     )
     .expect("the workspace opens");

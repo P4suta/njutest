@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: 2026 mjutest contributors
+SPDX-FileCopyrightText: 2026 njutest contributors
 SPDX-License-Identifier: MIT OR Apache-2.0
 -->
 
@@ -110,7 +110,7 @@ below is stated fail-closed.
   was asked, and says that instead.
 - `standard-v1` does not execute anything about `unsafe` code; it
   inventories it and says so (`soundness-not-executed`). `deep-v1` interprets
-  the suite under Miri and refuses to run at all without it (`MJ7001`), and
+  the suite under Miri and refuses to run at all without it (`NJ7001`), and
   what Miri will not interpret is `miri-unsupported` rather than a pass. A
   sanitizer the configuration asks for and the toolchain will not run is
   `sanitizer-unavailable`; every sanitizer run also carries
@@ -254,7 +254,7 @@ below is stated fail-closed.
   measured, and it measured the tree.
 - Symbolic links in the evidence tree are rejected.
 - The coverage build sets `CARGO_ENCODED_RUSTFLAGS`, which replaces
-  `build.rustflags` rather than adding to it, so mjutest reads the project's
+  `build.rustflags` rather than adding to it, so njutest reads the project's
   `.cargo/config.toml` files and puts those flags back. What it does not put
   back is `target.<triple>` and `target.cfg(…)` flags — which of them apply
   is cargo's decision about the target being built, and guessing wrong would

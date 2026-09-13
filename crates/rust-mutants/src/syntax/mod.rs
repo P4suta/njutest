@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Syntactic discovery: the candidates one file yields, each with the guard site the instrumenter will use, and every place deliberately passed over, each with its reason.

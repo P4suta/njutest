@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Discovery never panics on any input, and every candidate it proposes is coherent: it validates, its original bytes are the span's bytes, its edit lies inside its site, and the result is deterministic.

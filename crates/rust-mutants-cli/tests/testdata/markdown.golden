@@ -19,15 +19,15 @@
 
 ## Findings
 
-- **discharged-mutant** — every target that could have noticed aceffa6a7e2a2e0c4fb2 was removed by a proof, so no test could have: the mutation is in code the tests run and never observe
-- **surviving-mutant** — no test noticed 4ec926d27bd1b17fcd37; 1 test ran and passed
-- **discharged-mutant** — every target that could have noticed 3b95a1d51748a373fc05 was removed by a proof, so no test could have: the mutation is in code the tests run and never observe
-- **discharged-mutant** — every target that could have noticed e5c73ebd900e221f3bd8 was removed by a proof, so no test could have: the mutation is in code the tests run and never observe
+- **discharged-mutant** — every target that could have noticed d8a9939330496216a17d was removed by a proof, so no test could have: the mutation is in code the tests run and never observe
+- **surviving-mutant** — no test noticed 27e9c3f2d6bb568e5ef3; 1 test ran and passed
+- **discharged-mutant** — every target that could have noticed 7cfdea86ac571b743bd0 was removed by a proof, so no test could have: the mutation is in code the tests run and never observe
+- **discharged-mutant** — every target that could have noticed 0a8ab9771954a24f9d25 was removed by a proof, so no test could have: the mutation is in code the tests run and never observe
 
 ## Survivors (1)
 
 | where | rule | change | id |
 | --- | --- | --- | --- |
-| `src/lib.rs:16:10` | `le-to-lt` | `<=` → `<` | `4ec926d27bd1b17fcd37` |
+| `src/lib.rs:16:10` | `le-to-lt` | `<=` → `<` | `27e9c3f2d6bb568e5ef3` |
 
 Each of these is a gap in the tests or a claim to write down: `rust-mutants explain <id>` says what it is, and `[[mutation.expect]]` accepts one with a reason.

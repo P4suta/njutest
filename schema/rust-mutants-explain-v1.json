@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://mjutest.dev/schema/rust-mutants-explain-v1.json",
+  "$id": "https://njutest.dev/schema/rust-mutants-explain-v1.json",
   "title": "rust-mutants explain v1",
   "description": "Everything one run established about one mutant, built from what the run stored.",
   "type": "object",

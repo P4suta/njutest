@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2026 mjutest contributors
+# SPDX-FileCopyrightText: 2026 njutest contributors
 # SPDX-License-Identifier: MIT OR Apache-2.0
 name: ci
 
@@ -173,11 +173,11 @@ jobs:
       - name: Ratchet rust-mutants
         run: >-
           cargo llvm-cov report --summary-only --fail-under-regions 87
-          --ignore-filename-regex 'crates/(rust-mutants-cli|mjutest|mjutest-cli|mjutest-macros|mjutest-devkit)/|xtask/|fuzz/'
+          --ignore-filename-regex 'crates/(rust-mutants-cli|njutest|njutest-cli|njutest-macros|njutest-devkit)/|xtask/|fuzz/'
       - name: Ratchet rust-mutants-cli
         run: >-
           cargo llvm-cov report --summary-only --fail-under-regions 85
-          --ignore-filename-regex 'crates/(rust-mutants|mjutest|mjutest-cli|mjutest-macros|mjutest-devkit)/|xtask/|fuzz/'
+          --ignore-filename-regex 'crates/(rust-mutants|njutest|njutest-cli|njutest-macros|njutest-devkit)/|xtask/|fuzz/'
       - name: Ratchet xtask
         run: >-
           cargo llvm-cov report --summary-only --fail-under-regions 80
@@ -205,20 +205,20 @@ jobs:
           CARGO_NET_OFFLINE: "false"
         run: cargo fetch --locked
       - name: Every publishable member packages
-        run: cargo package --locked --workspace --no-verify --allow-dirty
+        run: cargo package --locked --workspace --no-verify --allow-dirty --exclude-lockfile
       - name: The binaries install from this tree
         run: |
-          cargo install --locked --path crates/mjutest-cli --root "${RUNNER_TEMP}/install"
+          cargo install --locked --path crates/njutest-cli --root "${RUNNER_TEMP}/install"
           cargo install --locked --path crates/rust-mutants-cli --root "${RUNNER_TEMP}/install"
-          "${RUNNER_TEMP}/install/bin/mjutest" --version
+          "${RUNNER_TEMP}/install/bin/njutest" --version
           "${RUNNER_TEMP}/install/bin/rust-mutants" --version
       - name: And cargo finds them by the name it looks for
         run: |
           export PATH="${RUNNER_TEMP}/install/bin:${PATH}"
-          cargo mjutest --version
+          cargo njutest --version
           cargo rust-mutants --version
       - name: What a release would say it is made of
-        run: cargo xtask sbom --output "${RUNNER_TEMP}/mjutest.cdx.json"
+        run: cargo xtask sbom --output "${RUNNER_TEMP}/njutest.cdx.json"
 
   book:
     name: book
@@ -251,22 +251,22 @@ jobs:
         env:
           CARGO_NET_OFFLINE: "false"
         run: cargo fetch --locked
-      - name: Build the mjutest this commit would ship
-        run: cargo build --locked --release --bin mjutest
+      - name: Build the njutest this commit would ship
+        run: cargo build --locked --release --bin njutest
       # Every other job runs on a machine with no Miri, where the whole of
-      # deep-v1 is the refusal MJ7001. This is the only place the promise
+      # deep-v1 is the refusal NJ7001. This is the only place the promise
       # itself is kept: the suite interpreted, and what the interpreter would
       # not follow stated rather than passed over.
       - name: Verify a fixture under the contract that promises interpretation
         run: |
           cp -r fixtures/fixture-baseline "$RUNNER_TEMP/interpreted"
-          printf 'version = 1\ncontract = "deep-v1"\n' > "$RUNNER_TEMP/interpreted/.mjutest.toml"
-          ./target/release/mjutest verify \
+          printf 'version = 1\ncontract = "deep-v1"\n' > "$RUNNER_TEMP/interpreted/.njutest.toml"
+          ./target/release/njutest verify \
             --directory "$RUNNER_TEMP/interpreted" --offline --locked --no-cache --ui=plain \
             || test $? -eq 2
       - name: The run says it interpreted the suite
         run: |
-          report="$RUNNER_TEMP/interpreted/$(jq -r .directory "$RUNNER_TEMP/interpreted/reports/latest-any.json")/mjutest-assurance-report-v1.json"
+          report="$RUNNER_TEMP/interpreted/$(jq -r .directory "$RUNNER_TEMP/interpreted/reports/latest-any.json")/njutest-assurance-report-v1.json"
           jq --exit-status '.contract == "deep-v1" and .accounting.soundness.executed == true' "$report"
 
   action-smoke:
@@ -282,21 +282,21 @@ jobs:
         env:
           CARGO_NET_OFFLINE: "false"
         run: cargo fetch --locked
-      - name: Build the mjutest this commit would ship and put it on the path
+      - name: Build the njutest this commit would ship and put it on the path
         run: |
-          cargo build --locked --release --bin mjutest
+          cargo build --locked --release --bin njutest
           echo "$PWD/target/release" >> "$GITHUB_PATH"
       - name: Run the action the way another repository would
-        id: mjutest
-        uses: ./.github/actions/mjutest
+        id: njutest
+        uses: ./.github/actions/njutest
         with:
           working-directory: fixtures/fixture-assured
           args: --offline --locked --ui=plain
           upload-sarif: "false"
       - name: The verdict the action reports is the one the run reached
         env:
-          VERDICT: ${{ steps.mjutest.outputs.verdict }}
-          REPORT: ${{ steps.mjutest.outputs.report }}
+          VERDICT: ${{ steps.njutest.outputs.verdict }}
+          REPORT: ${{ steps.njutest.outputs.report }}
         run: |
           test "$VERDICT" = ASSURED || { echo "verdict was '$VERDICT'"; exit 1; }
           test -f "fixtures/fixture-assured/$REPORT"

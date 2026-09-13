@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The command-line contract of the `rust-mutants` binary: what `--version` and `--help` print, and the exit codes of usage errors.
@@ -28,13 +28,13 @@ fn rust_mutants(args: &[&str]) -> Output {
             err: &mut err,
         },
     );
-    mjutest_devkit::process::answered(code, out, err)
+    njutest_devkit::process::answered(code, out, err)
 }
 
 /// The environment a command that reads no tree is answered in.
 fn environment() -> Environment {
     Environment {
-        vars: mjutest_devkit::paths::environment_for_a_run(),
+        vars: njutest_devkit::paths::environment_for_a_run(),
         temp_directory: std::env::temp_dir(),
         cache_directory: std::env::temp_dir(),
         working_directory: std::env::current_dir().unwrap_or_else(|_error| PathBuf::from(".")),
@@ -60,7 +60,7 @@ fn help_flag_matches_the_recorded_help_text() {
     let output = rust_mutants(&["--help"]);
     assert_eq!(output.status.code(), Some(0));
     let golden = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testdata/help.golden");
-    mjutest_devkit::golden::golden(&golden, &output.stdout).expect("help text is the recorded one");
+    njutest_devkit::golden::golden(&golden, &output.stdout).expect("help text is the recorded one");
 }
 
 /// Every command the top-level help lists, which is every command there is.
@@ -105,7 +105,7 @@ fn every_subcommand_has_its_own_recorded_help() {
         );
         let golden = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join(format!("tests/testdata/help-{name}.golden"));
-        mjutest_devkit::golden::golden(&golden, &output.stdout)
+        njutest_devkit::golden::golden(&golden, &output.stdout)
             .unwrap_or_else(|error| panic!("{name}: {error}"));
     }
 }
@@ -162,13 +162,13 @@ fn every_subcommand_has_the_recorded_help_text() {
         recorded.push('\n');
     }
     let golden = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testdata/subcommands.golden");
-    mjutest_devkit::golden::golden(&golden, recorded.as_bytes())
+    njutest_devkit::golden::golden(&golden, recorded.as_bytes())
         .expect("the subcommand help is the recorded one");
 }
 
 #[test]
 fn the_command_line_page_and_the_help_texts_name_the_same_flags() {
-    let at = mjutest_devkit::paths::workspace_root().join("docs/engine/command-line.md");
+    let at = njutest_devkit::paths::workspace_root().join("docs/engine/command-line.md");
     let page = std::fs::read_to_string(&at)
         .unwrap_or_else(|error| panic!("the command line page at {}: {error}", at.display()));
     let mut helped: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
@@ -202,7 +202,7 @@ fn the_command_line_page_and_the_help_texts_name_the_same_flags() {
 
 #[test]
 fn the_flags_the_page_lists_beside_a_command_are_that_command_s_own() {
-    let at = mjutest_devkit::paths::workspace_root().join("docs/engine/command-line.md");
+    let at = njutest_devkit::paths::workspace_root().join("docs/engine/command-line.md");
     let page = std::fs::read_to_string(&at)
         .unwrap_or_else(|error| panic!("the command line page at {}: {error}", at.display()));
     let rows = beside_a_command(&page);
@@ -295,7 +295,7 @@ fn rules_lists_every_rule_with_its_tier_and_version_so_a_team_can_pin_operators(
         );
     }
     let golden = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testdata/rules.golden");
-    mjutest_devkit::golden::golden(&golden, &output.stdout)
+    njutest_devkit::golden::golden(&golden, &output.stdout)
         .expect("the rules are the recorded set");
 }
 
@@ -306,7 +306,7 @@ fn rules_answers_as_a_document_when_it_is_asked_to() {
     let document: serde_json::Value =
         serde_json::from_slice(&output.stdout).expect("the answer is JSON");
     let golden = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testdata/rules.golden.json");
-    mjutest_devkit::golden::golden(&golden, &output.stdout)
+    njutest_devkit::golden::golden(&golden, &output.stdout)
         .expect("the document form of the operator table is the recorded one");
     let rules = document["rules"].as_array().expect("the rules");
     assert_eq!(rules.len(), rust_mutants::rule::CANONICAL_RULE_COUNT);

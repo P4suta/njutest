@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! An independent re-decision of what a completed run recorded. [ADR 0004](../../docs/adr/0004-proof-layers-not-budgets.md) ships a proof layer only against a re-implementation that never calls the runner's, so nothing here consults the code that wrote the report: every verdict is re-derived from the recording alone, and wherever the recording does not carry enough to re-derive one, that is said plainly rather than read as agreement.
@@ -8,10 +8,10 @@ use std::collections::BTreeSet;
 use std::fmt;
 
 /// The document a completed run leaves in its directory.
-pub const REPORT_FILE: &str = "mjutest-assurance-report-v1.json";
+pub const REPORT_FILE: &str = "njutest-assurance-report-v1.json";
 
 /// The schema this audit knows how to re-decide.
-pub const SCHEMA: &str = "mjutest-assurance-report-v1";
+pub const SCHEMA: &str = "njutest-assurance-report-v1";
 
 /// The exit code a run directory that could not be read earns, kept apart from the audit's own so that "I could not look" never reads as "I looked and found nothing".
 pub const EXIT_UNREADABLE: u8 = 2;

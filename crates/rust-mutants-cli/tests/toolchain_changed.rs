@@ -1,11 +1,11 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Mutating what changed: what a change set selects, and what it refuses to guess.
 
 use std::ffi::OsString;
 
-use mjutest_devkit::fixture::Fixture;
+use njutest_devkit::fixture::Fixture;
 use rust_mutants::runner::Cancel;
 use rust_mutants_cli::{Environment, Streams};
 use std::process::Output;
@@ -25,12 +25,12 @@ fn against(fixture: &Fixture, args: &[&str]) -> Output {
             err: &mut err,
         },
     );
-    mjutest_devkit::process::answered(code, out, err)
+    njutest_devkit::process::answered(code, out, err)
 }
 
 fn environment(fixture: &Fixture) -> Environment {
     Environment {
-        vars: mjutest_devkit::paths::environment_for_a_run(),
+        vars: njutest_devkit::paths::environment_for_a_run(),
         temp_directory: fixture.temp().to_path_buf(),
         cache_directory: fixture.cache().to_path_buf(),
         working_directory: fixture.root().to_path_buf(),
@@ -47,7 +47,7 @@ fn stdout(output: &Output) -> String {
 #[test]
 fn a_change_set_selects_the_files_that_differ_and_leaves_the_rest_alone() {
     let fixture = Fixture::copy("fixture-workspace");
-    mjutest_devkit::repo::commit_tree(fixture.root());
+    njutest_devkit::repo::commit_tree(fixture.root());
     let util = fixture.root().join("crates/core/src/util.rs");
     let mut widened = std::fs::read_to_string(&util).expect("read");
     widened.push_str("\npub fn extra(a: i32) -> i32 { a + 1 }\n");
@@ -70,7 +70,7 @@ fn a_change_set_selects_the_files_that_differ_and_leaves_the_rest_alone() {
 #[test]
 fn a_change_set_that_names_no_rust_file_selects_nothing_rather_than_everything() {
     let fixture = Fixture::copy("fixture-workspace");
-    mjutest_devkit::repo::commit_tree(fixture.root());
+    njutest_devkit::repo::commit_tree(fixture.root());
     std::fs::write(fixture.root().join("README.md"), "changed\n").expect("write");
 
     let output = against(&fixture, &["list", "--changed"]);
@@ -94,7 +94,7 @@ fn a_tree_git_cannot_be_asked_about_ends_the_command_rather_than_reading_as_noth
 #[test]
 fn a_revision_git_does_not_know_ends_the_command() {
     let fixture = Fixture::copy("fixture-workspace");
-    mjutest_devkit::repo::commit_tree(fixture.root());
+    njutest_devkit::repo::commit_tree(fixture.root());
     let output = against(&fixture, &["list", "--changed-from", "no-such-revision"]);
     let complaint = String::from_utf8_lossy(&output.stderr).into_owned();
     assert_eq!(output.status.code(), Some(2), "{output:?}");

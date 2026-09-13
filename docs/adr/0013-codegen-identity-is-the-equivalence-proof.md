@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: 2026 mjutest contributors
+SPDX-FileCopyrightText: 2026 njutest contributors
 SPDX-License-Identifier: MIT OR Apache-2.0
 -->
 
@@ -8,7 +8,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 ## Status
 
 Accepted, 2026-09-06. Implemented by `rust_mutants::equivalence` and
-`mjutest_cli::assure::equivalence` (M10).
+`njutest_cli::assure::equivalence` (M10).
 
 ## Context
 

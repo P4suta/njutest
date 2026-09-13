@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The public API, end to end: open a read-only tree, prepare it, and run mutants against the build that preparation produced.
@@ -12,7 +12,7 @@
 
 use std::path::Path;
 
-use mjutest_devkit::fixture::Fixture;
+use njutest_devkit::fixture::Fixture;
 use rust_mutants::outcome::Outcome;
 use rust_mutants::rule::Tier;
 use rust_mutants::run::Filter;
@@ -24,7 +24,7 @@ use rust_mutants::workspace::{OpenOptions, Workspace};
 fn open(fixture: &Fixture) -> Workspace {
     Workspace::open(
         fixture.root(),
-        opening(&mjutest_devkit::paths::cargo_binary(), fixture.temp()),
+        opening(&njutest_devkit::paths::cargo_binary(), fixture.temp()),
         &Cancel::new(),
     )
     .expect("open")
@@ -435,7 +435,7 @@ fn keeping_the_temporary_directories_preserves_them_and_says_which() {
         fixture.root(),
         OpenOptions {
             keep_temp: true,
-            ..opening(&mjutest_devkit::paths::cargo_binary(), fixture.temp())
+            ..opening(&njutest_devkit::paths::cargo_binary(), fixture.temp())
         },
         &Cancel::new(),
     )
@@ -457,7 +457,7 @@ fn the_trace_says_what_every_phase_did() {
         fixture.root(),
         OpenOptions {
             trace: recorder.clone(),
-            ..opening(&mjutest_devkit::paths::cargo_binary(), fixture.temp())
+            ..opening(&njutest_devkit::paths::cargo_binary(), fixture.temp())
         },
         &Cancel::new(),
     )
@@ -632,7 +632,7 @@ fn the_trace_of_a_covered_run_names_every_layer() {
         fixture.root(),
         OpenOptions {
             trace: recorder.clone(),
-            ..opening(&mjutest_devkit::paths::cargo_binary(), fixture.temp())
+            ..opening(&njutest_devkit::paths::cargo_binary(), fixture.temp())
         },
         &Cancel::new(),
     )

@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The three projections a team's existing surfaces read, put to their readers here rather than through a process.
@@ -141,7 +141,7 @@ fn sources() -> BTreeMap<String, Held> {
 #[test]
 fn the_page_needs_nothing_from_the_network_and_closes_no_tag_it_was_given() {
     let page = html::document(&document(), &sources());
-    let outside = mjutest_devkit::report::reaches_outside(&page);
+    let outside = njutest_devkit::report::reaches_outside(&page);
     assert!(
         outside.is_empty(),
         "a run report is read from a build artefact on a machine with no network as \
@@ -592,7 +592,7 @@ fn recorded(name: &str) -> std::path::PathBuf {
 #[test]
 fn the_page_is_the_page_that_was_reviewed() {
     let page = html::document(&document(), &sources());
-    mjutest_devkit::golden::golden(&recorded("report.golden.html"), page.as_bytes())
+    njutest_devkit::golden::golden(&recorded("report.golden.html"), page.as_bytes())
         .expect("the page a reviewer read");
 }
 
@@ -606,7 +606,7 @@ fn the_stryker_projection_is_the_document_that_was_reviewed() {
     )
     .expect("every mutated file is one the run measured");
     let text = serde_json::to_string_pretty(&projection).expect("the projection is a document");
-    mjutest_devkit::golden::golden(
+    njutest_devkit::golden::golden(
         &recorded("stryker.golden.json"),
         format!("{text}\n").as_bytes(),
     )
@@ -617,7 +617,7 @@ fn the_stryker_projection_is_the_document_that_was_reviewed() {
 fn the_sarif_log_is_the_document_that_was_reviewed() {
     let text =
         serde_json::to_string_pretty(&sarif::log(&document())).expect("the log is a document");
-    mjutest_devkit::golden::golden(
+    njutest_devkit::golden::golden(
         &recorded("sarif.golden.json"),
         format!("{text}\n").as_bytes(),
     )
@@ -669,7 +669,7 @@ fn everything_sources() -> BTreeMap<String, Held> {
 #[test]
 fn the_page_of_a_run_with_every_side_to_it_is_the_page_that_was_reviewed() {
     let page = html::document(&everything(), &everything_sources());
-    mjutest_devkit::golden::golden(&recorded("report-everything.golden.html"), page.as_bytes())
+    njutest_devkit::golden::golden(&recorded("report-everything.golden.html"), page.as_bytes())
         .expect("the page a reviewer read");
 }
 
@@ -680,7 +680,7 @@ fn the_page_of_a_run_that_cataloged_nothing_says_so_in_every_section() {
     nothing.mutants = Vec::new();
     nothing.findings = Vec::new();
     let page = html::document(&nothing, &BTreeMap::new());
-    mjutest_devkit::golden::golden(&recorded("report-nothing.golden.html"), page.as_bytes())
+    njutest_devkit::golden::golden(&recorded("report-nothing.golden.html"), page.as_bytes())
         .expect("the page a reviewer read");
 }
 
@@ -698,7 +698,7 @@ fn the_stryker_projection_of_a_run_with_every_side_to_it_is_the_one_reviewed() {
     )
     .expect("every mutated file is one the run measured");
     let text = serde_json::to_string_pretty(&projection).expect("the projection is a document");
-    mjutest_devkit::golden::golden(
+    njutest_devkit::golden::golden(
         &recorded("stryker-everything.golden.json"),
         format!("{text}\n").as_bytes(),
     )

@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! A cargo, a rustc, a coverage tool, or a test binary that says what a script told it to say.
@@ -12,7 +12,7 @@
 //! This is not part of the engine. It is an example so that `cargo test`,
 //! `cargo nextest run`, and `cargo llvm-cov` build it beside the test binaries
 //! on every platform, which a binary of a development-only crate would not be.
-//! The script it reads is `mjutest_devkit::fake_cargo::Script`, so what a test
+//! The script it reads is `njutest_devkit::fake_cargo::Script`, so what a test
 //! writes and what this reads are one type.
 
 #![expect(
@@ -25,7 +25,7 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use mjutest_devkit::fake_cargo::{Invocation, SCRIPT_ENV, Script, UNMATCHED_EXIT};
+use njutest_devkit::fake_cargo::{Invocation, SCRIPT_ENV, Script, UNMATCHED_EXIT};
 
 /// The command this process was started as: the name it answers to, and what came after it.
 struct Started {

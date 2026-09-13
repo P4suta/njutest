@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Every ledger the documentation keeps, against the code that is the ledger.
@@ -17,7 +17,7 @@
 use std::collections::BTreeSet;
 
 fn page(relative: &str) -> String {
-    let path = mjutest_devkit::paths::workspace_root().join(relative);
+    let path = njutest_devkit::paths::workspace_root().join(relative);
     std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display()))
 }
 
@@ -161,7 +161,7 @@ fn the_limitations_page_names_every_limitation_the_engine_can_state() {
 
 #[test]
 fn every_engine_page_says_what_it_is_the_status_of() {
-    let root = mjutest_devkit::paths::workspace_root();
+    let root = njutest_devkit::paths::workspace_root();
     let mut without = Vec::new();
     let contents_of_the_book = std::ffi::OsStr::new("SUMMARY.md");
     for directory in ["docs", "docs/engine", "docs/adr"] {

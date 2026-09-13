@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! A stored run report is read back by `rust-mutants report`, by a later run, and by whatever a user pipes it into. A document this reader accepts must render, and one it rejects must say so rather than panic.

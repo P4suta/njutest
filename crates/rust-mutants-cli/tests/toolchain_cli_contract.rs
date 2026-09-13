@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What the command line answers about a real tree: what it lists, what it catalogs, and what it exits with.
@@ -10,7 +10,7 @@
 
 use std::ffi::OsString;
 
-use mjutest_devkit::fixture::Fixture;
+use njutest_devkit::fixture::Fixture;
 use rust_mutants::runner::Cancel;
 use rust_mutants_cli::{Environment, Streams};
 use std::process::Output;
@@ -38,7 +38,7 @@ fn against(fixture: &Fixture, args: &[&str]) -> Output {
             err: &mut err,
         },
     );
-    mjutest_devkit::process::answered(code, out, err)
+    njutest_devkit::process::answered(code, out, err)
 }
 #[test]
 fn list_names_every_candidate_without_building_anything() {
@@ -221,7 +221,7 @@ fn instrument_prints_one_file_as_the_engine_rewrites_it() {
 #[test]
 fn the_catalog_document_validates_against_its_schema() {
     let schema_path =
-        mjutest_devkit::paths::workspace_root().join("schema/rust-mutants-catalog-v1.json");
+        njutest_devkit::paths::workspace_root().join("schema/rust-mutants-catalog-v1.json");
     let schema: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&schema_path).expect("the schema"))
             .expect("the schema is JSON");
@@ -343,7 +343,7 @@ fn equivalence_asks_about_at_most_the_limit_it_was_given() {
 
 fn environment(fixture: &Fixture) -> Environment {
     Environment {
-        vars: mjutest_devkit::paths::environment_for_a_run(),
+        vars: njutest_devkit::paths::environment_for_a_run(),
         temp_directory: fixture.temp().to_path_buf(),
         cache_directory: fixture.cache().to_path_buf(),
         working_directory: fixture.root().to_path_buf(),

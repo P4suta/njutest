@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: 2026 mjutest contributors
+SPDX-FileCopyrightText: 2026 njutest contributors
 SPDX-License-Identifier: MIT OR Apache-2.0
 -->
 
@@ -11,11 +11,11 @@ Accepted, 2026-09-09 (user decision). Bounds every milestone after M14.
 
 ## Context
 
-`mjutest` and `rust-mutants` are one workspace with a fixed dependency
+`njutest` and `rust-mutants` are one workspace with a fixed dependency
 direction ([ADR 0012](0012-one-workspace-two-products.md)), and the runner has
 grown a layer that finds test binaries, names them, and runs them. That layer
 looks like a second implementation of `cargo nextest`, and the question was
-whether to invert the arrangement: make `mjutest` a general test runner, with
+whether to invert the arrangement: make `njutest` a general test runner, with
 mutation testing as one plugin among the ways people test.
 
 The reason to want that is sound. Mutation testing says nothing without tests,
@@ -59,7 +59,7 @@ own command line doing what it documents.
 
 ## Decision
 
-**`mjutest` is an assurance layer, not a test layer.** It does not become a
+**`njutest` is an assurance layer, not a test layer.** It does not become a
 test runner, does not host plugins, and does not define a way to write a test.
 What it sells is the verdict and what stands behind it: the proof layers, the
 independent re-derivation in `cargo xtask proofaudit`, evidence reuse, and the

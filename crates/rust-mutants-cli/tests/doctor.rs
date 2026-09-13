@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What the doctor says about a world that is missing something, with every toolchain scripted.
@@ -12,14 +12,14 @@
 use std::path::Path;
 use std::process::Output;
 
-use mjutest_devkit::fake_cargo::{Installed, Invocation, Script, install};
-use mjutest_devkit::fixture::Fixture;
+use njutest_devkit::fake_cargo::{Installed, Invocation, Script, install};
+use njutest_devkit::fixture::Fixture;
 
 const CARGO_BANNER: &str = "cargo 1.98.0 (abc 2026-08-05)\nrelease: 1.98.0\ncommit-hash: abc\ncommit-date: 2026-08-05\nhost: x86_64-unknown-linux-gnu\n";
 const RUSTC_BANNER: &str = "rustc 1.98.0 (abc 2026-08-05)\nbinary: rustc\nrelease: 1.98.0\nhost: x86_64-unknown-linux-gnu\nLLVM version: 20.1.0\n";
 
 fn asked(fixture: &Fixture, path: &Path, extra: &[(&str, &str)]) -> Output {
-    let mut command = mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")));
+    let mut command = njutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")));
     command
         .env_clear()
         .env("NO_COLOR", "1")
@@ -129,7 +129,7 @@ fn every_check_the_lines_show_is_a_check_the_document_holds() {
     let empty = fixture.temp().join("nothing");
     std::fs::create_dir_all(&empty).expect("an empty directory");
     let lines = asked(&fixture, &empty, &[]);
-    let mut command = mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")));
+    let mut command = njutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")));
     let document = command
         .env_clear()
         .env("NO_COLOR", "1")

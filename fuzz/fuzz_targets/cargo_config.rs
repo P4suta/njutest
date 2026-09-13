@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! A cargo configuration file says what a build compiles with, and a coverage build has to put those flags back because the variable it uses replaces them. A reader that invents a flag, drops one, or hands on a flag holding the separator that variable splits on compiles something other than the project's own binaries. It never panics, and what it accepts can always be encoded back as itself.

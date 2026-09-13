@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The fixture conventions.
@@ -13,8 +13,8 @@ use std::path::Path;
 
 use xtask::fixtures::check_fixture;
 
-const HEADER: &str = "# SPDX-FileCopyrightText: 2026 mjutest contributors\n# SPDX-License-Identifier: MIT OR Apache-2.0\n";
-const RS_HEADER: &str = "// SPDX-FileCopyrightText: 2026 mjutest contributors\n// SPDX-License-Identifier: MIT OR Apache-2.0\n";
+const HEADER: &str = "# SPDX-FileCopyrightText: 2026 njutest contributors\n# SPDX-License-Identifier: MIT OR Apache-2.0\n";
+const RS_HEADER: &str = "// SPDX-FileCopyrightText: 2026 njutest contributors\n// SPDX-License-Identifier: MIT OR Apache-2.0\n";
 
 fn write(dir: &Path, relative: &str, text: &str) {
     let path = dir.join(relative);

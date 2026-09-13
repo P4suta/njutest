@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The catalog identity Cargo embeds in an instrumented binary, and rebuilds when it changes.
@@ -112,9 +112,9 @@ fn a_session_embeds_its_complete_catalog_in_the_binary_it_builds() {
     let workspace = Workspace::open(
         &project.root,
         OpenOptions {
-            cargo: Some(mjutest_devkit::paths::cargo_binary()),
+            cargo: Some(njutest_devkit::paths::cargo_binary()),
             temp_directory: project.temporary.clone(),
-            env: mjutest_devkit::paths::environment_for_a_run(),
+            env: njutest_devkit::paths::environment_for_a_run(),
             offline: true,
             locked: true,
             ..OpenOptions::default()
@@ -156,8 +156,8 @@ fn cargo_rebuilds_an_unchanged_binary_when_the_embedded_catalog_changes() {
     let trace = Recorder::disabled();
     let toolchain = Toolchain::locate(
         &LocateOptions {
-            cargo: Some(mjutest_devkit::paths::cargo_binary()),
-            env: Some(mjutest_devkit::paths::environment_for_a_run()),
+            cargo: Some(njutest_devkit::paths::cargo_binary()),
+            env: Some(njutest_devkit::paths::environment_for_a_run()),
             ..LocateOptions::default()
         },
         &project.root,

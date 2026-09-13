@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The gate that keeps `#[allow]`, `Box<dyn Trait>`, and a comment beside the code out.
@@ -121,7 +121,7 @@ fn a_comment_beside_the_code_is_refused_and_documentation_is_not() {
 fn the_licence_header_is_not_a_comment_this_gate_refuses() {
     assert_eq!(
         kinds(
-            "// SPDX-FileCopyrightText: 2026 mjutest contributors\n             // SPDX-License-Identifier: MIT OR Apache-2.0\n\n//! A file.\n"
+            "// SPDX-FileCopyrightText: 2026 njutest contributors\n             // SPDX-License-Identifier: MIT OR Apache-2.0\n\n//! A file.\n"
         ),
         [],
         "every file of this repository carries it"

@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What a run leaves behind, what a later command finds, and what puts one finding back to the tests.
@@ -13,7 +13,7 @@
 use std::ffi::OsString;
 use std::process::Output;
 
-use mjutest_devkit::fixture::Fixture;
+use njutest_devkit::fixture::Fixture;
 use rust_mutants::runner::Cancel;
 use rust_mutants_cli::{Environment, Streams};
 
@@ -32,12 +32,12 @@ fn against(fixture: &Fixture, args: &[&str]) -> Output {
             err: &mut err,
         },
     );
-    mjutest_devkit::process::answered(code, out, err)
+    njutest_devkit::process::answered(code, out, err)
 }
 
 fn environment(fixture: &Fixture) -> Environment {
     Environment {
-        vars: mjutest_devkit::paths::environment_for_a_run(),
+        vars: njutest_devkit::paths::environment_for_a_run(),
         temp_directory: fixture.temp().to_path_buf(),
         cache_directory: fixture.cache().to_path_buf(),
         working_directory: fixture.root().to_path_buf(),
@@ -174,12 +174,12 @@ fn replaying_a_recorded_outcome_asks_the_question_the_run_asked() {
     );
     let output = against(
         &fixture,
-        &["replay", "--offline", "--locked", "--tier", "all", "e5e8"],
+        &["replay", "--offline", "--locked", "--tier", "all", "16b0"],
     );
     let text = said(&output);
     assert!(
         text.contains(
-            "REPLAY    e5e872bfbcb2afbbf7a1 survived, which is the proof that \
+            "REPLAY    16b0cd40508fc0785477 survived, which is the proof that \
                        discharged it holding"
         ),
         "the run proved this mutation cannot be noticed rather than running it, and the \
@@ -207,11 +207,11 @@ fn replaying_a_mutant_a_run_measured_says_whether_the_answer_is_still_the_same()
     );
     let output = against(
         &fixture,
-        &["replay", "--offline", "--locked", "--tier", "all", "e5e8"],
+        &["replay", "--offline", "--locked", "--tier", "all", "16b0"],
     );
     let text = said(&output);
     assert!(
-        text.contains("REPLAY    e5e872bfbcb2afbbf7a1 still survived"),
+        text.contains("REPLAY    16b0cd40508fc0785477 still survived"),
         "a replay says whether the answer is still the same: {text}"
     );
     assert_eq!(output.status.code(), Some(1), "{text}");
@@ -226,7 +226,7 @@ fn measured(fixture: &Fixture) -> Output {
 
 /// How many of the run's rows an earlier run answered for.
 fn reused(fixture: &Fixture) -> usize {
-    let directory = mjutest_devkit::fixture::newest_run(fixture.root());
+    let directory = njutest_devkit::fixture::newest_run(fixture.root());
     let text = std::fs::read_to_string(directory.join("run-report-v1.json")).expect("the report");
     let document: serde_json::Value = serde_json::from_str(&text).expect("the report is JSON");
     document["mutants"]

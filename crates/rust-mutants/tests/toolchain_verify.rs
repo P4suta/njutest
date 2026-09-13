@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What preparing does about a target whose own tests do not pass with nothing active.
@@ -9,7 +9,7 @@
     reason = "a test reports a setup failure by panicking"
 )]
 
-use mjutest_devkit::fixture::Fixture;
+use njutest_devkit::fixture::Fixture;
 use rust_mutants::EngineError;
 use rust_mutants::rule::Tier;
 use rust_mutants::runner::Cancel;
@@ -24,7 +24,7 @@ fn open(fixture: &Fixture) -> Workspace {
         OpenOptions {
             offline: true,
             locked: true,
-            ..opening(&mjutest_devkit::paths::cargo_binary(), fixture.temp())
+            ..opening(&njutest_devkit::paths::cargo_binary(), fixture.temp())
         },
         &Cancel::new(),
     )
@@ -58,7 +58,7 @@ fn traced_prepare(fixture: &Fixture, recorder: &Recorder, options: &PrepareOptio
         fixture.root(),
         OpenOptions {
             trace: recorder.clone(),
-            ..opening(&mjutest_devkit::paths::cargo_binary(), fixture.temp())
+            ..opening(&njutest_devkit::paths::cargo_binary(), fixture.temp())
         },
         &Cancel::new(),
     )

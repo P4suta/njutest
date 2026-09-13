@@ -1,7 +1,0 @@
-Write an annotated .mjutest.toml
-
-Usage: mjutest init [OPTIONS]
-
-Options:
-      --force  Replace a configuration that is already there
-  -h, --help   Print help

@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! A whole run against a real workspace: what it establishes, what it writes, what it exits with, and reading it back.
@@ -11,7 +11,7 @@
 
 use std::ffi::OsString;
 
-use mjutest_devkit::fixture::{Fixture, copy_tree};
+use njutest_devkit::fixture::{Fixture, copy_tree};
 use rust_mutants::runner::Cancel;
 use rust_mutants_cli::{Environment, Streams};
 use std::path::{Path, PathBuf};
@@ -32,7 +32,7 @@ fn against(fixture: &Fixture, args: &[&str]) -> Output {
             err: &mut err,
         },
     );
-    mjutest_devkit::process::answered(code, out, err)
+    njutest_devkit::process::answered(code, out, err)
 }
 
 /// A command that takes no workspace, so no `--root` is added to it.
@@ -49,7 +49,7 @@ fn rootless(fixture: &Fixture, args: &[&str]) -> Output {
             err: &mut err,
         },
     );
-    mjutest_devkit::process::answered(code, out, err)
+    njutest_devkit::process::answered(code, out, err)
 }
 
 fn stdout(output: &Output) -> String {
@@ -62,7 +62,7 @@ fn count(value: usize) -> u64 {
 
 /// The report the newest run stored, as a document.
 fn stored(fixture: &Fixture) -> serde_json::Value {
-    serde_json::from_str(&mjutest_devkit::fixture::stored_report(fixture.root()))
+    serde_json::from_str(&njutest_devkit::fixture::stored_report(fixture.root()))
         .expect("the report is a document")
 }
 
@@ -149,7 +149,7 @@ fn the_report_names_every_mutant_scores_what_it_decided_and_reports_every_gap() 
 fn against_schema(named: &str, document: &serde_json::Value) -> Vec<String> {
     let schema: serde_json::Value = serde_json::from_str(
         &std::fs::read_to_string(
-            mjutest_devkit::paths::workspace_root()
+            njutest_devkit::paths::workspace_root()
                 .join("schema")
                 .join(named),
         )
@@ -276,7 +276,7 @@ fn an_expectation_the_run_confirms_stops_being_a_finding_and_a_stale_one_starts(
 #[test]
 fn a_process_with_an_incomplete_touch_mode_is_refused_before_anything_runs() {
     let fixture = Fixture::copy("fixture-simple");
-    let output = mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")))
+    let output = njutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")))
         .args(["list", "--root", &fixture.root().to_string_lossy()])
         .env("NO_COLOR", "1")
         .env("TMPDIR", fixture.temp())
@@ -335,7 +335,7 @@ fn cache_says_what_a_run_left_in_the_temporary_directory_and_gc_reclaims_it() {
         .expect("tempdir");
     let root = dir.path().join("fixture-simple");
     copy_tree(
-        &mjutest_devkit::paths::fixtures_dir().join("fixture-simple"),
+        &njutest_devkit::paths::fixtures_dir().join("fixture-simple"),
         &root,
     );
     let temp = dir.path().join("temp");
@@ -729,7 +729,7 @@ fn an_unreached_finding_is_a_finding_the_schema_knows() {
     );
     let schema: serde_json::Value = serde_json::from_str(
         &std::fs::read_to_string(
-            mjutest_devkit::paths::workspace_root().join("schema/rust-mutants-run-report-v1.json"),
+            njutest_devkit::paths::workspace_root().join("schema/rust-mutants-run-report-v1.json"),
         )
         .expect("the schema"),
     )
@@ -884,7 +884,7 @@ fn evidence_of(extra: &[&str]) -> (PathBuf, Fixture) {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let directory = mjutest_devkit::fixture::newest_run(fixture.root());
+    let directory = njutest_devkit::fixture::newest_run(fixture.root());
     (directory, fixture)
 }
 
@@ -1165,7 +1165,7 @@ fn a_proof_removing_a_mutation_and_nothing_reaching_it_are_two_answers() {
 
 fn environment(fixture: &Fixture) -> Environment {
     Environment {
-        vars: mjutest_devkit::paths::environment_for_a_run(),
+        vars: njutest_devkit::paths::environment_for_a_run(),
         temp_directory: fixture.temp().to_path_buf(),
         cache_directory: fixture.cache().to_path_buf(),
         working_directory: fixture.root().to_path_buf(),
@@ -1189,13 +1189,13 @@ fn asked(environment: &Environment, args: &[&str]) -> Output {
             err: &mut err,
         },
     );
-    mjutest_devkit::process::answered(code, out, err)
+    njutest_devkit::process::answered(code, out, err)
 }
 
 /// The environment of a tree a test laid out itself rather than copied as a fixture.
 fn environment_at(root: &Path, temp: &Path, cache: &Path) -> Environment {
     Environment {
-        vars: mjutest_devkit::paths::environment_for_a_run(),
+        vars: njutest_devkit::paths::environment_for_a_run(),
         temp_directory: temp.to_path_buf(),
         cache_directory: cache.to_path_buf(),
         working_directory: root.to_path_buf(),

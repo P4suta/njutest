@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What one bug report carries: everything a reader re-decides a run from, and nothing its owner did not choose to publish.
@@ -12,7 +12,7 @@
 use std::ffi::OsString;
 use std::path::Path;
 
-use mjutest_devkit::fixture::Fixture;
+use njutest_devkit::fixture::Fixture;
 use rust_mutants::runner::Cancel;
 use rust_mutants_cli::{Environment, Streams};
 
@@ -27,7 +27,7 @@ struct Said {
 }
 
 fn against(fixture: &Fixture, args: &[&str]) -> Said {
-    let mut vars = mjutest_devkit::paths::environment_for_a_run();
+    let mut vars = njutest_devkit::paths::environment_for_a_run();
     vars.push((
         OsString::from("RUST_MUTANTS_NOTHING"),
         OsString::from(SECRET),
@@ -319,7 +319,7 @@ fn the_run_a_bundle_is_about_is_the_one_that_was_named() {
 fn checked(document: &serde_json::Value, name: &str) {
     let schema: serde_json::Value = serde_json::from_str(
         &std::fs::read_to_string(
-            mjutest_devkit::paths::workspace_root()
+            njutest_devkit::paths::workspace_root()
                 .join("schema")
                 .join(name),
         )
