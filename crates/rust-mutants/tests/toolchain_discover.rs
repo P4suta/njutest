@@ -194,6 +194,31 @@ fn a_file_only_the_test_unit_compiles_is_a_test_only_file_skip() {
     assert_eq!(total, [("test-code", 17), ("test-only-file", 6)]);
 }
 
+#[cfg(unix)]
+#[test]
+fn a_logical_workspace_alias_accepts_the_physical_paths_the_compiler_reports() {
+    let prepared = prepare("fixture-simple");
+    let aliases = tempfile::tempdir().expect("a directory for the logical alias");
+    let alias = aliases.path().join("logical-workspace");
+    std::os::unix::fs::symlink(&prepared.dir, &alias).expect("a workspace alias");
+    let input = Input {
+        root: &alias,
+        metadata: &prepared.metadata,
+        units: &prepared.checked.units,
+    };
+
+    let discovery = discover(&input, &options(), &Recorder::disabled())
+        .expect("physical compiler paths are still inside the logical workspace");
+    assert_eq!(
+        discovery
+            .files
+            .iter()
+            .map(|file| file.path.as_str())
+            .collect::<Vec<_>>(),
+        ["src/lib.rs", "src/testutil.rs"]
+    );
+}
+
 #[test]
 fn a_nested_member_reports_workspace_relative_paths_and_a_binary_is_mutable() {
     let prepared = prepare("fixture-workspace");

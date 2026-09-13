@@ -325,6 +325,10 @@ fn assigned<'a>(
     let members = selected_members(input.metadata, &options.packages)?;
     let mut assigner = Assigner {
         root: input.root,
+        physical_root: input
+            .root
+            .canonicalize()
+            .unwrap_or_else(|_error| input.root.to_path_buf()),
         units: input.units,
         workspace_manifest: input
             .metadata
@@ -511,6 +515,9 @@ fn selected_members<'m>(
 /// Gives every file of every target its role, from the units that compiled the target, keeping the higher-priority role when targets disagree.
 struct Assigner<'a> {
     root: &'a Path,
+    /// The filesystem's spelling of `root`, for platforms that report a
+    /// compiler source through a physical alias of the snapshot path.
+    physical_root: PathBuf,
     units: &'a [Unit],
     /// The workspace manifest, which a member's `[lints] workspace = true` inherits from.
     workspace_manifest: PathBuf,
@@ -538,10 +545,10 @@ impl Assigner<'_> {
             .filter(|unit| !unit.test)
             .flat_map(|unit| unit.sources.iter().map(PathBuf::as_path))
             .collect();
-        let crate_root = relative(self.root, &target.src_path)?;
-        let own_root = non_test
-            .iter()
-            .any(|path| relative(self.root, path).is_ok_and(|rel| rel == crate_root));
+        let crate_root = relative(self.root, &self.physical_root, &target.src_path)?;
+        let own_root = non_test.iter().any(|path| {
+            relative(self.root, &self.physical_root, path).is_ok_and(|rel| rel == crate_root)
+        });
         let no_std =
             own_root && crate_root_is_freestanding(self.root, &crate_root, &target.edition);
         let forbidden = crate::cargo::manifest::forbidden(
@@ -551,7 +558,7 @@ impl Assigner<'_> {
         let forbids = crate_root_forbids_guard_noise(self.root, &crate_root, &forbidden);
         for unit in &compiled {
             for source in &unit.sources {
-                let Ok(path) = relative(self.root, source) else {
+                let Ok(path) = relative(self.root, &self.physical_root, source) else {
                     self.generated
                         .insert(generated_name(source), package.name.clone());
                     continue;
@@ -693,12 +700,20 @@ fn item_supplies_what_std_does(item: &syn::Item) -> bool {
 pub const GENERATED_DIR: &str = "<generated>";
 
 /// The workspace-relative, `/`-separated spelling of `path`.
-fn relative(root: &Path, path: &Path) -> Result<String, DiscoverError> {
+fn relative(root: &Path, physical_root: &Path, path: &Path) -> Result<String, DiscoverError> {
     let outside = || DiscoverError::OutsideRoot {
         path: path.display().to_string(),
         root: root.display().to_string(),
     };
-    let rel = path.strip_prefix(root).map_err(|_error| outside())?;
+    let rel = if let Ok(rel) = path.strip_prefix(root) {
+        rel.to_path_buf()
+    } else {
+        let physical_path = path.canonicalize().map_err(|_error| outside())?;
+        physical_path
+            .strip_prefix(physical_root)
+            .map(Path::to_path_buf)
+            .map_err(|_error| outside())?
+    };
     normalize_path(&rel.to_string_lossy()).map_err(|_error| outside())
 }
 

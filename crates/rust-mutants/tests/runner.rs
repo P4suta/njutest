@@ -307,11 +307,10 @@ fn a_windows_process_tree_is_killed_on_timeout() {
         "start /b cmd /C \"timeout /t 30 /nobreak > nul & echo alive > {}\" & timeout /t 30 /nobreak > nul",
         marker.display()
     );
+    let mut spec = shell(&script);
+    spec.timeout = Some(Duration::from_millis(500));
     let started = Instant::now();
-    let result = run(
-        &shell(&script).with_timeout(Some(Duration::from_millis(500))),
-        &Cancel::new(),
-    );
+    let result = run(&spec, &Cancel::new());
     assert!(result.timed_out, "{result:?}");
     assert!(
         started.elapsed() < Duration::from_secs(20),
