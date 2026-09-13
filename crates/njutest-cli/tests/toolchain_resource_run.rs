@@ -34,9 +34,9 @@ fn fixture() -> Fixture {
     Fixture { root, _dir: dir }
 }
 
-/// The provider a run drives, read rather than written: see the script's own note.
+/// The provider a run drives, as a program every platform can start.
 fn provider() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testdata/fake-provider.sh")
+    njutest_devkit::fake_cargo::example("fake_provider")
 }
 
 /// What the provider says when it is ready.
@@ -107,7 +107,7 @@ fn declaring(fixture: &Fixture) {
     std::fs::write(
         fixture.root.join(".njutest.toml"),
         format!(
-            "version = 1\n\n[resources.postgres]\ncommand = [\"/bin/sh\", {:?}]\n\
+            "version = 1\n\n[resources.postgres]\ncommand = [{:?}, \"resource\"]\n\
              timeout = \"10s\"\nenvironment = [\"FAKE_PROVIDER_READY\", \"FAKE_PROVIDER_STOPPED\"]\n",
             provider().to_string_lossy()
         ),

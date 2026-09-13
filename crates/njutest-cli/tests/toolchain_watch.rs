@@ -292,7 +292,9 @@ fn a_run_told_where_to_look_for_a_toolchain_looks_there_and_nowhere_else() {
         working_directory: root.path().to_owned(),
         temp_directory: scratch,
         vars: std::env::vars_os()
-            .filter(|(name, _value)| name == "PATH")
+            .filter(|(name, _)| {
+                njutest_devkit::paths::same_name(name, std::ffi::OsStr::new("PATH"))
+            })
             .collect(),
         cancel: Cancel::new(),
     };
@@ -840,12 +842,11 @@ fn a_run_that_held_something_says_what_it_held_and_lets_go_of_it() {
         &njutest_devkit::paths::fixtures_dir().join("fixture-baseline"),
         &root,
     );
-    let provider =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testdata/fake-provider.sh");
+    let provider = njutest_devkit::fake_cargo::example("fake_provider");
     std::fs::write(
         root.join(".njutest.toml"),
         format!(
-            "version = 1\n\n[resources.postgres]\ncommand = [\"/bin/sh\", {:?}]\n\
+            "version = 1\n\n[resources.postgres]\ncommand = [{:?}, \"resource\"]\n\
              timeout = \"10s\"\nenvironment = [\"FAKE_PROVIDER_READY\", \"FAKE_PROVIDER_STOPPED\"]\n",
             provider.to_string_lossy()
         ),
@@ -952,12 +953,11 @@ fn a_candidate_offered_for_a_gap_is_put_to_the_tests_before_it_is_recorded() {
         &njutest_devkit::paths::fixtures_dir().join("fixture-baseline"),
         &root,
     );
-    let provider =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testdata/fake-generator.sh");
+    let provider = njutest_devkit::fake_cargo::example("fake_provider");
     std::fs::write(
         root.join(".njutest.toml"),
         format!(
-            "version = 1\n\n[generation]\ncommand = [\"/bin/sh\", {:?}]\n\
+            "version = 1\n\n[generation]\ncommand = [{:?}, \"generation\"]\n\
              environment = [\"FAKE_GENERATOR_OFFERS\", \"FAKE_GENERATOR_ASKED\"]\n",
             provider.to_string_lossy()
         ),

@@ -242,17 +242,27 @@ impl Installed {
 /// builds it.
 #[must_use]
 pub fn locate() -> PathBuf {
+    example("fake_cargo")
+}
+
+/// The example named `name`, as `cargo build --examples` leaves it beside the test binaries.
+///
+/// # Panics
+/// When the example is not there and cannot be built, with the command that
+/// builds it.
+#[must_use]
+pub fn example(name: &str) -> PathBuf {
     let current = std::env::current_exe().expect("the test binary's own path");
     let deps = current.parent().expect("the deps directory");
     let profile = deps.parent().expect("the profile directory");
-    let fake = profile.join("examples").join(exe("fake_cargo"));
+    let fake = profile.join("examples").join(exe(name));
     if !fake.is_file() {
         static BUILT: std::sync::OnceLock<()> = std::sync::OnceLock::new();
         BUILT.get_or_init(|| build_the_example(profile));
     }
     assert!(
         fake.is_file(),
-        "the fake cargo is not built at {}: run `cargo build --examples -p rust-mutants` first, \
+        "{name} is not built at {}: run `cargo build --examples -p rust-mutants` first, \
          or drive this suite with a task that does",
         fake.display()
     );

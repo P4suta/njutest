@@ -37,16 +37,16 @@ fn fixture() -> Fixture {
     Fixture { root, _dir: dir }
 }
 
-/// The generation provider a run asks, read rather than written: see the script's own note.
+/// The generation provider a run asks, as a program every platform can start.
 fn provider() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testdata/fake-generator.sh")
+    njutest_devkit::fake_cargo::example("fake_provider")
 }
 
 fn declaring(fixture: &Fixture) {
     std::fs::write(
         fixture.root.join(".njutest.toml"),
         format!(
-            "version = 1\n\n[generation]\ncommand = [\"/bin/sh\", {:?}]\n\
+            "version = 1\n\n[generation]\ncommand = [{:?}, \"generation\"]\n\
              environment = [\"FAKE_GENERATOR_OFFERS\"]\n",
             provider().to_string_lossy()
         ),
