@@ -51,7 +51,7 @@ runs:
           echo "install=true" >> "${GITHUB_OUTPUT}"
         fi
     - if: steps.present.outputs.install == 'true'
-      uses: taiki-e/install-action@daa3c1f1f9e335f32fb3b07458d5b2767e3849a5 # v2
+      uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2.85.3
       with:
         tool: cargo-binstall
     - name: Install njutest

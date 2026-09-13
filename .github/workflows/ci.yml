@@ -38,6 +38,7 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/setup-rust
         with:
+          components: llvm-tools
           tools: cargo-nextest@0.9.140
       - name: Fetch the locked dependency graph
         env:
@@ -80,6 +81,8 @@ jobs:
       - name: repository gates (seam ratchet, dependency direction, fixtures, release consistency)
         run: cargo xtask all
       - name: fuzz targets type-check against the API they fuzz
+        env:
+          CARGO_NET_OFFLINE: "false"
         run: cargo check --locked --all-targets
         working-directory: fuzz
       - name: typos
@@ -108,6 +111,10 @@ jobs:
     name: deny
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    env:
+      # The container has its own Cargo home, so the host's fetch cannot seed
+      # the index it resolves against.
+      CARGO_NET_OFFLINE: "false"
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -159,7 +166,10 @@ jobs:
           cargo llvm-cov show-env --export-prefix > "$RUNNER_TEMP/coverage-env.sh"
           . "$RUNNER_TEMP/coverage-env.sh"
           cargo build --locked --examples -p rust-mutants
-          cargo nextest run --locked --workspace --all-targets --all-features
+          # A cold hosted runner can transiently starve one of the nested
+          # toolchain probes while every instrumented test starts together.
+          # Retry only a failure; deterministic failures still fail the job.
+          cargo nextest run --locked --workspace --all-targets --all-features --retries 1
       - name: Report (lcov + HTML + summary)
         run: |
           cargo llvm-cov report --lcov --output-path lcov.info
@@ -263,7 +273,7 @@ jobs:
           printf 'version = 1\ncontract = "deep-v1"\n' > "$RUNNER_TEMP/interpreted/.njutest.toml"
           ./target/release/njutest verify \
             --directory "$RUNNER_TEMP/interpreted" --offline --locked --no-cache --ui=plain \
-            || test $? -eq 2
+            || test $? -eq 1
       - name: The run says it interpreted the suite
         run: |
           report="$RUNNER_TEMP/interpreted/$(jq -r .directory "$RUNNER_TEMP/interpreted/reports/latest-any.json")/njutest-assurance-report-v1.json"

@@ -352,12 +352,11 @@ fn symbolic_links_are_recorded_and_not_followed() {
 #[test]
 fn irregular_files_are_recorded_and_not_copied() {
     let fx = fixture();
-    rustix::fs::mkfifoat(
-        rustix::fs::CWD,
-        fx.source.join("src/pipe"),
-        rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR,
-    )
-    .expect("fifo");
+    let made = std::process::Command::new("mkfifo")
+        .arg(fx.source.join("src/pipe"))
+        .status()
+        .expect("the POSIX mkfifo utility");
+    assert!(made.success(), "mkfifo exited with {made}");
 
     let snapshot = create(&fx.source, &options(&fx), now()).expect("a tree with a pipe in it");
 

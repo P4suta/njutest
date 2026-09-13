@@ -35,6 +35,10 @@ jobs:
     name: fuzz (${{ matrix.target }})
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    env:
+      # The repository pins stable in rust-toolchain.toml. Make the fuzz
+      # process select the nightly that the action below installs.
+      RUSTUP_TOOLCHAIN: nightly
     strategy:
       fail-fast: false
       matrix:
