@@ -933,14 +933,14 @@ fn concluded(
 ) {
     if json {
         crate::stream::Writer::new(stdout, session)
-            .ended(document, written.map(|path| path.display().to_string()));
+            .ended(document, written.map(rust_mutants::id::slashed));
         return;
     }
     write(stdout, "\n");
     write(stdout, &report::lines(document));
     if let Some(path) = written {
         let mut line = String::new();
-        let ok = writeln!(line, "REPORT    {}", path.display());
+        let ok = writeln!(line, "REPORT    {}", rust_mutants::id::slashed(path));
         debug_assert!(ok.is_ok(), "writing to a String cannot fail");
         write(stdout, &line);
     }
