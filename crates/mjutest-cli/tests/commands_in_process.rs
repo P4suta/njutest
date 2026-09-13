@@ -12,6 +12,7 @@
 #![expect(
     clippy::expect_used,
     clippy::indexing_slicing,
+    clippy::too_many_lines,
     reason = "the helpers that copy a fixture and run one verification are not themselves \
               tests, a setup that fails is reported by panicking, and a test reads a \
               document by the names the run it drove put there"
@@ -242,6 +243,10 @@ fn a_mutant_is_explained_by_the_run_that_judged_it_and_never_by_a_guess() {
         .as_str()
         .expect("a mutant the run judged")
         .to_owned();
+    let full = parsed["mutants"][0]["id"]
+        .as_str()
+        .expect("the full identity")
+        .to_owned();
 
     let explained = ask(&it.root, &["explain", &mutant]);
     assert_eq!(explained.code, 0, "{}{}", explained.out, explained.err);
@@ -264,6 +269,15 @@ fn a_mutant_is_explained_by_the_run_that_judged_it_and_never_by_a_guess() {
         explained.out
     );
     placed_and_ruled(&said, &explained.out);
+    let explained_by_full_identity = ask(&it.root, &["explain", &full]);
+    assert_eq!(
+        (
+            explained_by_full_identity.code,
+            explained_by_full_identity.out
+        ),
+        (0, explained.out.clone()),
+        "the full identity and its display prefix name exactly the same mutation"
+    );
 
     let killed = parsed["mutants"]
         .as_array()
@@ -281,6 +295,11 @@ fn a_mutant_is_explained_by_the_run_that_judged_it_and_never_by_a_guess() {
             .any(|line| line.starts_with("DECIDED-BY\t")),
         "a mutation something noticed names what noticed it, or a kill is a number with \
          nothing behind it: {}",
+        caught.out
+    );
+    assert!(
+        !caught.out.contains("ACCEPTANCE\t"),
+        "a mutation the tests killed is not accepted merely because it has no finding: {}",
         caught.out
     );
 
@@ -344,6 +363,12 @@ fn open_and_then_accepted(it: &Verified, parsed: &serde_json::Value) {
         open.out.lines().any(|line| line.starts_with("FINDING\t")),
         "a mutation nothing noticed carries the finding it raised, so an explanation is \
          where a person can go from the identity to what to do about it: {}",
+        open.out
+    );
+    assert!(
+        !open.out.contains("ACCEPTANCE\t"),
+        "a survivor whose own finding still stands is not described as accepted, even when the \
+         report also has findings about other mutations: {}",
         open.out
     );
 
@@ -432,7 +457,8 @@ fn an_acceptance_is_written_where_the_next_run_reads_it() {
         .expect("the configuration the acceptance was written into");
     assert!(
         written.contains("[[acceptance]]")
-            && written.contains("reviewed: the two forms compile to one"),
+            && written.contains("reviewed: the two forms compile to one")
+            && written.starts_with("version = 1\n"),
         "an acceptance is a line in the file the next run reads, with the reason beside \
          it: one recorded anywhere else is a decision the run cannot find, and one with \
          no reason is a mutant nobody looked at: {written}"
@@ -506,6 +532,11 @@ fn refusals(it: &Verified, survivor: &str) {
          {}{}",
         nobody.out, nobody.err
     );
+    assert!(
+        nobody.err.contains("ffffffffffff") && nobody.err.contains("no mutant"),
+        "the refused prefix and why it names nothing are both diagnostic: {}",
+        nobody.err
+    );
 
     let configured = it.root.join(mjutest_cli::config::FILE_NAME);
     let held = std::fs::read_to_string(&configured).expect("the configuration");
@@ -522,6 +553,11 @@ fn refusals(it: &Verified, survivor: &str) {
          refuses, and the reviews of every survivor would go with it: {}{}",
         wrong.out, wrong.err
     );
+    assert!(
+        wrong.err.contains("acceptance is not a list of tables"),
+        "the field with the wrong shape is named: {}",
+        wrong.err
+    );
 
     std::fs::write(&configured, "version = 1\nthis is not toml\n")
         .expect("a configuration that does not parse");
@@ -534,21 +570,57 @@ fn refusals(it: &Verified, survivor: &str) {
     );
     std::fs::write(&configured, held).expect("the configuration, as it was");
 
-    let several = ask(
-        &it.root,
-        &[
-            "accept",
-            &survivor.chars().take(1).collect::<String>(),
-            "--reason",
-            "why not",
-        ],
-    );
+    let several = ask(&it.root, &["accept", "", "--reason", "why not"]);
     assert!(
-        several.code == 3 || several.out.contains("already accepted"),
+        several.code == 3 && several.err.contains("names") && several.err.contains("mutants"),
         "and a prefix that names more than one is refused, because which of them a \
          person meant is not something to guess at: {}{}",
         several.out,
         several.err
+    );
+
+    std::fs::remove_file(&configured).expect("remove the configuration");
+    std::fs::create_dir_all(&configured).expect("a directory where the configuration belongs");
+    let unwritable = ask(&it.root, &["accept", survivor, "--reason", "reviewed"]);
+    assert_eq!(unwritable.code, 3, "{}{}", unwritable.out, unwritable.err);
+    assert!(
+        unwritable.err.contains("writing")
+            && unwritable.err.contains(mjutest_cli::config::FILE_NAME),
+        "an acceptance that cannot be persisted names the file and is an error: {}",
+        unwritable.err
+    );
+}
+
+#[test]
+fn accept_propagates_both_a_missing_run_and_an_unreadable_report() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let no_run = ask(dir.path(), &["accept", "abcdef", "--reason", "reviewed"]);
+    assert_eq!(no_run.code, 3, "{}{}", no_run.out, no_run.err);
+    assert!(
+        no_run.err.contains("no run has completed"),
+        "{}",
+        no_run.err
+    );
+
+    let run = "20260101T000000Z-broken";
+    std::fs::create_dir_all(
+        dir.path()
+            .join(mjutest_cli::app::reports::RUNS_DIR)
+            .join(run),
+    )
+    .expect("a run directory without a report");
+    let unreadable = ask(
+        dir.path(),
+        &["accept", "abcdef", "--reason", "reviewed", "--run", run],
+    );
+    assert_eq!(unreadable.code, 3, "{}{}", unreadable.out, unreadable.err);
+    assert!(
+        unreadable.err.contains(run)
+            && unreadable
+                .err
+                .contains(mjutest_cli::app::reports::DOCUMENT_NAME),
+        "{}",
+        unreadable.err
     );
 }
 
@@ -642,7 +714,6 @@ fn stored(it: &Verified) {
         "root      ",
         "holds     ",
         "collected ",
-        "builds    ",
         "kept      ",
         "temp      ",
     ] {
@@ -657,8 +728,7 @@ fn stored(it: &Verified) {
     let swept = ask(&it.root, &["cache", "--gc"]);
     assert_eq!(swept.code, 0, "{}{}", swept.out, swept.err);
     assert!(
-        swept.out.lines().any(|line| line.starts_with("collected "))
-            && swept.out.contains("artifacts"),
+        swept.out.lines().any(|line| line.starts_with("collected ")),
         "and a collection says what it took, or a person who ran it cannot tell it from \
          one that took nothing: {}",
         swept.out

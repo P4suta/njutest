@@ -41,16 +41,14 @@ fn module() -> (String, u32) {
 /// Builds a program around the runtime, runs it, and returns what it wrote to the touch log.
 fn ran(name: &str, body: &str, touching: bool) -> String {
     let (module, _) = module();
-    let dir = mjutest_devkit::paths::workspace_root()
-        .join("target/touch-runtime")
-        .join(format!("{}-{name}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("a place to build");
+    let temporary = tempfile::tempdir().expect("a place to build");
+    let dir = temporary.path();
     let source = dir.join(format!("{name}.rs"));
     std::fs::write(&source, format!("{module}\nfn main() {{\n{body}\n}}\n")).expect("write");
     let built = Command::new("rustc")
         .args(["--edition", "2024", "--crate-type", "bin"])
         .arg("--out-dir")
-        .arg(&dir)
+        .arg(dir)
         .arg(&source)
         .output()
         .expect("rustc runs");
@@ -218,10 +216,8 @@ fn a_run_with_nothing_to_record_never_evaluates_the_branch_it_would_have_compare
 #[test]
 fn a_process_built_from_another_catalog_writes_nothing_into_this_run_s_record() {
     let (module, _) = module();
-    let dir = mjutest_devkit::paths::workspace_root()
-        .join("target/touch-runtime")
-        .join(format!("{}-foreign", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("a place to build");
+    let temporary = tempfile::tempdir().expect("a place to build");
+    let dir = temporary.path();
     let source = dir.join("foreign.rs");
     std::fs::write(
         &source,
@@ -231,7 +227,7 @@ fn a_process_built_from_another_catalog_writes_nothing_into_this_run_s_record() 
     let built = Command::new("rustc")
         .args(["--edition", "2024", "--crate-type", "bin"])
         .arg("--out-dir")
-        .arg(&dir)
+        .arg(dir)
         .arg(&source)
         .output()
         .expect("rustc runs");
@@ -347,16 +343,14 @@ fn the_same_thread_named_twice_is_one_test_that_reached_both_lines_worth_of_site
 /// Compiles a library around the runtime, returning what rustc said.
 fn built(name: &str, prefix: &str) -> std::process::Output {
     let (module, _) = module();
-    let dir = mjutest_devkit::paths::workspace_root()
-        .join("target/touch-runtime")
-        .join(format!("{}-{name}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("a place to build");
+    let temporary = tempfile::tempdir().expect("a place to build");
+    let dir = temporary.path();
     let source = dir.join(format!("{name}.rs"));
     std::fs::write(&source, format!("{prefix}{module}")).expect("write");
     Command::new("rustc")
         .args(["--edition", "2024", "--crate-type", "lib"])
         .arg("--out-dir")
-        .arg(&dir)
+        .arg(dir)
         .arg(&source)
         .output()
         .expect("rustc runs")

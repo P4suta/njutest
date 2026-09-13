@@ -59,14 +59,13 @@ fn beside(root: &Path, name: &str) -> std::io::Result<PathBuf> {
     Ok(dir)
 }
 
-/// The parent's environment with the variables a run composes for itself taken out.
+/// The parent's environment for a new in-process run, with the variables that run must compose for itself taken out.
 ///
-/// A run refuses to inherit `RUST_MUTANTS_ACTIVE`, `RUST_MUTANTS_CATALOG` and
-/// `RUST_MUTANTS_TOUCH`, because an inherited one would decide what somebody
-/// else's run measured. That refusal is right, and it means a test that starts
-/// a run inherits its way into it whenever the test is itself running under a
-/// measurement — which is every test of this workspace when the workspace is
-/// measuring itself.
+/// A nested run must not inherit `RUST_MUTANTS_ACTIVE`,
+/// `RUST_MUTANTS_CATALOG`, or `RUST_MUTANTS_TOUCH`, because an inherited one
+/// would decide what somebody else's run measured. A subprocess of the code
+/// under test is different and uses [`command`] to retain the outer activation
+/// or touch mode beside its catalog.
 ///
 /// So a test composes the environment it gives a run rather than passing its
 /// own along. `LLVM_PROFILE_FILE` goes for the same reason from the other end:
@@ -89,23 +88,17 @@ pub fn environment_for_a_run() -> Vec<(std::ffi::OsString, std::ffi::OsString)> 
         .collect()
 }
 
-/// A command for `program`, with the variables a run composes for itself taken out of what it inherits.
+/// A command for `program`, preserving mutation identity while isolating coverage output.
 ///
-/// Every test that starts a run needs this, for the reason
-/// [`environment_for_a_run`] gives: under a measurement of this workspace the
-/// parent's environment names an activation, and a run that inherited one
-/// refuses — correctly, and so a test that inherits its way into that refusal
-/// cannot be measured at all.
+/// A subprocess built from an instrumented tree must inherit the outer
+/// activation or touch mode and its catalog so its guards still measure it.
+/// Its composition root verifies the catalog embedded by Cargo before
+/// accepting that pair.
+/// Coverage output is never inherited because the child would overwrite the
+/// measurement that started it.
 #[must_use]
 pub fn command(program: &Path) -> std::process::Command {
     let mut command = std::process::Command::new(program);
-    for composed in [
-        "RUST_MUTANTS_ACTIVE",
-        "RUST_MUTANTS_CATALOG",
-        "RUST_MUTANTS_TOUCH",
-        "LLVM_PROFILE_FILE",
-    ] {
-        let _configured = command.env_remove(composed);
-    }
+    let _configured = command.env_remove("LLVM_PROFILE_FILE");
     command
 }

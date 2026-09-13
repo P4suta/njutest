@@ -130,14 +130,15 @@ pub struct PrepareOptions {
     pub packages: Vec<String>,
     /// The places a reviewer configured the run to pass over, each with the reason they gave.
     pub skips: Vec<discover::SkipRule>,
-    /// Where to remember what measuring this tree established, so the next run of it measures nothing.
+    /// Where to remember successful measurements of this exact tree.
     ///
-    /// A coverage measurement is a function of the sources the build compiled,
-    /// the manifests that chose its flags and dependencies, and the toolchain.
-    /// A mutation changes none of them, and instrumenting for coverage
-    /// rebuilds every crate in the graph, so a tree that has not changed is a
-    /// whole build a run does not have to do. `None` measures it again every
-    /// time.
+    /// Coverage is keyed by the compiled closure, manifests and toolchain.
+    /// The passing instrumented baseline is keyed more strictly by the whole
+    /// snapshot and its exact instrumentation and execution inputs, and is
+    /// reused only when the built target artifacts are byte-identical. A
+    /// mutation changes none of those inputs. `None` measures both again every
+    /// time; this is what `--no-cache` supplies. A failing baseline is never
+    /// remembered.
     pub measurements: Option<PathBuf>,
     /// Run every test target once with nothing active, and refuse to hand back a session whose instrumented baseline does not pass.
     pub verify: bool,
@@ -195,6 +196,16 @@ pub struct PrepareOptions {
     /// so as a limitation, which is a decision somebody made rather than a
     /// result nobody can read.
     pub skip_targets: Vec<String>,
+    /// Which mutants to place in the compiled tree when a later run is already
+    /// known to ask about only part of the catalog.
+    ///
+    /// Discovery and the catalog remain whole: identities, prefixes, skips,
+    /// and report positions are therefore resolved against exactly the same
+    /// catalog as an unfiltered run. Only compiler validation and
+    /// instrumentation are narrowed. A candidate outside this filter has not
+    /// been accepted or refused by the compiler; a run using the same filter
+    /// records it as `not_run/unselected`.
+    pub validation_filter: Option<crate::run::Filter>,
 }
 
 impl Default for PrepareOptions {
@@ -219,6 +230,7 @@ impl Default for PrepareOptions {
             doctests: true,
             build: crate::cargo::BuildConfig::default(),
             skip_targets: Vec::new(),
+            validation_filter: None,
         }
     }
 }
@@ -290,6 +302,9 @@ pub struct Session {
     skips: Vec<Skip>,
     claims: Vec<SkipClaim>,
     validated: Validated,
+    /// The catalog indices compiler validation was asked about. Every other
+    /// index is an explicitly unvalidated candidate, never an accepted one.
+    eligible: BTreeSet<u32>,
     targets: Vec<TestTarget>,
     scratch: PathBuf,
     /// How many executions this session has started, which is what names each one's own temporary directory.
@@ -345,6 +360,12 @@ impl Session {
     #[must_use]
     pub fn rejections(&self) -> &[Rejection] {
         &self.validated.rejections
+    }
+
+    /// Whether compiler validation considered this catalog index.
+    #[must_use]
+    pub fn was_validated(&self, index: u32) -> bool {
+        self.eligible.contains(&index)
     }
 
     /// Every place discovery passed over, with its reason.
@@ -1071,6 +1092,25 @@ impl Session {
         })
     }
 
+    /// A catalogued mutant this instrumented build actually contains.
+    fn executable(&self, prefix: &str) -> Result<&Mutant, EngineError> {
+        let mutant = self.resolve(prefix)?;
+        if self.validated.accepted.binary_search(&mutant.index).is_ok() {
+            return Ok(mutant);
+        }
+        let why = if self.was_validated(mutant.index) {
+            "the compiler refused it"
+        } else {
+            "the preparation filter left it unvalidated"
+        };
+        Err(EngineError::from(SessionError::UnknownMutant {
+            message: format!(
+                "{} is in the catalog but not in this instrumented build: {why}",
+                mutant.display_id
+            ),
+        }))
+    }
+
     /// A temporary directory of this execution's own, so two executions at once
     /// cannot meet in one another's files.
     ///
@@ -1096,7 +1136,7 @@ impl Session {
     /// [`SessionError::UnknownMutant`], [`SessionError::UnknownTarget`], and
     /// [`SessionError::NoTargets`].
     pub fn exec(&self, request: &Request, cancel: &Cancel) -> Result<MutantResult, EngineError> {
-        let mutant = self.resolve(&request.mutant)?;
+        let mutant = self.executable(&request.mutant)?;
         let chosen = self.chosen(request, mutant, Asking::Anything);
         self.execute(
             request,
@@ -1127,7 +1167,7 @@ impl Session {
         quiet: &crate::run::Quiet,
         cancel: &Cancel,
     ) -> Result<Judgement, EngineError> {
-        let mutant = self.resolve(&request.mutant)?;
+        let mutant = self.executable(&request.mutant)?;
         let route = self.route(mutant);
         let chosen = Chosen::of(request, &route, Asking::ThisRun);
         let running = |alone: bool| Running {

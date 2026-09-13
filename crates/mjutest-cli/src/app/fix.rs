@@ -20,6 +20,9 @@ use crate::report::CandidateRecord;
 use crate::trace::Recorder;
 use crate::watch::Watch;
 
+/// The bound on each build or execution when a recorded repair is checked again.
+pub const RECHECK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
+
 /// Says what a run was offered, and writes what still holds up.
 pub fn run(
     arguments: &Arguments,
@@ -147,7 +150,8 @@ fn apply(
         },
         build,
         harness_args: config.execution.test_binary_args,
-        timeout: std::time::Duration::from_secs(300),
+        skip_targets: config.execution.skip_targets,
+        timeout: RECHECK_TIMEOUT,
     };
     let mut written = 0u32;
     let mut already = 0u32;
@@ -255,10 +259,11 @@ fn one(
 /// Writes one candidate into the tree a person is working in.
 fn write(root: &Path, proposal: &crate::repair::Proposal) -> Result<(), String> {
     let path = root.join(&proposal.path);
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|source| format!("cannot make {}: {source}", parent.display()))?;
-    }
-    std::fs::write(&path, &proposal.content)
-        .map_err(|source| format!("cannot write {}: {source}", path.display()))
+    rust_mutants::replace::file(&path, &proposal.content).map_err(|failure| {
+        format!(
+            "cannot write {}: {}",
+            failure.path.display(),
+            failure.source
+        )
+    })
 }

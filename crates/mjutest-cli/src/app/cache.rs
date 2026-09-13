@@ -73,7 +73,6 @@ pub fn run(
             collected.bytes
         ),
     );
-    build_layers(arguments, environment, &config, stdout);
     temporary(environment, stdout);
     preserved(&root, stdout);
     EXIT_ASSURED
@@ -150,50 +149,7 @@ fn preserved(root: &Path, stdout: &mut dyn Write) {
     }
 }
 
-/// What the machine-wide build cache holds, and what a collection took from it.
-fn build_layers(
-    arguments: &Cache,
-    environment: &Environment,
-    config: &Config,
-    stdout: &mut dyn Write,
-) {
-    let build = crate::build_cache::BuildCache::new(
-        &environment.cache_directory.join("mjutest"),
-        "every-toolchain",
-    );
-    let swept = if arguments.gc {
-        build.collect(config.cache.build_max_bytes)
-    } else {
-        crate::build_cache::Swept {
-            before: build.size(),
-            ..crate::build_cache::Swept::default()
-        }
-    };
-    super::say(
-        stdout,
-        &format!(
-            "builds    {} bytes of at most {}",
-            swept.before, config.cache.build_max_bytes
-        ),
-    );
-    super::say(
-        stdout,
-        &format!(
-            "collected {} artifacts, {} bytes; {} layers a build is using",
-            swept.files,
-            swept.removed,
-            swept.busy.len()
-        ),
-    );
-}
-
 /// What earlier runs left in the operating system's temporary directory. The engine sweeps its own prefixes; this reports rather than duplicating it.
-///
-/// A sweep spares a build cache whatever its age, because a cache exists to
-/// outlive the run that filled it. So the count of what a sweep took says
-/// nothing about what is on the disk, and a report that gives only that number
-/// reads as "there is nothing here" while a machine fills up with caches
-/// keyed to trees that are gone.
 fn temporary(environment: &Environment, stdout: &mut dyn Write) {
     let swept = rust_mutants::tempowner::sweep_with(
         &environment.temp_directory,
@@ -208,13 +164,11 @@ fn temporary(environment: &Environment, stdout: &mut dyn Write) {
     super::say(
         stdout,
         &format!(
-            "temp      {}: {} abandoned, {} in use, {} preserved on purpose, {} spared as \
-             a build cache",
+            "temp      {}: {} abandoned, {} in use, {} preserved on purpose",
             environment.temp_directory.display(),
             swept.removed.len(),
             swept.live,
-            swept.kept,
-            swept.cached
+            swept.kept
         ),
     );
 }

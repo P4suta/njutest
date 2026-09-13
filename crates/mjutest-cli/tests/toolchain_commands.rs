@@ -351,30 +351,36 @@ fn plan_why_says_what_put_each_target_in_scope() {
 }
 
 #[test]
-fn cache_says_how_many_directories_it_spared_rather_than_only_what_it_took() {
+fn cache_leaves_the_engine_build_cache_to_the_engine() {
     let fixture = fixture("fixture-baseline");
     let temp = mjutest_devkit::paths::temp_beside(&fixture.root).expect("a temporary directory");
-    let spared = temp.join(format!("{}kept", rust_mutants::snapshot::DIR_PREFIX));
-    std::fs::create_dir_all(&spared).expect("the directory");
-    rust_mutants::tempowner::claim_cache(
-        &spared,
+    let target = temp.join(format!(
+        "{}kept",
+        rust_mutants::workspace::TARGET_DIR_PREFIX
+    ));
+    std::fs::create_dir_all(&target).expect("the directory");
+    let mut owner = rust_mutants::tempowner::claim_cache_of(
+        &target,
         jiff::Timestamp::now(),
-        rust_mutants::tempowner::SCHEMA,
+        rust_mutants::workspace::TARGET_OWNER_SCHEMA,
+        &fixture.root,
     )
-    .expect("a cache of an earlier run");
+    .expect("the engine's build cache");
+    owner.release().expect("release the engine's claim");
 
-    let output = mjutest(&fixture, &["cache"]);
+    let output = mjutest(&fixture, &["cache", "--gc"]);
     assert_eq!(output.status.code(), Some(0));
     let text = stdout(&output);
     assert!(
-        text.contains("1 spared as a build cache"),
-        "a sweep spares a build cache whatever its age, so a report that counts only \
-         what it took says nothing is there while the disk fills: {text}"
+        !text.lines().any(|line| line.starts_with("builds    "))
+            && !text.contains("build cache")
+            && !text.contains(&target.display().to_string()),
+        "the runner neither reports nor collects compiled artifacts: {text}"
     );
     assert!(
-        spared.is_dir(),
-        "and it is still there: {}",
-        spared.display()
+        target.is_dir(),
+        "the engine's cache remains for the engine: {}",
+        target.display()
     );
 }
 

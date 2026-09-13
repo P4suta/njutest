@@ -271,16 +271,49 @@ pub fn validate(
     compile: &mut dyn Compile,
     validating: &Validating<'_>,
 ) -> Result<Validated, ValidateError> {
-    let Validating {
-        options,
-        cancel,
-        trace,
-    } = *validating;
     let all: BTreeSet<u32> = catalog
         .mutants()
         .iter()
         .map(|mutant| mutant.index)
         .collect();
+    validate_set(catalog, &all, compile, validating)
+}
+
+/// Establishes which mutants in `selected` compile, without making any claim
+/// about the rest of the catalog.
+///
+/// The selected indices keep their positions in the complete catalog. An
+/// index outside the catalog is ignored: callers derive this set from that
+/// catalog, and treating an invented index as a candidate would manufacture a
+/// result with no identity to report.
+///
+/// # Errors
+/// The same failures as [`validate`].
+pub fn validate_selected(
+    catalog: &Catalog,
+    selected: &BTreeSet<u32>,
+    compile: &mut dyn Compile,
+    validating: &Validating<'_>,
+) -> Result<Validated, ValidateError> {
+    let all: BTreeSet<u32> = selected
+        .iter()
+        .copied()
+        .filter(|index| catalog.by_index(*index).is_some())
+        .collect();
+    validate_set(catalog, &all, compile, validating)
+}
+
+fn validate_set(
+    catalog: &Catalog,
+    all: &BTreeSet<u32>,
+    compile: &mut dyn Compile,
+    validating: &Validating<'_>,
+) -> Result<Validated, ValidateError> {
+    let Validating {
+        options,
+        cancel,
+        trace,
+    } = *validating;
     let mut condemned: BTreeSet<u32> = BTreeSet::new();
     let mut diagnostics: BTreeMap<u32, (Option<String>, String)> = BTreeMap::new();
     let mut interacting: BTreeSet<u32> = BTreeSet::new();
@@ -324,7 +357,7 @@ pub fn validate(
         if progressed && rounds < options.max_rounds {
             continue;
         }
-        let settled = cancelled_or(settle(compile, &all, &condemned, validating), cancel)?;
+        let settled = cancelled_or(settle(compile, all, &condemned, validating), cancel)?;
         rounds = rounds.saturating_add(settled.rounds);
         bisections = bisections.saturating_add(settled.attempts);
         for (index, entry) in settled.diagnostics {

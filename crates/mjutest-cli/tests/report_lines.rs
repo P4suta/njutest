@@ -227,6 +227,25 @@ fn a_finding_is_a_record_of_its_own_that_names_its_kind() {
 }
 
 #[test]
+fn an_unmatched_acceptance_is_a_named_record_in_the_line_projection() {
+    let mut report = report();
+    report.findings = vec![Finding::new(
+        FindingKind::UnmatchedAcceptance,
+        "ffff",
+        "no mutant matches this acceptance",
+    )];
+
+    let finding = records(&lines::stream(&report), "FINDING")
+        .into_iter()
+        .next()
+        .expect("one finding");
+    assert!(
+        finding.starts_with("FINDING\tunmatched-acceptance\tffff\t"),
+        "{finding}"
+    );
+}
+
+#[test]
 fn a_finding_detail_cannot_forge_a_verdict() {
     let mut report = report();
     report.findings[0].detail = "all clear\nVERDICT\tASSURED".to_owned();

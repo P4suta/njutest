@@ -4,7 +4,7 @@
 //! `mjutest diagnostics`: everything about one run, in one directory.
 
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::app::{reports, runs};
 use crate::cli::{Diagnostics as Arguments, EXIT_ASSURED, EXIT_ERROR, Environment};
@@ -75,14 +75,16 @@ pub fn run(
         "held": held,
         "absent": absent,
     });
-    let mut text = serde_json::to_string_pretty(&manifest).unwrap_or_default();
+    let mut text = manifest.to_string();
     text.push('\n');
-    if let Err(error) = std::fs::write(bundle.join(MANIFEST_NAME), text) {
+    if let Err(error) = rust_mutants::replace::file(&bundle.join(MANIFEST_NAME), text.as_bytes()) {
         super::diagnose(
             stderr,
             &format!(
-                "{}: writing the bundle manifest: {error}",
-                crate::error::REPORT_NOT_KEPT.code
+                "{}: writing the bundle manifest through {}: {}",
+                crate::error::REPORT_NOT_KEPT.code,
+                error.path.display(),
+                error.source,
             ),
         );
         return EXIT_ERROR;
@@ -109,7 +111,7 @@ pub fn record(present: bool, name: &str, held: &mut Vec<String>, absent: &mut Ve
 
 /// Copies one file, answering whether it was there.
 #[must_use]
-pub fn copy(from: &Path, to: &PathBuf) -> bool {
+pub fn copy(from: &Path, to: &Path) -> bool {
     std::fs::copy(from, to).is_ok()
 }
 
@@ -122,24 +124,31 @@ pub fn copy(from: &Path, to: &PathBuf) -> bool {
 /// bundle reads first is the directory.
 #[must_use]
 pub fn copy_tree(from: &Path, to: &Path) -> bool {
-    let Ok(entries) = std::fs::read_dir(from) else {
-        return false;
-    };
-    if std::fs::create_dir_all(to).is_err() {
-        return false;
-    }
-    let mut copied = false;
-    for entry in entries.flatten() {
-        let target = to.join(entry.file_name());
-        let done = if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
-            copy_tree(&entry.path(), &target)
-        } else {
-            copy(&entry.path(), &target)
-        };
-        copied = copied || done;
-    }
+    let copied = copy_tree_into(from, to).unwrap_or(false);
     if !copied {
-        let _removed = std::fs::remove_dir_all(to);
+        drop(std::fs::remove_dir_all(to));
     }
     copied
+}
+
+/// Carries a tree, failing the whole copy when any entry cannot be inspected or copied.
+fn copy_tree_into(from: &Path, to: &Path) -> std::io::Result<bool> {
+    let entries = std::fs::read_dir(from)?;
+    std::fs::create_dir_all(to)?;
+    let mut copied = false;
+    for entry in entries {
+        let entry = entry?;
+        let target = to.join(entry.file_name());
+        let done = if entry.file_type()?.is_dir() {
+            copy_tree_into(&entry.path(), &target)?
+        } else {
+            std::fs::copy(entry.path(), target)?;
+            true
+        };
+        copied |= done;
+    }
+    if !copied {
+        std::fs::remove_dir(to)?;
+    }
+    Ok(copied)
 }

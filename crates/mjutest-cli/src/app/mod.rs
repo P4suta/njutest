@@ -23,7 +23,7 @@ pub mod watch;
 
 use std::io::Write;
 
-use crate::cli::{Command, Environment, PROGRAM, Request};
+use crate::cli::{Command, EXIT_ASSURED, EXIT_ERROR, Environment, PROGRAM, Request};
 
 /// Runs what the command line asked for and answers with the exit code.
 pub fn run(
@@ -38,9 +38,9 @@ pub fn run(
         Command::Merge(arguments) => merge::run(arguments, stdout, stderr),
         Command::Watch(arguments) => watch::run(arguments, environment, stdout, stderr),
         Command::Lsp(arguments) => lsp::run(arguments, environment),
-        Command::Doctor(arguments) => doctor::run(*arguments, environment, stdout, stderr),
+        Command::Doctor(arguments) => exit(doctor::run(*arguments, environment, stdout, stderr)),
         Command::Verify(arguments) => verify::run(arguments, environment, stdout, stderr),
-        Command::Plan(arguments) => plan::run(arguments, environment, stdout, stderr),
+        Command::Plan(arguments) => exit(plan::run(arguments, environment, stdout, stderr)),
         Command::Report(arguments) => show::run(arguments, environment, stdout, stderr),
         Command::Explain(arguments) => explain::run(arguments, environment, stdout, stderr),
         Command::Accept(arguments) => accept::run(arguments, environment, stdout, stderr),
@@ -48,6 +48,23 @@ pub fn run(
         Command::Replay(arguments) => replay::run(arguments, environment, stdout, stderr),
         Command::Trace { command } => trace::run(command, environment, stdout, stderr),
         Command::Diagnostics(arguments) => diagnostics::run(arguments, environment, stdout, stderr),
+    }
+}
+
+/// A command boundary before it is translated to the process exit policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Completion {
+    /// The command established what it was asked to.
+    Assured,
+    /// The command diagnosed why it could not.
+    Error,
+}
+
+/// Turns a command's boundary into the process policy.
+const fn exit(result: Completion) -> u8 {
+    match result {
+        Completion::Assured => EXIT_ASSURED,
+        Completion::Error => EXIT_ERROR,
     }
 }
 

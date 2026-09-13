@@ -27,8 +27,8 @@ use crate::syntax::branch::Marker;
 use crate::syntax::{Form, Found, SiteHint};
 
 pub use runtime::{
-    ACTIVE_ENV, CATALOG_ENV, MODULE_STEM, RUNTIME_MARKER, Rendering, STALE_CATALOG_EXIT, TOUCH_ENV,
-    TOUCH_UNAVAILABLE_EXIT, module_name, render,
+    ACTIVE_ENV, CATALOG_ENV, COMPILED_CATALOG_ENV, MODULE_STEM, RUNTIME_MARKER, Rendering,
+    STALE_CATALOG_EXIT, TOUCH_ENV, TOUCH_UNAVAILABLE_EXIT, module_name, render,
 };
 
 /// The first words the runtime prints before it exits [`runtime::STALE_CATALOG_EXIT`].

@@ -4,7 +4,7 @@
 //! `.mjutest.toml`: optional, strict, and defaulted.
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -23,9 +23,6 @@ pub const DEFAULT_CACHE_MAX_BYTES: u64 = 5 * 1024 * 1024 * 1024;
 
 /// How long a cached outcome is kept when the file does not say.
 pub const DEFAULT_CACHE_TTL: Duration = Duration::from_hours(720);
-
-/// How much of the machine-wide build cache is kept when the file does not say.
-pub const DEFAULT_BUILD_MAX_BYTES: u64 = 8 * 1024 * 1024 * 1024;
 
 /// How many run directories are kept when the file does not say.
 pub const DEFAULT_REPORTS_KEEP: u32 = 20;
@@ -150,6 +147,8 @@ pub struct Execution {
     pub timeout: Duration,
     /// How many mutation workers. Zero means the logical CPUs, capped.
     pub jobs: u32,
+    /// Test targets never to start, by the stable id a report names them with.
+    pub skip_targets: Vec<String>,
 }
 
 impl Execution {
@@ -180,6 +179,7 @@ impl Default for Execution {
             environment: Vec::new(),
             timeout: DEFAULT_TIMEOUT,
             jobs: 0,
+            skip_targets: Vec::new(),
         }
     }
 }
@@ -193,7 +193,7 @@ pub struct Mutation {
 }
 
 /// What is kept between runs.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Cache {
     /// How much of the outcome cache is kept.
@@ -201,11 +201,6 @@ pub struct Cache {
     /// How long a cached outcome is kept.
     #[serde(deserialize_with = "duration", serialize_with = "as_millis")]
     pub ttl: Duration,
-    /// How much of the machine-wide build cache is kept.
-    pub build_max_bytes: u64,
-    /// Where that build cache lives. `None` is below the user cache directory.
-    #[serde(deserialize_with = "optional_path", serialize_with = "as_path")]
-    pub build_dir: Option<PathBuf>,
 }
 
 impl Default for Cache {
@@ -213,8 +208,6 @@ impl Default for Cache {
         Self {
             max_bytes: DEFAULT_CACHE_MAX_BYTES,
             ttl: DEFAULT_CACHE_TTL,
-            build_max_bytes: DEFAULT_BUILD_MAX_BYTES,
-            build_dir: None,
         }
     }
 }
@@ -563,14 +556,6 @@ fn duration<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Duratio
     parse_duration(&text).map_err(serde::de::Error::custom)
 }
 
-/// Reads a path, treating the empty string as absent, which is how the skeleton spells "the default".
-fn optional_path<'de, D: serde::Deserializer<'de>>(
-    deserializer: D,
-) -> Result<Option<PathBuf>, D::Error> {
-    let text = String::deserialize(deserializer)?;
-    Ok((!text.is_empty()).then(|| PathBuf::from(text)))
-}
-
 /// The annotated skeleton `mjutest init` writes.
 #[must_use]
 pub fn skeleton() -> String {
@@ -596,6 +581,7 @@ contract = \"standard-v1\"        # \"standard-v1\" | \"deep-v1\"
 # environment = []               # variable names only, never values
 # timeout = \"{timeout}m\"              # upper bound for one executed command
 # jobs = 0                       # mutation workers; 0 = logical CPUs, capped
+# skip_targets = []              # target ids never to start; reported as a limitation
 
 [mutation]
 # equivalence = false            # ask the compiler about every survivor
@@ -603,8 +589,6 @@ contract = \"standard-v1\"        # \"standard-v1\" | \"deep-v1\"
 [cache]
 # max_bytes = {max_bytes}
 # ttl = \"{ttl}h\"
-# build_max_bytes = {build_max_bytes}
-# build_dir = \"\"                  # default: below the user cache directory
 
 [reports]
 # keep = {keep}                       # run directories kept under reports/runs
@@ -638,7 +622,6 @@ contract = \"standard-v1\"        # \"standard-v1\" | \"deep-v1\"
 ",
         allowed = ALLOWED_TEST_ARGS.join(", "),
         max_bytes = DEFAULT_CACHE_MAX_BYTES,
-        build_max_bytes = DEFAULT_BUILD_MAX_BYTES,
         keep = DEFAULT_REPORTS_KEEP,
     )
 }
@@ -646,22 +629,6 @@ contract = \"standard-v1\"        # \"standard-v1\" | \"deep-v1\"
 /// A [`Duration`] as whole milliseconds, so the digest of a configuration does not depend on how a person spelled `10m`.
 fn as_millis<S: serde::Serializer>(value: &Duration, serializer: S) -> Result<S::Ok, S::Error> {
     serializer.serialize_u128(value.as_millis())
-}
-
-/// A path as the text it came from, empty for none.
-#[expect(
-    clippy::ref_option,
-    reason = "serde's serialize_with hands the field by reference, whatever its shape"
-)]
-fn as_path<S: serde::Serializer>(
-    value: &Option<PathBuf>,
-    serializer: S,
-) -> Result<S::Ok, S::Error> {
-    serializer.serialize_str(
-        &value
-            .as_ref()
-            .map_or_else(String::new, |path| path.to_string_lossy().into_owned()),
-    )
 }
 
 impl Config {

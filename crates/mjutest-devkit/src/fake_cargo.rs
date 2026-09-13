@@ -262,9 +262,17 @@ pub fn locate() -> PathBuf {
 /// Builds the example into the target directory the test binary itself lives in.
 fn build_the_example(profile: &Path) {
     let target = profile.parent().unwrap_or(profile);
+    let profile_name = profile.file_name().unwrap_or_default();
+    let cargo_profile = if profile_name == "debug" {
+        OsString::from("dev")
+    } else {
+        profile_name.to_owned()
+    };
     let manifest = crate::paths::workspace_root().join("Cargo.toml");
     let said = std::process::Command::new(crate::paths::cargo_binary())
         .args(["build", "--offline", "--examples", "-p", "rust-mutants"])
+        .arg("--profile")
+        .arg(cargo_profile)
         .arg("--manifest-path")
         .arg(&manifest)
         .arg("--target-dir")

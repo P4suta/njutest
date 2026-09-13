@@ -55,13 +55,10 @@ fn environment(fixture: &Fixture) -> Environment {
 
 /// A reserved variable is about the environment a process inherits, so this one starts a process.
 ///
-/// Driven in this process instead, the variable reaches every child the
-/// command starts, and under a measurement of this workspace this target's
-/// baseline failed: what came back on the command's own stderr was the
-/// instrumented runtime refusing an activation with no catalog beside it,
-/// rather than the run refusing to inherit one. The rule was no longer the
-/// rule under test. The environment a process is given is `main.rs`'s to
-/// compose, and this is the one claim that is about that.
+/// An instrumented child legitimately inherits the outer measurement's
+/// activation and catalog. Removing that complete pair and adding an
+/// incomplete touch mode reaches the composition root's fail-closed boundary
+/// without the generated runtime rejecting a stale activation first.
 #[test]
 fn a_reserved_variable_names_itself_and_says_what_to_do() {
     let fixture = Fixture::copy("fixture-simple");
@@ -70,11 +67,14 @@ fn a_reserved_variable_names_itself_and_says_what_to_do() {
         .env("NO_COLOR", "1")
         .env("TMPDIR", fixture.temp())
         .env("XDG_CACHE_HOME", fixture.cache())
-        .env("RUST_MUTANTS_ACTIVE", "0".repeat(64))
+        .env_remove("RUST_MUTANTS_ACTIVE")
+        .env_remove("RUST_MUTANTS_CATALOG")
+        .env("RUST_MUTANTS_TOUCH", "not-a-run")
         .output()
         .expect("rust-mutants runs");
     let complaint = String::from_utf8_lossy(&output.stderr);
     assert!(complaint.contains("RM0006"), "{complaint}");
+    assert!(complaint.contains("RUST_MUTANTS_TOUCH"), "{complaint}");
     assert!(
         complaint.contains("try: unset the RUST_MUTANTS_ variable"),
         "a reader is told the next step, not only the trouble: {complaint}"

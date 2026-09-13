@@ -7,8 +7,8 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 ## Status
 
-Accepted, 2026-09-05. Implemented by the `build_cache` module of
-`mjutest-cli` (M2, gc in M4).
+Superseded, 2026-09-11, by
+[ADR 0019](0019-the-engine-owns-the-compiled-build-cache.md).
 
 ## Context
 

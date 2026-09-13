@@ -8,15 +8,18 @@ use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use rust_mutants::cargo::{Message, Toolchain, parse_messages, units_of};
+use rust_mutants::cargo::{CargoError, Message, Toolchain, parse_messages, units_of};
 use rust_mutants::execute::targets_of;
-use rust_mutants::runner::run;
+use rust_mutants::runner::{EXIT_CODE_UNAVAILABLE, run};
 
 use crate::error::{self, ErrorCode};
 use crate::rustflags::{self, COVERAGE_FLAG};
 use crate::targets::{Unit, UnitKind};
 use crate::trace::ExecRecord;
 use crate::watch::Watch;
+
+/// The largest Cargo JSON message stream retained for one test build.
+pub const BUILD_OUTPUT_LIMIT: usize = 64 * 1024 * 1024;
 
 /// Which of the two builds this is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -112,7 +115,13 @@ pub enum BuildError {
     Unreadable {
         /// The failure.
         #[source]
-        source: rust_mutants::cargo::CargoError,
+        source: CargoError,
+    },
+    /// Cargo's completion record is absent, repeated, or contradicts its exit status.
+    #[error("{}: the build's output could not be read: {message}", error::BUILD_UNREADABLE.code)]
+    Protocol {
+        /// What made the stream incomplete or contradictory.
+        message: String,
     },
 }
 
@@ -122,7 +131,7 @@ impl BuildError {
     pub const fn code(&self) -> ErrorCode {
         match self {
             Self::NotRun { .. } => error::BUILD_FAILED,
-            Self::Unreadable { .. } => error::BUILD_UNREADABLE,
+            Self::Unreadable { .. } | Self::Protocol { .. } => error::BUILD_UNREADABLE,
         }
     }
 }
@@ -144,7 +153,7 @@ pub fn build(
     let built_with = environment(options, &mut limitations);
     spec.env = Some(built_with.clone());
     spec.timeout = options.timeout;
-    spec.structured_stdout = Some(64 << 20);
+    spec.structured_stdout = Some(BUILD_OUTPUT_LIMIT);
 
     let built = run(&spec, watch.cancel);
     watch.trace.exec(ExecRecord::of(&spec, &built));
@@ -153,8 +162,44 @@ pub fn build(
             message: error.to_string(),
         });
     }
+    if built.timed_out {
+        return Err(BuildError::NotRun {
+            message: format!(
+                "cargo did not finish within {} milliseconds",
+                options.timeout.unwrap_or_default().as_millis()
+            ),
+        });
+    }
+    if built.exit_code == EXIT_CODE_UNAVAILABLE {
+        return Err(BuildError::NotRun {
+            message: "cargo was stopped before it reported an exit status".to_owned(),
+        });
+    }
     let messages =
         parse_messages(&built.stdout).map_err(|source| BuildError::Unreadable { source })?;
+    let finished: Vec<bool> = messages
+        .iter()
+        .filter_map(|message| match message {
+            Message::BuildFinished { success } => Some(*success),
+            _ => None,
+        })
+        .collect();
+    let [success] = finished.as_slice() else {
+        return Err(BuildError::Protocol {
+            message: format!(
+                "the message stream has {} build-finished records instead of one",
+                finished.len()
+            ),
+        });
+    };
+    if *success != (built.exit_code == 0) {
+        return Err(BuildError::Protocol {
+            message: format!(
+                "build-finished says success={success}, but cargo exited with {}",
+                built.exit_code
+            ),
+        });
+    }
     let units = targets_of(&messages, packages, Some(&options.target_dir))
         .into_iter()
         .map(|target| {
@@ -172,9 +217,11 @@ pub fn build(
             }
         })
         .collect();
+    let library_sources = library_sources(&messages, packages, &options.root)
+        .map_err(|source| BuildError::Unreadable { source })?;
     Ok(Built {
         units,
-        library_sources: library_sources(&messages, packages, &options.root),
+        library_sources,
         env: built_with,
         failure: failure_of(&messages, &built.output),
         limitations,
@@ -187,8 +234,6 @@ fn arguments(toolchain: &Toolchain, options: &BuildOptions) -> Vec<OsString> {
         "test".into(),
         "--no-run".into(),
         "--message-format=json".into(),
-        "--target-dir".into(),
-        options.target_dir.clone().into_os_string(),
     ];
     if options.flavour == Flavour::Coverage {
         arguments.push("--target".into());
@@ -219,6 +264,8 @@ fn arguments(toolchain: &Toolchain, options: &BuildOptions) -> Vec<OsString> {
         arguments.push("--features".into());
         arguments.push(selection.features.join(",").into());
     }
+    arguments.push("--target-dir".into());
+    arguments.push(options.target_dir.clone().into_os_string());
     arguments
 }
 
@@ -300,16 +347,26 @@ fn failure_of(messages: &[Message], output: &[u8]) -> Option<String> {
     let rendered: Vec<String> = messages
         .iter()
         .filter_map(|message| match message {
-            Message::CompilerMessage(compiler) if compiler.message.is_error() => compiler
-                .message
-                .rendered
-                .clone()
-                .or_else(|| Some(compiler.message.message.clone())),
+            Message::CompilerMessage(compiler) if compiler.message.is_error() => {
+                let rendered = compiler
+                    .message
+                    .rendered
+                    .as_deref()
+                    .filter(|text| !text.trim().is_empty())
+                    .unwrap_or(&compiler.message.message);
+                Some(rendered.trim().to_owned())
+            }
             _ => None,
         })
         .collect();
     if rendered.is_empty() {
-        return Some(String::from_utf8_lossy(output).into_owned());
+        let output = String::from_utf8_lossy(output);
+        let output = output.trim();
+        return Some(if output.is_empty() {
+            "cargo reported an unsuccessful build without a diagnostic".to_owned()
+        } else {
+            output.to_owned()
+        });
     }
     Some(rendered.join("\n"))
 }
@@ -323,9 +380,9 @@ fn library_sources(
     messages: &[Message],
     packages: &[rust_mutants::cargo::Package],
     root: &Path,
-) -> BTreeMap<String, Vec<PathBuf>> {
+) -> Result<BTreeMap<String, Vec<PathBuf>>, CargoError> {
     let mut found: BTreeMap<String, Vec<PathBuf>> = BTreeMap::new();
-    for unit in units_of(messages, root).unwrap_or_default() {
+    for unit in units_of(messages, root)? {
         if !unit.target.is_lib() || unit.target.is_proc_macro() {
             continue;
         }
@@ -345,5 +402,5 @@ fn library_sources(
         files.sort();
         files.dedup();
     }
-    found
+    Ok(found)
 }

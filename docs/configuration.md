@@ -35,6 +35,7 @@ test_binary_args = []           # allowed: --test-threads=N, --include-ignored, 
 environment = []                # variable names only, never values; RUST_TEST_* is refused
 timeout = "10m"                 # upper bound for one executed command; Go duration syntax
 jobs = 0                        # mutation workers; 0 = logical CPUs capped at four
+skip_targets = []               # stable target ids never to start; every one is reported
 
 [mutation]
 equivalence = false             # ask the compiler whether it renders each survivor identically
@@ -42,8 +43,6 @@ equivalence = false             # ask the compiler whether it renders each survi
 [cache]
 max_bytes = 5368709120          # 5 GiB
 ttl = "720h"                    # 30 days
-build_max_bytes = 8589934592    # 8 GiB, the machine-wide build cache
-build_dir = ""                  # default: below the user cache directory
 
 [reports]
 keep = 20                       # run directories kept under reports/runs
@@ -76,6 +75,11 @@ owner = "quality-team"
 ticket = "QA-123"
 ```
 
+`build_max_bytes` and `build_dir` were removed from `[cache]`. Remove those
+keys when upgrading: configuration is strict, so keeping either one is an
+unknown-field error. Compiled artifacts belong to rust-mutants' stable target
+directory; `[cache]` now controls only the outcome store described here.
+
 `[project] packages` is what a run is about, and `--package` on the command
 line takes its place rather than adding to it. A package no member answers to
 is refused, the way `mjutest plan` has always refused one: a run narrowed to a
@@ -87,6 +91,13 @@ test process of a run is started with those arguments, the baseline included:
 a baseline taken one way and mutations measured another compares two suites.
 Arguments given after `--` take the place of the ones the file holds rather
 than adding to them.
+
+`[execution] skip_targets` is the narrow escape hatch for a process whose tests
+inspect the instrumented tree itself, or otherwise fail for the same known
+reason under every mutation. Each entry is the stable target id a report and
+`mjutest plan` name, such as `pkg/test/ui`. An id the workspace does not declare
+is an error, and every id that is left out is recorded as
+`target-skipped-by-configuration`; it is never a silent pass.
 
 `[execution] features`, `all_features` and `no_default_features` are the words
 cargo would have been given, and every command of a run is given them: the

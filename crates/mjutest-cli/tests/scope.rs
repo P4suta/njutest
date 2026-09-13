@@ -8,11 +8,13 @@
     reason = "a test reports a setup failure by panicking and asserts with panics"
 )]
 
+use std::ffi::OsString;
 use std::path::Path;
 
-use mjutest_cli::assure::identity::{Asked, Machine, inputs};
+use mjutest_cli::assure::identity::{Asked, Machine, inputs, of};
 use mjutest_cli::config::Config;
 use mjutest_cli::evidence::digest::Mode;
+use mjutest_cli::evidence::key::Common;
 use mjutest_devkit::repo::Repo;
 
 const fn machine() -> Machine<'static> {
@@ -40,6 +42,20 @@ fn excluding(pattern: &str) -> Config {
     let mut config = Config::default();
     config.project.exclude = vec![pattern.to_owned()];
     config
+}
+
+fn common() -> Common {
+    Common {
+        toolchain: "rustc 1.98.0".to_owned(),
+        platform: "x86_64-unknown-linux-gnu".to_owned(),
+        environment: Vec::new(),
+        contract: "standard-v1".to_owned(),
+        test_args: Vec::new(),
+        features: Vec::new(),
+        timeout_ms: 1,
+        versions: Vec::new(),
+        corpus: String::new(),
+    }
 }
 
 #[test]
@@ -90,4 +106,111 @@ fn a_plan_compiles_what_the_configuration_says_to_compile() {
          on: a plan that read the negation the other way would describe a build cargo \
          would never do"
     );
+}
+
+#[test]
+fn only_compiler_inputs_and_explicitly_named_variables_enter_the_run_identity() {
+    let repo = Repo::new();
+    repo.package("demo").lib("pub fn f() {}\n");
+    let mut config = Config::default();
+    config.execution.environment = vec!["CUSTOM_INPUT".to_owned()];
+    let vars = vec![
+        (OsString::from("ORDINARY"), OsString::from("ignored")),
+        (OsString::from("RUSTFLAGS"), OsString::from("-Copt-level=2")),
+        (
+            OsString::from("CARGO_PROFILE_DEV_OPT_LEVEL"),
+            OsString::from("1"),
+        ),
+        (
+            OsString::from("CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER"),
+            OsString::from("clang"),
+        ),
+        (OsString::from("CUSTOM_INPUT"), OsString::from("present")),
+    ];
+    let machine = machine();
+    let asked = Asked {
+        root: repo.root(),
+        config: &config,
+        machine: &machine,
+        vars: &vars,
+        elsewhere: &[],
+    };
+
+    let read = inputs(&asked, Mode::Full, &[], None).expect("the tree reads");
+    assert_eq!(
+        read.environment,
+        [
+            ("RUSTFLAGS".to_owned(), "-Copt-level=2".to_owned()),
+            ("CARGO_PROFILE_DEV_OPT_LEVEL".to_owned(), "1".to_owned()),
+            (
+                "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER".to_owned(),
+                "clang".to_owned()
+            ),
+            ("CUSTOM_INPUT".to_owned(), "present".to_owned()),
+        ]
+    );
+    assert!(
+        of(&asked, Mode::Full, common(), None)
+            .expect("the identity reads")
+            .is_known()
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_variable_name_that_is_not_text_is_not_guessed_into_the_identity() {
+    use std::os::unix::ffi::OsStringExt as _;
+
+    let repo = Repo::new();
+    repo.package("demo").lib("pub fn f() {}\n");
+    let config = Config::default();
+    let vars = vec![
+        (
+            OsString::from_vec(vec![b'R', 0xff]),
+            OsString::from("hidden"),
+        ),
+        (OsString::from("CC"), OsString::from("clang")),
+    ];
+    let machine = machine();
+    let asked = Asked {
+        root: repo.root(),
+        config: &config,
+        machine: &machine,
+        vars: &vars,
+        elsewhere: &[],
+    };
+
+    assert_eq!(
+        inputs(&asked, Mode::Full, &[], None)
+            .expect("the tree reads")
+            .environment,
+        [("CC".to_owned(), "clang".to_owned())]
+    );
+}
+
+#[test]
+fn neither_identity_entry_point_panics_when_the_tree_or_lockfile_cannot_be_read() {
+    let container = tempfile::tempdir().expect("tempdir");
+    let root_is_a_file = container.path().join("not-a-tree");
+    std::fs::write(&root_is_a_file, "not a directory").expect("the file");
+
+    let lock_is_a_directory = container.path().join("tree");
+    std::fs::create_dir_all(lock_is_a_directory.join("Cargo.lock"))
+        .expect("a directory where a lockfile belongs");
+
+    for root in [&root_is_a_file, &lock_is_a_directory] {
+        let config = Config::default();
+        let machine = machine();
+        let asked = Asked {
+            root,
+            config: &config,
+            machine: &machine,
+            vars: &[],
+            elsewhere: &[],
+        };
+        let _input_error = inputs(&asked, Mode::Full, &[], None)
+            .expect_err("an unreadable tree has no input identity");
+        let _identity_error = of(&asked, Mode::Full, common(), None)
+            .expect_err("an unreadable tree has no run identity");
+    }
 }

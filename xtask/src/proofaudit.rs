@@ -23,6 +23,7 @@ const REJECTED: &str = "compile-rejected";
 const TIMED_OUT: &str = "timed_out";
 const PASSED: &str = "passed";
 const SURVIVING_MUTANT: &str = "surviving-mutant";
+const UNMATCHED_ACCEPTANCE: &str = "unmatched-acceptance";
 const EVERYTHING: &str = "all";
 const EQUIVALENT: &str = "equivalent";
 
@@ -89,6 +90,8 @@ pub enum Layer {
     Killers,
     /// The correspondence between the mutations nothing noticed and the findings that name them.
     Findings,
+    /// Whether an unmatched acceptance really fails to resolve in the complete catalog.
+    Acceptances,
     /// The earlier run a disposition was read back from.
     Reuse,
     /// The layers that removed an execution, held to the kills the run recorded.
@@ -103,6 +106,7 @@ impl Layer {
             Self::Accounting => "accounting",
             Self::Killers => "killers",
             Self::Findings => "findings",
+            Self::Acceptances => "acceptances",
             Self::Reuse => "reuse",
             Self::Proofs => "proofs",
         }
@@ -327,6 +331,7 @@ pub fn audit(path: &str, text: &str, recorded: Option<&str>) -> Result<Audit, Au
     verdict(&recording, &mut audit);
     killers(&recording, &mut audit);
     findings(&recording, &mut audit);
+    acceptances(&recording, &mut audit);
     reuse(&recording, &mut audit);
     proofs(&recording, recorded, &mut audit);
     audit.remarks.sort();
@@ -629,6 +634,7 @@ struct Recording<'a> {
     targets: Vec<TargetRow>,
     mutants: Vec<MutantRow>,
     findings: Vec<FindingRow>,
+    shard: Option<String>,
 }
 
 impl<'a> Recording<'a> {
@@ -665,6 +671,9 @@ impl<'a> Recording<'a> {
                     subject: field(row, "subject").unwrap_or_default(),
                 })
                 .collect(),
+            shard: document
+                .get("scope")
+                .and_then(|scope| field(scope, "shard")),
         }
     }
 
@@ -1067,6 +1076,49 @@ fn findings(recording: &Recording<'_>, audit: &mut Audit) {
                 "the finding names no mutant this run recorded as surviving; a finding a reader \
                  cannot trace to the evidence under it is a claim without one"
                     .to_owned(),
+            );
+        }
+    }
+}
+
+/// Whether a finding that calls an acceptance unmatched is supported by the complete catalog.
+fn acceptances(recording: &Recording<'_>, audit: &mut Audit) {
+    let mut notes = Notes::on(audit, Layer::Acceptances);
+    for finding in recording
+        .findings
+        .iter()
+        .filter(|finding| finding.kind == UNMATCHED_ACCEPTANCE)
+    {
+        if recording.shard.is_some() {
+            notes.unaudited(
+                &finding.subject,
+                "this shard does not carry the complete catalog, so whether the acceptance \
+                 resolves uniquely is decided only after the shards are merged"
+                    .to_owned(),
+            );
+            continue;
+        }
+        let subject = finding.subject.as_str();
+        let valid = (4..=64).contains(&subject.len())
+            && subject
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte));
+        if !valid {
+            continue;
+        }
+        let matches: Vec<&MutantRow> = recording
+            .mutants
+            .iter()
+            .filter(|mutant| mutant.id.starts_with(subject))
+            .collect();
+        if let [mutant] = matches.as_slice() {
+            notes.violated(
+                subject,
+                format!(
+                    "the finding calls this acceptance unmatched, but it uniquely resolves to \
+                     {}; an unmatched acceptance must suppress nothing",
+                    mutant.id
+                ),
             );
         }
     }

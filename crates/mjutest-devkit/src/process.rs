@@ -3,17 +3,16 @@
 
 //! One command's answer, in the shape a spawned one has.
 //!
-//! A test that starts a process measures nothing about the code it is about: a
-//! guard records what it reached in its own process, so every rule behind a
-//! command whose only tests spawn the binary is reached by nobody. Driving the
-//! same command through the library's own entry point in this process fixes
-//! that, and the only thing in the way is the shape: a suite written against
-//! [`std::process::Output`] would have to be rewritten line by line to read an
-//! exit code out of something else.
+//! An instrumented subprocess retains the outer mutation identity, so its
+//! guards are measured. Its main thread has no libtest test name, which makes
+//! those touches unattributed and safely widens their route to every test of
+//! the target. Driving the same command through the library entry point in the
+//! test process retains per-test attribution and avoids that extra work.
 //!
-//! So the answer comes back in that shape. What is lost is the wiring in
-//! `main.rs` between the process and the entry point, which is a handful of
-//! lines and is what the remaining spawning tests are for.
+//! [`answered`] lets a suite written against [`std::process::Output`] keep its
+//! assertions when it moves in-process. What is not exercised there is the
+//! wiring in `main.rs` between the process and the entry point, which is what
+//! the remaining spawning tests are for.
 
 /// What one command said, as a spawned process would have said it.
 #[must_use]

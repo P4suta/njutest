@@ -3,7 +3,7 @@ SPDX-FileCopyrightText: 2026 mjutest contributors
 SPDX-License-Identifier: MIT OR Apache-2.0
 -->
 
-# Current limitations and deferred work
+# Current boundaries and evidence
 
 **Status: implemented.** Every name here is one a report can carry; the list grows with each release, and every limitation
 below is stated fail-closed.
@@ -22,11 +22,10 @@ below is stated fail-closed.
   `coverage-incomplete`, `touch-incomplete`). Both readings are one finding,
   because they are one gap in the suite.
 - A target is a test binary, and a route names which of its tests a mutation is
-  put to. A target whose every test is `#[ignore]`d and one that printed no
-  result at all are both a target that executed nothing, and this release
-  reports both as missing: which of the two it was does not cross the boundary
-  between the engine and this runner yet, and a target nothing is known about
-  is a finding rather than a pass.
+  put to. A target whose every test is `#[ignore]`d is explicitly `Skipped`
+  with its ignored count. A target that printed no result and reported no
+  ignored tests is `Missing`: nothing was learned about it, which is a finding
+  rather than a pass.
 - A test that writes into the tree while it is being measured makes every
   later mutation a measurement of what it wrote
   (`tree-written-during-measurement`). One instrumented snapshot cannot
@@ -48,29 +47,18 @@ below is stated fail-closed.
 - A library that documents no example has nothing to run and is not a target
   (`doctests-none`): a target that ran nothing would raise a finding about
   documentation nobody wrote.
-- **A test that starts this engine in a process of its own cannot be measured
-  from inside a run of it.** A run composes an activation of its own and
-  refuses to inherit one (`RM0006`), which is what stops a nested process from
-  answering about the wrong catalog. A test that *spawns* `rust-mutants`
-  therefore fails verification under measurement, and the run refuses to judge
-  against it. A test that builds a `Session` in its own process inherits
-  nothing across a process boundary and is measured like any other: the line is
-  the boundary, not the engine. Most of this workspace's own suites used to
-  fall on the far side of it and do not any more: a suite that drives the
-  entry point in this process is a suite about the same command against the
-  same tree, and it is measured. Nine still start one, and every one of them
-  is about something a process does — an interrupt, a hang, a panic, a stream
-  read while it is being written, the language server's stdio, and the three
-  whose subject is a variable a process inherits.
-  Such a target is left out with `--skip-target` or `[execution] skip_targets`, and
-  `target-skipped-by-configuration` says so. What that target's tests would
-  have killed is a survivor for as long as it is left out, so a reader working
-  through survivors of a run that skipped targets has to hold that in mind: the
-  survivor may be a gap in the suite, or it may be the target that was not
-  asked. [The roadmap](roadmap.md) argues that this one is worth revisiting:
-  where the catalog a nested process inherits is its own, the binary is the
-  mutant the outer run activated, and the guards already refuse every other
-  case.
+- **A test that starts this engine in a process of its own is measurable only
+  as the instrumented binary the outer run built.** The binary embeds its
+  compiled catalog digest. It may inherit exactly one activation or touch mode
+  only beside the same nonempty catalog; every partial, stale, ordinary-build,
+  or double-mode environment is still refused with `RM0006`. The subprocess
+  keeps the outer identity so its guards can observe the mutation, while any
+  run it starts composes a new test environment with all three mutation
+  variables removed. Tests of the actual refusal remove the inherited
+  activation and catalog and deliberately add an incomplete touch mode, so
+  they still exercise the composition root's fail-closed boundary under
+  measurement without being stopped first by the generated runtime's
+  stale-catalog check.
 - **A test whose subject is the tree it was compiled from cannot be measured
   by copying the tree.** A run works in a snapshot, and a test that reaches its
   own repository through `env!("CARGO_MANIFEST_DIR")` reaches that snapshot
@@ -104,32 +92,12 @@ below is stated fail-closed.
 - A target whose guards recorded nothing this run can route by keeps every test
   of it in every route (`touch-not-recorded`), and one whose record did not
   read back is believed about nothing (`touch-log-unreadable`).
-- **A line that only runs inside a process the tests start is a line no
-  measurement reaches.** The guards write what they reached into the log a run
-  names for each test process it starts, and a process a *test* starts is not
-  one the run named: nothing composed `RUST_MUTANTS_TOUCH` for it, so what its
-  guards reached is written nowhere. What only ran there is `not_run` with
-  `unreached`, which says the measurement never asked - not that no test
-  covers it. Measured on the runner before its own command suites were driven
-  in this process, four hundred of six hundred and thirty nine mutations of its
-  orchestration came back that way, because orchestration is what runs in the
-  child. Moving a suite into the process the run measures is what changes that
-  number, and [the development page](development.md) says how. This is the same boundary as the
-  one above seen from the other side: there, a test that spawns the engine
-  cannot be verified; here, a line that only the spawned process runs cannot
-  be reached.
-- **A survivor can mean the test is in the wrong place rather than that there
-  is no test.** A mutation is put to the targets a measurement says reach it,
-  and a target that spawns a process records nothing about what the guards
-  inside that process reached. So a rule can have a test that holds it, and
-  that fails when the rule is broken, and still be reported as a survivor,
-  because the target holding that test is one nothing can be attributed to and
-  the route sent the mutation elsewhere. Measured on the runner: an assertion
-  written in a target that spawns the binary left the mutation surviving, and
-  the same assertion moved into a target that drives the same code in its own
-  process killed it, with nothing else changed. The report names the targets a
-  mutation was put to, and a survivor whose targets all spawn is this case
-  rather than a gap in the suite.
+- **A subprocess is measured, but its main-thread touches have no libtest test
+  name.** It inherits the outer touch log and catalog, so its guards are not
+  lost. The engine records those touches as unattributed and widens the route
+  to every test of the target. An in-process command test keeps test-level
+  attribution and costs less work; a subprocess test remains sound, with the
+  fallback costing precision rather than evidence.
 - Fuzz targets are found always and driven only when `[fuzz] run` says so;
   a tree that holds targets nobody asked to drive carries
   `fuzz-not-executed`. A target the fuzzer could not drive — no cargo-fuzz on
@@ -395,9 +363,88 @@ The third is not about the mutation at all. **The instrument for observing it
 is more fragile than the thing observed.** The call site of a function whose
 every rule is already tested is one example: killing it means running the whole
 composition, and a test that runs a whole verification inside another one is
-one a measurement times out rather than answers. Reading the process
-environment for the toolchain's search path is another: the only input that
-tells the two versions apart is an environment with no toolchain in it, and a
-test that arranges that is measuring the environment rather than the code. Both
-are recorded here rather than accepted, because neither is a claim that the
-mutation changes nothing.
+one a measurement times out rather than answers. This classification is made
+case by case, never from inconvenience alone. Optional-tool discovery is not
+in it: the doctor suite supplies an isolated `PATH` with fake executables and
+observes missing entries, later entries, non-files, spawn failures, exit
+statuses, the working directory, and the exact environment without depending
+on the developer's machine. A fragile observation is recorded here rather
+than accepted, because it is not a claim that the mutation changes nothing.
+
+## Speed regression closed by this change
+
+Speed is a release criterion, not a limitation deferred to another milestone.
+The focused runs below all asked the same two-file question with
+`--jobs 1 --build-jobs 2 --locked --offline --trace`. They are about
+`doctor.rs` and `plan.rs`, not a score for the whole workspace. Wall time is
+`finished_at - started_at`, so it includes preparation, baseline verification,
+and mutation execution rather than quoting only the mutation loop.
+
+| Field | Before, 2026-09-11 | Whole-catalog validation defect, 2026-09-12--13 | Selection-aware final, 2026-09-13 |
+| --- | --- | --- | --- |
+| Cataloged | 12,720 | 12,743 | 13,764 |
+| Executed | 88 | 94 | 89 |
+| Killed | 50 | 94 | 89 |
+| Survived | 38 | 0 | 0 |
+| Unreached | 12 | 0 | 0 |
+| Expected | 0 | 0 | 0 |
+| Configured target skips | `toolchain_errors`, `toolchain_run_report`, `xtask/test/gates` | `xtask/test/gates` | `xtask/test/gates` |
+| Compiler validation | not recorded separately | 5:22:56.073 | 1:04.557 |
+| Wall time | 1:58:34.441 | 5:40:14.094 | 19:31.263 |
+| Git HEAD at start | `6ef5a09c1e62c6311bbc3ae8b073dcd4f2302382` | `75a1145092aeb9bc26f2b059d89d3ab046d697a6` | `75a1145092aeb9bc26f2b059d89d3ab046d697a6` |
+| Workspace digest | `31ce3ec1d60952979b6a13bdb7e3af3eefc94fb0ba3a1b6b02e9d4254ea39dd0` | `d2b735f9f90a53782e55958d6a8599608b1ad5d0f3a44c19724b84d775c3e444` | `e583e25f534ebf5db23e33db7130aa408ad91d5eb57fda5c711e9cd8116e429f` |
+| Catalog digest | `8c000670a35b71fdcb1575ad8b77d64a8f13a2255136847996b282efb3fdad09` | `ce095b9bf5b2c15d897ddbf92b9bf2e3d2c6366a7d09796fb764d4867d4b5262` | `9e11aebe06102cf328fd4c1c1e891519e4240b5b7d7af65a82d99f3f5062ecd5` |
+| `.rust-mutants.toml` SHA-256 | `3da1e45a0f631bab208e4db2509affbad5f343fd824a6d0ef1eb72d75b93bab6` | `8e4b3dd906b4d10d776a9644b2ab641e8f00b22df523a725bda838f4cd95a591` | `8e4b3dd906b4d10d776a9644b2ab641e8f00b22df523a725bda838f4cd95a591` |
+| Recording | `reports/mutation/measure-changed` | `reports/mutation/20260912T202113425Z` | `reports/mutation/scope-speed-final-fresh` |
+
+The defective run compiled all 12,743 candidates although only 94 were in
+scope. Selection now reaches witness generation, guard placement, and compiler
+validation before any of them compile. An intermediate run of 97 selected
+mutants reduced validation from 19,376 to 56 seconds and total wall time from
+5:40:14 to 17:59: a 346-fold reduction in the defective phase and 18.9-fold
+end to end. The final run then killed all 89 current selected mutants with no
+new expectation or acceptance. Its exit 1 comes only from checking the whole
+workspace expectation ledger against a two-file report; the mutation rows
+the run selected contain no survivor or unreached result.
+
+## Repeated baseline cost
+
+The next repeated cost was the passing instrumented baseline. On the current
+self-hosted tree a dry run executed 209 baseline targets in 670.417 seconds;
+the complete preparation took 711.329 seconds. The result passed and reached
+cache serialization, but this sandbox refused the final write to its
+read-only user cache directory. That run is
+`/tmp/rust-mutants-cache-fixed-fresh-trace`; the
+`baseline-not-remembered` record names the failed path and OS error rather
+than pretending it was cached.
+
+The same release binary was then tested through its CLI against
+`fixture-simple` with a writable cache. The fresh run took 2.48 seconds and
+started three baseline target processes. The identical run took 2.11 seconds,
+started none of those three processes, emitted all three `verify` records with
+`remembered = true`, and passed `trace check`. The absolute difference is
+small because this fixture's three targets take less than a second; the
+structural assertion is the performance contract. A regression test holds the
+same rule in-process: the second exact preparation must emit the complete
+verify/touch evidence and start fewer processes. The 670 seconds measured on
+the self-hosted suite are therefore removable on an exact repeat, but that is
+an inference from the process-elision proof, not a fabricated warm wall-time
+measurement.
+
+## Controlled comparison with cargo-mutants
+
+One controlled slice used the same source, three common mutations, passing
+baseline policy, one mutation job, two build jobs, locked offline dependencies,
+and two libtest threads. rust-mutants killed all three in 7:40.09;
+cargo-mutants 27.1.0 caught all three in 7:52.63. Maximum RSS was 653,956 KiB
+and 652,392 KiB respectively. The 12.54-second, 2.65% total-time lead is real,
+but it is not an overwhelming general win and this page does not present it as
+one. The shipped speed claims are the measured selection regression fix and
+the exact-input work elision above; a universal lead over different languages
+and test suites is not inferred from one Rust slice.
+
+The literal workspace and configuration digests describe the inputs to these
+two recordings. This page is itself part of the workspace digest, so no page
+can contain its own post-edit digest as a fixed point. Any later confirmation
+is identified by its recording path; the digests inside that report are the
+authoritative identity of the tree it measured.

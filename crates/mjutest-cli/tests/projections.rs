@@ -217,6 +217,33 @@ fn a_finding_is_a_failing_case_so_it_shows_up_where_people_look() {
 }
 
 #[test]
+fn an_unmatched_acceptance_reaches_the_human_and_machine_projections() {
+    let mut report = report();
+    report.findings = vec![Finding::new(
+        FindingKind::UnmatchedAcceptance,
+        "ffff",
+        "no mutant matches this acceptance",
+    )];
+
+    let page = html::document(&report);
+    assert!(page.contains("unmatched-acceptance"), "{page}");
+    assert!(page.contains("ffff"), "{page}");
+
+    let log = sarif::document(&report);
+    assert_eq!(
+        log["runs"][0]["results"][0]["ruleId"],
+        "unmatched-acceptance"
+    );
+    assert_eq!(log["runs"][0]["results"][0]["level"], "warning");
+
+    let cases = junit::document(&report);
+    assert!(
+        cases.contains("classname=\"unmatched-acceptance\""),
+        "{cases}"
+    );
+}
+
+#[test]
 fn nothing_a_test_printed_can_close_a_tag() {
     let document = junit::document(&report());
     assert!(document.contains("&lt;left&gt;"), "{document}");

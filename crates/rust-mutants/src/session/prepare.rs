@@ -17,10 +17,10 @@ use crate::instrument::{FileOutput, Placement, instrument_file, plan_file};
 use crate::rule::Registry;
 use crate::runner::Cancel;
 use crate::snapshot::Drift;
-use crate::syntax::{Found, Selection};
+use crate::syntax::{Found, LineIndex, Selection};
 use crate::trace::{BuildRecord, InstrumentRecord};
 use crate::validate::{
-    Attempt, Compile, ValidateError, ValidateOptions, Validated, Validating, validate,
+    Attempt, Compile, ValidateError, ValidateOptions, Validated, Validating, validate_selected,
 };
 use crate::workspace::{SessionError, Workspace};
 
@@ -193,6 +193,14 @@ pub(super) struct Building<'a> {
     pub(super) trace: &'a crate::trace::Recorder,
     /// The catalog every guard of the tree was generated from, which is what a record must be about.
     pub(super) catalog: &'a Catalog,
+    /// The guards the final build contains, in catalog order.
+    pub(super) accepted: &'a [u32],
+    /// Which comparison and body markers the final build can record.
+    pub(super) narrowing: &'a crate::touch::Narrowing,
+    /// The digest of the pristine sources the build read.
+    pub(super) closure: &'a str,
+    /// The digest of the manifests and Cargo configuration the build read.
+    pub(super) manifests: &'a str,
     /// Whether the guards are asked what they reached on the run that verifies the baseline.
     pub(super) asked: bool,
     /// The messages of the build the tree ended at, which name the test binaries to start.
@@ -341,12 +349,13 @@ type Layers = (crate::prove::Established, crate::reach::Reached);
 
 fn layers(
     asking: &crate::prove::Asking<'_>,
+    eligible: &BTreeSet<u32>,
     remembering: Option<&crate::reach::remembered::Remembering>,
     cancel: &Cancel,
-    trace: &crate::trace::Recorder,
 ) -> Result<Layers, EngineError> {
+    let trace = &asking.workspace.trace;
     let established = if asking.options.branch_proofs {
-        crate::prove::establish(asking, cancel, trace)?
+        crate::prove::establish_selected(asking, eligible, cancel, trace)?
     } else {
         crate::prove::Established::default()
     };
@@ -496,6 +505,31 @@ struct Gated {
     closure: String,
 }
 
+/// The pristine sources, selected placements, and complete-catalog indices one preparation must validate.
+type SelectionPlan = (
+    BTreeMap<String, Vec<u8>>,
+    BTreeMap<String, Vec<Placement>>,
+    BTreeSet<u32>,
+);
+
+fn selection_plan(
+    workspace: &Workspace,
+    discovery: &discover::Discovery,
+    options: &PrepareOptions,
+    trace: &crate::trace::Recorder,
+) -> Result<SelectionPlan, EngineError> {
+    let phase = trace.phase("plan");
+    let (sources, placements) = plan_tree(workspace.snapshot_root(), discovery)?;
+    let eligible = eligible(
+        &discovery.catalog,
+        &sources,
+        options.validation_filter.as_ref(),
+    );
+    let placements = selected_placements(placements, &eligible);
+    phase.end();
+    Ok((sources, placements, eligible))
+}
+
 /// Discovers, instruments, validates, builds, and verifies.
 ///
 /// # Errors
@@ -509,22 +543,15 @@ pub fn prepare(
     let phase = trace.phase("prepare");
     let Gated { discovery, closure } = gated(&workspace, options, cancel, &trace)?;
     let manifests = manifests_of(&workspace);
-
-    let plan_phase = trace.phase("plan");
-    let (sources, placements) = plan_tree(workspace.snapshot_root(), &discovery)?;
-    plan_phase.end();
-
-    let (established, reached) = layers(
-        &crate::prove::Asking {
-            workspace: &workspace,
-            discovery: &discovery,
-            sources: &sources,
-            options,
-        },
-        remembering(options, &closure, &manifests, &workspace).as_ref(),
-        cancel,
-        &trace,
-    )?;
+    let (sources, placements, eligible) = selection_plan(&workspace, &discovery, options, &trace)?;
+    let asking = crate::prove::Asking {
+        workspace: &workspace,
+        discovery: &discovery,
+        sources: &sources,
+        options,
+    };
+    let remembered = remembering(options, &closure, &manifests, &workspace);
+    let (established, reached) = layers(&asking, &eligible, remembered.as_ref(), cancel)?;
 
     let validate_phase = trace.phase("validate");
     let Instrumented {
@@ -538,6 +565,7 @@ pub fn prepare(
             sources: &sources,
             placements: &placements,
             established: &established,
+            eligible: &eligible,
             options,
         },
         cancel,
@@ -553,6 +581,10 @@ pub fn prepare(
         cancel,
         trace: &trace,
         catalog: &discovery.catalog,
+        accepted: &validated.accepted,
+        narrowing: &narrowing,
+        closure: &closure,
+        manifests: &manifests,
         asked: options.touch,
         last_build: &last_build,
         options,
@@ -572,6 +604,7 @@ pub fn prepare(
         proofs: established.proofs,
         reached,
         validated,
+        eligible,
         targets,
         scratch,
         verified,
@@ -621,6 +654,8 @@ struct Establishing<'a> {
     placements: &'a BTreeMap<String, Vec<Placement>>,
     /// What the proof layers established about them: the branch proofs, and which guards may compare their two branches.
     established: &'a crate::prove::Established,
+    /// The catalog indices this preparation will validate and place.
+    eligible: &'a BTreeSet<u32>,
     /// What the run was asked to prepare.
     options: &'a PrepareOptions,
 }
@@ -637,6 +672,7 @@ fn establish(
         sources,
         placements,
         established,
+        eligible,
         options,
     } = *asking;
     let mut writer = TreeCompiler {
@@ -650,14 +686,15 @@ fn establish(
         packages: options.packages.clone(),
         build: options.build.clone(),
         written: BTreeMap::new(),
-        markers: marked(&discovery.catalog, &established.proofs),
+        markers: marked(&discovery.catalog, &established.proofs, eligible),
         comparable: &established.comparable,
         probed: &established.probed,
         compared: BTreeSet::new(),
         marked: BTreeSet::new(),
     };
-    let validated = validate(
+    let validated = validate_selected(
         &discovery.catalog,
+        eligible,
         &mut writer,
         &Validating {
             options: ValidateOptions {
@@ -744,6 +781,59 @@ fn plan_tree(
     Ok((sources, placements))
 }
 
+/// The catalog indices compiler validation has to decide for this preparation.
+///
+/// The catalog itself stays whole. A filter narrows only the expensive claim
+/// that a candidate compiles, using the same pristine line calculation a
+/// later run uses, so moving selection earlier changes cost and not meaning.
+fn eligible(
+    catalog: &Catalog,
+    sources: &BTreeMap<String, Vec<u8>>,
+    filter: Option<&crate::run::Filter>,
+) -> BTreeSet<u32> {
+    let Some(filter) = filter.filter(|filter| !filter.is_empty()) else {
+        return catalog
+            .mutants()
+            .iter()
+            .map(|mutant| mutant.index)
+            .collect();
+    };
+    catalog
+        .mutants()
+        .iter()
+        .filter(|mutant| {
+            let line = sources
+                .get(&mutant.candidate.path)
+                .and_then(|source| std::str::from_utf8(source).ok())
+                .map_or(0, |text| {
+                    LineIndex::new(text)
+                        .position(text, mutant.candidate.span.start)
+                        .line
+                });
+            filter.selects(mutant, line)
+        })
+        .map(|mutant| mutant.index)
+        .collect()
+}
+
+/// Keeps only placements validation was asked to decide, without renumbering
+/// them: every guard still names its index in the complete catalog.
+fn selected_placements(
+    placements: BTreeMap<String, Vec<Placement>>,
+    eligible: &BTreeSet<u32>,
+) -> BTreeMap<String, Vec<Placement>> {
+    placements
+        .into_iter()
+        .filter_map(|(path, placements)| {
+            let selected: Vec<Placement> = placements
+                .into_iter()
+                .filter(|placement| eligible.contains(&placement.index))
+                .collect();
+            (!selected.is_empty()).then_some((path, selected))
+        })
+        .collect()
+}
+
 /// How many lines a byte string holds.
 fn lines(bytes: &[u8]) -> u64 {
     u64::try_from(crate::splice::count_lines(bytes)).unwrap_or(u64::MAX)
@@ -765,9 +855,13 @@ fn body_lines(file: &FileOutput) -> u64 {
 fn marked(
     catalog: &Catalog,
     proofs: &BTreeMap<u32, crate::syntax::branch::Proof>,
+    eligible: &BTreeSet<u32>,
 ) -> BTreeMap<String, Vec<crate::syntax::branch::Marker>> {
     let mut by_file: BTreeMap<String, BTreeSet<crate::syntax::branch::Marker>> = BTreeMap::new();
     for (index, proof) in proofs {
+        if !eligible.contains(index) {
+            continue;
+        }
         let Some(marker) = proof.marker else {
             continue;
         };
@@ -865,7 +959,10 @@ impl Compile for TreeCompiler<'_> {
                 locked: self.workspace.locked,
                 offline: self.workspace.offline,
                 timeout: self.timeout,
-                env: Vec::new(),
+                env: vec![(
+                    std::ffi::OsString::from(crate::instrument::COMPILED_CATALOG_ENV),
+                    std::ffi::OsString::from(self.catalog.digest()),
+                )],
                 build: self.build.clone(),
             },
         )?;

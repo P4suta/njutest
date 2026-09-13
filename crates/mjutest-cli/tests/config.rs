@@ -12,8 +12,8 @@
 use std::time::Duration;
 
 use mjutest_cli::config::{
-    Config, ConfigErrorKind, Contract, DEFAULT_BUILD_MAX_BYTES, DEFAULT_CACHE_MAX_BYTES,
-    DEFAULT_CACHE_TTL, DEFAULT_REPORTS_KEEP, DEFAULT_TIMEOUT, FILE_NAME, parse_duration, skeleton,
+    Acceptance, Config, ConfigErrorKind, Contract, DEFAULT_CACHE_MAX_BYTES, DEFAULT_CACHE_TTL,
+    DEFAULT_REPORTS_KEEP, DEFAULT_TIMEOUT, FILE_NAME, parse_duration, skeleton,
 };
 
 fn load(text: &str) -> Result<Config, mjutest_cli::config::ConfigError> {
@@ -33,16 +33,17 @@ fn the_defaults_are_the_numbers_the_contract_states() {
     assert_eq!(config.execution.jobs, 0);
     assert_eq!(config.cache.max_bytes, DEFAULT_CACHE_MAX_BYTES);
     assert_eq!(config.cache.ttl, DEFAULT_CACHE_TTL);
-    assert_eq!(config.cache.build_max_bytes, DEFAULT_BUILD_MAX_BYTES);
-    assert_eq!(config.cache.build_dir, None);
     assert_eq!(config.reports.keep, DEFAULT_REPORTS_KEEP);
+    assert!(!config.fuzz.run);
+    assert_eq!(config.fuzz.max_total_time, Duration::from_secs(60));
+    assert!(config.fuzz.targets.is_empty());
     assert_eq!(FILE_NAME, ".mjutest.toml");
 }
 
 #[test]
 fn the_defaults_ask_for_nothing_a_run_has_to_be_told() {
     let config = Config::default();
-    let empty: [(&str, bool); 8] = [
+    let empty: [(&str, bool); 9] = [
         ("packages", config.project.packages.is_empty()),
         ("exclude", config.project.exclude.is_empty()),
         ("features", config.execution.features.is_empty()),
@@ -51,6 +52,7 @@ fn the_defaults_ask_for_nothing_a_run_has_to_be_told() {
             config.execution.test_binary_args.is_empty(),
         ),
         ("environment", config.execution.environment.is_empty()),
+        ("skip_targets", config.execution.skip_targets.is_empty()),
         ("miri_flags", config.soundness.miri_flags.is_empty()),
         ("sanitizers", config.soundness.sanitizers.is_empty()),
         ("acceptance", config.acceptance.is_empty()),
@@ -66,9 +68,10 @@ fn the_defaults_ask_for_nothing_a_run_has_to_be_told() {
 
 #[test]
 fn an_empty_file_and_the_written_skeleton_both_mean_the_defaults() {
+    let written = skeleton();
     assert_eq!(load("").expect("empty is legal"), Config::default());
     assert_eq!(
-        load(&skeleton()).expect("the skeleton loads"),
+        load(&written).expect("the skeleton loads"),
         Config::default(),
         "the untouched skeleton is exactly the defaults"
     );
@@ -82,9 +85,21 @@ fn an_empty_file_and_the_written_skeleton_both_mean_the_defaults() {
         "[generation]",
         "[[acceptance]]",
     ] {
-        assert!(skeleton().contains(section), "{section} is missing");
+        assert!(written.contains(section), "{section} is missing");
     }
-    assert!(skeleton().starts_with("# "), "the skeleton explains itself");
+    assert!(written.starts_with("# "), "the skeleton explains itself");
+    for exact_default in [
+        "# timeout = \"10m\"",
+        "# max_bytes = 5368709120",
+        "# ttl = \"720h\"",
+        "# keep = 20",
+        "# max_total_time = \"60s\"",
+    ] {
+        assert!(
+            written.contains(exact_default),
+            "the rendered default is part of the init contract: {exact_default}"
+        );
+    }
 }
 
 #[test]
@@ -160,6 +175,21 @@ fn a_duration_key_carries_its_own_name_into_the_error() {
     assert!(error.to_string().contains("timeout"), "{error}");
     let config = load("[execution]\ntimeout = \"90s\"\n").expect("a duration");
     assert_eq!(config.execution.timeout, Duration::from_secs(90));
+
+    let wrong_type = expect_error("[execution]\ntimeout = 90\n");
+    assert_eq!(wrong_type.kind(), ConfigErrorKind::Unparsable);
+    assert!(wrong_type.to_string().contains("timeout"), "{wrong_type}");
+}
+
+#[test]
+fn parse_errors_are_one_line_without_losing_their_boundaries() {
+    let error = expect_error("[execution]\ntimeout = [\n");
+    let rendered = error.to_string();
+    assert!(!rendered.contains('\n'), "{rendered:?}");
+    assert!(
+        rendered.contains("; "),
+        "folded source lines retain an unambiguous separator: {rendered}"
+    );
 }
 
 #[test]
@@ -237,12 +267,11 @@ test_binary_args = ["--test-threads=4"]
 environment = ["DATABASE_URL"]
 timeout = "5m"
 jobs = 3
+skip_targets = ["fixture-app/test/cli"]
 
 [cache]
 max_bytes = 1024
 ttl = "24h"
-build_max_bytes = 2048
-build_dir = "/var/cache/mjutest"
 
 [reports]
 keep = 5
@@ -277,16 +306,62 @@ ticket = "QA-123"
     assert!(config.execution.all_features && config.execution.no_default_features);
     assert_eq!(config.execution.timeout, Duration::from_secs(300));
     assert_eq!(config.execution.jobs, 3);
+    assert_eq!(config.execution.skip_targets, ["fixture-app/test/cli"]);
     assert_eq!(config.cache.max_bytes, 1024);
     assert_eq!(config.cache.ttl, Duration::from_hours(24));
-    assert_eq!(
-        config.cache.build_dir.as_deref(),
-        Some(std::path::Path::new("/var/cache/mjutest"))
-    );
     assert_eq!(config.reports.keep, 5);
     assert_eq!(config.soundness.sanitizers, ["thread"]);
 
     assert_documented_extras(&config);
+}
+
+#[test]
+fn omitted_resource_fields_have_the_documented_defaults() {
+    let config = load("[resources.db]\ncommand = [\"provider\"]\n").expect("resource");
+    let resource = config.resources.get("db").expect("db");
+    assert_eq!(resource.timeout, Duration::from_secs(30));
+    assert!(!resource.shared);
+    assert!(!resource.exclusive);
+    assert!(resource.environment.is_empty());
+}
+
+#[test]
+fn an_acceptance_expires_at_the_instant_it_names() {
+    let boundary = jiff::Timestamp::from_second(1_800_000_000).expect("in range");
+    let before = jiff::Timestamp::from_second(1_799_999_999).expect("in range");
+    let after = jiff::Timestamp::from_second(1_800_000_001).expect("in range");
+    let expiring = Acceptance {
+        id: "0123456789abcdef".to_owned(),
+        reason: "reviewed".to_owned(),
+        expires: Some(boundary),
+        owner: None,
+        ticket: None,
+    };
+    assert!(expiring.holds(before));
+    assert!(!expiring.holds(boundary));
+    assert!(!expiring.holds(after));
+
+    let forever = Acceptance {
+        expires: None,
+        ..expiring
+    };
+    assert!(forever.holds(after));
+}
+
+#[test]
+fn retired_build_cache_keys_are_refused_with_the_migration_in_their_names() {
+    for (name, value) in [
+        ("build_max_bytes", "2048"),
+        ("build_dir", "\"/var/cache/mjutest\""),
+    ] {
+        let text = format!("[cache]\n{name} = {value}\n");
+        let error = expect_error(&text);
+        assert_eq!(error.kind(), ConfigErrorKind::Unparsable, "{name}: {error}");
+        assert!(
+            error.to_string().contains(name),
+            "the obsolete key is named so a reader can remove it: {error}"
+        );
+    }
 }
 
 /// The sections a run reaches for only when it has to: resources, the generator, and the acceptances a reviewer recorded.
@@ -347,6 +422,29 @@ fn a_missing_file_is_the_defaults_and_a_present_one_is_read() {
         error.to_string().contains(FILE_NAME),
         "the error names the file: {error}"
     );
+}
+
+#[test]
+fn an_unreadable_configuration_is_not_mistaken_for_an_absent_one() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join(FILE_NAME);
+    std::fs::create_dir_all(&path).expect("directory at the configuration path");
+    let error = Config::load(dir.path()).expect_err("a directory is not an absent file");
+    assert_eq!(error.kind(), ConfigErrorKind::Unreadable);
+    assert!(error.to_string().contains(FILE_NAME), "{error}");
+}
+
+#[test]
+fn canonical_configuration_is_the_complete_serialized_contract() {
+    let config = Config::default();
+    let canonical = config.canonical();
+    assert_eq!(
+        canonical,
+        serde_json::to_string(&config).expect("the configuration is serializable")
+    );
+    assert!(canonical.starts_with("{\"version\":1,"), "{canonical}");
+    assert!(canonical.ends_with("\"acceptance\":[]}"), "{canonical}");
+    assert_eq!(config.digest().len(), 64);
 }
 
 #[test]

@@ -12,9 +12,9 @@
 use std::path::{Path, PathBuf};
 
 use mjutest_cli::report::{
-    Accounting, Git, Limitation, MutantAccounting, MutantRecord, Position, Report, Repository,
-    RunKind, SCHEMA, Scope, SoundnessAccounting, TargetAccounting, TargetRecord, TargetStatus,
-    Timing, Tool, Toolchain, Verdict, json,
+    Accounting, Finding, FindingKind, Git, Limitation, MutantAccounting, MutantRecord, Position,
+    Report, Repository, RunKind, SCHEMA, Scope, SoundnessAccounting, TargetAccounting,
+    TargetRecord, TargetStatus, Timing, Tool, Toolchain, Verdict, json,
 };
 
 /// A report with something in every field, so the schema is exercised whole.
@@ -161,6 +161,26 @@ fn schema() -> serde_json::Value {
     serde_json::from_str(&text).expect("the schema is JSON")
 }
 
+#[test]
+fn the_json_projection_and_schema_carry_an_unmatched_acceptance() {
+    let mut report = populated();
+    report.verdict = Verdict::Insufficient;
+    report.findings = vec![Finding::new(
+        FindingKind::UnmatchedAcceptance,
+        "ffff",
+        "no mutant matches this acceptance",
+    )];
+
+    let text = json::document(&report).expect("an audited document");
+    let document: serde_json::Value = serde_json::from_str(&text).expect("JSON");
+    assert_eq!(document["findings"][0]["kind"], "unmatched-acceptance");
+    assert!(
+        problems(&document).is_empty(),
+        "{}",
+        problems(&document).join("\n")
+    );
+}
+
 fn problems(document: &serde_json::Value) -> Vec<String> {
     let validator = jsonschema::validator_for(&schema()).expect("the schema compiles");
     validator
@@ -232,6 +252,19 @@ fn the_document_matches_the_recorded_one() {
 fn the_published_schema_accepts_a_populated_document() {
     let text = json::document(&populated()).expect("a sound report is written");
     let document: serde_json::Value = serde_json::from_str(&text).expect("JSON");
+    assert!(problems(&document).is_empty(), "{:?}", problems(&document));
+}
+
+#[test]
+fn the_published_schema_accepts_the_shard_a_partial_report_records() {
+    let mut report = populated();
+    report.scope.shard = Some("2/5".to_owned());
+    report.verdict = Verdict::Partial;
+
+    let text = json::document(&report).expect("an audited partial report");
+    let document: serde_json::Value = serde_json::from_str(&text).expect("JSON");
+
+    assert_eq!(document["scope"]["shard"], "2/5");
     assert!(problems(&document).is_empty(), "{:?}", problems(&document));
 }
 

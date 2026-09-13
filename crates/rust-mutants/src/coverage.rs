@@ -308,7 +308,7 @@ impl Tools {
         spec.env = toolchain
             .env()
             .map(<[(std::ffi::OsString, std::ffi::OsString)]>::to_vec);
-        spec.structured_stdout = Some(64 * 1024);
+        spec.structured_stdout = Some(crate::runner::PROBE_OUTPUT_LIMIT);
         let printed = run(&spec, watch.cancel());
         watch.exec(&spec, &printed);
         if !printed.ok() {

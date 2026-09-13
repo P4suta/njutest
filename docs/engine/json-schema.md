@@ -106,6 +106,13 @@ not the same as a score of zero. A timeout is `timed_out` only after a serial
 retry timed out again; one that did not reproduce is `inconclusive`, which is
 a hole rather than a detection.
 
+Here `cataloged` is the number of candidate rows in `mutants`, not a blanket
+claim that the compiler accepted every row. `refused` candidates live in
+`rejections`. In a filtered run, a row with `outcome: "not_run"` and
+`not_run_reason: "unselected"` may deliberately have skipped instrumentation
+and compiler validation. Every other outcome is about a compiler-accepted
+guard present in that run's build.
+
 `exit_code` is the one the process returned: `0` every mutant was noticed,
 `1` something was not, `2` the run itself failed, `130` it was interrupted, `143` it
 was terminated.
@@ -127,7 +134,9 @@ run that was killed, and `unselected` and `stopped-early` are the run doing
 what it was asked to — a filter took the mutant out, or `--fail-fast` stopped
 before reaching it. Neither of the last two is a finding, and both keep their
 row, so a report of a narrowed run still accounts for the whole catalog it was
-cut from.
+cut from. An `unselected` row makes no compiler-acceptance claim; this is what
+lets the expensive preparation work scale with a filtered selection without
+changing catalog identity.
 
 ## The run as it happens
 
@@ -183,8 +192,10 @@ not a run that cannot happen — and the exit code follows it.
 The checks are `cargo`, `rustc`, `host`, `workspace`, `config`, `temp`,
 `git`, `targets`, `environment`, `cache`, `disk`, `snapshots` and
 `llvm-tools`. A reserved variable is the one thing every other command
-refuses to start under; `doctor` and `diagnostics` report it instead, because
-they are what a person runs to find out that it is set.
+normally refuses to start under; the only accepted pair belongs to an
+instrumented engine binary whose embedded catalog matches it. `doctor` and
+`diagnostics` report reserved variables instead, because they are what a
+person runs to find out that one is set.
 
 ## A bug report, gathered
 
@@ -224,4 +235,3 @@ audit calls unaudited, which is the honest answer.
 `schema/rust-mutants-trace-v1.json` and its rules are in
 [trace](trace.md). A recording is never evidence, so nothing here reads one
 to decide anything.
-

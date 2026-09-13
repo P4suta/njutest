@@ -228,6 +228,7 @@ fn finding() -> impl Strategy<Value = mjutest_cli::report::Finding> {
             Just(mjutest_cli::report::FindingKind::TargetMissing),
             Just(mjutest_cli::report::FindingKind::Timeout),
             Just(mjutest_cli::report::FindingKind::NotMeasured),
+            Just(mjutest_cli::report::FindingKind::UnmatchedAcceptance),
             Just(mjutest_cli::report::FindingKind::UndefinedBehaviour),
         ],
         "[a-z0-9]{1,20}",

@@ -180,9 +180,10 @@ fn a_mutant_a_reviewer_accepted_stops_being_a_finding() {
 
     let mut configuration = String::from("version = 1\n");
     for id in &survivors {
+        let prefix = id.get(..12).expect("a long unique prefix");
         let _written = write!(
             configuration,
-            "\n[[acceptance]]\nid = \"{id}\"\nreason = \"the boundary is checked by an ignored test\"\n"
+            "\n[[acceptance]]\nid = \"{prefix}\"\nreason = \"the boundary is checked by an ignored test\"\n"
         );
     }
     std::fs::write(fixture.root.join(".mjutest.toml"), configuration).expect("a configuration");
@@ -202,6 +203,43 @@ fn a_mutant_a_reviewer_accepted_stops_being_a_finding() {
         "an acceptance does not rewrite what was measured"
     );
     assert_eq!(report["findings"].as_array().expect("findings").len(), 0);
+}
+
+#[test]
+fn an_acceptance_that_names_no_single_catalog_entry_suppresses_nothing() {
+    let fixture = fixture("fixture-baseline");
+    verify(&fixture, &[]);
+    std::fs::write(
+        fixture.root.join(".mjutest.toml"),
+        "version = 1\n\n[[acceptance]]\nid = \"not-a-mutant\"\nreason = \"stale review\"\n",
+    )
+    .expect("a configuration");
+
+    let output = verify(&fixture, &[]);
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "an unmatched acceptance is an insufficiency, not a successful suppression: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report = document(&fixture);
+    assert_eq!(report["verdict"], "INSUFFICIENT");
+    assert_eq!(report["accounting"]["mutants"]["accepted"], 0);
+    let findings = report["findings"].as_array().expect("findings");
+    let unmatched: Vec<&serde_json::Value> = findings
+        .iter()
+        .filter(|finding| finding["kind"] == "unmatched-acceptance")
+        .collect();
+    assert_eq!(unmatched.len(), 1, "{findings:?}");
+    assert_eq!(unmatched[0]["subject"], "not-a-mutant");
+    assert_eq!(
+        findings
+            .iter()
+            .filter(|finding| finding["kind"] == "surviving-mutant")
+            .count(),
+        3,
+        "every survivor remains visible: {findings:?}"
+    );
 }
 
 #[test]
@@ -786,6 +824,88 @@ fn the_harness_arguments_the_configuration_writes_are_the_ones_the_suite_runs_wi
     assert!(
         mutants["killed"].as_u64().unwrap_or_default() > 0,
         "with the tests that notice them now running: {mutants}"
+    );
+}
+
+#[test]
+fn a_configured_target_is_left_out_by_name_and_the_report_says_so() {
+    let fixture = fixture("fixture-workspace");
+    let skipped = "fixture-app/test/cli";
+    std::fs::write(
+        fixture.root.join(".mjutest.toml"),
+        format!("version = 1\n\n[execution]\nskip_targets = [{skipped:?}]\n"),
+    )
+    .expect("a configuration");
+
+    let output = verify(&fixture, &["--trace"]);
+    assert_ne!(
+        output.status.code(),
+        Some(3),
+        "a declared target is a valid exclusion: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report = document(&fixture);
+    let limitation = report["limitations"]
+        .as_array()
+        .expect("limitations")
+        .iter()
+        .find(|one| one["name"] == "target-skipped-by-configuration")
+        .expect("the deliberate gap is visible in the durable report");
+    assert!(
+        limitation["detail"]
+            .as_str()
+            .is_some_and(|detail| detail.contains(skipped)),
+        "the limitation names what was omitted: {limitation}"
+    );
+
+    let run_id = report["run_id"].as_str().expect("a run id");
+    let trace = std::fs::read_to_string(
+        fixture
+            .root
+            .join(".mjutest/trace")
+            .join(run_id)
+            .join("engine/trace.jsonl"),
+    )
+    .expect("the engine recording");
+    let skipped_in_build = trace.lines().any(|line| {
+        serde_json::from_str::<serde_json::Value>(line)
+            .ok()
+            .filter(|event| event["type"] == "build")
+            .and_then(|event| event["build"]["details"].as_array().cloned())
+            .is_some_and(|details| {
+                details.iter().any(|target| {
+                    target["id"] == skipped
+                        && target["limitations"].as_array().is_some_and(|names| {
+                            names
+                                .iter()
+                                .any(|name| name == "target-skipped-by-configuration")
+                        })
+                })
+            })
+    });
+    assert!(
+        skipped_in_build,
+        "the engine, not only the report projection, left out {skipped}: {trace}"
+    );
+}
+
+#[test]
+fn a_configured_skip_that_names_no_target_is_refused() {
+    let fixture = fixture("fixture-assured");
+    std::fs::write(
+        fixture.root.join(".mjutest.toml"),
+        "version = 1\n\n[execution]\nskip_targets = [\"nobody/test/missing\"]\n",
+    )
+    .expect("a configuration");
+
+    let output = verify(&fixture, &[]);
+
+    assert_eq!(output.status.code(), Some(3));
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(error.contains("nobody/test/missing"), "{error}");
+    assert!(
+        error.contains("fixture-assured/lib/fixture_assured"),
+        "the refusal names what can be configured instead: {error}"
     );
 }
 

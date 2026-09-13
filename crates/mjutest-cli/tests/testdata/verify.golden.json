@@ -258,7 +258,8 @@
   "scope": {
     "excluded": [],
     "requested_packages": [],
-    "resolved_packages": []
+    "resolved_packages": [],
+    "shard": null
   },
   "targets": [
     {

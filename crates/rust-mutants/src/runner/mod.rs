@@ -27,6 +27,9 @@ pub use output::{DEFAULT_OUTPUT_LIMIT, HeadBuffer, MIN_OUTPUT_LIMIT, OUTPUT_TRUN
 /// [`RunResult::exit_code`] when there is no exit status to report.
 pub const EXIT_CODE_UNAVAILABLE: i32 = -1;
 
+/// How much stdout a short probe may retain: version banners and one-line paths are bounded well below this.
+pub const PROBE_OUTPUT_LIMIT: usize = 64 * 1024;
+
 /// How long a POSIX process group is given to shut down after SIGTERM before it is sent SIGKILL. Windows has no equivalent phase.
 pub const TERMINATION_GRACE: Duration = Duration::from_secs(2);
 

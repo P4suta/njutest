@@ -79,7 +79,7 @@ pub struct Environment {
     pub working_directory: PathBuf,
     /// The operating system's temporary directory.
     pub temp_directory: PathBuf,
-    /// The user's cache directory, which the build cache lives under.
+    /// The user's cache directory, which earlier outcomes live under.
     pub cache_directory: PathBuf,
     /// Raised when the process is asked to stop. The composition root owns the signals; every phase reads this flag.
     pub cancel: Cancel,

@@ -28,6 +28,8 @@ struct Said {
     err: String,
 }
 
+type RefusalCase<'a> = (&'a str, Vec<(&'a str, &'a str)>, Option<&'a str>);
+
 fn environment(fixture: &Fixture) -> Environment {
     Environment {
         vars: mjutest_devkit::paths::environment_for_a_run(),
@@ -68,6 +70,97 @@ fn rooted(fixture: &Fixture, args: &[&str], tail: &[&str]) -> Said {
         code,
         out: String::from_utf8_lossy(&out).into_owned(),
         err: String::from_utf8_lossy(&err).into_owned(),
+    }
+}
+
+fn rooted_with_catalog(
+    fixture: &Fixture,
+    vars: &[(&str, &str)],
+    compiled_catalog: Option<&str>,
+) -> Said {
+    let mut environment = environment(fixture);
+    environment.vars.extend(
+        vars.iter()
+            .map(|(name, value)| (OsString::from(*name), OsString::from(*value))),
+    );
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let code = rust_mutants_cli::run_from_compiled(
+        [OsString::from("rust-mutants"), OsString::from("rules")],
+        rust_mutants_cli::Composition::new(&environment, compiled_catalog),
+        &Cancel::new(),
+        Streams {
+            out: &mut out,
+            err: &mut err,
+        },
+    );
+    Said {
+        code,
+        out: String::from_utf8_lossy(&out).into_owned(),
+        err: String::from_utf8_lossy(&err).into_owned(),
+    }
+}
+
+#[test]
+fn an_instrumented_composition_root_accepts_only_its_own_single_mode_catalog() {
+    let fixture = Fixture::copy("fixture-simple");
+    let digest = "a".repeat(64);
+    for mode in ["RUST_MUTANTS_ACTIVE", "RUST_MUTANTS_TOUCH"] {
+        let said = rooted_with_catalog(
+            &fixture,
+            &[(mode, "measurement"), ("RUST_MUTANTS_CATALOG", &digest)],
+            Some(&digest),
+        );
+        assert_eq!(said.code, 0, "{mode}: {}{}", said.out, said.err);
+        assert!(!said.out.is_empty(), "the command ran: {mode}");
+    }
+}
+
+#[test]
+fn partial_mismatched_and_double_modes_are_still_refused() {
+    let fixture = Fixture::copy("fixture-simple");
+    let digest = "a".repeat(64);
+    let other = "b".repeat(64);
+    let cases: &[RefusalCase<'_>] = &[
+        (
+            "active without catalog",
+            vec![("RUST_MUTANTS_ACTIVE", "one")],
+            Some(&digest),
+        ),
+        (
+            "catalog without mode",
+            vec![("RUST_MUTANTS_CATALOG", &digest)],
+            Some(&digest),
+        ),
+        (
+            "different catalog",
+            vec![
+                ("RUST_MUTANTS_ACTIVE", "one"),
+                ("RUST_MUTANTS_CATALOG", &other),
+            ],
+            Some(&digest),
+        ),
+        (
+            "two modes",
+            vec![
+                ("RUST_MUTANTS_ACTIVE", "one"),
+                ("RUST_MUTANTS_TOUCH", "two"),
+                ("RUST_MUTANTS_CATALOG", &digest),
+            ],
+            Some(&digest),
+        ),
+        (
+            "normal binary",
+            vec![
+                ("RUST_MUTANTS_ACTIVE", "one"),
+                ("RUST_MUTANTS_CATALOG", &digest),
+            ],
+            None,
+        ),
+    ];
+    for (name, vars, compiled) in cases {
+        let said = rooted_with_catalog(&fixture, vars, *compiled);
+        assert_eq!(said.code, 2, "{name}: {}{}", said.out, said.err);
+        assert!(said.err.contains("RM0006"), "{name}: {}", said.err);
     }
 }
 

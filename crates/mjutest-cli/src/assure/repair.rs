@@ -39,6 +39,8 @@ pub struct Checking<'a> {
     pub build: rust_mutants::cargo::BuildConfig,
     /// The arguments the test binaries are started with, which must be the ones the run used: a candidate held to a suite running another way is held to another suite.
     pub harness_args: Vec<String>,
+    /// Test targets the run deliberately left out, which a repair check must leave out too.
+    pub skip_targets: Vec<String>,
     /// How long one execution may take.
     pub timeout: Duration,
 }
@@ -111,6 +113,7 @@ pub fn check(
             verify: false,
             build: checking.build.clone(),
             harness_args: checking.harness_args.clone(),
+            skip_targets: checking.skip_targets.clone(),
             build_timeout: Some(checking.timeout),
             mutant_timeout: Timeout::Fixed(checking.timeout),
             ..PrepareOptions::default()
@@ -178,10 +181,11 @@ fn put(
 /// Writes one candidate into a snapshot, which is a copy nobody is working in.
 fn write(root: &Path, proposal: &Proposal) -> Result<(), String> {
     let path = root.join(&proposal.path);
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|source| format!("cannot make {}: {source}", parent.display()))?;
-    }
-    std::fs::write(&path, &proposal.content)
-        .map_err(|source| format!("cannot write {}: {source}", path.display()))
+    rust_mutants::replace::file(&path, &proposal.content).map_err(|failure| {
+        format!(
+            "cannot write {}: {}",
+            failure.path.display(),
+            failure.source
+        )
+    })
 }

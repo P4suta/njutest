@@ -3,13 +3,34 @@
 
 //! The answers earlier runs reached: what is stored, what is refused, what is read back, and what happens when two runs want the same one at once.
 
-use std::time::Duration;
+use std::io::{self, Read, Write};
+use std::time::{Duration, Instant};
 
 use jiff::Timestamp;
 use mjutest_cli::cache::lock::{self, LeaseError};
 use mjutest_cli::cache::store::{CacheError, Store};
 use mjutest_cli::report::{Provenance, Report, RunKind, TargetRecord, TargetStatus, Verdict};
 use rust_mutants::runner::Cancel;
+
+struct RefusingWriter;
+
+impl Write for RefusingWriter {
+    fn write(&mut self, _bytes: &[u8]) -> io::Result<usize> {
+        Err(io::Error::new(io::ErrorKind::BrokenPipe, "closed receiver"))
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+struct RefusingReader;
+
+impl Read for RefusingReader {
+    fn read(&mut self, _bytes: &mut [u8]) -> io::Result<usize> {
+        Err(io::Error::new(io::ErrorKind::BrokenPipe, "closed sender"))
+    }
+}
 
 fn report(run_id: &str, identity: &str) -> Report {
     let mut report = Report::new(
@@ -188,6 +209,76 @@ fn an_answer_older_than_the_time_to_live_is_not_an_answer_any_more() {
 }
 
 #[test]
+fn expiration_and_size_bounds_include_their_exact_edges() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let identity = "c".repeat(64);
+    let ttl = Store::new(dir.path(), u64::MAX, Duration::from_secs(60));
+    let path = ttl.put(&report("run-1", &identity)).expect("stored");
+    let modified = Timestamp::try_from(
+        std::fs::metadata(&path)
+            .expect("entry metadata")
+            .modified()
+            .expect("entry modification time"),
+    )
+    .expect("a representable modification time");
+    let just_before = modified
+        .checked_add(jiff::Span::new().seconds(59))
+        .expect("59 seconds later");
+    assert!(
+        ttl.collect(just_before)
+            .expect("collected before the edge")
+            .expired
+            .is_empty(),
+        "an answer is live until its entire TTL has elapsed"
+    );
+    let edge = modified
+        .checked_add(jiff::Span::new().seconds(60))
+        .expect("60 seconds later");
+    let expired = ttl.collect(edge).expect("collected at the edge");
+    assert_eq!(expired.expired, [path]);
+    assert!(expired.bytes > 0, "removed bytes are accounted for");
+
+    let sizes = tempfile::tempdir().expect("tempdir");
+    let unbounded = store(sizes.path());
+    for (run, byte) in [("run-1", 'd'), ("run-2", 'e')] {
+        let identity = byte.to_string().repeat(64);
+        unbounded.put(&report(run, &identity)).expect("stored");
+    }
+    let before = unbounded.status().expect("two entries");
+    assert_eq!(before.entries, 2);
+    let exact = Store::new(sizes.path(), before.bytes, Duration::ZERO);
+    assert!(
+        exact
+            .collect(Timestamp::now())
+            .expect("exactly bounded")
+            .evicted
+            .is_empty(),
+        "a store whose entries equal its byte bound is within the bound"
+    );
+    let one_byte_short = Store::new(sizes.path(), before.bytes.saturating_sub(1), Duration::ZERO);
+    let evicted = one_byte_short
+        .collect(Timestamp::now())
+        .expect("one byte over the bound");
+    assert_eq!(evicted.evicted.len(), 1);
+    assert!(evicted.bytes > 0);
+    assert_eq!(unbounded.status().expect("one entry remains").entries, 1);
+}
+
+#[test]
+fn zero_ttl_and_zero_size_bound_both_mean_unbounded() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let kept = Store::new(dir.path(), 0, Duration::ZERO);
+    let identity = "c".repeat(64);
+    kept.put(&report("run-1", &identity)).expect("stored");
+    let far_future = Timestamp::now()
+        .checked_add(jiff::Span::new().hours(24 * 365 * 100))
+        .expect("a century later");
+    let collected = kept.collect(far_future).expect("unbounded collection");
+    assert_eq!(collected, mjutest_cli::cache::store::Collected::default());
+    assert_eq!(kept.status().expect("still stored").entries, 1);
+}
+
+#[test]
 fn two_runs_of_the_same_work_do_not_do_it_twice() {
     let dir = tempfile::tempdir().expect("tempdir");
     let store = store(dir.path());
@@ -213,6 +304,84 @@ fn two_runs_of_the_same_work_do_not_do_it_twice() {
     let mut second = lock::claim(&path, Duration::from_secs(1), &cancel, &mut || ())
         .expect("the claim is free now");
     second.release().expect("released");
+}
+
+#[test]
+fn a_lease_releases_on_drop_and_explicit_release_is_idempotent() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = store(dir.path()).lease(&"c".repeat(64));
+    {
+        let _lease = lock::try_claim(&path)
+            .expect("a usable lock")
+            .expect("a fresh claim");
+        assert!(lock::try_claim(&path).expect("contended").is_none());
+    }
+    let mut reclaimed = lock::try_claim(&path)
+        .expect("a usable lock")
+        .expect("Drop released the claim");
+    reclaimed.release().expect("released once");
+    reclaimed.release().expect("released twice");
+}
+
+#[test]
+fn an_unusable_lease_parent_is_an_error_and_never_a_panic_or_a_claim() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let parent = dir.path().join("not-a-directory");
+    std::fs::write(&parent, "file\n").expect("a file in place of a directory");
+    let path = parent.join("entry.lock");
+    let error = lock::try_claim(&path).expect_err("the parent cannot be created");
+    assert!(
+        matches!(&error, LeaseError::Unusable { path: named, .. } if named == &path),
+        "{error}"
+    );
+}
+
+#[test]
+fn timeout_equality_is_expired_and_a_contended_claim_polls() {
+    assert!(!lock::timed_out(
+        Duration::from_nanos(9),
+        Duration::from_nanos(10)
+    ));
+    assert!(lock::timed_out(
+        Duration::from_nanos(10),
+        Duration::from_nanos(10)
+    ));
+    assert!(lock::timed_out(
+        Duration::from_nanos(11),
+        Duration::from_nanos(10)
+    ));
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = store(dir.path()).lease(&"d".repeat(64));
+    let held = lock::try_claim(&path)
+        .expect("usable")
+        .expect("fresh claim");
+    let cancel = Cancel::new();
+    let (started_waiting, release_owner) = std::sync::mpsc::sync_channel(0);
+    std::thread::scope(|scope| {
+        scope.spawn(move || {
+            release_owner
+                .recv()
+                .expect("the contender reached the wait");
+            std::thread::sleep(Duration::from_millis(10));
+            drop(held);
+        });
+        let started = Instant::now();
+        let mut announced = false;
+        let mut waiting = || {
+            if !announced {
+                announced = true;
+                started_waiting.send(()).expect("tell the owner");
+            }
+        };
+        let _lease = lock::claim(&path, Duration::from_secs(2), &cancel, &mut waiting)
+            .expect("reclaimed after the owner left");
+        assert!(announced, "contention is announced exactly once");
+        assert!(
+            started.elapsed() >= lock::POLL,
+            "a contender waits for the polling interval instead of spinning"
+        );
+    });
 }
 
 #[test]
@@ -254,6 +423,41 @@ fn an_entry_that_is_not_there_is_no_answer_and_an_entry_that_cannot_be_read_is_a
          call that a fresh answer, with nothing anywhere saying the store had stopped \
          working: {error}"
     );
+}
+
+#[test]
+fn listing_failures_and_non_file_entries_fail_closed_for_every_store_operation() {
+    let blocked = tempfile::tempdir().expect("tempdir");
+    let unusable = store(blocked.path());
+    std::fs::create_dir_all(unusable.root().parent().expect("layout parent"))
+        .expect("layout parent");
+    std::fs::write(unusable.root(), "not a directory\n").expect("blocked store root");
+    assert!(matches!(
+        unusable.status(),
+        Err(CacheError::Unusable { .. })
+    ));
+    assert!(matches!(
+        unusable.collect(Timestamp::now()),
+        Err(CacheError::Unusable { .. })
+    ));
+    assert!(matches!(
+        unusable.export(&mut Vec::new()),
+        Err(CacheError::Unusable { .. })
+    ));
+
+    let malformed = tempfile::tempdir().expect("tempdir");
+    let corrupt = store(malformed.path());
+    std::fs::create_dir_all(corrupt.entry(&"a".repeat(64)))
+        .expect("a directory named like an entry");
+    assert!(matches!(corrupt.status(), Err(CacheError::Corrupt { .. })));
+    assert!(matches!(
+        corrupt.collect(Timestamp::now()),
+        Err(CacheError::Corrupt { .. })
+    ));
+    assert!(matches!(
+        corrupt.export(&mut Vec::new()),
+        Err(CacheError::Corrupt { .. })
+    ));
 }
 
 fn keepable() -> Report {
@@ -348,6 +552,21 @@ fn what_one_machine_established_is_carried_to_another_and_answers_there() {
          the same work as many times as it has jobs, so what leaves a machine is every \
          answer it holds"
     );
+    let identities: Vec<String> = String::from_utf8(carried.clone())
+        .expect("the carried stream is text")
+        .lines()
+        .map(|line| {
+            mjutest_cli::report::json::parse(line)
+                .expect("one report per line")
+                .provenance
+                .identity
+        })
+        .collect();
+    assert_eq!(
+        identities,
+        [one.clone(), two.clone()],
+        "exports are stable in identity order"
+    );
 
     let read = store(there.path())
         .import(&mut carried.as_slice())
@@ -363,6 +582,42 @@ fn what_one_machine_established_is_carried_to_another_and_answers_there() {
              of what carrying it is for"
         );
     }
+}
+
+#[test]
+fn stopped_import_and_export_streams_are_reported_as_transport_failures() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let kept = store(dir.path());
+    kept.put(&keepable()).expect("one answer to export");
+    assert!(matches!(
+        kept.export(&mut RefusingWriter),
+        Err(CacheError::Carrying { .. })
+    ));
+    assert!(matches!(
+        kept.import(&mut RefusingReader),
+        Err(CacheError::Carrying { .. })
+    ));
+}
+
+#[test]
+fn blank_import_lines_are_skipped_without_hiding_later_answers_or_line_numbers() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let kept = store(dir.path());
+    let one =
+        mjutest_cli::report::json::line(&report("run-1", &"1".repeat(64))).expect("first line");
+    let two =
+        mjutest_cli::report::json::line(&report("run-2", &"2".repeat(64))).expect("second line");
+    let stream = format!("\n{one}\n\n{two}\n");
+    assert_eq!(kept.import(&mut stream.as_bytes()).expect("two answers"), 2);
+
+    let broken = format!("\n{one}\nnot-json\n");
+    let error = kept
+        .import(&mut broken.as_bytes())
+        .expect_err("the third physical line is malformed");
+    assert!(
+        matches!(error, CacheError::Arriving { line: 3, .. }),
+        "{error}"
+    );
 }
 
 #[test]

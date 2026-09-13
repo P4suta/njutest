@@ -18,7 +18,7 @@ pub const DIR_PREFIX: &str = "mjutest-run-";
 /// The marker schema of a directory this program made.
 pub const MARKER_SCHEMA: &str = "mjutest-temp-owner-v1";
 
-/// The scratch cache layer: what a suite's own cargo commands write into, so they never reach the layer the run builds from.
+/// The per-run build directory: what a suite's own Cargo commands write into, isolated from the engine's persistent target directory.
 pub const BUILD_DIR_NAME: &str = "build";
 
 /// Where instrumented test processes write their coverage profiles.
@@ -92,7 +92,7 @@ impl Scratch {
         &self.dir
     }
 
-    /// The scratch build cache layer.
+    /// The per-run build directory used for Cargo isolation.
     #[must_use]
     pub fn build_dir(&self) -> PathBuf {
         self.dir.join(BUILD_DIR_NAME)

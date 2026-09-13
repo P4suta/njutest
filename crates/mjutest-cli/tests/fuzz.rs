@@ -51,7 +51,7 @@ mod driving {
 
     use mjutest_cli::assure::fuzz::{Fuzzing, fuzz};
     use mjutest_cli::report::FindingKind;
-    use mjutest_cli::trace::Recorder;
+    use mjutest_cli::trace::{Clock, MemorySink, Payload, Recorder, Sink, StartRecord};
     use mjutest_cli::watch::Watch;
     use rust_mutants::runner::Cancel;
 
@@ -99,6 +99,18 @@ mod driving {
                 timeout: Some(Duration::from_secs(30)),
             },
             Watch::new(&cancel, &trace),
+        )
+    }
+
+    fn recording() -> Recorder {
+        Recorder::new(
+            Sink::Memory(MemorySink::unbounded()),
+            Clock::Wall,
+            StartRecord::of(
+                "fuzz-contract",
+                mjutest_cli::report::RunKind::Full,
+                mjutest_cli::config::Contract::StandardV1,
+            ),
         )
     }
 
@@ -222,6 +234,155 @@ mod driving {
             done.findings.first().map(|one| one.kind),
             Some(FindingKind::NotMeasured)
         );
+    }
+
+    #[test]
+    fn every_absence_message_is_decisive_even_when_cargo_exits_successfully() {
+        for message in [
+            "error: no such command: fuzz",
+            "error: no such subcommand: fuzz",
+            "fuzz is not installed for the toolchain",
+        ] {
+            let dir = tree(&["parse"]);
+            let done = driven(saying(message, 0, None), dir.path(), &[]);
+            assert!(done.ran.is_empty(), "{message}: {done:?}");
+            assert_eq!(
+                done.findings.first().map(|finding| finding.kind),
+                Some(FindingKind::NotMeasured),
+                "{message}: {done:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_fuzzer_process_that_cannot_be_spawned_is_not_counted_as_driven() {
+        let dir = tree(&["parse"]);
+        let missing = dir.path().join("no-such-cargo");
+        let cancel = Cancel::new();
+        let trace = Recorder::disabled();
+        let done = fuzz(
+            &Fuzzing {
+                root: dir.path(),
+                cargo: &missing,
+                env: Vec::new(),
+                targets: &[],
+                max_total_time: Duration::from_secs(1),
+                timeout: Some(Duration::from_secs(30)),
+            },
+            Watch::new(&cancel, &trace),
+        );
+
+        assert!(done.ran.is_empty(), "{done:?}");
+        assert_eq!(
+            done.findings.first().map(|finding| finding.kind),
+            Some(FindingKind::NotMeasured)
+        );
+    }
+
+    #[test]
+    fn the_fuzzer_command_and_its_trace_are_the_exact_bounded_invocation() {
+        let dir = tree(&["parse"]);
+        let argv = dir.path().join("argv");
+        let mut env = saying("Done", 0, None);
+        env.push((
+            OsString::from("FAKE_CARGO_ARGV_OUT"),
+            argv.clone().into_os_string(),
+        ));
+        let cancel = Cancel::new();
+        let trace = recording();
+        let cargo = cargo();
+        let done = fuzz(
+            &Fuzzing {
+                root: dir.path(),
+                cargo: &cargo,
+                env,
+                targets: &[],
+                max_total_time: Duration::from_secs(7),
+                timeout: Some(Duration::from_secs(30)),
+            },
+            Watch::new(&cancel, &trace),
+        );
+
+        assert_eq!(done.ran, ["parse"]);
+        assert_eq!(
+            std::fs::read_to_string(argv).expect("the arguments"),
+            "+nightly\nfuzz\nrun\nparse\n--\n-max_total_time=7\n"
+        );
+        let exec = trace
+            .events()
+            .into_iter()
+            .find_map(|event| match event.payload {
+                Payload::Exec { exec } => Some(exec),
+                _ => None,
+            })
+            .expect("the fuzz execution in the trace");
+        assert_eq!(
+            exec.argv
+                .iter()
+                .skip(1)
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            [
+                "+nightly",
+                "fuzz",
+                "run",
+                "parse",
+                "--",
+                "-max_total_time=7"
+            ]
+        );
+        let expected_directory = dir.path().to_string_lossy();
+        assert_eq!(exec.dir.as_deref(), Some(expected_directory.as_ref()));
+        assert_eq!(exec.timeout_ms, Some(30_000));
+    }
+
+    #[test]
+    fn every_new_artifact_is_read_from_its_real_path_and_reported_in_name_order() {
+        let dir = tree(&["parse"]);
+        let later = dir.path().join("fuzz/artifacts/parse/z-last");
+        let earlier = dir.path().join("fuzz/artifacts/parse/a-first");
+        let mut env = saying("crashed", 77, Some(&later.to_string_lossy()));
+        env.push((
+            OsString::from("FAKE_CARGO_ARTIFACT_TWO"),
+            earlier.into_os_string(),
+        ));
+        let done = driven(env, dir.path(), &[]);
+
+        assert_eq!(
+            done.crashes
+                .iter()
+                .map(|crash| crash.artifact.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "fuzz/artifacts/parse/a-first",
+                "fuzz/artifacts/parse/z-last"
+            ]
+        );
+        assert_eq!(
+            done.crashes.first().map(|crash| crash.content.clone()),
+            Some(b"second input".to_vec())
+        );
+        assert_eq!(
+            done.crashes.last().map(|crash| crash.content.clone()),
+            Some(b"bad input".to_vec())
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_backslash_in_an_artifact_name_is_normalized_after_the_real_file_is_read() {
+        let dir = tree(&["parse"]);
+        let artifact = dir.path().join("fuzz/artifacts/parse/nested\\crash-abc");
+        let done = driven(
+            saying("crashed", 77, Some(&artifact.to_string_lossy())),
+            dir.path(),
+            &[],
+        );
+
+        let crash = done.crashes.first().expect("the crash");
+        assert_eq!(crash.artifact, "fuzz/artifacts/parse/nested/crash-abc");
+        assert_eq!(crash.corpus, "fuzz/corpus/parse/crash-abc");
+        assert_eq!(crash.content, b"bad input");
     }
 
     #[test]

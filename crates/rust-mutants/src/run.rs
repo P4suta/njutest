@@ -12,6 +12,7 @@ use crate::discover::SkipClaim;
 use crate::outcome::Outcome;
 use crate::runner::Cancel;
 use crate::session::{Locator, Request, Session};
+use crate::workspace::SessionError;
 
 /// The machine: shared while a run measures several mutations at once, and given to one of them when a budget expires.
 ///
@@ -252,7 +253,10 @@ pub struct Finding {
 /// What a run counted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Tally {
-    /// How many mutants the compiler accepted.
+    /// How many candidate rows the run accounts for, excluding compiler refusals.
+    ///
+    /// An `unselected` row makes no compiler-acceptance claim: a scoped run
+    /// deliberately leaves such a candidate unvalidated.
     pub cataloged: u32,
     /// How many candidates the compiler refused.
     pub refused: u32,
@@ -294,7 +298,7 @@ pub struct Score {
 /// Everything one run established.
 #[derive(Debug, Clone)]
 pub struct Run {
-    /// One record per cataloged mutant, in catalog order.
+    /// One record per non-refused candidate the run accounts for, in catalog order.
     pub judged: Vec<Judged>,
     /// The declared expectations, as the run left them.
     pub expectations: Vec<Verified>,
@@ -704,7 +708,25 @@ pub fn run<O: Observer>(
         .iter()
         .filter_map(|index| session.catalog().by_index(*index))
         .collect();
-    let (places, unselected) = narrowed(session, places, options.filter);
+    let (places, mut unselected) = narrowed(session, places, options.filter);
+    for mutant in session.catalog().mutants().iter().filter(|mutant| {
+        options.shard.is_none_or(|shard| shard.holds(mutant.index))
+            && !session.was_validated(mutant.index)
+    }) {
+        if filter_selects(session, mutant, options.filter) {
+            return Err(EngineError::from(SessionError::UnknownMutant {
+                message: format!(
+                    "{} was not compiled by this prepared session; prepare with a validation filter that includes it",
+                    mutant.display_id
+                ),
+            }));
+        }
+        session.trace().select(crate::trace::SelectRecord {
+            mutant: mutant.display_id.clone(),
+            reason: NotRunReason::Unselected.name().to_owned(),
+        });
+        unselected.push(unexecuted(mutant, NotRunReason::Unselected));
+    }
     observer.starting(count(places.len()));
     let judged = if jobs(options.jobs) == 1 {
         serially(session, &places, options, (cancel, observer))?
@@ -1251,8 +1273,7 @@ fn narrowed<'m>(
     let mut selected = Vec::with_capacity(places.len());
     let mut left = Vec::new();
     for mutant in places {
-        let line = session.position(mutant).map_or(0, |at| at.line);
-        if filter.selects(mutant, line) {
+        if filter_selects(session, mutant, Some(filter)) {
             selected.push(mutant);
         } else {
             if session.trace().is_enabled() {
@@ -1265,6 +1286,13 @@ fn narrowed<'m>(
         }
     }
     (selected, left)
+}
+
+fn filter_selects(session: &Session, mutant: &Mutant, filter: Option<&Filter>) -> bool {
+    filter.filter(|one| !one.is_empty()).is_none_or(|filter| {
+        let line = session.position(mutant).map_or(0, |at| at.line);
+        filter.selects(mutant, line)
+    })
 }
 
 /// What an earlier run of this exact tree established about this mutant, when a record answers for it.

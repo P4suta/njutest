@@ -127,9 +127,12 @@ composition root is the only place that names the process environment, and
 ### The command line
 
 `rust-mutants list` and `why-skipped` copy and type-check the workspace and
-stop there: fast, and honest that nothing has been ruled on yet. `catalog`,
-`explain`, and `run` prepare it, so what they report is what the compiler
-accepted. `catalog --json` prints one `rust-mutants/catalog` document.
+stop there: fast, and honest that nothing has been ruled on yet. `catalog`
+and `explain` prepare the complete catalog. A filtered `run` keeps that same
+catalog and digest but instruments, proves, and compiler-validates only its
+selection; every other candidate remains as `not_run/unselected`, which makes
+no compiler-acceptance claim. `catalog --json` prints one
+`rust-mutants/catalog` document.
 `run` exits 0 when the tests noticed the mutant, 1 when they did not, and 2
 when nothing was established, so a script can act on the answer.
 
@@ -139,6 +142,13 @@ it, and a change set that names no Rust file selects nothing rather than
 everything. A tree git cannot be asked about, or a revision it does not know,
 ends the command with `RM0010`: a run that could not see what changed must
 never look like a run that saw nothing change.
+
+`--rule`, `--family`, `--skip-rule`, `--skip-family`, `--file`, `--id`, and
+`--from-report` are resolved once before preparation. Discovery remains whole
+so identities and prefix ambiguity do not depend on the filter, while witness
+questions, guard placement, and compiler validation scale with the selected
+candidates. The same resolved filter is then used for execution; in
+particular, `--from-report newest` cannot change between preparation and run.
 
 `--features`, `--all-features`, `--no-default-features`, `--build-target`,
 `--profile`, and `--build-jobs` are what the `[build]` section spells, and
@@ -242,16 +252,27 @@ value that travels with it is one nobody chose to publish. `bundle.json` says
 what is held and what the run did not leave, so a reader can tell a run that
 had nothing to say from a file that never arrived.
 
-These two are the only commands that do not refuse to start under a reserved
-variable. Every other command refuses, because nothing a test process said
-under an inherited activation would be about this run; these report it,
-because they are what a person runs to find out that it is set.
+These two report a reserved variable instead of refusing it, because they are
+what a person runs to find out that it is set. Every other command refuses an
+unrelated activation. The matching instrumented self-measurement pair described
+below is accepted because it is the binary and catalog the outer run built.
 
 `run --shard K/N` runs one part of the catalog, cut by index, and `merge`
 reassembles the parts into the report the whole would have written. A run
 reads back what an earlier run of this exact tree established unless
 `--no-cache` is given; `cache` says what is stored and `cache --gc` removes
 what no run still owns.
+
+That includes the instrumented baseline. A passing baseline is reused only
+when the complete copied tree, compiled closure and manifests, engine and
+toolchain, build and harness arguments, selected guard and proof-marker sets,
+test-target commands, working directories, and effective environments all
+match. Every directly built executable is then compared byte for byte with the
+one that passed. A failure, a process that wrote into the copied tree, an
+unreadable executable, a changed input, or a malformed or incomplete cache
+document is never reused. A remembered result still emits one `verify` and
+`touch` record per target, marked as remembered, so the audit sees the same
+premises without claiming that a process ran twice.
 
 `--trace[=DIR]` records what the command did, as JSON Lines. A run records
 beside its report and every other command under `<reports>/traces/`; `trace
@@ -515,9 +536,14 @@ a run puts a path of its own in its place, under the temporary directory that
 execution owns. The coverage pass puts its own path there instead, per
 target.
 
-Only the first three are refused on the command line. A run under
-`cargo llvm-cov` is an ordinary thing to want; a run under somebody else's
-activation is not.
+Only the first three are refused on the command line. An instrumented engine
+binary is the narrow exception: its composition root embeds the catalog digest
+Cargo supplied as `RUST_MUTANTS_COMPILED_CATALOG`, and accepts an inherited
+`ACTIVE+CATALOG` or `TOUCH+CATALOG` pair only when that digest matches and only
+one mode is present. This makes a child process part of the outer measurement
+without licensing a normal binary or a stale environment. A run under `cargo
+llvm-cov` is an ordinary thing to want; a run under somebody else's activation
+is not.
 
 ## The run
 

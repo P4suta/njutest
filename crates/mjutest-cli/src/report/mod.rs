@@ -259,7 +259,7 @@ pub struct Scope {
     /// The patterns that removed files from the scope.
     pub excluded: Vec<String>,
     /// Which part of the catalog this run judged, as `K/N`, or nothing when it judged every one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub shard: Option<String>,
 }
 
@@ -416,19 +416,22 @@ pub enum FindingKind {
     Timeout,
     /// Something a run could not measure, so it claims nothing about it.
     NotMeasured,
+    /// An unexpired acceptance does not name exactly one mutant in this catalog.
+    UnmatchedAcceptance,
     /// The interpreter found unsoundness in what the compiler cannot check.
     UndefinedBehaviour,
 }
 
 impl FindingKind {
     /// Every kind, in declaration order.
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::BuildFailure,
         Self::FailingTest,
         Self::TargetMissing,
         Self::SurvivingMutant,
         Self::Timeout,
         Self::NotMeasured,
+        Self::UnmatchedAcceptance,
         Self::UndefinedBehaviour,
     ];
 
@@ -442,6 +445,7 @@ impl FindingKind {
             Self::SurvivingMutant => "surviving-mutant",
             Self::Timeout => "timeout",
             Self::NotMeasured => "not-measured",
+            Self::UnmatchedAcceptance => "unmatched-acceptance",
             Self::UndefinedBehaviour => "undefined-behaviour",
         }
     }
@@ -451,20 +455,22 @@ impl FindingKind {
     pub const fn is_defect(self) -> bool {
         match self {
             Self::BuildFailure | Self::FailingTest | Self::UndefinedBehaviour => true,
-            Self::TargetMissing | Self::SurvivingMutant | Self::Timeout | Self::NotMeasured => {
-                false
-            }
+            Self::TargetMissing
+            | Self::SurvivingMutant
+            | Self::Timeout
+            | Self::NotMeasured
+            | Self::UnmatchedAcceptance => false,
         }
     }
 }
 
-/// One thing a run found wrong with the code under test.
+/// One actionable problem a run found in the project or its verification configuration.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Finding {
     /// What kind of thing it is.
     pub kind: FindingKind,
-    /// What it is about: a target identity, a mutant, a package.
+    /// What it is about: a target identity, a mutant, a package, or a configured acceptance.
     pub subject: String,
     /// One sentence a person can act on.
     pub detail: String,
@@ -614,7 +620,7 @@ pub struct Report {
     pub targets: Vec<TargetRecord>,
     /// Every mutant it has something to say about.
     pub mutants: Vec<MutantRecord>,
-    /// Everything it found wrong with the code under test.
+    /// Every actionable problem it found in the project or its verification configuration.
     pub findings: Vec<Finding>,
     /// Everything it is not claiming.
     pub limitations: Vec<Limitation>,

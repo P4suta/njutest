@@ -96,7 +96,7 @@ layers, none of which calls the engine's code:
 | `findings` | each kind as a set equality with the rows in both directions, and every finding as one that names a row |
 | `expectations` | `met`, `stale`, and `unmatched` against the rows they name, and each accepted row against the one claim that accounted for it |
 | `exit` | the code the run returned, from what it found |
-| `merge` | the parts of one catalog: same digests, disjoint indices, and the whole they come to |
+| `merge` | the parts of one catalog: every `K/N` exactly once, same digests/scope/tool versions, disjoint indices, and the whole they come to |
 | `proofs` | every discharge against the measurement and the catalog the run kept: a target that covered the body it was discharged from, a discharge whose premises are missing, a discharged pair that then ran, the `discharged` column, and a mutant that never ran and whose reason the recording does not give |
 | `trace` | every row against the recording of what actually ran: the target it names ran, its outcome is that execution's, a believed timeout repeated, instrumenting moved no line, every refusal was condemned by a round, a discharged target did not then run, an unreached route ran nothing, and every target the build produced was verified |
 | `ledger` | every survivor as one the ledger accepts with a reason, and every acceptance as one the run still holds |
@@ -185,10 +185,10 @@ changes in one function and every assertion in it stays as it was. Both
 products' command suites were moved that way on 2026-09-11; what still starts a
 process is what is about one — an interrupt, a hang, a panic, a stream read
 while it is being written, the language server's stdio, and the three suites
-whose subject is a variable a process inherits. That last kind must stay: the
-variable reaches every child the command starts, and under a measurement of
-this workspace one of those children answers about it, so the rule under test
-stops being the rule under test.
+whose subject is a variable a process inherits. That last kind must stay. An
+instrumented child keeps a valid outer identity; a refusal test removes its
+activation and catalog and adds an incomplete touch mode so the composition
+root, rather than a stale generated runtime, answers the question.
 
 ### The scripted toolchain
 

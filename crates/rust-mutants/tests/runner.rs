@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use rust_mutants::runner::output::{TailBuffer, truncation_notice};
 use rust_mutants::runner::{
     Cancel, DEFAULT_OUTPUT_LIMIT, EXIT_CODE_UNAVAILABLE, IO_DRAIN_GRACE, MIN_OUTPUT_LIMIT,
-    OUTPUT_TRUNCATED_PREFIX, RunnerError, Spec, run,
+    OUTPUT_TRUNCATED_PREFIX, PROBE_OUTPUT_LIMIT, RunnerError, Spec, run,
 };
 
 fn sh(script: &str) -> Spec {
@@ -207,6 +207,7 @@ fn the_tail_buffer_keeps_the_last_bytes_and_pays_for_the_notice_out_of_the_budge
     assert_eq!(buffer.limit(), MIN_OUTPUT_LIMIT);
     assert_eq!(TailBuffer::new(4096).limit(), 4096);
     assert_eq!(DEFAULT_OUTPUT_LIMIT, 1 << 20);
+    assert_eq!(PROBE_OUTPUT_LIMIT, 65_536);
 
     let small = TailBuffer::new(300);
     small.write(b"hello ");

@@ -26,59 +26,16 @@ tier = "all"
 [execution]
 offline = true
 locked = true
-# Three targets a run of this workspace may not start, for two reasons.
+# One target a run of this workspace may not start. It is not about processes:
 #
-# The first two put a reserved variable into the environment of a process they
-# start, to read back the diagnostic it earns. Under measurement that child is
-# instrumented too, so it meets an activation it was not built for and refuses
-# (`RM0006`) before it reaches the assertion, and the run stops with `RM5002`.
-# That is the limitation `docs/limitations.md` states under "a test that starts
-# this engine in a process of its own". A suite that drives the entry point in
-# this process inherits nothing across a process boundary and is measured like
-# any other, which is why there are two of these and not forty.
-#
-# `xtask/test/gates` is the other reason, and it is not about processes: the
-# gates are assertions about this repository, reached through
+# `xtask/test/gates` contains assertions about this repository, reached through
 # `env!("CARGO_MANIFEST_DIR")`, which under measurement names the snapshot. The
 # snapshot is this repository as the engine rewrote it, guards and runtime and
 # all, and the runtime carries the one `#[allow]` in the tree, which
 # `cargo xtask lints` exists to refuse. So the gate fails on the instrumentation
 # and would fail on it identically under every mutation. A test whose subject is
 # the tree it is compiled from cannot be measured by copying the tree.
-skip_targets = [
-  "rust-mutants-cli/test/toolchain_errors",
-  "rust-mutants-cli/test/toolchain_run_report",
-  "xtask/test/gates",
-]
-
-# A place the tests answer for by construction rather than by running.
-#
-# `Phase` ends its phase in `Drop`, so the explicit `end()` at the tail of a
-# function is there for a reader and not for the recording. That is the design
-# — a phase nobody can forget to close — and the invariant it rests on has a
-# test of its own: `trace.rs::a_phase_guard_ends_its_phase_once_with_its_duration_and_phases_nest`
-# drops a guard without calling `end` and still finds the `phase-end`. An
-# acceptance whose reason is an invariant is only as good as the test on that
-# invariant, so the test is named here for whoever reads this next.
-[[mutation.expect]]
-path = "crates/rust-mutants/src/prove.rs"
-item = "establish"
-rule = "delete-call-statement"
-original = "phase.end();"
-line = 201
-reason = "Phase ends its phase on Drop, so the explicit end at the tail of establish changes no recording; a_phase_guard_ends_its_phase_once_with_its_duration_and_phases_nest holds that"
-
-# The runner's own `Phase` is the same design and the same acceptance. Its
-# guard is held by `crates/mjutest-cli/tests/trace.rs`, which drops a phase
-# without calling `end` and still finds the `phase-end`. Two products reached
-# this shape separately, which is what a design being right looks like from
-# the outside.
-[[mutation.expect]]
-path = "crates/mjutest-cli/src/assure/baseline.rs"
-item = "observe"
-rule = "delete-call-statement"
-original = "phase.end();"
-reason = "the runner's Phase ends its phase on Drop, so the explicit end at the tail of observe changes no recording; a_phase_guard_ends_its_phase_once_with_its_duration_and_phases_nest holds that"
+skip_targets = ["xtask/test/gates"]
 
 # The language server reads a report and says what it holds. Four of its
 # survivors are places where the mutation names the same value the code does.

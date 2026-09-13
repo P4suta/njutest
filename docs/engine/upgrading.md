@@ -11,6 +11,24 @@ needs nothing is not listed.
 
 ## Unreleased
 
+**A filtered run validates and instruments only the mutations it can run.**
+The catalog remains complete and every identity and report position is still
+resolved against it, but `--file`, `--id`, `--mutant`, the rule/family
+filters, and `--from-report` now reach preparation before compiler validation.
+Candidates outside that selection are reported as
+`not_run/unselected`, without a false claim that the compiler accepted them.
+On this repository's `doctor.rs`/`plan.rs` scope that changed validation from
+19,376 seconds over 12,743 candidates to 56 seconds over 97 candidates.
+
+**An exact passing instrumented baseline is remembered.** The next identical
+run still builds and byte-compares its target executables, then reuses the
+passing outcomes, durations and touch records instead of starting every target
+again. The key includes the complete tree and every execution input; failures,
+tree-writing tests, changed binaries and damaged records are never reused.
+`--no-cache` forces a fresh baseline as well as fresh coverage and mutant
+outcomes. Trace `verify` records gained the optional `remembered` boolean; the
+trace schema name remains v1.
+
 **`cargo rust-mutants` works.** The engine ships a second binary under the name
 cargo looks for, as the runner has since M13, so `cargo rust-mutants run` is
 `rust-mutants run` wherever the binary is on the path. The word cargo repeats is
@@ -115,7 +133,9 @@ for the branch proofs of the bodies no marker could be written into, and for
 the differential harness. A run that was passing `--no-coverage` can stop.
 
 **`RUST_MUTANTS_TOUCH` is reserved.** A run composes it for every test process
-it starts and refuses to inherit it, exactly as it does the other three. A
+it starts and normally refuses to inherit it, exactly as it does the other
+mutation variables. The self-measurement exception requires the same catalog
+embedded in the instrumented engine binary and exactly one mode; every other
 process that finds it already set ends with `RM0006`.
 
 **The `WORK` line counts tests as well as pairs.** A pair is a process; a test
@@ -213,7 +233,11 @@ never. If you were parsing standard output, parse `--json` instead: one
 the identities and the catalog digest do not change. A mutant a filter dropped
 is `not_run` with reason `unselected`, and one `--fail-fast` never reached is
 `stopped-early`; neither is a finding. `--dry-run` prepares, verifies, and
-prints the estimate without executing a mutant.
+prints the estimate without executing a mutant. Preparation resolves the
+filter once before instrumentation: witness questions, guards, and compiler
+validation cover only the selected candidates. An `unselected` report row is
+therefore an accounting record, not a claim that the compiler accepted that
+candidate.
 
 **`cache --gc` keeps the build caches.** It used to remove them. `--gc --all`
 removes every build cache no live run has locked, and `--gc --kept` removes
@@ -227,9 +251,9 @@ follows it. The new checks are `git`, `targets`, `environment`, `cache`,
 `disk` and `snapshots`. A consumer reading only `ok` per check is unaffected.
 
 **`doctor` and `diagnostics` no longer refuse to start under a reserved
-variable.** Every other command still does. These two report it instead,
-because they are what a person runs to find out that `RUST_MUTANTS_ACTIVE` is
-set.
+variable.** Every other command still does unless it is the instrumented
+self-measurement pair described above. These two report it instead, because
+they are what a person runs to find out that `RUST_MUTANTS_ACTIVE` is set.
 
 **Three more report formats, and a page that shows the code.** `--format
 markdown`, `junit` and `sarif` join `lines`, `json`, `html` and `stryker`.
@@ -480,12 +504,11 @@ instead: an instrumented test process that inherited it wrote over the
 measurement that started the run, and one with no path at all wrote
 `default_*.profraw` into the tree being measured, which the drift report then
 blamed on your tests. Running `rust-mutants` under `cargo llvm-cov` is
-unaffected and is still allowed on the command line; only the three
-`RUST_MUTANTS_*` variables are refused there.
+unaffected and is still allowed on the command line. Ordinary binaries still
+refuse the three `RUST_MUTANTS_*` variables; only an instrumented engine binary
+with its matching catalog and exactly one mode accepts them for self-measurement.
 
 **`RM5002` says what it observed.** It claimed the pristine tree passes, which
 a run never establishes: it type-checks the tree rather than running it. It
 now names the target that failed with nothing active and says that
 `--no-verify` is the way past it.
-
-

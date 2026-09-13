@@ -69,6 +69,24 @@ impl Environment {
     }
 }
 
+/// The process inputs a composition root gives one command invocation.
+#[derive(Debug, Clone, Copy)]
+pub struct Composition<'a> {
+    pub(crate) environment: &'a Environment,
+    pub(crate) compiled_catalog: Option<&'a str>,
+}
+
+impl<'a> Composition<'a> {
+    /// Couples the runtime environment to the catalog identity this binary was compiled with.
+    #[must_use]
+    pub const fn new(environment: &'a Environment, compiled_catalog: Option<&'a str>) -> Self {
+        Self {
+            environment,
+            compiled_catalog,
+        }
+    }
+}
+
 /// The exit code of a run that was interrupted.
 pub const EXIT_INTERRUPTED: u8 = 130;
 
@@ -173,6 +191,24 @@ pub fn run_from<I>(args: I, environment: &Environment, cancel: &Cancel, streams:
 where
     I: IntoIterator<Item = OsString>,
 {
+    run_from_compiled(args, Composition::new(environment, None), cancel, streams)
+}
+
+/// Runs the command line with the catalog identity Cargo embedded in this composition root.
+///
+/// A normal build passes `None`. The two binaries pass their `option_env!`
+/// value, which lets an instrumented copy recognize only the outer run that
+/// compiled it from the same catalog.
+pub fn run_from_compiled<I>(
+    args: I,
+    composition: Composition<'_>,
+    cancel: &Cancel,
+    streams: Streams<'_>,
+) -> u8
+where
+    I: IntoIterator<Item = OsString>,
+{
+    let environment = composition.environment;
     let Streams {
         out: stdout,
         err: stderr,
@@ -196,7 +232,7 @@ where
     };
     let dispatched = app::dispatch(
         &command.command,
-        &painted,
+        Composition::new(&painted, composition.compiled_catalog),
         Streams {
             out: &mut *stdout,
             err: &mut *stderr,

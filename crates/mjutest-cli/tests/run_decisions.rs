@@ -11,11 +11,40 @@
 use mjutest_cli::app::plan::{Planned, line};
 use mjutest_cli::assure::baseline::{Baseline, Measured};
 use mjutest_cli::assure::run::{
-    Request, alone, first_line, kind_of, measurable, requested, resolved, reusable, selected,
-    stated,
+    Request, alone, first_line, kind_of, measurable, requested, resolve_acceptances, resolved,
+    reusable, selected, stated,
 };
-use mjutest_cli::config::Config;
-use mjutest_cli::report::{RunKind, TargetStatus};
+use mjutest_cli::config::{Acceptance, Config};
+use mjutest_cli::report::{FindingKind, RunKind, TargetStatus};
+use rust_mutants::catalog::{Builder, Candidate};
+use rust_mutants::id::digest;
+use rust_mutants::rule::Registry;
+use rust_mutants::span::Span;
+
+const CATALOG_SOURCE: &[u8] = b"pub fn f(a: i32, b: i32) -> bool { a < b && a == b }\n";
+
+fn candidate(path: &str, span: (u32, u32)) -> Candidate {
+    Candidate {
+        path: path.to_owned(),
+        rule: Registry::canonical()
+            .lookup("true-to-false")
+            .expect("a registered rule"),
+        span: Span::new(span.0, span.1).expect("a well-formed span"),
+        original: b"true".to_vec(),
+        replacement: b"false".to_vec(),
+        source_digest: digest(CATALOG_SOURCE),
+    }
+}
+
+fn acceptance(id: &str, expires: Option<jiff::Timestamp>) -> Acceptance {
+    Acceptance {
+        id: id.to_owned(),
+        reason: "reviewed".to_owned(),
+        expires,
+        owner: None,
+        ticket: None,
+    }
+}
 
 fn request(config: Config, packages: &[&str]) -> Request {
     Request {
@@ -37,6 +66,60 @@ fn request(config: Config, packages: &[&str]) -> Request {
         evidence_store: None,
         shard: None,
     }
+}
+
+#[test]
+fn only_an_unexpired_acceptance_that_uniquely_names_this_catalog_is_honoured() {
+    let first = candidate("crates/a/src/a.rs", (39, 43));
+    let second = candidate("crates/a/src/a.rs", (200, 204));
+    assert_eq!(
+        first.id().expect("an identity").get(..4),
+        Some("6d62"),
+        "the fixture pins the ambiguous prefix"
+    );
+    assert_eq!(
+        second.id().expect("an identity").get(..4),
+        Some("6d62"),
+        "the fixture pins the ambiguous prefix"
+    );
+    let unique = candidate("crates/a/src/unique.rs", (0, 4));
+    let unique_id = unique.id().expect("an identity");
+    let unique_prefix = unique_id.get(..8).expect("eight characters");
+    let mut builder = Builder::new();
+    builder
+        .add_all([first, second, unique])
+        .expect("coherent candidates");
+    let catalog = builder.build().expect("a catalog");
+    let now = jiff::Timestamp::from_second(1_800_000_000).expect("in range");
+    let expired = jiff::Timestamp::from_second(1).expect("in range");
+
+    let resolved = resolve_acceptances(
+        &catalog,
+        &[
+            acceptance(unique_prefix, None),
+            acceptance("not-hex", None),
+            acceptance("ffff", None),
+            acceptance("6d62", None),
+            acceptance("also-invalid", Some(expired)),
+        ],
+        now,
+    );
+
+    assert_eq!(resolved.ids, std::collections::BTreeSet::from([unique_id]));
+    let subjects: Vec<&str> = resolved
+        .findings
+        .iter()
+        .map(|finding| finding.subject.as_str())
+        .collect();
+    assert_eq!(subjects, ["not-hex", "ffff", "6d62"]);
+    assert!(
+        resolved
+            .findings
+            .iter()
+            .all(|finding| finding.kind == FindingKind::UnmatchedAcceptance),
+        "every refusal is explicit and non-suppressing: {:?}",
+        resolved.findings
+    );
 }
 
 fn measured(name: &str, status: TargetStatus) -> Measured {

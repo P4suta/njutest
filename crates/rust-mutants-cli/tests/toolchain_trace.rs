@@ -477,6 +477,72 @@ fn a_mutation_a_run_leaves_out_records_why_it_was_left_out() {
 }
 
 #[test]
+fn a_filtered_run_compiler_validates_only_the_mutants_it_selected() {
+    let fixture = Fixture::copy("fixture-simple");
+    let output = against(
+        &fixture,
+        &[
+            "run",
+            "--trace",
+            "--rule",
+            "gt-to-ge",
+            "--tier",
+            "all",
+            "--no-coverage",
+            "--jobs",
+            "1",
+        ],
+    );
+    let run = only_run(&reports(&fixture));
+    let events = recorded(&run.join("trace"));
+    let guarded: Vec<u64> = events
+        .iter()
+        .filter(|event| event.get("type").and_then(serde_json::Value::as_str) == Some("instrument"))
+        .filter_map(|event| event.pointer("/instrument/guards")?.as_u64())
+        .filter(|guards| *guards > 0)
+        .collect();
+    assert!(
+        !guarded.is_empty() && guarded.iter().all(|guards| *guards == 1),
+        "the one selected mutation, rather than the complete catalog, is what every validation \
+         attempt places in the tree: {guarded:?}\n{}{}",
+        stdout(&output),
+        stderr(&output)
+    );
+
+    let report: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(run.join("run-report-v1.json")).expect("the report"),
+    )
+    .expect("a report");
+    let selected: Vec<u64> = report["mutants"]
+        .as_array()
+        .expect("mutants")
+        .iter()
+        .filter(|mutant| mutant["not_run_reason"] != "unselected")
+        .filter_map(|mutant| mutant["index"].as_u64())
+        .collect();
+    let witnessed: Vec<u64> = events
+        .iter()
+        .filter(|event| event.get("type").and_then(serde_json::Value::as_str) == Some("witness"))
+        .filter_map(|event| event.pointer("/witness/index")?.as_u64())
+        .collect();
+    assert_eq!(
+        selected, witnessed,
+        "the proof compiler pass asks about the selected candidate only: {events:?}"
+    );
+    assert_eq!(report["accounting"]["cataloged"], 11, "{report}");
+    assert_eq!(
+        report["mutants"]
+            .as_array()
+            .expect("mutants")
+            .iter()
+            .filter(|mutant| mutant["not_run_reason"] == "unselected")
+            .count(),
+        10,
+        "the candidates not compiled remain visible as an explicit selection decision: {report}"
+    );
+}
+
+#[test]
 fn a_mutation_a_run_puts_to_the_tests_leaves_the_execution_that_ran_it() {
     let fixture = Fixture::copy("fixture-unreached");
     let output = against(&fixture, &["run", "--trace", "--tier", "balanced"]);

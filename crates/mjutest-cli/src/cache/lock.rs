@@ -12,6 +12,15 @@ use rust_mutants::tempowner::{self, Lock};
 /// How long between attempts while waiting for the owner to finish.
 pub const POLL: Duration = Duration::from_millis(50);
 
+/// Whether a wait has spent its whole budget.
+///
+/// Equality is expired: a zero budget performs exactly one acquisition
+/// attempt, and a caller never waits beyond the duration it named.
+#[must_use]
+pub fn timed_out(elapsed: Duration, within: Duration) -> bool {
+    elapsed >= within
+}
+
 /// An exclusive claim on one cache entry, held while a run establishes it.
 #[derive(Debug)]
 pub struct Lease {
@@ -112,7 +121,7 @@ pub fn claim(
                 path: path.to_path_buf(),
             });
         }
-        if started.elapsed() >= within {
+        if timed_out(started.elapsed(), within) {
             return Err(LeaseError::TimedOut {
                 path: path.to_path_buf(),
                 waited: started.elapsed(),

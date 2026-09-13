@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/P4suta/mjutest/schema/rust-mutants-run-report-v1.json",
   "title": "rust-mutants run report v1",
-  "description": "One completed run of every mutant a workspace catalogs: what was asked, what the compiler accepted, what the tests noticed, and every claim a reviewer declared in advance. The score is a ratio over the mutants the run decided, never over the ones it could not.",
+  "description": "One completed mutation run: the complete candidate accounting, what was selected and compiler-validated, what the tests noticed, and every claim a reviewer declared in advance. A not_run/unselected row can be deliberately unvalidated. The score is a ratio over the mutants the run decided, never over the ones it could not.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -204,7 +204,8 @@
       "properties": {
         "cataloged": {
           "type": "integer",
-          "minimum": 0
+          "minimum": 0,
+          "description": "The number of candidate rows in mutants, excluding compiler refusals. A not_run/unselected row makes no compiler-acceptance claim."
         },
         "refused": {
           "type": "integer",
@@ -421,7 +422,8 @@
               "interrupted",
               "unselected",
               "stopped-early"
-            ]
+            ],
+            "description": "Why execution did not occur. unselected may mean the scoped preparation deliberately omitted compiler validation and instrumentation for this candidate."
           },
           "identical": {
             "type": "boolean",

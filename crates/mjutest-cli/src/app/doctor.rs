@@ -7,12 +7,14 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use rust_mutants::cargo::{LocateOptions, Toolchain};
-use rust_mutants::runner::{Cancel, Spec, run as run_process};
+use rust_mutants::runner::{Cancel, PROBE_OUTPUT_LIMIT, Spec, run as run_process};
 
-use crate::cli::{Doctor, EXIT_ASSURED, EXIT_ERROR, Environment};
+use crate::cli::{Doctor, Environment};
 use crate::coverage::Tools;
 use crate::trace::Recorder;
 use crate::watch::Watch;
+
+use super::Completion;
 
 /// What a missing tool costs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -83,13 +85,13 @@ impl Finding {
     }
 }
 
-/// Reports the toolchain and the tools, and exits 3 when a required one is missing.
-pub fn run(
+/// Reports the toolchain and the tools, succeeding only when every required one is present.
+pub(super) fn run(
     _arguments: Doctor,
     environment: &Environment,
     stdout: &mut dyn Write,
     _stderr: &mut dyn Write,
-) -> u8 {
+) -> Completion {
     let findings = examine(environment);
     for finding in &findings {
         super::say(stdout, &finding.line());
@@ -102,13 +104,14 @@ pub fn run(
     super::say(stdout, "");
     if wanting.is_empty() {
         super::say(stdout, "a standard-v1 run can go ahead on this machine");
-        return EXIT_ASSURED;
+        Completion::Assured
+    } else {
+        super::say(
+            stdout,
+            &format!("a run cannot go ahead: {}", wanting.join(", ")),
+        );
+        Completion::Error
     }
-    super::say(
-        stdout,
-        &format!("a run cannot go ahead: {}", wanting.join(", ")),
-    );
-    EXIT_ERROR
 }
 
 /// Everything this machine was asked about, in reading order: what a run needs first, then what it would only like.
@@ -223,7 +226,7 @@ impl Probe<'_> {
         );
         spec.dir = Some(self.dir.to_path_buf());
         spec.env = Some(self.environment.vars.clone());
-        spec.structured_stdout = Some(64 * 1024);
+        spec.structured_stdout = Some(PROBE_OUTPUT_LIMIT);
         let result = run_process(&spec, self.cancel);
         if result.error.is_some() || result.exit_code != 0 {
             return None;

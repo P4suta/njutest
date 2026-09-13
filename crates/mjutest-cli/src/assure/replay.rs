@@ -76,6 +76,8 @@ pub struct Replaying<'a> {
     pub build: rust_mutants::cargo::BuildConfig,
     /// The arguments the test binaries are started with, which must be the ones the run used: a finding put back to a suite running another way is put to another suite.
     pub harness_args: Vec<String>,
+    /// Test targets the run deliberately left out, which a replay must leave out too.
+    pub skip_targets: Vec<String>,
     /// How long one execution may take.
     pub timeout: Option<Duration>,
 }
@@ -118,6 +120,7 @@ pub fn replay(
             verify: false,
             build: replaying.build.clone(),
             harness_args: replaying.harness_args.clone(),
+            skip_targets: replaying.skip_targets.clone(),
             mutant_timeout: replaying.timeout.map_or(Timeout::Auto, Timeout::Fixed),
             ..PrepareOptions::default()
         },

@@ -435,7 +435,7 @@ fn what_measuring_established_is_counted_where_it_lives() {
 
     let counted = asked(&environment, &["cache"]);
     assert!(
-        line(&counted.out, "measurements").contains("1 trees"),
+        line(&counted.out, "measurements").contains("1 records"),
         "and a file that is not a measurement is not counted as one: {}",
         counted.out
     );

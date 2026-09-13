@@ -449,7 +449,7 @@ pub struct TargetRecord {
     pub limitations: Vec<String>,
 }
 
-/// One target run with nothing active.
+/// What was established about one target with nothing active.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VerifyRecord {
     /// The target.
@@ -461,6 +461,9 @@ pub struct VerifyRecord {
     pub tests_run: Option<u32>,
     /// How long it took, which is what a derived timeout is five times.
     pub duration_ms: u64,
+    /// Whether this exact passing measurement was read back instead of running the target again.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub remembered: bool,
 }
 
 /// What one target's guards recorded on the run that verified its baseline.

@@ -15,8 +15,8 @@ use std::collections::BTreeSet;
 use serde_json::Value;
 
 use super::{
-    Audit, INCONCLUSIVE, Layer, NOT_RUN, Notes, Report, Row, TIMED_OUT, UNREACHED, array, number,
-    numbers, string, strings,
+    Audit, INCONCLUSIVE, Layer, NOT_RUN, Notes, Report, Row, STOPPED_EARLY, TIMED_OUT, UNREACHED,
+    UNSELECTED, array, number, numbers, string, strings,
 };
 
 /// The recording, against the report it is supposed to be the exhaust of.
@@ -145,11 +145,21 @@ fn instrumented(events: &[Value], notes: &mut Notes<'_>) {
 fn verified(events: &[Value], notes: &mut Notes<'_>) {
     let mut built: BTreeSet<String> = BTreeSet::new();
     let mut verified: BTreeSet<String> = BTreeSet::new();
+    let mut skipped: BTreeSet<String> = BTreeSet::new();
     for event in events {
         match string(event, "type").as_deref() {
             Some("build") => {
                 if let Some(record) = event.get("build") {
                     built.extend(strings(record, "targets"));
+                    for detail in array(record, "details") {
+                        if strings(detail, "limitations")
+                            .iter()
+                            .any(|one| one == "target-skipped-by-configuration")
+                            && let Some(target) = string(detail, "id")
+                        {
+                            skipped.insert(target);
+                        }
+                    }
                 }
             }
             Some("verify") => {
@@ -171,6 +181,9 @@ fn verified(events: &[Value], notes: &mut Notes<'_>) {
         return;
     }
     for target in built.difference(&verified) {
+        if skipped.contains(target) {
+            continue;
+        }
         notes.violated(
             target,
             "the build produced this target and nothing verified it; an outcome from a target \
@@ -294,6 +307,8 @@ fn routed(report: &Report, recorded: &str, notes: &mut Notes<'_>) {
     for row in &report.mutants {
         if row.source_run_id.is_some()
             || (row.outcome == NOT_RUN && report.interrupted == Some(true))
+            || row.not_run(UNSELECTED)
+            || row.not_run(STOPPED_EARLY)
         {
             continue;
         }

@@ -16,8 +16,8 @@
 use std::path::{Path, PathBuf};
 
 use mjutest_cli::app::reports::{
-    DOCUMENT_NAME, HTML_NAME, JUNIT_NAME, LATEST_ANY, LATEST_FULL, SARIF_NAME, keep, pointed_at,
-    retain,
+    DOCUMENT_NAME, HTML_NAME, JUNIT_NAME, LATEST_ANY, LATEST_FULL, RUNS_DIR, SARIF_NAME,
+    SCHEMA_NAME, StoreError, keep, pointed_at, retain,
 };
 use mjutest_cli::report::{Report, RunKind, Verdict};
 
@@ -187,6 +187,7 @@ fn a_run_keeps_every_projection_beside_its_document_and_points_both_indexes() {
 
     for name in [
         DOCUMENT_NAME,
+        SCHEMA_NAME,
         HTML_NAME,
         SARIF_NAME,
         JUNIT_NAME,
@@ -198,6 +199,19 @@ fn a_run_keeps_every_projection_beside_its_document_and_points_both_indexes() {
              projection that has to be generated later is one nobody generates: {name}"
         );
     }
+    assert_eq!(
+        std::fs::read(kept.directory.join(SCHEMA_NAME)).expect("the copied schema"),
+        include_bytes!("../../../schema/mjutest-assurance-report-v1.json"),
+        "the schema beside a report is the exact schema this release publishes"
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join(LATEST_ANY)).expect("the latest index"),
+        format!(
+            "{{\n  \"directory\": \"reports/runs/{run}\",\n  \"run_id\": \"{run}\",\n  \
+             \"schema\": \"mjutest-assurance-report-v1\"\n}}\n"
+        ),
+        "an index is a stable newline-terminated interface, not merely JSON that happens to parse"
+    );
     assert_eq!(
         (
             pointed_at(root, LATEST_ANY).as_deref(),
@@ -241,4 +255,41 @@ fn a_report_that_fails_its_own_audit_is_not_written_at_all() {
          a report nobody may be handed — and half of one on disk with no index naming it \
          is worse than none: a later collection reads the directory as a run: {refused}"
     );
+}
+
+#[test]
+fn every_failed_projection_and_index_names_the_path_that_was_not_kept() {
+    let run = "20260101T000000Z-aaaaaa";
+    let blocked = [
+        (format!("{RUNS_DIR}/{run}"), true),
+        (format!("{RUNS_DIR}/{run}/{DOCUMENT_NAME}"), false),
+        (format!("{RUNS_DIR}/{run}/{SCHEMA_NAME}"), false),
+        (
+            format!("{RUNS_DIR}/{run}/{}", mjutest_cli::report::lines::FILE_NAME),
+            false,
+        ),
+        (format!("{RUNS_DIR}/{run}/{HTML_NAME}"), false),
+        (format!("{RUNS_DIR}/{run}/{SARIF_NAME}"), false),
+        (format!("{RUNS_DIR}/{run}/{JUNIT_NAME}"), false),
+        (LATEST_ANY.to_owned(), false),
+        (LATEST_FULL.to_owned(), false),
+    ];
+
+    for (relative, file_in_place_of_directory) in blocked {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join(&relative);
+        std::fs::create_dir_all(path.parent().unwrap_or_else(|| dir.path())).expect("the parent");
+        if file_in_place_of_directory {
+            std::fs::write(&path, "occupied").expect("a file where a directory is needed");
+        } else {
+            std::fs::create_dir_all(&path).expect("a directory where a file is needed");
+        }
+
+        let error = keep(dir.path(), &keepable(run, RunKind::Full))
+            .expect_err("one output path refused the report");
+        assert!(
+            matches!(&error, StoreError::NotKept { path: named, .. } if named == &path.display().to_string()),
+            "{relative} failed as {error}"
+        );
+    }
 }

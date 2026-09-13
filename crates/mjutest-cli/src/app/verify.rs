@@ -190,9 +190,7 @@ fn establish(establishing: &Establishing<'_>, streams: Streams<'_>) -> u8 {
     };
     let result = {
         let mut notes = ui::Notes::of(arguments.ui, stderr);
-        let outcome = run::run(&request, environment, &mut notes, watch);
-        notes.finish();
-        outcome
+        run::run(&request, environment, &mut notes, watch)
     };
     let outcome = match result {
         Ok(outcome) => outcome,

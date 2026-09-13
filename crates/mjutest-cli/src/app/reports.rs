@@ -24,6 +24,8 @@ pub const DOCUMENT_NAME: &str = "mjutest-assurance-report-v1.json";
 /// The published schema, copied in beside the document it describes.
 pub const SCHEMA_NAME: &str = "mjutest-assurance-report-v1.schema.json";
 
+const SCHEMA_TEXT: &str = include_str!("../../../../schema/mjutest-assurance-report-v1.json");
+
 /// The page a person opens.
 pub const HTML_NAME: &str = "mjutest-assurance-report-v1.html";
 
@@ -79,10 +81,10 @@ pub struct Kept {
 pub fn keep(root: &Path, report: &Report) -> Result<Kept, StoreError> {
     let document_text = json::document(report)?;
     let directory = root.join(RUNS_DIR).join(&report.run_id);
-    create(&directory)?;
 
     let document = directory.join(DOCUMENT_NAME);
     write(&document, document_text.as_bytes())?;
+    write(&directory.join(SCHEMA_NAME), SCHEMA_TEXT.as_bytes())?;
     write(
         &directory.join(crate::report::lines::FILE_NAME),
         crate::report::lines::stream(report).as_bytes(),
@@ -161,9 +163,6 @@ pub fn pointed_at(root: &Path, index: &str) -> Option<String> {
 /// Writes one index.
 fn point(root: &Path, index: &str, run_id: &str) -> Result<(), StoreError> {
     let path = root.join(index);
-    if let Some(parent) = path.parent() {
-        create(parent)?;
-    }
     let mut text = serde_json::to_string_pretty(&serde_json::json!({
         "schema": crate::report::SCHEMA,
         "run_id": run_id,
@@ -172,13 +171,6 @@ fn point(root: &Path, index: &str, run_id: &str) -> Result<(), StoreError> {
     .unwrap_or_default();
     text.push('\n');
     write(&path, text.as_bytes())
-}
-
-fn create(directory: &Path) -> Result<(), StoreError> {
-    std::fs::create_dir_all(directory).map_err(|source| StoreError::NotKept {
-        path: directory.display().to_string(),
-        source,
-    })
 }
 
 fn write(path: &Path, bytes: &[u8]) -> Result<(), StoreError> {

@@ -20,6 +20,7 @@ use rust_mutants::testkit::compile::{
 use rust_mutants::trace::Recorder;
 use rust_mutants::validate::{
     Attempt, Compile, ValidateError, ValidateOptions, Validated, Validating, attribute, validate,
+    validate_selected,
 };
 
 fn options() -> ValidateOptions {
@@ -128,6 +129,60 @@ fn a_tree_that_compiles_is_accepted_whole_in_one_round() {
         scripted.catalog().len(),
         "every mutant is accepted"
     );
+    assert_eq!(scripted.attempts(), [BTreeSet::new()]);
+}
+
+#[test]
+fn a_selected_validation_claims_only_the_indices_it_was_asked_about() {
+    let mut scripted = scripted(&[1], &[]);
+    let catalog = scripted.catalog().clone();
+    let selected = BTreeSet::from([1, 3]);
+    let validated = validate_selected(
+        &catalog,
+        &selected,
+        &mut scripted,
+        &validating(&Cancel::new(), &Recorder::disabled()),
+    )
+    .expect("validate the selected candidates");
+
+    assert_eq!(validated.accepted, [3]);
+    assert_eq!(
+        validated
+            .rejections
+            .iter()
+            .map(|rejection| rejection.index)
+            .collect::<Vec<_>>(),
+        [1]
+    );
+    assert!(
+        validated
+            .accepted
+            .iter()
+            .chain(
+                validated
+                    .rejections
+                    .iter()
+                    .map(|rejection| &rejection.index)
+            )
+            .all(|index| selected.contains(index)),
+        "validation must make no claim about a candidate outside the requested selection"
+    );
+}
+
+#[test]
+fn an_empty_selected_validation_still_compiles_the_pristine_tree_once() {
+    let mut scripted = scripted(&[], &[]);
+    let catalog = scripted.catalog().clone();
+    let validated = validate_selected(
+        &catalog,
+        &BTreeSet::new(),
+        &mut scripted,
+        &validating(&Cancel::new(), &Recorder::disabled()),
+    )
+    .expect("the build gate still runs");
+
+    assert!(validated.accepted.is_empty());
+    assert!(validated.rejections.is_empty());
     assert_eq!(scripted.attempts(), [BTreeSet::new()]);
 }
 

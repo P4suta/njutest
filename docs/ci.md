@@ -215,10 +215,11 @@ broken answer into two.
 
 **What this does not carry is the build.** The compiled tree lives under the
 temporary directory, keyed to the workspace root, and it is the engine's
-rather than the runner's; `mjutest cache` prints where it is. A matrix that
-wants to compile once caches that directory with a stable `TMPDIR`, and every
-leg of it must be the same platform and the same toolchain for the artifacts
-to be usable at all.
+rather than the runner's; `rust-mutants cache` reports that temporary root and
+the target directories it holds. A matrix that wants to compile once gives
+every leg a stable `TMPDIR` and caches the `rust-mutants-target-*` directory
+below it. Every leg must use the same platform and toolchain for those
+artifacts to be usable at all.
 
 ## Using it from another repository
 

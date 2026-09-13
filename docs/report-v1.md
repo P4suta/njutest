@@ -67,9 +67,10 @@ additionally enforces arithmetic, scope/verdict, acceptance, cache, and
 unavailable-metadata invariants that JSON Schema alone cannot express
 (`report::audit::validate_for_persistence`).
 
-A **finding** is a claim about the project. There are seven kinds, and a
-report carries the name rather than a number, because the name is what a
-person greps for and what a projection shows:
+A **finding** is an actionable problem in the project or its verification
+configuration. There are eight kinds, and a report carries the name rather
+than a number, because the name is what a person greps for and what a
+projection shows:
 
 | `kind` | what it says | a defect |
 | --- | --- | --- |
@@ -80,10 +81,21 @@ person greps for and what a projection shows:
 | `target-missing` | a test target could not be found, so nothing was observed about it | no |
 | `timeout` | a target, or a mutation of one, ran out of the time it was given | no |
 | `not-measured` | something a run could not measure, so it claims nothing about it | no |
+| `unmatched-acceptance` | an unexpired acceptance does not name exactly one mutant in this catalog | no |
 
 The last column is the one a reader acts on first: a defect is a fault in the
 code under test, and the rest are gaps in what was established. Both are
 findings, and a report that carries either is not an assurance.
+
+Before mutation execution, every unexpired `[[acceptance]]` ID or prefix is
+resolved against the session's complete catalog. Only a prefix that names
+exactly one mutant is normalized to that mutant's full ID and may answer for a
+survivor. An invalid, absent, or ambiguous prefix suppresses nothing and raises
+one `unmatched-acceptance` finding whose `subject` is the configuration value.
+An expired acceptance is ignored. A shard cannot independently audit this
+relationship because it does not carry the complete catalog; the merged report
+does, and its audit rechecks that every such finding still fails to resolve
+uniquely.
 
 A **limitation** is the opposite: a claim the run declines to make about
 itself. The audit holds the verdict and the findings to each other,
@@ -170,13 +182,17 @@ are mutations nobody put to a test. A finding in a part is still a finding, so
 a part that found a defect says `DEFECT`.
 
 `mjutest merge <REPORT>...` writes the report the whole would have written. It
-refuses parts that disagree about the tree, the configuration, or the contract,
-and parts that both judged one mutant — the last says they were cut with
-different values of N. The mutant rows are the union, the accounting is derived
-from that union rather than added up from what each part claimed, and the
-verdict is decided again from the whole. A score is a ratio and never survives
-a merge: two ratios over different denominators average into a number no run
-observed.
+passes one already unsharded report through, or requires exactly one report for
+every label `1/N` through `N/N`. It refuses a missing, repeated, malformed,
+mixed unsharded, or differently divided part. It also
+refuses parts that disagree about the tree, configuration, contract, effective
+scope, or runner and engine versions, and parts that both judged one mutant.
+Only that complete union is allowed to lose `scope.shard`: otherwise a missing
+part could be mistaken for a catalog with no mutants in it. The mutant rows are
+the union, the accounting is derived from that union rather than added up from
+what each part claimed, and the verdict is decided again from the whole. A
+score is a ratio and never survives a merge: two ratios over different
+denominators average into a number no run observed.
 
 Every run's identity carries its shard, so a part never reads back the whole's
 stored answer and a whole never reads back a part's.

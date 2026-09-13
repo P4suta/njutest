@@ -13,7 +13,7 @@ use crate::assure::equivalence;
 use crate::assure::mutation::{self, MutationOptions, Subject};
 use crate::build::Cargo;
 use crate::cli::Environment;
-use crate::config::Config;
+use crate::config::{Acceptance, Config};
 use crate::error::RunnerError;
 use crate::git;
 use crate::report::{
@@ -491,6 +491,7 @@ fn considered(
             cargo: request.cargo,
             build: request.config.execution.build(),
             harness_args: request.test_args.clone(),
+            skip_targets: request.config.execution.skip_targets.clone(),
             timeout: request.config.execution.timeout,
         },
         proposal,
@@ -643,6 +644,16 @@ pub fn identity(request: &Request) -> Report {
         .scope
         .excluded
         .clone_from(&request.config.project.exclude);
+    if !request.config.execution.skip_targets.is_empty() {
+        report.limitations.push(Limitation::new(
+            rust_mutants::limitation::TARGET_SKIPPED_BY_CONFIGURATION,
+            &format!(
+                "{} ({})",
+                limitation_detail(rust_mutants::limitation::TARGET_SKIPPED_BY_CONFIGURATION),
+                request.config.execution.skip_targets.join(", ")
+            ),
+        ));
+    }
     if !request.evidence.is_known() {
         report.limitations.push(Limitation::new(
             crate::limitation::WORKSPACE_DIGEST_NOT_COMPUTED,
@@ -962,6 +973,49 @@ struct Mutating<'a> {
     session: &'a rust_mutants::session::Session,
 }
 
+/// The acceptance entries that one catalog can honour, and the entries it cannot match.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedAcceptances {
+    /// Full mutant identities, after resolving every accepted prefix.
+    pub ids: BTreeSet<String>,
+    /// Entries that did not name exactly one mutant in the catalog.
+    pub findings: Vec<Finding>,
+}
+
+/// Resolves every unexpired acceptance against the complete catalog for a session.
+///
+/// An entry that does not name exactly one mutant suppresses nothing and becomes
+/// an auditable finding. Expired entries answer for nothing and are ignored.
+#[must_use]
+pub fn resolve_acceptances(
+    catalog: &rust_mutants::catalog::Catalog,
+    acceptances: &[Acceptance],
+    now: Timestamp,
+) -> ResolvedAcceptances {
+    let mut resolved = ResolvedAcceptances {
+        ids: BTreeSet::new(),
+        findings: Vec::new(),
+    };
+    for acceptance in acceptances
+        .iter()
+        .filter(|acceptance| acceptance.holds(now))
+    {
+        match catalog.resolve_prefix(&acceptance.id) {
+            Ok(mutant) => {
+                let _new = resolved.ids.insert(mutant.id.clone());
+            }
+            Err(error) => resolved.findings.push(Finding::new(
+                FindingKind::UnmatchedAcceptance,
+                &acceptance.id,
+                &format!(
+                    "the acceptance names no single mutant in this catalog: {error}; review or remove it"
+                ),
+            )),
+        }
+    }
+    resolved
+}
+
 fn run_mutation(
     mutating: &mut Mutating<'_>,
     notes: &mut Notes<'_>,
@@ -970,21 +1024,18 @@ fn run_mutation(
     notes.phase("mutation");
     watch.trace.stage("mutation");
     let session = mutating.session;
-    let accepted: BTreeSet<String> = mutating
-        .request
-        .config
-        .acceptance
-        .iter()
-        .filter(|acceptance| acceptance.holds(mutating.request.started))
-        .map(|acceptance| acceptance.id.clone())
-        .collect();
+    let accepted = resolve_acceptances(
+        session.catalog(),
+        &mutating.request.config.acceptance,
+        mutating.request.started,
+    );
     let mutation = mutation::run_resuming(
         Subject {
             session,
             baseline: &mutating.baseline.targets,
         },
         &MutationOptions {
-            accepted: accepted.clone(),
+            accepted: accepted.ids.clone(),
             test_args: mutating.request.test_args.clone(),
             evidence: evidence_of(mutating),
             jobs: mutating.request.config.execution.jobs,
@@ -1017,7 +1068,8 @@ fn run_mutation(
             (notes, watch),
         )?;
     }
-    record(mutating.report, &mutation, &accepted);
+    record(mutating.report, &mutation, &accepted.ids);
+    mutating.report.findings.extend(accepted.findings);
     Ok(())
 }
 
@@ -1126,6 +1178,7 @@ fn prepare(
             failing: rust_mutants::session::Failing::Exclude,
             build_timeout: Some(request.config.execution.timeout),
             mutant_timeout: rust_mutants::session::Timeout::Fixed(request.config.execution.timeout),
+            skip_targets: request.config.execution.skip_targets.clone(),
             ..rust_mutants::session::PrepareOptions::default()
         },
         watch.cancel,

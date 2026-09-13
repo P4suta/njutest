@@ -352,6 +352,92 @@ fn a_defect_that_names_what_it_found_is_sound() {
     assert_eq!(validate_for_persistence(&report), Vec::new());
 }
 
+fn mutant(id: &str) -> mjutest_cli::report::MutantRecord {
+    mjutest_cli::report::MutantRecord {
+        id: id.to_owned(),
+        display_id: id.get(..20).unwrap_or(id).to_owned(),
+        path: "src/lib.rs".to_owned(),
+        position: Position {
+            line: 1,
+            column: 1,
+            character_column: 1,
+        },
+        rule: "gt-to-ge@1".to_owned(),
+        outcome: "killed".to_owned(),
+        killed_by: Some("core/lib/core one".to_owned()),
+        reused: false,
+        source_run_id: None,
+    }
+}
+
+#[test]
+fn a_whole_report_cannot_call_a_uniquely_resolved_acceptance_unmatched() {
+    let mut report = sound();
+    report.verdict = Verdict::Insufficient;
+    report.mutants = vec![mutant(&"a".repeat(64))];
+    report.findings = vec![Finding::new(
+        FindingKind::UnmatchedAcceptance,
+        "aaaaaaaa",
+        "the acceptance did not resolve",
+    )];
+
+    let violations = validate_for_persistence(&report);
+    assert!(
+        violations.iter().any(|violation| matches!(
+            violation,
+            Violation::UnmatchedAcceptanceResolved { subject, .. } if subject == "aaaaaaaa"
+        )),
+        "the full catalog proves the finding false: {violations:?}"
+    );
+}
+
+#[test]
+fn an_invalid_absent_or_ambiguous_acceptance_is_unmatched() {
+    for subject in ["A", "cccc", "aaaa"] {
+        let mut report = sound();
+        report.verdict = Verdict::Insufficient;
+        report.mutants = vec![
+            mutant(&"a".repeat(64)),
+            mutant(&format!("aaaa{}", "b".repeat(60))),
+        ];
+        report.findings = vec![Finding::new(
+            FindingKind::UnmatchedAcceptance,
+            subject,
+            "the acceptance did not resolve",
+        )];
+
+        assert!(
+            validate_for_persistence(&report)
+                .iter()
+                .all(|violation| !matches!(
+                    violation,
+                    Violation::UnmatchedAcceptanceResolved { .. }
+                )),
+            "{subject:?} does not resolve to exactly one catalog entry"
+        );
+    }
+}
+
+#[test]
+fn a_shard_leaves_acceptance_resolution_for_the_merged_catalog_to_audit() {
+    let mut report = sound();
+    report.verdict = Verdict::Insufficient;
+    report.scope.shard = Some("1/2".to_owned());
+    report.mutants = vec![mutant(&"a".repeat(64))];
+    report.findings = vec![Finding::new(
+        FindingKind::UnmatchedAcceptance,
+        "aaaaaaaa",
+        "the acceptance did not resolve",
+    )];
+
+    assert!(
+        validate_for_persistence(&report)
+            .iter()
+            .all(|violation| !matches!(violation, Violation::UnmatchedAcceptanceResolved { .. })),
+        "one shard does not carry the catalog needed to re-resolve the prefix"
+    );
+}
+
 #[test]
 fn a_run_that_looked_at_part_of_a_workspace_does_not_assure_all_of_it() {
     let mut report = sound();

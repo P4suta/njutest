@@ -1522,6 +1522,80 @@ fn a_survivor_a_finding_names_does_not_stop_the_search_for_one_it_does_not() {
     );
 }
 
+#[test]
+fn a_whole_recording_rejects_an_unmatched_finding_for_a_unique_prefix() {
+    let document = with(serde_json::json!({
+        "findings": [{
+            "kind": "unmatched-acceptance",
+            "subject": "aaaa",
+            "detail": "no single mutant",
+            "position": null
+        }]
+    }));
+    let audit = audited(&document);
+
+    assert!(
+        audit.remarks.iter().any(|remark| {
+            remark.layer == Layer::Acceptances
+                && remark.standing == Standing::Violated
+                && remark.subject == "aaaa"
+        }),
+        "the complete catalog uniquely resolves the prefix: {audit}"
+    );
+}
+
+#[test]
+fn invalid_absent_and_ambiguous_acceptances_support_the_unmatched_finding() {
+    for subject in ["A", "cccc", "aaaa"] {
+        let mut document = with(serde_json::json!({
+            "findings": [{
+                "kind": "unmatched-acceptance",
+                "subject": subject,
+                "detail": "no single mutant",
+                "position": null
+            }]
+        }));
+        if subject == "aaaa" {
+            *document
+                .pointer_mut("/mutants/1/id")
+                .expect("the second mutant identity") =
+                serde_json::json!(format!("aaaa{}", "b".repeat(60)));
+        }
+        let audit = audited(&document);
+
+        assert!(
+            audit
+                .remarks
+                .iter()
+                .all(|remark| remark.layer != Layer::Acceptances),
+            "{subject:?} does not resolve to exactly one catalog entry: {audit}"
+        );
+    }
+}
+
+#[test]
+fn a_shard_marks_acceptance_resolution_unaudited_until_merge() {
+    let document = with(serde_json::json!({
+        "scope": { "shard": "1/2" },
+        "findings": [{
+            "kind": "unmatched-acceptance",
+            "subject": "aaaa",
+            "detail": "no single mutant",
+            "position": null
+        }]
+    }));
+    let audit = audited(&document);
+
+    assert!(
+        audit.remarks.iter().any(|remark| {
+            remark.layer == Layer::Acceptances
+                && remark.standing == Standing::Unaudited
+                && remark.subject == "aaaa"
+        }),
+        "a shard has only its own mutant records: {audit}"
+    );
+}
+
 /// What the audit said about the verdict of `document`, in its own words.
 fn about_the_verdict(document: &serde_json::Value) -> Vec<String> {
     audited(document)

@@ -12,8 +12,12 @@ use rust_mutants::outcome::Outcome;
 
 #[test]
 fn a_run_that_does_not_say_takes_the_processors_it_has_up_to_the_cap() {
+    assert_eq!(workers(0, 0, false), 1);
     assert_eq!(workers(0, 1, false), 1);
+    assert_eq!(workers(0, 2, false), 2);
     assert_eq!(workers(0, 3, false), 3);
+    assert_eq!(workers(0, CAP, false), CAP);
+    assert_eq!(workers(0, CAP.saturating_add(1), false), CAP);
     assert_eq!(
         workers(0, 64, false),
         CAP,
@@ -25,6 +29,21 @@ fn a_run_that_does_not_say_takes_the_processors_it_has_up_to_the_cap() {
 fn a_run_that_says_how_many_workers_it_wants_gets_them() {
     assert_eq!(workers(2, 64, false), 2);
     assert_eq!(workers(1, 64, false), 1);
+    assert_eq!(
+        workers(u32::MAX, 1, false),
+        usize::try_from(u32::MAX).unwrap_or(usize::MAX)
+    );
+}
+
+#[test]
+fn one_worker_or_one_item_stays_on_the_calling_thread() {
+    let caller = std::thread::current().id();
+    let two = measure(&["a", "b"], 1, |_at, _item| std::thread::current().id());
+    let one = measure(&["a"], 4, |_at, _item| std::thread::current().id());
+
+    assert_eq!(two, [caller, caller]);
+    assert_eq!(one, [caller]);
+    assert!(measure::<u8, u8, _>(&[], 4, |_at, item| *item).is_empty());
 }
 
 #[test]
@@ -75,6 +94,29 @@ fn more_than_one_item_is_measured_at_a_time() {
         most >= 2,
         "a run that measures one mutation at a time leaves every other processor idle: {most}"
     );
+}
+
+#[test]
+fn a_parallel_measurement_starts_exactly_the_workers_it_was_given() {
+    let items: Vec<usize> = (0..12).collect();
+    let inside = AtomicUsize::new(0);
+    let most = AtomicUsize::new(0);
+    let entered = AtomicUsize::new(0);
+
+    let answers = measure(&items, 3, |_at, item| {
+        let now = inside.fetch_add(1, Ordering::SeqCst).saturating_add(1);
+        most.fetch_max(now, Ordering::SeqCst);
+        entered.fetch_add(1, Ordering::SeqCst);
+        let until = Instant::now() + Duration::from_secs(2);
+        while entered.load(Ordering::SeqCst) < 3 && Instant::now() < until {
+            std::thread::yield_now();
+        }
+        inside.fetch_sub(1, Ordering::SeqCst);
+        *item
+    });
+
+    assert_eq!(answers, items);
+    assert_eq!(most.load(Ordering::SeqCst), 3);
 }
 
 #[test]

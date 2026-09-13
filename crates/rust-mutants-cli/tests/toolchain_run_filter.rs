@@ -171,6 +171,28 @@ fn a_dry_run_says_what_it_would_cost_without_executing_a_mutant() {
 }
 
 #[test]
+fn a_scoped_dry_run_counts_the_whole_catalog_and_marks_unvalidated_candidates_unselected() {
+    let fixture = Fixture::copy("fixture-simple");
+    let output = run(&fixture, &["--rule", "gt-to-ge", "--dry-run"]);
+    let text = said(&output);
+
+    assert_eq!(output.status.code(), Some(0), "{text}");
+    assert!(
+        text.contains("(11 mutants against"),
+        "the estimate retains the complete catalog denominator: {text}"
+    );
+    assert!(
+        text.contains("unselected=10"),
+        "the ten candidates omitted before compiler validation remain explicit: {text}"
+    );
+    assert_eq!(
+        text.lines().filter(|line| line.starts_with('#')).count(),
+        1,
+        "only the selected candidate needs a route and a cost line: {text}"
+    );
+}
+
+#[test]
 fn from_report_reruns_what_the_last_run_left() {
     let fixture = Fixture::copy("fixture-coverage");
     let first = run(&fixture, &["--ui", "plain"]);

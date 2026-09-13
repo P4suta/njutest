@@ -3,6 +3,7 @@
 
 //! What a run would cost, counted in work first and guessed at in time last.
 
+use std::collections::BTreeSet;
 use std::fmt::Write as _;
 
 use rust_mutants::run;
@@ -19,11 +20,25 @@ pub fn estimate(session: &Session, filter: &run::Filter) -> String {
         .sum();
     let mut counted = Estimated::default();
     let mut text = String::new();
-    for index in session.accepted() {
-        let Some(mutant) = session.catalog().by_index(*index) else {
+    let rejected: BTreeSet<u32> = session
+        .rejections()
+        .iter()
+        .map(|rejection| rejection.index)
+        .collect();
+    for mutant in session.catalog().mutants() {
+        if rejected.contains(&mutant.index) {
             continue;
-        };
+        }
         counted.cataloged = counted.cataloged.saturating_add(1);
+        counted.tests_whole = counted.tests_whole.saturating_add(held);
+        if !session.was_validated(mutant.index) {
+            counted.unselected = counted.unselected.saturating_add(1);
+            continue;
+        }
+        debug_assert!(
+            session.accepted().binary_search(&mutant.index).is_ok(),
+            "a validated candidate is either accepted or rejected"
+        );
         let at = session.position(mutant);
         let line = at.map_or(0, |one| one.line);
         if !filter.is_empty() && !filter.selects(mutant, line) {
@@ -50,7 +65,6 @@ pub fn estimate(session: &Session, filter: &run::Filter) -> String {
                 .unwrap_or(u64::MAX),
             );
         }
-        counted.tests_whole = counted.tests_whole.saturating_add(held);
         let written = writeln!(
             text,
             "#{:<5} {}  {:<22} {}:{}  {}  {} targets",

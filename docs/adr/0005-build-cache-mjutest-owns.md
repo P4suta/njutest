@@ -7,9 +7,8 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 ## Status
 
-Accepted, 2026-09-05, adapted from goatest ADR 0005 (accepted 2026-09-03,
-revised 2026-09-04). The Rust shape is [ADR 0010](0010-target-directories-are-the-cache-layers.md);
-this record keeps the rule that decides what persists.
+Superseded, 2026-09-11, by
+[ADR 0019](0019-the-engine-owns-the-compiled-build-cache.md).
 
 ## Context
 

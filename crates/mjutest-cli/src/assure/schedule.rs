@@ -31,7 +31,7 @@ pub fn workers(jobs: u32, available: usize, exclusive: bool) -> usize {
         return 1;
     }
     if jobs > 0 {
-        return usize::try_from(jobs).unwrap_or(1).max(1);
+        return usize::try_from(jobs).unwrap_or(usize::MAX);
     }
     available.clamp(1, CAP)
 }
@@ -39,7 +39,8 @@ pub fn workers(jobs: u32, available: usize, exclusive: bool) -> usize {
 /// The processors this machine offers, or one when it will not say.
 #[must_use]
 pub fn available() -> usize {
-    std::thread::available_parallelism().map_or(1, std::num::NonZero::get)
+    std::thread::available_parallelism()
+        .map_or(std::num::NonZeroUsize::MIN.get(), std::num::NonZero::get)
 }
 
 /// Measures every item, at most `workers` at a time, and answers in the order the items came in.
@@ -97,17 +98,13 @@ pub struct Quiet(RwLock<()>);
 impl Quiet {
     /// Runs `work` beside whatever else this run is measuring.
     pub fn shared<R>(&self, work: impl FnOnce() -> R) -> R {
-        let held = self.0.read().unwrap_or_else(PoisonError::into_inner);
-        let answer = work();
-        drop(held);
-        answer
+        let _held = self.0.read().unwrap_or_else(PoisonError::into_inner);
+        work()
     }
 
     /// Runs `work` with nothing else this run started running beside it.
     pub fn alone<R>(&self, work: impl FnOnce() -> R) -> R {
-        let held = self.0.write().unwrap_or_else(PoisonError::into_inner);
-        let answer = work();
-        drop(held);
-        answer
+        let _held = self.0.write().unwrap_or_else(PoisonError::into_inner);
+        work()
     }
 }

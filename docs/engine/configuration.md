@@ -238,7 +238,16 @@ the code under it moves is worse than no skip at all.
 ## Reserved environment
 
 A run composes `RUST_MUTANTS_ACTIVE`, `RUST_MUTANTS_CATALOG`, and
-`RUST_MUTANTS_TOUCH` for every test process it starts. Finding any of them already set in its own environment ends the
-command with `RM0006`: nothing a test process said under an inherited
-activation would be about this run, and a touch log an outer run owns is one
-this run would append its own answers to.
+`RUST_MUTANTS_TOUCH` for every test process it starts. Finding any of them
+already set normally ends the command with `RM0006`: nothing a test process
+said under an unrelated activation would be about this run, and a touch log
+another run owns is not one this run may append to.
+
+There is one closed exception for this repository measuring itself. Cargo
+compiles every instrumented tree with an internal
+RUST_MUTANTS_COMPILED_CATALOG build input, and the two engine composition roots
+embed it with `option_env!`. A nonempty inherited catalog is accepted only
+when it equals that embedded digest and exactly one of `ACTIVE` or `TOUCH` is
+also nonempty. A normal binary, a partial pair, a stale catalog, or both modes
+still earns `RM0006`. The internal value is a build input, not a variable a
+user sets or a test process inherits.

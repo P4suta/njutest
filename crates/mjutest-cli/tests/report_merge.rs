@@ -79,6 +79,67 @@ fn nothing_is_not_a_catalog() {
     assert_eq!(merge(&[]).expect_err("no parts"), MergeError::Nothing);
 }
 
+fn shard_set_error(parts: &[Report]) -> String {
+    match merge(parts) {
+        Err(MergeError::ShardSet { because }) => because,
+        Ok(_) | Err(_) => String::new(),
+    }
+}
+
+#[test]
+fn a_whole_requires_every_shard_not_only_disjoint_rows() {
+    let one_of_two = part("1/2", &[("a".repeat(64).as_str(), "killed")]);
+    assert!(
+        shard_set_error(&[one_of_two]).contains("shard 2/2 is missing"),
+        "a missing shard has no row with which to overlap, so disjoint rows do not prove a whole"
+    );
+
+    let one = part("1/3", &[("a".repeat(64).as_str(), "killed")]);
+    let three = part("3/3", &[("c".repeat(64).as_str(), "killed")]);
+    assert!(
+        shard_set_error(&[one, three]).contains("shard 2/3 is missing"),
+        "a gap in the middle is no more complete than a missing last part"
+    );
+}
+
+#[test]
+fn every_part_names_one_shared_denominator_and_one_distinct_index() {
+    let one = part("1/2", &[("a".repeat(64).as_str(), "killed")]);
+    let two_of_three = part("2/3", &[("b".repeat(64).as_str(), "killed")]);
+    assert!(
+        shard_set_error(&[one, two_of_three]).contains("while the first report is one of 2"),
+        "disjoint rows cut with different denominators leave an unknown part"
+    );
+
+    let one = part("1/2", &[("a".repeat(64).as_str(), "killed")]);
+    let another_one = part("1/2", &[("b".repeat(64).as_str(), "killed")]);
+    assert!(
+        shard_set_error(&[one, another_one]).contains("shard 1/2 was offered more than once"),
+        "two disjoint documents with the same label still leave shard 2/2 absent"
+    );
+}
+
+#[test]
+fn one_whole_report_is_an_explicit_passthrough_but_cannot_be_mixed_with_parts() {
+    let mut whole = part("1/2", &[("a".repeat(64).as_str(), "killed")]);
+    whole.scope.shard = None;
+    whole.verdict = Verdict::Assured;
+    let whole = merge(std::slice::from_ref(&whole)).expect("one whole report");
+    assert_eq!(whole.scope.shard, None);
+    assert_eq!(whole.mutants.len(), 1);
+    let partial = part("1/2", &[("b".repeat(64).as_str(), "killed")]);
+    assert!(
+        shard_set_error(&[whole, partial]).contains("does not name a shard"),
+        "an unsharded report mixed with a part does not prove what the other part omitted"
+    );
+
+    let malformed = part("part one", &[("a".repeat(64).as_str(), "killed")]);
+    assert!(
+        shard_set_error(&[malformed]).contains("is not a shard"),
+        "a label the engine would refuse cannot prove which part this report judged"
+    );
+}
+
 #[test]
 fn parts_of_two_different_trees_are_not_parts_of_one_catalog() {
     let one = part("1/2", &[("a".repeat(64).as_str(), "killed")]);
@@ -120,13 +181,43 @@ fn parts_that_answered_to_different_contracts_are_not_added_into_one_that_answer
 fn a_mutant_two_parts_both_judged_says_the_parts_were_cut_differently() {
     let both = "a".repeat(64);
     let one = part("1/2", &[(both.as_str(), "killed")]);
-    let two = part("2/3", &[(both.as_str(), "survived")]);
+    let two = part("2/2", &[(both.as_str(), "survived")]);
 
     let refused = merge(&[one, two]).expect_err("an overlap");
     assert!(
         matches!(&refused, MergeError::Overlapping { mutant } if mutant == &both),
         "every mutant belongs to exactly one part, so two parts holding one of them is \
          two runs cut with different N: {refused}"
+    );
+}
+
+#[test]
+fn parts_with_different_effective_scopes_or_tool_versions_are_not_one_catalog() {
+    let one = part("1/2", &[("a".repeat(64).as_str(), "killed")]);
+    let mut two = part("2/2", &[("b".repeat(64).as_str(), "killed")]);
+    two.scope.requested_packages.push("only-this".to_owned());
+    let refused = merge(&[one, two]).expect_err("two selected package sets");
+    assert!(
+        matches!(&refused, MergeError::Disagree { about, .. } if *about == "the selected packages and exclusions"),
+        "the same tree can be cataloged over different package subsets: {refused}"
+    );
+
+    let one = part("1/2", &[("a".repeat(64).as_str(), "killed")]);
+    let mut two = part("2/2", &[("b".repeat(64).as_str(), "killed")]);
+    two.run_kind = RunKind::Changed;
+    let refused = merge(&[one, two]).expect_err("two run scopes");
+    assert!(
+        matches!(&refused, MergeError::Disagree { about, .. } if *about == "the run scope"),
+        "a full and changed catalog do not add up to either: {refused}"
+    );
+
+    let one = part("1/2", &[("a".repeat(64).as_str(), "killed")]);
+    let mut two = part("2/2", &[("b".repeat(64).as_str(), "killed")]);
+    two.tool.rust_mutants = "another engine".to_owned();
+    let refused = merge(&[one, two]).expect_err("two engine versions");
+    assert!(
+        matches!(&refused, MergeError::Disagree { about, .. } if *about == "the runner and engine versions"),
+        "two engine versions need not enumerate the same catalog: {refused}"
     );
 }
 
@@ -210,6 +301,24 @@ fn what_both_parts_state_the_whole_states_once() {
         whole.limitations
     );
     assert_eq!(whole.findings, vec![raised]);
+}
+
+#[test]
+fn an_unmatched_acceptance_every_shard_reports_is_one_finding_in_the_whole() {
+    let raised = Finding::new(
+        FindingKind::UnmatchedAcceptance,
+        "ffff",
+        "no mutant matches this acceptance",
+    );
+    let mut one = part("1/2", &[("a".repeat(64).as_str(), "killed")]);
+    one.findings = vec![raised.clone()];
+    let mut two = part("2/2", &[("b".repeat(64).as_str(), "killed")]);
+    two.findings = vec![raised.clone()];
+
+    let whole = merge(&[one, two]).expect("two parts");
+
+    assert_eq!(whole.findings, vec![raised]);
+    assert_eq!(whole.verdict, Verdict::Insufficient);
 }
 
 #[test]

@@ -9,10 +9,7 @@ use std::path::{Path, PathBuf};
 
 use super::version::{VersionInfo, parse_version};
 use super::{CargoError, CargoErrorKind};
-use crate::runner::{Cancel, Spec, run};
-
-/// How a `-vV` banner is bounded: nothing legitimate is longer.
-const VERSION_OUTPUT_LIMIT: usize = 64 * 1024;
+use crate::runner::{Cancel, PROBE_OUTPUT_LIMIT, Spec, run};
 
 /// Configures [`Toolchain::locate`].
 #[derive(Debug, Clone, Default)]
@@ -61,7 +58,7 @@ impl Toolchain {
             let mut spec = Spec::new([program.as_os_str(), OsStr::new("-vV")]);
             spec.dir = Some(dir.to_path_buf());
             spec.env.clone_from(&options.env);
-            spec.structured_stdout = Some(VERSION_OUTPUT_LIMIT);
+            spec.structured_stdout = Some(PROBE_OUTPUT_LIMIT);
             let result = run(&spec, cancel);
             if !result.ok() {
                 return Err(command_failed(&spec, &result));
@@ -249,7 +246,7 @@ fn sysroot_of(
     ]);
     spec.dir = Some(dir.to_path_buf());
     spec.env = env.map(<[(OsString, OsString)]>::to_vec);
-    spec.structured_stdout = Some(VERSION_OUTPUT_LIMIT);
+    spec.structured_stdout = Some(PROBE_OUTPUT_LIMIT);
     let result = run(&spec, cancel);
     if !result.ok() {
         return None;

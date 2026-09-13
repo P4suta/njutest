@@ -91,7 +91,7 @@ pub enum Command {
         /// Do not write a run report under the report directory.
         #[arg(long, conflicts_with = "mutant")]
         no_report: bool,
-        /// Execute every mutant afresh rather than reading back what an earlier run of this exact tree established.
+        /// Remeasure coverage, the passing baseline, and every mutant instead of reading back what an earlier run of this exact tree established.
         #[arg(long, conflicts_with = "mutant")]
         no_cache: bool,
         /// How much the run says while it is happening.

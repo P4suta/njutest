@@ -163,10 +163,14 @@ impl Store {
             });
         }
         let violations = audit::validate_for_persistence(&report);
-        if let Some(first) = violations.first() {
+        if !violations.is_empty() {
             return Err(CacheError::Corrupt {
                 path,
-                message: first.to_string(),
+                message: violations
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join("; "),
             });
         }
         Ok(Some(report))
@@ -192,9 +196,16 @@ impl Store {
             });
         }
         let violations = audit::validate_for_persistence(report);
-        if let Some(first) = violations.first() {
+        if !violations.is_empty() {
             return Err(CacheError::Refused {
-                message: format!("the report is not one a reader could check: {first}"),
+                message: format!(
+                    "the report is not one a reader could check: {}",
+                    violations
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join("; ")
+                ),
             });
         }
         let text = crate::report::json::render(report).map_err(|error| CacheError::Refused {
@@ -213,7 +224,8 @@ impl Store {
     /// What the store holds.
     ///
     /// # Errors
-    /// The store's own directory could not be listed.
+    /// The store's own directory could not be listed, or an entry selected for
+    /// removal could not be removed.
     pub fn status(&self) -> Result<Status, CacheError> {
         let mut status = Status::default();
         for entry in self.entries()? {
@@ -238,8 +250,8 @@ impl Store {
                 .max(0);
             let ttl = i64::try_from(self.ttl.as_secs()).unwrap_or(i64::MAX);
             if self.ttl > Duration::ZERO && age >= ttl {
+                remove(&entry)?;
                 collected.bytes = collected.bytes.saturating_add(entry.bytes);
-                drop(std::fs::remove_file(&entry.path));
                 collected.expired.push(entry.path);
             } else {
                 remaining.push(entry);
@@ -254,9 +266,9 @@ impl Store {
             if total <= self.max_bytes {
                 break;
             }
+            remove(&entry)?;
             total = total.saturating_sub(entry.bytes);
             collected.bytes = collected.bytes.saturating_add(entry.bytes);
-            drop(std::fs::remove_file(&entry.path));
             collected.evicted.push(entry.path);
         }
         Ok(collected)
@@ -280,12 +292,15 @@ impl Store {
     pub fn export(&self, out: &mut dyn std::io::Write) -> Result<u32, CacheError> {
         let mut written: u32 = 0;
         for entry in self.entries()? {
-            let Some(identity) = entry.path.file_stem().and_then(std::ffi::OsStr::to_str) else {
-                continue;
-            };
-            let Some(report) = self.get(identity)? else {
-                continue;
-            };
+            let report = self
+                .get(&entry.identity)?
+                .ok_or_else(|| CacheError::Unusable {
+                    path: entry.path.clone(),
+                    source: std::io::Error::new(
+                        std::io::ErrorKind::NotFound,
+                        "the entry disappeared while it was being exported",
+                    ),
+                })?;
             let text = crate::report::json::line(&report).map_err(|error| CacheError::Corrupt {
                 path: entry.path.clone(),
                 message: error.to_string(),
@@ -338,21 +353,48 @@ impl Store {
             }
         };
         let mut entries = Vec::new();
-        for found in listing.flatten() {
+        for found in listing {
+            let found = found.map_err(|source| CacheError::Unusable {
+                path: self.root.clone(),
+                source,
+            })?;
             let path = found.path();
             if path.extension().and_then(std::ffi::OsStr::to_str) != Some(ENTRY_EXTENSION) {
                 continue;
             }
-            let Ok(metadata) = found.metadata() else {
-                continue;
-            };
+            let identity = path
+                .file_stem()
+                .and_then(std::ffi::OsStr::to_str)
+                .ok_or_else(|| CacheError::Corrupt {
+                    path: path.clone(),
+                    message: "the entry name is not text".to_owned(),
+                })?
+                .to_owned();
+            let metadata = found.metadata().map_err(|source| CacheError::Unusable {
+                path: path.clone(),
+                source,
+            })?;
+            if !metadata.is_file() {
+                return Err(CacheError::Corrupt {
+                    path,
+                    message: "an outcome entry is not a regular file".to_owned(),
+                });
+            }
             let modified = metadata
                 .modified()
-                .ok()
-                .and_then(|when| Timestamp::try_from(when).ok())
-                .unwrap_or(Timestamp::UNIX_EPOCH);
+                .map_err(|source| CacheError::Unusable {
+                    path: path.clone(),
+                    source,
+                })
+                .and_then(|when| {
+                    Timestamp::try_from(when).map_err(|error| CacheError::Corrupt {
+                        path: path.clone(),
+                        message: format!("its modification time is not representable: {error}"),
+                    })
+                })?;
             entries.push(Entry {
                 path,
+                identity,
                 bytes: metadata.len(),
                 modified,
             });
@@ -365,6 +407,14 @@ impl Store {
 #[derive(Debug, Clone)]
 struct Entry {
     path: PathBuf,
+    identity: String,
     bytes: u64,
     modified: Timestamp,
+}
+
+fn remove(entry: &Entry) -> Result<(), CacheError> {
+    std::fs::remove_file(&entry.path).map_err(|source| CacheError::Unusable {
+        path: entry.path.clone(),
+        source,
+    })
 }

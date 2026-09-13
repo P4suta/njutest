@@ -496,6 +496,23 @@ fn a_target_the_build_produced_and_nothing_verified_is_a_violation() {
 }
 
 #[test]
+fn a_target_the_build_records_as_configured_out_needs_no_verification() {
+    let mut events = recording();
+    events[4]["build"]["targets"] = serde_json::json!([TARGET, "demo/test/ui"]);
+    events[4]["build"]["details"] = serde_json::json!([
+        {"id": TARGET, "kind": "lib", "harness": true},
+        {
+            "id": "demo/test/ui",
+            "kind": "test",
+            "harness": true,
+            "limitations": ["target-skipped-by-configuration"]
+        }
+    ]);
+    let audit = audited_with(&base(), &events);
+    assert!(violations(&audit, Layer::Trace).is_empty(), "{audit}");
+}
+
+#[test]
 fn a_discharged_target_that_then_ran_is_a_violation() {
     let mut events = recording();
     events[7]["route"]["discharged"] =
@@ -1536,5 +1553,57 @@ fn a_mutant_a_filter_left_out_is_accounted_for_rather_than_reported_as_a_hole() 
         violations(&audit, Layer::Findings).is_empty(),
         "a mutant nobody selected is not a gap in the tests: {:?}",
         violations(&audit, Layer::Findings)
+    );
+}
+
+#[test]
+fn a_filter_decision_needs_a_select_record_and_no_route_for_an_unvalidated_mutant() {
+    let mut document = base();
+    document["accounting"] = serde_json::json!({
+        "cataloged": 2, "refused": 1, "skipped": 0, "executed": 1,
+        "killed": 1, "survived": 0, "timed_out": 0, "inconclusive": 0,
+        "errored": 0, "not_run": 1, "unreached": 0, "discharged": 0,
+        "expected": 0
+    });
+    document["score"] = serde_json::json!({"detected": 1, "decided": 1, "value": 1.0});
+    document["mutants"][1]["outcome"] = serde_json::json!("not_run");
+    document["mutants"][1]["target"] = serde_json::json!("");
+    document["mutants"][1]["exit_code"] = serde_json::json!(0);
+    document["mutants"][1]["duration_ms"] = serde_json::json!(0);
+    document["mutants"][1]["tests_run"] = serde_json::Value::Null;
+    document["mutants"][1]["expected"] = serde_json::json!(false);
+    document["mutants"][1]["not_run_reason"] = serde_json::json!("unselected");
+    document["mutants"][1]["route"] = serde_json::Value::Null;
+    document["expectations"] = serde_json::json!([]);
+
+    let survivor = short(SURVIVED);
+    let mut events = recording();
+    events.retain(|event| {
+        let named = event
+            .pointer("/route/mutant")
+            .or_else(|| event.pointer("/mutant/id"))
+            .and_then(serde_json::Value::as_str);
+        named != Some(survivor.as_str())
+    });
+    let end = events.pop().expect("run end");
+    events.push(serde_json::json!({
+        "timestamp":"2026-09-06T10:15:02Z", "elapsed_ms":62,
+        "type":"select", "select":{"mutant":survivor,"reason":"unselected"}
+    }));
+    events.push(end);
+    let emitted = u64::try_from(events.len()).expect("event count");
+    for (at, event) in events.iter_mut().enumerate() {
+        event["seq"] = serde_json::json!(u64::try_from(at + 1).expect("sequence"));
+    }
+    events.last_mut().expect("run end")["run"]["events_emitted"] = serde_json::json!(emitted);
+
+    let audit = audited_with(&document, &events);
+    assert!(
+        violations(&audit, Layer::Trace).is_empty(),
+        "selection is the entire auditable decision for a candidate that was never placed in the build: {audit}"
+    );
+    assert!(
+        violations(&audit, Layer::Proofs).is_empty(),
+        "the select record agrees with the report: {audit}"
     );
 }

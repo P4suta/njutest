@@ -119,6 +119,12 @@ impl<'a> Notes<'a> {
     }
 }
 
+impl Drop for Notes<'_> {
+    fn drop(&mut self) {
+        self.finish();
+    }
+}
+
 impl Dashboard<'_> {
     /// Rewrites the block where it already wrote, padded to cover whatever was longer before it.
     fn redraw(&mut self, detail: &str) {

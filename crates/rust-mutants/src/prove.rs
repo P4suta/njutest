@@ -130,18 +130,44 @@ pub fn establish(
     cancel: &Cancel,
     trace: &Recorder,
 ) -> Result<Established, EngineError> {
+    establish_for(asking, None, cancel, trace)
+}
+
+/// Establishes proofs only for the catalog indices a prepared run can use.
+///
+/// Discovery and identity remain global. Narrowing only the witness questions
+/// prevents a scoped run from paying a whole-catalog compiler pass for proofs
+/// it cannot consume.
+///
+/// # Errors
+/// The same failures as [`establish`].
+pub fn establish_selected(
+    asking: &Asking<'_>,
+    selected: &BTreeSet<u32>,
+    cancel: &Cancel,
+    trace: &Recorder,
+) -> Result<Established, EngineError> {
+    establish_for(asking, Some(selected), cancel, trace)
+}
+
+fn establish_for(
+    asking: &Asking<'_>,
+    selected: Option<&BTreeSet<u32>>,
+    cancel: &Cancel,
+    trace: &Recorder,
+) -> Result<Established, EngineError> {
     let Asking {
         workspace,
         discovery,
         sources,
         options,
     } = *asking;
-    let questions = questions_of(discovery);
+    let questions = questions_of(discovery, selected);
     if questions.is_empty() {
         return Ok(Established::default());
     }
     let claims = &questions.conditions;
-    let phase = trace.phase("witness");
+    let _phase = trace.phase("witness");
     let root = workspace.snapshot_root().to_path_buf();
     let wrote = write(&root, sources, &questions);
     let checked = wrote
@@ -151,7 +177,6 @@ pub fn establish(
     let written = wrote?;
 
     let Some(Ok(checked)) = checked else {
-        phase.end();
         return Ok(Established::default());
     };
     let mut refused = if checked.success {
@@ -171,7 +196,6 @@ pub fn establish(
                     .map_or("the compiler named no place at all", String::as_str)
             ),
         );
-        phase.end();
         return Ok(Established::default());
     }
     unasked(&questions, &written.unasked, &mut refused);
@@ -198,7 +222,6 @@ pub fn establish(
             established.probed.len(),
         ),
     );
-    phase.end();
     Ok(established)
 }
 
@@ -313,7 +336,7 @@ fn count(claims: &ByFile) -> usize {
 }
 
 /// Every claim discovery made, by the file it is in.
-fn questions_of(discovery: &Discovery) -> Questions {
+fn questions_of(discovery: &Discovery, selected: Option<&BTreeSet<u32>>) -> Questions {
     let mut questions = Questions::default();
     for located in &discovery.candidates {
         let Ok(id) = located.found.candidate.id() else {
@@ -322,6 +345,9 @@ fn questions_of(discovery: &Discovery) -> Questions {
         let Some(mutant) = discovery.catalog.by_id(&id) else {
             continue;
         };
+        if selected.is_some_and(|selected| !selected.contains(&mutant.index)) {
+            continue;
+        }
         if let Some(question) = located.found.probe {
             questions
                 .probes

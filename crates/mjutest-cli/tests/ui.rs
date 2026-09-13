@@ -65,9 +65,10 @@ fn the_dashboard_keeps_one_block_and_redraws_it_rather_than_scrolling() {
         text.contains("3/3"),
         "the last thing it says is where the run got to: {text:?}"
     );
-    assert!(
-        !text.contains('\n'),
-        "a terminal showing this shows one line, because nothing here ends one: {text:?}"
+    assert_eq!(
+        text.bytes().filter(|byte| *byte == b'\n').count(),
+        1,
+        "redraws do not scroll, and dropping the dashboard ends its one line: {text:?}"
     );
     assert!(
         text.split('\r').filter(|part| !part.is_empty()).count() >= 4,
@@ -80,7 +81,6 @@ fn the_dashboard_leaves_the_terminal_as_it_found_it() {
     let text = said(Ui::Dashboard, |notes| {
         notes.phase("mutation");
         notes.progress("abcd", 1, 4);
-        notes.finish();
     });
     assert!(
         text.ends_with('\n'),

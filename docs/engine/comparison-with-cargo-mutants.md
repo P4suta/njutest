@@ -9,19 +9,19 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 [cargo-mutants] is the mutation testing tool most Rust projects reach for, and
 it is good. This page says what is different here, so that a reader can tell
-whether the difference is worth anything to them. It is a comparison of
-designs, not a benchmark: where a claim would need numbers this page says so
-rather than inventing them.
+whether the difference is worth anything to them. Most of the page compares
+contracts. The one measured comparison below states its exact scope and does
+not turn a three-mutant result into a universal benchmark claim.
 
 [cargo-mutants]: https://github.com/sourcefrog/cargo-mutants
 
 ## The one difference everything else follows from
 
 cargo-mutants writes one mutation into a copy of the tree, builds it, runs the
-tests, and starts again for the next mutant. rust-mutants writes **every**
-compilable mutation into one copy, each dormant behind a guard, builds that
-once, and activates one mutant per test process through an environment
-variable — the mutant schemata of the family this engine belongs to
+tests, and starts again for the next mutant. rust-mutants writes every
+selected compilable mutation into one copy, each dormant behind a guard,
+builds that once, and activates one mutant per test process through an
+environment variable — the mutant schemata of the family this engine belongs to
 ([ocaml-mutants], [gleam-mutants], [go-mutants]).
 
 [ocaml-mutants]: https://github.com/P4suta/ocaml-mutants
@@ -40,15 +40,36 @@ answer, and the tests here are mostly about those invariants.
 
 | | cargo-mutants | rust-mutants |
 | --- | --- | --- |
-| Build | one per mutant | one for the whole catalog |
+| Build | one per mutant | one instrumented build for the selected set |
 | Mutant identity | position in the current tree | content-addressed, stable across unrelated edits |
-| Which candidates are real | the build decides, per mutant | one `cargo check` decides for all of them, and every refusal is kept with the compiler's own words |
+| Which candidates are real | the build decides, per mutant | batched `cargo check` rounds decide the selected set, and every refusal is kept with the compiler's own words |
 | Line numbers | shifted by the mutation | preserved, byte for byte, which is what every position in a report rests on |
-| Selection | `--in-diff`, `--file`, `--regex` | `--changed`, `--include`, `--exclude`, `--package`, `--shard K/N` |
-| Skipping work | `--baseline`, timeouts, `--in-diff` | proofs only: guard routing, coverage routing, branch proofs, infection proofs — no budget, no sample |
+| Selection | `--in-diff`, `--file`, `--regex` | `--changed`, `--include`, `--exclude`, `--package`, `--file`, `--id`, rule/family filters, `--from-report`, `--shard K/N` |
+| Skipping work | `--baseline`, timeouts, `--in-diff` | content-addressed passing baseline and outcome reuse, guard and coverage routing, branch and infection proofs — no sampling |
 | Unbuildable mutants | reported as a build failure | refused before execution, with the diagnostic that refused them |
 | Report | `mutants.out/*.txt`, JSON | `rust-mutants/run-report` v1 with a JSON Schema, plus a Stryker projection, one offline page, and a terminal reader |
 | Verdict | a count | an exit code from a stated policy, with expectations a reviewer declares and the run verifies |
+
+## What has actually been faster
+
+A controlled run on this repository selected the same three mutations both
+engines could spell and gave both a passing baseline, one mutation job, two
+build jobs, locked offline dependencies, and two libtest threads. Both found
+all three. rust-mutants took 7:40.09 wall time and cargo-mutants 27.1.0 took
+7:52.63; maximum RSS was 653,956 KiB and 652,392 KiB respectively. The total
+lead is 12.54 seconds, or 2.65%. It establishes parity with a small lead for
+that slice, not an overwhelming lead in general.
+
+The larger win found in the same work was against this engine's own prior
+implementation. A two-file selection used to validate all 12,743 catalog
+candidates and took 5:40:14. Selection-aware witness generation,
+instrumentation, and validation brought a comparable run to 17:59: 346 times
+faster in validation and 18.9 times faster end to end. Exact repeated
+instrumented baselines now start no baseline target processes at all. The
+dated commands, digests, outcomes, and the distinction between measured and
+inferred time are recorded in [Current boundaries and evidence].
+
+[Current boundaries and evidence]: ../limitations.md#speed-regression-closed-by-this-change
 
 ## What cargo-mutants does that this does not
 

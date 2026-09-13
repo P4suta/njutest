@@ -152,8 +152,10 @@ so there would be nothing to map an expansion's positions onto.
   and a type whose `PartialEq` answers about less than a test can read, leave
   the mutant unprobed.
 
-A mutant without a proof is still cataloged, instrumented, and executed; what
-it lacks is only the licence to skip a test.
+A selected mutant without a proof is still cataloged, instrumented, and
+executed; what it lacks is only the licence to skip a test. A run filter can
+leave a different candidate explicitly `unselected` before either proof or
+compiler validation.
 
 ## What `include!` does to a file
 

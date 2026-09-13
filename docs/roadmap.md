@@ -81,14 +81,26 @@ So the next thing to make cheaper here is not a fourth layer. It is what the
 measurement above says: the witness pass claims very little on real code, and
 what a widening of it buys is measured rather than assumed.
 
-What preparing costs, measured on this engine's own workspace after E12: 427
-seconds on a cold cache and **99 on a warm one**, and 77 of those 99 are
-`verify` — one run of every target with nothing active. That run is the
-baseline and the measurement at once, so it is the floor: a mutation score
-cannot be had without running the unmutated program once. The builds around
-it come to twenty seconds warm. There is no large engine-side saving left to
-find; what is left is the yield of the layers, which is a different question
-and the one the numbers above are about.
+Speed is a product gate, not a deferred layer. The first focused
+`doctor.rs`/`plan.rs` rerun exposed a preparation bug: although only 94
+mutations could run, validation compiled all 12,743 candidates and spent
+19,376 seconds doing it. Selection now reaches the witness, validation and
+instrumentation passes before they compile anything while the catalog itself
+stays complete. The comparable 97-mutation run spent 56 seconds in validation
+and 17:59 wall-clock in total — 346 times faster in the faulty phase and 18.9
+times faster end to end.
+
+The remaining repeated cost was `verify`, which started every target again for
+an unchanged instrumented tree. A wholly passing baseline is now remembered
+under its complete execution inputs and reused only after every newly built
+target executable compares byte for byte (a doctest is additionally keyed by
+its exact Cargo command). Failing, tree-writing, incomplete and
+changed measurements always run again, and `--no-cache` bypasses the layer.
+That makes the baseline a first-measurement cost instead of a tax on every
+iteration; the performance record in [limitations](limitations.md) carries the
+heavy fresh phase and the CLI-level process-elision proof. Total wall time over
+equivalent mutants, including preparation and baseline, is the comparison
+metric — mutation-loop speed on its own is not a product claim.
 
 One candidate was measured and is not one. The witness pass checks into a
 target directory of its own, and a cold run spends sixty seconds there, which
@@ -118,41 +130,33 @@ lives in `Store::put` and nowhere else. What the answers do not carry is the
 build: the compiled tree is the engine's, keyed to the workspace root under
 the temporary directory, and `docs/ci.md` says how a matrix caches it.
 
-## What this engine cannot measure about itself, and what would change that
+## What this engine still cannot measure about itself
 
-A test that starts this engine inherits the activation the run composed and
-is refused (`RM0006`), and a test that inspects the tree it is being measured
-in reads a tree carrying the guards rather than the one a person wrote. Both
-refusals are correct, and `docs/limitations.md` says so.
+A test that inspects the tree it is being measured in reads a tree carrying
+the guards rather than the one a person wrote. That refusal remains correct,
+and `docs/limitations.md` says so.
 
-Most of the cost turned out to be avoidable, and for a reason that had nothing
-to do with either refusal: **a guard records what it reached in its own
-process.** A suite that starts the binary is measured by nothing whatever the
-binary then does, so the whole command layer of both products — every suite
+Most of the cost turned out to be avoidable. Before subprocesses inherited
+the outer mutation identity, **a guard recorded only what its own process
+reached.** A suite that started the binary was therefore measured by nothing
+the binary then did, so the whole command layer of both products — every suite
 that drove `rust-mutants` or `mjutest` as a child — was reached by no mutation
 at all. Those suites drive `run_from` in this process now, which is the same
-command against the same tree and is measured. What kept them starting a
-process for so long after the reason to stop was known is that they were
-written against `std::process::Output`;
+command against the same tree with test-level attribution. What kept them
+starting a process for so long after the reason to stop was known is that they
+were written against `std::process::Output`;
 `mjutest_devkit::process::answered` hands that shape back for a command driven
 here, so each suite changed in one function.
 
 What still starts a process is what is about a process: an interrupt, a hang, a
 panic, a stream read while it is still being written, the language server's
-stdio, and the two suites whose subject is a variable a process inherits. Those
-are the skips a reader counting survivors still has to count, and there are six
-of them rather than seventy.
-
-The first of the two is worth revisiting. What makes an inherited activation
-dangerous is the catalog matching, and where it matches, this binary **is**
-the mutant the outer run activated — which is the answer the outer run wants.
-The runtime already refuses the rest: an identity it does not know activates
-nothing, a catalog that is not its own ends the process, and a record it may
-not append to is one it does not open. So `RM0006` is a better diagnostic for
-a case the guards already cover, and relaxing it where the binary's own
-catalog is the one active would let a run measure the tests that start it. It
-is a change to make on its own, with its own falsification: done wrongly, the
-guard stops protecting a person whose environment still names an old run.
+stdio, and the suites whose subject is a variable a process inherits. Those
+processes are measurable now. Each instrumented composition root embeds its
+catalog digest and accepts exactly one inherited `ACTIVE` or `TOUCH` mode only
+when the nonempty catalog beside it matches. Normal builds, partial pairs,
+stale catalogs, and both modes remain `RM0006`; Cargo's environment tracking
+rebuilds the binary when the catalog changes. The only configured target skip
+left here is the gate whose subject is the instrumented tree itself.
 
 ## What the configuration audit closed
 
@@ -313,9 +317,9 @@ four things and graded none of them; now it answers about thirteen, says
 whether each is `ok`, `warn` or `fail`, and carries the next step for every
 one that is not `ok`. `diagnostics` is the second step: one command, one
 directory, everything a reader re-decides the run from, and the names of the
-environment variables with none of their values. Both are the only commands
-that report a reserved variable instead of refusing to start under it, which
-is the one situation they exist for.
+environment variables with none of their values. Both report a reserved
+variable instead of refusing to start under it, which is the one situation
+they exist for.
 
 ## What E7 closed
 

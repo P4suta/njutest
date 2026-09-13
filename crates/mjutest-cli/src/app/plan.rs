@@ -6,18 +6,40 @@
 use std::io::Write;
 
 use crate::build::{BuildOptions, Cargo, Flavour, Selection, build};
-use crate::cli::{EXIT_ASSURED, EXIT_ERROR, Environment, Plan as Arguments};
+use crate::cli::{Environment, Plan as Arguments};
 use crate::targets::{Target, UnitKind, enumerate};
 use crate::trace::Recorder;
 use crate::watch::Watch;
 
+use super::Completion;
+
 /// Says what a run would measure.
-pub fn run(
+pub(super) fn run(
     arguments: &Arguments,
     environment: &Environment,
     stdout: &mut dyn Write,
     stderr: &mut dyn Write,
-) -> u8 {
+) -> Completion {
+    match planned(arguments, environment, stdout) {
+        Ok(()) => Completion::Assured,
+        Err(message) => {
+            super::diagnose(stderr, &message);
+            Completion::Error
+        }
+    }
+}
+
+/// Writes a complete plan or returns the one reason no plan can be made.
+///
+/// Keeping failure in the value until the composition boundary gives success
+/// and failure one observable exit decision. It also avoids a tail expression
+/// whose only possible value is zero, which is indistinguishable from
+/// `u8::default()` under mutation.
+fn planned(
+    arguments: &Arguments,
+    environment: &Environment,
+    stdout: &mut dyn Write,
+) -> Result<(), String> {
     let root = environment.rooted(arguments.directory.as_deref());
     let cancel = environment.cancel.clone();
     let trace = Recorder::disabled();
@@ -27,36 +49,16 @@ pub fn run(
         locked: arguments.locked,
     };
 
-    let selection = match compiled(&root, arguments) {
-        Ok(selection) => selection,
-        Err(message) => {
-            super::diagnose(stderr, &message);
-            return EXIT_ERROR;
-        }
-    };
+    let selection = compiled(&root, arguments)?;
     let packages = selection.packages.clone();
 
-    let located = locate(&root, environment, cargo, &cancel);
-    let (toolchain, metadata) = match located {
-        Ok(pair) => pair,
-        Err(message) => {
-            super::diagnose(stderr, &message);
-            return EXIT_ERROR;
-        }
-    };
+    let (toolchain, metadata) = locate(&root, environment, cargo, &cancel)?;
 
     if let Some(refusal) = unknown_package(&packages, &metadata.packages) {
-        super::diagnose(stderr, &refusal);
-        return EXIT_ERROR;
+        return Err(refusal);
     }
 
-    let scratch = match workplace(environment) {
-        Ok(scratch) => scratch,
-        Err(error) => {
-            super::diagnose(stderr, &error.to_string());
-            return EXIT_ERROR;
-        }
-    };
+    let scratch = workplace(environment).map_err(|error| error.to_string())?;
     let options = BuildOptions {
         root,
         selection,
@@ -67,42 +69,25 @@ pub fn run(
         cargo,
         timeout: None,
     };
-    let built = match build(&toolchain, &metadata.packages, &options, watch) {
-        Ok(built) if built.failure.is_none() => built,
-        Ok(built) => {
-            super::diagnose(
-                stderr,
-                &format!(
-                    "{}: the workspace does not compile, so there is nothing to plan:\n{}",
-                    crate::error::BUILD_FAILED.code,
-                    built.failure.unwrap_or_default()
-                ),
-            );
-            return EXIT_ERROR;
-        }
-        Err(error) => {
-            super::diagnose(stderr, &error.to_string());
-            return EXIT_ERROR;
-        }
-    };
+    let built = build(&toolchain, &metadata.packages, &options, watch)
+        .map_err(|error| error.to_string())?;
+    if let Some(failure) = &built.failure {
+        return Err(format!(
+            "{}: the workspace does not compile, so there is nothing to plan:\n{failure}",
+            crate::error::BUILD_FAILED.code,
+        ));
+    }
 
     if arguments.why {
         super::say(stdout, &format!("SCOPE\t{}", scope(arguments, &packages)));
     }
 
-    let selected = match selected(&built.units, watch) {
-        Ok(selected) => selected,
-        Err(error) => {
-            super::diagnose(stderr, &error.to_string());
-            return EXIT_ERROR;
-        }
-    };
+    let selected = selected(&built.units, watch).map_err(|error| error.to_string())?;
     for target in &selected {
         super::say(stdout, &line(target, arguments.why));
     }
     super::say(stdout, &format!("TARGETS\t{}", selected.len()));
-    drop(scratch.close());
-    EXIT_ASSURED
+    Ok(())
 }
 
 /// Every binary a run would measure, and how many tests each of them holds.

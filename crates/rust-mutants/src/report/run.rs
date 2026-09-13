@@ -51,7 +51,7 @@ pub struct RunDocument {
     /// How many tests the run started to establish that a set of them answers on its own, which is work no mutation asked for and every narrowed execution rests on.
     #[serde(default)]
     pub established_tests: u64,
-    /// One record per cataloged mutant, in catalog order.
+    /// One record per non-refused candidate the run accounts for, in catalog order.
     pub mutants: Vec<RunMutantDocument>,
     /// Every candidate the compiler refused.
     pub rejections: Vec<RejectionDocument>,
@@ -85,7 +85,10 @@ pub struct RunMeta {
 /// What a run counted. Every mutant is in exactly one of the outcome columns.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Accounting {
-    /// How many mutants the compiler accepted.
+    /// How many candidate rows the run accounts for, excluding compiler refusals.
+    ///
+    /// A row left `unselected` by a scoped run was not necessarily presented
+    /// to the compiler and makes no acceptance claim.
     pub cataloged: u32,
     /// How many candidates the compiler refused.
     pub refused: u32,
@@ -126,7 +129,10 @@ pub struct ScoreDocument {
     pub value: f64,
 }
 
-/// One cataloged mutant and what the run established about it.
+/// One non-refused candidate and what the run established about it.
+///
+/// `not_run/unselected` is an explicit absence of a compiler-acceptance claim:
+/// selection-aware preparation need not instrument or validate that candidate.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunMutantDocument {
     /// The dense catalog index the guards name.

@@ -63,7 +63,7 @@ read them too, so what those preview is what a run would do.
 | `--coverage`, `--no-coverage` | build once with LLVM coverage instrumentation, and route by what it measured |
 | `--no-touch` | do not ask the guards which of each target's tests reached them, and so run every test of every target that could |
 | `--equivalence` | ask the compiler whether a survivor's mutation is one it renders identically |
-| `--no-cache` | do not read back what an earlier run of this tree established |
+| `--no-cache` | remeasure coverage, baseline and mutant outcomes instead of reading back an exact prior answer |
 | `--keep-temp` | keep the snapshot and its build cache, and record where |
 | `--fail-fast` | stop at the first finding |
 | `--dry-run` | prepare, verify, and say what a run would cost |

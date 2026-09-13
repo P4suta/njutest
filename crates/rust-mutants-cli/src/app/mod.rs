@@ -36,7 +36,7 @@ use doctor::{Asked, doctor};
 pub use stored::run_id;
 use stored::{named, newest, prune, store};
 
-/// The variables a run composes for itself, which it therefore refuses to inherit.
+/// The variables a run composes for itself and normally refuses to inherit.
 pub const RESERVED_ENV: [&str; 3] = [
     "RUST_MUTANTS_ACTIVE",
     "RUST_MUTANTS_CATALOG",
@@ -49,16 +49,17 @@ pub const RESERVED_ENV: [&str; 3] = [
 /// Returns what the command could not do.
 pub fn dispatch(
     command: &cli::Command,
-    environment: &Environment,
+    composition: crate::Composition<'_>,
     streams: crate::Streams<'_>,
     cancel: &Cancel,
 ) -> Result<u8, CliError> {
+    let environment = composition.environment;
     let crate::Streams {
         out: stdout,
         err: stderr,
     } = streams;
     if !diagnoses(command) {
-        reserved(environment)?;
+        reserved(environment, composition.compiled_catalog)?;
     }
     match command {
         cli::Command::Init { root, force } => init(root.as_deref(), *force, environment, stdout),
@@ -180,9 +181,11 @@ fn kept_command(
 /// A run composes its own activation. An inherited one would silently decide what every test process measures.
 /// Whether the command is one whose whole job is to say what is wrong here.
 ///
-/// Every other command refuses to inherit a reserved variable, because what a
-/// test process said under one is about something else. These two report it
-/// instead: a person whose environment is broken runs them to find that out.
+/// Every other command refuses an unrelated reserved variable, because what a
+/// test process said under one is about something else. A binary compiled from
+/// the matching instrumented catalog may retain its one outer measurement.
+/// These two report the environment instead: a person whose environment is
+/// broken runs them to find that out.
 const fn diagnoses(command: &cli::Command) -> bool {
     matches!(
         command,
@@ -209,11 +212,38 @@ pub fn reserved_names(environment: &Environment) -> Vec<String> {
         .collect()
 }
 
-fn reserved(environment: &Environment) -> Result<(), CliError> {
+fn reserved(environment: &Environment, compiled_catalog: Option<&str>) -> Result<(), CliError> {
+    if is_self_measurement(environment, compiled_catalog) {
+        return Ok(());
+    }
     reserved_names(environment).into_iter().next().map_or_else(
         || Ok(()),
         |name| Err(CliError::EnvironmentReserved { name }),
     )
+}
+
+/// Whether this binary belongs to exactly the catalog the inherited activation or touch run names.
+#[must_use]
+pub fn is_self_measurement(environment: &Environment, compiled_catalog: Option<&str>) -> bool {
+    let value = |name: &str| {
+        environment
+            .vars
+            .iter()
+            .find(|(candidate, value)| candidate == name && !value.is_empty())
+            .map(|(_, value)| value.to_string_lossy())
+    };
+    let Some(compiled) = compiled_catalog.filter(|catalog| !catalog.is_empty()) else {
+        return false;
+    };
+    let Some(catalog) = value(rust_mutants::instrument::CATALOG_ENV) else {
+        return false;
+    };
+    if compiled != catalog {
+        return false;
+    }
+    let active = value(rust_mutants::instrument::ACTIVE_ENV).is_some();
+    let touch = value(rust_mutants::instrument::TOUCH_ENV).is_some();
+    active ^ touch
 }
 
 fn workspace_command(
@@ -399,6 +429,22 @@ struct Running<'a> {
     phases: &'a std::sync::mpsc::Receiver<rust_mutants::trace::Event>,
 }
 
+fn preparation_options(
+    command: &cli::Command,
+    running: &Running<'_>,
+    cancel: &Cancel,
+) -> Result<(session::PrepareOptions, Option<run::Filter>), CliError> {
+    let mut options = running.settings.prepare_options()?;
+    options.measurements = remembered_measurements(command, running.environment);
+    harness(command, &mut options);
+    if let Some(base) = base_of(running.scope) {
+        options.include = selected(running, base, cancel)?;
+    }
+    let validation_filter = validation_filter(command, running.settings)?;
+    options.validation_filter.clone_from(&validation_filter);
+    Ok((options, validation_filter))
+}
+
 fn measured(
     command: &cli::Command,
     running: &Running<'_>,
@@ -416,12 +462,7 @@ fn measured(
     } = *running;
     let open = settings.open_options(scope, environment, recorder.clone())?;
     let workspace = Workspace::open(&settings.root, open.clone(), cancel)?;
-    let mut options = settings.prepare_options()?;
-    options.measurements = remembered_measurements(command, environment);
-    harness(command, &mut options);
-    if let Some(base) = base_of(scope) {
-        options.include = selected(running, base, cancel)?;
-    }
+    let (options, validation_filter) = preparation_options(command, running, cancel)?;
     match command {
         cli::Command::Equivalence { limit, .. } => {
             let discovery = session::preview(&workspace, &options, cancel)?;
@@ -476,6 +517,7 @@ fn measured(
                     id,
                     started,
                     phases,
+                    filter: validation_filter.as_ref(),
                 },
                 cancel,
                 stdout,
@@ -635,6 +677,24 @@ struct Prepared<'a> {
     started: Timestamp,
     /// What the recorder has said about the phases it has finished, for a display to write.
     phases: &'a std::sync::mpsc::Receiver<rust_mutants::trace::Event>,
+    /// The run selection compiled into the instrumented tree, evaluated once
+    /// before preparation so `--from-report` cannot move underneath it.
+    filter: Option<&'a run::Filter>,
+}
+
+fn request(
+    mutant: &str,
+    target: Option<&String>,
+    test: Option<&String>,
+    args: &[String],
+) -> Request {
+    let mut request = Request::new(mutant.to_owned())
+        .test(test.cloned())
+        .with_args(args.to_vec());
+    if let Some(target) = target {
+        request = request.with_target(target.clone());
+    }
+    request
 }
 
 /// What a command that needs a prepared session does.
@@ -645,7 +705,10 @@ fn prepared(
     stdout: &mut dyn Write,
 ) -> Result<u8, CliError> {
     let Prepared {
-        session, settings, ..
+        session,
+        settings,
+        filter: prepared_filter,
+        ..
     } = *prepared;
     match command {
         cli::Command::Catalog {
@@ -683,15 +746,7 @@ fn prepared(
         } => match mutant {
             Some(prefix) => one(
                 session,
-                &{
-                    let mut request = Request::new(prefix.clone())
-                        .test(test.clone())
-                        .with_args(args.clone());
-                    if let Some(target) = target {
-                        request = request.with_target(target.clone());
-                    }
-                    request
-                },
+                &request(prefix, target.as_ref(), test.as_ref(), args),
                 cancel,
                 stdout,
             ),
@@ -710,7 +765,12 @@ fn prepared(
                         fail_fast: *fail_fast,
                         dry_run: *dry_run,
                     },
-                    filter: filter(command, prepared.settings, session)?,
+                    filter: filter(
+                        command,
+                        prepared.settings,
+                        session,
+                        prepared_filter.cloned().unwrap_or_default(),
+                    )?,
                     phases: prepared.phases,
                     environment: prepared.environment,
                     id: prepared.id,
@@ -986,19 +1046,9 @@ fn filter(
     command: &cli::Command,
     settings: &Settings,
     session: &Session,
+    filter: run::Filter,
 ) -> Result<run::Filter, CliError> {
-    let cli::Command::Run {
-        rules,
-        families,
-        skip_rules,
-        skip_families,
-        files,
-        ids,
-        from_report,
-        outcome,
-        ..
-    } = command
-    else {
+    let cli::Command::Run { files, ids, .. } = command else {
         return Ok(run::Filter::default());
     };
     let removed_a_file = session
@@ -1035,10 +1085,6 @@ fn filter(
             });
         }
     }
-    known("--rule", rules, true)?;
-    known("--skip-rule", skip_rules, true)?;
-    known("--family", families, false)?;
-    known("--skip-family", skip_families, false)?;
     narrowed(
         &session
             .files()
@@ -1047,6 +1093,35 @@ fn filter(
             .collect::<Vec<String>>(),
         files,
     )?;
+    Ok(filter)
+}
+
+/// Compiles the run's syntactic selection before the expensive compiler
+/// validation begins. Existence checks still happen against the complete
+/// session catalog afterwards; this step only gives preparation the same
+/// predicate the run will use.
+fn filter_before_preparation(
+    command: &cli::Command,
+    settings: &Settings,
+) -> Result<run::Filter, CliError> {
+    let cli::Command::Run {
+        rules,
+        families,
+        skip_rules,
+        skip_families,
+        files,
+        ids,
+        from_report,
+        outcome,
+        ..
+    } = command
+    else {
+        return Ok(run::Filter::default());
+    };
+    known("--rule", rules, true)?;
+    known("--skip-rule", skip_rules, true)?;
+    known("--family", families, false)?;
+    known("--skip-family", skip_families, false)?;
     let mut named_ids = (!ids.is_empty()).then(|| ids.clone());
     if let Some(named) = from_report {
         named_ids
@@ -1064,6 +1139,30 @@ fn filter(
             .collect::<Result<Vec<_>, _>>()?,
         ids: named_ids,
     })
+}
+
+/// Which candidates a run already knows it can leave out before it compiles
+/// the instrumented tree. Shards deliberately stay out of this predicate:
+/// each shard report currently carries the shared validation result, so that
+/// result must remain identical across all parts until merge records a
+/// partitioned validation proof of its own.
+fn validation_filter(
+    command: &cli::Command,
+    settings: &Settings,
+) -> Result<Option<run::Filter>, CliError> {
+    match command {
+        cli::Command::Run {
+            mutant: Some(prefix),
+            ..
+        } => Ok(Some(run::Filter {
+            ids: Some(vec![prefix.clone()]),
+            ..run::Filter::default()
+        })),
+        cli::Command::Run { mutant: None, .. } => {
+            Ok(Some(filter_before_preparation(command, settings)?))
+        }
+        _ => Ok(None),
+    }
 }
 
 /// The mutants a stored run left with `outcome`, by identity.

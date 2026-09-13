@@ -16,8 +16,8 @@ use std::path::PathBuf;
 
 use rust_mutants::catalog::{Builder, Catalog};
 use rust_mutants::instrument::{
-    ACTIVE_ENV, CATALOG_ENV, InstrumentErrorKind, Instrumenting, MODULE_STEM, RUNTIME_MARKER,
-    STALE_CATALOG_EXIT, instrument_file, module_name, plan_file,
+    ACTIVE_ENV, CATALOG_ENV, COMPILED_CATALOG_ENV, InstrumentErrorKind, Instrumenting, MODULE_STEM,
+    RUNTIME_MARKER, STALE_CATALOG_EXIT, instrument_file, module_name, plan_file,
 };
 use rust_mutants::rule::{Registry, Tier};
 use rust_mutants::splice::count_lines;
@@ -111,6 +111,7 @@ fn split_runtime(text: &str) -> (&str, &str) {
 fn the_constants_are_frozen() {
     assert_eq!(ACTIVE_ENV, "RUST_MUTANTS_ACTIVE");
     assert_eq!(CATALOG_ENV, "RUST_MUTANTS_CATALOG");
+    assert_eq!(COMPILED_CATALOG_ENV, "RUST_MUTANTS_COMPILED_CATALOG");
     assert_eq!(MODULE_STEM, "__rm");
     assert_eq!(STALE_CATALOG_EXIT, 97);
     assert_eq!(RUNTIME_MARKER, "rust-mutants-runtime-v1");

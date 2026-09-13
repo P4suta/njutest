@@ -481,14 +481,18 @@ be claiming the one thing it did not look at. A finding in a part is a finding,
 so a part that found a defect says `DEFECT`.
 
 `mjutest merge <REPORT>…` writes the report the whole would have written. It
-refuses five things: no parts at all, parts that disagree about the tree, parts
-that disagree about the configuration, parts that disagree about the contract,
-and two parts that both judged one mutation — the last says they were cut with
-different values of N. The last three are this runner's and not the engine's. A
-run report is a collection of what running something said, and two collections
-add up whatever produced them; an assurance report is one claim, that a contract
-was met, and a claim assembled from a part that met it and a part that met
-something else is true of neither.
+passes one already unsharded report through, or requires exactly one report for
+every label `1/N` through `N/N`. It refuses no parts at all; a missing,
+repeated, malformed, mixed unsharded, or differently divided part; parts that
+disagree about the tree, configuration, contract, effective
+scope, or runner and engine versions; and two parts that both judged one
+mutation. Only a complete set is allowed to become an unsharded report: an
+absent shard has no mutant row with which to overlap, so disjoint rows alone
+cannot prove that the union is the whole. These refusals are this runner's and
+not the engine's. A run report is a collection of what running something said,
+and two collections add up whatever produced them; an assurance report is one
+claim, that a contract was met, and a claim assembled from a part that met it
+and a part that met something else is true of neither.
 
 The mutant rows of the whole are the union of the parts'. Its accounting is
 derived from that union rather than added up from what each part counted, so the

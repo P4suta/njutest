@@ -32,7 +32,7 @@ first digit names an area:
 | `RM0003` | A configuration file that is not the document this version understands: an unknown key, a malformed value, a duration that is not a duration. | — |
 | `RM0004` | A configuration or a flag that parses but says something a run cannot honour: an expectation without a reason, a harness flag the engine owns, a report directory outside the workspace, a shard that is not a part of something, a line range that addresses no line, a run name a directory cannot be, a `--file` this run does not read, a `--rule` or `--family` this release does not know. | — |
 | `RM0005` | A configuration whose `version` is not one this release understands. | — |
-| `RM0006` | A process environment that already selects a mutant or names a catalog, so nothing a test process said would be about this run. | unset the RUST_MUTANTS_ variable the message names and run again |
+| `RM0006` | A process environment names any mutation-control value unless this is an instrumented engine binary carrying the same nonempty catalog and exactly one nonempty activation or touch mode. | unset the RUST_MUTANTS_ variable the message names and run again |
 | `RM0007` | A stored run report or recording that is not there or cannot be read. | — |
 | `RM0008` | A file a command would write that is already there, and `--force` was not given. | — |
 | `RM0009` | A report or configuration file that could not be written. | — |
@@ -120,10 +120,9 @@ first digit names an area:
 | `MJ6002` | A document is not the assurance report this version understands: an unknown field, a missing field, a value of the wrong shape. |
 | `MJ6004` | The report could not be written where a reader will look for it. |
 | `MJ6005` | There is no such run to answer about, or none at all. A command never answers about a different run than the one it was asked about. |
-| `MJ8002` | A build cache layer could not be used: it holds files this program did not put there, or it could not be written. Never a reason to fail a run — the command builds without one. |
 | `MJ8003` | The store of earlier answers could not be used, a report was offered for storage that must not be stored, or the stream answers were being carried on or off this machine stopped. |
 | `MJ8004` | A stored answer is not the answer it claims to be, or a line offered to this machine is not an answer at all: a document that does not parse, that does not carry the identity it is filed under, or that does not satisfy the audit every durable report must. |
 | `MJ7001` | The toolchain has no `cargo miri`, and the `deep-v1` contract promises the suite is interpreted. Install it (`rustup +nightly component add miri`) or verify under `standard-v1`. |
 | `MJ8001` | The run has nowhere to work: its scratch directory could not be made. Failing to *claim* one is a limitation, not an error. |
-| `MJ9001` | The reports offered to `mjutest merge` are not the parts of one catalog: none were offered, they disagree about the tree, the configuration or the contract, or two of them judged the same mutant. Adding up answers about two different runs produces an answer about neither. |
+| `MJ9001` | The reports offered to `mjutest merge` are neither one whole report nor one complete division of one catalog: none were offered; a `K/N` label is missing, repeated, malformed, mixed with an unsharded report, or uses another N; the reports disagree about the tree, configuration, contract, effective scope, or tool versions; or two judged the same mutant. A partial union cannot be relabelled as the whole. |
 | `MJ6003` | The report contradicts itself — the numbers do not add up, the verdict is more than what ran supports, a fact recorded as unavailable is also present — so nothing was written. |

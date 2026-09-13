@@ -10,6 +10,10 @@ if [ -n "${FAKE_CARGO_ARTIFACT:-}" ]; then
   mkdir -p "$(dirname "${FAKE_CARGO_ARTIFACT}")"
   printf '%s' "${FAKE_CARGO_ARTIFACT_CONTENT:-bad input}" >"${FAKE_CARGO_ARTIFACT}"
 fi
+if [ -n "${FAKE_CARGO_ARTIFACT_TWO:-}" ]; then
+  mkdir -p "$(dirname "${FAKE_CARGO_ARTIFACT_TWO}")"
+  printf '%s' "${FAKE_CARGO_ARTIFACT_TWO_CONTENT:-second input}" >"${FAKE_CARGO_ARTIFACT_TWO}"
+fi
 if [ -n "${FAKE_CARGO_ENV_OUT:-}" ]; then
   mkdir -p "$(dirname "${FAKE_CARGO_ENV_OUT}")"
   {
@@ -17,6 +21,10 @@ if [ -n "${FAKE_CARGO_ENV_OUT:-}" ]; then
     printf 'CARGO_ENCODED_RUSTFLAGS=%s\n' "${CARGO_ENCODED_RUSTFLAGS-<unset>}"
     printf 'MIRIFLAGS=%s\n' "${MIRIFLAGS-<unset>}"
   } >"${FAKE_CARGO_ENV_OUT}"
+fi
+if [ -n "${FAKE_CARGO_ARGV_OUT:-}" ]; then
+  mkdir -p "$(dirname "${FAKE_CARGO_ARGV_OUT}")"
+  printf '%s\n' "$@" >"${FAKE_CARGO_ARGV_OUT}"
 fi
 if [ -n "${FAKE_CARGO_SLEEP:-}" ]; then
   sleep "${FAKE_CARGO_SLEEP}"

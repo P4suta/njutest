@@ -81,10 +81,10 @@ reports — are inherited. Five decisions are Rust's own:
 - **`soundness` replaces `race`.** Safe Rust has no data races to detect; the
   residual fault class is `unsafe`, inventoried under `standard-v1` and run
   under Miri in `deep-v1` ([ADR 0009](adr/0009-soundness-replaces-race.md)).
-- **Target directories are the cache layers.** Compiling commands get
-  `--target-dir` into a machine-wide base layer; every process that runs tests
-  gets `CARGO_TARGET_DIR` into the run's scratch
-  ([ADR 0010](adr/0010-target-directories-are-the-cache-layers.md)).
+- **The engine owns the compiled build cache.** Its stable target directory is
+  shared by successive snapshots of one source root; every process that runs
+  tests gets `CARGO_TARGET_DIR` inside the run's scratch
+  ([ADR 0019](adr/0019-the-engine-owns-the-compiled-build-cache.md)).
 - **The mutant runtime lives at the end of each instrumented file**, so no
   crate root is edited and no line moves
   ([ADR 0011](adr/0011-the-runtime-lives-at-the-end-of-each-instrumented-file.md)).
@@ -148,7 +148,7 @@ app                report persistence, doctor, fix, cache maintenance, trace rea
    ↓  assure::Dependencies (a table of the run's collaborators, passed, never global)
 assure             one round: the phases in order, each a function over its inputs
    ↓
-build, targets, coverage, rustflags, evidence, build_cache, cache, checkpoint, trace, ui,
+build, targets, coverage, rustflags, evidence, cache, checkpoint, trace, ui,
 repair, resource, provider, temp_owner, kept_ledger, retention, process_tree,
 advisory_lock, environment, test_args, report, config
 ```

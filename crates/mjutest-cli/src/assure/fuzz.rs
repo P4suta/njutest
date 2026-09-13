@@ -160,7 +160,7 @@ fn one(done: &mut Fuzzed, fuzzing: &Fuzzing<'_>, target: &str, watch: Watch<'_>)
     let ran = run(&spec, watch.cancel);
     watch.trace.exec(ExecRecord::of(&spec, &ran));
     let said = String::from_utf8_lossy(&ran.output).into_owned();
-    let left: Vec<String> = artifacts(fuzzing.root, target)
+    let left: Vec<Artifact> = artifacts(fuzzing.root, target)
         .into_iter()
         .filter(|artifact| !before.contains(artifact))
         .collect();
@@ -189,45 +189,52 @@ fn one(done: &mut Fuzzed, fuzzing: &Fuzzing<'_>, target: &str, watch: Watch<'_>)
         ));
     }
     for artifact in left {
-        let Ok(content) = std::fs::read(fuzzing.root.join(&artifact)) else {
+        let Ok(content) = std::fs::read(&artifact.on_disk) else {
             continue;
         };
-        let name = Path::new(&artifact).file_name().map_or_else(
-            || artifact.clone(),
+        let name = Path::new(&artifact.reported).file_name().map_or_else(
+            || artifact.reported.clone(),
             |name| name.to_string_lossy().into_owned(),
         );
         done.findings.push(Finding {
             kind: FindingKind::FailingTest,
             subject: format!("fuzz:{target}"),
-            detail: format!("{target} crashed on the input {artifact} kept"),
+            detail: format!("{target} crashed on the input {} kept", artifact.reported),
             path: None,
             position: None,
         });
         done.crashes.push(Crash {
             target: target.to_owned(),
-            artifact,
+            artifact: artifact.reported,
             corpus: format!("{CORPUS}/{target}/{name}"),
             content,
         });
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Artifact {
+    on_disk: PathBuf,
+    reported: String,
+}
+
 /// What is in one target's artifact directory, workspace-relative, in name order.
-fn artifacts(root: &Path, target: &str) -> Vec<String> {
+fn artifacts(root: &Path, target: &str) -> Vec<Artifact> {
     let directory = PathBuf::from(ARTIFACTS).join(target);
     let Ok(entries) = std::fs::read_dir(root.join(&directory)) else {
         return Vec::new();
     };
-    let mut found: Vec<String> = entries
+    let mut found: Vec<Artifact> = entries
         .flatten()
         .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
-        .map(|entry| {
-            directory
+        .map(|entry| Artifact {
+            on_disk: entry.path(),
+            reported: directory
                 .join(entry.file_name())
                 .to_string_lossy()
-                .replace('\\', "/")
+                .replace('\\', "/"),
         })
         .collect();
-    found.sort();
+    found.sort_by(|one, other| one.reported.cmp(&other.reported));
     found
 }

@@ -135,7 +135,7 @@ fn measurements(environment: &Environment) -> String {
             bytes = bytes.saturating_add(entry.metadata().map_or(0, |it| it.len()));
         }
     }
-    format!("{held} trees, {bytes} bytes, at {}", directory.display())
+    format!("{held} records, {bytes} bytes, at {}", directory.display())
 }
 
 /// The directories runs were asked to keep, listed or removed.

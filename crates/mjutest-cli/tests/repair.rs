@@ -16,6 +16,14 @@ use mjutest_cli::repair::{
     CANDIDATE_LIMIT, DEFAULT_ALLOWED, Kind, RepairErrorKind, allowed, preimage_of, take,
 };
 
+#[test]
+fn a_recorded_repair_is_rechecked_with_the_documented_five_minute_bound() {
+    assert_eq!(
+        mjutest_cli::app::fix::RECHECK_TIMEOUT,
+        std::time::Duration::from_secs(300)
+    );
+}
+
 /// The base64 of `text`, computed the long way so the test does not use the decoder it tests.
 fn base64(text: &str) -> String {
     const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";

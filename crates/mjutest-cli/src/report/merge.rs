@@ -16,7 +16,7 @@
 //! assembled from a part that met it and a part that met something else is
 //! true of neither.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::{MutantAccounting, Report};
 
@@ -49,6 +49,15 @@ pub enum MergeError {
         /// The mutant both parts hold.
         mutant: String,
     },
+    /// The reports do not name every distinct part of one division.
+    #[error(
+        "{}: the reports are not one complete shard set: {because}. Offer exactly one report for every shard from 1/N through N/N",
+        crate::error::MERGE_REFUSED.code
+    )]
+    ShardSet {
+        /// What made the set incomplete or incoherent.
+        because: String,
+    },
 }
 
 impl MergeError {
@@ -56,9 +65,10 @@ impl MergeError {
     #[must_use]
     pub const fn code(&self) -> crate::error::ErrorCode {
         match self {
-            Self::Nothing | Self::Disagree { .. } | Self::Overlapping { .. } => {
-                crate::error::MERGE_REFUSED
-            }
+            Self::Nothing
+            | Self::Disagree { .. }
+            | Self::Overlapping { .. }
+            | Self::ShardSet { .. } => crate::error::MERGE_REFUSED,
         }
     }
 }
@@ -76,6 +86,7 @@ impl MergeError {
 pub fn merge(parts: &[Report]) -> Result<Report, MergeError> {
     let first = parts.first().ok_or(MergeError::Nothing)?;
     agree(parts, first)?;
+    complete_shard_set(parts)?;
     let mut whole = first.clone();
     whole.scope.shard = None;
     whole.mutants = judged(parts)?;
@@ -88,6 +99,71 @@ pub fn merge(parts: &[Report]) -> Result<Report, MergeError> {
     whole.verdict = whole.concluded();
     whole.sort_targets();
     Ok(whole)
+}
+
+/// Requires exactly one report for every part of one `K/N` division.
+///
+/// Clearing `scope.shard` turns the union into a claim about the whole catalog.
+/// That is sound only when the labels themselves prove that no part is absent;
+/// disjoint mutant rows cannot prove that, because an absent part has no rows
+/// with which to overlap.
+fn complete_shard_set(parts: &[Report]) -> Result<(), MergeError> {
+    if parts.len() == 1 && parts.first().is_some_and(|part| part.scope.shard.is_none()) {
+        return Ok(());
+    }
+    let mut denominator = None;
+    let mut indices = BTreeSet::new();
+    for part in parts {
+        let text = part
+            .scope
+            .shard
+            .as_deref()
+            .ok_or_else(|| MergeError::ShardSet {
+                because: format!("report {:?} does not name a shard", part.run_id),
+            })?;
+        let shard =
+            rust_mutants::run::Shard::parse(text).map_err(|error| MergeError::ShardSet {
+                because: format!("report {:?} names {text:?}: {error}", part.run_id),
+            })?;
+        match denominator {
+            Some(expected) if shard.of != expected => {
+                return Err(MergeError::ShardSet {
+                    because: format!(
+                        "shard {text} is one of {actual}, while the first report is one of {expected}",
+                        actual = shard.of
+                    ),
+                });
+            }
+            None => denominator = Some(shard.of),
+            Some(_) => {}
+        }
+        if !indices.insert(shard.index) {
+            return Err(MergeError::ShardSet {
+                because: format!("shard {text} was offered more than once"),
+            });
+        }
+    }
+
+    let Some(of) = denominator else {
+        return Err(MergeError::Nothing);
+    };
+    if indices.len() != usize::try_from(of).unwrap_or(usize::MAX) {
+        let Some(missing) = (1..=of).find(|index| !indices.contains(index)) else {
+            return Err(MergeError::ShardSet {
+                because: format!(
+                    "{} distinct shard labels cannot describe the declared {of} parts",
+                    indices.len()
+                ),
+            });
+        };
+        return Err(MergeError::ShardSet {
+            because: format!(
+                "shard {missing}/{of} is missing; {} of {of} reports were offered",
+                indices.len()
+            ),
+        });
+    }
+    Ok(())
 }
 
 /// Whether every part answered the same question about the same tree.
@@ -118,6 +194,37 @@ fn agree(parts: &[Report], first: &Report) -> Result<(), MergeError> {
                 about: "the contract",
                 first: format!("{:?}", first.contract).to_lowercase(),
                 other: format!("{:?}", part.contract).to_lowercase(),
+            });
+        }
+        if first.run_kind != part.run_kind {
+            return Err(MergeError::Disagree {
+                about: "the run scope",
+                first: format!("{:?}", first.run_kind).to_lowercase(),
+                other: format!("{:?}", part.run_kind).to_lowercase(),
+            });
+        }
+        let first_scope = (
+            &first.scope.requested_packages,
+            &first.scope.resolved_packages,
+            &first.scope.excluded,
+        );
+        let part_scope = (
+            &part.scope.requested_packages,
+            &part.scope.resolved_packages,
+            &part.scope.excluded,
+        );
+        if first_scope != part_scope {
+            return Err(MergeError::Disagree {
+                about: "the selected packages and exclusions",
+                first: format!("{first_scope:?}"),
+                other: format!("{part_scope:?}"),
+            });
+        }
+        if first.tool != part.tool {
+            return Err(MergeError::Disagree {
+                about: "the runner and engine versions",
+                first: format!("{:?}", first.tool),
+                other: format!("{:?}", part.tool),
             });
         }
     }

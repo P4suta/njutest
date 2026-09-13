@@ -5,7 +5,7 @@
 
 use std::fmt;
 
-use super::{Report, TargetStatus, UNAVAILABLE, Verdict};
+use super::{FindingKind, Report, TargetStatus, UNAVAILABLE, Verdict};
 
 /// One way a report failed to be a report.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,6 +70,13 @@ pub enum Violation {
         /// Why it is required.
         because: String,
     },
+    /// A finding claims an acceptance is unmatched although it resolves uniquely.
+    UnmatchedAcceptanceResolved {
+        /// The prefix the finding names.
+        subject: String,
+        /// The full mutant identity it resolves to.
+        mutant: String,
+    },
 }
 
 impl fmt::Display for Violation {
@@ -127,6 +134,11 @@ impl fmt::Display for Violation {
                 f,
                 "the report must state the limitation {name:?}, because {because}"
             ),
+            Self::UnmatchedAcceptanceResolved { subject, mutant } => write!(
+                f,
+                "the report calls acceptance {subject:?} unmatched, but it uniquely resolves to \
+                 {mutant}; an unmatched-acceptance finding must suppress nothing"
+            ),
         }
     }
 }
@@ -140,8 +152,44 @@ pub fn validate_for_persistence(report: &Report) -> Vec<Violation> {
     check_verdict(report, &mut violations);
     check_git(report, &mut violations);
     check_findings(report, &mut violations);
+    check_acceptances(report, &mut violations);
     check_provenance(report, &mut violations);
     violations
+}
+
+/// Whether every unmatched-acceptance finding really fails to name exactly one catalog entry.
+fn check_acceptances(report: &Report, violations: &mut Vec<Violation>) {
+    if report.scope.shard.is_some() {
+        return;
+    }
+    for finding in report
+        .findings
+        .iter()
+        .filter(|finding| finding.kind == FindingKind::UnmatchedAcceptance)
+    {
+        let subject = finding.subject.as_str();
+        let valid = (rust_mutants::id::MIN_PREFIX_LENGTH..=rust_mutants::id::ID_HEX_LENGTH)
+            .contains(&subject.len())
+            && subject
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte));
+        if !valid {
+            continue;
+        }
+        let mut matches = report
+            .mutants
+            .iter()
+            .filter(|mutant| mutant.id.starts_with(subject));
+        let Some(mutant) = matches.next() else {
+            continue;
+        };
+        if matches.next().is_none() {
+            violations.push(Violation::UnmatchedAcceptanceResolved {
+                subject: finding.subject.clone(),
+                mutant: mutant.id.clone(),
+            });
+        }
+    }
 }
 
 /// A report that was read back names the run that established it; one that was not names nobody.

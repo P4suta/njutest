@@ -33,7 +33,7 @@ fn a_scratch_is_named_for_its_run_and_holds_the_places_a_run_writes() {
             .expect("a name"),
         format!("{DIR_PREFIX}20260905T081500Z-abcdef")
     );
-    assert!(scratch.build_dir().is_dir(), "the scratch cache layer");
+    assert!(scratch.build_dir().is_dir(), "the isolated build directory");
     assert!(scratch.profiles_dir().is_dir(), "coverage profiles");
     assert!(scratch.output_dir().is_dir(), "preserved command output");
     assert!(scratch.is_claimed(), "the lock is held for the whole run");
@@ -78,6 +78,23 @@ fn closing_a_scratch_removes_everything_it_made() {
 
     assert_eq!(scratch.close(), Vec::<std::path::PathBuf>::new());
     assert!(!dir.exists(), "{}", dir.display());
+}
+
+#[test]
+fn dropping_a_scratch_removes_everything_it_made() {
+    let parent = tempfile::tempdir().expect("a temporary root");
+    let dir = {
+        let scratch = Scratch::create(parent.path(), "run", now()).expect("scratch");
+        let dir = scratch.dir().to_path_buf();
+        fs::write(scratch.build_dir().join("artifact"), b"x").expect("a file in it");
+        dir
+    };
+
+    assert!(
+        !dir.exists(),
+        "an early return relies on RAII to remove {}",
+        dir.display()
+    );
 }
 
 #[test]

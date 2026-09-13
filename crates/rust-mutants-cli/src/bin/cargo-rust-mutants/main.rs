@@ -22,9 +22,12 @@ fn main() -> ExitCode {
         paints: false,
         vars,
     };
-    let code = rust_mutants_cli::run_from(
+    let code = rust_mutants_cli::run_from_compiled(
         std::env::args_os(),
-        &environment,
+        rust_mutants_cli::Composition::new(
+            &environment,
+            option_env!("RUST_MUTANTS_COMPILED_CATALOG"),
+        ),
         &cancel,
         rust_mutants_cli::Streams {
             out: &mut std::io::stdout().lock(),

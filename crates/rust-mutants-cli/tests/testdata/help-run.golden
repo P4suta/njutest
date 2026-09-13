@@ -137,8 +137,8 @@ Options:
           Do not write a run report under the report directory
 
       --no-cache
-          Execute every mutant afresh rather than reading back what an earlier run of this exact
-          tree established
+          Remeasure coverage, the passing baseline, and every mutant instead of reading back what an
+          earlier run of this exact tree established
 
       --ui <MODE>
           How much the run says while it is happening

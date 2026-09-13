@@ -13,8 +13,8 @@ and shared with the `tempowner` convention of every engine in the family.
 ## Context
 
 A run writes far more outside the repository than inside it: the engine's
-snapshot, its probe tree, its scratch; the runner's build cache layer, a
-scratch per baseline round, a tree per validated candidate. Every one of
+snapshot, its probe tree, its scratch; the runner's per-run build directory,
+a scratch per baseline round, a tree per validated candidate. Every one of
 those directories used to be made directly under the temporary root and
 removed by a deferred call in the process that made it. A SIGKILL, an
 out-of-memory kill, or a closed terminal ends the process between the copy
@@ -29,7 +29,7 @@ root: *who made this*, and *is anybody still using it*.
 
 1. **One scratch directory per run, and everything below it.** A run makes
    `mjutest-run-*` under the configured temporary root before it writes
-   anything: `build/` for the scratch cache layer, `baseline-*` per round,
+   anything: `build/` for per-run Cargo isolation, `baseline-*` per round,
    `candidate-*` per validated candidate, `control-fuzz-*` for a fuzzing
    original control.
 2. **A run that cannot make or claim one still runs**, under the temporary

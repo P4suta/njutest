@@ -29,7 +29,7 @@ pub fn run(arguments: &Arguments, stdout: &mut dyn Write, stderr: &mut dyn Write
             return EXIT_ERROR;
         }
     };
-    let document = match serde_json::to_string_pretty(&whole) {
+    let document = match crate::report::json::document(&whole) {
         Ok(document) => document,
         Err(error) => {
             super::diagnose(stderr, &error.to_string());
@@ -37,12 +37,12 @@ pub fn run(arguments: &Arguments, stdout: &mut dyn Write, stderr: &mut dyn Write
         }
     };
     if let Some(path) = &arguments.output {
-        if let Err(error) = std::fs::write(path, format!("{document}\n")) {
+        if let Err(error) = std::fs::write(path, &document) {
             super::diagnose(stderr, &format!("{}: {error}", path.display()));
             return EXIT_ERROR;
         }
     } else {
-        super::say(stdout, &document);
+        super::say(stdout, document.trim_end());
     }
     whole.verdict.exit_code()
 }

@@ -83,26 +83,33 @@ Two rules now:
 
 ## Work a run does not have to do twice
 
-A coverage measurement is a function of three things and nothing else: the
-sources every unit compiled, the manifests that chose the flags and
-dependencies, and the toolchain. **A mutation changes none of them.** So a
-tree measured yesterday and untouched since has already been measured — and
-making the measurement is the most expensive thing a run does, because
-instrumenting for coverage changes the fingerprint of every crate and rebuilds
-the whole dependency graph.
+Coverage and the instrumented baseline are measurements of a tree, not of one
+mutation. **A mutation changes none of their inputs.** A run therefore files
+both, under separate content keys, and an unchanged rerun reads them instead of
+rebuilding the coverage tree or starting every baseline target again. `cache`
+says how many measurement records are held and where. `--no-cache` turns both
+off, because a flag that says "establish it again" has to mean both.
 
-A run therefore files what it measured under a digest of exactly those three
-things, and a run of an unchanged tree reads it back instead of building
-again. `cache` says how many trees are remembered and where. `--no-cache`
-turns it off, because a flag that says "establish it again" has to mean this
-too.
+The baseline key is deliberately stricter than the coverage key. It includes
+the complete snapshot, closure and manifests, engine and toolchain, catalog,
+accepted guards and narrowing markers, target kind and harness, and the exact
+argument vector, working directory and effective environment of every target.
+On a hit, every directly built executable must also have the same SHA-256 as
+the program that passed. Only a wholly passing baseline is written; a baseline
+that changed the tree is not. The document carries an integrity digest, and
+any missing target, out-of-catalog touch, unreadable artifact or damaged field
+turns the entire record into a miss. Reuse is consequently less work, never a
+weaker baseline.
 
 The claim is the one the outcome store already rests on — nothing that could
 change the answer changed — and it is checked the same way:
 `a_remembered_measurement_routes_a_run_exactly_as_a_fresh_one_would` runs a
 fixture, empties the outcome store, runs it again, and holds the two reports
 to each other on both the verdict and the route. A tree that *did* change is
-measured again, and a test says so.
+measured again, and a test says so. The baseline has the corresponding
+`an_exact_passing_baseline_is_reused_without_starting_its_targets_again` test,
+including changed harness arguments, a parseable damaged document, and a
+failing baseline that is never written.
 
 The same reasoning is why the outcome store is keyed on the compiled closure
 rather than on the tree: see [upgrading](upgrading.md).

@@ -50,6 +50,7 @@ pub fn run(
             },
             build,
             harness_args: config.execution.test_binary_args,
+            skip_targets: config.execution.skip_targets,
             timeout: None,
         },
         &found.subject,

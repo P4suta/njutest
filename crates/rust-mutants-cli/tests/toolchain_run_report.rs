@@ -267,28 +267,29 @@ fn an_expectation_the_run_confirms_stops_being_a_finding_and_a_stale_one_starts(
     );
 }
 
-/// An activation a process already carries is about the environment it inherits, so this one starts a process.
+/// An incomplete mutation mode is about the environment a process inherits, so this one starts a process.
 ///
-/// Driven in this process instead, the variable reaches every child the
-/// command starts, and under a measurement of this workspace this target's
-/// baseline failed: what came back on the command's own stderr was the
-/// instrumented runtime refusing an activation with no catalog beside it,
-/// rather than the run refusing to inherit one.
+/// An instrumented child legitimately inherits the outer measurement's
+/// activation and catalog. Removing that complete pair and adding an
+/// incomplete touch mode leaves the generated runtime inert and puts the
+/// invalid tuple to the composition root itself.
 #[test]
-fn a_process_that_already_selects_a_mutant_is_refused_before_anything_runs() {
+fn a_process_with_an_incomplete_touch_mode_is_refused_before_anything_runs() {
     let fixture = Fixture::copy("fixture-simple");
     let output = mjutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")))
         .args(["list", "--root", &fixture.root().to_string_lossy()])
         .env("NO_COLOR", "1")
         .env("TMPDIR", fixture.temp())
         .env("XDG_CACHE_HOME", fixture.cache())
-        .env("RUST_MUTANTS_ACTIVE", "0".repeat(64))
+        .env_remove("RUST_MUTANTS_ACTIVE")
+        .env_remove("RUST_MUTANTS_CATALOG")
+        .env("RUST_MUTANTS_TOUCH", "not-a-run")
         .output()
         .expect("rust-mutants runs");
     assert_eq!(output.status.code(), Some(2));
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("RM0006"), "{stderr}");
-    assert!(stderr.contains("RUST_MUTANTS_ACTIVE"), "{stderr}");
+    assert!(stderr.contains("RUST_MUTANTS_TOUCH"), "{stderr}");
 }
 #[test]
 fn init_writes_a_configuration_that_changes_nothing_and_refuses_to_overwrite() {

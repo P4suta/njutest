@@ -124,11 +124,6 @@ code!(
     "the reports offered are not the parts of one catalog"
 );
 code!(
-    BUILD_CACHE_UNUSABLE,
-    "MJ8002",
-    "a build cache layer could not be used"
-);
-code!(
     PROVIDER_UNSTARTABLE,
     "MJ5001",
     "a provider could not be started"
@@ -288,7 +283,6 @@ pub const fn error_codes() -> &'static [ErrorCode] {
         RUN_NOT_FOUND,
         MIRI_MISSING,
         SCRATCH_UNUSABLE,
-        BUILD_CACHE_UNUSABLE,
         CACHE_UNUSABLE,
         CACHE_CORRUPT,
         MERGE_REFUSED,

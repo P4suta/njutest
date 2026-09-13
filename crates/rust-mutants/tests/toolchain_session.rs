@@ -15,6 +15,7 @@ use std::path::Path;
 use mjutest_devkit::fixture::Fixture;
 use rust_mutants::outcome::Outcome;
 use rust_mutants::rule::Tier;
+use rust_mutants::run::Filter;
 use rust_mutants::runner::Cancel;
 use rust_mutants::session::{PrepareOptions, Request, Session};
 use rust_mutants::testkit::opening::opening;
@@ -160,6 +161,126 @@ fn preparing_catalogs_instruments_validates_and_builds() {
         "the source tree is read-only"
     );
     session.close().expect("close");
+}
+
+#[test]
+fn a_scoped_session_keeps_the_catalog_but_cannot_execute_an_unvalidated_candidate() {
+    let fixture = Fixture::copy("fixture-simple");
+    let session = open(&fixture)
+        .prepare(
+            &PrepareOptions {
+                tier: Tier::All,
+                verify: false,
+                coverage: false,
+                branch_proofs: false,
+                touch: false,
+                validation_filter: Some(Filter {
+                    rules: vec!["gt-to-ge".to_owned()],
+                    ..Filter::default()
+                }),
+                ..PrepareOptions::default()
+            },
+            &Cancel::new(),
+        )
+        .expect("prepare only the selected rule");
+
+    assert_eq!(session.catalog().len(), 11, "identity remains global");
+    assert_eq!(session.accepted().len(), 1, "validation follows the scope");
+    let outside = session
+        .catalog()
+        .mutants()
+        .iter()
+        .find(|mutant| mutant.candidate.rule.name == "return-default")
+        .expect("an unselected candidate");
+    assert!(!session.was_validated(outside.index));
+
+    for error in [
+        session
+            .exec(&Request::new(outside.display_id.clone()), &Cancel::new())
+            .expect_err("an unvalidated guard is absent from the build"),
+        session
+            .judge(
+                &Request::new(outside.display_id.clone()),
+                &rust_mutants::run::Quiet::default(),
+                &Cancel::new(),
+            )
+            .expect_err("judging has the same fail-closed boundary"),
+    ] {
+        let said = error.to_string();
+        assert!(
+            said.contains("RM5003")
+                && said.contains("not in this instrumented build")
+                && said.contains("unvalidated"),
+            "the refusal distinguishes a catalog identity from an executable guard: {said}"
+        );
+    }
+    session.close().expect("close");
+}
+
+#[test]
+fn consecutive_scopes_cannot_reuse_a_stale_instrumented_binary() {
+    let fixture = Fixture::copy("fixture-simple");
+    let options = |filter: Filter| PrepareOptions {
+        tier: Tier::All,
+        verify: false,
+        coverage: false,
+        branch_proofs: false,
+        touch: false,
+        validation_filter: Some(filter),
+        ..PrepareOptions::default()
+    };
+
+    let first = open(&fixture)
+        .prepare(
+            &options(Filter {
+                rules: vec!["gt-to-ge".to_owned()],
+                ..Filter::default()
+            }),
+            &Cancel::new(),
+        )
+        .expect("prepare scope A");
+    assert_eq!(first.accepted().len(), 1);
+    first.close().expect("close A");
+
+    let empty = open(&fixture)
+        .prepare(
+            &options(Filter {
+                ids: Some(Vec::new()),
+                ..Filter::default()
+            }),
+            &Cancel::new(),
+        )
+        .expect("prepare the empty scope");
+    assert!(empty.accepted().is_empty());
+    empty.close().expect("close empty");
+
+    let last = open(&fixture)
+        .prepare(
+            &options(Filter {
+                rules: vec!["return-default".to_owned()],
+                ..Filter::default()
+            }),
+            &Cancel::new(),
+        )
+        .expect("prepare scope B");
+    assert!(
+        last.accepted().iter().all(|index| {
+            last.catalog()
+                .by_index(*index)
+                .is_some_and(|mutant| mutant.candidate.rule.name == "return-default")
+        }),
+        "the last build contains only scope B"
+    );
+    let mutant = last
+        .accepted()
+        .first()
+        .and_then(|index| last.catalog().by_index(*index))
+        .expect("scope B has an executable candidate");
+    let result = last
+        .exec(&Request::new(mutant.display_id.clone()), &Cancel::new())
+        .expect("the scope-B guard is in the final binary");
+    assert_eq!(result.outcome, Outcome::Killed);
+    last.close().expect("close B");
 }
 
 #[test]

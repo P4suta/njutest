@@ -35,6 +35,9 @@ pub const ACTIVE_ENV: &str = "RUST_MUTANTS_ACTIVE";
 /// Names the catalog the activating run holds.
 pub const CATALOG_ENV: &str = "RUST_MUTANTS_CATALOG";
 
+/// The catalog identity embedded into binaries compiled from an instrumented tree.
+pub const COMPILED_CATALOG_ENV: &str = "RUST_MUTANTS_COMPILED_CATALOG";
+
 /// The exit status of a test process whose tree was built from a different
 /// catalog than the one activating it.
 pub const STALE_CATALOG_EXIT: i32 = 97;

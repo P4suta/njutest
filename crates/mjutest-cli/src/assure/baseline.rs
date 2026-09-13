@@ -88,7 +88,7 @@ impl Reporting<'_, '_> {
 #[must_use]
 pub fn observe(session: &Session, mut reporting: Reporting<'_, '_>) -> Baseline {
     let watch = reporting.watch;
-    let phase = watch.trace.phase("baseline-measure");
+    let _phase = watch.trace.phase("baseline-measure");
     let verified = session.verified();
     let mut baseline = Baseline {
         limitations: limitations(session.targets(), &verified.touched.limitations),
@@ -115,7 +115,6 @@ pub fn observe(session: &Session, mut reporting: Reporting<'_, '_>) -> Baseline 
             message,
         });
     }
-    phase.end();
     baseline
 }
 
