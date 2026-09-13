@@ -81,14 +81,18 @@ run = "cargo build --locked --examples -p rust-mutants"
 [tasks."test:fast"]
 description = "Run every test that starts no toolchain: the inner loop, seconds rather than a minute"
 depends = ["build:examples"]
-run = "cargo nextest run --locked --workspace --all-targets --status-level fail -E 'not binary(/^toolchain_/)'"
-run_windows = "cargo nextest run --locked --workspace --all-targets --status-level fail -E 'not binary(/^toolchain_/)'"
+run = "cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast --status-level fail -E 'not binary(/^toolchain_/)'"
+run_windows = "cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast --status-level fail -E 'not binary(/^toolchain_/)'"
 
+# Each test in these binaries drives its own Cargo. CI adds `--test-threads 2`
+# on top of this, because a hosted runner multiplies those build jobs into
+# resource exhaustion; a developer's machine is not that machine, and the bound
+# costs minutes there without changing which tests pass.
 [tasks."test:slow"]
 description = "Run the suites that drive a real cargo against the fixture projects"
 depends = ["build:examples"]
-run = "cargo nextest run --locked --workspace --all-targets --status-level fail -E 'binary(/^toolchain_/)'"
-run_windows = "cargo nextest run --locked --workspace --all-targets --status-level fail -E 'binary(/^toolchain_/)'"
+run = "cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast --status-level fail -E 'binary(/^toolchain_/)'"
+run_windows = "cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast --status-level fail -E 'binary(/^toolchain_/)'"
 
 [tasks."test:doc"]
 description = "Run the doctests, which nextest does not"
@@ -98,10 +102,24 @@ run = "cargo test --locked --workspace --doc"
 description = "Run the complete suite: every target through nextest, then the doctests"
 depends = ["test:fast", "test:slow", "test:doc"]
 
+# The floors are the ones .github/workflows/ci.yml enforces, in the same order
+# and with the same scoping. Never lower one; raise one when its suite earns it,
+# in both places at once.
 [tasks.coverage]
-description = "Measure region coverage with the ratchet CI enforces (never lower the floor)"
+description = "Measure region coverage with the ratchet CI enforces (never lower a floor)"
 depends = ["build:examples"]
-run = "cargo llvm-cov --locked --workspace --all-targets --all-features --summary-only --fail-under-regions 80"
+shell = "bash -c"
+run = """
+set -euo pipefail
+cargo llvm-cov --locked --workspace --all-targets --all-features --no-report
+cargo llvm-cov report --summary-only --fail-under-regions 80
+cargo llvm-cov report --summary-only --fail-under-regions 87 \
+  --ignore-filename-regex 'crates/(rust-mutants-cli|njutest|njutest-cli|njutest-macros|njutest-devkit)/|xtask/|fuzz/'
+cargo llvm-cov report --summary-only --fail-under-regions 85 \
+  --ignore-filename-regex 'crates/(rust-mutants|njutest|njutest-cli|njutest-macros|njutest-devkit)/|xtask/|fuzz/'
+cargo llvm-cov report --summary-only --fail-under-regions 80 \
+  --ignore-filename-regex 'crates/|fuzz/'
+"""
 
 [tasks.deny]
 description = "Check licenses, advisories, bans, and sources"
@@ -146,7 +164,14 @@ run = "cargo mutants --config .cargo/mutants.toml --workspace"
 # `lint` says in seventeen seconds.
 [tasks.check]
 description = "Run every local gate, the ones that answer quickest first"
-run = ["mise run fmt:check", "mise run build", "mise run lint", "mise run test", "mise run deny"]
+run = [
+  "mise run fmt:check",
+  "mise run build",
+  "mise run lint",
+  "mise run test",
+  "mise run deny",
+  "mise run audit",
+]
 
 [tasks.bench]
 description = "Observe what every stage costs. Numbers, never gates"
