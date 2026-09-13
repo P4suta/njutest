@@ -162,8 +162,14 @@ fn opening_a_member_directory_names_the_workspace_root_and_the_flag() {
     let fixture = Fixture::copy("fixture-simple");
     let elsewhere = fixture.temp().join("the-workspace");
     let document = metadata_document(fixture.root()).replace(
-        &format!("\"workspace_root\":\"{}\"", fixture.root().display()),
-        &format!("\"workspace_root\":\"{}\"", elsewhere.display()),
+        &format!(
+            "\"workspace_root\":\"{}\"",
+            njutest_devkit::paths::in_json(fixture.root())
+        ),
+        &format!(
+            "\"workspace_root\":\"{}\"",
+            njutest_devkit::paths::in_json(&elsewhere)
+        ),
     );
     let script =
         toolchain_answers().answering(Invocation::new("cargo", &["metadata"]).printing(&document));
@@ -216,7 +222,7 @@ fn an_allowed_directory_outside_the_root_is_read_rather_than_refused() {
         "\"targets\":[",
         &format!(
             "\"dependencies\":[{{\"name\":\"outside\",\"kind\":null,\"path\":\"{}\"}}],\"targets\":[",
-            allowed.display()
+            njutest_devkit::paths::in_json(&allowed)
         ),
     );
     let script =

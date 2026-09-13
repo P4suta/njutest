@@ -296,9 +296,14 @@ fn a_check_that_fails_to_compile_still_yields_its_messages() {
         .collect();
     assert_eq!(errors.len(), 1, "{messages:?}");
     assert_eq!(errors[0].code.as_deref(), Some("E0369"));
-    assert_eq!(
-        errors[0].primary_span().expect("primary").file_name,
-        "src/lib.rs"
+    assert!(
+        rust_mutants::cargo::names_file(
+            &errors[0].primary_span().expect("primary").file_name,
+            "src/lib.rs"
+        ),
+        "the compiler names the file it was given with its own separator, and what the \
+         engine matches a catalog against is the rule that reads either spelling: {:?}",
+        errors[0].primary_span().expect("primary").file_name
     );
     assert!(matches!(
         messages.last(),
