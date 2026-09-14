@@ -13,10 +13,16 @@ the publish runs in.
 
 ## What makes a version
 
-`release-please` watches `main` and keeps a release pull request open with the
-next version and the changelog it derives from the Conventional Commits since
-the last tag. Merging that pull request writes the version into every manifest
-and pushes the tag.
+`release-please` is started by hand — `workflow_dispatch` — and opens a release
+pull request with the next version and the changelog it derives from the
+Conventional Commits since the last tag. Merging that pull request writes the
+version into every manifest and pushes the tag.
+
+It is asked for rather than automatic because opening that pull request needs a
+permission this repository withholds from Actions, so a run on every push to
+`main` could only fail, and a branch that is red for a job nobody wanted is a
+branch whose colour says nothing. Granting the permission is part of meaning to
+cut a version, not part of merging a change.
 
 ## What the tag sets off
 
