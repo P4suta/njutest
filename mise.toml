@@ -114,14 +114,21 @@ depends = ["test:fast", "test:slow", "test:doc"]
 
 # The floors are the ones .github/workflows/ci.yml enforces, in the same order
 # and with the same scoping. Never lower one; raise one when its suite earns it,
-# in both places at once.
+# in both places at once. The collection is that job's as well, down to the
+# environment it exports and the two runs it splits the suite into: a gate that
+# measured a different way is a gate that answers a different question, and the
+# one that job asks is the one that has to be green.
 [tasks.coverage]
 description = "Measure region coverage with the ratchet CI enforces (never lower a floor)"
 depends = ["build:examples"]
 shell = "bash -c"
 run = """
 set -euo pipefail
-cargo llvm-cov --locked --workspace --all-targets --all-features --no-report
+cargo llvm-cov clean --workspace
+eval "$(cargo llvm-cov show-env --export-prefix)"
+cargo build --locked --examples -p rust-mutants
+cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast --status-level fail -E 'not binary(/^toolchain_/)'
+cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast --status-level fail --test-threads 2 -E 'binary(/^toolchain_/)'
 cargo llvm-cov report --summary-only --fail-under-regions 80
 cargo llvm-cov report --summary-only --fail-under-regions 87 \
   --ignore-filename-regex 'crates/(rust-mutants-cli|njutest|njutest-cli|njutest-macros|njutest-devkit)/|xtask/|fuzz/'

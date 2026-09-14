@@ -170,6 +170,11 @@ jobs:
           cargo llvm-cov clean --workspace
           cargo llvm-cov show-env --export-prefix > "$RUNNER_TEMP/coverage-env.sh"
           . "$RUNNER_TEMP/coverage-env.sh"
+          # Every step after this one is its own shell, and `report` guesses a
+          # directory of its own that is not the one these runs write to:
+          # `not found *.profraw files in .../target/llvm-cov-target`, with the
+          # profiles sitting in `target` all along. The steps are told where.
+          echo "CARGO_LLVM_COV_TARGET_DIR=$CARGO_LLVM_COV_TARGET_DIR" >> "$GITHUB_ENV"
           cargo build --locked --examples -p rust-mutants
           cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast -E 'not binary(/^toolchain_/)'
           # Coverage makes every nested build heavier. Bound only the suites
