@@ -233,6 +233,19 @@ fn an_exact_passing_baseline_is_reused_without_starting_its_targets_again() {
         "the first run measured the baseline"
     );
 
+    if !njutest_devkit::reproducible::builds_the_same_twice() {
+        let again = Recorder::wall(Sink::Memory(MemorySink::unbounded()));
+        let measured = traced_prepare(&fixture, &again, &options);
+        assert!(
+            !remembered(&again),
+            "a remembered baseline is an answer about a program, and this machine builds \
+             one tree to two of them: the bytes it would be answering about are not the \
+             bytes anything ran"
+        );
+        measured.close().expect("close");
+        return;
+    }
+
     let second_trace = Recorder::wall(Sink::Memory(MemorySink::unbounded()));
     let second = traced_prepare(&fixture, &second_trace, &options);
     assert_eq!(second.verified().targets, first_targets);

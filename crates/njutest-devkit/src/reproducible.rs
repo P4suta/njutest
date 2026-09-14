@@ -54,7 +54,9 @@ pub fn builds_the_same_twice() -> bool {
 
 /// One build of the tree at `root`, or nothing at all when it did not build.
 fn built(root: &Path, target: &Path) -> Built {
-    let mut command = crate::paths::command(&crate::paths::cargo_binary());
+    let mut command = std::process::Command::new(crate::paths::cargo_binary());
+    let _cleared = command.env_clear();
+    let _given = command.envs(crate::paths::environment_for_a_toolchain_run(&[]));
     let _configured = command
         .env("CARGO_INCREMENTAL", "0")
         .args(["test", "--no-run", "--message-format=json", "--offline"])

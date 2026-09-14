@@ -86,7 +86,8 @@ fn opening_copies_the_tree_and_never_writes_to_it() {
 
     assert_eq!(
         workspace.root(),
-        fixture.root().canonicalize().expect("real")
+        fixture.root(),
+        "the run answers about the directory it was given, in the spelling it was given"
     );
     assert!(workspace.snapshot_root().join("src/lib.rs").is_file());
     assert_ne!(workspace.snapshot_root(), fixture.root());

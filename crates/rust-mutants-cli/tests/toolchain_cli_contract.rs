@@ -280,9 +280,14 @@ fn equivalence_says_what_the_compiler_renders_identically_and_never_says_equival
         }
         assert_eq!(columns.len(), 4, "{row}");
         assert!(
-            columns[1] == "identical" || columns[1] == "differs",
+            if njutest_devkit::reproducible::builds_the_same_twice() {
+                columns[1] == "identical" || columns[1] == "differs"
+            } else {
+                columns[1] == "not-established"
+            },
             "an answer is about what the compiler rendered, not about what the tests could \
-             notice: {row}"
+             notice — and on a machine that renders one unchanged tree two ways there is no \
+             answer to give: {row}"
         );
     }
     assert!(

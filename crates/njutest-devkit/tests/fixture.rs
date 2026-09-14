@@ -33,13 +33,22 @@ fn a_fixture_copy_is_a_throwaway_tree_with_temp_and_cache_beside_it() {
 }
 
 #[test]
-fn a_fixture_copy_has_a_canonical_root() {
+fn a_fixture_copy_has_a_resolved_root_spelled_the_way_a_run_answers() {
     let fixture = Fixture::copy("fixture-simple");
     let canonical = fixture.root().canonicalize().expect("canonicalize");
+    #[cfg(not(windows))]
     assert_eq!(
         fixture.root(),
         canonical,
         "a path a run reports has to compare equal to the one the test holds"
+    );
+    #[cfg(windows)]
+    assert_eq!(
+        std::path::Path::new(&format!(r"\\?\{}", fixture.root().display())),
+        canonical,
+        "the root is what resolving it answers, in the spelling the products put a \
+         resolved path back into: a run that answered in one and a test that held the \
+         other would be two names for one directory"
     );
 }
 

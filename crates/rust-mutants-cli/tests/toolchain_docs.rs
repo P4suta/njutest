@@ -47,7 +47,9 @@ fn environment(fixture: &Fixture) -> Environment {
 
 /// The session with everything that changes between two runs of it taken out.
 fn steady(text: &str, fixture: &Fixture) -> String {
-    let mut out = text.replace(&fixture.root().to_string_lossy().into_owned(), ".");
+    let mut out = text
+        .replace(&fixture.root().to_string_lossy().into_owned(), ".")
+        .replace(&rust_mutants::id::slashed(fixture.root()), ".");
     for line in text.lines() {
         if let Some(rest) = line.strip_prefix("run       ") {
             out = out.replace(rest, "<run>");
