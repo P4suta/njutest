@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The seam ratchet refuses each shape ADR 0001 names, exempts what it exempts, and holds the tree to the ledger in both directions.
@@ -123,7 +123,7 @@ fn exiting_the_process_is_a_seam_outside_the_composition_root() {
 fn importing_test_support_from_production_code_is_a_seam() {
     let source = r#"
         use crate::testkit::Repo;
-        use mjutest_devkit::golden;
+        use njutest_devkit::golden;
         #[cfg(test)]
         mod tests { use crate::testkit::ScriptedWorkspace; }
         #[cfg(any(test, feature = "testkit"))]
@@ -133,7 +133,7 @@ fn importing_test_support_from_production_code_is_a_seam() {
         seams("crates/x/src/a.rs", source),
         [
             "crates/x/src/a.rs:testkit-import:crate::testkit::Repo",
-            "crates/x/src/a.rs:testkit-import:mjutest_devkit::golden",
+            "crates/x/src/a.rs:testkit-import:njutest_devkit::golden",
         ]
     );
 }

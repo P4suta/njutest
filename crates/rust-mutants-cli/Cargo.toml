@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2026 mjutest contributors
+# SPDX-FileCopyrightText: 2026 njutest contributors
 # SPDX-License-Identifier: MIT OR Apache-2.0
 
 [package]
@@ -22,6 +22,20 @@ path = "src/main.rs"
 # The binary is one function; its documentation is the library's.
 doc = false
 
+[[bin]]
+name = "cargo-rust-mutants"
+path = "src/bin/cargo-rust-mutants/main.rs"
+# The same program under the name cargo looks for; its documentation is the library's.
+doc = false
+
+[package.metadata.binstall]
+# The archive `release.yml` builds, which carries both products, so
+# `cargo binstall rust-mutants-cli` finds what the release published rather
+# than compiling the workspace again.
+pkg-url = "{ repo }/releases/download/v{ version }/njutest-{ version }-{ target }.tar.gz"
+pkg-fmt = "tgz"
+bin-dir = "njutest-{ version }-{ target }/{ bin }{ binary-ext }"
+
 [dependencies]
 clap = { workspace = true }
 jiff = { workspace = true }
@@ -33,11 +47,16 @@ toml = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
 hex = { workspace = true }
+rustix = { workspace = true }
 signal-hook = { workspace = true }
 
 [dev-dependencies]
 jsonschema = { workspace = true }
-mjutest-devkit = { workspace = true }
+proptest = { workspace = true }
+# The engine's own testkit, for the tests that need a source in a shape they
+# would otherwise commit a second copy of.
+rust-mutants = { workspace = true, features = ["testkit"] }
+njutest-devkit = { workspace = true }
 rustix = { workspace = true }
 tempfile = { workspace = true }
 

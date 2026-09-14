@@ -1,7 +1,0 @@
-error: #[mjutest::integration] applies to a function
- --> tests/ui/not_a_function.rs:1:1
-  |
-1 | #[mjutest::integration("postgres")]
-  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  |
-  = note: this error originates in the attribute macro `mjutest::integration` (in Nightly builds, run with -Z macro-backtrace for more info)

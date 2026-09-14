@@ -1,32 +1,37 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The walk over one file's syntax tree.
 
 use std::collections::BTreeMap;
 
-use proc_macro2::{TokenStream, TokenTree};
 use syn::spanned::Spanned;
 use syn::{
-    Attribute, BinOp, Block, Expr, ImplItem, Item, Macro, Meta, Pat, ReturnType, Signature, Stmt,
-    TraitItem, Type, Visibility,
+    Attribute, BinOp, Block, Expr, ImplItem, Item, Macro, Pat, ReturnType, Signature, Stmt,
+    TraitItem, Visibility,
 };
 
+use super::annotate::Marker;
 use super::branch;
 use super::position::LineIndex;
 use super::rules::{
-    arguments, assertion_arity, assertion_is_condition, binary_swap, has_let,
-    is_compound_assignment, is_connective, is_default_spelling, is_not, is_ok_default,
-    is_some_default, is_true_literal, method_swap, unary_removal,
+    arguments, assertion_arity, assertion_is_condition, binary_swap, bool_method, has_let,
+    is_compound_assignment, is_connective, is_default_spelling, is_err_default, is_not,
+    is_ok_default, is_some_default, is_true_literal, method_swap, respell_int, terminal_else,
+    unary_removal,
 };
-use super::{Decision, Form, Found, Include, Selection, SiteHint, SkipReason, beside};
+use super::shape::{
+    block_tail, deletable_arm, expr_attrs, guard_of, implemented, item_attrs, parameters,
+    return_kind, return_kind_within, suppression_of,
+};
+use super::{Claim, Decision, Form, Found, Include, Selection, SiteHint, SkipReason, beside};
 use crate::catalog::Candidate;
-use crate::probe::form::Question;
+use crate::probe::Question;
 use crate::span::Span;
 
 /// What the enclosing function returns, as far as its signature says.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ReturnKind {
+pub(super) enum ReturnKind {
     /// A closure without a spelled type, an async block: nothing is known.
     Unknown,
     /// `()` or no return type.
@@ -35,17 +40,24 @@ enum ReturnKind {
     Never,
     /// `-> bool`.
     Bool,
-    /// `-> Result<..>` by its last path segment.
-    Result,
-    /// `-> Option<..>` by its last path segment.
-    Option,
+    /// `-> Result<..>` by its last path segment, and whether the syntax can say each of the two types it names has a default.
+    Result {
+        /// Whether the `Ok` type spells a default.
+        ok: bool,
+        /// Whether the `Err` type spells a default.
+        err: bool,
+    },
+    /// `-> Option<..>` by its last path segment, and whether the syntax can say the `Some` type has a default.
+    Option(bool),
     /// Anything else, where only `Default::default()` can be offered.
     Other,
+    /// A type the syntax cannot say has a default, so the replacement is stated rather than guessed.
+    Unstated,
 }
 
 /// Where a statement without a semicolon sits in its block.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TailRole {
+pub(super) enum TailRole {
     /// Not the last statement: a block-like statement whose value is `()`.
     NotLast,
     /// The last statement: the block's value.
@@ -79,6 +91,29 @@ enum Kind {
     Place,
 }
 
+/// Where one decision was made, and what the walker has to say about it.
+#[derive(Debug, Clone, Copy)]
+struct At<'a> {
+    offset: u32,
+    rule: &'a str,
+    note: Option<&'a str>,
+}
+
+impl<'a> At<'a> {
+    const fn new(offset: u32, rule: &'a str) -> Self {
+        Self {
+            offset,
+            rule,
+            note: None,
+        }
+    }
+
+    const fn noting(mut self, note: &'a str) -> Self {
+        self.note = Some(note);
+        self
+    }
+}
+
 /// The context an expression is walked in.
 #[derive(Debug, Clone, Copy)]
 struct Ctx {
@@ -87,6 +122,10 @@ struct Ctx {
     stmt: Option<Site>,
     /// Whether the expression is the whole of an expression statement.
     direct_stmt: bool,
+    /// Whether another rule already offers to negate this expression whole.
+    negated: bool,
+    /// Where a swap that changes the expression's type has to be guarded: the end of the method chain this call is a receiver in.
+    wrap: Option<Span>,
 }
 
 impl Ctx {
@@ -95,6 +134,8 @@ impl Ctx {
             kind,
             stmt,
             direct_stmt: false,
+            negated: false,
+            wrap: None,
         }
     }
 
@@ -103,6 +144,25 @@ impl Ctx {
             kind,
             stmt: self.stmt,
             direct_stmt: false,
+            negated: false,
+            wrap: None,
+        }
+    }
+
+    const fn negated(self, kind: Kind) -> Self {
+        Self {
+            kind,
+            stmt: self.stmt,
+            direct_stmt: false,
+            negated: true,
+            wrap: None,
+        }
+    }
+
+    const fn wrapping(self, span: Span) -> Self {
+        Self {
+            wrap: Some(span),
+            ..self
         }
     }
 
@@ -113,6 +173,20 @@ impl Ctx {
     const fn boolean(self) -> Self {
         self.child(Kind::Bool)
     }
+}
+
+/// What one walk of a file decided.
+pub(super) struct Walked {
+    /// The candidates, in the order the walk found them.
+    pub(super) found: Vec<Found>,
+    /// The skip tallies.
+    pub(super) skips: BTreeMap<SkipReason, u32>,
+    /// Every decision, in the order the walk took them.
+    pub(super) decisions: Vec<Decision>,
+    /// Every file this one pastes in.
+    pub(super) includes: Vec<Include>,
+    /// Every marker the file carries.
+    pub(super) annotations: Vec<Claim>,
 }
 
 /// The file being walked.
@@ -159,6 +233,16 @@ pub(super) struct Walker<'a> {
     mod_depth: u32,
     /// What a proof would rest on for each `if` or `while` condition being walked, innermost last.
     gates: Vec<Option<branch::Prepared>>,
+    /// The loops being walked, innermost last: the label each carries, and whether its breaks decide its value.
+    loops: Vec<(Option<String>, bool)>,
+    /// Every `rust-mutants: skip` marker the file carries, in source order.
+    markers: Vec<Marker>,
+    /// Which markers hid a place a rule targets.
+    matched: Vec<bool>,
+    /// The marker whose scope the walk is inside, if any.
+    annotation: Option<usize>,
+    /// The items the walk is inside, outermost first: modules, impls, traits, and the function or constant itself.
+    items: Vec<String>,
     includes: Vec<Include>,
 }
 
@@ -182,20 +266,103 @@ impl<'a> Walker<'a> {
             frames: Vec::new(),
             mod_depth: 0,
             gates: Vec::new(),
+            loops: Vec::new(),
+            markers: Vec::new(),
+            matched: Vec::new(),
+            annotation: None,
+            items: Vec::new(),
             includes: Vec::new(),
         }
     }
 
     /// The results, unsorted.
-    pub(super) fn finish(
-        self,
-    ) -> (
-        Vec<Found>,
-        BTreeMap<SkipReason, u32>,
-        Vec<Decision>,
-        Vec<Include>,
-    ) {
-        (self.found, self.skips, self.decisions, self.includes)
+    /// Hands the walk the markers it is to honour, before it starts.
+    pub(super) fn annotate(&mut self, markers: Vec<Marker>) {
+        self.matched = vec![false; markers.len()];
+        self.markers = markers;
+    }
+
+    pub(super) fn finish(self) -> Walked {
+        let annotations = self
+            .markers
+            .iter()
+            .enumerate()
+            .map(|(index, marker)| Claim {
+                line: marker.line,
+                reason: marker.reason.clone(),
+                matched: self.matched.get(index).copied().unwrap_or_default(),
+            })
+            .collect();
+        Walked {
+            found: self.found,
+            skips: self.skips,
+            decisions: self.decisions,
+            includes: self.includes,
+            annotations,
+        }
+    }
+
+    /// The marker that speaks about a place starting on `line`, if one does.
+    fn marker_at(&self, line: u32) -> Option<usize> {
+        self.markers.iter().position(|marker| marker.scope == line)
+    }
+
+    /// The item the walk is inside, as a reader writes it: `mod::path::Type::method`.
+    fn item_path(&self) -> String {
+        self.items.join("::")
+    }
+
+    /// Walks something under the name it goes by.
+    fn within_item(&mut self, name: String, walk: impl FnOnce(&mut Self)) {
+        self.items.push(name);
+        walk(self);
+        let _left = self.items.pop();
+    }
+
+    /// The line a byte offset sits on.
+    fn line_of(&self, offset: u32) -> u32 {
+        self.index.position(self.src, offset).line
+    }
+
+    /// The lines a marker may sit above to speak about this construct: where its attributes start, and where the first token after them does.
+    fn heading(&self, span: Span, attrs: &[Attribute]) -> [u32; 2] {
+        let outer = self.line_of(span.start);
+        let Some(last) = attrs.last() else {
+            return [outer, outer];
+        };
+        let after = self.span(last).end;
+        let rest = self
+            .src
+            .get(usize::try_from(after).unwrap_or(usize::MAX)..)
+            .unwrap_or_default();
+        let skipped = rest.len().saturating_sub(rest.trim_start().len());
+        let inner = self.line_of(after.saturating_add(u32::try_from(skipped).unwrap_or(0)));
+        [outer, inner]
+    }
+
+    /// Walks a construct under the marker that speaks about it, if one does.
+    ///
+    /// A marker with the line to itself speaks about what follows: the edits
+    /// that start on the next line, and everything inside the item, statement,
+    /// arm, or `else` block that starts there. Attributes are part of what a
+    /// marker may sit above, so either the line the attributes start on or the
+    /// line of the first token after them is the line it speaks about.
+    fn maybe_annotated(&mut self, lines: [u32; 2], walk: impl FnOnce(&mut Self)) {
+        let found = lines
+            .into_iter()
+            .filter_map(|line| self.marker_at(line))
+            .find(|index| {
+                self.markers
+                    .get(*index)
+                    .is_some_and(|marker| marker.own_line)
+            });
+        let Some(index) = found else {
+            walk(self);
+            return;
+        };
+        let annotation = self.annotation.replace(index);
+        self.with_suppression(SkipReason::Annotated, walk);
+        self.annotation = annotation;
     }
 
     /// Records an `include!`, when its argument names a file this run can name.
@@ -262,6 +429,21 @@ impl<'a> Walker<'a> {
             self.decide(edit.span.start, rule_name, Outcome::Skipped(reason));
             return;
         }
+        let line = self.line_of(edit.span.start);
+        if let Some(index) = self.marker_at(line) {
+            let reason = self
+                .markers
+                .get(index)
+                .map_or_else(String::new, |marker| marker.reason.clone());
+            if let Some(claimed) = self.matched.get_mut(index) {
+                *claimed = true;
+            }
+            self.declined(
+                At::new(edit.span.start, rule_name).noting(&reason),
+                SkipReason::Annotated,
+            );
+            return;
+        }
         let Some(site) = edit.site else {
             self.skip(SkipReason::UnsupportedSite);
             self.decide(
@@ -273,6 +455,10 @@ impl<'a> Walker<'a> {
         };
         let original = self.text(edit.span).as_bytes().to_vec();
         if original == edit.replacement {
+            self.declined(
+                At::new(edit.span.start, rule_name).noting("identical-replacement"),
+                SkipReason::UnsupportedSite,
+            );
             return;
         }
         let candidate = Candidate {
@@ -283,6 +469,7 @@ impl<'a> Walker<'a> {
             replacement: edit.replacement,
             source_digest: self.digest.to_owned(),
         };
+        let item = self.item_path();
         let hint = SiteHint {
             form: site.form,
             site: site.span,
@@ -291,38 +478,59 @@ impl<'a> Walker<'a> {
             allow_at: self.frames.last().and_then(|frame| frame.allow_at),
         };
         let position = self.index.position(self.src, edit.span.start);
-        let branch = self
-            .gates
-            .last()
-            .and_then(Option::as_ref)
-            .and_then(|gate| gate.claim(rule_name, edit.span));
+        let gate = self.gates.last().and_then(Option::as_ref);
+        let branch = gate.and_then(|gate| gate.claim(rule_name, edit.span));
+        let comparable = gate.and_then(|gate| gate.comparable(rule_name, edit.span));
         self.found.push(Found {
             candidate,
             position,
+            item,
             hint,
             branch,
+            comparable,
             probe: edit.probe,
         });
         self.decide(edit.span.start, rule_name, Outcome::Candidate(site.form));
     }
 
     fn skip(&mut self, reason: SkipReason) {
+        if reason == SkipReason::Annotated
+            && let Some(index) = self.annotation
+            && let Some(claimed) = self.matched.get_mut(index)
+        {
+            *claimed = true;
+        }
         let count = self.skips.entry(reason).or_insert(0);
         *count = count.saturating_add(1);
     }
 
     fn decide(&mut self, offset: u32, rule: &str, outcome: Outcome) {
+        self.noted(At::new(offset, rule), outcome);
+    }
+
+    /// One decision, with what the walker has to say about it beyond its reason.
+    fn noted(&mut self, at: At<'_>, outcome: Outcome) {
         let (form, skip) = match outcome {
             Outcome::Candidate(form) => (Some(form), None),
             Outcome::Skipped(reason) => (None, Some(reason)),
         };
         self.decisions.push(Decision {
-            offset,
-            position: self.index.position(self.src, offset),
-            rule: rule.to_owned(),
+            offset: at.offset,
+            position: self.index.position(self.src, at.offset),
+            rule: at.rule.to_owned(),
             form,
             skip,
+            note: at.note.map(ToOwned::to_owned),
         });
+    }
+
+    /// One place a rule targeted and passed over, counted and said.
+    fn declined(&mut self, at: At<'_>, reason: SkipReason) {
+        if self.selection.rule(at.rule).is_none() {
+            return;
+        }
+        self.skip(reason);
+        self.noted(at, Outcome::Skipped(reason));
     }
 
     /// A macro invocation in expression or statement position: the arguments of an assertion, or one skip.
@@ -404,8 +612,41 @@ impl<'a> Walker<'a> {
 
     fn with_frame(&mut self, frame: Frame, walk: impl FnOnce(&mut Self)) {
         self.frames.push(frame);
+        let loops = std::mem::take(&mut self.loops);
         walk(self);
+        self.loops = loops;
         self.frames.pop();
+    }
+
+    fn within_loop(
+        &mut self,
+        label: Option<&syn::Label>,
+        valued: bool,
+        walk: impl FnOnce(&mut Self),
+    ) {
+        self.loops
+            .push((label.map(|label| label.name.ident.to_string()), valued));
+        walk(self);
+        let _left = self.loops.pop();
+    }
+
+    /// Whether the loop a jump names is one whose breaks decide its value.
+    ///
+    /// A jump that names no loop the walk is inside is one the compiler will
+    /// refuse anyway; reading it as valued is what keeps the engine from
+    /// proposing a mutation on top of a program that does not build.
+    fn breaks_decide_the_value(&self, label: Option<&syn::Lifetime>) -> bool {
+        label.map_or_else(
+            || self.loops.last().is_none_or(|(_, valued)| *valued),
+            |named| {
+                let wanted = named.ident.to_string();
+                self.loops
+                    .iter()
+                    .rev()
+                    .find(|(label, _)| label.as_deref() == Some(wanted.as_str()))
+                    .is_none_or(|(_, valued)| *valued)
+            },
+        )
     }
 
     fn inherited_allow(&self) -> Option<u32> {
@@ -419,34 +660,48 @@ impl<'a> Walker<'a> {
     }
 
     fn walk_item(&mut self, item: &Item) {
-        self.maybe_suppressed(item_attrs(item), |walker| walker.walk_item_inner(item));
+        let heading = self.heading(self.span(item), item_attrs(item));
+        self.maybe_annotated(heading, |walker| {
+            walker.maybe_suppressed(item_attrs(item), |walker| walker.walk_item_inner(item));
+        });
     }
 
     fn walk_item_inner(&mut self, item: &Item) {
         match item {
             Item::Fn(f) => {
                 let start = self.allow_offset(Some(&f.vis), &f.sig);
-                self.walk_fn(&f.sig, &f.block, start);
+                let name = f.sig.ident.to_string();
+                self.within_item(name, |walker| walker.walk_fn(&f.sig, &f.block, start));
             }
             Item::Impl(i) => {
-                for member in &i.items {
-                    self.walk_impl_item(member);
-                }
+                self.within_item(implemented(i), |walker| {
+                    for member in &i.items {
+                        walker.walk_impl_item(member);
+                    }
+                });
             }
             Item::Trait(t) => {
-                for member in &t.items {
-                    self.walk_trait_item(member);
-                }
+                self.within_item(t.ident.to_string(), |walker| {
+                    for member in &t.items {
+                        walker.walk_trait_item(member);
+                    }
+                });
             }
             Item::Mod(m) => {
                 if let Some((_, items)) = &m.content {
                     self.mod_depth = self.mod_depth.saturating_add(1);
-                    self.walk_items(items);
+                    self.within_item(m.ident.to_string(), |walker| walker.walk_items(items));
                     self.mod_depth = self.mod_depth.saturating_sub(1);
                 }
             }
-            Item::Const(c) => self.walk_const_expr(&c.expr),
-            Item::Static(s) => self.walk_const_expr(&s.expr),
+            Item::Const(c) => {
+                let name = c.ident.to_string();
+                self.within_item(name, |walker| walker.walk_const_expr(&c.expr));
+            }
+            Item::Static(s) => {
+                let name = s.ident.to_string();
+                self.within_item(name, |walker| walker.walk_const_expr(&s.expr));
+            }
             Item::Enum(e) => {
                 for variant in &e.variants {
                     if let Some((_, discriminant)) = &variant.discriminant {
@@ -463,10 +718,18 @@ impl<'a> Walker<'a> {
         match member {
             ImplItem::Fn(f) => {
                 let start = self.allow_offset(Some(&f.vis), &f.sig);
-                self.maybe_suppressed(&f.attrs, |walker| walker.walk_fn(&f.sig, &f.block, start));
+                let name = f.sig.ident.to_string();
+                self.within_item(name, |walker| {
+                    walker.maybe_suppressed(&f.attrs, |walker| {
+                        walker.walk_fn(&f.sig, &f.block, start);
+                    });
+                });
             }
             ImplItem::Const(c) => {
-                self.maybe_suppressed(&c.attrs, |walker| walker.walk_const_expr(&c.expr));
+                let name = c.ident.to_string();
+                self.within_item(name, |walker| {
+                    walker.maybe_suppressed(&c.attrs, |walker| walker.walk_const_expr(&c.expr));
+                });
             }
             ImplItem::Macro(m) => self.macro_site(&m.mac),
             _ => {}
@@ -478,12 +741,20 @@ impl<'a> Walker<'a> {
             TraitItem::Fn(f) => {
                 if let Some(block) = &f.default {
                     let start = self.allow_offset(None, &f.sig);
-                    self.maybe_suppressed(&f.attrs, |walker| walker.walk_fn(&f.sig, block, start));
+                    let name = f.sig.ident.to_string();
+                    self.within_item(name, |walker| {
+                        walker.maybe_suppressed(&f.attrs, |walker| {
+                            walker.walk_fn(&f.sig, block, start);
+                        });
+                    });
                 }
             }
             TraitItem::Const(c) => {
                 if let Some((_, expr)) = &c.default {
-                    self.maybe_suppressed(&c.attrs, |walker| walker.walk_const_expr(expr));
+                    let name = c.ident.to_string();
+                    self.within_item(name, |walker| {
+                        walker.maybe_suppressed(&c.attrs, |walker| walker.walk_const_expr(expr));
+                    });
                 }
             }
             TraitItem::Macro(m) => self.macro_site(&m.mac),
@@ -501,12 +772,13 @@ impl<'a> Walker<'a> {
     }
 
     fn walk_fn(&mut self, sig: &Signature, block: &Block, item_start: u32) {
+        let (generic, defaultable) = parameters(&sig.generics);
         let frame = Frame {
             allow_at: Some(item_start),
-            ret: return_kind(&sig.output),
+            ret: return_kind_within(&sig.output, &generic, &defaultable),
         };
         if sig.constness.is_some() {
-            self.with_suppression(SkipReason::ConstContext, |walker| {
+            self.with_suppression(SkipReason::ConstFnBody, |walker| {
                 walker.with_frame(frame, |walker| walker.walk_block(block, true));
             });
         } else {
@@ -538,7 +810,10 @@ impl<'a> Walker<'a> {
     fn walk_stmt(&mut self, stmt: &Stmt, role: TailRole) {
         match stmt {
             Stmt::Local(local) => {
-                self.maybe_suppressed(&local.attrs, |walker| walker.walk_local(local));
+                let heading = self.heading(self.span(local), &local.attrs);
+                self.maybe_annotated(heading, |walker| {
+                    walker.maybe_suppressed(&local.attrs, |walker| walker.walk_local(local));
+                });
             }
             Stmt::Item(item) => self.walk_item(item),
             Stmt::Expr(expr, Some(semi)) => {
@@ -546,15 +821,19 @@ impl<'a> Walker<'a> {
                     start: self.span(expr).start,
                     end: self.span(semi).end,
                 };
-                self.maybe_suppressed(expr_attrs(expr), |walker| {
-                    walker.statement_candidates(expr, stmt_span);
-                    let site = Site {
-                        form: Form::S,
-                        span: stmt_span,
-                    };
-                    let mut ctx = Ctx::new(Kind::Value, Some(site));
-                    ctx.direct_stmt = true;
-                    walker.walk_expr(expr, ctx);
+                let heading = self.heading(stmt_span, expr_attrs(expr));
+                self.maybe_annotated(heading, |walker| {
+                    walker.maybe_suppressed(expr_attrs(expr), |walker| {
+                        walker.statement_candidates(expr, stmt_span);
+                        walker.deletable_else(expr, stmt_span);
+                        let site = Site {
+                            form: Form::S,
+                            span: stmt_span,
+                        };
+                        let mut ctx = Ctx::new(Kind::Value, Some(site));
+                        ctx.direct_stmt = true;
+                        walker.walk_expr(expr, ctx);
+                    });
                 });
             }
             Stmt::Expr(expr, None) => {
@@ -567,11 +846,17 @@ impl<'a> Walker<'a> {
                     },
                     span,
                 };
-                self.maybe_suppressed(expr_attrs(expr), |walker| {
-                    walker.walk_expr(expr, Ctx::new(Kind::Value, Some(site)));
-                    if role == TailRole::ReturnValue {
-                        walker.return_site(expr);
-                    }
+                let heading = self.heading(span, expr_attrs(expr));
+                self.maybe_annotated(heading, |walker| {
+                    walker.maybe_suppressed(expr_attrs(expr), |walker| {
+                        if role == TailRole::NotLast {
+                            walker.deletable_else(expr, span);
+                        }
+                        walker.walk_expr(expr, Ctx::new(Kind::Value, Some(site)));
+                        if role == TailRole::ReturnValue {
+                            walker.return_site(expr);
+                        }
+                    });
                 });
             }
             Stmt::Macro(m) => {
@@ -690,10 +975,16 @@ impl<'a> Walker<'a> {
             Expr::Let(l) => self.walk_expr(&l.expr, ctx.value()),
             Expr::Block(b) => self.walk_block(&b.block, false),
             Expr::Unsafe(u) => self.walk_block(&u.block, false),
-            Expr::Loop(l) => self.walk_block(&l.body, false),
+            Expr::Loop(l) => {
+                self.within_loop(l.label.as_ref(), true, |walker| {
+                    walker.walk_block(&l.body, false);
+                });
+            }
             Expr::ForLoop(f) => {
                 self.walk_expr(&f.expr, ctx.value());
-                self.walk_block(&f.body, false);
+                self.within_loop(f.label.as_ref(), false, |walker| {
+                    walker.walk_block(&f.body, false);
+                });
             }
             Expr::Async(a) => {
                 let frame = Frame {
@@ -714,6 +1005,7 @@ impl<'a> Walker<'a> {
                     walker.walk_block(&c.block, false);
                 });
             }
+            Expr::Break(_) | Expr::Continue(_) => self.walk_jump(expr, ctx),
             Expr::Repeat(r) => {
                 self.walk_expr(&r.expr, ctx.value());
                 self.walk_const_expr(&r.len);
@@ -734,7 +1026,8 @@ impl<'a> Walker<'a> {
             }
             Expr::MethodCall(m) => {
                 self.walk_method_name(m, ctx);
-                self.walk_expr(&m.receiver, value);
+                let chain = ctx.wrap.unwrap_or_else(|| self.span(m));
+                self.walk_expr(&m.receiver, value.wrapping(chain));
                 for arg in &m.args {
                     self.walk_expr(arg, value);
                 }
@@ -790,7 +1083,14 @@ impl<'a> Walker<'a> {
             let edit = self.span(&b.op);
             let connective_with_let =
                 is_connective(&b.op) && (has_let(&b.left) || has_let(&b.right));
-            if !connective_with_let && self.text(edit) == original {
+            if connective_with_let {
+                self.declined(At::new(edit.start, rule), SkipReason::LetCondition);
+            } else if self.text(edit) != original {
+                self.declined(
+                    At::new(edit.start, rule).noting("text-mismatch"),
+                    SkipReason::UnsupportedSite,
+                );
+            } else {
                 let site = if is_compound_assignment(&b.op) {
                     if ctx.direct_stmt {
                         ctx.stmt
@@ -823,21 +1123,45 @@ impl<'a> Walker<'a> {
         }
     }
 
-    /// The one identifier a method-swap edits, when the receiver calls a method whose name says the opposite of another.
+    /// What a method call offers: the one identifier a swap edits, and the negation of a call that answers a question.
+    ///
+    /// A swap is guarded at the end of the chain the call is a receiver in,
+    /// not at the call: `skip` and `take` do not produce the same type, and
+    /// the two branches of a guard have to meet somewhere. A negation is
+    /// guarded at the call, because `!` of a question is a question and the
+    /// types already meet there.
+    ///
+    /// A call whose question another rule already asks is left to that rule:
+    /// the whole of an `if` or `while` condition is `negate-condition`'s and
+    /// `negate-loop-condition`'s, what sits under a `!` is `remove-not`'s, and
+    /// `is_some` and its three companions are the swaps'. Each of those places
+    /// carries the other rule's decision, so none of them is silent.
     fn walk_method_name(&mut self, m: &syn::ExprMethodCall, ctx: Ctx) {
-        let Some((rule, replacement)) = method_swap(&m.method.to_string()) else {
-            return;
-        };
+        let name = m.method.to_string();
         let own = self.span(m);
-        self.emit(
-            rule,
-            Edit {
-                span: self.span(&m.method),
-                replacement: replacement.as_bytes().to_vec(),
-                site: Self::site_for(ctx, own),
-                probe: None,
-            },
-        );
+        if let Some((rule, replacement)) = method_swap(&name) {
+            self.emit(
+                rule,
+                Edit {
+                    span: self.span(&m.method),
+                    replacement: replacement.as_bytes().to_vec(),
+                    site: Self::site_for(ctx, ctx.wrap.unwrap_or(own)),
+                    probe: None,
+                },
+            );
+        }
+        if bool_method(&name) && !ctx.negated {
+            let replacement = format!("!({})", self.text(own)).into_bytes();
+            self.emit(
+                "negate-bool-method",
+                Edit {
+                    span: own,
+                    replacement,
+                    site: Self::site_for(ctx, own),
+                    probe: None,
+                },
+            );
+        }
     }
 
     fn walk_unary(&mut self, u: &syn::ExprUnary, ctx: Ctx) {
@@ -853,8 +1177,12 @@ impl<'a> Walker<'a> {
                     probe: None,
                 },
             );
-            let inner = if ctx.kind == Kind::Bool && is_not(&u.op) {
-                ctx.boolean()
+            let inner = if is_not(&u.op) {
+                ctx.negated(if ctx.kind == Kind::Bool {
+                    Kind::Bool
+                } else {
+                    Kind::Value
+                })
             } else {
                 ctx.value()
             };
@@ -867,23 +1195,115 @@ impl<'a> Walker<'a> {
     }
 
     fn walk_literal(&mut self, lit: &syn::ExprLit, ctx: Ctx) {
-        if let syn::Lit::Bool(b) = &lit.lit {
-            let own = self.span(lit);
-            let (rule, replacement) = if b.value {
-                ("true-to-false", "false")
-            } else {
-                ("false-to-true", "true")
-            };
-            self.emit(
+        let own = self.span(lit);
+        let offer = |walker: &mut Self, rule: &str, replacement: String| {
+            walker.emit(
                 rule,
                 Edit {
                     span: own,
-                    replacement: replacement.as_bytes().to_vec(),
+                    replacement: replacement.into_bytes(),
                     site: Self::site_for(ctx, own),
                     probe: None,
                 },
             );
+        };
+        match &lit.lit {
+            syn::Lit::Bool(b) => {
+                let (rule, replacement) = if b.value {
+                    ("true-to-false", "false")
+                } else {
+                    ("false-to-true", "true")
+                };
+                offer(self, rule, replacement.to_owned());
+            }
+            syn::Lit::Int(int) => {
+                for (rule, delta) in [("int-increment", 1), ("int-decrement", -1)] {
+                    if let Some(respelled) = respell_int(int, delta) {
+                        offer(self, rule, respelled);
+                    }
+                }
+            }
+            syn::Lit::Str(text) if !text.value().is_empty() => {
+                offer(self, "string-to-empty", String::from("\"\""));
+            }
+            _ => {}
         }
+    }
+
+    /// The `else` a statement's `if` chain ends with, which a statement can do without.
+    ///
+    /// An `if` that is a value has to have an `else` and every branch has to
+    /// produce the same type, so only an `if` standing as a statement can lose
+    /// one and still be the program it was.
+    fn deletable_else(&mut self, expr: &Expr, stmt_span: Span) {
+        let Some((then_branch, otherwise)) = terminal_else(expr) else {
+            return;
+        };
+        let span = Span {
+            start: self.span(then_branch).end,
+            end: self.span(otherwise).end,
+        };
+        self.emit(
+            "delete-else-branch",
+            Edit {
+                span,
+                replacement: Vec::new(),
+                site: Some(Site {
+                    form: Form::S,
+                    span: stmt_span,
+                }),
+                probe: None,
+            },
+        );
+    }
+
+    /// A `break` and a `continue` say opposite things about the loop they are in, and either is the other with its label kept.
+    ///
+    /// A `break` that carries a value is left alone: `continue` carries none,
+    /// and a loop whose value it was would have nothing to be.
+    fn walk_jump(&mut self, expr: &Expr, ctx: Ctx) {
+        let (rule, replacement) = match expr {
+            Expr::Break(one) => {
+                if let Some(value) = &one.expr {
+                    self.declined(
+                        At::new(self.span(expr).start, "break-to-continue"),
+                        SkipReason::LoopValue,
+                    );
+                    self.walk_expr(value, ctx.value());
+                    return;
+                }
+                let label = one
+                    .label
+                    .as_ref()
+                    .map_or_else(String::new, |label| format!(" {label}"));
+                ("break-to-continue", format!("continue{label}"))
+            }
+            Expr::Continue(one) => {
+                if self.breaks_decide_the_value(one.label.as_ref()) {
+                    self.declined(
+                        At::new(self.span(expr).start, "continue-to-break"),
+                        SkipReason::LoopValue,
+                    );
+                    return;
+                }
+                let label = one
+                    .label
+                    .as_ref()
+                    .map_or_else(String::new, |label| format!(" {label}"));
+                ("continue-to-break", format!("break{label}"))
+            }
+            _ => return,
+        };
+        let own = self.span(expr);
+        self.emit(
+            rule,
+            Edit {
+                span: own,
+                replacement: replacement.into_bytes(),
+                site: Self::site_for(ctx, own),
+                probe: None,
+            },
+        );
     }
 
     fn negate(&mut self, rule: &str, cond: &Expr) {
@@ -911,7 +1331,7 @@ impl<'a> Walker<'a> {
         self.negate("negate-condition", &i.cond);
         let gate = self.gate(&i.cond, &i.then_branch);
         self.gates.push(gate);
-        self.walk_expr(&i.cond, ctx.boolean());
+        self.walk_expr(&i.cond, ctx.negated(Kind::Bool));
         self.gates.pop();
         self.walk_block(&i.then_branch, false);
         if let Some((_, else_branch)) = &i.else_branch {
@@ -923,9 +1343,11 @@ impl<'a> Walker<'a> {
         self.negate("negate-loop-condition", &w.cond);
         let gate = self.gate(&w.cond, &w.body);
         self.gates.push(gate);
-        self.walk_expr(&w.cond, ctx.boolean());
+        self.walk_expr(&w.cond, ctx.negated(Kind::Bool));
         self.gates.pop();
-        self.walk_block(&w.body, false);
+        self.within_loop(w.label.as_ref(), false, |walker| {
+            walker.walk_block(&w.body, false);
+        });
     }
 
     /// What a proof about this condition would rest on, or nothing when the syntax supports none.
@@ -947,20 +1369,79 @@ impl<'a> Walker<'a> {
 
     fn walk_match(&mut self, m: &syn::ExprMatch, ctx: Ctx) {
         self.walk_expr(&m.expr, ctx.value());
-        for arm in &m.arms {
-            self.maybe_suppressed(&arm.attrs, |walker| {
-                walker.walk_pat_guards(&arm.pat, ctx);
-                let span = walker.span(&arm.body);
-                let site = Site {
-                    form: Form::E,
-                    span,
-                };
-                walker.walk_expr(&arm.body, Ctx::new(Kind::Value, Some(site)));
+        for (position, arm) in m.arms.iter().enumerate() {
+            let deletable = deletable_arm(&m.arms, position);
+            let heading = self.heading(self.span(arm), &arm.attrs);
+            self.maybe_annotated(heading, |walker| {
+                walker.maybe_suppressed(&arm.attrs, |walker| {
+                    walker.walk_arm_head(&arm.pat, deletable);
+                    walker.walk_pat_guards(&arm.pat, ctx);
+                    let span = walker.span(&arm.body);
+                    let site = Site {
+                        form: Form::E,
+                        span,
+                    };
+                    walker.walk_expr(&arm.body, Ctx::new(Kind::Value, Some(site)));
+                });
             });
         }
     }
 
-    /// The guard of an arm is a boolean position; patterns hold no other runtime expression.
+    /// What an arm's head offers: a guard that can be made false, so the arm is gone, and one that can be made true, so it stops narrowing.
+    ///
+    /// An arm that has a guard already is a boolean position like any other,
+    /// and both edits are written where the guard is. An arm without one has
+    /// no bytes to replace, so the edit is the empty place between its pattern
+    /// and its `=>` and the guard is written there.
+    fn walk_arm_head(&mut self, pat: &Pat, deletable: bool) {
+        let Some(guard) = guard_of(pat) else {
+            let pattern = self.span(pat);
+            if deletable {
+                self.emit(
+                    "delete-match-arm",
+                    Edit {
+                        span: Span {
+                            start: pattern.end,
+                            end: pattern.end,
+                        },
+                        replacement: b"false".to_vec(),
+                        site: Some(Site {
+                            form: Form::M,
+                            span: pattern,
+                        }),
+                        probe: None,
+                    },
+                );
+            }
+            return;
+        };
+        let span = self.span(guard);
+        let site = Some(Site {
+            form: Form::C,
+            span,
+        });
+        if deletable {
+            self.emit(
+                "delete-match-arm",
+                Edit {
+                    span,
+                    replacement: b"false".to_vec(),
+                    site,
+                    probe: None,
+                },
+            );
+        }
+        self.emit(
+            "remove-match-guard",
+            Edit {
+                span,
+                replacement: b"true".to_vec(),
+                site,
+                probe: None,
+            },
+        );
+    }
+
     fn walk_pat_guards(&mut self, pat: &Pat, ctx: Ctx) {
         match pat {
             Pat::Guard(g) => {
@@ -1000,7 +1481,7 @@ impl<'a> Walker<'a> {
             form: Form::E,
             span,
         });
-        let probeable = crate::probe::form::is_effect_free(expr);
+        let probeable = crate::probe::is_effect_free(expr);
         let offer = |walker: &mut Self, rule: &str, replacement: &str| {
             walker.emit(
                 rule,
@@ -1018,16 +1499,38 @@ impl<'a> Walker<'a> {
                     offer(self, "return-true", "true");
                 }
             }
-            ReturnKind::Result => {
-                if !is_ok_default(expr) {
-                    offer(self, "return-ok-default", "Ok(Default::default())");
+            ReturnKind::Result { ok, err } => {
+                if ok {
+                    if !is_ok_default(expr) {
+                        offer(self, "return-ok-default", "Ok(Default::default())");
+                    }
+                } else {
+                    self.declined(
+                        At::new(span.start, "return-ok-default"),
+                        SkipReason::UnstatedReturnType,
+                    );
+                }
+                if err {
+                    if !is_err_default(expr) {
+                        offer(self, "return-err-default", "Err(Default::default())");
+                    }
+                } else {
+                    self.declined(
+                        At::new(span.start, "return-err-default"),
+                        SkipReason::UnstatedReturnType,
+                    );
                 }
             }
-            ReturnKind::Option => {
+            ReturnKind::Option(inner) => {
                 if !is_default_spelling(expr) {
                     offer(self, "return-default", "Default::default()");
                 }
-                if !is_some_default(expr) {
+                if !inner {
+                    self.declined(
+                        At::new(span.start, "return-some-default"),
+                        SkipReason::UnstatedReturnType,
+                    );
+                } else if !is_some_default(expr) {
                     offer(self, "return-some-default", "Some(Default::default())");
                 }
             }
@@ -1036,7 +1539,52 @@ impl<'a> Walker<'a> {
                     offer(self, "return-default", "Default::default()");
                 }
             }
+            ReturnKind::Unstated => {
+                for rule in [
+                    "return-default",
+                    "return-ok-default",
+                    "return-some-default",
+                    "return-err-default",
+                ] {
+                    self.declined(At::new(span.start, rule), SkipReason::UnstatedReturnType);
+                }
+            }
             ReturnKind::Unknown | ReturnKind::Unit | ReturnKind::Never => {}
+        }
+        self.branches_of(expr);
+    }
+
+    /// Every branch of a returned `if` or `match` is a place the function returns from too.
+    ///
+    /// A replacement of the whole expression is one mutation; a replacement of
+    /// one arm is another, and a suite that notices the first may notice
+    /// nothing about the second. The whole keeps the identity it had, because
+    /// an identity is minted from the bytes an edit replaces and those bytes
+    /// have not moved.
+    fn branches_of(&mut self, expr: &Expr) {
+        match expr {
+            Expr::If(one) => {
+                if let Some(tail) = block_tail(&one.then_branch) {
+                    self.return_site(tail);
+                }
+                if let Some((_, otherwise)) = &one.else_branch {
+                    match otherwise.as_ref() {
+                        Expr::Block(block) => {
+                            if let Some(tail) = block_tail(&block.block) {
+                                self.return_site(tail);
+                            }
+                        }
+                        nested @ Expr::If(_) => self.branches_of(nested),
+                        _ => {}
+                    }
+                }
+            }
+            Expr::Match(one) => {
+                for arm in &one.arms {
+                    self.return_site(&arm.body);
+                }
+            }
+            _ => {}
         }
     }
 
@@ -1057,6 +1605,12 @@ impl<'a> Walker<'a> {
 
     /// A range swap changes the expression's type, so its site is the statement level the context carries, never the range itself.
     fn walk_range(&mut self, r: &syn::ExprRange, ctx: Ctx) {
+        if r.end.is_none() {
+            let at = self.span(&r.limits).start;
+            for rule in ["range-to-inclusive", "inclusive-to-range"] {
+                self.declined(At::new(at, rule), SkipReason::OpenRange);
+            }
+        }
         if r.end.is_some() {
             let edit = self.span(&r.limits);
             let (rule, replacement) = match r.limits {
@@ -1101,129 +1655,5 @@ impl<'a> Walker<'a> {
                 walker.return_site(body);
             }
         });
-    }
-}
-
-/// What a signature says the function returns.
-fn return_kind(output: &ReturnType) -> ReturnKind {
-    match output {
-        ReturnType::Default => ReturnKind::Unit,
-        ReturnType::Type(_, ty) => return_kind_of(ty),
-    }
-}
-
-fn return_kind_of(ty: &Type) -> ReturnKind {
-    match ty {
-        Type::Tuple(t) if t.elems.is_empty() => ReturnKind::Unit,
-        Type::Never(_) => ReturnKind::Never,
-        Type::Paren(p) => return_kind_of(&p.elem),
-        Type::Group(g) => return_kind_of(&g.elem),
-        Type::Path(p) => match p
-            .path
-            .segments
-            .last()
-            .map(|s| s.ident.to_string())
-            .as_deref()
-        {
-            Some("bool") => ReturnKind::Bool,
-            Some("Result") => ReturnKind::Result,
-            Some("Option") => ReturnKind::Option,
-            _ => ReturnKind::Other,
-        },
-        _ => ReturnKind::Other,
-    }
-}
-
-/// The reason attributes suppress what they decorate: `#[test]` and `#[bench]` are test code, a `cfg` mentioning `test` is test code, and any other `cfg` is a configuration the walker does not evaluate.
-fn suppression_of(attrs: &[Attribute]) -> Option<SkipReason> {
-    let mut cfg = None;
-    for attr in attrs {
-        let path = attr.path();
-        if path.is_ident("test") || path.is_ident("bench") {
-            return Some(SkipReason::TestCode);
-        }
-        if path.is_ident("cfg") {
-            if let Meta::List(list) = &attr.meta
-                && mentions_test(&list.tokens)
-            {
-                return Some(SkipReason::TestCode);
-            }
-            cfg = Some(SkipReason::CfgAttribute);
-        }
-    }
-    cfg
-}
-
-fn mentions_test(tokens: &TokenStream) -> bool {
-    tokens.clone().into_iter().any(|tree| match tree {
-        TokenTree::Ident(ident) => ident == "test",
-        TokenTree::Group(group) => mentions_test(&group.stream()),
-        TokenTree::Punct(_) | TokenTree::Literal(_) => false,
-    })
-}
-
-fn item_attrs(item: &Item) -> &[Attribute] {
-    match item {
-        Item::Const(i) => &i.attrs,
-        Item::Enum(i) => &i.attrs,
-        Item::ExternCrate(i) => &i.attrs,
-        Item::Fn(i) => &i.attrs,
-        Item::ForeignMod(i) => &i.attrs,
-        Item::Impl(i) => &i.attrs,
-        Item::Macro(i) => &i.attrs,
-        Item::Mod(i) => &i.attrs,
-        Item::Static(i) => &i.attrs,
-        Item::Struct(i) => &i.attrs,
-        Item::Trait(i) => &i.attrs,
-        Item::TraitAlias(i) => &i.attrs,
-        Item::Type(i) => &i.attrs,
-        Item::Union(i) => &i.attrs,
-        Item::Use(i) => &i.attrs,
-        _ => &[],
-    }
-}
-
-fn expr_attrs(expr: &Expr) -> &[Attribute] {
-    match expr {
-        Expr::Array(e) => &e.attrs,
-        Expr::Assign(e) => &e.attrs,
-        Expr::Async(e) => &e.attrs,
-        Expr::Await(e) => &e.attrs,
-        Expr::Binary(e) => &e.attrs,
-        Expr::Block(e) => &e.attrs,
-        Expr::Break(e) => &e.attrs,
-        Expr::Call(e) => &e.attrs,
-        Expr::Cast(e) => &e.attrs,
-        Expr::Closure(e) => &e.attrs,
-        Expr::Const(e) => &e.attrs,
-        Expr::Continue(e) => &e.attrs,
-        Expr::Field(e) => &e.attrs,
-        Expr::ForLoop(e) => &e.attrs,
-        Expr::Group(e) => &e.attrs,
-        Expr::If(e) => &e.attrs,
-        Expr::Index(e) => &e.attrs,
-        Expr::Infer(e) => &e.attrs,
-        Expr::Let(e) => &e.attrs,
-        Expr::Lit(e) => &e.attrs,
-        Expr::Loop(e) => &e.attrs,
-        Expr::Macro(e) => &e.attrs,
-        Expr::Match(e) => &e.attrs,
-        Expr::MethodCall(e) => &e.attrs,
-        Expr::Paren(e) => &e.attrs,
-        Expr::Path(e) => &e.attrs,
-        Expr::Range(e) => &e.attrs,
-        Expr::RawAddr(e) => &e.attrs,
-        Expr::Reference(e) => &e.attrs,
-        Expr::Repeat(e) => &e.attrs,
-        Expr::Return(e) => &e.attrs,
-        Expr::Struct(e) => &e.attrs,
-        Expr::Try(e) => &e.attrs,
-        Expr::TryBlock(e) => &e.attrs,
-        Expr::Tuple(e) => &e.attrs,
-        Expr::Unary(e) => &e.attrs,
-        Expr::Unsafe(e) => &e.attrs,
-        Expr::While(e) => &e.attrs,
-        Expr::Yield(e) => &e.attrs,
-        _ => &[],
     }
 }

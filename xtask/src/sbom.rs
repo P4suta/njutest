@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What a release is made of, as a bill of materials a reader's own tools understand.
@@ -125,7 +125,7 @@ pub fn of(metadata: &str, about: (&str, &str)) -> Result<Bom, String> {
         version: 1,
         metadata: Metadata {
             tools: vec![Tool {
-                vendor: "mjutest contributors".to_owned(),
+                vendor: "njutest contributors".to_owned(),
                 name: "cargo xtask sbom".to_owned(),
                 version: env!("CARGO_PKG_VERSION").to_owned(),
             }],

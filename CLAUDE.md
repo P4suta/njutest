@@ -1,8 +1,8 @@
 # Working in this repository
 
-mjutest is two products in one workspace: `rust-mutants` (a mutation testing
-engine, `crates/rust-mutants`) and `mjutest` (an assurance runner on top of
-it, `crates/mjutest-cli`). Read `docs/architecture.md` first, then
+njutest is two products in one workspace: `rust-mutants` (a mutation testing
+engine, `crates/rust-mutants`) and `njutest` (an assurance runner on top of
+it, `crates/njutest-cli`). Read `docs/architecture.md` first, then
 `docs/adr/0004-proof-layers-not-budgets.md` and `docs/adr/0001-seam-policy.md`;
 they explain most of what looks unusual here.
 
@@ -40,11 +40,14 @@ cargo xtask report-diff A B   # what changed between two stored reports
 
 - English in code, documentation, and commits. Conventional Commits. SPDX
   header on every `.rs`, `.toml`, `.yml`.
-- **No comments.** The SPDX header stays, and so does the one line of
-  documentation the lint set requires on a public item (plus the `# Errors`
-  and `# Panics` sections clippy asks for). Nothing else: a name that needs
-  a comment is a name to change, and a test named after the behaviour says
-  more than a paragraph above the code ever will.
+- **No comments.** `cargo xtask lints` refuses one anywhere in the
+  repository's own code. What stays is the SPDX header, the documentation the
+  lint set requires (plus the `# Errors` and `# Panics` sections clippy asks
+  for), and a `rust-mutants:` annotation, which is an instruction the engine
+  reads rather than an account of the code. Nothing else: a name that needs a
+  comment is a name to change, an assertion that needs one wants a better
+  message, and a rationale worth writing belongs in the item's own
+  documentation, where `cargo doc` shows it and a reader can find it.
 - Workspace lints are strict (`pedantic`, `nursery`, `unwrap_used`, …).
   **`#[allow]` is never written** — `cargo xtask lints` refuses it anywhere,
   tests included. A waiver is `#[expect(…, reason = "…")]`, which the
@@ -67,5 +70,5 @@ cargo xtask report-diff A B   # what changed between two stored reports
 | Plan and milestones | the approved plan lives outside the repository; `docs/architecture.md` states the current shape |
 | Contracts | `docs/assurance-contract.md`, `docs/report-v1.md`, `docs/trace-v1.md`, `docs/engine/` |
 | Decisions | `docs/adr/` |
-| Developer tooling | `docs/development.md`, `xtask/`, `crates/mjutest-devkit/`, `scripts/doctor.sh` |
+| Developer tooling | `docs/development.md`, `xtask/`, `crates/njutest-devkit/`, `scripts/doctor.sh` |
 | Error codes | `docs/errors.md` |

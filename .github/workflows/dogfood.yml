@@ -1,0 +1,149 @@
+# SPDX-FileCopyrightText: 2026 njutest contributors
+# SPDX-License-Identifier: MIT OR Apache-2.0
+#
+# rust-mutants against its own engine, in four parts, and then an independent
+# re-decision of what it reported. This is the second of the two measurements
+# of how strong this suite is; the other is cargo-mutants (mutation.yml). A
+# survivor the ledger does not accept fails the merge job.
+name: dogfood
+
+on:
+  workflow_dispatch:
+    inputs:
+      include:
+        description: The files to mutate, as a glob. Empty means the ledger's own selection.
+        required: false
+        type: string
+      tier:
+        description: Which tier of operators to apply.
+        required: false
+        default: balanced
+        type: choice
+        options: [balanced, strong, all]
+  schedule:
+    - cron: "17 5 * * 2"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dogfood-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  shard:
+    name: shard ${{ matrix.shard }} of 4
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+      - name: Fetch the locked dependency graph
+        run: cargo fetch --locked
+      - name: Build the engine
+        run: cargo build --release --bin rust-mutants
+      - name: Run this part of the catalog
+        env:
+          SHARD: ${{ matrix.shard }}
+          TIER: ${{ inputs.tier || 'balanced' }}
+          INCLUDE: ${{ inputs.include }}
+        # The exit code says what the run found, and what it found is the
+        # merge job's business. A part that reports a survivor is not a part
+        # that failed.
+        run: >-
+          ./target/release/rust-mutants run
+          --shard "$SHARD/4" --tier "$TIER" --probe --jobs 4 --trace
+          ${INCLUDE:+--include "$INCLUDE"}
+          || true
+      - name: Upload this part and its recording
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: dogfood-part-${{ matrix.shard }}
+          path: reports/mutation
+          if-no-files-found: error
+
+  audit:
+    name: re-decide the whole
+    needs: shard
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+      - name: Fetch the locked dependency graph
+        run: cargo fetch --locked
+      - name: Build the engine and the gates
+        run: cargo build --release --bin rust-mutants -p xtask
+      - name: Download every part
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: dogfood-part-*
+          path: parts
+      - name: Put the parts back together
+        run: |
+          set -euo pipefail
+          find parts -name run-report-v1.json -print0 \
+            | sort -z \
+            | xargs -0 ./target/release/rust-mutants merge --output whole.json
+      - name: Say whether each recording is complete
+        run: |
+          set -euo pipefail
+          for trace in parts/*/*/trace; do
+            ./target/release/rust-mutants trace check --dir "$trace"
+          done
+      - name: Re-decide every part from its own recording and the ledger
+        run: |
+          set -euo pipefail
+          status=0
+          for run in parts/*/*/; do
+            [ -f "$run/run-report-v1.json" ] || continue
+            echo "== $run"
+            ./target/release/xtask engine-audit "$run" \
+              --trace "$run/trace" --sites --ledger .rust-mutants.toml || status=1
+          done
+          exit "$status"
+      - name: Say what moved since the last complete run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # A run that reports what a previous one did not is a change somebody
+        # made. There is nothing to compare on the first run of a workflow, and
+        # a diff against nothing is not a failure; a diff that cannot be read
+        # is.
+        run: |
+          set -euo pipefail
+          previous=$(gh run list --workflow dogfood.yml --status success \
+            --json databaseId --jq '.[0].databaseId' || true)
+          if [ -z "$previous" ]; then
+            echo "no earlier run of this workflow to compare with" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          rm -rf before
+          gh run download "$previous" --name dogfood-whole --dir before
+          {
+            echo "## What moved since run $previous"
+            echo
+            echo '```'
+            ./target/release/xtask report-diff before/whole.json whole.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload the whole and the parts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: dogfood-whole
+          path: |
+            whole.json
+            parts
+          if-no-files-found: error

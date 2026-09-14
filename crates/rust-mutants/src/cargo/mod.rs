@@ -1,13 +1,16 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The cargo boundary: locating the toolchain, reading `cargo metadata`, parsing `--message-format=json`, and reading dep-info to learn which files a unit really compiled.
 
 mod compile;
+pub mod config;
 mod depinfo;
 mod locate;
+pub mod manifest;
 mod messages;
 mod metadata;
+mod outside;
 mod version;
 
 use std::fmt;
@@ -17,14 +20,19 @@ use crate::error::{self, ErrorCode};
 use crate::runner::Cancel;
 use crate::trace::Recorder;
 
-pub use compile::{CompileKind, CompileOptions, Compiled, compile};
+pub use compile::{BuildConfig, CompileKind, CompileOptions, Compiled, compile, compile_arguments};
 pub use depinfo::{Unit, dep_info_path, parse_dep_info, units_of};
 
 pub use locate::{LocateOptions, Toolchain, command_failed, resolve_executable};
 pub use messages::{
-    Artifact, CompilerMessage, Diagnostic, DiagnosticSpan, Message, Profile, parse_messages,
+    Artifact, CompilerMessage, Diagnostic, DiagnosticSpan, Message, Profile, names_file,
+    parse_messages,
 };
-pub use metadata::{DepKind, Metadata, MetadataOptions, Node, NodeDep, Package, Resolve, Target};
+pub use metadata::{
+    DepKind, Dependency, Metadata, MetadataOptions, Node, NodeDep, Package, Resolve, Target,
+    metadata_arguments,
+};
+pub use outside::{Outside, reaching_outside};
 pub use version::{VersionInfo, parse_version};
 
 /// Everything a cargo command needs besides its arguments: the toolchain, the directory to run in, the cancellation flag, and the trace.
@@ -57,11 +65,13 @@ pub enum CargoErrorKind {
     DepInfoUnreadable,
     /// An artifact's dep-info file could not be read.
     DepInfoMissing,
+    /// The caller cancelled before the command finished, so what it printed says nothing.
+    Cancelled,
 }
 
 impl CargoErrorKind {
     /// Every kind, in code order.
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::ToolchainNotFound,
         Self::VersionUnreadable,
         Self::CommandFailed,
@@ -69,6 +79,7 @@ impl CargoErrorKind {
         Self::MessageUnparsable,
         Self::DepInfoUnreadable,
         Self::DepInfoMissing,
+        Self::Cancelled,
     ];
 
     /// The stable code of this failure.
@@ -82,6 +93,7 @@ impl CargoErrorKind {
             Self::MessageUnparsable => error::CARGO_MESSAGE_UNPARSABLE,
             Self::DepInfoUnreadable => error::DEP_INFO_UNREADABLE,
             Self::DepInfoMissing => error::DEP_INFO_MISSING,
+            Self::Cancelled => error::INTERRUPTED,
         }
     }
 }

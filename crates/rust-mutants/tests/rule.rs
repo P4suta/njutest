@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The operator table is a contract: its order is the deduplication tiebreak, its names are parts of mutant identities, and its tiers nest.
@@ -58,9 +58,9 @@ fn the_canonical_table_has_the_documented_shape() {
         .validate()
         .expect("the canonical table satisfies every registry invariant");
     assert_eq!(registry.len(), CANONICAL_RULE_COUNT);
-    assert_eq!(CANONICAL_RULE_COUNT, 51);
+    assert_eq!(CANONICAL_RULE_COUNT, 69);
     assert_eq!(registry.families().len(), CANONICAL_FAMILY_COUNT);
-    assert_eq!(CANONICAL_FAMILY_COUNT, 12);
+    assert_eq!(CANONICAL_FAMILY_COUNT, 15);
     let expected: Vec<(Family, Tier, Vec<&str>)> = vec![
         (
             Family::BooleanLiteral,
@@ -70,7 +70,12 @@ fn the_canonical_table_has_the_documented_shape() {
         (
             Family::ConditionNegation,
             Tier::Balanced,
-            vec!["negate-condition", "negate-loop-condition", "remove-not"],
+            vec![
+                "negate-condition",
+                "negate-loop-condition",
+                "remove-not",
+                "negate-bool-method",
+            ],
         ),
         (
             Family::BooleanConnective,
@@ -114,12 +119,23 @@ fn the_canonical_table_has_the_documented_shape() {
                 "return-ok-default",
                 "return-some-default",
                 "return-true",
+                "return-err-default",
             ],
         ),
         (
             Family::ErrorPropagation,
             Tier::Balanced,
             vec!["question-to-unwrap", "ignore-question-statement"],
+        ),
+        (
+            Family::MatchArm,
+            Tier::Balanced,
+            vec!["delete-match-arm", "remove-match-guard"],
+        ),
+        (
+            Family::ControlFlow,
+            Tier::Balanced,
+            vec!["break-to-continue", "continue-to-break"],
         ),
         (
             Family::Bitwise,
@@ -158,6 +174,14 @@ fn the_canonical_table_has_the_documented_shape() {
                 "is-err-to-is-ok",
                 "max-to-min",
                 "min-to-max",
+                "all-to-any",
+                "any-to-all",
+                "first-to-last",
+                "last-to-first",
+                "skip-to-take",
+                "take-to-skip",
+                "sum-to-product",
+                "product-to-sum",
             ],
         ),
         (
@@ -167,7 +191,13 @@ fn the_canonical_table_has_the_documented_shape() {
                 "delete-call-statement",
                 "delete-assignment",
                 "delete-compound-assignment",
+                "delete-else-branch",
             ],
+        ),
+        (
+            Family::Literal,
+            Tier::All,
+            vec!["int-increment", "int-decrement", "string-to-empty"],
         ),
     ];
     let mut position = 0;
@@ -222,9 +252,9 @@ fn select_tier_returns_every_rule_at_or_below_the_tier_in_table_order() {
     let balanced = registry.select_tier(Tier::Balanced);
     let strong = registry.select_tier(Tier::Strong);
     let all = registry.select_tier(Tier::All);
-    assert_eq!(balanced.len(), 27);
-    assert_eq!(strong.len(), 48);
-    assert_eq!(all.len(), 51);
+    assert_eq!(balanced.len(), 33);
+    assert_eq!(strong.len(), 62);
+    assert_eq!(all.len(), 69);
     assert!(balanced.iter().all(|r| r.tier == Tier::Balanced));
     assert_eq!(
         &strong[..balanced.len()],
@@ -289,8 +319,12 @@ const TIER_CONFLICT: [Rule; 2] = [
 ];
 const SPLIT: [Rule; 3] = [
     rule(Family::Comparison, "eq-to-neq", 1, Tier::Balanced),
-    rule(Family::Bitwise, "band-to-bor", 1, Tier::Strong),
+    rule(Family::Range, "range-to-inclusive", 1, Tier::Balanced),
     rule(Family::Comparison, "neq-to-eq", 1, Tier::Balanced),
+];
+const TIER_OUT_OF_ORDER: [Rule; 2] = [
+    rule(Family::Bitwise, "band-to-bor", 1, Tier::Strong),
+    rule(Family::Comparison, "eq-to-neq", 1, Tier::Balanced),
 ];
 const ZERO_VERSION: [Rule; 1] = [rule(Family::Comparison, "eq-to-neq", 0, Tier::Balanced)];
 const BAD_NAME: [Rule; 1] = [rule(Family::Comparison, "eq to neq@1", 1, Tier::Balanced)];
@@ -321,6 +355,15 @@ fn a_registry_refuses_a_table_that_breaks_an_invariant() {
         Err(RuleError::FamilySplit {
             family: Family::Comparison,
             position: 2
+        })
+    ));
+    assert!(matches!(
+        Registry::new(&TIER_OUT_OF_ORDER),
+        Err(RuleError::TierOutOfOrder {
+            position: 1,
+            first: Tier::Strong,
+            second: Tier::Balanced,
+            ..
         })
     ));
     assert!(matches!(
@@ -408,4 +451,21 @@ fn adding_a_rule_never_reorders_the_ones_that_were_there() {
         "a rule that changed places renames every mutant it wins the tie for, and with \
          it every acceptance and every reused verdict about that mutant"
     );
+}
+
+#[test]
+fn tiers_never_decrease_down_the_table() {
+    let registry = Registry::canonical();
+    let mut highest = Tier::Balanced;
+    for rule in registry.rules() {
+        assert!(
+            rule.tier >= highest,
+            "each profile's rules are a prefix of the next one's, so a rule at a lower tier \
+             below one at a higher tier would make `--tier balanced` skip a rule and then \
+             select a later one: {rule} at {} follows {highest}",
+            rule.tier
+        );
+        highest = rule.tier;
+    }
+    assert_eq!(highest, Tier::All);
 }

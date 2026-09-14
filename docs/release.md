@@ -1,9 +1,11 @@
 <!--
-SPDX-FileCopyrightText: 2026 mjutest contributors
+SPDX-FileCopyrightText: 2026 njutest contributors
 SPDX-License-Identifier: MIT OR Apache-2.0
 -->
 
 # Releasing
+
+**Status: implemented.** The release train described here is `release-please.yml` and `release.yml`, and `cargo xtask release-check` is the gate that keeps the versions in step.
 
 A release is a tag, and everything else follows from it. Nothing here is
 manual except deciding that a version is ready and approving the environment

@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: 2026 mjutest contributors
+SPDX-FileCopyrightText: 2026 njutest contributors
 SPDX-License-Identifier: MIT OR Apache-2.0
 -->
 
@@ -28,3 +28,26 @@ The library's own documentation is this file, pulled in with
 on, so this markdown is in there beside the Rust — and reading it as Rust,
 which is what discovery used to do with everything a dep-info named, failed
 the whole run.
+
+## Fates
+
+What one run of this fixture establishes for every mutation of it, and
+for every candidate the compiler refused. The run is `rust-mutants run
+--tier all --offline --locked`;
+`cargo test -p rust-mutants-cli --test toolchain_fates` does it again and
+refuses a difference, and `UPDATE_FATES=1` rewrites the block below.
+
+```fates
+src/items.rs:9:5 return-true killed
+src/items.rs:9:7 gt-to-ge survived
+src/items.rs:9:9 int-decrement survived
+src/items.rs:9:9 int-increment killed
+src/lib.rs:14:33 sum-to-product killed
+src/lib.rs:15:5 return-default killed
+src/lib.rs:15:8 negate-condition killed
+src/lib.rs:15:18 return-default killed
+src/lib.rs:15:22 mul-to-div killed
+src/lib.rs:15:24 int-decrement killed
+src/lib.rs:15:24 int-increment killed
+src/lib.rs:15:35 return-default killed
+```

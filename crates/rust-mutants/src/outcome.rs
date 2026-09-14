@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What happened to one mutant in one run.
@@ -20,7 +20,7 @@ pub enum Outcome {
     TimedOut,
     /// The run could not decide: one timeout that did not reproduce, or a failure that also fails on the instrumented baseline.
     Inconclusive,
-    /// The harness itself failed for this mutant: the test binary could not start, the runtime rejected the activation, the process died on a signal the supervisor did not send.
+    /// The harness itself failed for this mutant: the test binary could not start, the runtime said it was built from another catalog, or a process said it could not record what it saw. A death by signal is not one of these: a test that aborts is a test that failed, which is a kill.
     Errored,
 }
 

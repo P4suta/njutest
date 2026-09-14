@@ -1,4 +1,4 @@
-# cargo-deny configuration for the mjutest workspace.
+# cargo-deny configuration for the njutest workspace.
 
 [graph]
 all-features = true

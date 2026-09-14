@@ -1189,15 +1189,28 @@ dependencies = [
 ]
 
 [[package]]
-name = "mjutest"
+name = "nix"
+version = "0.29.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "71e2746dc3a24dd78b3cfcb7be93368c6de9963d30f43a6a73998a9cf4b17b46"
+dependencies = [
+ "bitflags 2.13.1",
+ "cfg-if",
+ "cfg_aliases",
+ "libc",
+ "memoffset",
+]
+
+[[package]]
+name = "njutest"
 version = "0.1.0"
 dependencies = [
- "mjutest-macros",
+ "njutest-macros",
  "trybuild",
 ]
 
 [[package]]
-name = "mjutest-cli"
+name = "njutest-cli"
 version = "0.1.0"
 dependencies = [
  "clap",
@@ -1205,8 +1218,10 @@ dependencies = [
  "hex",
  "jiff",
  "jsonschema",
- "mjutest-devkit",
+ "njutest-cli",
+ "njutest-devkit",
  "proc-macro2",
+ "proptest",
  "rust-mutants",
  "rustix",
  "serde",
@@ -1221,34 +1236,24 @@ dependencies = [
 ]
 
 [[package]]
-name = "mjutest-devkit"
+name = "njutest-devkit"
 version = "0.1.0"
 dependencies = [
+ "hex",
+ "serde",
  "serde_json",
+ "sha2 0.11.0",
  "similar",
  "tempfile",
  "thiserror 2.0.20",
 ]
 
 [[package]]
-name = "mjutest-macros"
+name = "njutest-macros"
 version = "0.1.0"
 dependencies = [
  "proc-macro2",
  "syn 3.0.5",
-]
-
-[[package]]
-name = "nix"
-version = "0.29.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "71e2746dc3a24dd78b3cfcb7be93368c6de9963d30f43a6a73998a9cf4b17b46"
-dependencies = [
- "bitflags 2.13.1",
- "cfg-if",
- "cfg_aliases",
- "libc",
- "memoffset",
 ]
 
 [[package]]
@@ -1881,9 +1886,11 @@ dependencies = [
  "criterion",
  "hex",
  "jiff",
- "mjutest-devkit",
+ "jsonschema",
+ "njutest-devkit",
  "proc-macro2",
  "proptest",
+ "rust-mutants",
  "rustix",
  "serde",
  "serde_json",
@@ -1891,6 +1898,7 @@ dependencies = [
  "syn 3.0.5",
  "tempfile",
  "thiserror 2.0.20",
+ "toml",
  "windows-sys",
 ]
 
@@ -1902,7 +1910,8 @@ dependencies = [
  "hex",
  "jiff",
  "jsonschema",
- "mjutest-devkit",
+ "njutest-devkit",
+ "proptest",
  "ratatui",
  "rust-mutants",
  "rustix",
@@ -2753,9 +2762,11 @@ version = "0.1.0"
 dependencies = [
  "cargo_metadata",
  "clap",
+ "hex",
  "proc-macro2",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
  "syn 3.0.5",
  "tempfile",
  "thiserror 2.0.20",

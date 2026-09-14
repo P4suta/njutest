@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Return replacements a probe can answer for, and one it cannot.
@@ -63,6 +63,50 @@ pub fn retries() -> i32 {
     NO_RETRIES
 }
 
+/// A value whose equality the standard library defines in full, so a guard may compare one.
+#[derive(Debug, Clone, Default)]
+pub struct Held {
+    /// A name the tests only ever leave empty.
+    pub name: String,
+    /// A list the tests only ever leave empty.
+    pub items: Vec<i32>,
+    /// A number the tests only ever leave absent.
+    pub maybe: Option<i32>,
+}
+
+/// Returns the name, which every test leaves empty, and empty is what the replacement writes.
+#[must_use]
+pub fn name_of(held: Held) -> String {
+    held.name
+}
+
+/// Returns the list, which every test leaves empty, and empty is what the replacement writes.
+#[must_use]
+pub fn items_of(held: Held) -> Vec<i32> {
+    held.items
+}
+
+/// Returns the number, which every test leaves absent, and absent is what the replacement writes.
+#[must_use]
+pub fn maybe_of(held: Held) -> Option<i32> {
+    held.maybe
+}
+
+/// Returns a borrow of the name. The value is a `&String`, which has no `Default`, so the compiler refuses the probe however empty the name is.
+#[must_use]
+pub fn borrowed_name(held: &Held) -> &str {
+    &held.name
+}
+
+/// The empty name, spelled as a name so the returned value is a `&str` rather than a borrow of a `String`.
+pub const NO_NAME: &str = "";
+
+/// Returns the name nothing has, which is already what the replacement would write.
+#[must_use]
+pub fn no_name() -> &'static str {
+    NO_NAME
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -93,6 +137,31 @@ mod tests {
     #[test]
     fn there_are_no_retries() {
         assert_eq!(super::retries(), 0);
+    }
+
+    #[test]
+    fn a_held_name_comes_back_empty() {
+        assert!(super::name_of(super::Held::default()).is_empty());
+    }
+
+    #[test]
+    fn a_held_list_comes_back_empty() {
+        assert!(super::items_of(super::Held::default()).is_empty());
+    }
+
+    #[test]
+    fn a_held_number_comes_back_absent() {
+        assert!(super::maybe_of(super::Held::default()).is_none());
+    }
+
+    #[test]
+    fn a_borrowed_name_comes_back_empty() {
+        assert!(super::borrowed_name(&super::Held::default()).is_empty());
+    }
+
+    #[test]
+    fn nothing_has_a_name() {
+        assert!(super::no_name().is_empty());
     }
 
     #[test]

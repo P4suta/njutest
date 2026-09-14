@@ -1,0 +1,35 @@
+Say what the engine left in the temporary directory, and remove what no run still owns
+
+Usage: rust-mutants cache [OPTIONS]
+
+Options:
+      --color <WHEN>
+          Whether to paint the output. `auto` paints a terminal that has not set `NO_COLOR`
+
+          Possible values:
+          - auto:   Colour a terminal that has not asked to go without
+          - always: Always
+          - never:  Never
+          
+          [default: auto]
+
+      --root <DIR>
+          The workspace root, whose report directory holds the ledger of what was kept
+
+      --gc
+          Remove every abandoned snapshot, and the build caches no run can look up again
+
+      --all
+          With `--gc`, remove every build cache no live run has locked, not only the unowned ones
+
+      --kept
+          With `--gc`, remove the directories a run was asked to keep, too
+
+      --clear-outcomes
+          Empty the store of what earlier runs established, and say how much was in it
+
+      --cache-dir <DIR>
+          Read and write the store under this directory rather than the user's cache directory
+
+  -h, --help
+          Print help (see a summary with '-h')

@@ -1,12 +1,12 @@
 <!--
-SPDX-FileCopyrightText: 2026 mjutest contributors
+SPDX-FileCopyrightText: 2026 njutest contributors
 SPDX-License-Identifier: MIT OR Apache-2.0
 -->
 
 # Operators
 
 **Status: implemented** (`rust_mutants::syntax`, `rust_mutants::instrument`,
-`rust_mutants::validate`). The v1 table: twelve families, fifty-one rules,
+`rust_mutants::validate`). The v1 table: fifteen families, sixty-nine rules,
 named `family` / `rule@version`. The version enters the mutant identity, so
 changing a rule's output is a new version and every old identity lapses with
 it. Adding a rule does not: what enters an identity is the rule's own name and
@@ -25,11 +25,26 @@ type-checks. Return replacements read the signature — `-> bool` offers
 `return-true`, `-> Result<..>` `return-ok-default`, `-> Option<..>` both
 `return-some-default` and `return-default`, anything else `return-default` —
 and never propose a value the code already spells (`0`, `false`, `""`, `()`,
-`None`, `Ok(())`, `Default::default()`, `T::new()`). A range swap changes
-the expression's type, so its guard sits at the enclosing statement or `let`
-initializer, where the types meet again. A `&&`/`||` with a `let` operand
-and an `if let`/`while let` condition are left alone: they cannot be
-negated or swapped and compile.
+`None`, `[]`, `&[]`, `vec![]`, `Ok(())`, `Default::default()`, `T::new()`). A signature the syntax
+cannot say has a default is `unstated-return-type` rather than a candidate
+the compiler will refuse: an `impl Trait`, a raw pointer, a function type, a
+type a macro writes, a generic parameter nothing bound to `Default`, and a
+`&mut T` — a reference that is read is defaultable where the syntax says so
+(`&str`, `&[T]`, and the arguments of an `Option` or a `Result` that spell
+one), and a reference that is written is not.
+
+A return site is the whole returned expression and, where that expression is
+an `if` or a `match` whose arms return, each branch of it as well. `fn sign`
+whose body is `if n > 0 { "positive" } else if n < 0 { "negative" } else
+{ "zero" }` therefore carries four return replacements: one that answers for
+the function and one for each of the three answers it chooses between. The
+whole-expression mutant keeps the id it always had; the branch mutants are
+new ones beside it.
+
+A range swap changes the expression's type, so its guard sits at the
+enclosing statement or `let` initializer, where the types meet again. A
+`&&`/`||` with a `let` operand and an `if let`/`while let` condition are left
+alone: they cannot be negated or swapped and compile.
 
 Type-directed splits are impossible without a type checker
 ([ADR 0008](../adr/0008-compiler-validated-acceptance-and-the-type-witness-pass.md)),
@@ -39,21 +54,59 @@ type-check. Replacements derive from the token, never from a string.
 | Family | Rules | Tier |
 | --- | --- | --- |
 | `boolean-literal` | `true-to-false`, `false-to-true` | balanced |
-| `condition-negation` | `negate-condition`, `negate-loop-condition`, `remove-not` | balanced |
+| `condition-negation` | `negate-condition`, `negate-loop-condition`, `remove-not`, `negate-bool-method` | balanced |
 | `boolean-connective` | `and-to-or`, `or-to-and` | balanced |
 | `comparison` | `eq-to-neq`, `neq-to-eq`, `lt-to-le`, `le-to-lt`, `gt-to-ge`, `ge-to-gt` | balanced |
 | `range` | `range-to-inclusive`, `inclusive-to-range` | balanced |
 | `arithmetic` | `add-to-sub`, `sub-to-add`, `mul-to-div`, `div-to-mul`, `rem-to-mul`, `remove-unary-minus` | balanced |
-| `return-replacement` | `return-default`, `return-ok-default`, `return-some-default`, `return-true` | balanced |
+| `return-replacement` | `return-default`, `return-ok-default`, `return-some-default`, `return-true`, `return-err-default` | balanced |
 | `error-propagation` | `question-to-unwrap`, `ignore-question-statement` | balanced |
+| `match-arm` | `delete-match-arm`, `remove-match-guard` | balanced |
+| `control-flow` | `break-to-continue`, `continue-to-break` | balanced |
 | `bitwise` | `band-to-bor`, `bor-to-band`, `xor-to-band`, `shl-to-shr`, `shr-to-shl` | strong |
 | `compound-assignment` | `add-assign-to-sub-assign`, `sub-assign-to-add-assign`, `mul-assign-to-div-assign`, `div-assign-to-mul-assign`, `rem-assign-to-mul-assign`, `band-assign-to-bor-assign`, `bor-assign-to-band-assign`, `xor-assign-to-band-assign`, `shl-assign-to-shr-assign`, `shr-assign-to-shl-assign` | strong |
-| `method-swap` | `is-some-to-is-none`, `is-none-to-is-some`, `is-ok-to-is-err`, `is-err-to-is-ok`, `max-to-min`, `min-to-max` | strong |
-| `statement-deletion` | `delete-call-statement`, `delete-assignment`, `delete-compound-assignment` | all |
+| `method-swap` | `is-some-to-is-none`, `is-none-to-is-some`, `is-ok-to-is-err`, `is-err-to-is-ok`, `max-to-min`, `min-to-max`, `all-to-any`, `any-to-all`, `first-to-last`, `last-to-first`, `skip-to-take`, `take-to-skip`, `sum-to-product`, `product-to-sum` | strong |
+| `statement-deletion` | `delete-call-statement`, `delete-assignment`, `delete-compound-assignment`, `delete-else-branch` | all |
+| `literal` | `int-increment`, `int-decrement`, `string-to-empty` | all |
 
 `balanced ⊂ strong ⊂ all`, which the table's order carries: it is
 non-decreasing in tier, so each profile's rules are a prefix of the next
-one's.
+one's, and `tiers_never_decrease_down_the_table` is what holds it there.
+
+`delete-match-arm` asks whether a suite notices an arm going away, by making
+the arm's guard `false`; `remove-match-guard` asks whether it notices the arm
+widening, by making the guard `true`. An arm with no guard is where the guard
+is written, which is what Form M is for. Deletion is offered only where the
+syntax can say the match stays exhaustive without the arm: the arm is not
+itself a bare `_`, and a bare `_` sits below it. Every other arm may be the
+one carrying exhaustiveness, and a mutation the compiler refuses says nothing
+about the tests.
+
+`break-to-continue` and `continue-to-break` keep the label, because the label
+says which loop the jump is about. A `break` that carries a value is left
+alone: `continue` carries none, and the loop whose value it was would have
+nothing to be. A swap that turns the only way out of a loop into a way round
+it is a mutation the tests notice as a timeout, which is a kill.
+
+`delete-else-branch` takes the `else` an `if` chain ends with, and only where
+the chain stands as a statement: an `if` that is a value has to have an `else`
+and every branch has to produce the same type.
+
+`int-increment` and `int-decrement` respell a literal one step away in the
+radix it was written in, keeping its suffix. Rust spells no negative literal
+— `-1` is a unary minus on `1` — so zero has no predecessor to offer, and a
+suffix that names a type bounds what the literal may become.
+`string-to-empty` empties a string that says something: a message nobody
+checks is a message nobody would miss.
+
+`negate-bool-method` asks the opposite of a call that answers a question —
+`is_*`, `has_*`, `contains`, `contains_key`, `starts_with`, `ends_with` — by
+wrapping it in a `!`. It stays out of three places another rule already asks
+about: the whole of an `if` or `while` condition, which is
+`negate-condition`'s and `negate-loop-condition`'s; a call directly under a
+`!`, which is `remove-not`'s; and `is_some`, `is_none`, `is_ok`, `is_err`,
+which are the swaps'. Every one of those places carries the other rule's
+decision, so leaving it is not silence.
 
 A method swap edits the method's identifier and nothing else. It reads no
 type, so `is_none` on a receiver that has no such method is a mutation the
@@ -92,14 +145,17 @@ so there would be nothing to map an expansion's positions onto.
   the witness tree proves), and the body has at least one statement: the
   body's brace-to-brace span.
 - **Probe form** (`Mutant.probed`): for the `return-replacement` family, when
-  every operand of the statement is effect-free and cannot panic and the
-  compiler accepts the probe. It accepts it only where equality is the whole of
-  what a program can tell apart — the integers, `bool`, `char`, the unit — so a
-  float, and a type whose `PartialEq` answers about less than a test can read,
-  leave the mutant unprobed.
+  every operand of the returned expression is effect-free and cannot panic and
+  the compiler accepts the probe. It accepts it only where equality is the
+  whole of what a program can tell apart — the integers, `bool`, `char`, the
+  unit, `str`, `String`, and `Option` or `Vec` of one of those — so a float,
+  and a type whose `PartialEq` answers about less than a test can read, leave
+  the mutant unprobed.
 
-A mutant without a proof is still cataloged, instrumented, and executed; what
-it lacks is only the licence to skip a test.
+A selected mutant without a proof is still cataloged, instrumented, and
+executed; what it lacks is only the licence to skip a test. A run filter can
+leave a different candidate explicitly `unselected` before either proof or
+compiler validation.
 
 ## What `include!` does to a file
 

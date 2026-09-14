@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-FileCopyrightText: 2026 mjutest contributors
+# SPDX-FileCopyrightText: 2026 njutest contributors
 # SPDX-License-Identifier: MIT OR Apache-2.0
 #
 # Report the development tools this repository expects, read-only. The pins it
@@ -40,16 +40,23 @@ else
 fi
 
 echo "cargo tools"
-for tool in cargo-nextest cargo-deny cargo-llvm-cov cargo-audit cargo-mutants cargo-fuzz cargo-miri; do
+for tool in cargo-nextest cargo-deny cargo-llvm-cov cargo-audit cargo-mutants cargo-fuzz; do
     if command -v "$tool" >/dev/null 2>&1; then
         ok "$tool"
     else
         warn "$tool not found (mise install, or optional for fuzz/miri)"
     fi
 done
+# rustup puts a `cargo-miri` shim on the path whether or not the component is
+# installed, and the shim refuses when it is not. Ask it, rather than the path.
+if cargo +nightly miri --version >/dev/null 2>&1; then
+    ok "cargo-miri"
+else
+    warn "cargo-miri not installed for nightly: the deep-v1 contract will fail closed with NJ7001 (rustup +nightly component add miri)"
+fi
 
 echo "repository tools"
-for tool in mise lefthook committed typos taplo actionlint git; do
+for tool in mise lefthook committed typos taplo actionlint mdbook git; do
     if command -v "$tool" >/dev/null 2>&1; then
         ok "$tool"
     else

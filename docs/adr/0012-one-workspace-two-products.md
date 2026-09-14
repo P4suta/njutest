@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: 2026 mjutest contributors
+SPDX-FileCopyrightText: 2026 njutest contributors
 SPDX-License-Identifier: MIT OR Apache-2.0
 -->
 
@@ -20,7 +20,7 @@ sequence of pull requests with a version pin between them.
 
 ## Decision
 
-`rust-mutants` and `mjutest` live in one Cargo workspace. The engine remains
+`rust-mutants` and `njutest` live in one Cargo workspace. The engine remains
 a product of its own — a library with a stable public API and, from milestone
 E2, a standalone command line with its own reports — and the dependency
 direction is fixed: the runner depends on the engine and on the public API

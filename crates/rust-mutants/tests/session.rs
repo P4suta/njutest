@@ -1,573 +1,133 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! The public API, end to end: open a read-only tree, prepare it, and run mutants against the build that preparation produced.
+//! What a session is asked, in the words a caller says it in. Nothing here starts a toolchain.
 
-#![expect(
-    clippy::expect_used,
-    clippy::indexing_slicing,
-    clippy::too_many_lines,
-    reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
-)]
+use std::time::Duration;
 
-use std::path::{Path, PathBuf};
+use std::sync::atomic::Ordering;
 
-use rust_mutants::outcome::Outcome;
-use rust_mutants::rule::Tier;
-use rust_mutants::runner::Cancel;
-use rust_mutants::session::{PrepareOptions, Request, Session};
-use rust_mutants::workspace::{OpenOptions, Workspace};
+use rust_mutants::run::Quiet;
+use rust_mutants::session::{
+    DEFAULT_MUTANT_TIMEOUT, Request, Timeout, TimeoutSource, derived, rewrite_needed,
+};
 
-/// A copy of a fixture, so the source tree the engine opens is a throwaway.
-struct Fixture {
-    root: PathBuf,
-    _dir: tempfile::TempDir,
-    _temp: tempfile::TempDir,
-    temp_root: PathBuf,
+#[test]
+fn a_request_built_step_by_step_equals_the_literal_it_replaces() {
+    let built = Request::new("abc")
+        .with_target("demo/lib/demo")
+        .test(Some("tests::one".to_owned()))
+        .with_args(vec!["--nocapture".to_owned()])
+        .with_timeout(Some(Duration::from_secs(30)));
+    assert_eq!(built.mutant, "abc");
+    assert_eq!(built.target.as_deref(), Some("demo/lib/demo"));
+    assert_eq!(built.test.as_deref(), Some("tests::one"));
+    assert_eq!(built.args, vec!["--nocapture".to_owned()]);
+    assert_eq!(built.timeout, Some(Duration::from_secs(30)));
+
+    let plain = Request::new("abc");
+    assert_eq!(plain.target, None);
+    assert_eq!(plain.test, None);
+    assert!(plain.args.is_empty());
+    assert_eq!(plain.timeout, None);
 }
 
-fn fixture(name: &str) -> Fixture {
-    let dir = tempfile::Builder::new()
-        .prefix("rust-mutants-session-")
-        .tempdir()
-        .expect("tempdir");
-    let root = dir.path().join(name);
-    copy_dir(&mjutest_devkit::paths::fixtures_dir().join(name), &root);
-    let temp = tempfile::Builder::new()
-        .prefix("rust-mutants-session-temp-")
-        .tempdir()
-        .expect("tempdir");
-    let temp_root = temp.path().to_path_buf();
-    Fixture {
-        root,
-        _dir: dir,
-        _temp: temp,
-        temp_root,
-    }
+#[test]
+fn asking_for_the_whole_target_again_is_one_call_rather_than_a_struct_update() {
+    let one = Request::new("abc")
+        .with_target("demo/lib/demo")
+        .test(Some("tests::one".to_owned()));
+    let whole = one.clone().test(None);
+    assert_eq!(whole.test, None);
+    assert_eq!(
+        whole.target, one.target,
+        "asking for the whole target changes what runs and nothing else"
+    );
+    assert_eq!(whole.mutant, one.mutant);
 }
 
-fn copy_dir(from: &Path, to: &Path) {
-    std::fs::create_dir_all(to).expect("mkdir");
-    for entry in std::fs::read_dir(from).expect("read_dir") {
-        let entry = entry.expect("entry");
-        if entry.file_name() == "target" {
-            continue;
-        }
-        let destination = to.join(entry.file_name());
-        if entry.file_type().expect("type").is_dir() {
-            copy_dir(&entry.path(), &destination);
-        } else {
-            std::fs::copy(entry.path(), &destination).expect("copy");
-        }
-    }
+#[test]
+fn a_file_whose_kept_set_did_not_change_is_not_rewritten_between_rounds() {
+    let instrumented = "the file as one round wrote it".to_owned();
+    assert!(
+        rewrite_needed(None, &instrumented),
+        "a file nothing has written yet is a file to write"
+    );
+    assert!(
+        !rewrite_needed(Some(&instrumented), &instrumented),
+        "a round condemns mutants of some files and not others, and a file whose live set did \
+         not change holds what it already holds"
+    );
+    assert!(rewrite_needed(
+        Some(&instrumented),
+        "the file with one guard fewer"
+    ));
 }
 
-fn open(fixture: &Fixture) -> Workspace {
-    Workspace::open(
-        &fixture.root,
-        OpenOptions {
-            cargo: Some(mjutest_devkit::paths::cargo_binary()),
-            temp_directory: fixture.temp_root.clone(),
-            env: std::env::vars_os().collect(),
-            locked: true,
-            offline: true,
-            ..OpenOptions::default()
-        },
-        &Cancel::new(),
-    )
-    .expect("open")
+#[test]
+fn the_default_timeout_is_five_times_the_baseline_of_the_target_and_never_below_thirty_seconds() {
+    assert_eq!(
+        derived(Duration::from_secs(20)),
+        Duration::from_secs(100),
+        "a mutation that takes five times what the whole target took is one nothing is waiting \
+         for, and the multiple is of what this target measured rather than of a number"
+    );
+    assert_eq!(
+        derived(Duration::from_millis(40)),
+        Duration::from_secs(30),
+        "a fast target would derive a budget shorter than a machine's own noise, and a timeout \
+         a slow machine trips is a finding about the machine"
+    );
 }
 
-fn prepare(fixture: &Fixture) -> Session {
-    open(fixture)
-        .prepare(
-            &PrepareOptions {
-                tier: Tier::All,
-                ..PrepareOptions::default()
-            },
-            &Cancel::new(),
-        )
-        .expect("prepare")
+#[test]
+fn a_configured_timeout_wins_over_auto() {
+    assert_eq!(
+        Timeout::Fixed(Duration::from_secs(7)).of(Some(Duration::from_secs(20))),
+        (Duration::from_secs(7), TimeoutSource::Configured)
+    );
+    assert_eq!(
+        Timeout::Auto.of(Some(Duration::from_secs(20))),
+        (Duration::from_secs(100), TimeoutSource::Derived)
+    );
+    assert_eq!(
+        Timeout::Auto.of(None),
+        (DEFAULT_MUTANT_TIMEOUT, TimeoutSource::Derived),
+        "a target nothing verified has no baseline to be a multiple of, and the run says what \
+         it fell back to rather than waiting for ever"
+    );
 }
 
-/// The digest of every file of a tree, so "the source was not touched" can be asserted rather than hoped.
-fn fingerprint(root: &Path) -> Vec<(String, String)> {
-    let mut entries = Vec::new();
-    let mut stack = vec![root.to_path_buf()];
-    while let Some(dir) = stack.pop() {
-        for entry in std::fs::read_dir(&dir).expect("read_dir") {
-            let entry = entry.expect("entry");
-            let path = entry.path();
-            if entry.file_type().expect("type").is_dir() {
-                if entry.file_name() != "target" {
-                    stack.push(path);
+#[test]
+fn a_confirming_retry_takes_the_quiet_lock_alone() {
+    let quiet = Quiet::default();
+    let running = std::sync::atomic::AtomicU32::new(0);
+    let most = std::sync::atomic::AtomicU32::new(0);
+    std::thread::scope(|scope| {
+        for _worker in 0..4 {
+            let _handle = scope.spawn(|| {
+                for _turn in 0..8 {
+                    quiet.shared(|| {
+                        let now = running.fetch_add(1, Ordering::SeqCst).saturating_add(1);
+                        most.fetch_max(now, Ordering::SeqCst);
+                        std::thread::sleep(Duration::from_millis(1));
+                        running.fetch_sub(1, Ordering::SeqCst);
+                    });
+                    quiet.alone(|| {
+                        assert_eq!(
+                            running.load(Ordering::SeqCst),
+                            0,
+                            "a run that has to decide whether a budget really expired measures \
+                             with the machine to itself"
+                        );
+                        std::thread::sleep(Duration::from_millis(1));
+                    });
                 }
-                continue;
-            }
-            let bytes = std::fs::read(&path).expect("read");
-            entries.push((
-                path.strip_prefix(root)
-                    .expect("under the root")
-                    .to_string_lossy()
-                    .into_owned(),
-                hex::encode(<sha2::Sha256 as sha2::Digest>::digest(&bytes)),
-            ));
+            });
         }
-    }
-    entries.sort();
-    entries
-}
-
-#[test]
-fn opening_copies_the_tree_and_never_writes_to_it() {
-    let fixture = fixture("fixture-simple");
-    let before = fingerprint(&fixture.root);
-    let workspace = open(&fixture);
-
-    assert_eq!(workspace.root(), fixture.root.canonicalize().expect("real"));
-    assert!(workspace.snapshot_root().join("src/lib.rs").is_file());
-    assert_ne!(workspace.snapshot_root(), fixture.root);
-    assert_eq!(workspace.workspace_digest().len(), 64);
-    assert!(workspace.toolchain().host().contains('-'));
-    let members: Vec<&str> = workspace
-        .metadata()
-        .members()
-        .map(|package| package.name.as_str())
-        .collect();
-    assert_eq!(members, ["fixture-simple"]);
+    });
     assert!(
-        workspace
-            .target_dir()
-            .file_name()
-            .expect("a name")
-            .to_string_lossy()
-            .starts_with("rust-mutants-target-")
-    );
-    assert!(workspace.swept().failures.is_empty());
-
-    let dir = workspace.snapshot_dir().to_path_buf();
-    assert!(workspace.close().expect("close").is_empty());
-    assert!(!dir.exists(), "the snapshot goes when the workspace does");
-    assert_eq!(
-        fingerprint(&fixture.root),
-        before,
-        "the source tree is read-only"
-    );
-}
-
-#[test]
-fn preparing_catalogs_instruments_validates_and_builds() {
-    let fixture = fixture("fixture-simple");
-    let before = fingerprint(&fixture.root);
-    let session = prepare(&fixture);
-
-    assert_eq!(session.catalog().len(), 6);
-    assert_eq!(session.accepted().len(), 6, "{:?}", session.rejections());
-    assert!(session.rejections().is_empty());
-    let skips: Vec<(&str, u32)> = session
-        .skips()
-        .iter()
-        .map(|skip| (skip.reason.name(), skip.count))
-        .collect();
-    assert_eq!(skips, [("test-code", 2), ("test-only-file", 2)]);
-
-    let targets: Vec<&str> = session
-        .targets()
-        .iter()
-        .map(|target| target.id.as_str())
-        .collect();
-    assert_eq!(
-        targets,
-        [
-            "fixture-simple/lib/fixture_simple",
-            "fixture-simple/test/parity",
-            "fixture-simple/doc/fixture_simple"
-        ]
-    );
-    for target in session.targets() {
-        assert!(
-            target.executable.is_file(),
-            "{}",
-            target.executable.display()
-        );
-        assert_eq!(target.cwd, session.snapshot_root());
-    }
-    assert_eq!(
-        fingerprint(&fixture.root),
-        before,
-        "the source tree is read-only"
-    );
-    session.close().expect("close");
-}
-
-#[test]
-fn a_mutant_runs_against_every_target_until_one_kills_it() {
-    let fixture = fixture("fixture-simple");
-    let session = prepare(&fixture);
-    let cancel = Cancel::new();
-
-    let by_rule = |rule: &str| -> String {
-        session
-            .catalog()
-            .mutants()
-            .iter()
-            .find(|mutant| mutant.candidate.rule.name == rule)
-            .unwrap_or_else(|| panic!("a {rule} mutant"))
-            .display_id
-            .clone()
-    };
-
-    let killed = session
-        .exec(
-            &Request {
-                mutant: by_rule("return-default"),
-                ..Request::default()
-            },
-            &cancel,
-        )
-        .expect("exec");
-    assert_eq!(killed.outcome, Outcome::Killed);
-    assert_eq!(killed.target, "fixture-simple/lib/fixture_simple");
-    assert!(killed.tests_run.unwrap_or_default() > 0);
-
-    let survivor = session
-        .exec(
-            &Request {
-                mutant: by_rule("gt-to-ge"),
-                ..Request::default()
-            },
-            &cancel,
-        )
-        .expect("exec");
-    assert_eq!(survivor.outcome, Outcome::Survived);
-    assert_eq!(
-        survivor.target, "fixture-simple/test/parity",
-        "every target ran, and the last one had the last word"
-    );
-
-    let one = session
-        .exec(
-            &Request {
-                mutant: by_rule("return-default"),
-                target: Some("fixture-simple/lib/fixture_simple".to_owned()),
-                test: Some("tests::max_picks_the_larger".to_owned()),
-                ..Request::default()
-            },
-            &cancel,
-        )
-        .expect("exec");
-    assert_eq!(one.outcome, Outcome::Killed);
-    assert_eq!(one.summary.expect("a summary").failed, 1);
-
-    let nothing = session
-        .exec(
-            &Request {
-                mutant: by_rule("return-default"),
-                target: Some("parity".to_owned()),
-                test: Some("no::such::test".to_owned()),
-                ..Request::default()
-            },
-            &cancel,
-        )
-        .expect("exec");
-    assert_eq!(nothing.outcome, Outcome::Inconclusive);
-
-    let drift = session.changes().expect("changes");
-    assert!(
-        drift.is_empty(),
-        "no test wrote into the tree: {:?}",
-        drift
-            .iter()
-            .map(|one| (one.kind().name(), one.rel_path()))
-            .collect::<Vec<_>>()
-    );
-    session.close().expect("close");
-}
-
-#[test]
-fn a_request_that_names_nothing_is_refused_by_name() {
-    let fixture = fixture("fixture-simple");
-    let session = prepare(&fixture);
-    let cancel = Cancel::new();
-
-    let unknown = session
-        .exec(
-            &Request {
-                mutant: "ffffffff".to_owned(),
-                ..Request::default()
-            },
-            &cancel,
-        )
-        .unwrap_err();
-    assert!(unknown.to_string().contains("RM5003"), "{unknown}");
-
-    let short = session
-        .exec(
-            &Request {
-                mutant: "a".to_owned(),
-                ..Request::default()
-            },
-            &cancel,
-        )
-        .unwrap_err();
-    assert!(short.to_string().contains("RM5003"), "{short}");
-
-    let target = session
-        .exec(
-            &Request {
-                mutant: session.catalog().mutants()[0].display_id.clone(),
-                target: Some("no-such-target".to_owned()),
-                ..Request::default()
-            },
-            &cancel,
-        )
-        .unwrap_err();
-    assert!(target.to_string().contains("RM5004"), "{target}");
-    session.close().expect("close");
-}
-
-#[test]
-fn a_refused_candidate_keeps_the_compilers_own_words_and_costs_no_sibling() {
-    let fixture = fixture("fixture-rejectable");
-    let session = prepare(&fixture);
-    let mut refused: Vec<&str> = session
-        .rejections()
-        .iter()
-        .map(|rejection| rejection.rule.as_str())
-        .collect();
-    refused.sort_unstable();
-    assert_eq!(
-        refused,
-        [
-            "add-to-sub",
-            "mul-to-div",
-            "range-to-inclusive",
-            "return-default"
-        ],
-        "mul-to-div is refused by a lint that only fires once code is \
-         generated, which is why validation compiles the way the run runs"
-    );
-    assert!(
-        session
-            .rejections()
-            .iter()
-            .any(|rejection| rejection.diagnostic.contains("cannot subtract"))
-    );
-    assert_eq!(
-        session.accepted().len() + session.rejections().len(),
-        session.catalog().len()
-    );
-    assert!(!session.accepted().is_empty());
-    session.close().expect("close");
-}
-
-#[test]
-fn keeping_the_temporary_directories_preserves_them_and_says_which() {
-    let fixture = fixture("fixture-simple");
-    let workspace = Workspace::open(
-        &fixture.root,
-        OpenOptions {
-            cargo: Some(mjutest_devkit::paths::cargo_binary()),
-            temp_directory: fixture.temp_root.clone(),
-            env: std::env::vars_os().collect(),
-            locked: true,
-            offline: true,
-            keep_temp: true,
-            ..OpenOptions::default()
-        },
-        &Cancel::new(),
-    )
-    .expect("open");
-    let dir = workspace.snapshot_dir().to_path_buf();
-    let kept = workspace.close().expect("close");
-    assert_eq!(kept.first(), Some(&dir));
-    assert!(dir.join("tree/src/lib.rs").is_file(), "kept means kept");
-    std::fs::remove_dir_all(&dir).expect("tidy");
-}
-
-#[test]
-fn the_trace_says_what_every_phase_did() {
-    use rust_mutants::trace::{MemorySink, Payload, Recorder, Sink};
-
-    let fixture = fixture("fixture-rejectable");
-    let recorder = Recorder::wall(Sink::Memory(MemorySink::unbounded()));
-    let workspace = Workspace::open(
-        &fixture.root,
-        OpenOptions {
-            cargo: Some(mjutest_devkit::paths::cargo_binary()),
-            temp_directory: fixture.temp_root.clone(),
-            env: std::env::vars_os().collect(),
-            locked: true,
-            offline: true,
-            trace: recorder.clone(),
-            ..OpenOptions::default()
-        },
-        &Cancel::new(),
-    )
-    .expect("open");
-    let session = workspace
-        .prepare(
-            &PrepareOptions {
-                tier: Tier::All,
-                verify: false,
-                ..PrepareOptions::default()
-            },
-            &Cancel::new(),
-        )
-        .expect("prepare");
-    let mutant = session.catalog().mutants()[0].display_id.clone();
-    let _result = session
-        .exec(
-            &Request {
-                mutant,
-                ..Request::default()
-            },
-            &Cancel::new(),
-        )
-        .expect("exec");
-    recorder.run_end("ok", None);
-    session.close().expect("close");
-
-    let events = recorder.events();
-    let types: Vec<&str> = events
-        .iter()
-        .map(|event| event.payload.type_name())
-        .collect();
-    for expected in [
-        "run-start",
-        "open",
-        "snapshot",
-        "discover-file",
-        "instrument",
-        "validate-round",
-        "build",
-        "mutant-exec",
-        "exec",
-        "run-end",
-    ] {
-        assert!(
-            types.contains(&expected),
-            "{expected} is missing from {types:?}"
-        );
-    }
-
-    let rounds: Vec<(u32, bool, usize)> = events
-        .iter()
-        .filter_map(|event| match &event.payload {
-            Payload::ValidateRound { round } => {
-                Some((round.round, round.success, round.attributed.len()))
-            }
-            _ => None,
-        })
-        .collect();
-    assert!(rounds.len() >= 2, "{rounds:?}");
-    assert_eq!(rounds.first().map(|round| round.1), Some(false));
-    assert_eq!(rounds.last().map(|round| round.1), Some(true));
-    let attributed: Vec<(u32, String)> = events
-        .iter()
-        .filter_map(|event| match &event.payload {
-            Payload::ValidateRound { round } => Some(round.attributed.clone()),
-            _ => None,
-        })
-        .flatten()
-        .map(|one| (one.index, one.said))
-        .collect();
-    assert_eq!(attributed.len(), 4, "{attributed:?}");
-    assert!(
-        attributed
-            .iter()
-            .any(|(_, said)| said.contains("cannot subtract")),
-        "{attributed:?}"
-    );
-
-    for event in &events {
-        if let Payload::Instrument { instrument } = &event.payload {
-            assert_eq!(
-                instrument.lines_before, instrument.lines_after,
-                "{} moved a line",
-                instrument.path
-            );
-            assert!(
-                instrument.module.starts_with("__rm_"),
-                "every file's runtime module is named after its own path: {}",
-                instrument.module
-            );
-        }
-    }
-
-    let executed: Vec<(&str, &str)> = events
-        .iter()
-        .filter_map(|event| match &event.payload {
-            Payload::MutantExec { mutant } => {
-                Some((mutant.outcome.as_str(), mutant.target.as_str()))
-            }
-            _ => None,
-        })
-        .collect();
-    assert_eq!(
-        executed
-            .iter()
-            .filter(|(_, target)| !target.contains("/doc/"))
-            .count(),
-        1,
-        "a library that documents no example answers nothing, and a request that names no \
-         target passes over it: {executed:?}"
-    );
-}
-
-#[test]
-fn a_target_with_no_tests_in_it_answers_neither_question() {
-    let fixture = fixture("fixture-subprocess");
-    let session = prepare(&fixture);
-    let cancel = Cancel::new();
-    let mutant = session
-        .catalog()
-        .mutants()
-        .iter()
-        .find(|mutant| mutant.candidate.rule.name == "negate-condition")
-        .expect("a negate-condition mutant")
-        .display_id
-        .clone();
-    let request = Request {
-        mutant,
-        ..Request::default()
-    };
-
-    let killed = session.exec(&request, &cancel).expect("exec");
-    assert_eq!(
-        killed.outcome,
-        Outcome::Killed,
-        "the library and the binary hold no tests, and passing over them is what lets \
-         the one target that does hold tests answer"
-    );
-    assert_eq!(killed.target, "fixture-subprocess/test/through_the_binary");
-
-    let control = session.control(&request, &cancel).expect("control");
-    assert_eq!(
-        control.outcome,
-        Outcome::Survived,
-        "the original passes, and a sibling target that ran nothing is not a reason to \
-         say it did not"
-    );
-}
-
-#[test]
-fn a_dependency_s_documentation_is_not_this_run_s_to_measure() {
-    let fixture = fixture("fixture-simple");
-    let session = prepare(&fixture);
-
-    let documentation: Vec<&str> = session
-        .targets()
-        .iter()
-        .filter(|target| target.kind == rust_mutants::execute::TargetKind::Doc)
-        .map(|target| target.package.as_str())
-        .collect();
-
-    assert_eq!(
-        documentation,
-        ["fixture-simple"],
-        "the workspace's own members and never the whole resolved graph: asking cargo to \
-         run a dependency's examples asks it to resolve that dependency's own \
-         dev-dependencies, which a lock file for this workspace never pinned"
+        most.load(Ordering::SeqCst) > 1,
+        "and shares it the rest of the time"
     );
 }

@@ -1,0 +1,650 @@
+// SPDX-FileCopyrightText: 2026 njutest contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! The run report: one completed run of every mutant, as a document and as lines a person reads.
+
+use std::collections::BTreeMap;
+
+use crate::session::Session;
+use jiff::Timestamp;
+use serde::{Deserialize, Serialize};
+
+use crate::report::catalog::{
+    MutantDocument, RejectionDocument, SelectionDocument, SkipDocument, WorkspaceDocument,
+};
+use crate::run::{Finding, Run, Standing, count};
+
+/// The name of the shape, so a reader can tell versions apart.
+pub const DOCUMENT_TYPE: &str = "rust-mutants/run-report";
+
+/// The version of that shape.
+pub const SCHEMA_VERSION: u32 = 1;
+
+/// The file one run writes under its own directory.
+pub const FILE_NAME: &str = "run-report-v1.json";
+
+/// The pointer file that names the newest run.
+pub const LATEST_FILE_NAME: &str = "latest.json";
+
+/// One completed run.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunDocument {
+    /// Names the shape.
+    pub document_type: String,
+    /// The version of that shape.
+    pub schema_version: u32,
+    /// The engine that produced it.
+    pub tool_version: String,
+    /// When it ran and how it ended.
+    pub run: RunMeta,
+    /// The tree that was read.
+    pub workspace: WorkspaceDocument,
+    /// What the run asked for.
+    pub selection: SelectionDocument,
+    /// What the run counted.
+    pub accounting: Accounting,
+    /// The share of decided mutants the tests noticed, absent when the run decided nothing.
+    pub score: Option<ScoreDocument>,
+    /// The test targets the run built, which is what every mutant could have been asked against.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub targets: Vec<TargetDocument>,
+    /// How many tests the run started to establish that a set of them answers on its own, which is work no mutation asked for and every narrowed execution rests on.
+    #[serde(default)]
+    pub established_tests: u64,
+    /// One record per non-refused candidate the run accounts for, in catalog order.
+    pub mutants: Vec<RunMutantDocument>,
+    /// Every candidate the compiler refused.
+    pub rejections: Vec<RejectionDocument>,
+    /// Every place discovery passed over.
+    pub skips: Vec<SkipDocument>,
+    /// The claims a reviewer declared, as the run left them.
+    pub expectations: Vec<ExpectationDocument>,
+    /// Everything that stops the run from being clean.
+    pub findings: Vec<FindingDocument>,
+}
+
+/// When a run ran and how it ended.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunMeta {
+    /// The run's identity, which is also its directory name.
+    pub id: String,
+    /// When it started.
+    pub started_at: String,
+    /// When it finished.
+    pub finished_at: String,
+    /// How long the executions took together.
+    pub duration_ms: u64,
+    /// Whether the run stopped because it was asked to.
+    pub interrupted: bool,
+    /// The exit code the run earned.
+    pub exit_code: u8,
+    /// Which part of the catalog the run was about, absent for the whole of it.
+    pub shard: Option<String>,
+}
+
+/// What a run counted. Every mutant is in exactly one of the outcome columns.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct Accounting {
+    /// How many candidate rows the run accounts for, excluding compiler refusals.
+    ///
+    /// A row left `unselected` by a scoped run was not necessarily presented
+    /// to the compiler and makes no acceptance claim.
+    pub cataloged: u32,
+    /// How many candidates the compiler refused.
+    pub refused: u32,
+    /// How many places discovery passed over.
+    pub skipped: u32,
+    /// How many mutants an execution reached a verdict on.
+    pub executed: u32,
+    /// How many a test failed on.
+    pub killed: u32,
+    /// How many every test passed on.
+    pub survived: u32,
+    /// How many exceeded the budget twice.
+    pub timed_out: u32,
+    /// How many the run could not decide.
+    pub inconclusive: u32,
+    /// How many the harness itself failed on.
+    pub errored: u32,
+    /// How many never ran.
+    pub not_run: u32,
+    /// How many of those never ran because no measured target reaches them.
+    #[serde(default)]
+    pub unreached: u32,
+    /// How many of those never ran because a proof removed every target that could have noticed them.
+    #[serde(default)]
+    pub discharged: u32,
+    /// How many survivors a reviewer had declared, and the run confirmed.
+    pub expected: u32,
+}
+
+/// The share of decided mutants the tests noticed.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct ScoreDocument {
+    /// Killed plus confirmed timeouts.
+    pub detected: u32,
+    /// Detected plus survived.
+    pub decided: u32,
+    /// `detected / decided`.
+    pub value: f64,
+}
+
+/// One non-refused candidate and what the run established about it.
+///
+/// `not_run/unselected` is an explicit absence of a compiler-acceptance claim:
+/// selection-aware preparation need not instrument or validate that candidate.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunMutantDocument {
+    /// The dense catalog index the guards name.
+    pub index: u32,
+    /// The full identity.
+    pub id: String,
+    /// The short identity a person types.
+    pub display_id: String,
+    /// The workspace-relative path.
+    pub path: String,
+    /// The package that owns the file.
+    pub package: String,
+    /// The family the rule belongs to.
+    pub family: String,
+    /// The rule's name.
+    pub rule: String,
+    /// The rule's version, which enters the identity.
+    pub rule_version: u32,
+    /// The 1-based line of the edit.
+    pub line: u32,
+    /// The 1-based byte column of the edit.
+    pub column: u32,
+    /// The first byte of the edit.
+    #[serde(default)]
+    pub start_byte: u32,
+    /// One past the last byte of the edit.
+    #[serde(default)]
+    pub end_byte: u32,
+    /// The SHA-256 of the file the edit was cut from, which is what re-minting the identity needs.
+    #[serde(default)]
+    pub source_digest: String,
+    /// The bytes the edit replaces.
+    pub original: String,
+    /// What they become.
+    pub replacement: String,
+    /// What the execution says.
+    pub outcome: String,
+    /// The target that ran, empty when none did.
+    pub target: String,
+    /// The exit status of the last execution.
+    pub exit_code: i32,
+    /// How long every execution of this mutant took together.
+    pub duration_ms: u64,
+    /// How many tests ran, when the harness said.
+    pub tests_run: Option<u32>,
+    /// Every test that failed with the mutant active, which is what noticed it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub killed_by: Vec<String>,
+    /// The signal the last execution died from, on the platforms that have them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signal: Option<i32>,
+    /// Whether a first timeout was retried serially before the outcome was believed.
+    pub retried: bool,
+    /// Why it was never executed, when it was not: `unreached`, `discharged`, or `interrupted`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub not_run_reason: Option<String>,
+    /// Which targets could have noticed it, and which of them ran.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub route: Option<RouteDocument>,
+    /// Whether the compiler renders the mutation identically to what it mutates, when the equivalence layer was asked. Never a claim that it is equivalent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identical: Option<bool>,
+    /// Whether a reviewer declared this outcome in advance and the run confirmed the claim.
+    pub expected: bool,
+    /// Whether no measured target reaches it, which is why it never ran.
+    #[serde(default)]
+    pub unreached: bool,
+    /// The run that established this, when it was not this one.
+    pub source_run_id: Option<String>,
+}
+
+/// One declared expectation, as the run left it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExpectationDocument {
+    /// The identity, prefix, or locator the file wrote, as a reader reads it.
+    pub id: String,
+    /// The locator the file wrote, when it wrote one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub locator: Option<crate::session::Locator>,
+    /// Why the reviewer claims the outcome.
+    pub reason: String,
+    /// The outcome claimed.
+    pub outcome: String,
+    /// The mutant it resolved to, when it resolved. The one that decided the standing, when it named several.
+    pub mutant: Option<String>,
+    /// How many mutants the claim was resolved against, when the locator stated a count.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub covered: Option<u32>,
+    /// Whether the claim held: `met`, `stale`, or `unmatched`.
+    pub standing: String,
+    /// What the run established instead, when the claim was contradicted.
+    pub actual: Option<String>,
+    /// Why the identity resolved to nothing, when it did not resolve.
+    pub why: Option<String>,
+}
+
+/// One thing that stops a run from being clean.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FindingDocument {
+    /// What kind of hole it is.
+    pub kind: String,
+    /// The mutant it is about, when it is about one.
+    pub mutant: Option<String>,
+    /// One sentence a reader can act on.
+    pub detail: String,
+}
+
+/// What the document needs that the session and the run do not carry.
+#[derive(Debug, Clone, Copy)]
+pub struct Meta<'a> {
+    /// The run's identity.
+    pub id: &'a str,
+    /// When the run started.
+    pub started_at: Timestamp,
+    /// When it finished.
+    pub finished_at: Timestamp,
+}
+
+/// Every test target the run built, as documents.
+fn target_documents(session: &Session) -> Vec<TargetDocument> {
+    session
+        .targets()
+        .iter()
+        .map(|target| TargetDocument {
+            id: target.id.clone(),
+            kind: target.kind.name().to_owned(),
+            harness: target.harness,
+            tests: session.tests_of(&target.id),
+            limitations: target.limitations.clone(),
+        })
+        .collect()
+}
+
+/// The run as one document.
+#[must_use]
+pub fn document(
+    session: &Session,
+    run: &Run,
+    selection: SelectionDocument,
+    meta: &Meta<'_>,
+) -> RunDocument {
+    let tally = run.tally();
+    RunDocument {
+        document_type: DOCUMENT_TYPE.to_owned(),
+        schema_version: SCHEMA_VERSION,
+        tool_version: crate::VERSION.to_owned(),
+        run: RunMeta {
+            id: meta.id.to_owned(),
+            started_at: meta.started_at.to_string(),
+            finished_at: meta.finished_at.to_string(),
+            duration_ms: millis(run.duration),
+            interrupted: run.interrupted,
+            exit_code: run.exit_code(),
+            shard: run.shard.map(|shard| shard.to_string()),
+        },
+        workspace: crate::report::catalog::workspace_document(session),
+        selection,
+        targets: target_documents(session),
+        established_tests: session.established_tests(),
+        accounting: Accounting {
+            cataloged: tally.cataloged,
+            refused: tally.refused,
+            skipped: tally.skipped,
+            executed: tally.executed,
+            killed: tally.killed,
+            survived: tally.survived,
+            timed_out: tally.timed_out,
+            inconclusive: tally.inconclusive,
+            errored: tally.errored,
+            not_run: tally.not_run,
+            expected: tally.expected,
+            unreached: tally.unreached,
+            discharged: tally.discharged,
+        },
+        score: run.score().map(|score| ScoreDocument {
+            detected: score.detected,
+            decided: score.decided,
+            value: score.value,
+        }),
+        mutants: run
+            .judged
+            .iter()
+            .map(|one| {
+                let catalog = session
+                    .catalog()
+                    .by_index(one.index)
+                    .map(|mutant| crate::report::catalog::mutant_document(session, mutant));
+                mutant(one, catalog)
+            })
+            .collect(),
+        rejections: crate::report::catalog::rejection_documents(session),
+        skips: crate::report::catalog::skip_documents(session),
+        expectations: run
+            .expectations
+            .iter()
+            .map(|verified| ExpectationDocument {
+                id: verified.id.clone(),
+                locator: verified.locator.clone(),
+                reason: verified.reason.clone(),
+                outcome: verified.outcome.name().to_owned(),
+                mutant: verified.mutant.clone(),
+                covered: (verified.covered > 1).then_some(verified.covered),
+                standing: standing_name(&verified.standing).to_owned(),
+                actual: match &verified.standing {
+                    Standing::Stale { actual } => Some(actual.name().to_owned()),
+                    Standing::Met | Standing::Moved { .. } | Standing::Unmatched { .. } => None,
+                },
+                why: match &verified.standing {
+                    Standing::Unmatched { why } => Some(why.clone()),
+                    Standing::Moved { from, to } => {
+                        Some(format!("the mutation moved from line {from} to line {to}"))
+                    }
+                    Standing::Met | Standing::Stale { .. } => None,
+                },
+            })
+            .collect(),
+        findings: run.findings().iter().map(finding).collect(),
+    }
+}
+
+const fn standing_name(standing: &Standing) -> &'static str {
+    match standing {
+        Standing::Met | Standing::Moved { .. } => "met",
+        Standing::Stale { .. } => "stale",
+        Standing::Unmatched { .. } => "unmatched",
+    }
+}
+
+fn finding(finding: &Finding) -> FindingDocument {
+    FindingDocument {
+        kind: finding.kind.name().to_owned(),
+        mutant: finding.mutant.clone(),
+        detail: finding.detail.clone(),
+    }
+}
+
+fn mutant(one: &crate::run::Judged, catalog: Option<MutantDocument>) -> RunMutantDocument {
+    let catalog = catalog.unwrap_or_else(|| MutantDocument {
+        index: one.index,
+        id: one.id.clone(),
+        display_id: one.display_id.clone(),
+        path: String::new(),
+        package: String::new(),
+        family: String::new(),
+        rule: String::new(),
+        rule_version: 0,
+        line: 0,
+        column: 0,
+        start_byte: 0,
+        end_byte: 0,
+        source_digest: String::new(),
+        original: String::new(),
+        replacement: String::new(),
+        branch: None,
+    });
+    RunMutantDocument {
+        index: catalog.index,
+        id: catalog.id,
+        display_id: catalog.display_id,
+        path: catalog.path,
+        package: catalog.package,
+        family: catalog.family,
+        rule: catalog.rule,
+        rule_version: catalog.rule_version,
+        line: catalog.line,
+        column: catalog.column,
+        start_byte: catalog.start_byte,
+        end_byte: catalog.end_byte,
+        source_digest: catalog.source_digest,
+        original: catalog.original,
+        replacement: catalog.replacement,
+        outcome: one.outcome.name().to_owned(),
+        target: one.target.clone(),
+        exit_code: one.exit_code,
+        duration_ms: millis(one.duration),
+        tests_run: one.tests_run,
+        killed_by: one.failed_tests.clone(),
+        signal: one.signal,
+        retried: one.retried,
+        not_run_reason: one.not_run_reason.map(|reason| reason.name().to_owned()),
+        route: one.route.clone(),
+        identical: one.identical,
+        expected: one.expected,
+        unreached: one.not_run_reason == Some(crate::run::NotRunReason::Unreached),
+        source_run_id: one.source_run_id.clone(),
+    }
+}
+
+/// One test target a run built, and what it is beyond its name.
+///
+/// A run's work is counted in pairs of one mutant and one target, so a reader
+/// that cannot see how many targets there were cannot say what a whole run
+/// would have cost.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TargetDocument {
+    /// `package/kind/name`.
+    pub id: String,
+    /// What kind of target it is.
+    pub kind: String,
+    /// Whether it is built with the libtest harness, which decides how its silence is read.
+    pub harness: bool,
+    /// How many tests its baseline ran, which is what asking the whole of it about one mutation costs.
+    #[serde(default)]
+    pub tests: u32,
+    /// What a run could not establish about it, each named.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub limitations: Vec<String>,
+}
+
+/// One route, as a document, with the targets an execution of it actually ran.
+#[must_use]
+pub fn route_document(route: &crate::session::Route, executed: Vec<String>) -> RouteDocument {
+    RouteDocument {
+        granularity: route.granularity().to_owned(),
+        fallback: route.fallback().map(ToOwned::to_owned),
+        reaching: route
+            .reaching()
+            .into_iter()
+            .map(ToOwned::to_owned)
+            .collect(),
+        discharged: route
+            .discharged()
+            .iter()
+            .map(|one| DischargeDocument {
+                target: one.target.clone(),
+                proof: one.proof.to_owned(),
+            })
+            .collect(),
+        executed,
+        tests: route.tests(),
+    }
+}
+
+fn millis(value: std::time::Duration) -> u64 {
+    u64::try_from(value.as_millis()).unwrap_or(u64::MAX)
+}
+
+/// Which targets could have noticed one mutation, and what became of the ones that ran.
+///
+/// A recording says the same thing, and a run that was not recorded has to be
+/// able to answer it too: `explain` draws a route from the report alone.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RouteDocument {
+    /// `all`, `test`, `block`, `discharged`, or `unreached`.
+    pub granularity: String,
+    /// Why the route is wider than the measurement alone would make it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<String>,
+    /// Every target that could have noticed the mutation.
+    pub reaching: Vec<String>,
+    /// Every target a proof removed, with the proof that removed it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub discharged: Vec<DischargeDocument>,
+    /// Every target that ran, in the order the run asked them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub executed: Vec<String>,
+    /// For each target the measurement narrowed to some of its tests, exactly those tests. A target absent from this ran every test it has.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub tests: BTreeMap<String, Vec<String>>,
+}
+
+/// One target a proof removed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DischargeDocument {
+    /// The target.
+    pub target: String,
+    /// The proof that removed it.
+    pub proof: String,
+}
+
+/// Why the parts of a catalog could not be put back together.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum MergeError {
+    /// Nothing was given to combine.
+    #[error("a merge of no reports is not a report")]
+    Nothing,
+    /// Two of the reports are about different trees, so their parts were never parts of one whole.
+    #[error(
+        "{first} and {other} are about different catalogs, and the parts of one catalog are what a merge is of"
+    )]
+    Disagree {
+        /// The catalog the first report is about.
+        first: String,
+        /// The one that differs.
+        other: String,
+    },
+    /// One mutant appears in more than one part, so the parts overlap and the counts would say more happened than did.
+    #[error(
+        "{mutant} is in more than one of these reports, so they are not the parts of one whole"
+    )]
+    Overlapping {
+        /// The mutant two reports both claim.
+        mutant: String,
+    },
+}
+
+/// The report the whole of a catalog would have written, from the reports of its parts.
+///
+/// The parts are checked for being parts: they must be about one catalog, and
+/// no mutant may appear in two of them. A merge that let them overlap would
+/// count one execution twice and report a score no run ever established.
+///
+/// # Errors
+/// See [`MergeError`].
+pub fn merge(parts: &[RunDocument]) -> Result<RunDocument, MergeError> {
+    let first = parts.first().ok_or(MergeError::Nothing)?;
+    for part in parts {
+        if part.workspace.catalog_digest != first.workspace.catalog_digest {
+            return Err(MergeError::Disagree {
+                first: first.workspace.catalog_digest.clone(),
+                other: part.workspace.catalog_digest.clone(),
+            });
+        }
+    }
+    let mut mutants: BTreeMap<u32, RunMutantDocument> = BTreeMap::new();
+    for part in parts {
+        for one in &part.mutants {
+            if mutants.insert(one.index, one.clone()).is_some() {
+                return Err(MergeError::Overlapping {
+                    mutant: one.id.clone(),
+                });
+            }
+        }
+    }
+    let mutants: Vec<RunMutantDocument> = mutants.into_values().collect();
+    let accounting = accounting_of(&mutants, first);
+    let mut merged = first.clone();
+    merged.run = RunMeta {
+        duration_ms: parts.iter().map(|part| part.run.duration_ms).sum(),
+        interrupted: parts.iter().any(|part| part.run.interrupted),
+        shard: None,
+        ..first.run.clone()
+    };
+    merged.score = score_of(&accounting);
+    merged.accounting = accounting;
+    merged.mutants = mutants;
+    merged.expectations = parts
+        .iter()
+        .flat_map(|part| part.expectations.iter().cloned())
+        .collect();
+    merged.findings = parts
+        .iter()
+        .flat_map(|part| part.findings.iter().cloned())
+        .collect();
+    merged.findings.sort_by(|a, b| {
+        a.kind
+            .cmp(&b.kind)
+            .then_with(|| a.mutant.cmp(&b.mutant))
+            .then_with(|| a.detail.cmp(&b.detail))
+    });
+    merged.findings.dedup();
+    merged.run.exit_code = exit_code_of(&merged);
+    Ok(merged)
+}
+
+/// The columns the merged records add up to. What no part executed — refusals and skips — is a fact about the catalog rather than about a part, so it is taken from one of them rather than summed.
+fn accounting_of(mutants: &[RunMutantDocument], first: &RunDocument) -> Accounting {
+    let mut counted = Accounting {
+        cataloged: count(mutants.len()),
+        refused: first.accounting.refused,
+        skipped: first.accounting.skipped,
+        ..Accounting::default()
+    };
+    for one in mutants {
+        let slot = match one.outcome.as_str() {
+            "killed" => &mut counted.killed,
+            "survived" => &mut counted.survived,
+            "timed_out" => &mut counted.timed_out,
+            "inconclusive" => &mut counted.inconclusive,
+            "not_run" => &mut counted.not_run,
+            _ => &mut counted.errored,
+        };
+        *slot = slot.saturating_add(1);
+        if one.unreached {
+            counted.unreached = counted.unreached.saturating_add(1);
+        }
+        if one.not_run_reason.as_deref() == Some("discharged") {
+            counted.discharged = counted.discharged.saturating_add(1);
+        }
+        if one.expected {
+            counted.expected = counted.expected.saturating_add(1);
+        }
+    }
+    counted.executed = counted.cataloged.saturating_sub(counted.not_run);
+    counted
+}
+
+fn score_of(accounting: &Accounting) -> Option<ScoreDocument> {
+    let detected = accounting.killed.saturating_add(accounting.timed_out);
+    let decided = detected.saturating_add(accounting.survived);
+    (decided > 0).then(|| ScoreDocument {
+        detected,
+        decided,
+        value: f64::from(detected) / f64::from(decided),
+    })
+}
+
+/// The exit code the whole earns, which is the code the whole would have earned rather than the worst of its parts.
+fn exit_code_of(merged: &RunDocument) -> u8 {
+    if merged.run.interrupted {
+        return crate::run::EXIT_INTERRUPTED;
+    }
+    if merged.findings.iter().any(|finding| {
+        crate::run::FindingKind::parse(&finding.kind)
+            .is_some_and(crate::run::FindingKind::is_infrastructure)
+    }) {
+        return crate::run::EXIT_FAILED;
+    }
+    if merged.findings.is_empty() {
+        crate::run::EXIT_DETECTED
+    } else {
+        crate::run::EXIT_UNDETECTED
+    }
+}

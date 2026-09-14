@@ -1,0 +1,1533 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/P4suta/njutest/schema/rust-mutants-trace-v1.json",
+  "title": "rust-mutants trace v1",
+  "description": "One line of a recording: an envelope of sequence number and moment around a typed record. A trace is diagnostic exhaust and never evidence (ADR 0002); what it is for is telling a reader why a run behaved as it did.",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "seq",
+        "timestamp",
+        "elapsed_ms",
+        "type",
+        "schema",
+        "engine"
+      ],
+      "properties": {
+        "seq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "timestamp": {
+          "type": "string",
+          "minLength": 1
+        },
+        "elapsed_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "type": {
+          "const": "run-start"
+        },
+        "schema": {
+          "const": "rust-mutants-trace-v1"
+        },
+        "engine": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "seq",
+        "timestamp",
+        "elapsed_ms",
+        "type",
+        "phase"
+      ],
+      "properties": {
+        "seq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "timestamp": {
+          "type": "string",
+          "minLength": 1
+        },
+        "elapsed_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "type": {
+          "const": "phase-start"
+        },
+        "phase": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "name"
+          ],
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1
+            },
+            "duration_ms": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "seq",
+        "timestamp",
+        "elapsed_ms",
+        "type",
+        "phase"
+      ],
+      "properties": {
+        "seq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "timestamp": {
+          "type": "string",
+          "minLength": 1
+        },
+        "elapsed_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "type": {
+          "const": "phase-end"
+        },
+        "phase": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "name"
+          ],
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1
+            },
+            "duration_ms": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "seq",
+        "timestamp",
+        "elapsed_ms",
+        "type",
+        "open"
+      ],
+      "properties": {
+        "seq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "timestamp": {
+          "type": "string",
+          "minLength": 1
+        },
+        "elapsed_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "type": {
+          "const": "open"
+        },
+        "open": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "root",
+            "snapshot_dir",
+            "stable_dir"
+          ],
+          "properties": {
+            "root": {
+              "type": "string"
+            },
+            "snapshot_dir": {
+              "type": "string"
+            },
+            "stable_dir": {
+              "type": "boolean"
+            },
+            "sweep": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "parent",
+                "removed",
+                "removed_bytes",
+                "live",
+                "kept",
+                "failures"
+              ],
+              "properties": {
+                "parent": {
+                  "type": "string"
+                },
+                "removed": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "removed_bytes": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "live": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "kept": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "failures": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "seq",
+        "timestamp",
+        "elapsed_ms",
+        "type",
+        "snapshot"
+      ],
+      "properties": {
+        "seq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "timestamp": {
+          "type": "string",
+          "minLength": 1
+        },
+        "elapsed_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "type": {
+          "const": "snapshot"
+        },
+        "snapshot": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "source_root",
+            "dir",
+            "files",
+            "bytes",
+            "duration_ms"
+          ],
+          "properties": {
+            "source_root": {
+              "type": "string"
+            },
+            "dir": {
+              "type": "string"
+            },
+            "files": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "bytes": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "workspace_digest": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "duration_ms": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "error": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "seq",
+        "timestamp",
+        "elapsed_ms",
+        "type",
+        "exec"
+      ],
+      "properties": {
+        "seq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "timestamp": {
+          "type": "string",
+          "minLength": 1
+        },
+        "elapsed_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "type": {
+          "const": "exec"
+        },
+        "exec": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "argv",
+            "exit_code",
+            "duration_ms"
+          ],
+          "properties": {
+            "argv": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1
+            },
+            "dir": {
+              "type": "string"
+            },
+            "env_names": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "timeout_ms": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "exit_code": {
+              "type": "integer"
+            },
+            "timed_out": {
+              "type": "boolean"
+            },
+            "duration_ms": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "output_bytes": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "output_sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "output_truncated": {
+              "type": "boolean"
+            },
+            "output_path": {
+              "type": "string"
+            },
+            "error": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "seq",
+        "timestamp",
+        "elapsed_ms",
+        "type",
+        "discover"
+      ],
+      "properties": {
+        "seq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "timestamp": {
+          "type": "string",
+          "minLength": 1
+        },
+        "elapsed_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "type": {
+          "const": "discover-file"
+        },
+        "discover": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "path",
+            "candidates"
+          ],
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "candidates": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "sites": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "line",
+                  "column",
+                  "rule"
+                ],
+                "properties": {
+                  "line": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "column": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "rule": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "form": {
+                    "enum": [
+                      "C",
+                      "E",
+                      "S",
+                      "M"
+                    ]
+                  },
+                  "skip": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "note": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "skips": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "reason",
+                  "count"
+                ],
+                "properties": {
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "count": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "seq",
+        "timestamp",
+        "elapsed_ms",
+        "type",
+        "instrument"
+      ],
+      "properties": {
+        "seq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "timestamp": {
+          "type": "string",
+          "minLength": 1
+        },
+        "elapsed_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "type": {
+          "const": "instrument"
+        },
+        "instrument": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "path",
+            "guards",
+            "module",
+            "lines_before",
+            "lines_after"
+          ],
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "guards": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "module": {
+              "type": "string",
+              "minLength": 1
+            },
+            "lines_before": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "lines_after": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "seq",
+        "timestamp",
+        "elapsed_ms",
+        "type",
+        "round"
+      ],
+      "properties": {
+        "seq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "timestamp": {
+          "type": "string",
+          "minLength": 1
+        },
+        "elapsed_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "type": {
+          "const": "validate-round"
+        },
+        "round": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "round",
+            "condemned",
+            "success"
+          ],
+          "properties": {
+            "round": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "condemned": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "success": {
+              "type": "boolean"
+            },
+            "written": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "attributed": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "index",
+                  "said"
+                ],
+                "properties": {
+                  "index": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "code": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "said": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "unattributed": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "seq",
+        "timestamp",
+        "elapsed_ms",
+        "type",
+        "bisect"
+      ],
+      "properties": {
+        "seq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "timestamp": {
+          "type": "string",
+          "minLength": 1
+        },
+        "elapsed_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "type": {
+          "const": "bisect"
+        },
+        "bisect": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "suspects",
+            "offenders",
+            "attempts"
+          ],
+          "properties": {
+            "suspects": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "offenders": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "attempts": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "diagnosed": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "seq",
+        "timestamp",
+        "elapsed_ms",
+        "type",
+        "build"
+      ],
+      "properties": {
+        "seq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "timestamp": {
+          "type": "string",
+          "minLength": 1
+        },
+        "elapsed_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "type": {
+          "const": "build"
+        },
+        "build": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "targets"
+          ],
+          "properties": {
+            "targets": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "details": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "id",
+                  "kind",
+                  "harness"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "kind": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "harness": {
+                    "type": "boolean"
+                  },
+                  "limitations": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "seq",
+        "timestamp",
+        "elapsed_ms",
+        "type",
+        "verify"
+      ],
+      "properties": {
+        "seq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "timestamp": {
+          "type": "string",
+          "minLength": 1
+        },
+        "elapsed_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "type": {
+          "const": "verify"
+        },
+        "verify": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "target",
+            "outcome",
+            "duration_ms"
+          ],
+          "properties": {
+            "target": {
+              "type": "string",
+              "minLength": 1
+            },
+            "outcome": {
+              "type": "string",
+              "minLength": 1
+            },
+            "tests_run": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "duration_ms": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "remembered": {
+              "type": "boolean"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "seq",
+        "timestamp",
+        "elapsed_ms",
+        "type",
+        "touch"
+      ],
+      "properties": {
+        "seq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "timestamp": {
+          "type": "string",
+          "minLength": 1
+        },
+        "elapsed_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "type": {
+          "const": "touch"
+        },
+        "touch": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "target",
+            "tests",
+            "sites",
+            "loose"
+          ],
+          "properties": {
+            "target": {
+              "type": "string",
+              "minLength": 1
+            },
+            "tests": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "sites": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "loose": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "infected": {
+              "description": "How many distinct mutations anything of it saw its guard's two branches differ over.",
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "seq",
+        "timestamp",
+        "elapsed_ms",
+        "type",
+        "witness"
+      ],
+      "properties": {
+        "seq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "timestamp": {
+          "type": "string",
+          "minLength": 1
+        },
+        "elapsed_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "type": {
+          "const": "witness"
+        },
+        "witness": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "index",
+            "checked"
+          ],
+          "properties": {
+            "index": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "witnesses": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "checked": {
+              "type": "boolean"
+            },
+            "diagnostic": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "seq",
+        "timestamp",
+        "elapsed_ms",
+        "type",
+        "claim"
+      ],
+      "properties": {
+        "seq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "timestamp": {
+          "type": "string",
+          "minLength": 1
+        },
+        "elapsed_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "type": {
+          "const": "skip-claim"
+        },
+        "claim": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "path",
+            "line",
+            "reason",
+            "matched"
+          ],
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "line": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 1
+            },
+            "matched": {
+              "type": "boolean"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "seq",
+        "timestamp",
+        "elapsed_ms",
+        "type",
+        "kept"
+      ],
+      "properties": {
+        "seq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "timestamp": {
+          "type": "string",
+          "minLength": 1
+        },
+        "elapsed_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "type": {
+          "const": "kept"
+        },
+        "kept": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "path",
+            "run_id"
+          ],
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "run_id": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "seq",
+        "timestamp",
+        "elapsed_ms",
+        "type",
+        "route"
+      ],
+      "properties": {
+        "seq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "timestamp": {
+          "type": "string",
+          "minLength": 1
+        },
+        "elapsed_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "type": {
+          "const": "route"
+        },
+        "route": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "mutant",
+            "index",
+            "granularity"
+          ],
+          "properties": {
+            "mutant": {
+              "type": "string",
+              "minLength": 1
+            },
+            "index": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "granularity": {
+              "enum": [
+                "all",
+                "block",
+                "test",
+                "discharged",
+                "unreached"
+              ]
+            },
+            "fallback": {
+              "enum": [
+                "not-measured",
+                "position-unknown",
+                "outside-blocks",
+                "coverage-incomplete",
+                "touch-incomplete"
+              ]
+            },
+            "considered": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "reaching": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "discharged": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "target",
+                  "proof"
+                ],
+                "properties": {
+                  "target": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "proof": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              }
+            },
+            "executed": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "reused": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "seq",
+        "timestamp",
+        "elapsed_ms",
+        "type",
+        "mutant"
+      ],
+      "properties": {
+        "seq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "timestamp": {
+          "type": "string",
+          "minLength": 1
+        },
+        "elapsed_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "type": {
+          "const": "mutant-exec"
+        },
+        "mutant": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "index",
+            "target",
+            "outcome",
+            "exit_code",
+            "duration_ms"
+          ],
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "index": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "target": {
+              "type": "string"
+            },
+            "outcome": {
+              "type": "string",
+              "minLength": 1
+            },
+            "exit_code": {
+              "type": "integer"
+            },
+            "duration_ms": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "tests_run": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "signal": {
+              "type": "integer"
+            },
+            "failed_tests": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "timeout_ms": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "timeout_source": {
+              "enum": [
+                "configured",
+                "derived"
+              ]
+            },
+            "alone": {
+              "type": "boolean",
+              "description": "Whether it ran with nothing else the run started running beside it, which is what a confirming retry does."
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "seq",
+        "timestamp",
+        "elapsed_ms",
+        "type",
+        "cache"
+      ],
+      "properties": {
+        "seq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "timestamp": {
+          "type": "string",
+          "minLength": 1
+        },
+        "elapsed_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "type": {
+          "const": "cache"
+        },
+        "cache": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "mutant",
+            "key",
+            "hit"
+          ],
+          "properties": {
+            "mutant": {
+              "type": "string",
+              "minLength": 1
+            },
+            "key": {
+              "type": "string",
+              "minLength": 1
+            },
+            "hit": {
+              "type": "boolean"
+            },
+            "source_run_id": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "seq",
+        "timestamp",
+        "elapsed_ms",
+        "type",
+        "select"
+      ],
+      "properties": {
+        "seq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "timestamp": {
+          "type": "string",
+          "minLength": 1
+        },
+        "elapsed_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "type": {
+          "const": "select"
+        },
+        "select": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "mutant",
+            "reason"
+          ],
+          "properties": {
+            "mutant": {
+              "type": "string",
+              "minLength": 1
+            },
+            "reason": {
+              "enum": [
+                "unreached",
+                "discharged",
+                "interrupted"
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "seq",
+        "timestamp",
+        "elapsed_ms",
+        "type",
+        "identical"
+      ],
+      "properties": {
+        "seq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "timestamp": {
+          "type": "string",
+          "minLength": 1
+        },
+        "elapsed_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "type": {
+          "const": "identical"
+        },
+        "identical": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "index",
+            "identity"
+          ],
+          "properties": {
+            "index": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "identity": {
+              "enum": [
+                "identical",
+                "differs",
+                "not-established"
+              ]
+            },
+            "detail": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "seq",
+        "timestamp",
+        "elapsed_ms",
+        "type",
+        "evidence"
+      ],
+      "properties": {
+        "seq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "timestamp": {
+          "type": "string",
+          "minLength": 1
+        },
+        "elapsed_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "type": {
+          "const": "evidence"
+        },
+        "evidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "file",
+            "bytes",
+            "digest"
+          ],
+          "properties": {
+            "file": {
+              "type": "string",
+              "minLength": 1
+            },
+            "bytes": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "digest": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "seq",
+        "timestamp",
+        "elapsed_ms",
+        "type",
+        "note"
+      ],
+      "properties": {
+        "seq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "timestamp": {
+          "type": "string",
+          "minLength": 1
+        },
+        "elapsed_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "type": {
+          "const": "note"
+        },
+        "note": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "detail"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "minLength": 1
+            },
+            "detail": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "seq",
+        "timestamp",
+        "elapsed_ms",
+        "type",
+        "run"
+      ],
+      "properties": {
+        "seq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "timestamp": {
+          "type": "string",
+          "minLength": 1
+        },
+        "elapsed_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "type": {
+          "const": "run-end"
+        },
+        "run": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "outcome",
+            "events_emitted",
+            "events_dropped"
+          ],
+          "properties": {
+            "outcome": {
+              "type": "string",
+              "minLength": 1
+            },
+            "error": {
+              "type": "string"
+            },
+            "events_emitted": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "events_dropped": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      }
+    }
+  ]
+}

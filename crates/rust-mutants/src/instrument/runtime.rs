@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The module appended to every instrumented file, which decides at run time
@@ -35,9 +35,33 @@ pub const ACTIVE_ENV: &str = "RUST_MUTANTS_ACTIVE";
 /// Names the catalog the activating run holds.
 pub const CATALOG_ENV: &str = "RUST_MUTANTS_CATALOG";
 
+/// The catalog identity embedded into binaries compiled from an instrumented tree.
+pub const COMPILED_CATALOG_ENV: &str = "RUST_MUTANTS_COMPILED_CATALOG";
+
 /// The exit status of a test process whose tree was built from a different
 /// catalog than the one activating it.
 pub const STALE_CATALOG_EXIT: i32 = 97;
+
+/// Names the file the guards append to, saying which of the process's threads reached them.
+///
+/// A record is about one catalog, and a process records into it only when
+/// [`CATALOG_ENV`] names the catalog that process was built from. A project
+/// whose own tests build and run instrumented trees of their own — this
+/// engine's do — would otherwise have those children append to the record of
+/// the run that started them, and a record with two catalogs in it is one the
+/// reader refuses whole.
+pub const TOUCH_ENV: &str = "RUST_MUTANTS_TOUCH";
+
+/// The trait the runtime names the types a probe may compare a value of.
+pub(super) const OBSERVABLE: &str = "Observable";
+
+/// The exit status of a test process asked to record what its guards saw that could not.
+///
+/// Silence is what licenses a run to skip a test, so a process that cannot
+/// write ends rather than leaving one. The session reads this code as "run this
+/// target again with nothing to record", and the target it says it about keeps
+/// every test of it in every route.
+pub const TOUCH_UNAVAILABLE_EXIT: i32 = 96;
 
 /// The name the generated module takes when the file does not already spell
 /// it; otherwise a digit is appended until one is free.
@@ -77,6 +101,10 @@ fn short_digest(path: &str) -> String {
 }
 
 /// [`module_name`] for a module of another stem, so the witness tree can have one of its own without either shadowing the other.
+///
+/// The search for a free name terminates because a file cannot spell more
+/// names than it holds identifiers, and the table of identifiers is the one
+/// every candidate of that file came from.
 #[must_use]
 pub(super) fn module_named(text: &str, stem: &str) -> String {
     let taken: BTreeSet<String> = text
@@ -90,8 +118,6 @@ pub(super) fn module_named(text: &str, stem: &str) -> String {
     if !taken.contains(stem) {
         return stem.to_owned();
     }
-    // Bounded: a file cannot spell more names than it has identifiers, and
-    // the table is what every candidate came from.
     let limit = u32::try_from(taken.len())
         .unwrap_or(u32::MAX)
         .saturating_add(1);
@@ -126,10 +152,21 @@ mod {{MODULE}} {
 {{IDS}}    ];
     const UNINIT: u32 = u32::MAX - 1;
     const NONE: u32 = u32::MAX;
+    const TOUCH_BASE: u32 = {{BASE}};
+    const TOUCH_SPAN: usize = {{SPAN}};
+    const TOUCH_BATCH: usize = 64;
+    const TOUCH_UNKNOWN: u8 = 0;
+    const TOUCH_OFF: u8 = 1;
+    const TOUCH_ON: u8 = 2;
     static ACTIVE: __rm_std::sync::atomic::AtomicU32 = __rm_std::sync::atomic::AtomicU32::new(UNINIT);
+    static TOUCHING: __rm_std::sync::atomic::AtomicU8 = __rm_std::sync::atomic::AtomicU8::new(TOUCH_UNKNOWN);
+    static TOUCH_SINK: __rm_std::sync::OnceLock<__rm_std::sync::Mutex<__rm_std::fs::File>> = __rm_std::sync::OnceLock::new();
 
     #[inline(always)]
     pub(crate) fn active(index: u32) -> bool {
+        if TOUCHING.load(__rm_std::sync::atomic::Ordering::Relaxed) != TOUCH_OFF {
+            touch(index);
+        }
         let selected = ACTIVE.load(__rm_std::sync::atomic::Ordering::Relaxed);
         if selected != UNINIT {
             return selected == index;
@@ -137,6 +174,264 @@ mod {{MODULE}} {
         let resolved = resolve();
         ACTIVE.store(resolved, __rm_std::sync::atomic::Ordering::Relaxed);
         resolved == index
+    }
+
+    struct Seen {
+        name: __rm_std::string::String,
+        eager: bool,
+        bits: __rm_std::vec::Vec<bool>,
+        touched: __rm_std::vec::Vec<u32>,
+        entered_bits: __rm_std::vec::Vec<bool>,
+        entered: __rm_std::vec::Vec<u32>,
+        differed_bits: __rm_std::vec::Vec<bool>,
+        differed: __rm_std::vec::Vec<u32>,
+    }
+
+    impl Seen {
+        fn new() -> Seen {
+            let named = __rm_std::thread::current().name().map(__rm_std::string::ToString::to_string);
+            let eager = match &named {
+                __rm_std::option::Option::Some(name) => name == "main",
+                __rm_std::option::Option::None => true,
+            };
+            let mut bits = __rm_std::vec::Vec::new();
+            bits.resize(TOUCH_SPAN, false);
+            let mut entered_bits = __rm_std::vec::Vec::new();
+            entered_bits.resize(TOUCH_SPAN, false);
+            let mut differed_bits = __rm_std::vec::Vec::new();
+            differed_bits.resize(TOUCH_SPAN, false);
+            Seen {
+                name: match named {
+                    __rm_std::option::Option::Some(name) if !eager => name,
+                    _ => __rm_std::string::String::from("{{UNATTRIBUTED}}"),
+                },
+                eager,
+                bits,
+                touched: __rm_std::vec::Vec::new(),
+                entered_bits,
+                entered: __rm_std::vec::Vec::new(),
+                differed_bits,
+                differed: __rm_std::vec::Vec::new(),
+            }
+        }
+
+        fn saw(&mut self, index: u32) {
+            let at = index.wrapping_sub(TOUCH_BASE) as usize;
+            if at >= self.bits.len() || self.bits[at] {
+                return;
+            }
+            self.bits[at] = true;
+            self.touched.push(index);
+            if self.eager || self.touched.len() >= TOUCH_BATCH {
+                self.flush();
+            }
+        }
+
+        fn entered_body(&mut self, index: u32) {
+            let at = index.wrapping_sub(TOUCH_BASE) as usize;
+            if at >= self.entered_bits.len() || self.entered_bits[at] {
+                return;
+            }
+            self.entered_bits[at] = true;
+            self.entered.push(index);
+            if self.eager || self.entered.len() >= TOUCH_BATCH {
+                self.flush();
+            }
+        }
+
+        fn saw_a_difference(&mut self, index: u32) {
+            let at = index.wrapping_sub(TOUCH_BASE) as usize;
+            if at >= self.differed_bits.len() || self.differed_bits[at] {
+                return;
+            }
+            self.differed_bits[at] = true;
+            self.differed.push(index);
+            if self.eager || self.differed.len() >= TOUCH_BATCH {
+                self.flush();
+            }
+        }
+
+        fn flush(&mut self) {
+            written("{{SITES}}", &self.name, &mut self.touched);
+            written("{{BODIES}}", &self.name, &mut self.entered);
+            written("{{INFECTED}}", &self.name, &mut self.differed);
+        }
+    }
+
+    fn written(kind: &str, name: &str, indices: &mut __rm_std::vec::Vec<u32>) {
+        if indices.is_empty() {
+            return;
+        }
+        let mut line = __rm_std::string::String::from(kind);
+        line.push_str("\t");
+        line.push_str(name);
+        let mut at = 0;
+        while at < indices.len() {
+            line.push_str(if at == 0 { "\t" } else { "," });
+            line.push_str(&__rm_std::format!("{}", indices[at]));
+            at += 1;
+        }
+        line.push_str("\n");
+        indices.clear();
+        append(&line);
+    }
+
+    impl __rm_std::ops::Drop for Seen {
+        fn drop(&mut self) {
+            self.flush();
+        }
+    }
+
+    __rm_std::thread_local! {
+        static SEEN: __rm_std::cell::RefCell<Seen> = __rm_std::cell::RefCell::new(Seen::new());
+    }
+
+    #[inline(never)]
+    fn touch(index: u32) {
+        if !touching() {
+            return;
+        }
+        let _ = SEEN.try_with(|seen| match seen.try_borrow_mut() {
+            __rm_std::result::Result::Ok(mut seen) => seen.saw(index),
+            __rm_std::result::Result::Err(_) => (),
+        });
+    }
+
+    #[inline(always)]
+    pub(crate) fn body(index: u32) {
+        if TOUCHING.load(__rm_std::sync::atomic::Ordering::Relaxed) == TOUCH_OFF {
+            return;
+        }
+        entered(index);
+    }
+
+    #[inline(always)]
+    pub(crate) fn differing<F: __rm_std::ops::FnOnce() -> bool>(index: u32, original: bool, alternative: F) -> bool {
+        if TOUCHING.load(__rm_std::sync::atomic::Ordering::Relaxed) != TOUCH_OFF
+            && touching()
+            && original != alternative()
+        {
+            difference(index);
+        }
+        original
+    }
+
+{{OBSERVABLE}}
+
+    #[inline(always)]
+    pub(crate) fn undefaulted<T: {{PROBE_BOUND}}>(index: u32, value: T) -> T {
+        if TOUCHING.load(__rm_std::sync::atomic::Ordering::Relaxed) != TOUCH_OFF
+            && touching()
+            && value != <T as __rm_std::default::Default>::default()
+        {
+            difference(index);
+        }
+        value
+    }
+
+    #[inline(always)]
+    pub(crate) fn untrue(index: u32, value: bool) -> bool {
+        if TOUCHING.load(__rm_std::sync::atomic::Ordering::Relaxed) != TOUCH_OFF
+            && touching()
+            && !value
+        {
+            difference(index);
+        }
+        value
+    }
+
+    #[inline(always)]
+    pub(crate) fn unokdefault<T: {{PROBE_BOUND}}, E>(index: u32, value: __rm_std::result::Result<T, E>) -> __rm_std::result::Result<T, E> {
+        if TOUCHING.load(__rm_std::sync::atomic::Ordering::Relaxed) != TOUCH_OFF && touching() {
+            let parted = match &value {
+                __rm_std::result::Result::Ok(held) => *held != <T as __rm_std::default::Default>::default(),
+                __rm_std::result::Result::Err(_) => true,
+            };
+            if parted {
+                difference(index);
+            }
+        }
+        value
+    }
+
+    #[inline(always)]
+    pub(crate) fn unsomedefault<T: {{PROBE_BOUND}}>(index: u32, value: __rm_std::option::Option<T>) -> __rm_std::option::Option<T> {
+        if TOUCHING.load(__rm_std::sync::atomic::Ordering::Relaxed) != TOUCH_OFF && touching() {
+            let parted = match &value {
+                __rm_std::option::Option::Some(held) => *held != <T as __rm_std::default::Default>::default(),
+                __rm_std::option::Option::None => true,
+            };
+            if parted {
+                difference(index);
+            }
+        }
+        value
+    }
+
+    #[inline(never)]
+    fn difference(index: u32) {
+        let _ = SEEN.try_with(|seen| match seen.try_borrow_mut() {
+            __rm_std::result::Result::Ok(mut seen) => seen.saw_a_difference(index),
+            __rm_std::result::Result::Err(_) => (),
+        });
+    }
+
+    #[inline(never)]
+    fn entered(index: u32) {
+        if !touching() {
+            return;
+        }
+        let _ = SEEN.try_with(|seen| match seen.try_borrow_mut() {
+            __rm_std::result::Result::Ok(mut seen) => seen.entered_body(index),
+            __rm_std::result::Result::Err(_) => (),
+        });
+    }
+
+    fn touching() -> bool {
+        let known = TOUCHING.load(__rm_std::sync::atomic::Ordering::Relaxed);
+        if known != TOUCH_UNKNOWN {
+            return known == TOUCH_ON;
+        }
+        let asked = match __rm_std::env::var("{{TOUCH_ENV}}") {
+            __rm_std::result::Result::Ok(value) => !value.is_empty(),
+            __rm_std::result::Result::Err(_) => false,
+        };
+        let ours = match __rm_std::env::var("{{CATALOG_ENV}}") {
+            __rm_std::result::Result::Ok(value) => value == CATALOG,
+            __rm_std::result::Result::Err(_) => false,
+        };
+        let on = asked && ours;
+        TOUCHING.store(if on { TOUCH_ON } else { TOUCH_OFF }, __rm_std::sync::atomic::Ordering::Relaxed);
+        on
+    }
+
+    fn append(line: &str) {
+        let sink = TOUCH_SINK.get_or_init(opened);
+        let mut file = match sink.lock() {
+            __rm_std::result::Result::Ok(guard) => guard,
+            __rm_std::result::Result::Err(poisoned) => poisoned.into_inner(),
+        };
+        if __rm_std::io::Write::write_all(&mut *file, line.as_bytes()).is_err() {
+            __rm_std::process::exit({{TOUCH_EXIT}});
+        }
+    }
+
+    #[cold]
+    fn opened() -> __rm_std::sync::Mutex<__rm_std::fs::File> {
+        let path = match __rm_std::env::var("{{TOUCH_ENV}}") {
+            __rm_std::result::Result::Ok(value) => value,
+            __rm_std::result::Result::Err(_) => __rm_std::process::exit({{TOUCH_EXIT}}),
+        };
+        let opened = __rm_std::fs::OpenOptions::new().create(true).append(true).open(&path);
+        let mut file = match opened {
+            __rm_std::result::Result::Ok(file) => file,
+            __rm_std::result::Result::Err(_) => __rm_std::process::exit({{TOUCH_EXIT}}),
+        };
+        let header = __rm_std::format!("{{TOUCH_SCHEMA}} {}\n", CATALOG);
+        if __rm_std::io::Write::write_all(&mut file, header.as_bytes()).is_err() {
+            __rm_std::process::exit({{TOUCH_EXIT}});
+        }
+        __rm_std::sync::Mutex::new(file)
     }
 
     #[cold]
@@ -173,35 +468,104 @@ mod {{MODULE}} {
 /// a `#![no_std]` crate: `#![no_std]` withholds the implicit link and the
 /// prelude, and forbids neither an explicit link nor an explicit path. Nothing
 /// in the module is `unsafe`, so a crate that forbids unsafe code still does.
-pub(super) fn render(
-    module: &str,
-    catalog_digest: &str,
-    placements: &[Placement],
-    newline: &str,
-) -> String {
-    let mut ids: Vec<(&str, u32)> = placements
+#[must_use]
+pub fn render(rendering: &Rendering<'_>) -> String {
+    let Rendering {
+        module,
+        catalog_digest,
+        placements,
+        markers,
+        newline,
+    } = *rendering;
+    let ids: BTreeSet<(&str, u32)> = placements
         .iter()
         .map(|placement| (placement.id.as_str(), placement.index))
         .collect();
-    ids.sort_unstable();
-    ids.dedup();
     let mut table = String::new();
     for (id, index) in &ids {
         let written = writeln!(table, "        ({id:?}, {index}),");
         debug_assert!(written.is_ok(), "writing to a String cannot fail");
     }
+    let reach = touched(placements, markers);
 
     let text = TEMPLATE
         .replace("{{MODULE}}", module)
         .replace("{{MARKER}}", RUNTIME_MARKER)
         .replace("{{CATALOG}}", catalog_digest)
         .replace("{{IDS}}", &table)
+        .replace("{{BASE}}", &reach.base.to_string())
+        .replace("{{SPAN}}", &reach.span.to_string())
         .replace("{{ACTIVE_ENV}}", ACTIVE_ENV)
         .replace("{{CATALOG_ENV}}", CATALOG_ENV)
-        .replace("{{EXIT}}", &STALE_CATALOG_EXIT.to_string());
+        .replace("{{TOUCH_ENV}}", TOUCH_ENV)
+        .replace("{{TOUCH_SCHEMA}}", crate::touch::SCHEMA)
+        .replace("{{UNATTRIBUTED}}", crate::touch::UNATTRIBUTED)
+        .replace("{{SITES}}", crate::touch::SITES)
+        .replace("{{BODIES}}", crate::touch::BODIES)
+        .replace("{{INFECTED}}", crate::touch::INFECTED)
+        .replace("{{EXIT}}", &STALE_CATALOG_EXIT.to_string())
+        .replace("{{TOUCH_EXIT}}", &TOUCH_UNAVAILABLE_EXIT.to_string())
+        .replace(
+            "{{OBSERVABLE}}",
+            &format!(
+                "    {}",
+                super::observable::declaration(OBSERVABLE, "__rm_std")
+            ),
+        )
+        .replace(
+            "{{PROBE_BOUND}}",
+            &super::observable::bound(OBSERVABLE, "__rm_std"),
+        );
     if newline == "\n" {
         text
     } else {
         text.replace('\n', newline)
     }
+}
+
+/// What one file's runtime module is generated from.
+#[derive(Debug, Clone, Copy)]
+pub struct Rendering<'a> {
+    /// The module's name, which carries the file path's digest.
+    pub module: &'a str,
+    /// The catalog every guard names.
+    pub catalog_digest: &'a str,
+    /// The mutants placed in the file.
+    pub placements: &'a [Placement],
+    /// The markers the branch proofs put in it, whose indices the recording also carries.
+    pub markers: &'a [crate::syntax::branch::Marker],
+    /// The newline the file uses.
+    pub newline: &'a str,
+}
+
+/// The window of catalog indices one file's guards can report, which is what sizes the per-thread record of what it already said.
+///
+/// A file's mutants are numbered by the catalog rather than by the file, so the
+/// window is the lowest of them and how far the highest reaches past it. A guard
+/// outside it — which the catalog's numbering does not produce — is recorded
+/// every time rather than once, and a repeated record is a line the reader
+/// unions, never a fact it loses.
+fn touched(placements: &[Placement], markers: &[crate::syntax::branch::Marker]) -> Window {
+    let every = || {
+        placements
+            .iter()
+            .map(|placement| placement.index)
+            .chain(markers.iter().map(|marker| marker.index))
+    };
+    let lowest = every().min().unwrap_or(0);
+    let highest = every().max().unwrap_or(0);
+    Window {
+        base: lowest,
+        span: usize::try_from(highest.saturating_sub(lowest))
+            .unwrap_or(0)
+            .saturating_add(1),
+    }
+}
+
+/// The catalog indices one file's guards can report.
+struct Window {
+    /// The lowest of them.
+    base: u32,
+    /// How many there are from `base` up to and including the highest.
+    span: usize,
 }

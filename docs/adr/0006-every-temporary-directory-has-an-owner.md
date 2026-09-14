@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: 2026 mjutest contributors
+SPDX-FileCopyrightText: 2026 njutest contributors
 SPDX-License-Identifier: MIT OR Apache-2.0
 -->
 
@@ -13,8 +13,8 @@ and shared with the `tempowner` convention of every engine in the family.
 ## Context
 
 A run writes far more outside the repository than inside it: the engine's
-snapshot, its probe tree, its scratch; the runner's build cache layer, a
-scratch per baseline round, a tree per validated candidate. Every one of
+snapshot, its probe tree, its scratch; the runner's per-run build directory,
+a scratch per baseline round, a tree per validated candidate. Every one of
 those directories used to be made directly under the temporary root and
 removed by a deferred call in the process that made it. A SIGKILL, an
 out-of-memory kill, or a closed terminal ends the process between the copy
@@ -28,8 +28,8 @@ root: *who made this*, and *is anybody still using it*.
 ## Decision
 
 1. **One scratch directory per run, and everything below it.** A run makes
-   `mjutest-run-*` under the configured temporary root before it writes
-   anything: `build/` for the scratch cache layer, `baseline-*` per round,
+   `njutest-run-*` under the configured temporary root before it writes
+   anything: `build/` for per-run Cargo isolation, `baseline-*` per round,
    `candidate-*` per validated candidate, `control-fuzz-*` for a fuzzing
    original control.
 2. **A run that cannot make or claim one still runs**, under the temporary
@@ -38,14 +38,14 @@ root: *who made this*, and *is anybody still using it*.
    holds `owner.lock`, an exclusive advisory lock held open for the whole
    run. A lock that can be taken means its holder is gone; a pid wraps.
 4. **The marker is for people, and for one bit.** `owner.json` is a
-   `mjutest-temp-owner-v1` document naming the run, the process, the start
+   `njutest-temp-owner-v1` document naming the run, the process, the start
    time, the repository, and `kept`. The sweep reads only `kept`.
 5. **An unowned directory is judged by age, and 24 hours is the number.**
 6. **Sweeping is what a run does before it writes, and what `cache gc` does
    on demand.** The engine sweeps its own prefixes in `Workspace::open`; the
    runner reports that rather than duplicating it.
 7. **A keep is recorded where it outlives the run**, in
-   `.mjutest/kept-temp-v1.json`, so a successful untraced run still accounts
+   `.njutest/kept-temp-v1.json`, so a successful untraced run still accounts
    for what it left behind.
 8. **The ledger names a directory; the directory says whether it may be
    removed.** A recursive delete is not something a path in an editable file

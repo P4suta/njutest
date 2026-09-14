@@ -1,0 +1,14 @@
+Say what earlier runs left behind, and collect what is no longer an answer
+
+Usage: njutest cache [OPTIONS]
+
+Options:
+      --directory <DIR>  The workspace whose configuration bounds the store. The working directory
+                         by default
+      --gc               Remove what has expired, then the oldest of what is left until the store is
+                         under its size
+      --export <FILE>    Write every answer this machine holds to FILE, one to a line, for another
+                         machine to read
+      --import <FILE>    Read answers another machine wrote into this machine's store, holding each
+                         to what a run of this one would keep
+  -h, --help             Print help

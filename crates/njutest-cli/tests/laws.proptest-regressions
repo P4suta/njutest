@@ -1,0 +1,9 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 6fcb6592c81a5efec12b1527866e846898fa51d946d57ee570fcd11cf23c58cd # shrinks to dispositions = [Unreached]
+cc 1d96b59375c4599df167b5865a37456b251ef6117841d40065b6d5a4fca0bb5f # shrinks to jobs = 1, available = 2, exclusive = false
+cc 32eb36fd1c3222f7f8bf9bb223bb2001fd6c99d09ae81ed303bf8be256d2f281 # shrinks to count = 2, workers = 2

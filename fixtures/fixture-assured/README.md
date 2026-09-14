@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: 2026 mjutest contributors
+SPDX-FileCopyrightText: 2026 njutest contributors
 SPDX-License-Identifier: MIT OR Apache-2.0
 -->
 
@@ -18,3 +18,21 @@ accepts is noticed by a test.
 Four mutants, four kills, no acceptance. The tests are written for the
 boundaries rather than for the happy path, which is the whole difference
 between this fixture and `fixture-baseline`.
+
+## Fates
+
+What one run of this fixture establishes for every mutation of it, and
+for every candidate the compiler refused. The run is `rust-mutants run
+--tier all --offline --locked`;
+`cargo test -p rust-mutants-cli --test toolchain_fates` does it again and
+refuses a difference, and `UPDATE_FATES=1` rewrites the block below.
+
+```fates
+src/lib.rs:9:5 return-true killed
+src/lib.rs:9:7 gt-to-ge killed
+src/lib.rs:9:9 int-increment killed
+src/lib.rs:15:5 return-default killed
+src/lib.rs:15:7 mul-to-div killed
+src/lib.rs:15:9 int-decrement killed
+src/lib.rs:15:9 int-increment killed
+```

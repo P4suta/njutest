@@ -1,0 +1,9 @@
+Bundle everything about one run into one directory
+
+Usage: njutest diagnostics <RUN>
+
+Arguments:
+  <RUN>  The run to bundle
+
+Options:
+  -h, --help  Print help

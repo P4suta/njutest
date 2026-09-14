@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! `cargo --message-format=json`: artifacts, compiler messages, and the build's end.
@@ -18,8 +18,8 @@ pub enum Message {
     CompilerArtifact(Artifact),
     /// rustc said something about a unit.
     CompilerMessage(CompilerMessage),
-    /// A build script ran.
-    BuildScriptExecuted,
+    /// A build script ran, and said where it wrote and what it put in the environment.
+    BuildScriptExecuted(BuildScript),
     /// The build ended.
     BuildFinished {
         /// Whether every unit succeeded.
@@ -30,6 +30,19 @@ pub enum Message {
         /// The reason.
         reason: String,
     },
+}
+
+/// A `build-script-executed` message: what a build script left behind for the units that read it.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
+pub struct BuildScript {
+    /// The package whose build script it was.
+    pub package_id: String,
+    /// The directory it was told to write into, which every unit of the package is told about too.
+    #[serde(default)]
+    pub out_dir: Option<PathBuf>,
+    /// What it put in the environment with `cargo::rustc-env`, in the order it said them.
+    #[serde(default)]
+    pub env: Vec<(String, String)>,
 }
 
 /// A `compiler-artifact` message.
@@ -69,6 +82,19 @@ pub struct CompilerMessage {
     pub target: Target,
     /// What rustc said.
     pub message: Diagnostic,
+}
+
+/// Whether the path a diagnostic names is the file that was written.
+///
+/// rustc reports a path relative to the directory it ran in, which is the
+/// workspace root, and the engine names files the same way; a member's nested
+/// path therefore matches exactly, and an absolute one by suffix. The
+/// separator is normalised because a diagnostic on Windows spells one path
+/// with backslashes and the catalog spells the same path with slashes.
+#[must_use]
+pub fn names_file(reported: &str, path: &str) -> bool {
+    let reported = reported.replace('\\', "/");
+    reported == path || reported.ends_with(&format!("/{path}"))
 }
 
 /// One rustc diagnostic.
@@ -177,7 +203,7 @@ fn parse_message(line: &str) -> Result<Message, serde_json::Error> {
     Ok(match reason.as_str() {
         "compiler-artifact" => Message::CompilerArtifact(Artifact::deserialize(value)?),
         "compiler-message" => Message::CompilerMessage(CompilerMessage::deserialize(value)?),
-        "build-script-executed" => Message::BuildScriptExecuted,
+        "build-script-executed" => Message::BuildScriptExecuted(BuildScript::deserialize(value)?),
         "build-finished" => Message::BuildFinished {
             success: value
                 .get("success")

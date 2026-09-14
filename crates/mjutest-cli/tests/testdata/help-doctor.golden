@@ -1,6 +1,0 @@
-Report the toolchain and the tools a run needs
-
-Usage: mjutest doctor
-
-Options:
-  -h, --help  Print help

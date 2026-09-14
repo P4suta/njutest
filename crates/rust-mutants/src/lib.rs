@@ -1,10 +1,11 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! A mutation testing engine for Rust and Cargo.
 
 #![deny(unsafe_code)]
 
+pub mod canonical;
 pub mod cargo;
 pub mod catalog;
 pub mod coverage;
@@ -19,11 +20,16 @@ pub mod glob;
 pub mod id;
 pub mod instrument;
 pub mod interval;
+pub mod limitation;
 pub mod outcome;
+pub mod outcomes;
 pub mod probe;
 pub mod prove;
 pub mod reach;
+pub mod replace;
+pub mod report;
 pub mod rule;
+pub mod run;
 pub mod runner;
 pub mod session;
 pub mod snapshot;
@@ -31,8 +37,14 @@ pub mod span;
 pub mod splice;
 pub mod syntax;
 pub mod tempowner;
+#[cfg(any(test, feature = "testkit"))]
+pub mod testkit;
+pub mod touch;
 pub mod trace;
+pub mod userdirs;
 pub mod validate;
+pub mod vars;
+pub mod work;
 pub mod workspace;
 
 pub use error::{EngineError, ErrorCode};

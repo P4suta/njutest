@@ -1,0 +1,33 @@
+# Mutation report — fixture-coverage <run>
+
+**94.7%** — 18 detected of 19 decided
+
+| what | how many |
+| --- | --- |
+| cataloged | 22 |
+| killed | 18 |
+| survived | 1 |
+| timed out | 0 |
+| inconclusive | 0 |
+| errored | 0 |
+| not run | 3 |
+| unreached | 0 |
+| discharged | 3 |
+| expected | 0 |
+| refused | 0 |
+| skipped | 4 |
+
+## Findings
+
+- **discharged-mutant** — every target that could have noticed d8a9939330496216a17d was removed by a proof, so no test could have: the mutation is in code the tests run and never observe
+- **surviving-mutant** — no test noticed 27e9c3f2d6bb568e5ef3; 1 test ran and passed
+- **discharged-mutant** — every target that could have noticed 7cfdea86ac571b743bd0 was removed by a proof, so no test could have: the mutation is in code the tests run and never observe
+- **discharged-mutant** — every target that could have noticed 0a8ab9771954a24f9d25 was removed by a proof, so no test could have: the mutation is in code the tests run and never observe
+
+## Survivors (1)
+
+| where | rule | change | id |
+| --- | --- | --- | --- |
+| `src/lib.rs:16:10` | `le-to-lt` | `<=` → `<` | `27e9c3f2d6bb568e5ef3` |
+
+Each of these is a gap in the tests or a claim to write down: `rust-mutants explain <id>` says what it is, and `[[mutation.expect]]` accepts one with a reason.

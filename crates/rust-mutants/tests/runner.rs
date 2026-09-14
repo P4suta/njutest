@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! One child, its whole tree, and what came back. These tests drive a real shell; they are the reason the runner can be trusted with somebody else's test binary.
@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use rust_mutants::runner::output::{TailBuffer, truncation_notice};
 use rust_mutants::runner::{
     Cancel, DEFAULT_OUTPUT_LIMIT, EXIT_CODE_UNAVAILABLE, IO_DRAIN_GRACE, MIN_OUTPUT_LIMIT,
-    OUTPUT_TRUNCATED_PREFIX, RunnerError, Spec, run,
+    OUTPUT_TRUNCATED_PREFIX, PROBE_OUTPUT_LIMIT, RunnerError, Spec, run,
 };
 
 fn sh(script: &str) -> Spec {
@@ -121,9 +121,9 @@ fn a_death_by_signal_is_reported_as_128_plus_the_signal() {
 }
 
 #[test]
-fn the_environment_and_the_directory_are_exactly_what_the_spec_says() {
+fn the_environment_a_spec_names_is_the_whole_of_the_child_s_own() {
     let temp = tempfile::tempdir().expect("tempdir");
-    let mut spec = sh("echo \"$RM_TEST_VAR|$HOME|$(pwd)\"");
+    let mut spec = sh("echo \"$RM_TEST_VAR|$CARGO_PKG_NAME\"");
     spec.env = Some(vec![
         (OsString::from("RM_TEST_VAR"), OsString::from("value")),
         (
@@ -133,17 +133,37 @@ fn the_environment_and_the_directory_are_exactly_what_the_spec_says() {
     ]);
     spec.dir = Some(temp.path().to_path_buf());
     let result = run(&spec, &Cancel::new());
-    let output = String::from_utf8_lossy(&result.output);
-    let canonical = temp.path().canonicalize().expect("canonical");
     assert_eq!(
-        output.trim(),
-        format!("value||{}", canonical.display()),
-        "HOME is not inherited"
+        String::from_utf8_lossy(&result.output).trim(),
+        "value|",
+        "a spec that names an environment names all of it: what it lists arrives, and \
+         what this process has and it does not list stays here. `CARGO_PKG_NAME` is one \
+         the harness always has and no shell invents for itself"
     );
     let inherited = run(&sh("echo \"$RM_TEST_VAR|$PATH\""), &Cancel::new());
     assert!(
         String::from_utf8_lossy(&inherited.output).starts_with('|'),
         "a None env inherits ours, which has no RM_TEST_VAR"
+    );
+}
+
+/// The directory a spec names is where the child runs.
+///
+/// Asked of a POSIX shell, because `pwd` is how a shell says where it is and
+/// the one on a Windows machine answers in its own spelling rather than the
+/// platform's: a suite that compared the two would be comparing shells.
+#[cfg(unix)]
+#[test]
+fn the_directory_a_spec_names_is_the_one_the_child_runs_in() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let mut spec = sh("pwd");
+    spec.dir = Some(temp.path().to_path_buf());
+    let result = run(&spec, &Cancel::new());
+    let canonical = temp.path().canonicalize().expect("canonical");
+    assert_eq!(
+        String::from_utf8_lossy(&result.output).trim(),
+        canonical.display().to_string(),
+        "a child started somewhere else would measure somewhere else"
     );
 }
 
@@ -207,6 +227,7 @@ fn the_tail_buffer_keeps_the_last_bytes_and_pays_for_the_notice_out_of_the_budge
     assert_eq!(buffer.limit(), MIN_OUTPUT_LIMIT);
     assert_eq!(TailBuffer::new(4096).limit(), 4096);
     assert_eq!(DEFAULT_OUTPUT_LIMIT, 1 << 20);
+    assert_eq!(PROBE_OUTPUT_LIMIT, 65_536);
 
     let small = TailBuffer::new(300);
     small.write(b"hello ");
@@ -279,4 +300,119 @@ fn the_head_buffer_keeps_the_first_bytes_and_admits_the_cut() {
     let exact = HeadBuffer::new(3);
     exact.write(b"xyz");
     assert_eq!(exact.capture(), (b"xyz".to_vec(), false, 3));
+}
+
+/// A command line the platform's own shell understands.
+#[cfg(windows)]
+fn shell(script: &str) -> Spec {
+    Spec::new(["cmd", "/C", script])
+}
+
+#[cfg(windows)]
+#[test]
+fn a_windows_child_that_fails_is_data_not_an_error() {
+    let result = run(&shell("echo out & exit /b 3"), &Cancel::new());
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert_eq!(result.exit_code, 3);
+    assert!(!result.timed_out);
+    assert!(!result.ok());
+}
+
+#[cfg(windows)]
+#[test]
+fn a_windows_process_tree_is_killed_on_timeout() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let marker = temp.path().join("still-here.txt");
+    let outliving = temp.path().join("outliving.bat");
+    std::fs::write(
+        &outliving,
+        format!(
+            "@echo off\r\nping -n 31 127.0.0.1 > nul\r\necho alive > {}\r\n",
+            marker.display()
+        ),
+    )
+    .expect("the script a descendant runs");
+    let script = temp.path().join("tree.bat");
+    std::fs::write(
+        &script,
+        format!(
+            "@echo off\r\nstart /b cmd /C {}\r\nping -n 31 127.0.0.1 > nul\r\n",
+            outliving.display()
+        ),
+    )
+    .expect("the script the run starts");
+    let mut spec = Spec::new([
+        OsString::from("cmd"),
+        OsString::from("/C"),
+        script.clone().into_os_string(),
+    ]);
+    spec.timeout = Some(Duration::from_millis(500));
+    let started = Instant::now();
+    let result = run(&spec, &Cancel::new());
+    assert!(result.timed_out, "{result:?}");
+    assert!(
+        started.elapsed() < Duration::from_secs(20),
+        "the run ends at the bound rather than waiting for the tree it started"
+    );
+    std::thread::sleep(Duration::from_secs(2));
+    assert!(
+        !marker.exists(),
+        "the job object owns every descendant, so closing it stops the one that outlived its \
+         parent"
+    );
+}
+
+#[test]
+fn the_supervisor_of_this_platform_is_the_one_a_diagnostic_names() {
+    let expected = if cfg!(windows) {
+        "job-object"
+    } else {
+        "process-group"
+    };
+    assert_eq!(
+        rust_mutants::runner::SUPERVISOR_KIND,
+        expected,
+        "what owns the process tree is what a diagnostic has to name"
+    );
+}
+
+proptest::proptest! {
+    /// Whatever a child writes and however it is cut into writes, the buffer keeps the end of it and stays inside its budget.
+    ///
+    /// The tail is what a person reads when a test fails, and the budget is
+    /// what stops a runaway child from filling memory. A buffer that kept the
+    /// beginning, or that grew past its limit, would fail exactly the run
+    /// somebody needed the output of.
+    #[test]
+    fn the_tail_buffer_keeps_the_end_within_its_budget_however_the_writes_are_cut(
+        chunks in proptest::collection::vec(proptest::collection::vec(0u8..=255, 0..64), 0..40),
+        limit in 0usize..2048
+    ) {
+        let buffer = TailBuffer::new(limit);
+        let mut whole = Vec::new();
+        for chunk in &chunks {
+            buffer.write(chunk);
+            whole.extend_from_slice(chunk);
+        }
+        let captured = buffer.capture();
+        proptest::prop_assert!(
+            captured.len() <= buffer.limit(),
+            "{} bytes captured against a budget of {}",
+            captured.len(),
+            buffer.limit()
+        );
+        if whole.len() <= buffer.limit() {
+            proptest::prop_assert_eq!(
+                captured,
+                whole,
+                "output that fits is kept exactly, whatever the writes were"
+            );
+        } else {
+            let tail = whole.get(whole.len().saturating_sub(16)..).unwrap_or_default();
+            proptest::prop_assert!(
+                captured.len() < tail.len() || captured.ends_with(tail),
+                "what is kept is the end of what was written"
+            );
+        }
+    }
 }

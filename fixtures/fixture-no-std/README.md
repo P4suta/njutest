@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: 2026 mjutest contributors
+SPDX-FileCopyrightText: 2026 njutest contributors
 SPDX-License-Identifier: MIT OR Apache-2.0
 -->
 
@@ -19,3 +19,18 @@ link nor an explicit path, so the runtime module declares
 This fixture exists because the crate used to be skipped whole with the
 reason `no-std-crate`, on the strength of an attribute that says less than
 the skip did.
+
+## Fates
+
+What one run of this fixture establishes for every mutation of it, and
+for every candidate the compiler refused. The run is `rust-mutants run
+--tier all --offline --locked`;
+`cargo test -p rust-mutants-cli --test toolchain_fates` does it again and
+refuses a difference, and `UPDATE_FATES=1` rewrites the block below.
+
+```fates
+src/lib.rs:10:5 return-default killed
+src/lib.rs:10:7 add-to-sub killed
+src/lib.rs:15:5 return-true killed
+src/lib.rs:15:7 ge-to-gt killed
+```

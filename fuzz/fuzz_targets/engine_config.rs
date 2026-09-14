@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! `.rust-mutants.toml` decides what a run mutates and what it believes. A document this parser *accepts* must be one every later stage can honour, so what it accepts is checked here against the same rules the reader states, and no document may make it panic.
@@ -23,12 +23,25 @@ fuzz_target!(|text: &str| {
     for argument in &config.execution.test_binary_args {
         assert!(allowed_test_arg(argument), "{argument} of {ALLOWED_TEST_ARGS:?}");
     }
+    let mut named = std::collections::BTreeSet::new();
     for expectation in &config.mutation.expect {
-        assert!(!expectation.id.trim().is_empty());
-        assert!(!expectation.reason.trim().is_empty());
+        assert!(!expectation.reason.trim().is_empty(), "a claim says why");
         assert!(
-            expectation.outcome.detected() || expectation.outcome == rust_mutants::outcome::Outcome::Survived,
-            "only an outcome a run confirms may be expected"
+            matches!(
+                expectation.outcome(),
+                Some(
+                    rust_mutants::outcome::Outcome::Survived
+                        | rust_mutants::outcome::Outcome::Killed
+                        | rust_mutants::outcome::Outcome::TimedOut
+                )
+            ),
+            "only an outcome a run confirms may be expected: {:?}",
+            expectation.outcome
+        );
+        assert!(
+            named.insert(expectation.name()),
+            "two claims name {:?}, and a mutant has one reason",
+            expectation.name()
         );
     }
     let directory = &config.reports.directory;

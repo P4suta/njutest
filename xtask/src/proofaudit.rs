@@ -1,17 +1,17 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! An independent re-decision of what a completed run recorded. [ADR 0004](../../../docs/adr/0004-proof-layers-not-budgets.md) ships a proof layer only against a re-implementation that never calls the runner's, so nothing here consults the code that wrote the report: every verdict is re-derived from the recording alone, and wherever the recording does not carry enough to re-derive one, that is said plainly rather than read as agreement.
+//! An independent re-decision of what a completed run recorded. [ADR 0004](../../docs/adr/0004-proof-layers-not-budgets.md) ships a proof layer only against a re-implementation that never calls the runner's, so nothing here consults the code that wrote the report: every verdict is re-derived from the recording alone, and wherever the recording does not carry enough to re-derive one, that is said plainly rather than read as agreement.
 
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::fmt;
 
 /// The document a completed run leaves in its directory.
-pub const REPORT_FILE: &str = "mjutest-assurance-report-v1.json";
+pub const REPORT_FILE: &str = "njutest-assurance-report-v1.json";
 
 /// The schema this audit knows how to re-decide.
-pub const SCHEMA: &str = "mjutest-assurance-report-v1";
+pub const SCHEMA: &str = "njutest-assurance-report-v1";
 
 /// The exit code a run directory that could not be read earns, kept apart from the audit's own so that "I could not look" never reads as "I looked and found nothing".
 pub const EXIT_UNREADABLE: u8 = 2;
@@ -23,7 +23,8 @@ const REJECTED: &str = "compile-rejected";
 const TIMED_OUT: &str = "timed_out";
 const PASSED: &str = "passed";
 const SURVIVING_MUTANT: &str = "surviving-mutant";
-const SUITE: &str = "suite";
+const UNMATCHED_ACCEPTANCE: &str = "unmatched-acceptance";
+const EVERYTHING: &str = "all";
 const EQUIVALENT: &str = "equivalent";
 
 /// Why a recording could not be re-decided at all.
@@ -89,6 +90,8 @@ pub enum Layer {
     Killers,
     /// The correspondence between the mutations nothing noticed and the findings that name them.
     Findings,
+    /// Whether an unmatched acceptance really fails to resolve in the complete catalog.
+    Acceptances,
     /// The earlier run a disposition was read back from.
     Reuse,
     /// The layers that removed an execution, held to the kills the run recorded.
@@ -103,6 +106,7 @@ impl Layer {
             Self::Accounting => "accounting",
             Self::Killers => "killers",
             Self::Findings => "findings",
+            Self::Acceptances => "acceptances",
             Self::Reuse => "reuse",
             Self::Proofs => "proofs",
         }
@@ -327,8 +331,9 @@ pub fn audit(path: &str, text: &str, recorded: Option<&str>) -> Result<Audit, Au
     verdict(&recording, &mut audit);
     killers(&recording, &mut audit);
     findings(&recording, &mut audit);
+    acceptances(&recording, &mut audit);
     reuse(&recording, &mut audit);
-    proofs(recorded, &mut audit);
+    proofs(&recording, recorded, &mut audit);
     audit.remarks.sort();
     audit.remarks.dedup();
     Ok(audit)
@@ -380,7 +385,7 @@ struct FindingRow {
 
 /// Whether any layer removed a target that then killed the mutation it removed.
 ///
-/// [ADR 0004](../../../docs/adr/0004-proof-layers-not-budgets.md) decision 5
+/// [ADR 0004](../../docs/adr/0004-proof-layers-not-budgets.md) decision 5
 /// ships a layer only against a re-implementation that is not asked whether it
 /// agrees with itself, and holds it to every kill the run proved: a layer that
 /// would drop one recorded killer is unsound. The recording of the routes and
@@ -390,7 +395,7 @@ struct FindingRow {
 /// A run recorded without `--trace` leaves nothing to re-derive from, which is
 /// said rather than passed over: fail-closed is never turning "I cannot check
 /// this" into "this is fine".
-fn proofs(recorded: Option<&str>, audit: &mut Audit) {
+fn proofs(recording: &Recording<'_>, recorded: Option<&str>, audit: &mut Audit) {
     let mut notes = Notes::on(audit, Layer::Proofs);
     let Some(recorded) = recorded else {
         notes.unaudited(
@@ -401,51 +406,35 @@ fn proofs(recorded: Option<&str>, audit: &mut Audit) {
         );
         return;
     };
-    let mut removed: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
-    let mut granularity: BTreeMap<String, String> = BTreeMap::new();
-    let mut reused: BTreeSet<String> = BTreeSet::new();
-    let mut executed: BTreeSet<String> = BTreeSet::new();
-    let mut ran: Vec<(String, String, String)> = Vec::new();
-    for line in recorded.lines().filter(|line| !line.trim().is_empty()) {
-        let Ok(event) = serde_json::from_str::<serde_json::Value>(line) else {
-            continue;
-        };
-        match field(&event, "type").unwrap_or_default().as_str() {
-            "route" => {
-                let Some(route) = event.get("route") else {
-                    continue;
-                };
-                let mutant = field(route, "mutant").unwrap_or_default();
-                granularity.insert(
-                    mutant.clone(),
-                    field(route, "granularity").unwrap_or_default(),
-                );
-                if field(route, "reused").is_some() {
-                    reused.insert(mutant.clone());
-                }
-                let discharged = removed.entry(mutant).or_default();
-                for one in rows(route, "discharged") {
-                    discharged.insert(
-                        field(one, "target").unwrap_or_default(),
-                        field(one, "proof").unwrap_or_default(),
-                    );
-                }
-            }
-            "mutant-exec" => {
-                let Some(execution) = event.get("mutant") else {
-                    continue;
-                };
-                let mutant = field(execution, "mutant").unwrap_or_default();
-                executed.insert(mutant.clone());
-                ran.push((
-                    mutant,
-                    field(execution, "target").unwrap_or_default(),
-                    field(execution, "outcome").unwrap_or_default(),
-                ));
-            }
-            _ => {}
-        }
-    }
+    let routing = crate::route::read(recorded);
+    let removed: BTreeMap<String, BTreeMap<String, String>> = routing
+        .routes
+        .iter()
+        .map(|route| {
+            let discharged = route
+                .discharged
+                .iter()
+                .map(|one| (one.target.clone(), one.proof.clone()))
+                .collect();
+            (route.mutant.clone(), discharged)
+        })
+        .collect();
+    let executed: BTreeSet<String> = routing
+        .execs
+        .iter()
+        .map(|exec| exec.mutant.clone())
+        .collect();
+    let ran: Vec<(String, String, String)> = routing
+        .execs
+        .iter()
+        .map(|exec| {
+            (
+                exec.mutant.clone(),
+                exec.target.clone(),
+                exec.outcome.clone(),
+            )
+        })
+        .collect();
     if removed.is_empty() && ran.is_empty() {
         notes.unaudited(
             "route",
@@ -455,13 +444,35 @@ fn proofs(recorded: Option<&str>, audit: &mut Audit) {
         );
         return;
     }
+    let known: BTreeSet<&str> = recording
+        .targets
+        .iter()
+        .map(|target| target.name.as_str())
+        .collect();
     discharges(&removed, &ran, &mut notes);
-    reach(&granularity, &reused, &executed, &mut notes);
-    notes.unaudited(
-        "reach",
-        "which regions each target executed is in the coverage profiles, and a completed          run does not keep them, so a route decided by region is held to what it ran and          not re-derived from the measurement it was decided from"
-            .to_owned(),
-    );
+    kept(&routing.routes, &ran, &mut notes);
+    reach(&routing.routes, &known, &executed, &mut notes);
+    believed(&routing.routes, &mut notes);
+}
+
+/// Reuse, re-derived: a route names the run whose answer it took, or why it took none, and never both.
+///
+/// A believed record is an execution that did not happen, so reuse is a layer
+/// like the others and the recording has to say which way it went for every
+/// mutation. A route that names a run and a reason at once is a recording that
+/// says the answer was read back and that it was not, and a reader who cannot
+/// tell which cannot tell what the run did.
+fn believed(routes: &[crate::route::Route], notes: &mut Notes<'_>) {
+    for route in routes {
+        if let (Some(run), Some(refusal)) = (route.reused.as_ref(), route.refused.as_ref()) {
+            notes.violated(
+                &route.mutant,
+                format!(
+                    "the route says the answer was read back from {run} and that it was                      refused as {refusal}; one of those is not what happened, and a                      recording that says both cannot be held to either"
+                ),
+            );
+        }
+    }
 }
 
 /// Every proof that removed a target, against the kills the recording holds: a layer that drops a target which then finds a defect is unsound.
@@ -487,33 +498,131 @@ fn discharges(
     }
 }
 
-/// The reach layer against the recording: a route that claims nothing reaches a mutation may not then run one, and a route that says the evidence does not carry that claim has to run something.
+/// Every kill, against the route that decided which targets would be asked: a layer that drops a target which then finds a defect is unsound, however it dropped it.
+///
+/// [`discharges`] asks this of the targets a proof removed, which a route
+/// names. This asks it of the ones the reach layer removed, which a route does
+/// not name — it names what it kept, and the rest were dropped because the
+/// measurement placed them elsewhere. The check does not need them named: a
+/// kill by a target the route did not keep is a kill by a target the route
+/// removed, and that is the one thing no layer may do.
+///
+/// A route that kept nothing is [`reach`]'s to answer for, and a route that
+/// widened to everything kept everything, so neither is asked here.
+fn kept(routes: &[crate::route::Route], ran: &[(String, String, String)], notes: &mut Notes<'_>) {
+    for (mutant, target, outcome) in ran {
+        if outcome != KILLED && outcome != TIMED_OUT {
+            continue;
+        }
+        let Some(route) = routes
+            .iter()
+            .find(|route| &route.mutant == mutant && route.reused.is_none())
+        else {
+            continue;
+        };
+        if route.reaching.is_empty() || route.reaching.iter().any(|one| one == target) {
+            continue;
+        }
+        if route.discharges(target) {
+            continue;
+        }
+        notes.violated(
+            mutant,
+            format!(
+                "the route did not keep {target} for this mutation and the recording then \
+                 shows {target} {outcome} it; a target the measurement placed elsewhere is \
+                 a target the reach layer removed, and a layer that removes one which \
+                 finds a defect is unsound"
+            ),
+        );
+    }
+}
+
+/// The reach layer, re-derived from what the route named rather than confirmed from what it decided.
+///
+/// A route that says nothing reaches a mutation makes a claim about the code,
+/// and the claim names the targets that were measured, were asked, and
+/// answered that nothing of them executes the position. Every one of those
+/// names is checked here: against the targets the run says it has, against the
+/// targets the same route kept, and against whether anything then ran. A claim
+/// that names nobody cannot be checked at all, and a layer that cannot be
+/// checked is one [ADR 0004](../../docs/adr/0004-proof-layers-not-budgets.md)
+/// decision 5 does not ship.
 fn reach(
-    granularity: &BTreeMap<String, String>,
-    reused: &BTreeSet<String>,
+    routes: &[crate::route::Route],
+    known: &BTreeSet<&str>,
     executed: &BTreeSet<String>,
     notes: &mut Notes<'_>,
 ) {
-    for (mutant, decided) in granularity {
-        if reused.contains(mutant) {
+    for route in routes {
+        if route.reused.is_some() {
             continue;
         }
-        match (decided.as_str(), executed.contains(mutant)) {
-            (UNREACHED, true) => notes.violated(
-                mutant,
-                "the route says no measured test reaches this mutation and the recording \
-                 then runs one against it; a claim about the code that its own run \
-                 contradicts is not a claim"
-                    .to_owned(),
-            ),
-            (SUITE, false) => notes.violated(
-                mutant,
-                "the route says the evidence does not carry that nothing reaches this \
+        let ran = executed.contains(&route.mutant);
+        if route.granularity == UNREACHED {
+            if ran {
+                notes.violated(
+                    &route.mutant,
+                    "the route says no measured target reaches this mutation and the \
+                     recording then runs one against it; a claim about the code that its \
+                     own run contradicts is not a claim"
+                        .to_owned(),
+                );
+            }
+            if route.considered.is_empty() {
+                notes.violated(
+                    &route.mutant,
+                    "the route removed every execution and named no target it removed \
+                     them from; nothing reaches a place only if somebody was in a \
+                     position to notice and did not, and this says nobody was"
+                        .to_owned(),
+                );
+            }
+        }
+        if route.granularity == EVERYTHING && !ran {
+            notes.violated(
+                &route.mutant,
+                "the route says the measurement does not carry which targets reach this \
                  mutation, and the recording runs nothing against it; a premise that \
                  fails has to end in more work rather than in less"
                     .to_owned(),
-            ),
-            _ => {}
+            );
+        }
+        considered(route, known, notes);
+    }
+}
+
+/// Every target a route says was asked and did not reach, against the run that says which targets there were.
+fn considered(route: &crate::route::Route, known: &BTreeSet<&str>, notes: &mut Notes<'_>) {
+    for target in &route.considered {
+        if !known.contains(target.as_str()) {
+            notes.violated(
+                &route.mutant,
+                format!(
+                    "the route says {target} was measured and did not reach this \
+                     mutation, and the run reports no such target; a layer held to \
+                     targets that are not there is held to nothing"
+                ),
+            );
+        }
+        if route.reaching.contains(target) {
+            notes.violated(
+                &route.mutant,
+                format!(
+                    "the route both keeps {target} for this mutation and says it did not \
+                     reach it; one route cannot answer a question two ways"
+                ),
+            );
+        }
+        if route.discharges(target) {
+            notes.violated(
+                &route.mutant,
+                format!(
+                    "the route says {target} did not reach this mutation and also names \
+                     a proof that removed it; a target that reaches nothing needs no \
+                     proof, and a proof that removed it says it did reach"
+                ),
+            );
         }
     }
 }
@@ -525,6 +634,7 @@ struct Recording<'a> {
     targets: Vec<TargetRow>,
     mutants: Vec<MutantRow>,
     findings: Vec<FindingRow>,
+    shard: Option<String>,
 }
 
 impl<'a> Recording<'a> {
@@ -561,6 +671,9 @@ impl<'a> Recording<'a> {
                     subject: field(row, "subject").unwrap_or_default(),
                 })
                 .collect(),
+            shard: document
+                .get("scope")
+                .and_then(|scope| field(scope, "shard")),
         }
     }
 
@@ -963,6 +1076,49 @@ fn findings(recording: &Recording<'_>, audit: &mut Audit) {
                 "the finding names no mutant this run recorded as surviving; a finding a reader \
                  cannot trace to the evidence under it is a claim without one"
                     .to_owned(),
+            );
+        }
+    }
+}
+
+/// Whether a finding that calls an acceptance unmatched is supported by the complete catalog.
+fn acceptances(recording: &Recording<'_>, audit: &mut Audit) {
+    let mut notes = Notes::on(audit, Layer::Acceptances);
+    for finding in recording
+        .findings
+        .iter()
+        .filter(|finding| finding.kind == UNMATCHED_ACCEPTANCE)
+    {
+        if recording.shard.is_some() {
+            notes.unaudited(
+                &finding.subject,
+                "this shard does not carry the complete catalog, so whether the acceptance \
+                 resolves uniquely is decided only after the shards are merged"
+                    .to_owned(),
+            );
+            continue;
+        }
+        let subject = finding.subject.as_str();
+        let valid = (4..=64).contains(&subject.len())
+            && subject
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte));
+        if !valid {
+            continue;
+        }
+        let matches: Vec<&MutantRow> = recording
+            .mutants
+            .iter()
+            .filter(|mutant| mutant.id.starts_with(subject))
+            .collect();
+        if let [mutant] = matches.as_slice() {
+            notes.violated(
+                subject,
+                format!(
+                    "the finding calls this acceptance unmatched, but it uniquely resolves to \
+                     {}; an unmatched acceptance must suppress nothing",
+                    mutant.id
+                ),
             );
         }
     }

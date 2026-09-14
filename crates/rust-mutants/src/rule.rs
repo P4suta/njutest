@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The operator table: families, rules, tiers, and the registry that fixes their order.
@@ -70,14 +70,20 @@ pub enum Family {
     ReturnReplacement,
     /// `?` propagation.
     ErrorPropagation,
+    /// Deleting a match arm, and removing the guard that narrows one.
+    MatchArm,
+    /// `break` ↔ `continue`.
+    ControlFlow,
     /// `&`, `|`, `^`, `<<`, `>>`.
     Bitwise,
     /// `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=`.
     CompoundAssignment,
     /// A method whose name says the opposite of another the same receiver has: `is_some`, `is_ok`, `max`.
     MethodSwap,
-    /// Deleting a statement.
+    /// Deleting a statement, and the `else` a statement ends with.
     StatementDeletion,
+    /// Moving an integer literal by one, and emptying a string.
+    Literal,
 }
 
 impl Family {
@@ -91,10 +97,13 @@ impl Family {
         Self::Arithmetic,
         Self::ReturnReplacement,
         Self::ErrorPropagation,
+        Self::MatchArm,
+        Self::ControlFlow,
         Self::Bitwise,
         Self::CompoundAssignment,
         Self::MethodSwap,
         Self::StatementDeletion,
+        Self::Literal,
     ];
 
     /// The family's canonical name.
@@ -109,10 +118,13 @@ impl Family {
             Self::Arithmetic => "arithmetic",
             Self::ReturnReplacement => "return-replacement",
             Self::ErrorPropagation => "error-propagation",
+            Self::MatchArm => "match-arm",
+            Self::ControlFlow => "control-flow",
             Self::Bitwise => "bitwise",
             Self::CompoundAssignment => "compound-assignment",
             Self::MethodSwap => "method-swap",
             Self::StatementDeletion => "statement-deletion",
+            Self::Literal => "literal",
         }
     }
 
@@ -150,9 +162,9 @@ impl fmt::Display for Rule {
 }
 
 /// The counts of the canonical v1 table, asserted by the registry tests.
-pub const CANONICAL_FAMILY_COUNT: usize = 12;
+pub const CANONICAL_FAMILY_COUNT: usize = 15;
 /// The number of rules in the canonical v1 table.
-pub const CANONICAL_RULE_COUNT: usize = 51;
+pub const CANONICAL_RULE_COUNT: usize = 69;
 
 const fn v1(family: Family, name: &'static str, tier: Tier) -> Rule {
     Rule {
@@ -178,6 +190,11 @@ pub const CANONICAL_TABLE: [Rule; CANONICAL_RULE_COUNT] = [
         Tier::Balanced,
     ),
     v1(Family::ConditionNegation, "remove-not", Tier::Balanced),
+    v1(
+        Family::ConditionNegation,
+        "negate-bool-method",
+        Tier::Balanced,
+    ),
     v1(Family::BooleanConnective, "and-to-or", Tier::Balanced),
     v1(Family::BooleanConnective, "or-to-and", Tier::Balanced),
     v1(Family::Comparison, "eq-to-neq", Tier::Balanced),
@@ -207,6 +224,11 @@ pub const CANONICAL_TABLE: [Rule; CANONICAL_RULE_COUNT] = [
     ),
     v1(Family::ReturnReplacement, "return-true", Tier::Balanced),
     v1(
+        Family::ReturnReplacement,
+        "return-err-default",
+        Tier::Balanced,
+    ),
+    v1(
         Family::ErrorPropagation,
         "question-to-unwrap",
         Tier::Balanced,
@@ -216,6 +238,10 @@ pub const CANONICAL_TABLE: [Rule; CANONICAL_RULE_COUNT] = [
         "ignore-question-statement",
         Tier::Balanced,
     ),
+    v1(Family::MatchArm, "delete-match-arm", Tier::Balanced),
+    v1(Family::MatchArm, "remove-match-guard", Tier::Balanced),
+    v1(Family::ControlFlow, "break-to-continue", Tier::Balanced),
+    v1(Family::ControlFlow, "continue-to-break", Tier::Balanced),
     v1(Family::Bitwise, "band-to-bor", Tier::Strong),
     v1(Family::Bitwise, "bor-to-band", Tier::Strong),
     v1(Family::Bitwise, "xor-to-band", Tier::Strong),
@@ -277,6 +303,14 @@ pub const CANONICAL_TABLE: [Rule; CANONICAL_RULE_COUNT] = [
     v1(Family::MethodSwap, "is-err-to-is-ok", Tier::Strong),
     v1(Family::MethodSwap, "max-to-min", Tier::Strong),
     v1(Family::MethodSwap, "min-to-max", Tier::Strong),
+    v1(Family::MethodSwap, "all-to-any", Tier::Strong),
+    v1(Family::MethodSwap, "any-to-all", Tier::Strong),
+    v1(Family::MethodSwap, "first-to-last", Tier::Strong),
+    v1(Family::MethodSwap, "last-to-first", Tier::Strong),
+    v1(Family::MethodSwap, "skip-to-take", Tier::Strong),
+    v1(Family::MethodSwap, "take-to-skip", Tier::Strong),
+    v1(Family::MethodSwap, "sum-to-product", Tier::Strong),
+    v1(Family::MethodSwap, "product-to-sum", Tier::Strong),
     v1(
         Family::StatementDeletion,
         "delete-call-statement",
@@ -288,6 +322,10 @@ pub const CANONICAL_TABLE: [Rule; CANONICAL_RULE_COUNT] = [
         "delete-compound-assignment",
         Tier::All,
     ),
+    v1(Family::StatementDeletion, "delete-else-branch", Tier::All),
+    v1(Family::Literal, "int-increment", Tier::All),
+    v1(Family::Literal, "int-decrement", Tier::All),
+    v1(Family::Literal, "string-to-empty", Tier::All),
 ];
 
 /// Whether a rule name is well formed: non-empty, and free of whitespace and of the `@` that separates the version in the rendered form.
@@ -333,6 +371,16 @@ pub enum RuleError {
         /// The disagreeing tier.
         second: Tier,
     },
+    /// The table's tiers decrease, so one profile's rules are not a prefix of the next one's.
+    #[error("position {position} is at tier {second}, below the {first} above it")]
+    TierOutOfOrder {
+        /// Where the tier dropped.
+        position: usize,
+        /// The tier of the rule above.
+        first: Tier,
+        /// The lower tier.
+        second: Tier,
+    },
     /// A family's rules are not contiguous in table order.
     #[error("family {family} resumes at position {position}; families are contiguous")]
     FamilySplit {
@@ -372,7 +420,7 @@ impl Registry {
         }
     }
 
-    /// A registry from rules in table order, validating the invariants the catalog relies on: valid metadata, unique names, one tier per family, and contiguous families.
+    /// A registry from rules in table order, validating the invariants the catalog relies on: valid metadata, unique names, one tier per family, contiguous families, and tiers that never decrease.
     ///
     /// # Errors
     /// Returns the first invariant the table breaks.
@@ -382,7 +430,7 @@ impl Registry {
         Ok(registry)
     }
 
-    /// Whether the registry's table satisfies every invariant: valid metadata, unique names, one tier per family, contiguous families.
+    /// Whether the registry's table satisfies every invariant: valid metadata, unique names, one tier per family, contiguous families, tiers that never decrease.
     ///
     /// # Errors
     /// Returns the first invariant the table breaks.
@@ -400,6 +448,15 @@ impl Registry {
                 });
             }
             let earlier = self.rules.get(..index).unwrap_or_default();
+            if let Some(previous) = earlier.last()
+                && rule.tier < previous.tier
+            {
+                return Err(RuleError::TierOutOfOrder {
+                    position: index,
+                    first: previous.tier,
+                    second: rule.tier,
+                });
+            }
             if let Some(first) = earlier.iter().position(|seen| seen.name == rule.name) {
                 return Err(RuleError::DuplicateRule {
                     name: rule.name.to_owned(),

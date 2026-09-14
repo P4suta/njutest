@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Which regions of which files one test reached.
@@ -26,7 +26,9 @@ pub const PROFILE_ENV: &str = "LLVM_PROFILE_FILE";
 pub const REGION_KIND_CODE: u32 = 0;
 
 /// A place in a file: a 1-based line and a 1-based byte column, which is the unit `llvm-cov` reports regions in.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub struct Point {
     /// The 1-based line.
     pub line: u32,
@@ -57,7 +59,7 @@ pub struct FileRegions {
 }
 
 /// One stretch of source a test really ran.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 pub struct Block {
     /// The file.
     pub file: PathBuf,
@@ -208,17 +210,29 @@ fn read_region(function: &Function, region: &[u64]) -> Result<(PathBuf, Region),
         .get(file_id)
         .ok_or_else(|| format!("a region names file {file_id}, which the function does not have"))?
         .clone();
+    let start = Point {
+        line: small(0)?,
+        column: small(1)?,
+    };
+    let end = Point {
+        line: small(2)?,
+        column: small(3)?,
+    };
+    if (end.line, end.column) < (start.line, start.column) {
+        return Err(format!(
+            "a region of {} starts at {}:{} and ends at {}:{}, which is before it starts",
+            path.display(),
+            start.line,
+            start.column,
+            end.line,
+            end.column
+        ));
+    }
     Ok((
         path,
         Region {
-            start: Point {
-                line: small(0)?,
-                column: small(1)?,
-            },
-            end: Point {
-                line: small(2)?,
-                column: small(3)?,
-            },
+            start,
+            end,
             count: field(4)?,
             kind: small(7)?,
         },
@@ -294,7 +308,7 @@ impl Tools {
         spec.env = toolchain
             .env()
             .map(<[(std::ffi::OsString, std::ffi::OsString)]>::to_vec);
-        spec.structured_stdout = Some(64 * 1024);
+        spec.structured_stdout = Some(crate::runner::PROBE_OUTPUT_LIMIT);
         let printed = run(&spec, watch.cancel());
         watch.exec(&spec, &printed);
         if !printed.ok() {

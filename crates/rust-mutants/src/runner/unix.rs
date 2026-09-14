@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! POSIX supervision: a process group per child.
@@ -68,4 +68,9 @@ pub(super) fn exit_code(status: ExitStatus) -> i32 {
         .code()
         .or_else(|| status.signal().map(|signal| 128i32.saturating_add(signal)))
         .unwrap_or(EXIT_CODE_UNAVAILABLE)
+}
+
+/// The signal the child died from, which is what a report says when a mutation turned a failure into an abort.
+pub(super) fn signal(status: ExitStatus) -> Option<i32> {
+    status.signal()
 }

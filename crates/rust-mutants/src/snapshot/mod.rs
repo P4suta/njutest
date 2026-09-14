@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! A disposable copy of a source tree, so that mutation testing never writes to the tree a user is editing.
@@ -55,6 +55,15 @@ const COPY_BUFFER: usize = 64 * 1024;
 pub struct Options {
     /// Patterns matched against each entry's `/`-normalized path relative to the source root. A matching directory is skipped whole.
     pub exclude: Vec<Pattern>,
+    /// Directories to copy beside the tree, each under its own name.
+    ///
+    /// A workspace that reads a path dependency from a sibling directory
+    /// reads it from beside the tree, and a copy that holds only the tree
+    /// cannot build. Copying the sibling under the same name makes the same
+    /// relative path resolve inside the copy. Their contents are not part of
+    /// the workspace digest: they are read and never mutated, and a run that
+    /// says what it measured must say the tree.
+    pub beside: Vec<PathBuf>,
     /// The configured report directory as a source-root-relative path. `None` means the default. It is excluded in addition to, never instead of, [`DEFAULT_REPORT_DIR`].
     pub report_dir: Option<String>,
     /// The absolute directory the snapshot is created in. The composition root decides where the temporary area is; this module never asks the process environment.
@@ -65,6 +74,7 @@ impl Options {
     /// Options with only the built-in exclusions, creating under `dest_parent`.
     pub fn new(dest_parent: impl Into<PathBuf>) -> Self {
         Self {
+            beside: Vec::new(),
             exclude: Vec::new(),
             report_dir: None,
             dest_parent: dest_parent.into(),
@@ -422,7 +432,9 @@ pub fn create(
         owner: Some(owner),
         state: State::Live,
     };
-    match populate(&snapshot.root, &dirs, &files) {
+    match populate(&snapshot.root, &dirs, &files)
+        .and_then(|manifest| beside(&snapshot.dir, &options.beside).map(|()| manifest))
+    {
         Ok(manifest) => {
             snapshot.workspace_digest = digest_of(&manifest, &snapshot.passed_over);
             snapshot.manifest = manifest;
@@ -433,6 +445,21 @@ pub fn create(
             Err(cause)
         }
     }
+}
+
+/// Copies each named directory beside the tree, under its own name.
+fn beside(dir: &Path, directories: &[PathBuf]) -> Result<(), SnapshotError> {
+    for source in directories {
+        let Some(name) = source.file_name() else {
+            continue;
+        };
+        let mut walker = Walker::new(source, &[]);
+        walker.walk("")?;
+        walker.rejection()?;
+        let Walker { files, dirs, .. } = walker;
+        let _manifest = populate(&dir.join(name), &dirs, &files)?;
+    }
+    Ok(())
 }
 
 /// Creates the tree and copies the files into it, returning the manifest.
@@ -808,7 +835,30 @@ fn copy_file(src: &Path, dst: &Path, meta: &Metadata) -> io::Result<(u64, String
     }
     platform::finalize_file_permissions(&output, meta)?;
     output.flush()?;
+    keep_times(&output, meta);
     Ok((size, hex::encode(hasher.finalize())))
+}
+
+/// Gives the copy the time the original was written, and says nothing when it cannot.
+///
+/// Cargo decides whether to compile a file by comparing its modification time
+/// with the artifact built from it. A copy stamped with *now* is newer than
+/// every artifact any earlier run left behind, so the whole dependency graph
+/// is compiled again on every run however much of it is already there — which
+/// makes the build cache this engine keeps between runs worth nothing.
+///
+/// The time is metadata, not content: the manifest's digests are of the bytes,
+/// and nothing about drift, identity or instrumentation reads a timestamp. A
+/// copy that carries it is a more faithful copy, and a filesystem that will
+/// not set it costs a rebuild rather than a run.
+fn keep_times(output: &File, meta: &Metadata) {
+    let Ok(modified) = meta.modified() else {
+        return;
+    };
+    let times = fs::FileTimes::new()
+        .set_modified(modified)
+        .set_accessed(meta.accessed().unwrap_or(modified));
+    let _kept = output.set_times(times);
 }
 
 /// The size and lowercase hex SHA-256 of a file already on disk: the read-only half of [`copy_file`], used by [`Snapshot::redigest`].
@@ -1143,6 +1193,7 @@ impl Snapshot {
             }
             match remove(&self.dir) {
                 Ok(()) => return Ok(()),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
                 Err(error) => last = Some(error),
             }
         }

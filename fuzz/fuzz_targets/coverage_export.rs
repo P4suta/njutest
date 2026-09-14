@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The coverage export comes from another program, and a run that misreads it routes every mutant wrongly while looking perfectly healthy. So the reader never panics, and what it accepts describes real regions: a block that ended before it began would make `contains` answer nonsense.
@@ -6,7 +6,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use mjutest_cli::coverage::{covered, instrumented, parse_export};
+use njutest_cli::coverage::{covered, instrumented, parse_export};
 
 fuzz_target!(|data: &[u8]| {
     let Ok(files) = parse_export(data) else {

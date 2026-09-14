@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Every error code the engine can report is documented, and every documented code exists. The table in `docs/errors.md` is the reader-facing ledger; this test keeps it from drifting from the code in either direction.
@@ -13,7 +13,7 @@ use std::collections::BTreeSet;
 use rust_mutants::error::error_codes;
 
 fn documented_codes(prefix: &str) -> BTreeSet<String> {
-    let path = mjutest_devkit::paths::workspace_root().join("docs/errors.md");
+    let path = njutest_devkit::paths::workspace_root().join("docs/errors.md");
     let text = std::fs::read_to_string(&path).expect("docs/errors.md");
     text.lines()
         .filter_map(|line| {
@@ -101,4 +101,35 @@ fn every_variant_reports_a_declared_code() {
             "{sample:?} reports an undeclared code"
         );
     }
+}
+
+#[test]
+fn every_code_documents_the_remedy_it_carries() {
+    let path = njutest_devkit::paths::workspace_root().join("docs/errors.md");
+    let text = std::fs::read_to_string(&path).expect("docs/errors.md");
+    let documented: std::collections::BTreeMap<String, String> = text
+        .lines()
+        .filter_map(|line| {
+            let cell = line.strip_prefix("| `")?;
+            let (code, rest) = cell.split_once("` | ")?;
+            let remedy = rest.rsplit_once(" |")?.0.rsplit_once(" | ")?.1;
+            code.starts_with("RM")
+                .then(|| (code.to_owned(), remedy.trim().to_owned()))
+        })
+        .collect();
+    let mut wrong = Vec::new();
+    for code in error_codes() {
+        let said = documented.get(code.code).map_or("", String::as_str);
+        let carried = code.remedy.unwrap_or("—");
+        if said != carried {
+            wrong.push(format!(
+                "{}: table says {said:?}, code carries {carried:?}",
+                code.code
+            ));
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "the remedy a reader is told is the remedy the code carries: {wrong:?}"
+    );
 }

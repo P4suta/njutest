@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2026 mjutest contributors
+# SPDX-FileCopyrightText: 2026 njutest contributors
 # SPDX-License-Identifier: MIT OR Apache-2.0
 #
 # Tool pins and the task runner. `justfile` is a thin wrapper over these.
@@ -18,10 +18,19 @@ committed = "1.1.11"
 "cargo:cargo-audit" = "0.22.2"
 "cargo:cargo-mutants" = "27.1.0"
 "cargo:cargo-fuzz" = "0.13.2"
+mdbook = "0.5.4"
 
 [tasks.bootstrap]
 description = "Fetch the locked dependency graph and install the git hooks"
 run = ["cargo fetch --locked", "lefthook install"]
+
+[tasks.book]
+description = "Build the documentation as a book, into target/book"
+run = "mdbook build docs"
+
+[tasks."book:serve"]
+description = "Build the book and reload it in a browser as the pages change"
+run = "mdbook serve docs"
 
 [tasks.doctor]
 description = "Report which development tools are present and whether their versions match the pins"
@@ -52,20 +61,48 @@ run = "cargo doc --locked --workspace --no-deps --document-private-items"
 description = "Run the repository gates: seam ratchet, dependency direction, fixture conventions, release consistency"
 run = [
   "cargo xtask devgates",
+  "cargo xtask lints",
   "cargo xtask deps",
   "cargo xtask fixtures",
   "cargo xtask release-check",
 ]
 
 [tasks.lint]
-description = "Run clippy, rustdoc, the repository gates, spelling, TOML, and workflow linters"
-depends = ["clippy", "doc", "gates"]
+description = "Run clippy, rustdoc, the repository gates, the fuzz targets' own type check, spelling, TOML, and workflow linters"
+depends = ["clippy", "doc", "gates", "fuzz:check"]
 run = ["typos", "actionlint"]
 
+# The suite is written for three platforms and run here on one. Most of what
+# the other two answer differently needs their machine to find out, but code
+# behind `#[cfg(windows)]` is not even read by this one's compiler, and a
+# workspace that builds here can fail to build there on a lint. This asks for
+# the reading without the machine, and needs the target's standard library:
+# `rustup target add x86_64-pc-windows-msvc`.
+[tasks."check:windows"]
+description = "Type-check every target for Windows, so code only that platform compiles is compiled here too"
+run = "cargo check --locked --workspace --all-targets --all-features --target x86_64-pc-windows-msvc"
+
+[tasks."build:examples"]
+description = "Build the scripted cargo the suite drives, which no test build produces"
+# `cargo test --all-targets` builds an example as a test harness rather than as
+# the program it is, so a suite that drives one has to ask for it plainly.
+run = "cargo build --locked --examples -p rust-mutants"
+
 [tasks."test:fast"]
-description = "Run the unit tests of every crate (no doctests, no toolchain-driven end-to-end tests)"
-run = "cargo nextest run --locked --workspace --all-targets --status-level fail"
-run_windows = "cargo nextest run --locked --workspace --all-targets --status-level fail"
+description = "Run every test that starts no toolchain: the inner loop, seconds rather than a minute"
+depends = ["build:examples"]
+run = "cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast --status-level fail -E 'not binary(/^toolchain_/)'"
+run_windows = "cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast --status-level fail -E 'not binary(/^toolchain_/)'"
+
+# Each test in these binaries drives its own Cargo. CI adds `--test-threads 2`
+# on top of this, because a hosted runner multiplies those build jobs into
+# resource exhaustion; a developer's machine is not that machine, and the bound
+# costs minutes there without changing which tests pass.
+[tasks."test:slow"]
+description = "Run the suites that drive a real cargo against the fixture projects"
+depends = ["build:examples"]
+run = "cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast --status-level fail -E 'binary(/^toolchain_/)'"
+run_windows = "cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast --status-level fail -E 'binary(/^toolchain_/)'"
 
 [tasks."test:doc"]
 description = "Run the doctests, which nextest does not"
@@ -73,11 +110,33 @@ run = "cargo test --locked --workspace --doc"
 
 [tasks.test]
 description = "Run the complete suite: every target through nextest, then the doctests"
-depends = ["test:fast", "test:doc"]
+depends = ["test:fast", "test:slow", "test:doc"]
 
+# The floors are the ones .github/workflows/ci.yml enforces, in the same order
+# and with the same scoping. Never lower one; raise one when its suite earns it,
+# in both places at once. The collection is that job's as well, down to the
+# environment it exports and the two runs it splits the suite into: a gate that
+# measured a different way is a gate that answers a different question, and the
+# one that job asks is the one that has to be green.
 [tasks.coverage]
-description = "Measure region coverage with the ratchet CI enforces (never lower the floor)"
-run = "cargo llvm-cov --locked --workspace --all-targets --all-features --summary-only --fail-under-regions 80"
+description = "Measure region coverage with the ratchet CI enforces (never lower a floor)"
+depends = ["build:examples"]
+shell = "bash -c"
+run = """
+set -euo pipefail
+cargo llvm-cov clean --workspace
+eval "$(cargo llvm-cov show-env --export-prefix)"
+cargo build --locked --examples -p rust-mutants
+cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast --status-level fail -E 'not binary(/^toolchain_/)'
+cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast --status-level fail --test-threads 2 -E 'binary(/^toolchain_/)'
+cargo llvm-cov report --summary-only --fail-under-regions 80
+cargo llvm-cov report --summary-only --fail-under-regions 87 \
+  --ignore-filename-regex 'crates/(rust-mutants-cli|njutest|njutest-cli|njutest-macros|njutest-devkit)/|xtask/|fuzz/'
+cargo llvm-cov report --summary-only --fail-under-regions 85 \
+  --ignore-filename-regex 'crates/(rust-mutants|njutest|njutest-cli|njutest-macros|njutest-devkit)/|xtask/|fuzz/'
+cargo llvm-cov report --summary-only --fail-under-regions 80 \
+  --ignore-filename-regex 'crates/|fuzz/'
+"""
 
 [tasks.deny]
 description = "Check licenses, advisories, bans, and sources"
@@ -87,6 +146,11 @@ run = "cargo deny --locked check"
 description = "Check the dependency graph against the RustSec advisory database"
 run = "cargo audit --deny warnings"
 
+[tasks."fuzz:check"]
+description = "Type-check every cargo-fuzz target on the toolchain the workspace uses, so one cannot rot against an API change unnoticed"
+dir = "fuzz"
+run = "cargo check --locked --all-targets"
+
 [tasks."fuzz:build"]
 description = "Build every cargo-fuzz target (nightly, sanitizer) without running one"
 dir = "fuzz"
@@ -95,6 +159,7 @@ run = "cargo +nightly fuzz build"
 [tasks."fuzz:smoke"]
 description = "Run every cargo-fuzz target briefly, the way CI does on a pull request"
 dir = "fuzz"
+shell = "bash -c"
 run = """
 set -euo pipefail
 for target in $(cargo +nightly fuzz list); do
@@ -107,34 +172,53 @@ done
 description = "Run cargo-mutants, the external mutation tester, against this workspace"
 run = "cargo mutants --config .cargo/mutants.toml --workspace"
 
+# The order is cheapest refusal first, which is not the order CI runs them in:
+# CI runs the jobs at once and waits for all of them, and a person waits for
+# each in turn. Formatting answers in seconds, rustdoc and clippy and the
+# repository gates in tens of them, the suite in minutes. Two broken
+# documentation links and two fuzz targets naming code that had been deleted
+# all lived behind a three-minute suite, and every one of them is something
+# `lint` says in seventeen seconds.
 [tasks.check]
-description = "Run every local gate in the order CI runs them"
-run = ["mise run fmt:check", "mise run build", "mise run test", "mise run lint", "mise run deny"]
+description = "Run every local gate, the ones that answer quickest first"
+run = [
+  "mise run fmt:check",
+  "mise run build",
+  "mise run lint",
+  "mise run test",
+  "mise run deny",
+  "mise run audit",
+]
 
 [tasks.bench]
-description = "Observe what the byte foundation and the report cost. Numbers, never gates"
+description = "Observe what every stage costs. Numbers, never gates"
+shell = "bash -c"
 run = """
 set -euo pipefail
 cargo bench -p rust-mutants --bench foundation -- "$@"
-cargo bench -p mjutest-cli --bench report -- "$@"
+cargo bench -p rust-mutants --bench pipeline -- "$@"
+cargo bench -p njutest-cli --bench report -- "$@"
+cargo bench -p njutest-cli --bench evidence -- "$@"
 """
 
 [tasks.dogfood]
-description = "Point mjutest at this workspace and read the verdict it reaches"
+description = "Point njutest at this workspace and read the verdict it reaches"
+shell = "bash -c"
 run = """
 set -euo pipefail
-cargo build --release --bin mjutest
-./target/release/mjutest verify --locked --offline --ui=plain "$@"
+cargo build --release --bin njutest
+./target/release/njutest verify --locked --offline --ui=plain "$@"
 """
 
 [tasks."dogfood:audit"]
-description = "Run mjutest on this workspace and re-decide the recording it leaves"
+description = "Run njutest on this workspace and re-decide the recording it leaves"
+shell = "bash -c"
 run = """
 set -euo pipefail
-cargo build --release --bin mjutest
-./target/release/mjutest verify --locked --offline --ui=plain --trace "$@" || true
+cargo build --release --bin njutest
+./target/release/njutest verify --locked --offline --ui=plain --trace "$@" || true
 run="$(ls -dt reports/runs/*/ | head -1)"
-trace="$(ls -dt .mjutest/trace/*/ | head -1)"
+trace="$(ls -dt .njutest/trace/*/ | head -1)"
 echo "re-deciding ${run} from ${trace}"
 cargo build --release -p xtask
 ./target/release/xtask proofaudit "${run}" --trace "${trace}"
@@ -142,8 +226,40 @@ cargo build --release -p xtask
 
 [tasks."dogfood:engine"]
 description = "Point rust-mutants at this workspace and read the score it reaches"
+shell = "bash -c"
 run = """
 set -euo pipefail
 cargo build --release --bin rust-mutants
-./target/release/rust-mutants run --locked --offline "$@"
+./target/release/rust-mutants run --locked --offline --trace --jobs 4 "$@"
+"""
+
+[tasks."dogfood:engine:audit"]
+description = "Run rust-mutants on its own engine and re-decide the report it wrote"
+shell = "bash -c"
+run = """
+set -euo pipefail
+cargo build --release --bin rust-mutants
+cargo build --release -p xtask
+./target/release/rust-mutants run --locked --offline --trace --jobs 4 "$@" || true
+run="$(ls -dt reports/mutation/*/ 2>/dev/null | head -1)"
+if [ -z "${run}" ] || [ ! -f "${run}run-report-v1.json" ]; then
+  echo "the run left no report to re-decide; read what it said above" >&2
+  exit 2
+fi
+echo "re-deciding ${run} from its own recording"
+./target/release/rust-mutants trace check --dir "${run}trace"
+./target/release/xtask engine-audit "${run%/}" --trace "${run}trace" --sites --ledger .rust-mutants.toml
+"""
+
+[tasks."engine-audit"]
+description = "Re-decide a stored engine run from its own rows, recording, and ledger"
+run = "cargo run -q -p xtask -- engine-audit \"$@\""
+
+[tasks."trace:check"]
+description = "Say whether a recording is complete: it begins, it ends, and it lost nothing"
+shell = "bash -c"
+run = """
+set -euo pipefail
+cargo build --bin rust-mutants
+./target/debug/rust-mutants trace check "$@"
 """

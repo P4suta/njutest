@@ -1,0 +1,1 @@
+{"version": 1, "candidates": [{"kind": "patch", "path": "tests/zero.rs", "preimage_sha256": null, "content_base64": "Ly8gU1BEWC1GaWxlQ29weXJpZ2h0VGV4dDogMjAyNiBtanV0ZXN0IGNvbnRyaWJ1dG9ycwovLyBTUERYLUxpY2Vuc2UtSWRlbnRpZmllcjogTUlUIE9SIEFwYWNoZS0yLjAKCiNbdGVzdF0KZm4gemVyb19oYXNfYV9zaWduX29mX2l0c19vd24oKSB7CiAgICBhc3NlcnRfZXEhKGRlbW86OnNpZ24oMCksICJ6ZXJvIik7Cn0K"}]}

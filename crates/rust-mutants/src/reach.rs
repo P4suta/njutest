@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Which test targets could have observed a mutant at all.
@@ -19,7 +19,8 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use crate::EngineError;
-use crate::cargo::{CompileKind, CompileOptions, compile};
+use crate::cargo::config::{Configured, ENCODED_RUSTFLAGS, RUSTFLAGS};
+use crate::cargo::{CompileKind, CompileOptions, compile, config};
 use crate::coverage::{
     Block, Point, Tools, covered, instrumented, profile_pattern, written_profiles,
 };
@@ -29,29 +30,19 @@ use crate::session::PrepareOptions;
 use crate::trace::Recorder;
 use crate::workspace::{SessionError, Workspace};
 
+/// The limitation a session states when a cargo configuration file could not be parsed.
+pub use crate::limitation::CARGO_CONFIGURATION_UNREADABLE as UNREADABLE_CONFIGURATION;
 /// The limitation a session states when the tree could not be built with instrumentation.
-pub const UNBUILDABLE: &str = "coverage-build-failed";
-
-/// The limitation a session states when the LLVM tools are not installed.
-pub const TOOLS_MISSING: &str = "coverage-tools-missing";
-
+pub use crate::limitation::COVERAGE_BUILD_FAILED as UNBUILDABLE;
 /// The limitation a session states when the tools ran and said nothing usable.
-pub const UNMEASURED: &str = "coverage-not-measured";
-
-/// The limitation a session states when the project configures its own compiler flags, which a coverage build would have to replace.
-pub const CONFIGURED_FLAGS: &str = "coverage-refused-configured-rustflags";
-
-/// The variable a coverage build's flags are put in, which is the encoded form so a value with a space cannot become two flags.
-const ENCODED_RUSTFLAGS: &str = "CARGO_ENCODED_RUSTFLAGS";
-
-/// The plain form, which cargo ignores when the encoded one is set.
-const RUSTFLAGS: &str = "RUSTFLAGS";
-
-/// What separates arguments inside the encoded form.
-const SEPARATOR: char = '\u{1f}';
+pub use crate::limitation::COVERAGE_NOT_MEASURED as UNMEASURED;
+/// The limitation a session states when the project configures compiler flags for a target, which a coverage build cannot put back.
+pub use crate::limitation::COVERAGE_REFUSED_CONFIGURED_RUSTFLAGS as CONFIGURED_FLAGS;
+/// The limitation a session states when the LLVM tools are not installed.
+pub use crate::limitation::COVERAGE_TOOLS_MISSING as TOOLS_MISSING;
 
 /// What each target reached, and what the measurement could not establish.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Reached {
     /// Every target that ran, by identity, with the blocks its run covered. Empty when nothing was measured.
     pub targets: BTreeMap<String, BTreeSet<Block>>,
@@ -66,6 +57,19 @@ impl Reached {
     #[must_use]
     pub fn measured(&self) -> bool {
         !self.targets.is_empty()
+    }
+
+    /// Whether it reached every target it set out to, which is what makes it worth remembering.
+    ///
+    /// A measurement names the targets it could not read. One that names any
+    /// is a measurement of some of them: sound to route by, because what it
+    /// could not read stays in every route, and wrong to keep, because a later
+    /// run would have nothing to tell it from a whole one.
+    #[must_use]
+    pub fn whole(&self) -> bool {
+        self.limitations
+            .iter()
+            .all(|limitation| !limitation.starts_with(UNMEASURED))
     }
 
     /// The targets whose run covered `position` in `path`, in identity order, or nothing at all when the measurement never instrumented that place and so says nothing about it.
@@ -117,6 +121,31 @@ pub fn establish(
     reached
 }
 
+/// The limitation a cargo configuration refuses a coverage measurement with, before a build is attempted.
+///
+/// A coverage build has to compile the tree with flags of its own, and it can
+/// only do that by putting back the flags the project configured. A file this
+/// release could not read faithfully says nothing about what those are, and a
+/// `target.*` table says flags whose application is cargo's decision about the
+/// target being built rather than this one's. Measuring under flags that are
+/// not the project's would route mutations by a coverage profile of a
+/// different program, so the measurement is refused and every mutation is
+/// routed by its file instead: sound, and none of the saving.
+///
+/// The unreadable file is answered first. A file nobody could read may also
+/// hold a `target.*` table, and the more serious fact about it is that nothing
+/// in it is known.
+#[must_use]
+pub const fn refusal(flags: &Configured) -> Option<&'static str> {
+    if flags.unreadable {
+        return Some(UNREADABLE_CONFIGURATION);
+    }
+    if flags.target_specific {
+        return Some(CONFIGURED_FLAGS);
+    }
+    None
+}
+
 fn measure(
     workspace: &Workspace,
     options: &PrepareOptions,
@@ -124,20 +153,22 @@ fn measure(
     trace: &Recorder,
 ) -> Result<Reached, EngineError> {
     let root = workspace.snapshot_root();
-    if configures_flags(root) {
-        return Ok(refused(CONFIGURED_FLAGS, trace));
+    let flags = config::configured(root, config::home(&workspace.base_env).as_deref());
+    if let Some(named) = refusal(&flags) {
+        return Ok(refused(named, trace));
     }
     let target_dir = workspace.target_dir.join("coverage");
     let built = compile(
         &workspace.driver(cancel),
         &CompileOptions {
             kind: CompileKind::Tests,
-            packages: Vec::new(),
+            packages: options.packages.clone(),
             target_dir: Some(target_dir.clone()),
             locked: workspace.locked,
             offline: workspace.offline,
             timeout: Workspace::timeout(options.build_timeout),
-            env: instrumenting(&workspace.base_env),
+            env: instrumenting(&workspace.base_env, &flags),
+            build: options.build.clone(),
         },
     );
     let Ok(built) = built else {
@@ -192,6 +223,11 @@ fn measure(
 }
 
 /// Runs every target once with nothing active and reads back what each covered.
+///
+/// A measurement that stops early says which targets it never reached. A
+/// partial measurement that does not is one a route reads as "these targets
+/// ran and covered nothing", which is the difference between a mutant nobody
+/// could notice and a mutant nobody looked at.
 fn run_targets(
     reading: &Reading<'_>,
     targets: &[execute::TestTarget],
@@ -200,8 +236,15 @@ fn run_targets(
 ) -> Reached {
     let (workspace, options) = within;
     let mut reached = Reached::default();
-    for target in targets {
+    for (at, target) in targets.iter().enumerate() {
         if cancel.is_cancelled() {
+            reached.limitations.extend(
+                targets
+                    .get(at..)
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|left| format!("{UNMEASURED}:{}", left.id)),
+            );
             break;
         }
         let pattern = profile_pattern(reading.profiles, &key(target));
@@ -210,7 +253,7 @@ fn run_targets(
             cargo: Some(workspace.toolchain.cargo()),
             sysroot: workspace.toolchain.sysroot(),
             active: None,
-            probe: None,
+            touch: None,
             profile: Some(&pattern),
         };
         let request = ExecRequest::new(target)
@@ -233,16 +276,14 @@ fn run_targets(
 
 /// Every executable the build produced, test harnesses and plain binaries alike.
 fn executables(messages: &[crate::cargo::Message]) -> Vec<PathBuf> {
-    let mut found: Vec<PathBuf> = messages
+    let found: BTreeSet<PathBuf> = messages
         .iter()
         .filter_map(|message| match message {
             crate::cargo::Message::CompilerArtifact(artifact) => artifact.executable.clone(),
             _ => None,
         })
         .collect();
-    found.sort();
-    found.dedup();
-    found
+    found.into_iter().collect()
 }
 
 /// A target's identity as one file name: the identity is a path of its own, and a profile is a file beside the others rather than a tree.
@@ -314,42 +355,11 @@ fn refused(limitation: &str, trace: &Recorder) -> Reached {
     }
 }
 
-/// Whether the tree configures its own compiler flags, which the coverage build would have to replace and cannot merge without deciding which of cargo's tables apply.
-fn configures_flags(root: &Path) -> bool {
-    for name in ["config.toml", "config"] {
-        let path = root.join(".cargo").join(name);
-        if std::fs::read_to_string(&path).is_ok_and(|text| text.contains("rustflags")) {
-            return true;
-        }
-    }
-    false
-}
-
-/// The environment a coverage build adds: the caller's own flags, then the instrumentation.
-fn instrumenting(base: &[(OsString, OsString)]) -> Vec<(OsString, OsString)> {
-    let mut flags: Vec<String> = Vec::new();
-    if let Some((_, encoded)) = base.iter().find(|(name, _)| name == ENCODED_RUSTFLAGS) {
-        flags.extend(
-            encoded
-                .to_string_lossy()
-                .split(SEPARATOR)
-                .filter(|flag| !flag.is_empty())
-                .map(str::to_owned),
-        );
-    } else if let Some((_, plain)) = base.iter().find(|(name, _)| name == RUSTFLAGS) {
-        flags.extend(
-            plain
-                .to_string_lossy()
-                .split_whitespace()
-                .map(str::to_owned),
-        );
-    }
-    flags.push(INSTRUMENT.to_owned());
+/// The environment a coverage build adds: whatever the tree already compiles with, then the instrumentation.
+fn instrumenting(base: &[(OsString, OsString)], flags: &Configured) -> Vec<(OsString, OsString)> {
+    let encoded = config::encoded(base, flags, &[INSTRUMENT]).unwrap_or_default();
     vec![
-        (
-            OsString::from(ENCODED_RUSTFLAGS),
-            OsString::from(flags.join(&SEPARATOR.to_string())),
-        ),
+        (OsString::from(ENCODED_RUSTFLAGS), encoded),
         (OsString::from(RUSTFLAGS), OsString::new()),
     ]
 }
@@ -361,4 +371,110 @@ const INSTRUMENT: &str = "-Cinstrument-coverage";
 #[must_use]
 pub fn directory(target_dir: &Path) -> PathBuf {
     target_dir.join("coverage")
+}
+
+/// A measurement an earlier run of the same tree already made.
+///
+/// What a coverage measurement establishes is a function of three things and
+/// nothing else: the sources every unit compiled, the flags and dependencies
+/// the manifests chose, and the toolchain that compiled it. None of them
+/// changes because a mutation was written, so a tree measured yesterday and
+/// unchanged today has already been measured — and the measurement is the most
+/// expensive thing a run does, because instrumenting for coverage changes the
+/// fingerprint of every crate and rebuilds the whole graph.
+///
+/// Remembering it is therefore the largest single piece of work a run can
+/// remove, and the claim it rests on is the one the outcome store already
+/// rests on: nothing that could change the answer changed.
+///
+/// Nothing here ever fails a run. A measurement that cannot be read is one the
+/// run makes again, which is what it would have done anyway.
+pub mod remembered {
+    use std::path::{Path, PathBuf};
+
+    use super::Reached;
+
+    /// The directory remembered measurements live in, below the caller's cache directory.
+    pub const LAYOUT: &str = "rust-mutants/measurements-v1";
+
+    /// Bumped when what a measurement holds changes, or when a release finds a reason not to trust one written before it.
+    ///
+    /// Two: a measurement cut short used to be remembered as if it were whole,
+    /// and a run that read one back routed away targets nobody had measured.
+    pub const ABI: u32 = 2;
+
+    /// Everything a measurement is a function of.
+    #[derive(Debug, Clone, Copy)]
+    pub struct Of<'a> {
+        /// The digest of the pristine sources every unit of the build compiled.
+        pub closure: &'a str,
+        /// The digest of the manifests, the lock file, and the cargo configuration.
+        pub manifests: &'a str,
+        /// The toolchain that compiled it.
+        pub toolchain: &'a str,
+        /// The cargo arguments the tree was compiled with.
+        pub build: &'a [String],
+    }
+
+    /// Where measurements of one tree are remembered, and under what name.
+    #[derive(Debug, Clone)]
+    pub struct Remembering {
+        /// The directory to read and write under.
+        pub directory: PathBuf,
+        /// Everything the measurement is a function of, folded into one name.
+        pub key: String,
+    }
+
+    impl Remembering {
+        /// The name one measurement is filed under.
+        #[must_use]
+        pub fn of(directory: &Path, measured: &Of<'_>) -> Self {
+            let Of {
+                closure,
+                manifests,
+                toolchain,
+                build,
+            } = measured;
+            let mut text = format!("{LAYOUT}\0{ABI}\0{closure}\0{manifests}\0{toolchain}");
+            for argument in *build {
+                text.push('\0');
+                text.push_str(argument);
+            }
+            Self {
+                directory: directory.to_path_buf(),
+                key: crate::id::digest(text.as_bytes()),
+            }
+        }
+
+        /// The file the measurement sits in.
+        #[must_use]
+        pub fn path(&self) -> PathBuf {
+            self.directory.join(format!("{}.json", self.key))
+        }
+
+        /// What an earlier run of this exact tree measured, when one did and it still reads.
+        #[must_use]
+        pub fn read(&self) -> Option<Reached> {
+            let text = std::fs::read_to_string(self.path()).ok()?;
+            serde_json::from_str(&text).ok()
+        }
+
+        /// Remembers a measurement for the next run of this tree, and says nothing when it cannot.
+        pub fn write(&self, reached: &Reached) {
+            let Ok(text) = serde_json::to_string(reached) else {
+                return;
+            };
+            if std::fs::create_dir_all(&self.directory).is_err() {
+                return;
+            }
+            let temporary = self.directory.join(format!("{}.writing", self.key));
+            if std::fs::write(&temporary, text.as_bytes()).is_err() {
+                let _removed = std::fs::remove_file(&temporary);
+                return;
+            }
+            if std::fs::rename(&temporary, self.path()).is_err() {
+                let _removed = std::fs::remove_file(&temporary);
+            }
+        }
+    }
 }

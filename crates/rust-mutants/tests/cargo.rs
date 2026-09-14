@@ -1,45 +1,22 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The cargo boundary: locating the toolchain, reading `cargo metadata`, parsing `--message-format=json`, and reading dep-info to learn which files a unit really compiled. The end-to-end tests drive the cargo that built this test binary against the fixtures, offline.
 
 #![expect(
-    clippy::expect_used,
     clippy::panic,
     clippy::indexing_slicing,
     reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
 )]
 
-use std::collections::BTreeSet;
-use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use rust_mutants::cargo::{
-    CargoError, CargoErrorKind, Diagnostic, Driver, LocateOptions, Message, Metadata,
-    MetadataOptions, Toolchain, dep_info_path, parse_dep_info, parse_messages, parse_version,
-    resolve_executable, units_of,
+    BuildConfig, CargoError, CargoErrorKind, CompileKind, CompileOptions, Diagnostic,
+    LocateOptions, Message, Metadata, Toolchain, compile_arguments, dep_info_path, parse_dep_info,
+    parse_messages, parse_version,
 };
-use rust_mutants::runner::{Cancel, run};
-use rust_mutants::trace::Recorder;
-
-fn fixture(name: &str) -> PathBuf {
-    mjutest_devkit::paths::fixtures_dir().join(name)
-}
-
-fn toolchain(dir: &Path) -> Toolchain {
-    let options = LocateOptions {
-        cargo: Some(mjutest_devkit::paths::cargo_binary()),
-        ..LocateOptions::default()
-    };
-    Toolchain::locate(&options, dir, &Cancel::new()).expect("locate")
-}
-
-fn scratch_target(name: &str) -> tempfile::TempDir {
-    tempfile::Builder::new()
-        .prefix(&format!("rust-mutants-{name}-"))
-        .tempdir()
-        .expect("tempdir")
-}
+use rust_mutants::runner::Cancel;
 
 #[test]
 fn verbose_version_output_is_parsed_into_its_fields() {
@@ -79,59 +56,6 @@ fn version_output_without_release_or_host_is_refused() {
         let error = parse_version(bad).unwrap_err();
         assert_eq!(error.kind(), CargoErrorKind::VersionUnreadable, "{bad:?}");
     }
-}
-
-#[test]
-fn an_explicit_cargo_path_must_exist_and_a_bare_name_is_searched_on_the_given_path() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let missing = resolve_executable(Path::new("/definitely/not/cargo"), None).unwrap_err();
-    assert_eq!(missing.kind(), CargoErrorKind::ToolchainNotFound);
-    assert!(missing.to_string().contains("RM1012"), "{missing}");
-
-    let real = mjutest_devkit::paths::cargo_binary();
-    assert_eq!(resolve_executable(&real, None).expect("exists"), real);
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt as _;
-        let bin = temp.path().join("bin");
-        std::fs::create_dir_all(&bin).expect("mkdir");
-        let fake = bin.join("cargo");
-        std::fs::write(&fake, "#!/bin/sh\nexit 0\n").expect("write");
-        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).expect("chmod");
-        let mut search = OsString::from(temp.path().join("empty"));
-        search.push(":");
-        search.push(&bin);
-        assert_eq!(
-            resolve_executable(Path::new("cargo"), Some(search.as_os_str())).expect("found"),
-            fake
-        );
-        let none = resolve_executable(Path::new("cargo"), Some(OsString::from("").as_os_str()))
-            .unwrap_err();
-        assert_eq!(none.kind(), CargoErrorKind::ToolchainNotFound);
-    }
-    let bare_without_path = resolve_executable(Path::new("no-such-tool-xyz"), None).unwrap_err();
-    assert_eq!(bare_without_path.kind(), CargoErrorKind::ToolchainNotFound);
-}
-
-#[test]
-fn locating_reads_both_versions_from_inside_the_directory() {
-    let dir = fixture("fixture-simple");
-    let tc = toolchain(&dir);
-    assert_eq!(tc.cargo(), mjutest_devkit::paths::cargo_binary());
-    assert!(!tc.cargo_version().release.is_empty());
-    assert!(!tc.rustc_version().release.is_empty());
-    assert_eq!(tc.host(), tc.rustc_version().host);
-    assert!(tc.host().contains('-'), "{}", tc.host());
-    let spec = tc.command(&dir, ["metadata", "--format-version", "1"]);
-    assert_eq!(spec.argv[0], tc.cargo().as_os_str());
-    assert_eq!(spec.argv[1], "metadata");
-    assert_eq!(spec.dir.as_deref(), Some(dir.as_path()));
-    let described = tc.to_string();
-    assert!(
-        described.contains("cargo ") && described.contains("rustc "),
-        "{described}"
-    );
 }
 
 #[test]
@@ -211,72 +135,6 @@ fn metadata_json_is_parsed_into_packages_and_targets() {
     assert_eq!(error.kind(), CargoErrorKind::MetadataUnparsable);
 }
 
-#[test]
-fn metadata_is_loaded_from_a_workspace_with_the_locked_offline_flags() {
-    let dir = fixture("fixture-workspace");
-    let tc = toolchain(&dir);
-    let options = MetadataOptions {
-        locked: true,
-        offline: true,
-    };
-    let cancel = Cancel::new();
-    let trace = Recorder::disabled();
-    let driver = Driver {
-        toolchain: &tc,
-        dir: &dir,
-        cancel: &cancel,
-        trace: &trace,
-    };
-    let metadata = Metadata::load(&driver, options).expect("metadata");
-    assert_eq!(metadata.workspace_root, dir);
-    let mut members: Vec<&str> = metadata.members().map(|p| p.name.as_str()).collect();
-    members.sort_unstable();
-    assert_eq!(members, ["fixture-app", "fixture-core"]);
-    let app = metadata
-        .members()
-        .find(|p| p.name == "fixture-app")
-        .expect("app");
-    assert_eq!(app.manifest_dir(), dir.join("crates/app"));
-    let mut targets: Vec<(String, Vec<String>)> = app
-        .targets
-        .iter()
-        .map(|t| (t.name.clone(), t.kind.clone()))
-        .collect();
-    targets.sort();
-    assert_eq!(
-        targets,
-        [
-            ("cli".to_owned(), vec!["test".to_owned()]),
-            ("fixture-app".to_owned(), vec!["bin".to_owned()]),
-        ]
-    );
-    for target in metadata.members().flat_map(|p| p.targets.iter()) {
-        assert!(
-            target.src_path.is_absolute(),
-            "{}",
-            target.src_path.display()
-        );
-    }
-
-    let not_a_workspace = tempfile::tempdir().expect("tempdir");
-    let error = Metadata::load(
-        &Driver {
-            toolchain: &tc,
-            dir: not_a_workspace.path(),
-            cancel: &cancel,
-            trace: &trace,
-        },
-        options,
-    )
-    .unwrap_err();
-    assert_eq!(error.kind(), CargoErrorKind::CommandFailed);
-    assert!(error.to_string().contains("RM1014"), "{error}");
-    assert!(
-        error.to_string().contains("could not find"),
-        "the command's own words are kept: {error}"
-    );
-}
-
 const fn sample_stream() -> &'static str {
     concat!(
         r#"{"reason":"compiler-artifact","package_id":"path+file:///w/demo#0.1.0","manifest_path":"/w/demo/Cargo.toml","target":{"kind":["lib"],"crate_types":["lib"],"name":"demo","src_path":"/w/demo/src/lib.rs","edition":"2024","doc":true,"doctest":true,"test":true},"profile":{"opt_level":"0","debuginfo":2,"debug_assertions":true,"overflow_checks":true,"test":true},"features":[],"filenames":["/w/target/debug/deps/libdemo-abc.rmeta"],"executable":null,"fresh":false}"#,
@@ -331,7 +189,7 @@ fn message_lines_are_typed_and_a_line_that_is_not_one_is_refused() {
 #[test]
 fn other_message_kinds_are_typed_and_a_line_that_is_not_one_is_refused() {
     let messages = parse_messages(sample_stream().as_bytes()).expect("parse");
-    assert!(matches!(&messages[2], Message::BuildScriptExecuted));
+    assert!(matches!(&messages[2], Message::BuildScriptExecuted(_)));
     assert!(matches!(&messages[3], Message::Other { reason } if reason == "something-new"));
     assert!(matches!(
         &messages[4],
@@ -383,167 +241,6 @@ fn the_dep_info_file_sits_beside_the_artifact_without_the_lib_prefix() {
     assert_eq!(dep_info_path(Path::new("/")), None);
 }
 
-#[test]
-fn units_from_a_check_name_exactly_the_files_each_unit_compiled() {
-    let dir = fixture("fixture-simple");
-    let tc = toolchain(&dir);
-    let target = scratch_target("simple");
-    let mut spec = tc.command(
-        &dir,
-        [
-            "check",
-            "--workspace",
-            "--all-targets",
-            "--message-format=json",
-            "--offline",
-            "--locked",
-        ],
-    );
-    spec.argv.push("--target-dir".into());
-    spec.argv.push(target.path().into());
-    spec.structured_stdout = Some(64 << 20);
-    let result = run(&spec, &Cancel::new());
-    assert!(result.ok(), "{}", String::from_utf8_lossy(&result.output));
-    let messages = parse_messages(&result.stdout).expect("messages");
-    let units = units_of(&messages, &dir).expect("units");
-    let mut described: Vec<(String, Vec<String>, bool, Vec<String>)> = units
-        .iter()
-        .map(|unit| {
-            (
-                unit.target.name.clone(),
-                unit.target.kind.clone(),
-                unit.test,
-                unit.sources
-                    .iter()
-                    .map(|p| {
-                        p.strip_prefix(&dir)
-                            .expect("under the root")
-                            .to_string_lossy()
-                            .into_owned()
-                    })
-                    .collect(),
-            )
-        })
-        .collect();
-    described.sort();
-    assert_eq!(
-        described,
-        [
-            (
-                "fixture_simple".to_owned(),
-                vec!["lib".to_owned()],
-                false,
-                vec!["src/lib.rs".to_owned()]
-            ),
-            (
-                "fixture_simple".to_owned(),
-                vec!["lib".to_owned()],
-                true,
-                vec!["src/lib.rs".to_owned(), "src/testutil.rs".to_owned()]
-            ),
-            (
-                "parity".to_owned(),
-                vec!["test".to_owned()],
-                true,
-                vec!["tests/parity.rs".to_owned()]
-            ),
-        ]
-    );
-    for unit in &units {
-        assert!(unit.sources.iter().all(|p| p.is_absolute() && p.is_file()));
-    }
-}
-
-#[test]
-fn units_of_a_nested_member_resolve_against_the_workspace_root() {
-    let dir = fixture("fixture-workspace");
-    let tc = toolchain(&dir);
-    let target = scratch_target("workspace");
-    let mut spec = tc.command(
-        &dir,
-        [
-            "check",
-            "--workspace",
-            "--all-targets",
-            "--message-format=json",
-            "--offline",
-            "--locked",
-        ],
-    );
-    spec.argv.push("--target-dir".into());
-    spec.argv.push(target.path().into());
-    spec.structured_stdout = Some(64 << 20);
-    let result = run(&spec, &Cancel::new());
-    assert!(result.ok(), "{}", String::from_utf8_lossy(&result.output));
-    let units = units_of(&parse_messages(&result.stdout).expect("messages"), &dir).expect("units");
-    let core: BTreeSet<String> = units
-        .iter()
-        .filter(|u| u.target.name == "fixture_core" && !u.test)
-        .flat_map(|u| u.sources.iter())
-        .map(|p| {
-            p.strip_prefix(&dir)
-                .expect("under the root")
-                .to_string_lossy()
-                .into_owned()
-        })
-        .collect();
-    assert_eq!(
-        core,
-        ["crates/core/src/lib.rs", "crates/core/src/util.rs"]
-            .into_iter()
-            .map(str::to_owned)
-            .collect()
-    );
-    let app_test = units
-        .iter()
-        .find(|u| u.target.name == "cli")
-        .expect("integration test unit");
-    assert_eq!(app_test.sources, [dir.join("crates/app/tests/cli.rs")]);
-    assert!(app_test.target.is_test());
-}
-
-#[test]
-fn a_check_that_fails_to_compile_still_yields_its_messages() {
-    let dir = fixture("fixture-simple");
-    let tc = toolchain(&dir);
-    let target = scratch_target("broken");
-    let snapshot = tempfile::tempdir().expect("tempdir");
-    let copy = snapshot.path().join("fixture-simple");
-    copy_dir(&dir, &copy);
-    std::fs::write(
-        copy.join("src/lib.rs"),
-        "pub fn f() -> i32 { let s = String::new(); s - \"x\" }\n",
-    )
-    .expect("break");
-    let mut spec = tc.command(
-        &copy,
-        ["check", "--message-format=json", "--offline", "--locked"],
-    );
-    spec.argv.push("--target-dir".into());
-    spec.argv.push(target.path().into());
-    spec.structured_stdout = Some(64 << 20);
-    let result = run(&spec, &Cancel::new());
-    assert!(!result.ok());
-    let messages = parse_messages(&result.stdout).expect("messages");
-    let errors: Vec<&Diagnostic> = messages
-        .iter()
-        .filter_map(|m| match m {
-            Message::CompilerMessage(m) if m.message.is_error() => Some(&m.message),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(errors.len(), 1, "{messages:?}");
-    assert_eq!(errors[0].code.as_deref(), Some("E0369"));
-    assert_eq!(
-        errors[0].primary_span().expect("primary").file_name,
-        "src/lib.rs"
-    );
-    assert!(matches!(
-        messages.last(),
-        Some(Message::BuildFinished { success: false })
-    ));
-}
-
 fn artifact_of(message: &Message) -> &rust_mutants::cargo::Artifact {
     match message {
         Message::CompilerArtifact(artifact) => artifact,
@@ -558,28 +255,218 @@ fn diagnostic_of(message: &Message) -> &Diagnostic {
     }
 }
 
-fn copy_dir(from: &Path, to: &Path) {
-    std::fs::create_dir_all(to).expect("mkdir");
-    for entry in std::fs::read_dir(from).expect("read_dir") {
-        let entry = entry.expect("entry");
-        let dest = to.join(entry.file_name());
-        if entry.file_name() == "target" {
-            continue;
-        }
-        if entry.file_type().expect("type").is_dir() {
-            copy_dir(&entry.path(), &dest);
-        } else {
-            std::fs::copy(entry.path(), &dest).expect("copy");
-        }
-    }
-}
-
 #[test]
 fn every_cargo_error_kind_has_a_code_in_the_workspace_area() {
     for kind in CargoErrorKind::ALL {
         let code = kind.code().code;
-        assert!(code.starts_with("RM1") || code.starts_with("RM2"), "{code}");
+        assert!(
+            code.starts_with("RM1") || code.starts_with("RM2") || kind == CargoErrorKind::Cancelled,
+            "{code}"
+        );
     }
+    assert_eq!(
+        CargoErrorKind::Cancelled.code().code,
+        "RM0001",
+        "a command nobody waited for is the caller's cancellation, not a fact about the \
+         workspace, and it is the one cargo failure that is not"
+    );
     let error: CargoError = parse_dep_info("").unwrap_err();
     assert_eq!(error.kind().code().code, "RM2001");
+}
+
+#[test]
+fn a_build_script_executed_message_carries_its_out_dir_and_environment() {
+    let stream = r#"{"reason":"build-script-executed","package_id":"demo 0.1.0","linked_libs":[],"linked_paths":[],"cfgs":[],"env":[["FIXTURE_TAG","written"],["OTHER","2"]],"out_dir":"/t/debug/build/demo-abc/out"}
+{"reason":"build-finished","success":true}
+"#;
+    let messages = parse_messages(stream.as_bytes()).expect("parse");
+    let Message::BuildScriptExecuted(script) = &messages[0] else {
+        panic!("{messages:?}");
+    };
+    assert_eq!(script.package_id, "demo 0.1.0");
+    assert_eq!(
+        script.out_dir.as_deref(),
+        Some(Path::new("/t/debug/build/demo-abc/out")),
+        "a unit that reads a build script reads its OUT_DIR back at run time, so a run that \
+         starts the test process itself has to say where it is"
+    );
+    assert_eq!(
+        script.env,
+        vec![
+            ("FIXTURE_TAG".to_owned(), "written".to_owned()),
+            ("OTHER".to_owned(), "2".to_owned()),
+        ],
+        "and what the script put in the environment, in the order it said them"
+    );
+}
+
+#[test]
+fn a_build_script_that_wrote_nowhere_says_so_rather_than_guessing() {
+    let stream = "{\"reason\":\"build-script-executed\",\"package_id\":\"demo 0.1.0\"}\n";
+    let messages = parse_messages(stream.as_bytes()).expect("parse");
+    let Message::BuildScriptExecuted(script) = &messages[0] else {
+        panic!("{messages:?}");
+    };
+    assert_eq!(script.out_dir, None);
+    assert!(script.env.is_empty());
+}
+
+#[test]
+fn compile_arguments_spell_every_build_option_once() {
+    let options = CompileOptions {
+        kind: CompileKind::Tests,
+        packages: vec!["one".to_owned()],
+        target_dir: Some(PathBuf::from("/tmp/out")),
+        locked: true,
+        offline: true,
+        build: BuildConfig {
+            features: vec!["a".to_owned(), "b".to_owned()],
+            all_features: false,
+            no_default_features: true,
+            target: Some("x86_64-unknown-linux-gnu".to_owned()),
+            profile: Some("release".to_owned()),
+            jobs: Some(3),
+            debug: false,
+        },
+        ..CompileOptions::default()
+    };
+    assert_eq!(
+        compile_arguments(&options),
+        [
+            "test",
+            "--package",
+            "one",
+            "--all-targets",
+            "--no-run",
+            "--message-format=json",
+            "--locked",
+            "--offline",
+            "--target-dir",
+            "/tmp/out",
+            "--no-default-features",
+            "--features",
+            "a,b",
+            "--target",
+            "x86_64-unknown-linux-gnu",
+            "--profile",
+            "release",
+            "--jobs",
+            "3",
+        ]
+    );
+}
+
+#[test]
+fn a_build_configured_with_nothing_asks_for_nothing_but_the_bytes_nobody_reads() {
+    let bare = compile_arguments(&CompileOptions::default());
+    assert_eq!(
+        bare,
+        [
+            "check",
+            "--workspace",
+            "--all-targets",
+            "--message-format=json",
+            "--config",
+            "profile.dev.debug=0",
+            "--config",
+            "profile.test.debug=0"
+        ]
+    );
+}
+
+#[test]
+fn all_features_and_a_named_feature_are_both_spelled_because_cargo_accepts_both() {
+    let options = CompileOptions {
+        build: BuildConfig {
+            features: vec!["a".to_owned()],
+            all_features: true,
+            ..BuildConfig::default()
+        },
+        ..CompileOptions::default()
+    };
+    let args = compile_arguments(&options);
+    assert!(args.contains(&"--all-features".to_owned()));
+    assert_eq!(
+        args.iter().filter(|arg| *arg == "--features").count(),
+        1,
+        "every feature the run asked for is one argument, not one argument each"
+    );
+}
+
+#[test]
+fn a_build_writes_no_debug_information_unless_it_is_asked_to() {
+    use rust_mutants::cargo::{BuildConfig, CompileKind, CompileOptions, compile_arguments};
+    let plain = compile_arguments(&CompileOptions {
+        kind: CompileKind::Tests,
+        ..CompileOptions::default()
+    });
+    assert!(
+        plain
+            .windows(2)
+            .any(|pair| pair == ["--config", "profile.test.debug=0"]),
+        "the engine reads what a test harness printed and never a backtrace, so the debug \
+         information a build writes is bytes nobody reads: {plain:?}"
+    );
+    assert!(
+        plain
+            .windows(2)
+            .any(|pair| pair == ["--config", "profile.dev.debug=0"]),
+        "and a check compiles with the dev profile: {plain:?}"
+    );
+
+    let asked = compile_arguments(&CompileOptions {
+        kind: CompileKind::Tests,
+        build: BuildConfig {
+            debug: true,
+            ..BuildConfig::default()
+        },
+        ..CompileOptions::default()
+    });
+    assert!(
+        !asked.iter().any(|one| one.starts_with("profile.")),
+        "somebody who wants a debugger on a kept snapshot says so, and then nothing overrides \
+         the profile they wrote: {asked:?}"
+    );
+
+    let named = compile_arguments(&CompileOptions {
+        kind: CompileKind::Tests,
+        build: BuildConfig {
+            profile: Some("bench".to_owned()),
+            ..BuildConfig::default()
+        },
+        ..CompileOptions::default()
+    });
+    assert!(
+        !named.iter().any(|one| one.starts_with("profile.")),
+        "a profile somebody named is one they meant, and this engine does not edit it: {named:?}"
+    );
+}
+
+#[test]
+fn a_run_told_not_to_touch_the_network_tells_every_command_it_starts() {
+    use rust_mutants::cargo::{MetadataOptions, metadata_arguments};
+
+    let promised = MetadataOptions {
+        locked: true,
+        offline: true,
+    };
+    assert_eq!(
+        metadata_arguments(promised, false),
+        ["metadata", "--format-version", "1", "--locked", "--offline"],
+        "resolving the workspace is a command a run starts, and one that reached out anyway \
+         would keep the promise for the builds and break it before the first of them"
+    );
+    assert_eq!(
+        metadata_arguments(
+            MetadataOptions {
+                locked: false,
+                offline: false,
+            },
+            true,
+        ),
+        ["metadata", "--format-version", "1", "--no-deps"],
+        "and a run that promised neither asks for neither, or every project would be resolved \
+         against a lock file it did not agree to; the resolve that reads no dependencies is \
+         the one that says so"
+    );
 }

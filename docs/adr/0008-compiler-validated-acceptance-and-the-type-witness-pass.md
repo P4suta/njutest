@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: 2026 mjutest contributors
+SPDX-FileCopyrightText: 2026 njutest contributors
 SPDX-License-Identifier: MIT OR Apache-2.0
 -->
 
@@ -45,12 +45,31 @@ rather than as a survivor.
    about less than a test can read, is refused: the probe tree's own validation
    drops the site, and the mutant is simply unprobed.
 3. **A proof that needs a fact about a type asks the compiler for it.** The
-   branch proof needs the operands of a comparison to be primitive. A third
-   tree — pristine plus one witness statement per candidate, checked and never
-   run — gets `__rm::w_ord(&a, &b)` in front of the `if`; the sealed trait
-   behind it is implemented for the primitive types alone, and a witness that
-   fails to check leaves its candidate without a proof.
-4. **`rust-analyzer` stays out.** A `TypeOracle` trait marks the extension
+   branch proof needs a comparison that runs none of the program's code. A
+   third tree — pristine plus one witness statement per candidate, checked and
+   never run — gets `__rmw::w_ord(&a, &b)` in front of the `if`; the sealed
+   trait behind it names the types whose comparison the standard library
+   defines — the primitives, `str`, `String`, `OsStr`, `OsString`, `Path`,
+   `PathBuf`, and an array, slice, `Vec` or `Option` of something it already
+   names — and a witness that fails to check leaves its candidate without a
+   proof. A container is in it only where what it holds is, because a `Vec<T>`
+   comparison is `T`'s comparison in a loop.
+
+   The two operands are asked about **separately**, so a `String` beside a
+   `&str` is vouched for and does not refuse the whole condition it sits in.
+   That is no weaker: a comparison between two of these types can only be the
+   standard library's, because coherence lets nobody add a `PartialEq` or
+   `PartialOrd` impl between two types they own neither of. A type of your own
+   on either side is not in the trait, whichever side it is on.
+4. **A check that failed and named nothing vouches for nothing.** An error
+   inside a condition's witnesses refuses that claim and an error inside a
+   body's marker refuses only the marker; an error in neither is the tree
+   refusing to compile for a reason this pass cannot localise, and reading it
+   as "nothing was refused" would grant every claim on a question the compiler
+   never answered. `prove::refusal` is the pure rule of the diagnostics and
+   the rewrites they landed in, and a failure it does not account for costs
+   every proof of the run.
+5. **`rust-analyzer` stays out.** A `TypeOracle` trait marks the extension
    point; nothing implements it.
 
 ## Consequences

@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Whether the compiler renders a mutation identically to the program it mutates.
@@ -14,10 +14,11 @@
 //! linker, and the artifacts come out identical for a reason that is the
 //! opposite of reassuring. Saying `Identical` is the engine's whole claim, and
 //! the premises that turn it into a verdict live where the evidence does
-//! ([ADR 0013](../../../docs/adr/0013-codegen-identity-is-the-equivalence-proof.md)).
+//! ([ADR 0013](../../../../docs/adr/0013-codegen-identity-is-the-equivalence-proof.md)).
 
 pub mod artifacts;
 
+use std::ffi::{OsStr, OsString};
 use std::path::Path;
 use std::time::Duration;
 
@@ -38,8 +39,24 @@ pub const NO_SUCH_FILE: &str = "the tree holds no file the mutation is in";
 /// The reason a build that did not succeed establishes nothing.
 pub const DID_NOT_BUILD: &str = "the tree with the mutation spliced in did not build";
 
+/// The reason a mutation the compiler refuses establishes nothing about equivalence.
+pub const DOES_NOT_BUILD: &str =
+    "the mutated tree does not build, so there are not two programs to compare";
+
 /// The reason a control that stopped matching withdraws the layer.
 pub const CONTROL_DRIFTED: &str = "the original tree stopped building to the bytes it built to, so nothing here compares two programs";
+
+/// The variable that takes the build history out of what a build emits.
+///
+/// The lemma here is byte identity, and incremental compilation is the one
+/// feature that makes what a compiler emits depend on what it emitted before
+/// rather than only on the source it was given. A tree built once from nothing
+/// and once from a cache comes out as two byte sequences for one program, so
+/// every mutation would read as one the compiler renders and the layer would
+/// establish nothing while saying something. The tree is this layer's own and
+/// is built from nothing to begin with, so asking for the whole of it each
+/// time costs the run nothing it was keeping.
+const WHOLE_BUILDS: (&str, &str) = ("CARGO_INCREMENTAL", "0");
 
 /// What to prove equivalence with: how to open a tree of this layer's own, and how long one build may take.
 #[derive(Debug, Clone, Default)]
@@ -48,6 +65,8 @@ pub struct ProveOptions {
     pub open: OpenOptions,
     /// How long one build may take.
     pub timeout: Option<Duration>,
+    /// What the project is compiled as, which is a parameter of the question rather than of the answer.
+    pub build: crate::cargo::BuildConfig,
 }
 
 /// A tree of its own, built once, and asked one mutation at a time whether the compiler renders it identically.
@@ -63,6 +82,7 @@ pub struct ProveOptions {
 pub struct Prover {
     workspace: Workspace,
     original: Artifacts,
+    settled: bool,
     withdrawn: bool,
     options: ProveOptions,
 }
@@ -80,25 +100,36 @@ impl Prover {
     ) -> Result<Self, EngineError> {
         let mut open = options.open.clone();
         open.trace = trace.clone();
+        open.env
+            .retain(|(name, _value)| !crate::vars::same_name(name, OsStr::new(WHOLE_BUILDS.0)));
+        open.env.push((
+            OsString::from(WHOLE_BUILDS.0),
+            OsString::from(WHOLE_BUILDS.1),
+        ));
         let workspace = Workspace::open(root, open, cancel)?;
         let mut prover = Self {
             workspace,
             original: Artifacts::new(),
+            settled: false,
             withdrawn: false,
             options: options.clone(),
         };
-        prover.original = prover.build(cancel)?;
+        prover.original = prover.build(cancel)?.unwrap_or_default();
         Ok(prover)
     }
 
     /// Whether the compiler renders `candidate` identically to what it mutates.
     ///
-    /// Every answer of [`Identity::Identical`] is followed by building the
-    /// original again and checking that it still builds to the bytes it built
-    /// to. A tree whose build is not reproducible proves nothing, and one
-    /// answer that fails that check withdraws every answer this prover would
-    /// give afterwards: a layer that cannot establish its premise keeps the
-    /// execution.
+    /// Both answers rest on one premise: that a difference between two builds
+    /// of this tree is the mutation's doing. So the original is built again and
+    /// has to still build to the bytes it built to — every time the answer is
+    /// [`Identity::Identical`], which is the stronger claim, and once before
+    /// the first [`Identity::Differs`], which is the same premise read the
+    /// other way. A machine whose linker stamps what it writes renders one
+    /// unchanged tree two ways, and a layer that reported that as the
+    /// mutation's doing would be reporting the machine. One failed check
+    /// withdraws every answer this prover would give afterwards: a layer that
+    /// cannot establish its premise keeps the execution.
     ///
     /// # Errors
     /// Whatever stopped a build or a write.
@@ -134,14 +165,19 @@ impl Prover {
             self.withdrawn = true;
             return Ok(Identity::NotEstablished(CONTROL_DRIFTED));
         }
-        let mutated = mutated?;
+        let Some(mutated) = mutated? else {
+            return Ok(Identity::NotEstablished(DOES_NOT_BUILD));
+        };
         let answer = artifacts::compare(&self.original, &mutated);
-        if answer != Identity::Identical {
+        if matches!(answer, Identity::NotEstablished(_))
+            || (answer == Identity::Differs && self.settled)
+        {
             return Ok(answer);
         }
-        let control = self.build(cancel)?;
+        let control = self.build(cancel)?.unwrap_or_default();
         if control == self.original {
-            Ok(Identity::Identical)
+            self.settled = true;
+            Ok(answer)
         } else {
             self.withdrawn = true;
             Ok(Identity::NotEstablished(CONTROL_DRIFTED))
@@ -163,7 +199,13 @@ impl Prover {
         Ok(())
     }
 
-    fn build(&self, cancel: &Cancel) -> Result<Artifacts, EngineError> {
+    /// What one build of the tree produced, or nothing when the tree did not build.
+    ///
+    /// A mutation the compiler refuses is not one it renders identically: the
+    /// question is about two programs, and there is only one. Saying so is
+    /// what keeps a build failure from reading as an empty set of artifacts
+    /// equal to another empty set.
+    fn build(&self, cancel: &Cancel) -> Result<Option<Artifacts>, EngineError> {
         let built = compile(
             &self.workspace.driver(cancel),
             &CompileOptions {
@@ -171,17 +213,18 @@ impl Prover {
                 locked: self.options.open.locked,
                 offline: self.options.open.offline,
                 timeout: self.options.timeout,
+                build: self.options.build.clone(),
                 ..CompileOptions::default()
             },
         )?;
         if !built.success {
-            return Ok(Artifacts::new());
+            return Ok(None);
         }
         let targets = targets_of(&built.messages, &self.workspace.metadata().packages, None);
         let executables: Vec<(&str, &Path)> = targets
             .iter()
             .map(|target| (target.id.as_str(), target.executable.as_path()))
             .collect();
-        Ok(artifacts::digests(executables).unwrap_or_default())
+        Ok(Some(artifacts::digests(executables).unwrap_or_default()))
     }
 }

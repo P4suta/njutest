@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="rust-mutants" tests="22" failures="1" errors="0" skipped="3" time="0.000">
+  <testsuite name="src/lib.rs" tests="22" failures="1" errors="0" skipped="3" time="0.000">
+    <testcase name="negate-condition at src/lib.rs:8:8 [5cac17c9a5e04edb02b2]" classname="src/lib.rs" time="0.000"/>
+    <testcase name="le-to-lt at src/lib.rs:8:14 [d8a9939330496216a17d]" classname="src/lib.rs" time="0.000">
+      <skipped message="discharged"/>
+    </testcase>
+    <testcase name="return-default at src/lib.rs:9:16 [e50b2e8595cf900f3ac1]" classname="src/lib.rs" time="0.000"/>
+    <testcase name="return-default at src/lib.rs:11:5 [60434963b2d455f5908b]" classname="src/lib.rs" time="0.000"/>
+    <testcase name="negate-condition at src/lib.rs:16:8 [56a6462eff402c51fa3c]" classname="src/lib.rs" time="0.000"/>
+    <testcase name="le-to-lt at src/lib.rs:16:10 [27e9c3f2d6bb568e5ef3]" classname="src/lib.rs" time="0.000">
+      <failure message="survived" type="surviving-mutant">the tests did not notice that `&lt;=` became `&lt;` at src/lib.rs:16:10</failure>
+    </testcase>
+    <testcase name="true-to-false at src/lib.rs:17:16 [b1675dab81a17593d6aa]" classname="src/lib.rs" time="0.000"/>
+    <testcase name="false-to-true at src/lib.rs:19:5 [97fdd99d1189fccc52b3]" classname="src/lib.rs" time="0.000"/>
+    <testcase name="negate-condition at src/lib.rs:28:8 [df6a811dc8b92df4f0ac]" classname="src/lib.rs" time="0.000"/>
+    <testcase name="le-to-lt at src/lib.rs:28:20 [0a79c5a3228a6a3320ff]" classname="src/lib.rs" time="0.000"/>
+    <testcase name="true-to-false at src/lib.rs:29:16 [23af36e78e61d3830771]" classname="src/lib.rs" time="0.000"/>
+    <testcase name="false-to-true at src/lib.rs:31:5 [9c4254184c154b37dfec]" classname="src/lib.rs" time="0.000"/>
+    <testcase name="negate-condition at src/lib.rs:36:8 [e7bffab1d339dfb05f85]" classname="src/lib.rs" time="0.000"/>
+    <testcase name="le-to-lt at src/lib.rs:36:13 [7cfdea86ac571b743bd0]" classname="src/lib.rs" time="0.000">
+      <skipped message="discharged"/>
+    </testcase>
+    <testcase name="true-to-false at src/lib.rs:37:16 [a327c1687a74b22a55d3]" classname="src/lib.rs" time="0.000"/>
+    <testcase name="false-to-true at src/lib.rs:39:5 [e5d16d6b8f3079358855]" classname="src/lib.rs" time="0.000"/>
+    <testcase name="negate-condition at src/lib.rs:44:8 [a2bc7cba4054f5efcd09]" classname="src/lib.rs" time="0.000"/>
+    <testcase name="eq-to-neq at src/lib.rs:44:14 [d26c55f2db5eca1ecdbe]" classname="src/lib.rs" time="0.000"/>
+    <testcase name="and-to-or at src/lib.rs:44:26 [7972f10b600490ef32f3]" classname="src/lib.rs" time="0.000"/>
+    <testcase name="le-to-lt at src/lib.rs:44:34 [0a8ab9771954a24f9d25]" classname="src/lib.rs" time="0.000">
+      <skipped message="discharged"/>
+    </testcase>
+    <testcase name="true-to-false at src/lib.rs:45:16 [19cb1252f74aee5c39d0]" classname="src/lib.rs" time="0.000"/>
+    <testcase name="false-to-true at src/lib.rs:47:5 [287db8451f8a0e8ad123]" classname="src/lib.rs" time="0.000"/>
+  </testsuite>
+</testsuites>

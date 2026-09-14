@@ -1,12 +1,25 @@
 # cargo-mutants: the external mutation tester CI runs weekly against *this*
 # repository (mutation.yml). It is one of two independent measurements of how
-# strong this suite is; the other is `mise run dogfood`, which runs mjutest and
+# strong this suite is; the other is `mise run dogfood`, which runs njutest and
 # rust-mutants on themselves. A survivor here is a test to write or an
 # acceptance to record with a reason, never something to leave silently.
 
 exclude_globs = [
   "fixtures/**",
-  "xtask/**",
+  # The gates themselves are measured; what is left out is the wiring around
+  # them. `proofaudit`, `engineaudit`, and `route` re-decide what a run
+  # reported, so a survivor in one of them is a check that never fires.
+  "xtask/src/lib.rs",
+  "xtask/src/main.rs",
+  "xtask/src/gates.rs",
+  "xtask/src/devgates.rs",
+  "xtask/src/lints.rs",
+  "xtask/src/deps.rs",
+  "xtask/src/fixtures.rs",
+  "xtask/src/release.rs",
+  "xtask/src/reportdiff.rs",
+  "xtask/src/sbom.rs",
+  "xtask/tests/**",
   # Composition roots are stdin/stdout/exit-code wiring pinned by CLI contract
   # tests; the behaviour behind them is mutated through the library crates.
   "crates/*/src/main.rs",

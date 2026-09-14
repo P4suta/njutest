@@ -1,9 +1,0 @@
-Bundle everything about one run into one directory
-
-Usage: mjutest diagnostics <RUN>
-
-Arguments:
-  <RUN>  The run to bundle
-
-Options:
-  -h, --help  Print help

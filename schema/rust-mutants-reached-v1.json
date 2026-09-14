@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://njutest.dev/schema/rust-mutants-reached-v1.json",
+  "title": "rust-mutants reached v1",
+  "description": "The measurement a coverage run kept: which blocks each target's own run covered, which blocks the coverage build instrumented at all, and what the measurement could not establish. A place outside `instrumented` is a place nothing may be concluded about.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["targets", "instrumented", "limitations"],
+  "properties": {
+    "targets": {
+      "description": "Every target that ran, by identity, with the blocks its run covered. Empty when nothing was measured.",
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/block"
+        }
+      }
+    },
+    "instrumented": {
+      "description": "Every block the coverage build instrumented, whether or not it ran.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/block"
+      }
+    },
+    "limitations": {
+      "description": "Why the measurement is not what it could be, in the order it was found out.",
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  },
+  "$defs": {
+    "block": {
+      "description": "One stretch of source a test really ran.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["file", "start", "end"],
+      "properties": {
+        "file": {
+          "type": "string",
+          "minLength": 1
+        },
+        "start": {
+          "$ref": "#/$defs/point"
+        },
+        "end": {
+          "$ref": "#/$defs/point"
+        }
+      }
+    },
+    "point": {
+      "description": "A 1-based line and a 1-based byte column, the unit llvm-cov reports regions in.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["line", "column"],
+      "properties": {
+        "line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "column": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    }
+  }
+}

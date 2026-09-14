@@ -1,195 +1,459 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Coverage routing: a mutant is only ever run against a target that reached it.
+//! Routing: which targets could notice a mutation, and what the route says when the measurement says nothing.
 
-#![expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "a test reports a setup failure by panicking and asserts with panics"
-)]
+use std::path::Path;
 
-use std::path::{Path, PathBuf};
+use rust_mutants::coverage::{Block, Point};
+use rust_mutants::reach::{Reached, UNMEASURED};
+use rust_mutants::session::{Route, Routing};
 
-use rust_mutants::outcome::Outcome;
-use rust_mutants::rule::Tier;
-use rust_mutants::runner::Cancel;
-use rust_mutants::session::{PrepareOptions, Request, Session};
-use rust_mutants::workspace::{OpenOptions, Workspace};
-
-struct Fixture {
-    root: PathBuf,
-    _dir: tempfile::TempDir,
-    _temp: tempfile::TempDir,
-    temp_root: PathBuf,
-}
-
-fn fixture(name: &str) -> Fixture {
-    let dir = tempfile::Builder::new()
-        .prefix("rust-mutants-reach-")
-        .tempdir()
-        .expect("tempdir");
-    let root = dir.path().join(name);
-    copy_dir(&mjutest_devkit::paths::fixtures_dir().join(name), &root);
-    let temp = tempfile::Builder::new()
-        .prefix("rust-mutants-reach-temp-")
-        .tempdir()
-        .expect("tempdir");
-    let temp_root = temp.path().to_path_buf();
-    Fixture {
-        root,
-        _dir: dir,
-        _temp: temp,
-        temp_root,
-    }
-}
-
-fn copy_dir(from: &Path, to: &Path) {
-    std::fs::create_dir_all(to).expect("mkdir");
-    for entry in std::fs::read_dir(from).expect("read_dir") {
-        let entry = entry.expect("entry");
-        if entry.file_name() == "target" {
-            continue;
-        }
-        let destination = to.join(entry.file_name());
-        if entry.file_type().expect("type").is_dir() {
-            copy_dir(&entry.path(), &destination);
-        } else {
-            std::fs::copy(entry.path(), &destination).expect("copy");
-        }
-    }
-}
-
-fn prepared(fixture: &Fixture, coverage: bool) -> Session {
-    let workspace = Workspace::open(
-        &fixture.root,
-        OpenOptions {
-            cargo: Some(mjutest_devkit::paths::cargo_binary()),
-            temp_directory: fixture.temp_root.clone(),
-            env: std::env::vars_os().collect(),
-            locked: true,
-            offline: true,
-            ..OpenOptions::default()
-        },
-        &Cancel::new(),
-    )
-    .expect("open");
-    workspace
-        .prepare(
-            &PrepareOptions {
-                tier: Tier::Balanced,
-                coverage,
-                ..PrepareOptions::default()
-            },
-            &Cancel::new(),
-        )
-        .expect("prepare")
-}
-
-/// The mutant whose original text is `original` and whose rule is `rule`.
-fn mutant<'a>(session: &'a Session, rule: &str, line: u32) -> &'a rust_mutants::catalog::Mutant {
-    session
-        .catalog()
-        .mutants()
-        .iter()
-        .find(|one| {
-            one.candidate.rule.name == rule
-                && session.position(one).is_some_and(|at| at.line == line)
-        })
-        .unwrap_or_else(|| panic!("a {rule} mutant on line {line}"))
-}
-
-/// The one mutant of a rule the tree proposes exactly once.
-fn only<'a>(session: &'a Session, rule: &str) -> &'a rust_mutants::catalog::Mutant {
-    let mut found = session
-        .catalog()
-        .mutants()
-        .iter()
-        .filter(|one| one.candidate.rule.name == rule);
-    let one = found.next().unwrap_or_else(|| panic!("a {rule} mutant"));
-    assert!(found.next().is_none(), "more than one {rule} mutant");
-    one
-}
-
-#[test]
-fn a_session_that_was_not_asked_to_measure_coverage_proves_nothing_about_reach() {
-    let fixture = fixture("fixture-simple");
-    let session = prepared(&fixture, false);
-    assert!(!session.reached().measured());
-    let one = mutant(&session, "gt-to-ge", 11);
-    assert_eq!(session.reaches(one), None);
-    session.close().expect("close");
-}
-
-#[test]
-fn each_target_reaches_the_code_its_own_tests_run_and_no_more() {
-    let fixture = fixture("fixture-simple");
-    let session = prepared(&fixture, true);
-    let reached = session.reached();
-    assert!(
-        reached.measured(),
-        "the coverage build was not measured: {:?}",
-        reached.limitations
-    );
-    let measured: Vec<&str> = reached.targets.keys().map(String::as_str).collect();
-    assert_eq!(
-        measured,
-        [
-            "fixture-simple/lib/fixture_simple",
-            "fixture-simple/test/parity"
-        ]
-    );
-
-    let max = mutant(&session, "gt-to-ge", 11);
-    let even = mutant(&session, "eq-to-neq", 16);
-    assert_eq!(session.reaches(max), Some(true));
-    assert_eq!(session.reaches(even), Some(true));
-    let covering = |one: &rust_mutants::catalog::Mutant| -> Vec<String> {
-        let position = session.position(one).expect("a position");
-        reached
-            .covering(
-                Path::new(&one.candidate.path),
-                rust_mutants::coverage::Point {
-                    line: position.line,
-                    column: position.byte_column,
-                },
-            )
-            .expect("the measurement instrumented the place")
-            .into_iter()
-            .map(str::to_owned)
-            .collect()
+/// A measurement in which `covered` ran and `instrumented` was built, over one file.
+fn measured(instrumented: &[(&str, u32)], covered: &[(&str, &[u32])]) -> Reached {
+    let block = |line: u32| Block {
+        file: "src/lib.rs".into(),
+        start: Point { line, column: 1 },
+        end: Point { line, column: 80 },
     };
-    assert_eq!(covering(max), ["fixture-simple/lib/fixture_simple"]);
-    assert_eq!(covering(even), ["fixture-simple/test/parity"]);
-    session.close().expect("close");
+    Reached {
+        targets: covered
+            .iter()
+            .map(|(target, lines)| {
+                (
+                    (*target).to_owned(),
+                    lines.iter().map(|line| block(*line)).collect(),
+                )
+            })
+            .collect(),
+        instrumented: instrumented.iter().map(|(_, line)| block(*line)).collect(),
+        limitations: Vec::new(),
+    }
+}
+
+const fn at(line: u32) -> Point {
+    Point { line, column: 5 }
+}
+
+const TARGETS: [&str; 3] = ["demo/lib/demo", "demo/test/parity", "demo/doc/demo"];
+
+/// Everything a coverage build compiles, which is every target but the documented examples.
+const MEASURABLE: [&str; 2] = ["demo/lib/demo", "demo/test/parity"];
+
+#[test]
+fn a_route_without_a_measurement_is_every_target_and_says_why() {
+    let route = Route::decide(
+        &Reached::default(),
+        Path::new("src/lib.rs"),
+        at(3),
+        &Routing {
+            targets: &TARGETS,
+            measurable: &MEASURABLE,
+            also_reaching: &[],
+        },
+    );
+    assert_eq!(route.granularity(), "all");
+    assert_eq!(route.fallback(), Some("not-measured"));
+    assert_eq!(route.reaching(), TARGETS.to_vec());
 }
 
 #[test]
-fn a_mutant_no_measured_target_reached_is_not_run_at_all() {
-    let fixture = fixture("fixture-simple");
-    let mut source = std::fs::read_to_string(fixture.root.join("src/lib.rs")).expect("read");
-    source.push_str("\n/// Nothing calls this.\npub fn unreached(a: i32) -> i32 {\n    a + 1\n}\n");
-    std::fs::write(fixture.root.join("src/lib.rs"), source).expect("write");
-
-    let session = prepared(&fixture, true);
-    assert!(session.reached().measured());
-    let alone = only(&session, "add-to-sub");
-    assert_eq!(session.reaches(alone), Some(false));
-
-    let result = session
-        .exec(
-            &Request {
-                mutant: alone.id.clone(),
-                ..Request::default()
-            },
-            &Cancel::new(),
-        )
-        .expect("exec");
-    assert_eq!(
-        result.outcome,
-        Outcome::NotRun,
-        "a mutant nothing reached is not run against everything to find that out again"
+fn a_position_no_measurement_instrumented_is_one_nothing_is_known_about() {
+    let reached = measured(&[("demo/lib/demo", 10)], &[("demo/lib/demo", &[10])]);
+    let route = Route::decide(
+        &reached,
+        Path::new("src/lib.rs"),
+        at(3),
+        &Routing {
+            targets: &TARGETS,
+            measurable: &MEASURABLE,
+            also_reaching: &[],
+        },
     );
-    assert!(result.target.is_empty(), "{result:?}");
-    session.close().expect("close");
+    assert_eq!(
+        route.granularity(),
+        "all",
+        "a place the build never instrumented is a place the measurement says nothing about"
+    );
+    assert_eq!(route.fallback(), Some("outside-blocks"));
+}
+
+#[test]
+fn a_measured_position_is_routed_to_the_targets_that_ran_it() {
+    let reached = measured(
+        &[("demo/lib/demo", 3)],
+        &[
+            ("demo/lib/demo", &[3]),
+            ("demo/test/parity", &[]),
+            ("demo/doc/demo", &[]),
+        ],
+    );
+    let route = Route::decide(
+        &reached,
+        Path::new("src/lib.rs"),
+        at(3),
+        &Routing {
+            targets: &TARGETS,
+            measurable: &MEASURABLE,
+            also_reaching: &[],
+        },
+    );
+    assert_eq!(route.granularity(), "block");
+    assert_eq!(
+        route.fallback(),
+        None,
+        "the measurement named every target the run built, so nothing is being fallen back on"
+    );
+    assert_eq!(route.reaching(), vec!["demo/lib/demo"]);
+}
+
+#[test]
+fn a_measured_position_no_target_ran_is_unreached() {
+    let reached = measured(
+        &[("demo/lib/demo", 3)],
+        &[
+            ("demo/lib/demo", &[10]),
+            ("demo/test/parity", &[]),
+            ("demo/doc/demo", &[]),
+        ],
+    );
+    let route = Route::decide(
+        &reached,
+        Path::new("src/lib.rs"),
+        at(3),
+        &Routing {
+            targets: &TARGETS,
+            measurable: &MEASURABLE,
+            also_reaching: &[],
+        },
+    );
+    assert_eq!(route.granularity(), "unreached");
+    assert!(route.reaching().is_empty());
+}
+
+#[test]
+fn a_measurement_that_names_only_some_of_the_targets_narrows_to_none_of_them() {
+    let reached = measured(&[("demo/lib/demo", 3)], &[("demo/lib/demo", &[10])]);
+    let route = Route::decide(
+        &reached,
+        Path::new("src/lib.rs"),
+        at(3),
+        &Routing {
+            targets: &TARGETS,
+            measurable: &MEASURABLE,
+            also_reaching: &[],
+        },
+    );
+    assert_eq!(
+        route.reaching(),
+        vec!["demo/test/parity"],
+        "the one target the measurement named ran somewhere else, and the one it could have \
+         named and did not is one nothing is known about. The documented examples are not \
+         missing from the measurement, they are not what it is about."
+    );
+    assert_eq!(route.fallback(), Some("coverage-incomplete"));
+}
+
+#[test]
+fn a_target_the_measurement_could_not_read_is_kept_in_every_route() {
+    let mut reached = measured(
+        &[("demo/lib/demo", 3)],
+        &[
+            ("demo/lib/demo", &[10]),
+            ("demo/test/parity", &[]),
+            ("demo/doc/demo", &[]),
+        ],
+    );
+    reached
+        .limitations
+        .push(format!("{UNMEASURED}:demo/test/parity"));
+    let route = Route::decide(
+        &reached,
+        Path::new("src/lib.rs"),
+        at(3),
+        &Routing {
+            targets: &TARGETS,
+            measurable: &MEASURABLE,
+            also_reaching: &[],
+        },
+    );
+    assert_eq!(
+        route.reaching(),
+        vec!["demo/test/parity"],
+        "a target whose profile could not be read is a target the measurement says nothing about, \
+         and what nothing is known about is run"
+    );
+    assert_eq!(route.granularity(), "block");
+    assert_eq!(route.fallback(), Some("coverage-incomplete"));
+}
+
+#[test]
+fn a_target_a_measurement_says_nothing_about_reaches_by_being_named() {
+    let reached = measured(
+        &[("demo/lib/demo", 3)],
+        &[
+            ("demo/lib/demo", &[10]),
+            ("demo/test/parity", &[]),
+            ("demo/doc/demo", &[]),
+        ],
+    );
+    let route = Route::decide(
+        &reached,
+        Path::new("src/lib.rs"),
+        at(3),
+        &Routing {
+            targets: &TARGETS,
+            measurable: &MEASURABLE,
+            also_reaching: &[TARGETS[2]],
+        },
+    );
+    assert_eq!(route.granularity(), "block");
+    assert!(
+        route.reaching().contains(&TARGETS[2]),
+        "a library's documented examples are compiled by rustdoc while cargo runs them, so no \
+         coverage build instruments them and routing them by file is the widest a fallback \
+         goes: {:?}",
+        route.reaching()
+    );
+}
+
+#[test]
+fn what_an_execution_narrows_to_is_what_the_route_says_and_nothing_else() {
+    let mut reached = measured(
+        &[("demo/lib/demo", 3)],
+        &[
+            ("demo/lib/demo", &[3]),
+            ("demo/test/parity", &[]),
+            ("demo/doc/demo", &[]),
+        ],
+    );
+    reached
+        .limitations
+        .push(format!("{UNMEASURED}:demo/test/parity"));
+    let route = Route::decide(
+        &reached,
+        Path::new("src/lib.rs"),
+        at(3),
+        &Routing {
+            targets: &TARGETS,
+            measurable: &MEASURABLE,
+            also_reaching: &[],
+        },
+    );
+    assert_eq!(
+        route.narrowing(),
+        Some(vec![
+            "demo/lib/demo".to_owned(),
+            "demo/test/parity".to_owned()
+        ]),
+        "a target whose profile could not be read is one the measurement says nothing about,          and dropping it from what runs is a survivor nobody measured"
+    );
+
+    let nothing = Route::decide(
+        &Reached::default(),
+        Path::new("src/lib.rs"),
+        at(3),
+        &Routing {
+            targets: &TARGETS,
+            measurable: &MEASURABLE,
+            also_reaching: &[],
+        },
+    );
+    assert_eq!(
+        nothing.narrowing(),
+        None,
+        "a route that is everything narrows nothing, which is what lets a run that measured          no coverage run every target it selected"
+    );
+
+    let unreached = Route::decide(
+        &measured(
+            &[("demo/lib/demo", 3)],
+            &[
+                ("demo/lib/demo", &[10]),
+                ("demo/test/parity", &[]),
+                ("demo/doc/demo", &[]),
+            ],
+        ),
+        Path::new("src/lib.rs"),
+        at(3),
+        &Routing {
+            targets: &TARGETS,
+            measurable: &MEASURABLE,
+            also_reaching: &[],
+        },
+    );
+    assert_eq!(
+        unreached.narrowing(),
+        Some(Vec::new()),
+        "a mutation no measured target executes is one nothing runs"
+    );
+}
+
+#[test]
+fn a_target_the_measurement_never_names_is_one_nothing_is_known_about() {
+    let mut reached = measured(&[("src/lib.rs", 10)], &[("demo/test/one", &[10])]);
+    reached.targets.insert(
+        "demo/test/two".to_owned(),
+        std::collections::BTreeSet::new(),
+    );
+
+    let targets = ["demo/test/one", "demo/test/two", "demo/test/three"];
+    let route = Route::decide(
+        &reached,
+        Path::new("src/lib.rs"),
+        Point {
+            line: 10,
+            column: 1,
+        },
+        &Routing {
+            targets: &targets,
+            measurable: &targets,
+            also_reaching: &[],
+        },
+    );
+    let reaching = route.reaching();
+    assert!(
+        reaching.contains(&"demo/test/one"),
+        "the target whose run covered it can notice it: {reaching:?}"
+    );
+    assert!(
+        !reaching.contains(&"demo/test/two"),
+        "a target the measurement read and which covered nothing there cannot: {reaching:?}"
+    );
+    assert!(
+        reaching.contains(&"demo/test/three"),
+        "a target the measurement never names is one nothing was established about, and a route \
+         that drops it turns a kill into a survivor. Being absent from a measurement is not the \
+         same as being measured and covering nothing: {reaching:?}"
+    );
+}
+
+#[test]
+fn a_measurement_that_could_not_read_a_target_is_not_one_to_remember() {
+    let whole = measured(
+        &[("demo/lib/demo", 3)],
+        &[("demo/lib/demo", &[3]), ("demo/test/parity", &[])],
+    );
+    assert!(
+        whole.whole(),
+        "a measurement that read every target it set out to is one a later run of the same tree \
+         can stand on"
+    );
+    assert!(whole.measured(), "and it measured something");
+    let mut partial = whole;
+    partial
+        .limitations
+        .push(format!("{UNMEASURED}:demo/test/parity"));
+    assert!(
+        !partial.whole(),
+        "a measurement of some of the targets is sound to route by, because what it could not \
+         read stays in every route, and wrong to keep, because a later run would have nothing \
+         to tell it from a whole one"
+    );
+}
+
+#[test]
+fn a_record_that_is_not_there_is_a_process_that_wrote_nothing_and_one_that_will_not_read_is_neither()
+ {
+    use rust_mutants::limitation::appended;
+    use std::io::{Error, ErrorKind};
+
+    assert_eq!(
+        appended(Ok("t\t-\t1\n".to_owned())).ok(),
+        Some("t\t-\t1\n".to_owned()),
+        "a record that read back is the record"
+    );
+    assert_eq!(
+        appended(Err(Error::from(ErrorKind::NotFound))).ok(),
+        Some(String::new()),
+        "a runtime creates the file the first time it has something to say, so a file that is \
+         not there is a process that had nothing to say"
+    );
+    for kind in [
+        ErrorKind::PermissionDenied,
+        ErrorKind::InvalidData,
+        ErrorKind::IsADirectory,
+    ] {
+        assert!(
+            appended(Err(Error::from(kind))).is_err(),
+            "a file that is there and did not come back is not a record of nothing; reading \
+             the two as one turns every mutant of that target into one nothing could notice, \
+             so it is the {} limitation and never the empty record: {kind:?}",
+            rust_mutants::limitation::TOUCH_LOG_UNREADABLE
+        );
+    }
+}
+
+#[test]
+fn a_configuration_this_release_cannot_read_refuses_a_coverage_measurement() {
+    use rust_mutants::cargo::config::Configured;
+    use rust_mutants::reach::refusal;
+
+    assert_eq!(
+        refusal(&Configured {
+            unreadable: true,
+            ..Configured::default()
+        }),
+        Some("cargo-configuration-unreadable"),
+        "a coverage build compiles the tree with flags of its own and can only do that by \
+         putting back the flags the project configured; a file nothing could read says \
+         nothing about what those are, so measuring would route mutations by a coverage \
+         profile of a different program"
+    );
+}
+
+#[test]
+fn flags_a_target_table_configures_refuse_a_coverage_measurement() {
+    use rust_mutants::cargo::config::Configured;
+    use rust_mutants::reach::refusal;
+
+    assert_eq!(
+        refusal(&Configured {
+            target_specific: true,
+            ..Configured::default()
+        }),
+        Some("coverage-refused-configured-rustflags"),
+        "which `target.*` table applies is cargo's decision about the target being built \
+         rather than this one's, so the flags a coverage build would put back are not the \
+         flags the project compiles under"
+    );
+}
+
+#[test]
+fn flags_the_project_configures_for_every_target_are_flags_a_coverage_build_puts_back() {
+    use rust_mutants::cargo::config::Configured;
+    use rust_mutants::reach::refusal;
+
+    assert_eq!(
+        refusal(&Configured {
+            build: vec!["--cfg".to_owned(), "tree".to_owned()],
+            ..Configured::default()
+        }),
+        None,
+        "a measurement that refused here would route every mutation by its file for a \
+         configuration it could have honoured, which is the whole saving given away"
+    );
+    assert_eq!(
+        refusal(&Configured::default()),
+        None,
+        "and a tree that configures nothing is measured"
+    );
+}
+
+#[test]
+fn a_configuration_that_is_both_unreadable_and_target_specific_is_said_to_be_unreadable() {
+    use rust_mutants::cargo::config::Configured;
+    use rust_mutants::reach::refusal;
+
+    assert_eq!(
+        refusal(&Configured {
+            unreadable: true,
+            target_specific: true,
+            build: Vec::new(),
+        }),
+        Some("cargo-configuration-unreadable"),
+        "a file nobody could read may also hold a target table, and the more serious fact \
+         about it is that nothing in it is known: a reader told the flags were \
+         target-specific would go looking for a table that may not be the reason"
+    );
 }

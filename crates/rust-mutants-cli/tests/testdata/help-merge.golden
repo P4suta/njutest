@@ -1,0 +1,30 @@
+Combine the reports of the parts of one catalog into the report the whole would have written
+
+Usage: rust-mutants merge [OPTIONS] [REPORT]...
+
+Arguments:
+  [REPORT]...
+          The reports to combine, one per part
+
+Options:
+      --color <WHEN>
+          Whether to paint the output. `auto` paints a terminal that has not set `NO_COLOR`
+
+          Possible values:
+          - auto:   Colour a terminal that has not asked to go without
+          - always: Always
+          - never:  Never
+          
+          [default: auto]
+
+      --root <DIR>
+          The workspace root whose report directory the parts are under
+
+      --runs <IDS>
+          The runs to combine, by name or as a glob against the report directory
+
+      --output <FILE>
+          Write the combined report here rather than to standard output
+
+  -h, --help
+          Print help (see a summary with '-h')

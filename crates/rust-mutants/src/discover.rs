@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Discovery over a whole workspace: which files are mutable, which are passed over as a whole and why, and the catalog that results.
@@ -14,7 +14,7 @@ use crate::id::normalize_path;
 use crate::syntax::{
     FileDiscovery, Found, Selection, Skip, SkipReason, SyntaxError, discover_file,
 };
-use crate::trace::{DiscoverFileRecord, Recorder, SkipCount};
+use crate::trace::{DiscoverFileRecord, Recorder, SkipClaimRecord, SkipCount};
 
 /// Configures [`discover`].
 #[derive(Debug, Clone)]
@@ -27,6 +27,44 @@ pub struct DiscoverOptions<'r> {
     pub exclude: Vec<Pattern>,
     /// The member packages to discover in, by name. Empty means every member. A package left out is not a skip: nothing was decided about it.
     pub packages: Vec<String>,
+    /// The places a reviewer configured the run to pass over, each with the reason they gave.
+    pub skips: Vec<SkipRule>,
+}
+
+/// One `[[mutation.skip]]` entry: where to pass over, and why.
+///
+/// A configured skip is the decision a `rust-mutants: skip` marker makes,
+/// written where the code cannot be edited or where one entry covers what a
+/// hundred markers would. Like a marker it names a reason, and one that hides
+/// nothing is reported rather than left to rot.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkipRule {
+    /// The paths it speaks about, as a glob against the workspace-relative path.
+    pub path: Pattern,
+    /// The lines it speaks about, inclusive and 1-based. `None` is every line of the file.
+    pub lines: Option<(u32, u32)>,
+    /// The item it speaks about, by a suffix of the item path. `None` is every item.
+    pub item: Option<String>,
+    /// Why its author wrote it.
+    pub reason: String,
+}
+
+impl SkipRule {
+    /// Whether this entry speaks about a place.
+    #[must_use]
+    pub fn covers(&self, path: &str, line: u32, item: &str) -> bool {
+        if !self.path.matches(path) {
+            return false;
+        }
+        if let Some((from, to)) = self.lines
+            && !(from..=to).contains(&line)
+        {
+            return false;
+        }
+        self.item
+            .as_ref()
+            .is_none_or(|wanted| item == wanted || item.ends_with(&format!("::{wanted}")))
+    }
 }
 
 /// One candidate plus the package it belongs to.
@@ -53,6 +91,36 @@ pub struct FileReport {
     pub whole_file: Option<SkipReason>,
 }
 
+/// One `rust-mutants: skip` marker, where it sits and whether it hid anything.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkipClaim {
+    /// The workspace-relative path with forward slashes.
+    pub path: String,
+    /// The 1-based line the marker sits on.
+    pub line: u32,
+    /// The reason its author wrote.
+    pub reason: String,
+    /// Whether a place a rule targets starts inside what it speaks about.
+    pub matched: bool,
+}
+
+/// One decision the walk took, and the file it took it in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Decided {
+    /// The workspace-relative path with forward slashes.
+    pub path: String,
+    /// Where the place is.
+    pub position: crate::syntax::Position,
+    /// The rule, or the reason's name for a place that is not a rule's.
+    pub rule: String,
+    /// The guard form of a candidate.
+    pub form: Option<crate::syntax::Form>,
+    /// The reason of a skip.
+    pub skip: Option<SkipReason>,
+    /// What the walk has to say about the decision beyond its reason.
+    pub note: Option<String>,
+}
+
 /// Everything discovery found.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Discovery {
@@ -62,6 +130,10 @@ pub struct Discovery {
     pub candidates: Vec<Located>,
     /// Every skip, in (reason, path) order.
     pub skips: Vec<Skip>,
+    /// Every `rust-mutants: skip` marker of a file the run measures, in (path, line) order. A marker in a file the run passed over is a marker about nothing this run decided.
+    pub claims: Vec<SkipClaim>,
+    /// Every decision the walk took, in (path, offset) order, for a reader asking about one place rather than about a tally.
+    pub decisions: Vec<Decided>,
     /// The catalog of the candidates.
     pub catalog: Catalog,
 }
@@ -122,7 +194,7 @@ impl DiscoverError {
     pub const fn code(&self) -> ErrorCode {
         match self {
             Self::Unreadable { .. } => error::DISCOVER_FILE_UNREADABLE,
-            Self::Parse(_) => error::DISCOVER_PARSE_FAILED,
+            Self::Parse(error) => error.code(),
             Self::OutsideRoot { .. } => error::DISCOVER_OUTSIDE_ROOT,
             Self::Catalog(_) | Self::Candidate(_) => error::DISCOVER_CATALOG_FAILED,
             Self::UnknownPackage { .. } => error::DISCOVER_UNKNOWN_PACKAGE,
@@ -133,6 +205,7 @@ impl DiscoverError {
 /// How a file is treated, in priority order when targets disagree.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Role {
+    Forbidden,
     Mutable,
     NoStd,
     TestOnly,
@@ -166,29 +239,27 @@ pub fn discover(
     trace: &Recorder,
 ) -> Result<Discovery, DiscoverError> {
     let root = input.root;
-    let members = selected_members(input.metadata, &options.packages)?;
-    let mut assigner = Assigner {
-        root,
-        units: input.units,
-        assignments: BTreeMap::new(),
-    };
-    for package in &members {
-        for target in &package.targets {
-            assigner.assign(package, target)?;
-        }
-    }
+    let assigner = assigned(input, options)?;
     let assignments = assigner.assignments;
     let mut files = Vec::new();
     let mut candidates = Vec::new();
     let mut skips = Vec::new();
+    let mut claims: Vec<SkipClaim> = Vec::new();
+    let mut decisions: Vec<Decided> = Vec::new();
+    let mut configured = vec![false; options.skips.len()];
     let mut builder = Builder::new();
+    for (path, package) in &assigner.generated {
+        let report = whole_file(path, package, SkipReason::GeneratedOutsideWorkspace);
+        skips.extend(report.skips.iter().cloned());
+        files.push(report);
+    }
     let read: Vec<(&String, Result<FileDiscovery, DiscoverError>)> = assignments
         .keys()
         .map(|path| (path, walk(root, path, &options.selection)))
         .collect();
     let fragments = pasted_in(&read);
     for ((path, discovery), assignment) in read.into_iter().zip(assignments.values()) {
-        let discovery = match discovery {
+        let mut discovery = match discovery {
             Ok(discovery) => discovery,
             Err(error) if fragments.contains(path.as_str()) => {
                 let report = fragment(path, &assignment.package);
@@ -200,14 +271,27 @@ pub fn discover(
             Err(error) => return Err(error),
         };
         let role = match assignment.role {
+            Role::Forbidden => Some(SkipReason::ForbiddenLints),
             Role::Mutable if !selected_by_patterns(path, options) => Some(SkipReason::Excluded),
             Role::Mutable => None,
             Role::NoStd => Some(SkipReason::NoStdCrate),
             Role::TestOnly => Some(SkipReason::TestOnlyFile),
         };
+        if role.is_none() {
+            configure(&mut discovery, &options.skips, &mut configured);
+        }
         let report = report(&discovery, &assignment.package, role);
         trace.discover_file(record(&discovery, &report));
         if role.is_none() {
+            claimed(path, &discovery.annotations, trace, &mut claims);
+            decisions.extend(discovery.decisions.iter().map(|one| Decided {
+                path: path.clone(),
+                position: one.position,
+                rule: one.rule.clone(),
+                form: one.form,
+                skip: one.skip,
+                note: one.note.clone(),
+            }));
             for found in discovery.candidates {
                 builder.add(found.candidate.clone())?;
                 candidates.push(Located {
@@ -220,13 +304,139 @@ pub fn discover(
         files.push(report);
     }
     skips.sort();
+    configured_claims(&options.skips, &configured, trace, &mut claims);
+    claims.sort_by(|one, other| (&one.path, one.line).cmp(&(&other.path, other.line)));
     let catalog = builder.build()?;
     Ok(Discovery {
         files,
         candidates,
         skips,
+        claims,
+        decisions,
         catalog,
     })
+}
+
+/// Which unit compiled each file the run may mutate, and what each file is to the run.
+fn assigned<'a>(
+    input: &'a Input<'a>,
+    options: &DiscoverOptions<'_>,
+) -> Result<Assigner<'a>, DiscoverError> {
+    let members = selected_members(input.metadata, &options.packages)?;
+    let mut assigner = Assigner {
+        root: input.root,
+        physical_root: crate::canonical::canonical(input.root)
+            .unwrap_or_else(|_error| input.root.to_path_buf()),
+        units: input.units,
+        workspace_manifest: input
+            .metadata
+            .workspace_root
+            .join(crate::cargo::manifest::FILE_NAME),
+        assignments: BTreeMap::new(),
+        generated: BTreeMap::new(),
+    };
+    for package in &members {
+        for target in &package.targets {
+            assigner.assign(package, target)?;
+        }
+    }
+    Ok(assigner)
+}
+
+/// The configured entries, recorded and kept beside the markers.
+fn configured_claims(
+    rules: &[SkipRule],
+    matched: &[bool],
+    trace: &Recorder,
+    into: &mut Vec<SkipClaim>,
+) {
+    for (rule, matched) in rules.iter().zip(matched) {
+        let claim = SkipClaim {
+            path: rule.path.to_string(),
+            line: rule.lines.map_or(0, |(from, _)| from),
+            reason: rule.reason.clone(),
+            matched: *matched,
+        };
+        trace.skip_claim(SkipClaimRecord {
+            path: claim.path.clone(),
+            line: claim.line,
+            reason: claim.reason.clone(),
+            matched: claim.matched,
+        });
+        into.push(claim);
+    }
+}
+
+/// Takes out of one file's walk what a `[[mutation.skip]]` entry speaks about.
+///
+/// A configured skip is applied where the walk's own decisions are, so every
+/// tally, every decision and every report row says the same thing about the
+/// file. Which entries hid something is what the run reports back: an entry
+/// that hides nothing is a claim about code that has moved or gone.
+fn configure(discovery: &mut FileDiscovery, rules: &[SkipRule], matched: &mut [bool]) {
+    if rules.is_empty() {
+        return;
+    }
+    let mut hidden = 0u32;
+    let path = discovery.path.clone();
+    discovery.candidates.retain(|found| {
+        let Some(at) = rules
+            .iter()
+            .position(|rule| rule.covers(&path, found.position.line, &found.item))
+        else {
+            return true;
+        };
+        if let Some(claimed) = matched.get_mut(at) {
+            *claimed = true;
+        }
+        hidden = hidden.saturating_add(1);
+        for decision in &mut discovery.decisions {
+            if decision.offset == found.candidate.span.start
+                && decision.rule == found.candidate.rule.name
+            {
+                decision.form = None;
+                decision.skip = Some(SkipReason::Configured);
+                decision.note = Some(
+                    rules
+                        .get(at)
+                        .map_or_else(String::new, |rule| rule.reason.clone()),
+                );
+            }
+        }
+        false
+    });
+    if hidden == 0 {
+        return;
+    }
+    discovery.skips.push(Skip {
+        reason: SkipReason::Configured,
+        path,
+        count: hidden,
+    });
+    discovery.skips.sort_by_key(|skip| skip.reason);
+}
+
+/// The markers of one file the run measures, recorded and kept.
+fn claimed(
+    path: &str,
+    annotations: &[crate::syntax::Claim],
+    trace: &Recorder,
+    into: &mut Vec<SkipClaim>,
+) {
+    for claim in annotations {
+        trace.skip_claim(SkipClaimRecord {
+            path: path.to_owned(),
+            line: claim.line,
+            reason: claim.reason.clone(),
+            matched: claim.matched,
+        });
+        into.push(SkipClaim {
+            path: path.to_owned(),
+            line: claim.line,
+            reason: claim.reason.clone(),
+            matched: claim.matched,
+        });
+    }
 }
 
 /// Every file another file pastes in where an expression goes.
@@ -246,17 +456,37 @@ fn pasted_in(read: &[(&String, Result<FileDiscovery, DiscoverError>)]) -> BTreeS
 
 /// The report of a file that is a fragment: no candidate, one skip, and the reason said out loud.
 fn fragment(path: &str, package: &str) -> FileReport {
+    whole_file(path, package, SkipReason::IncludedExpression)
+}
+
+/// One file passed over whole, for a reason the walk never had a chance to reach.
+fn whole_file(path: &str, package: &str, reason: SkipReason) -> FileReport {
     FileReport {
         path: path.to_owned(),
         package: package.to_owned(),
         candidates: 0,
         skips: vec![Skip {
             path: path.to_owned(),
-            reason: SkipReason::IncludedExpression,
+            reason,
             count: 1,
         }],
-        whole_file: Some(SkipReason::IncludedExpression),
+        whole_file: Some(reason),
     }
+}
+
+/// The name a report calls a file a build script wrote outside the tree.
+///
+/// The path it was written to is a build directory that is different on every
+/// machine and every run, and a report that named it would say where this run
+/// put its temporary files rather than which file was passed over. The file's
+/// own name is what a reader recognises, under a directory nobody can mistake
+/// for one in the tree.
+fn generated_name(source: &Path) -> String {
+    let name = source.file_name().map_or_else(
+        || "unnamed".to_owned(),
+        |name| name.to_string_lossy().into_owned(),
+    );
+    format!("{GENERATED_DIR}/{name}")
 }
 
 /// The members to discover in: every member, or the named ones.
@@ -283,8 +513,15 @@ fn selected_members<'m>(
 /// Gives every file of every target its role, from the units that compiled the target, keeping the higher-priority role when targets disagree.
 struct Assigner<'a> {
     root: &'a Path,
+    /// The filesystem's spelling of `root`, for platforms that report a
+    /// compiler source through a physical alias of the snapshot path.
+    physical_root: PathBuf,
     units: &'a [Unit],
+    /// The workspace manifest, which a member's `[lints] workspace = true` inherits from.
+    workspace_manifest: PathBuf,
     assignments: BTreeMap<String, Assignment>,
+    /// Files a unit compiled from outside the tree, by the name a report calls them.
+    generated: BTreeMap<String, String>,
 }
 
 impl Assigner<'_> {
@@ -306,15 +543,27 @@ impl Assigner<'_> {
             .filter(|unit| !unit.test)
             .flat_map(|unit| unit.sources.iter().map(PathBuf::as_path))
             .collect();
-        let crate_root = relative(self.root, &target.src_path)?;
-        let no_std = non_test
-            .iter()
-            .any(|path| relative(self.root, path).is_ok_and(|rel| rel == crate_root))
-            && crate_root_is_freestanding(self.root, &crate_root, &target.edition);
+        let crate_root = relative(self.root, &self.physical_root, &target.src_path)?;
+        let own_root = non_test.iter().any(|path| {
+            relative(self.root, &self.physical_root, path).is_ok_and(|rel| rel == crate_root)
+        });
+        let no_std =
+            own_root && crate_root_is_freestanding(self.root, &crate_root, &target.edition);
+        let forbidden = crate::cargo::manifest::forbidden(
+            &package.manifest_path,
+            Some(&self.workspace_manifest),
+        );
+        let forbids = crate_root_forbids_guard_noise(self.root, &crate_root, &forbidden);
         for unit in &compiled {
             for source in &unit.sources {
-                let path = relative(self.root, source)?;
-                let role = if no_std {
+                let Ok(path) = relative(self.root, &self.physical_root, source) else {
+                    self.generated
+                        .insert(generated_name(source), package.name.clone());
+                    continue;
+                };
+                let role = if forbids {
+                    Role::Forbidden
+                } else if no_std {
                     Role::NoStd
                 } else if unit.test && !non_test.contains(&source.as_path()) {
                     Role::TestOnly
@@ -345,6 +594,54 @@ impl Assigner<'_> {
             }
         }
     }
+}
+
+/// Whether the crate at `rel`, or the manifest that builds it, forbids a lint the guards fire.
+fn crate_root_forbids_guard_noise(root: &Path, rel: &str, forbidden: &[String]) -> bool {
+    forbids_guard_noise(
+        &std::fs::read_to_string(root.join(rel)).unwrap_or_default(),
+        forbidden,
+    )
+}
+
+/// Whether a crate compiled this way forbids a lint the guards' own attribute turns off.
+///
+/// `forbid` is the one level an `allow` cannot override, so a guard placed in
+/// such a crate is a compile error whatever it edits, and every mutant of the
+/// crate would be refused with nothing in the report saying why. Only the
+/// crate root's own inner attributes count — an attribute inside an item is
+/// about that item — and only the lints the guards can fire: a crate is free
+/// to forbid anything else. `forbidden` is what the manifest says, which
+/// cargo passes on the command line where no attribute overrides it.
+#[must_use]
+pub fn forbids_guard_noise(source: &str, forbidden: &[String]) -> bool {
+    if forbidden
+        .iter()
+        .any(|lint| crate::instrument::GUARD_NOISE_LINTS.contains(&lint.as_str()))
+    {
+        return true;
+    }
+    let Ok(file) = syn::parse_file(source) else {
+        return false;
+    };
+    file.attrs
+        .iter()
+        .filter(|attr| attr.path().is_ident("forbid"))
+        .any(|attr| {
+            let mut names = false;
+            let _parsed = attr.parse_nested_meta(|meta| {
+                let path = meta
+                    .path
+                    .segments
+                    .iter()
+                    .map(|segment| segment.ident.to_string())
+                    .collect::<Vec<_>>()
+                    .join("::");
+                names |= crate::instrument::GUARD_NOISE_LINTS.contains(&path.as_str());
+                Ok(())
+            });
+            names
+        })
 }
 
 /// Whether the crate at `rel` is one this host cannot lend `std` to. A root that does not parse is answered `false` here; the walk reports the parse failure.
@@ -397,13 +694,24 @@ fn item_supplies_what_std_does(item: &syn::Item) -> bool {
     })
 }
 
+/// The directory a report puts a file a build script wrote outside the tree under.
+pub const GENERATED_DIR: &str = "<generated>";
+
 /// The workspace-relative, `/`-separated spelling of `path`.
-fn relative(root: &Path, path: &Path) -> Result<String, DiscoverError> {
+fn relative(root: &Path, physical_root: &Path, path: &Path) -> Result<String, DiscoverError> {
     let outside = || DiscoverError::OutsideRoot {
         path: path.display().to_string(),
         root: root.display().to_string(),
     };
-    let rel = path.strip_prefix(root).map_err(|_error| outside())?;
+    let rel = if let Ok(rel) = path.strip_prefix(root) {
+        rel.to_path_buf()
+    } else {
+        let physical_path = crate::canonical::canonical(path).map_err(|_error| outside())?;
+        physical_path
+            .strip_prefix(physical_root)
+            .map(Path::to_path_buf)
+            .map_err(|_error| outside())?
+    };
     normalize_path(&rel.to_string_lossy()).map_err(|_error| outside())
 }
 

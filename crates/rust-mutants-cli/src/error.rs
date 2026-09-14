@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What the command line itself can fail at, each with a stable code documented in `docs/errors.md`.
@@ -66,6 +66,30 @@ pub enum CliError {
         /// The revision it was compared against.
         base: String,
     },
+    /// A flag was given a value it cannot take.
+    #[error(
+        "{}: {flag} cannot take {value:?}; write {expected}",
+        error::CONFIG_INVALID.code
+    )]
+    InvalidValue {
+        /// The flag.
+        flag: String,
+        /// What it was given.
+        value: String,
+        /// What it takes.
+        expected: String,
+    },
+    /// A source file the report names is not the one the run measured, or is not there at all.
+    #[error(
+        "{}: {path} {why}, so the mutation cannot be shown as a change",
+        error::SOURCE_UNREADABLE.code
+    )]
+    SourceUnreadable {
+        /// The workspace-relative path the report names.
+        path: String,
+        /// Which of the two things is wrong with it.
+        why: String,
+    },
     /// A file the command had to write could not be written.
     #[error("{}: writing {}: {source}", error::WRITE_FAILED.code, path.display())]
     WriteFailed {
@@ -93,9 +117,28 @@ impl CliError {
             Self::EnvironmentReserved { .. } => error::ENVIRONMENT_RESERVED,
             Self::ReportMissing { .. } => error::REPORT_MISSING,
             Self::FileExists { .. } => error::FILE_EXISTS,
-            Self::Shard { .. } => error::CONFIG_INVALID,
+            Self::Shard { .. } | Self::InvalidValue { .. } => error::CONFIG_INVALID,
             Self::ChangeSetUnavailable { .. } => error::CHANGE_SET_UNAVAILABLE,
+            Self::SourceUnreadable { .. } => error::SOURCE_UNREADABLE,
             Self::WriteFailed { .. } => error::WRITE_FAILED,
+        }
+    }
+
+    /// A file the report names that this tree does not hold.
+    #[must_use]
+    pub fn absent(path: &str, root: &Path) -> Self {
+        Self::SourceUnreadable {
+            path: path.to_owned(),
+            why: format!("is not under {}", root.display()),
+        }
+    }
+
+    /// A file this tree holds that is not the one the run measured.
+    #[must_use]
+    pub fn moved_on(path: &str) -> Self {
+        Self::SourceUnreadable {
+            path: path.to_owned(),
+            why: "changed since the run".to_owned(),
         }
     }
 

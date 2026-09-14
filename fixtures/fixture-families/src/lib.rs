@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! One site for every v1 rule, plus the shapes the walker has to get right: nested modules, methods, closures, match arms, multi-line conditions.
@@ -133,6 +133,45 @@ pub mod inner {
     pub fn closures(xs: &[i32]) -> Vec<i32> {
         xs.iter().map(|x| x * 2).filter(|x| *x > 2).collect()
     }
+}
+
+pub fn sequences(v: &[i32], s: &str) -> i32 {
+    let head = v.first().copied().unwrap_or(0);
+    let tail = v.last().copied().unwrap_or(0);
+    let some = v.iter().skip(1).take(2).sum::<i32>();
+    let rest = v.iter().product::<i32>();
+    if v.iter().all(|n| *n > 0) && s.contains('x') {
+        return head + tail;
+    }
+    if v.iter().any(|n| *n < 0) || s.starts_with('a') {
+        return some;
+    }
+    rest
+}
+
+pub fn parsed(s: &str) -> Result<i32, String> {
+    s.parse::<i32>().map_err(|e| e.to_string())
+}
+
+pub fn jumps(v: &[i32]) -> i32 {
+    let mut n = 0;
+    'outer: for x in v {
+        for y in v {
+            if *y == 0 {
+                continue 'outer;
+            }
+            if *x < 0 {
+                break;
+            }
+            n += *x;
+        }
+    }
+    if n > 100 {
+        n = 100;
+    } else {
+        n += 1;
+    }
+    n
 }
 
 #[cfg(test)]

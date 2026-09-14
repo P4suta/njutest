@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What a branch proof rests on: which edits get a claim, what the compiler is asked to vouch for, and everywhere the syntax refuses to claim anything.
@@ -13,7 +13,9 @@
 )]
 
 use rust_mutants::rule::{Registry, Tier};
-use rust_mutants::syntax::branch::{Claim, DECREASING, WitnessKind, is_decreasing};
+use rust_mutants::syntax::branch::{
+    Claim, Comparable, DECREASING, NEGATING, WitnessKind, is_decreasing, is_negating,
+};
 use rust_mutants::syntax::{Selection, discover_file};
 
 /// Every candidate of `source`, as the rule that proposed it and what it claims.
@@ -26,6 +28,21 @@ fn claims(source: &str) -> Vec<(String, Option<Claim>)> {
         .into_iter()
         .map(|found| (found.candidate.rule.name.to_owned(), found.branch))
         .collect()
+}
+
+/// Every rule of the canonical registry, which is what a fixture of this kind is discovered with.
+fn selection() -> Selection<'static> {
+    static REGISTRY: Registry = Registry::canonical();
+    Selection::tier(&REGISTRY, Tier::All)
+}
+
+/// What any candidate of `source` may have its two branches compared over, when one may.
+fn comparable_of(source: &str) -> Option<Comparable> {
+    discover_file("src/lib.rs", source.as_bytes(), &selection())
+        .expect("the source parses")
+        .candidates
+        .into_iter()
+        .find_map(|found| found.comparable)
 }
 
 /// What the candidate proposed by `rule` claims.
@@ -137,6 +154,43 @@ fn a_body_that_runs_nothing_says_nothing_by_not_running() {
     assert!(
         claim_of(source, "le-to-lt").is_none(),
         "a target's silence about an empty body means nothing"
+    );
+    assert!(
+        comparable_of(source).is_some(),
+        "and the guard may still compare its two branches, which is about the condition and \
+         not about what the condition gates"
+    );
+}
+
+#[test]
+fn a_swap_that_negates_what_it_replaces_is_offered_no_comparison() {
+    for rule in NEGATING {
+        assert!(is_negating(rule), "{rule}");
+    }
+    assert!(
+        !is_negating("lt-to-le"),
+        "`<` and `<=` agree everywhere but equality"
+    );
+    assert!(!is_negating("and-to-or"));
+
+    let source = "pub fn f(a: i32, b: i32) -> i32 {\n    if a == b { return 1; }\n    0\n}\n";
+    let offered: Vec<String> = discover_file("src/lib.rs", source.as_bytes(), &selection())
+        .expect("the source parses")
+        .candidates
+        .into_iter()
+        .filter(|found| found.comparable.is_some())
+        .map(|found| found.candidate.rule.name.to_owned())
+        .collect();
+    assert!(
+        !offered.iter().any(|name| name == "eq-to-neq"),
+        "a guard whose two branches part on every evaluation records nothing worth the call \
+         that records it: {offered:?}"
+    );
+
+    let source = "pub fn f(a: i32, b: i32) -> i32 {\n    if a < b { return 1; }\n    0\n}\n";
+    assert!(
+        comparable_of(source).is_some(),
+        "and one whose branches agree anywhere is offered the comparison"
     );
 }
 

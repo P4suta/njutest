@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Starts one child process, supervises its whole process tree, and returns what happened.
@@ -12,7 +12,7 @@ mod windows;
 
 use std::ffi::OsString;
 use std::io::{self, Read as _};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -26,6 +26,9 @@ pub use output::{DEFAULT_OUTPUT_LIMIT, HeadBuffer, MIN_OUTPUT_LIMIT, OUTPUT_TRUN
 
 /// [`RunResult::exit_code`] when there is no exit status to report.
 pub const EXIT_CODE_UNAVAILABLE: i32 = -1;
+
+/// How much stdout a short probe may retain: version banners and one-line paths are bounded well below this.
+pub const PROBE_OUTPUT_LIMIT: usize = 64 * 1024;
 
 /// How long a POSIX process group is given to shut down after SIGTERM before it is sent SIGKILL. Windows has no equivalent phase.
 pub const TERMINATION_GRACE: Duration = Duration::from_secs(2);
@@ -150,6 +153,8 @@ pub struct RunResult {
     pub stdout_truncated: bool,
     /// Set only when the process could not be started or supervised.
     pub error: Option<RunnerError>,
+    /// The signal the process died from, on the platforms that have them. A process that exited normally, and every process on Windows, has none.
+    pub signal: Option<i32>,
 }
 
 impl RunResult {
@@ -211,6 +216,7 @@ pub fn run(spec: &Spec, cancel: &Cancel) -> RunResult {
         stdout: Vec::new(),
         stdout_truncated: false,
         error,
+        signal: None,
     };
     let Some(program) = spec.argv.first() else {
         return unavailable(
@@ -259,13 +265,14 @@ pub fn run(spec: &Spec, cancel: &Cancel) -> RunResult {
     supervisor.release();
     let output = tail.capture();
     let duration = started.elapsed();
-    let (exit_code, timed_out, error) = match outcome {
-        Exit::Killed { timed_out } => (EXIT_CODE_UNAVAILABLE, timed_out, None),
-        Exit::Status(Ok(status)) => (sys::exit_code(status), false, None),
+    let (exit_code, timed_out, error, signal) = match outcome {
+        Exit::Killed { timed_out } => (EXIT_CODE_UNAVAILABLE, timed_out, None, None),
+        Exit::Status(Ok(status)) => (sys::exit_code(status), false, None, sys::signal(status)),
         Exit::Status(Err(source)) => (
             EXIT_CODE_UNAVAILABLE,
             false,
             Some(RunnerError::ProcessWaitFailed { source }),
+            None,
         ),
     };
     RunResult {
@@ -276,6 +283,7 @@ pub fn run(spec: &Spec, cancel: &Cancel) -> RunResult {
         stdout,
         stdout_truncated,
         error,
+        signal,
     }
 }
 
@@ -362,6 +370,32 @@ fn start(spec: &Spec, program: &OsString) -> Result<Started, Failed> {
     })
 }
 
+/// The program to start, found on the search path the spec's own environment names.
+///
+/// A spec that names an environment names all of it, and what a bare program
+/// name means is part of that. Windows does not read it that way: it resolves
+/// a bare name against the environment of the process doing the starting, so a
+/// run handed a search path with nothing on it would start the caller's
+/// program anyway and report what somebody else's machine has. Resolving here
+/// makes the answer the same everywhere, including the answer "there is no
+/// such program": a name the search path does not hold is refused here rather
+/// than handed on, because handing it on is exactly what lets the platform
+/// answer in this one's place.
+///
+/// A name that is already a path is left alone, and so is a spec that asked to
+/// inherit this process's own environment.
+///
+/// # Errors
+/// The name is bare and the environment's search path does not hold it.
+fn resolved(spec: &Spec, program: &OsString) -> io::Result<OsString> {
+    let Some(env) = &spec.env else {
+        return Ok(program.clone());
+    };
+    crate::cargo::resolve_executable(Path::new(program), crate::vars::search_path(env).as_deref())
+        .map(PathBuf::into_os_string)
+        .map_err(|unfound| io::Error::new(io::ErrorKind::NotFound, unfound.to_string()))
+}
+
 /// A command with its pipes attached: the merged reader, and the structured stdout reader with its cap when the spec asked for one.
 struct Wired {
     command: Command,
@@ -372,7 +406,7 @@ struct Wired {
 /// Builds the command and the pipes it writes to. No stdin: a test binary that reads from the terminal would hang. One pipe for both streams unless stdout is wanted whole, so the interleaving is the child's own.
 fn wire(spec: &Spec, program: &OsString) -> io::Result<Wired> {
     let (merged, stderr) = io::pipe()?;
-    let mut command = Command::new(program);
+    let mut command = Command::new(resolved(spec, program)?);
     command.args(spec.argv.iter().skip(1));
     if let Some(dir) = &spec.dir {
         command.current_dir(dir);

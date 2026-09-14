@@ -1,0 +1,421 @@
+{
+  "document_type": "rust-mutants/rules",
+  "rules": [
+    {
+      "family": "boolean-literal",
+      "name": "true-to-false",
+      "tier": "balanced",
+      "version": 1
+    },
+    {
+      "family": "boolean-literal",
+      "name": "false-to-true",
+      "tier": "balanced",
+      "version": 1
+    },
+    {
+      "family": "condition-negation",
+      "name": "negate-condition",
+      "tier": "balanced",
+      "version": 1
+    },
+    {
+      "family": "condition-negation",
+      "name": "negate-loop-condition",
+      "tier": "balanced",
+      "version": 1
+    },
+    {
+      "family": "condition-negation",
+      "name": "remove-not",
+      "tier": "balanced",
+      "version": 1
+    },
+    {
+      "family": "condition-negation",
+      "name": "negate-bool-method",
+      "tier": "balanced",
+      "version": 1
+    },
+    {
+      "family": "boolean-connective",
+      "name": "and-to-or",
+      "tier": "balanced",
+      "version": 1
+    },
+    {
+      "family": "boolean-connective",
+      "name": "or-to-and",
+      "tier": "balanced",
+      "version": 1
+    },
+    {
+      "family": "comparison",
+      "name": "eq-to-neq",
+      "tier": "balanced",
+      "version": 1
+    },
+    {
+      "family": "comparison",
+      "name": "neq-to-eq",
+      "tier": "balanced",
+      "version": 1
+    },
+    {
+      "family": "comparison",
+      "name": "lt-to-le",
+      "tier": "balanced",
+      "version": 1
+    },
+    {
+      "family": "comparison",
+      "name": "le-to-lt",
+      "tier": "balanced",
+      "version": 1
+    },
+    {
+      "family": "comparison",
+      "name": "gt-to-ge",
+      "tier": "balanced",
+      "version": 1
+    },
+    {
+      "family": "comparison",
+      "name": "ge-to-gt",
+      "tier": "balanced",
+      "version": 1
+    },
+    {
+      "family": "range",
+      "name": "range-to-inclusive",
+      "tier": "balanced",
+      "version": 1
+    },
+    {
+      "family": "range",
+      "name": "inclusive-to-range",
+      "tier": "balanced",
+      "version": 1
+    },
+    {
+      "family": "arithmetic",
+      "name": "add-to-sub",
+      "tier": "balanced",
+      "version": 1
+    },
+    {
+      "family": "arithmetic",
+      "name": "sub-to-add",
+      "tier": "balanced",
+      "version": 1
+    },
+    {
+      "family": "arithmetic",
+      "name": "mul-to-div",
+      "tier": "balanced",
+      "version": 1
+    },
+    {
+      "family": "arithmetic",
+      "name": "div-to-mul",
+      "tier": "balanced",
+      "version": 1
+    },
+    {
+      "family": "arithmetic",
+      "name": "rem-to-mul",
+      "tier": "balanced",
+      "version": 1
+    },
+    {
+      "family": "arithmetic",
+      "name": "remove-unary-minus",
+      "tier": "balanced",
+      "version": 1
+    },
+    {
+      "family": "return-replacement",
+      "name": "return-default",
+      "tier": "balanced",
+      "version": 1
+    },
+    {
+      "family": "return-replacement",
+      "name": "return-ok-default",
+      "tier": "balanced",
+      "version": 1
+    },
+    {
+      "family": "return-replacement",
+      "name": "return-some-default",
+      "tier": "balanced",
+      "version": 1
+    },
+    {
+      "family": "return-replacement",
+      "name": "return-true",
+      "tier": "balanced",
+      "version": 1
+    },
+    {
+      "family": "return-replacement",
+      "name": "return-err-default",
+      "tier": "balanced",
+      "version": 1
+    },
+    {
+      "family": "error-propagation",
+      "name": "question-to-unwrap",
+      "tier": "balanced",
+      "version": 1
+    },
+    {
+      "family": "error-propagation",
+      "name": "ignore-question-statement",
+      "tier": "balanced",
+      "version": 1
+    },
+    {
+      "family": "match-arm",
+      "name": "delete-match-arm",
+      "tier": "balanced",
+      "version": 1
+    },
+    {
+      "family": "match-arm",
+      "name": "remove-match-guard",
+      "tier": "balanced",
+      "version": 1
+    },
+    {
+      "family": "control-flow",
+      "name": "break-to-continue",
+      "tier": "balanced",
+      "version": 1
+    },
+    {
+      "family": "control-flow",
+      "name": "continue-to-break",
+      "tier": "balanced",
+      "version": 1
+    },
+    {
+      "family": "bitwise",
+      "name": "band-to-bor",
+      "tier": "strong",
+      "version": 1
+    },
+    {
+      "family": "bitwise",
+      "name": "bor-to-band",
+      "tier": "strong",
+      "version": 1
+    },
+    {
+      "family": "bitwise",
+      "name": "xor-to-band",
+      "tier": "strong",
+      "version": 1
+    },
+    {
+      "family": "bitwise",
+      "name": "shl-to-shr",
+      "tier": "strong",
+      "version": 1
+    },
+    {
+      "family": "bitwise",
+      "name": "shr-to-shl",
+      "tier": "strong",
+      "version": 1
+    },
+    {
+      "family": "compound-assignment",
+      "name": "add-assign-to-sub-assign",
+      "tier": "strong",
+      "version": 1
+    },
+    {
+      "family": "compound-assignment",
+      "name": "sub-assign-to-add-assign",
+      "tier": "strong",
+      "version": 1
+    },
+    {
+      "family": "compound-assignment",
+      "name": "mul-assign-to-div-assign",
+      "tier": "strong",
+      "version": 1
+    },
+    {
+      "family": "compound-assignment",
+      "name": "div-assign-to-mul-assign",
+      "tier": "strong",
+      "version": 1
+    },
+    {
+      "family": "compound-assignment",
+      "name": "rem-assign-to-mul-assign",
+      "tier": "strong",
+      "version": 1
+    },
+    {
+      "family": "compound-assignment",
+      "name": "band-assign-to-bor-assign",
+      "tier": "strong",
+      "version": 1
+    },
+    {
+      "family": "compound-assignment",
+      "name": "bor-assign-to-band-assign",
+      "tier": "strong",
+      "version": 1
+    },
+    {
+      "family": "compound-assignment",
+      "name": "xor-assign-to-band-assign",
+      "tier": "strong",
+      "version": 1
+    },
+    {
+      "family": "compound-assignment",
+      "name": "shl-assign-to-shr-assign",
+      "tier": "strong",
+      "version": 1
+    },
+    {
+      "family": "compound-assignment",
+      "name": "shr-assign-to-shl-assign",
+      "tier": "strong",
+      "version": 1
+    },
+    {
+      "family": "method-swap",
+      "name": "is-some-to-is-none",
+      "tier": "strong",
+      "version": 1
+    },
+    {
+      "family": "method-swap",
+      "name": "is-none-to-is-some",
+      "tier": "strong",
+      "version": 1
+    },
+    {
+      "family": "method-swap",
+      "name": "is-ok-to-is-err",
+      "tier": "strong",
+      "version": 1
+    },
+    {
+      "family": "method-swap",
+      "name": "is-err-to-is-ok",
+      "tier": "strong",
+      "version": 1
+    },
+    {
+      "family": "method-swap",
+      "name": "max-to-min",
+      "tier": "strong",
+      "version": 1
+    },
+    {
+      "family": "method-swap",
+      "name": "min-to-max",
+      "tier": "strong",
+      "version": 1
+    },
+    {
+      "family": "method-swap",
+      "name": "all-to-any",
+      "tier": "strong",
+      "version": 1
+    },
+    {
+      "family": "method-swap",
+      "name": "any-to-all",
+      "tier": "strong",
+      "version": 1
+    },
+    {
+      "family": "method-swap",
+      "name": "first-to-last",
+      "tier": "strong",
+      "version": 1
+    },
+    {
+      "family": "method-swap",
+      "name": "last-to-first",
+      "tier": "strong",
+      "version": 1
+    },
+    {
+      "family": "method-swap",
+      "name": "skip-to-take",
+      "tier": "strong",
+      "version": 1
+    },
+    {
+      "family": "method-swap",
+      "name": "take-to-skip",
+      "tier": "strong",
+      "version": 1
+    },
+    {
+      "family": "method-swap",
+      "name": "sum-to-product",
+      "tier": "strong",
+      "version": 1
+    },
+    {
+      "family": "method-swap",
+      "name": "product-to-sum",
+      "tier": "strong",
+      "version": 1
+    },
+    {
+      "family": "statement-deletion",
+      "name": "delete-call-statement",
+      "tier": "all",
+      "version": 1
+    },
+    {
+      "family": "statement-deletion",
+      "name": "delete-assignment",
+      "tier": "all",
+      "version": 1
+    },
+    {
+      "family": "statement-deletion",
+      "name": "delete-compound-assignment",
+      "tier": "all",
+      "version": 1
+    },
+    {
+      "family": "statement-deletion",
+      "name": "delete-else-branch",
+      "tier": "all",
+      "version": 1
+    },
+    {
+      "family": "literal",
+      "name": "int-increment",
+      "tier": "all",
+      "version": 1
+    },
+    {
+      "family": "literal",
+      "name": "int-decrement",
+      "tier": "all",
+      "version": 1
+    },
+    {
+      "family": "literal",
+      "name": "string-to-empty",
+      "tier": "all",
+      "version": 1
+    }
+  ],
+  "schema_version": 1,
+  "tool_version": "0.1.0"
+}

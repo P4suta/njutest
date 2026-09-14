@@ -1,24 +1,47 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The command-line contract of the `rust-mutants` binary: what `--version` and `--help` print, and the exit codes of usage errors.
 
 #![expect(
-    clippy::expect_used,
     clippy::indexing_slicing,
-    reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
+    reason = "a test reads a document as a table"
 )]
 
-use std::path::Path;
-use std::process::{Command, Output};
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
+use std::process::Output;
+
+use rust_mutants::runner::Cancel;
+use rust_mutants_cli::{Environment, Streams};
 
 fn rust_mutants(args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_rust-mutants"))
-        .args(args)
-        .env_clear()
-        .env("NO_COLOR", "1")
-        .output()
-        .expect("rust-mutants runs")
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let code = rust_mutants_cli::run_from(
+        std::iter::once("rust-mutants")
+            .chain(args.iter().copied())
+            .map(OsString::from),
+        &environment(),
+        &Cancel::new(),
+        Streams {
+            out: &mut out,
+            err: &mut err,
+        },
+    );
+    njutest_devkit::process::answered(code, out, err)
+}
+
+/// The environment a command that reads no tree is answered in.
+fn environment() -> Environment {
+    Environment {
+        vars: njutest_devkit::paths::environment_for_a_run(),
+        temp_directory: std::env::temp_dir(),
+        cache_directory: std::env::temp_dir(),
+        working_directory: std::env::current_dir().unwrap_or_else(|_error| PathBuf::from(".")),
+        no_color: true,
+        stdout_is_terminal: false,
+        paints: false,
+    }
 }
 
 #[test]
@@ -37,7 +60,54 @@ fn help_flag_matches_the_recorded_help_text() {
     let output = rust_mutants(&["--help"]);
     assert_eq!(output.status.code(), Some(0));
     let golden = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testdata/help.golden");
-    mjutest_devkit::golden::golden(&golden, &output.stdout).expect("help text is the recorded one");
+    njutest_devkit::golden::golden(&golden, &output.stdout).expect("help text is the recorded one");
+}
+
+/// Every command the top-level help lists, which is every command there is.
+///
+/// Read from the help rather than written down here, because a list somebody
+/// maintains beside the one the program prints is a list that falls behind:
+/// none of these had a recorded help at all until it was read from the
+/// program instead.
+fn subcommands() -> Vec<String> {
+    let help = String::from_utf8_lossy(&rust_mutants(&["--help"]).stdout).into_owned();
+    let listing = help
+        .split_once("Commands:\n")
+        .map_or(String::new(), |(_before, rest)| {
+            rest.split("\n\n").next().unwrap_or_default().to_owned()
+        });
+    let named: Vec<String> = listing
+        .lines()
+        .filter_map(|line| line.strip_prefix("  "))
+        .filter(|line| !line.starts_with(' '))
+        .filter_map(|line| line.split_whitespace().next())
+        .filter(|name| *name != "help")
+        .map(str::to_owned)
+        .collect();
+    assert!(
+        named.len() > 10,
+        "the help lists {} commands, and reading none of them is not the same as there \
+         being none: {listing}",
+        named.len()
+    );
+    named
+}
+
+#[test]
+fn every_subcommand_has_its_own_recorded_help() {
+    for name in subcommands() {
+        let output = rust_mutants(&[name.as_str(), "--help"]);
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "the help offers {name} and the program does not take it: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let golden = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join(format!("tests/testdata/help-{name}.golden"));
+        njutest_devkit::golden::golden(&golden, &output.stdout)
+            .unwrap_or_else(|error| panic!("{name}: {error}"));
+    }
 }
 
 #[test]
@@ -59,275 +129,211 @@ fn an_unknown_subcommand_is_a_usage_error() {
     );
 }
 
-use std::path::PathBuf;
+/// Every subcommand, so a page and a golden both stay complete when one is added.
+const SUBCOMMANDS: [&str; 16] = [
+    "run",
+    "list",
+    "catalog",
+    "explain",
+    "why-skipped",
+    "instrument",
+    "replay",
+    "equivalence",
+    "rules",
+    "init",
+    "doctor",
+    "diagnostics",
+    "merge",
+    "trace",
+    "report",
+    "cache",
+];
 
-/// A throwaway copy of a fixture, so the tree the command line opens is one nothing else is reading.
-struct Fixture {
-    root: PathBuf,
-    /// Every snapshot and build cache the run makes goes in here, so the tree a test leaves behind is the tree it took with it.
-    temp: PathBuf,
-    _dir: tempfile::TempDir,
-}
-
-fn fixture(name: &str) -> Fixture {
-    let dir = tempfile::Builder::new()
-        .prefix("rust-mutants-cli-")
-        .tempdir()
-        .expect("tempdir");
-    let root = dir.path().join(name);
-    copy_dir(&mjutest_devkit::paths::fixtures_dir().join(name), &root);
-    let temp = dir.path().join("temp");
-    std::fs::create_dir_all(&temp).expect("mkdir");
-    Fixture {
-        root,
-        temp,
-        _dir: dir,
+#[test]
+fn every_subcommand_has_the_recorded_help_text() {
+    let mut recorded = String::new();
+    for name in SUBCOMMANDS {
+        let output = rust_mutants(&[name, "--help"]);
+        assert_eq!(output.status.code(), Some(0), "{name} --help");
+        recorded.push_str("$ rust-mutants ");
+        recorded.push_str(name);
+        recorded.push_str(" --help\n");
+        recorded.push_str(&String::from_utf8_lossy(&output.stdout));
+        recorded.push('\n');
     }
+    let golden = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testdata/subcommands.golden");
+    njutest_devkit::golden::golden(&golden, recorded.as_bytes())
+        .expect("the subcommand help is the recorded one");
 }
 
-fn copy_dir(from: &Path, to: &Path) {
-    std::fs::create_dir_all(to).expect("mkdir");
-    for entry in std::fs::read_dir(from).expect("read_dir") {
-        let entry = entry.expect("entry");
-        if entry.file_name() == "target" {
+#[test]
+fn the_command_line_page_and_the_help_texts_name_the_same_flags() {
+    let at = njutest_devkit::paths::workspace_root().join("docs/engine/command-line.md");
+    let page = std::fs::read_to_string(&at)
+        .unwrap_or_else(|error| panic!("the command line page at {}: {error}", at.display()));
+    let mut helped: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for name in SUBCOMMANDS.into_iter().chain(std::iter::once("")) {
+        let output = if name.is_empty() {
+            rust_mutants(&["--help"])
+        } else {
+            rust_mutants(&[name, "--help"])
+        };
+        helped.extend(flags(&String::from_utf8_lossy(&output.stdout)));
+    }
+    let missing: Vec<&String> = helped
+        .iter()
+        .filter(|flag| !page.contains(flag.as_str()))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "docs/engine/command-line.md does not name {missing:?}"
+    );
+
+    let written = flags(&page);
+    let unknown: Vec<&String> = written
+        .iter()
+        .filter(|flag| !helped.contains(*flag))
+        .collect();
+    assert!(
+        unknown.is_empty(),
+        "docs/engine/command-line.md names flags no command has: {unknown:?}"
+    );
+}
+
+#[test]
+fn the_flags_the_page_lists_beside_a_command_are_that_command_s_own() {
+    let at = njutest_devkit::paths::workspace_root().join("docs/engine/command-line.md");
+    let page = std::fs::read_to_string(&at)
+        .unwrap_or_else(|error| panic!("the command line page at {}: {error}", at.display()));
+    let rows = beside_a_command(&page);
+    assert!(
+        rows.len() > 5,
+        "the table that lists a command and its flags is read: {rows:?}"
+    );
+    let mut wrong: Vec<String> = Vec::new();
+    for (command, listed) in rows {
+        let helped = flags(&String::from_utf8_lossy(
+            &rust_mutants(&[command.as_str(), "--help"]).stdout,
+        ));
+        wrong.extend(
+            listed
+                .into_iter()
+                .filter(|flag| !helped.contains(flag))
+                .map(|flag| format!("{command} {flag}")),
+        );
+    }
+    assert!(
+        wrong.is_empty(),
+        "docs/engine/command-line.md lists these beside a command that does not take them: \
+         {wrong:?}. A flag that exists on some other command is not this one's, and a \
+         reader who types what the row says is answered with a usage error"
+    );
+}
+
+/// Every row of the page's one table of commands and their flags, as the command and what it lists.
+fn beside_a_command(page: &str) -> Vec<(String, std::collections::BTreeSet<String>)> {
+    let mut rows = Vec::new();
+    let mut reading = false;
+    for line in page.lines() {
+        if line.starts_with("| Command ") {
+            reading = true;
             continue;
         }
-        let destination = to.join(entry.file_name());
-        if entry.file_type().expect("type").is_dir() {
-            copy_dir(&entry.path(), &destination);
-        } else {
-            std::fs::copy(entry.path(), &destination).expect("copy");
+        if reading && !line.starts_with('|') {
+            reading = false;
+            continue;
         }
+        if !reading || line.starts_with("| ---") {
+            continue;
+        }
+        let mut cells = line.split('|').skip(1);
+        let (Some(named), Some(listed)) = (cells.next(), cells.next()) else {
+            continue;
+        };
+        let Some(command) = named
+            .trim()
+            .trim_matches('`')
+            .split_whitespace()
+            .next()
+            .map(ToOwned::to_owned)
+        else {
+            continue;
+        };
+        rows.push((command, flags(listed)));
     }
+    rows
 }
 
-/// Runs the binary against a fixture, with the environment a real run has.
-fn against(fixture: &Fixture, args: &[&str]) -> Output {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_rust-mutants"));
-    command.env("NO_COLOR", "1");
-    command.env("TMPDIR", &fixture.temp);
-    command.arg(args[0]);
-    command.args(["--root", &fixture.root.to_string_lossy()]);
-    command.args(["--tier", "all"]);
-    command.args(["--offline", "--locked"]);
-    command.args(&args[1..]);
-    command.output().expect("rust-mutants runs")
-}
-
-fn stdout(output: &Output) -> String {
-    String::from_utf8_lossy(&output.stdout).into_owned()
-}
-
-#[test]
-fn list_names_every_candidate_without_building_anything() {
-    let fixture = fixture("fixture-simple");
-    let output = against(&fixture, &["list"]);
-    assert_eq!(
-        output.status.code(),
-        Some(0),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let text = stdout(&output);
-    let lines: Vec<&str> = text.lines().collect();
-    assert_eq!(lines.len(), 6, "{text}");
-    assert!(
-        lines
-            .iter()
-            .all(|line| line.contains("src/lib.rs:") && line.contains(" => ")),
-        "{text}"
-    );
-    assert!(text.contains("gt-to-ge@1"), "{text}");
-    assert!(text.contains("\">\" => \">=\""), "{text}");
+/// Every long flag a text spells, as `--name`.
+fn flags(text: &str) -> std::collections::BTreeSet<String> {
+    let mut found = std::collections::BTreeSet::new();
+    let mut rest = text;
+    while let Some(at) = rest.find("--") {
+        let tail = rest.split_at(at).1.get(2..).unwrap_or("");
+        let end = tail
+            .find(|one: char| !one.is_ascii_alphanumeric() && one != '-')
+            .unwrap_or(tail.len());
+        let name = tail.get(..end).unwrap_or("");
+        if name.len() > 1 && name.starts_with(|one: char| one.is_ascii_lowercase()) {
+            found.insert(format!("--{name}"));
+        }
+        rest = tail.get(end..).unwrap_or("");
+    }
+    found
 }
 
 #[test]
-fn why_skipped_tallies_the_reasons_with_a_sentence_each() {
-    let fixture = fixture("fixture-simple");
-    let output = against(&fixture, &["why-skipped"]);
-    assert_eq!(output.status.code(), Some(0));
-    let text = stdout(&output);
-    assert!(text.contains("test-code"), "{text}");
-    assert!(text.contains("test-only-file"), "{text}");
-    assert!(
-        text.contains("measures itself"),
-        "the reason is explained: {text}"
-    );
-}
-
-#[test]
-fn catalog_says_what_compiles_and_what_the_compiler_refused() {
-    let fixture = fixture("fixture-rejectable");
-    let output = against(&fixture, &["catalog", "--no-verify"]);
-    assert_eq!(
-        output.status.code(),
-        Some(0),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let text = stdout(&output);
-    assert!(text.contains("refused by the compiler:"), "{text}");
-    assert!(text.contains("cannot subtract"), "{text}");
-    assert!(text.contains("accepted, 4 refused"), "{text}");
-}
-
-#[test]
-fn catalog_as_json_is_one_document_a_program_can_read() {
-    let fixture = fixture("fixture-simple");
-    let output = against(&fixture, &["catalog", "--json"]);
-    assert_eq!(
-        output.status.code(),
-        Some(0),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let document: serde_json::Value =
-        serde_json::from_str(&stdout(&output)).expect("one JSON document");
-    assert_eq!(document["document_type"], "rust-mutants/catalog");
-    assert_eq!(document["schema_version"], 1);
-    assert_eq!(document["tool_version"], rust_mutants::VERSION);
-    assert_eq!(
-        document["workspace"]["catalog_digest"]
-            .as_str()
-            .map(str::len),
-        Some(64)
-    );
-    assert_eq!(document["skips"].as_array().expect("skips").len(), 2);
-}
-
-#[test]
-fn explain_says_everything_known_about_one_mutant() {
-    let fixture = fixture("fixture-simple");
-    let listed = stdout(&against(&fixture, &["list"]));
-    let short = listed
-        .lines()
-        .find(|line| line.contains("return-default"))
-        .and_then(|line| line.split_whitespace().next())
-        .expect("a return-default mutant")
-        .to_owned();
-
-    let output = against(&fixture, &["explain", &short, "--no-verify"]);
-    assert_eq!(
-        output.status.code(),
-        Some(0),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let text = stdout(&output);
-    assert!(text.contains(&format!("short     {short}")), "{text}");
-    assert!(
-        text.contains("rule      return-default@1 (return-replacement)"),
-        "{text}"
-    );
-    assert!(text.contains("verdict   accepted"), "{text}");
-    assert!(text.contains("fixture-simple/lib/fixture_simple"), "{text}");
-}
-
-#[test]
-fn run_exits_by_what_the_tests_said() {
-    let fixture = fixture("fixture-simple");
-    let listed = stdout(&against(&fixture, &["list"]));
-    let short_of = |rule: &str| -> String {
-        listed
-            .lines()
-            .find(|line| line.contains(rule))
-            .and_then(|line| line.split_whitespace().next())
-            .unwrap_or_else(|| panic!("a {rule} mutant"))
-            .to_owned()
-    };
-
-    let killed = against(&fixture, &["run", "--mutant", &short_of("return-default")]);
-    assert_eq!(
-        killed.status.code(),
-        Some(0),
-        "{}",
-        String::from_utf8_lossy(&killed.stderr)
-    );
-    let text = stdout(&killed);
-    assert!(text.contains("killed"), "{text}");
-    assert!(text.contains("fixture-simple/lib/fixture_simple"), "{text}");
-
-    let survived = against(&fixture, &["run", "--mutant", &short_of("gt-to-ge")]);
-    assert_eq!(survived.status.code(), Some(1), "{}", stdout(&survived));
-    assert!(stdout(&survived).contains("survived"));
-
-    let unknown = against(&fixture, &["run", "--mutant", "ffffffff"]);
-    assert_eq!(unknown.status.code(), Some(2));
-    let said = String::from_utf8_lossy(&unknown.stderr);
-    assert!(said.contains("RM5003"), "{said}");
-}
-
-#[test]
-fn instrument_prints_one_file_as_the_engine_rewrites_it() {
-    let fixture = fixture("fixture-simple");
-    let output = against(&fixture, &["instrument", "--file", "src/lib.rs"]);
-    assert_eq!(
-        output.status.code(),
-        Some(0),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let text = stdout(&output);
-    let module = rust_mutants::instrument::module_name("src/lib.rs", "");
-    assert!(
-        text.contains(&format!("{module}::active(")) && text.contains(&format!("mod {module} {{")),
-        "{text}"
-    );
-    assert!(text.contains("#[allow(warnings, unused, unused_qualifications, unfulfilled_lint_expectations, clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery, clippy::cargo)] pub fn max"), "{text}");
-
-    let source = std::fs::read_to_string(fixture.root.join("src/lib.rs")).expect("read");
-    assert!(
-        !source.contains("__rm"),
-        "the source workspace is read-only"
-    );
-
-    let missing = against(&fixture, &["instrument", "--file", "src/nope.rs"]);
-    assert_eq!(missing.status.code(), Some(2));
-    assert!(
-        String::from_utf8_lossy(&missing.stderr).contains("RM5006"),
-        "{}",
-        String::from_utf8_lossy(&missing.stderr)
-    );
-}
-
-#[test]
-fn the_catalog_document_validates_against_its_schema() {
-    let schema_path =
-        mjutest_devkit::paths::workspace_root().join("schema/rust-mutants-catalog-v1.json");
-    let schema: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&schema_path).expect("the schema"))
-            .expect("the schema is JSON");
-    let validator = jsonschema::validator_for(&schema).expect("the schema compiles");
-
-    for fixture_name in ["fixture-simple", "fixture-rejectable"] {
-        let fixture = fixture(fixture_name);
-        let output = against(&fixture, &["catalog", "--json", "--no-verify"]);
-        assert_eq!(
-            output.status.code(),
-            Some(0),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        let document: serde_json::Value =
-            serde_json::from_str(&stdout(&output)).expect("one JSON document");
-        let problems: Vec<String> = validator
-            .iter_errors(&document)
-            .map(|error| format!("{} at {}", error, error.instance_path()))
-            .collect();
-        assert!(problems.is_empty(), "{fixture_name}: {problems:?}");
-
-        let mutants = document["mutants"].as_array().expect("mutants");
-        assert!(!mutants.is_empty(), "{fixture_name}");
+fn rules_lists_every_rule_with_its_tier_and_version_so_a_team_can_pin_operators() {
+    let output = rust_mutants(&["rules"]);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let text = String::from_utf8_lossy(&output.stdout).into_owned();
+    for rule in rust_mutants::rule::CANONICAL_TABLE {
         assert!(
-            mutants
-                .iter()
-                .all(|mutant| mutant["line"].as_u64().unwrap_or(0) > 0),
-            "every mutant is placed in the file a person would open"
-        );
-        assert_eq!(document["selection"]["tier"], "all");
-        assert_eq!(
-            document["workspace"]["root_name"], fixture_name,
-            "the workspace names itself"
+            text.contains(rule.name),
+            "{} is a rule this release has and does not list",
+            rule.name
         );
     }
+    let golden = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testdata/rules.golden");
+    njutest_devkit::golden::golden(&golden, &output.stdout)
+        .expect("the rules are the recorded set");
+}
+
+#[test]
+fn rules_answers_as_a_document_when_it_is_asked_to() {
+    let output = rust_mutants(&["rules", "--json"]);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let document: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("the answer is JSON");
+    let golden = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testdata/rules.golden.json");
+    njutest_devkit::golden::golden(&golden, &output.stdout)
+        .expect("the document form of the operator table is the recorded one");
+    let rules = document["rules"].as_array().expect("the rules");
+    assert_eq!(rules.len(), rust_mutants::rule::CANONICAL_RULE_COUNT);
+    for rule in rules {
+        assert!(rule["name"].as_str().is_some_and(|it| !it.is_empty()));
+        assert!(rule["family"].as_str().is_some_and(|it| !it.is_empty()));
+        assert!(rule["tier"].as_str().is_some_and(|it| !it.is_empty()));
+        assert!(rule["version"].as_u64().is_some());
+    }
+}
+
+#[test]
+fn rules_narrowed_to_a_tier_is_what_that_tier_selects() {
+    let output = rust_mutants(&["rules", "--tier", "balanced", "--json"]);
+    let document: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("the answer is JSON");
+    let named: Vec<String> = document["rules"]
+        .as_array()
+        .expect("the rules")
+        .iter()
+        .filter_map(|rule| rule["name"].as_str().map(ToOwned::to_owned))
+        .collect();
+    let selected: Vec<String> = rust_mutants::rule::Registry::canonical()
+        .select_tier(rust_mutants::rule::Tier::Balanced)
+        .into_iter()
+        .map(|rule| rule.name.to_owned())
+        .collect();
+    assert_eq!(named, selected);
+    assert!(named.len() < rust_mutants::rule::CANONICAL_RULE_COUNT);
 }

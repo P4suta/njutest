@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The fixture conventions.
@@ -13,8 +13,8 @@ use std::path::Path;
 
 use xtask::fixtures::check_fixture;
 
-const HEADER: &str = "# SPDX-FileCopyrightText: 2026 mjutest contributors\n# SPDX-License-Identifier: MIT OR Apache-2.0\n";
-const RS_HEADER: &str = "// SPDX-FileCopyrightText: 2026 mjutest contributors\n// SPDX-License-Identifier: MIT OR Apache-2.0\n";
+const HEADER: &str = "# SPDX-FileCopyrightText: 2026 njutest contributors\n# SPDX-License-Identifier: MIT OR Apache-2.0\n";
+const RS_HEADER: &str = "// SPDX-FileCopyrightText: 2026 njutest contributors\n// SPDX-License-Identifier: MIT OR Apache-2.0\n";
 
 fn write(dir: &Path, relative: &str, text: &str) {
     let path = dir.join(relative);
@@ -32,6 +32,11 @@ fn good_fixture(dir: &Path) {
     );
     write(dir, "Cargo.lock", "# generated\nversion = 4\n");
     write(dir, "src/lib.rs", &format!("{RS_HEADER}pub fn f() {{}}\n"));
+    write(
+        dir,
+        "README.md",
+        "# fixture-simple\n\nWhat it is for.\n\n```fates\nsrc/lib.rs:2:1 gt-to-ge killed\n```\n",
+    );
 }
 
 #[test]
@@ -109,6 +114,7 @@ fn every_broken_convention_is_named() {
             "Cargo.toml needs an empty [workspace] table to stay independent of the root workspace",
             "Cargo.toml: dependency \"serde\" is not a path inside the fixture; fixtures build offline against no registry",
             "Cargo.toml: missing the SPDX header",
+            "README.md is missing (it is where a fixture says what it is for)",
             "src/lib.rs: missing the SPDX header",
         ]
     );
@@ -123,7 +129,72 @@ fn a_missing_manifest_is_reported_and_the_build_directory_is_ignored() {
         problems,
         [
             "Cargo.lock is missing (commit it: fixtures build with --locked --offline)",
-            "Cargo.toml is missing"
+            "Cargo.toml is missing",
+            "README.md is missing (it is where a fixture says what it is for)",
         ]
     );
+}
+
+#[test]
+fn a_readme_that_states_no_fates_is_a_fixture_a_change_can_quietly_re_decide() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    good_fixture(dir.path());
+    write(dir.path(), "README.md", "# x\n\nWhat it is for.\n");
+    let problems = check_fixture(dir.path());
+    assert_eq!(problems.len(), 1, "{problems:?}");
+    assert!(
+        problems
+            .first()
+            .is_some_and(|problem| problem.contains("```fates")),
+        "{problems:?}"
+    );
+}
+
+#[test]
+fn a_sibling_fixture_library_is_the_one_path_allowed_to_climb() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    good_fixture(dir.path());
+    write(
+        dir.path(),
+        "Cargo.toml",
+        &format!(
+            "{HEADER}[workspace]\n\n[package]\nname = \"fixture-outside-dep\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[dependencies]\nfixture-outside-dep-lib = {{ path = \"../fixture-outside-dep-lib\" }}\n"
+        ),
+    );
+    assert_eq!(
+        check_fixture(dir.path()),
+        Vec::<String>::new(),
+        "a fixture that exists to read from outside itself reads from another fixture, so the \
+         suite still builds from what this repository holds and still builds offline"
+    );
+
+    for (spelling, why) in [
+        (
+            "out = { path = \"../elsewhere\" }",
+            "a sibling that is not a fixture",
+        ),
+        (
+            "out = { path = \"../../fixture-far\" }",
+            "a path that climbs further than beside",
+        ),
+        (
+            "out = { path = \"../fixture-a/../../fixture-b\" }",
+            "a path that climbs on its way",
+        ),
+    ] {
+        write(
+            dir.path(),
+            "Cargo.toml",
+            &format!(
+                "{HEADER}[workspace]\n\n[package]\nname = \"x\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[dependencies]\n{spelling}\n"
+            ),
+        );
+        let problems = check_fixture(dir.path());
+        assert!(
+            problems
+                .iter()
+                .any(|problem| problem.contains("not a path inside the fixture")),
+            "{why}: {problems:?}"
+        );
+    }
 }

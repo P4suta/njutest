@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2026 mjutest contributors
+# SPDX-FileCopyrightText: 2026 njutest contributors
 # SPDX-License-Identifier: MIT OR Apache-2.0
 
 [workspace]
@@ -13,9 +13,9 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.98"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/P4suta/mjutest"
-homepage = "https://github.com/P4suta/mjutest"
-authors = ["mjutest contributors"]
+repository = "https://github.com/P4suta/njutest"
+homepage = "https://github.com/P4suta/njutest"
+authors = ["njutest contributors"]
 readme = "README.md"
 
 [workspace.lints.rust]
@@ -98,10 +98,11 @@ multiple_crate_versions = "allow"
 
 [workspace.dependencies]
 # Internal crates. Version and path together so a member can be published.
+njutest-cli = { version = "0.1.0", path = "crates/njutest-cli" }
 rust-mutants = { version = "0.1.0", path = "crates/rust-mutants" }
-mjutest = { version = "0.1.0", path = "crates/mjutest" }
-mjutest-macros = { version = "0.1.0", path = "crates/mjutest-macros" }
-mjutest-devkit = { version = "0.1.0", path = "crates/mjutest-devkit" }
+njutest = { version = "0.1.0", path = "crates/njutest" }
+njutest-macros = { version = "0.1.0", path = "crates/njutest-macros" }
+njutest-devkit = { version = "0.1.0", path = "crates/njutest-devkit" }
 
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -153,6 +154,13 @@ codegen-units = 1
 strip = "symbols"
 panic = "abort"
 opt-level = 3
+
+# A test binary of this workspace is 73 MB, and 94% of that is DWARF nobody
+# reads: a failing test is read from its backtrace, which needs the file and
+# the line and not the variables. Keeping the full record cost 51 GB of the
+# 54 GB `target/debug/deps` holds, and filled the disk twice in one day.
+[profile.dev]
+debug = "line-tables-only"
 
 [profile.dev.package."*"]
 opt-level = 1

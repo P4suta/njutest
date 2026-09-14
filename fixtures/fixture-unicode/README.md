@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: 2026 mjutest contributors
+SPDX-FileCopyrightText: 2026 njutest contributors
 SPDX-License-Identifier: MIT OR Apache-2.0
 -->
 
@@ -16,3 +16,23 @@ compared a coverage region against the wrong one fails here.
 
 `使われない` is called by nothing: its region is instrumented and uncovered,
 which is what "no test reaches this" looks like in a coverage export.
+
+## Fates
+
+What one run of this fixture establishes for every mutation of it, and
+for every candidate the compiler refused. The run is `rust-mutants run
+--tier all --offline --locked`;
+`cargo test -p rust-mutants-cli --test toolchain_fates` does it again and
+refuses a difference, and `UPDATE_FATES=1` rewrites the block below.
+
+```fates
+src/lib.rs:7:61 return-default killed
+src/lib.rs:7:64 negate-condition killed
+src/lib.rs:7:67 gt-to-ge not_run
+src/lib.rs:7:74 return-default unreached
+src/lib.rs:7:86 return-default killed
+src/lib.rs:11:5 return-default unreached
+src/lib.rs:11:8 mul-to-div unreached
+src/lib.rs:11:10 int-decrement unreached
+src/lib.rs:11:10 int-increment unreached
+```

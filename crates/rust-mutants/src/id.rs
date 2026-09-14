@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The stable mutant identity recipe.
@@ -126,6 +126,18 @@ pub struct Identity {
 #[must_use]
 pub fn digest(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
+}
+
+/// `path` as a reader sees it: the separators a catalog uses, and nothing else changed.
+///
+/// A run says the same thing however widely it is run, and a path it prints is
+/// part of what it says. The platform's own separator is not: the same report,
+/// named twice on two machines, would be two answers to one question, and the
+/// documented session a reader compares against could only ever match one of
+/// them.
+#[must_use]
+pub fn slashed(path: &std::path::Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
 }
 
 /// Converts a source path to the canonical workspace-relative form used in identities and reports: forward slashes, cleaned, no leading `./`.

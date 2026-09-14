@@ -1,0 +1,13 @@
+version = 1
+
+[project]
+packages = ["demo"]
+exclude = ["target/**"]
+
+[mutation]
+tier = "all"
+
+[execution]
+offline = true
+locked = true
+jobs = 2

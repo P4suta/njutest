@@ -1,14 +1,14 @@
 <!--
-SPDX-FileCopyrightText: 2026 mjutest contributors
+SPDX-FileCopyrightText: 2026 njutest contributors
 SPDX-License-Identifier: MIT OR Apache-2.0
 -->
 
 # Assurance report v1
 
-**Status: implemented** (`mjutest_cli::report`) — the model, its audit, and
+**Status: implemented** (`njutest_cli::report`) — the model, its audit, and
 all five projections.
 
-The first public report contract is `mjutest-assurance-report-v1`. The
+The first public report contract is `njutest-assurance-report-v1`. The
 schema value names the toolchain so a reader never confuses it with goatest's
 `assurance-report-v1`, whose shape it shares.
 
@@ -19,14 +19,14 @@ exists:
 
 ```text
 reports/runs/<run-id>/
-  mjutest-assurance-report-v1.json
-  mjutest-assurance-report-v1.html
-  mjutest-assurance-report-v1.sarif
-  mjutest-assurance-report-v1.junit.xml
-  mjutest-assurance-report-v1.schema.json
+  njutest-assurance-report-v1.json
+  njutest-assurance-report-v1.html
+  njutest-assurance-report-v1.sarif
+  njutest-assurance-report-v1.junit.xml
+  njutest-assurance-report-v1.schema.json
 ```
 
-`reports/latest-any.json` and `.mjutest/latest-any.json` track the latest
+`reports/latest-any.json` and `.njutest/latest-any.json` track the latest
 completed run of any scope. `latest-full.json` exists in both locations and
 advances only when `run_kind` is `full`. The history is bounded by
 `[reports] keep`, twenty by default, plus the runs the `latest-*` indexes
@@ -41,7 +41,7 @@ A durable report must include:
 - repository package inventory and explicit Git availability, commit, dirty
   state, merge base, and changed files;
 - an effective configuration SHA-256;
-- `rustc -vV` (version, commit hash, host), the cargo version, the mjutest and
+- `rustc -vV` (version, commit hash, host), the cargo version, the njutest and
   rust-mutants versions, OS, architecture, and target triple;
 - RFC3339 start/finish times and duration;
 - cache-derived state and source run ID when applicable;
@@ -56,7 +56,7 @@ If Git is unavailable, the report uses the explicit `available=false` state
 and `unavailable` sentinels together with `git-metadata-unavailable`; an empty
 value is invalid.
 
-The JSON Schema is published at `schema/mjutest-assurance-report-v1.json`
+The JSON Schema is published at `schema/njutest-assurance-report-v1.json`
 and copied into each run directory. Every object is closed with
 `additionalProperties: false` and requires everything it declares, which is
 what holds it to the model in both directions: a field the model gained and
@@ -67,18 +67,71 @@ additionally enforces arithmetic, scope/verdict, acceptance, cache, and
 unavailable-metadata invariants that JSON Schema alone cannot express
 (`report::audit::validate_for_persistence`).
 
-A **finding** is a claim about the project — a build that does not compile,
-a failing test, a target that could not be found, a surviving mutant, a
-timeout. A **limitation** is the opposite: a claim the run declines to make
-about itself. The audit holds the verdict and the findings to each other,
+A **finding** is an actionable problem in the project or its verification
+configuration. There are eight kinds, and a report carries the name rather
+than a number, because the name is what a person greps for and what a
+projection shows:
+
+| `kind` | what it says | a defect |
+| --- | --- | --- |
+| `build-failure` | the workspace does not compile | yes |
+| `failing-test` | a test of the workspace fails with nothing active | yes |
+| `undefined-behaviour` | the interpreter found unsoundness where the compiler stops vouching | yes |
+| `surviving-mutant` | every test that could notice a mutation passed with it active | no |
+| `target-missing` | a test target could not be found, so nothing was observed about it | no |
+| `timeout` | a target, or a mutation of one, ran out of the time it was given | no |
+| `not-measured` | something a run could not measure, so it claims nothing about it | no |
+| `unmatched-acceptance` | an unexpired acceptance does not name exactly one mutant in this catalog | no |
+
+The last column is the one a reader acts on first: a defect is a fault in the
+code under test, and the rest are gaps in what was established. Both are
+findings, and a report that carries either is not an assurance.
+
+Before mutation execution, every unexpired `[[acceptance]]` ID or prefix is
+resolved against the session's complete catalog. Only a prefix that names
+exactly one mutant is normalized to that mutant's full ID and may answer for a
+survivor. An invalid, absent, or ambiguous prefix suppresses nothing and raises
+one `unmatched-acceptance` finding whose `subject` is the configuration value.
+An expired acceptance is ignored. A shard cannot independently audit this
+relationship because it does not carry the complete catalog; the merged report
+does, and its audit rechecks that every such finding still fails to resolve
+uniquely.
+
+A **limitation** is the opposite: a claim the run declines to make about
+itself. The audit holds the verdict and the findings to each other,
 because a report must not say two things at once: an assurance is the claim
 that nothing was found, so it carries no findings, and a `DEFECT` a reader
 cannot see named is not one they can act on, so it carries at least one.
+
+A target is a test binary, and its identity is the digest of the package, the
+kind, the binary's name, and — for the shape a later release may take — the
+libtest path within it. The binary is part of it because two integration tests
+of one package can each hold a test called `works`, and an identity that left
+the binary out made those two rows one. The domain separator carries the
+recipe, so a recipe that changes says so: it reads `njutest-target-v2`.
+
+A target's `duration_ms` is the cost of running every test it holds, once,
+with nothing active. It is not divisible by the number of tests: a target that
+takes a second for one test and a second for a hundred is two facts about
+process starts and one fact about the tests. An estimate built from it may
+decide an order and never a budget.
 
 `targets` is canonically ordered by descending duration, then ascending target
 ID. A mutant disposition may say `reused: true` with a `source_run_id`; the
 accounting carries `reused_killed` and `reused_survived`, each part of
 `killed` and `survived`.
+
+## What a finding is about
+
+A finding names its `subject` — a mutant, a target, a package — and an
+identity is not somewhere anybody can open. So a finding that is about a
+place in the tree also carries `path`, relative to the workspace root, beside
+its `position`. Both are `null` for a finding that is about a target or a
+package rather than a line.
+
+Every consumer that puts a finding on a line needs the file as well: SARIF
+shows an alert against the path in the log, and a log that gave the identity
+instead put every alert on a file nobody had.
 
 ## Positions
 
@@ -112,13 +165,49 @@ test could forge a `FINDING`, `REPAIR`, `ACCEPTANCE`, or `LIMITATION`
 record, and a reader filtering for one would read a claim the run never
 made.
 
+## Parts of one catalog
+
+`njutest verify --shard K/N` judges one part of the catalog and measures the
+whole baseline, because a mutation cannot be judged against tests that were
+not run. The engine's rule decides which part holds which mutant — the dense
+catalog index modulo N, counting K from one — so two runs of the same tree
+divide it the same way without talking to each other, and every mutant belongs
+to exactly one part. Nothing is sampled and nothing is skipped, which is what
+keeps this out of [ADR 0004](adr/0004-proof-layers-not-budgets.md)'s way: it
+divides the work rather than reducing it.
+
+A part concludes `PARTIAL` and records its `scope.shard`. It assures nothing on
+its own: the mutations it did not judge are not mutations nothing noticed, they
+are mutations nobody put to a test. A finding in a part is still a finding, so
+a part that found a defect says `DEFECT`.
+
+`njutest merge <REPORT>...` writes the report the whole would have written. It
+passes one already unsharded report through, or requires exactly one report for
+every label `1/N` through `N/N`. It refuses a missing, repeated, malformed,
+mixed unsharded, or differently divided part. It also
+refuses parts that disagree about the tree, configuration, contract, effective
+scope, or runner and engine versions, and parts that both judged one mutant.
+Only that complete union is allowed to lose `scope.shard`: otherwise a missing
+part could be mistaken for a catalog with no mutants in it. The mutant rows are
+the union, the accounting is derived from that union rather than added up from
+what each part claimed, and the verdict is decided again from the whole. A
+score is a ratio and never survives a merge: two ratios over different
+denominators average into a number no run observed.
+
+Every run's identity carries its shard, so a part never reads back the whole's
+stored answer and a whole never reads back a part's.
+
 ## Exit codes
 
 | Code | Meaning |
 | ---: | --- |
-| 0 | `ASSURED`, `CHANGE_ASSURED`, `SCOPE_ASSURED`, `RESOLVED`, or `COMPLETED` |
-| 1 | `DEFECT` or `REPRODUCED` |
+| 0 | `ASSURED`, `CHANGE_ASSURED`, `SCOPE_ASSURED`, `PARTIAL`, `RESOLVED` |
+| 1 | `DEFECT`, `REPRODUCED` |
 | 2 | `INSUFFICIENT` |
-| 3 | `ERROR`, invalid input, or infrastructure failure |
+| 3 | `ERROR`, invalid input, or an infrastructure failure |
 | 130 | interrupted |
 | 143 | terminated |
+
+`njutest --help` prints this table, and it prints it from the verdicts
+themselves rather than from a copy: a run that has no verdict for a code has
+no line for it. This page is held to what that prints.

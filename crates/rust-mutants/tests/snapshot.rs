@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The snapshot: a disposable, byte-exact copy of a source tree at a stable name, with a manifest, a frozen workspace digest, drift detection, and a guarded cleanup.
@@ -352,12 +352,11 @@ fn symbolic_links_are_recorded_and_not_followed() {
 #[test]
 fn irregular_files_are_recorded_and_not_copied() {
     let fx = fixture();
-    rustix::fs::mkfifoat(
-        rustix::fs::CWD,
-        fx.source.join("src/pipe"),
-        rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR,
-    )
-    .expect("fifo");
+    let made = std::process::Command::new("mkfifo")
+        .arg(fx.source.join("src/pipe"))
+        .status()
+        .expect("the POSIX mkfifo utility");
+    assert!(made.success(), "mkfifo exited with {made}");
 
     let snapshot = create(&fx.source, &options(&fx), now()).expect("a tree with a pipe in it");
 
@@ -392,8 +391,9 @@ fn a_name_with_a_backslash_is_refused_because_it_cannot_round_trip_through_a_rel
 #[test]
 fn a_file_that_cannot_be_read_fails_the_copy_and_removes_the_partial_snapshot() {
     use std::os::unix::fs::PermissionsExt as _;
-    if rustix::process::geteuid().is_root() {
-        return; // root reads everything
+    let root_reads_everything = rustix::process::geteuid().is_root();
+    if root_reads_everything {
+        return;
     }
     let fx = fixture();
     let secret = write(&fx.source, "src/secret.rs", b"//\n");
@@ -442,7 +442,9 @@ fn an_abandoned_stable_directory_is_swept_and_the_name_reused_never_adopted() {
         b"// half-instrumented\n",
     );
     let mut owner = tempowner::claim(&dir, now()).expect("claim");
-    owner.release().expect("release"); // the previous run is gone
+    owner
+        .release()
+        .expect("the previous run releases what it owned");
     drop(owner);
 
     let snap = create(&fx.source, &options(&fx), now()).expect("create");
@@ -631,6 +633,27 @@ fn cleanup_retries_with_a_doubling_backoff_and_reports_a_directory_that_survives
 }
 
 #[test]
+fn a_directory_that_is_already_gone_is_a_directory_that_was_removed() {
+    let fx = fixture();
+    let snap = create(&fx.source, &options(&fx), now()).expect("create");
+    let dir = snap.dir().to_path_buf();
+    let attempts = RefCell::new(0usize);
+    let remove = |_: &Path| -> io::Result<()> {
+        *attempts.borrow_mut() += 1;
+        Err(io::Error::from(io::ErrorKind::NotFound))
+    };
+    snap.cleanup_with(&remove, &|_| panic!("nothing to wait for"))
+        .expect("a directory nobody can find is a directory nobody has to remove");
+    assert_eq!(
+        *attempts.borrow(),
+        1,
+        "the lock is released before the removal, so a sweeper is free to have got there first \
+         and retrying waits on nothing"
+    );
+    fs::remove_dir_all(&dir).expect("tidy");
+}
+
+#[test]
 fn cleanup_succeeds_on_a_later_attempt_without_reporting_the_earlier_ones() {
     let fx = fixture();
     let snap = create(&fx.source, &options(&fx), now()).expect("create");
@@ -652,9 +675,25 @@ fn cleanup_succeeds_on_a_later_attempt_without_reporting_the_earlier_ones() {
     assert!(!dir.exists());
 }
 
+/// A path that is absolute on the machine the test runs on, from a slash-separated tail.
+///
+/// A leading slash alone is not an absolute path on Windows, and a guard that
+/// asks whether a directory is one would refuse the case the test means to
+/// accept: the suite would pass by taking the branch it meant to prove is not
+/// taken.
+fn absolute(tail: &str) -> PathBuf {
+    if cfg!(windows) {
+        PathBuf::from(format!("C:\\{}", tail.replace('/', "\\")))
+    } else {
+        PathBuf::from(format!("/{tail}"))
+    }
+}
+
 #[test]
 fn the_cleanup_guard_refuses_anything_that_does_not_look_like_a_snapshot_directory() {
-    let parent = Path::new("/tmp/parent");
+    let elsewhere = absolute("somewhere/else");
+    let parent = absolute("tmp/parent");
+    let parent = parent.as_path();
     let ok = parent.join("rust-mutants-snap-0123456789abcdef");
     cleanup_guard(&ok, parent).expect("a snapshot directory in its parent");
 
@@ -668,7 +707,7 @@ fn the_cleanup_guard_refuses_anything_that_does_not_look_like_a_snapshot_directo
         ("wrong prefix", parent.join("project"), DIR_PREFIX),
         (
             "wrong parent",
-            Path::new("/somewhere/else").join("rust-mutants-snap-0123456789abcdef"),
+            elsewhere.join("rust-mutants-snap-0123456789abcdef"),
             "parent",
         ),
     ];
@@ -814,4 +853,41 @@ fn a_directory_with_a_file_of_that_name_that_is_not_the_tag_is_copied() {
         snapshot.root().join("data/CACHEDIR.TAG").is_file(),
         "the signature is what tags a cache, not the name"
     );
+}
+
+#[test]
+fn a_copied_file_keeps_the_time_the_original_was_written() {
+    let source = tempfile::tempdir().expect("a source tree");
+    let destination = tempfile::tempdir().expect("somewhere to copy to");
+    fs::write(
+        source.path().join("Cargo.toml"),
+        "[package]\nname = \"demo\"\n",
+    )
+    .expect("a manifest");
+    fs::create_dir_all(source.path().join("src")).expect("a source directory");
+    let file = source.path().join("src/lib.rs");
+    fs::write(&file, "pub fn one() -> u8 { 1 }\n").expect("a library");
+    let long_ago = std::time::SystemTime::UNIX_EPOCH
+        .checked_add(Duration::from_secs(1_600_000_000))
+        .expect("a time before now");
+    fs::File::options()
+        .write(true)
+        .open(&file)
+        .expect("the library")
+        .set_times(fs::FileTimes::new().set_modified(long_ago))
+        .expect("a time somebody could have written it");
+
+    let snapshot = create(source.path(), &Options::new(destination.path()), now())
+        .expect("the tree is copied");
+    let copied = fs::metadata(snapshot.root().join("src/lib.rs"))
+        .expect("the copy")
+        .modified()
+        .expect("a modification time");
+    assert_eq!(
+        copied, long_ago,
+        "cargo decides whether to compile a file by comparing its time with the artifact's. A \
+         copy stamped with now is a copy cargo has to build again, every run, whatever it \
+         already built."
+    );
+    snapshot.cleanup().expect("the copy goes away");
 }

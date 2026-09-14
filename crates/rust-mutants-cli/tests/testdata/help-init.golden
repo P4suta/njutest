@@ -1,0 +1,23 @@
+Write a `.rust-mutants.toml` whose every value is already the default
+
+Usage: rust-mutants init [OPTIONS]
+
+Options:
+      --color <WHEN>
+          Whether to paint the output. `auto` paints a terminal that has not set `NO_COLOR`
+
+          Possible values:
+          - auto:   Colour a terminal that has not asked to go without
+          - always: Always
+          - never:  Never
+          
+          [default: auto]
+
+      --root <DIR>
+          The workspace root. Defaults to the working directory
+
+      --force
+          Overwrite a file that is already there
+
+  -h, --help
+          Print help (see a summary with '-h')

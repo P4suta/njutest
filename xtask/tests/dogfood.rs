@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What the dogfood tasks must and must not do.
@@ -31,7 +31,12 @@ fn task(name: &str) -> String {
 
 #[test]
 fn dogfood_runs_the_built_binary_and_never_cargo_run() {
-    for name in ["dogfood", "\"dogfood:engine\"", "\"dogfood:audit\""] {
+    for name in [
+        "dogfood",
+        "\"dogfood:engine\"",
+        "\"dogfood:audit\"",
+        "\"dogfood:engine:audit\"",
+    ] {
         let body = task(name);
         assert!(
             !body.contains("cargo run"),
@@ -48,9 +53,64 @@ fn dogfood_runs_the_built_binary_and_never_cargo_run() {
 #[test]
 fn dogfood_verifies_rather_than_merely_building() {
     let body = task("dogfood");
-    assert!(body.contains("mjutest verify"), "{body}");
+    assert!(body.contains("njutest verify"), "{body}");
     assert!(
         body.contains("--ui=plain"),
         "the output is for a person reading a terminal: {body}"
+    );
+}
+
+#[test]
+fn the_engine_audit_task_checks_the_recording_before_re_deciding_it() {
+    let body = task("\"dogfood:engine:audit\"");
+    assert!(
+        body.contains("--trace"),
+        "a run nobody recorded leaves every trace layer unaudited: {body}"
+    );
+    let checked = body.find("trace check").unwrap_or_else(|| panic!("{body}"));
+    let audited = body
+        .find("engine-audit")
+        .unwrap_or_else(|| panic!("{body}"));
+    assert!(
+        checked < audited,
+        "a recording that lost events is not one to re-decide a run from: {body}"
+    );
+    assert!(
+        body.contains("--ledger .rust-mutants.toml"),
+        "a survivor nobody accepted has to fail the gate: {body}"
+    );
+}
+
+#[test]
+fn the_engine_ledger_names_what_it_measures_and_asks_for_every_proof_layer() {
+    let ledger = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../.rust-mutants.toml"),
+    )
+    .expect("the engine's own ledger");
+    let settings: String = ledger
+        .lines()
+        .filter(|line| !line.trim_start().starts_with('#'))
+        .collect::<Vec<&str>>()
+        .join("\n");
+    assert!(
+        ledger.contains(
+            "packages = [\"rust-mutants\", \"rust-mutants-cli\", \"njutest-cli\", \"xtask\"]"
+        ),
+        "{ledger}"
+    );
+    assert!(
+        ledger.contains("tier = \"all\""),
+        "a tool that asks a project for every operator asks itself for them too: {ledger}"
+    );
+    assert!(
+        !settings.contains("coverage"),
+        "coverage routing is the default now, and a ledger that asks for a default says \
+         nothing: {settings}"
+    );
+    assert!(
+        !settings.contains("probe"),
+        "the infection layer rides on the run that establishes the baseline, so there is \
+         nothing to ask for, and a ledger that asks for a layer there is no switch for \
+         reads as a switch somebody could throw: {settings}"
     );
 }

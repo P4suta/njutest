@@ -1,0 +1,43 @@
+Read back a stored run report
+
+Usage: rust-mutants report [OPTIONS]
+
+Options:
+      --color <WHEN>
+          Whether to paint the output. `auto` paints a terminal that has not set `NO_COLOR`
+
+          Possible values:
+          - auto:   Colour a terminal that has not asked to go without
+          - always: Always
+          - never:  Never
+          
+          [default: auto]
+
+      --root <DIR>
+          The workspace root. Defaults to the working directory
+
+      --run <ID>
+          The run, by its identity. Defaults to the newest
+
+      --format <FORMAT>
+          How to write it
+
+          Possible values:
+          - lines:    The lines a person reads
+          - json:     The stored `rust-mutants/run-report` document, verbatim
+          - html:     One self-contained HTML page
+          - stryker:  The mutation testing report every Stryker reader understands
+          - junit:    The JUnit XML a continuous integration server already reads
+          - sarif:    The findings as SARIF 2.1.0, for a code scanning view
+          - markdown: The summary a person puts in a pull request
+          
+          [default: lines]
+
+      --output <FILE>
+          Write it here rather than to standard output
+
+      --tui
+          Read it at the terminal instead of writing it
+
+  -h, --help
+          Print help (see a summary with '-h')

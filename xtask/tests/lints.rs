@@ -1,7 +1,7 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! The gate that keeps `#[allow]` and `Box<dyn Trait>` out.
+//! The gate that keeps `#[allow]`, `Box<dyn Trait>`, and a comment beside the code out.
 
 #![expect(
     clippy::expect_used,
@@ -86,4 +86,90 @@ fn a_finding_says_where_it_is_and_what_to_do_instead() {
 #[test]
 fn a_file_that_is_not_rust_is_an_error_rather_than_a_pass() {
     scan_source("a.rs", "fn (").expect_err("a file this gate cannot read is not a file it passes");
+}
+
+#[test]
+fn a_comment_beside_the_code_is_refused_and_documentation_is_not() {
+    assert_eq!(
+        kinds("//! A file.\n\npub fn f() {\n    // why\n}\n"),
+        [Kind::Comment],
+        "a comment beside code is a second account of it that nothing keeps true"
+    );
+    assert_eq!(
+        kinds("//! A file.\n\n/// What it is.\npub fn f() {}\n"),
+        [],
+        "the one line the lint set asks for on a public item is documentation, not a comment"
+    );
+    assert_eq!(
+        kinds("//! A file.\n\npub fn f() {\n    let x = 1; // here\n    drop(x);\n}\n"),
+        [Kind::Comment],
+        "and one at the end of a line is one too"
+    );
+    assert_eq!(
+        kinds("//! A file.\n\n/* why */\npub fn f() {}\n"),
+        [Kind::Comment],
+        "whichever way it is spelled"
+    );
+    assert_eq!(
+        kinds("//! A file.\n\n/** What it is. */\npub fn f() {}\n"),
+        [],
+        "and a block that documents is documentation"
+    );
+}
+
+#[test]
+fn the_licence_header_is_not_a_comment_this_gate_refuses() {
+    assert_eq!(
+        kinds(
+            "// SPDX-FileCopyrightText: 2026 njutest contributors\n             // SPDX-License-Identifier: MIT OR Apache-2.0\n\n//! A file.\n"
+        ),
+        [],
+        "every file of this repository carries it"
+    );
+}
+
+#[test]
+fn slashes_inside_a_literal_are_not_a_comment() {
+    for source in [
+        "//! A file.\npub const URL: &str = \"https://example.test/a\";\n",
+        "//! A file.\npub const RAW: &str = r\"https://example.test/a\";\n",
+        "//! A file.\npub const HASHED: &str = r#\"a \"//\" b\"#;\n",
+        "//! A file.\npub const BYTES: &[u8] = b\"//\";\n",
+        "//! A file.\npub const SLASH: char = '/';\n",
+        "//! A file.\npub fn f(s: &'static str) -> &'static str {\n    s\n}\n",
+        "//! A file.\npub const ESCAPED: &str = \"a\\\\\";\n",
+    ] {
+        assert_eq!(
+            kinds(source),
+            [],
+            "the text a program carries is not a thing anybody said about it: {source}"
+        );
+    }
+}
+
+#[test]
+fn the_engine_s_own_annotation_is_an_instruction_rather_than_an_account() {
+    assert_eq!(
+        kinds("//! A file.\n\npub fn f() {\n    // rust-mutants: skip nothing to see\n}\n"),
+        [],
+        "a skip marker is read by the engine, and its syntax is what says so"
+    );
+}
+
+#[test]
+fn the_development_page_names_every_kind_this_gate_reports() {
+    let page = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("the workspace root")
+            .join("docs/development.md"),
+    )
+    .expect("the page");
+    for kind in Kind::ALL {
+        assert!(
+            page.contains(&format!("`{}`", kind.label())),
+            "a finding says {} and docs/development.md does not say what it is",
+            kind.label()
+        );
+    }
 }

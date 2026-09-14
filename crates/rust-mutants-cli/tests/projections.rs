@@ -1,212 +1,706 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! What a stored run becomes for other readers: a Stryker report, one page, and one doctor document.
+//! The three projections a team's existing surfaces read, put to their readers here rather than through a process.
+//!
+//! A run report is what a program reads and these are what somebody else's
+//! program reads, so each is held to the shape its reader accepts. Driving the
+//! command instead means starting a process, and a measurement of what a
+//! crate's own tests reach does not follow a guard across that boundary.
 
 #![expect(
     clippy::expect_used,
     clippy::indexing_slicing,
-    reason = "a test reports a setup failure by panicking and reads a document as a table"
+    reason = "the helpers that build one document are not themselves tests, and a test \
+              reads a document by the names its own fixture put there"
 )]
 
-use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::collections::BTreeMap;
 
-struct Fixture {
-    root: PathBuf,
-    temp: PathBuf,
-    cache: PathBuf,
-    _dir: tempfile::TempDir,
-}
+use rust_mutants_cli::report::run::{
+    Accounting, FindingDocument, RunDocument, RunMeta, RunMutantDocument, ScoreDocument,
+};
+use rust_mutants_cli::report::sources::Held;
+use rust_mutants_cli::report::stryker::Thresholds;
+use rust_mutants_cli::report::{
+    PlatformDocument, RejectionDocument, SelectionDocument, SkipDocument, WorkspaceDocument, html,
+    sarif, stryker,
+};
 
-fn fixture(name: &str) -> Fixture {
-    let dir = tempfile::Builder::new()
-        .prefix("rust-mutants-projection-")
-        .tempdir()
-        .expect("tempdir");
-    let root = dir.path().join(name);
-    copy_dir(&mjutest_devkit::paths::fixtures_dir().join(name), &root);
-    let temp = dir.path().join("temp");
-    let cache = dir.path().join("cache");
-    std::fs::create_dir_all(&temp).expect("mkdir");
-    std::fs::create_dir_all(&cache).expect("mkdir");
-    Fixture {
-        root,
-        temp,
-        cache,
-        _dir: dir,
+/// The source every mutation in the fixture is in.
+const SOURCE: &str = "pub fn wide(n: i32) -> bool {\n    n > 1\n}\n";
+
+/// A name a reader must not be able to close a tag with.
+const MARKUP: &str = "<script>alert('x')</script>";
+
+fn mutant(index: u32, outcome: &str, replacement: &str) -> RunMutantDocument {
+    RunMutantDocument {
+        index,
+        id: format!("{index:064x}"),
+        display_id: format!("{index:020x}"),
+        path: "src/lib.rs".to_owned(),
+        package: "demo".to_owned(),
+        family: "comparison".to_owned(),
+        rule: "gt-to-ge".to_owned(),
+        rule_version: 1,
+        line: 2,
+        column: 7,
+        start_byte: 35,
+        end_byte: 36,
+        source_digest: format!("{index:064x}"),
+        original: ">".to_owned(),
+        replacement: replacement.to_owned(),
+        outcome: outcome.to_owned(),
+        target: "demo/lib/demo".to_owned(),
+        exit_code: 0,
+        duration_ms: 41,
+        tests_run: Some(1),
+        killed_by: Vec::new(),
+        signal: None,
+        not_run_reason: None,
+        route: None,
+        identical: None,
+        retried: false,
+        expected: false,
+        unreached: false,
+        source_run_id: None,
     }
 }
 
-fn copy_dir(from: &Path, to: &Path) {
-    std::fs::create_dir_all(to).expect("mkdir");
-    for entry in std::fs::read_dir(from).expect("read_dir") {
-        let entry = entry.expect("entry");
-        if entry.file_name() == "target" {
-            continue;
-        }
-        let destination = to.join(entry.file_name());
-        if entry.file_type().expect("type").is_dir() {
-            copy_dir(&entry.path(), &destination);
-        } else {
-            std::fs::copy(entry.path(), &destination).expect("copy");
-        }
+fn document() -> RunDocument {
+    RunDocument {
+        document_type: "rust-mutants/run-report".to_owned(),
+        schema_version: 1,
+        tool_version: "0.1.0".to_owned(),
+        run: RunMeta {
+            id: "20260905T120000000Z".to_owned(),
+            started_at: "2026-09-05T12:00:00Z".to_owned(),
+            finished_at: "2026-09-05T12:00:01Z".to_owned(),
+            duration_ms: 1000,
+            interrupted: false,
+            exit_code: 1,
+            shard: None,
+        },
+        workspace: WorkspaceDocument {
+            root_name: MARKUP.to_owned(),
+            toolchain: "rustc 1.98.0".to_owned(),
+            workspace_digest: "a".repeat(64),
+            catalog_digest: "b".repeat(64),
+            platform: PlatformDocument {
+                os: "linux".to_owned(),
+                arch: "x86_64".to_owned(),
+                target: "x86_64-unknown-linux-gnu".to_owned(),
+            },
+        },
+        selection: SelectionDocument {
+            build: Vec::new(),
+            tier: "balanced".to_owned(),
+            operators: Vec::new(),
+            include: Vec::new(),
+            exclude: Vec::new(),
+            packages: Vec::new(),
+        },
+        targets: Vec::new(),
+        established_tests: 0,
+        accounting: Accounting {
+            cataloged: 2,
+            refused: 0,
+            skipped: 0,
+            executed: 2,
+            killed: 1,
+            survived: 1,
+            timed_out: 0,
+            inconclusive: 0,
+            errored: 0,
+            unreached: 0,
+            discharged: 0,
+            not_run: 0,
+            expected: 0,
+        },
+        score: Some(ScoreDocument {
+            detected: 1,
+            decided: 2,
+            value: 0.5,
+        }),
+        mutants: vec![mutant(0, "killed", ">="), mutant(1, "survived", "<")],
+        rejections: Vec::new(),
+        skips: Vec::new(),
+        expectations: Vec::new(),
+        findings: vec![FindingDocument {
+            kind: "surviving-mutant".to_owned(),
+            mutant: Some(format!("{:064x}", 1)),
+            detail: "no test noticed this".to_owned(),
+        }],
     }
 }
 
-fn against(fixture: &Fixture, args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_rust-mutants"))
-        .env("NO_COLOR", "1")
-        .env("TMPDIR", &fixture.temp)
-        .env("XDG_CACHE_HOME", &fixture.cache)
-        .args(args)
-        .args(["--root", &fixture.root.to_string_lossy()])
-        .output()
-        .expect("rust-mutants runs")
-}
-
-fn stdout(output: &Output) -> String {
-    String::from_utf8_lossy(&output.stdout).into_owned()
-}
-
-fn measured() -> Fixture {
-    let fixture = fixture("fixture-unicode");
-    let ran = against(&fixture, &["run", "--offline", "--locked"]);
-    assert!(
-        ran.status.code().is_some_and(|code| code <= 1),
-        "the run establishes something: {ran:?}"
-    );
-    fixture
+fn sources() -> BTreeMap<String, Held> {
+    BTreeMap::from([("src/lib.rs".to_owned(), Held::Measured(SOURCE.to_owned()))])
 }
 
 #[test]
-fn a_stryker_projection_validates_against_the_schema_it_answers_to() {
-    let fixture = measured();
-    let projected = against(&fixture, &["report", "--format", "stryker"]);
+fn the_page_needs_nothing_from_the_network_and_closes_no_tag_it_was_given() {
+    let page = html::document(&document(), &sources());
+    let outside = njutest_devkit::report::reaches_outside(&page);
     assert!(
-        projected.status.code().is_some_and(|code| code <= 1),
-        "reading a report back answers with the run's own exit code: {projected:?}"
+        outside.is_empty(),
+        "a run report is read from a build artefact on a machine with no network as \
+         often as from a desk: {outside:?}"
     );
-    let document: serde_json::Value =
-        serde_json::from_str(&stdout(&projected)).expect("the projection is JSON");
+    assert!(
+        page.starts_with("<!doctype html>") && page.trim_end().ends_with("</html>"),
+        "and it is one whole document rather than a fragment somebody has to wrap"
+    );
+    assert!(
+        !page.contains(MARKUP) && page.contains("&lt;script&gt;"),
+        "while a name the run read off a tree cannot close a tag it was put inside: a \
+         workspace is called whatever somebody called it, and a page that pastes that in \
+         is a page whose shape the tree under test decides"
+    );
+}
 
-    let schema: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(
-            mjutest_devkit::paths::workspace_root()
-                .join("test/vendor/mutation-testing-report-schema.json"),
-        )
-        .expect("the vendored schema"),
+#[test]
+fn the_stryker_projection_is_the_shape_that_reader_accepts() {
+    let projection = stryker::project(
+        &document(),
+        std::path::Path::new("."),
+        Thresholds { high: 80, low: 60 },
+        &sources(),
     )
-    .expect("the schema is JSON");
-    let validator = jsonschema::validator_for(&schema).expect("the schema compiles");
-    let complaints: Vec<String> = validator
-        .iter_errors(&document)
-        .map(|error| format!("{error} at {}", error.instance_path()))
-        .collect();
-    assert!(complaints.is_empty(), "{complaints:?}\n{document}");
-}
+    .expect("every mutated file is one the run measured");
+    let json = serde_json::to_value(&projection).expect("the projection is a document");
+    assert_eq!(
+        json["schemaVersion"], "2.0",
+        "the reader is told which shape this is before it reads any of it: {json}"
+    );
+    let file = &json["files"]["src/lib.rs"];
+    assert_eq!(
+        file["source"], SOURCE,
+        "a mutated file carries the source the run measured, because the reader draws \
+         every mutation onto it and a file it does not have is a file it draws nothing \
+         on: {json}"
+    );
+    let mutants = file["mutants"].as_array().expect("the mutations");
+    assert_eq!(mutants.len(), 2, "{json}");
+    assert_eq!(
+        (mutants[0]["status"].as_str(), mutants[1]["status"].as_str()),
+        (Some("Killed"), Some("Survived")),
+        "and each says what happened to it in the words that reader knows, which are \
+         not the words this one uses: {json}"
+    );
+    assert_eq!(
+        mutants[0]["location"]["start"]["line"].as_u64(),
+        Some(2),
+        "a location is where the mutation is, counted the way the reader counts: {json}"
+    );
 
-#[test]
-fn a_stryker_projection_counts_columns_in_utf16_as_the_schema_requires() {
-    let fixture = measured();
-    let projected = against(&fixture, &["report", "--format", "stryker"]);
-    let document: serde_json::Value =
-        serde_json::from_str(&stdout(&projected)).expect("the projection is JSON");
-    let files = document["files"].as_object().expect("the files");
-    let (path, file) = files.iter().next().expect("one mutated file");
-    let source = file["source"].as_str().expect("the source");
+    let moved = stryker::project(
+        &document(),
+        std::path::Path::new("."),
+        Thresholds { high: 80, low: 60 },
+        &BTreeMap::from([("src/lib.rs".to_owned(), Held::Changed)]),
+    );
     assert!(
-        source.contains("pub fn"),
-        "the whole file is in the document so a reader can show the mutation in place: {path}"
+        moved.is_err(),
+        "while a file that is no longer the one the run measured is refused rather than \
+         drawn on: every mutation would be marked at a byte that means something else \
+         now, and the reader would show a person a place nothing happened"
     );
-    for mutant in file["mutants"].as_array().expect("the mutants") {
-        let line = mutant["location"]["start"]["line"]
-            .as_u64()
-            .expect("a line");
-        let column = mutant["location"]["start"]["column"]
-            .as_u64()
-            .expect("a column");
-        let text = source
-            .lines()
-            .nth(usize::try_from(line - 1).expect("a line index"));
-        let units = text.map_or(0, |text| text.chars().map(char::len_utf16).sum::<usize>());
-        assert!(
-            usize::try_from(column).expect("a column index") <= units + 1,
-            "a column past the end of its line: {mutant}"
-        );
-        assert!(column >= 1, "{mutant}");
+}
+
+/// One finding, about `mutant` or about nothing.
+fn found(kind: &str, mutant: Option<&str>) -> FindingDocument {
+    FindingDocument {
+        kind: kind.to_owned(),
+        mutant: mutant.map(ToOwned::to_owned),
+        detail: format!("what {kind} means here"),
     }
 }
 
 #[test]
-fn a_page_needs_nothing_from_the_network_to_be_read() {
-    let fixture = measured();
-    let page = against(&fixture, &["report", "--format", "html"]);
-    let text = stdout(&page);
-    assert!(text.starts_with("<!doctype html>"), "{text}");
-    assert!(text.contains("</html>"), "{text}");
-    for outside in ["http://", "https://", "<script", "src=", "@import"] {
-        assert!(
-            !text.contains(outside),
-            "a page that fetches {outside} is not one that opens offline"
-        );
-    }
+fn a_sarif_alert_carries_the_level_its_kind_earns_and_the_place_it_is_about() {
+    let mut document = document();
+    document.findings = vec![
+        found("surviving-mutant", Some(&format!("{:064x}", 1))),
+        found("unreached-mutant", Some(&format!("{:064x}", 0))),
+        found("build-failure", None),
+        found("surviving-mutant", Some("a mutation this run never judged")),
+    ];
+    let json = serde_json::to_value(sarif::log(&document)).expect("the log is a document");
+    let results = json["runs"][0]["results"]
+        .as_array()
+        .expect("the results")
+        .clone();
+    assert_eq!(
+        results.len(),
+        4,
+        "every finding is one alert, including the one about no mutation and the one \
+         naming a mutation this run never judged: a finding a log drops is a finding the \
+         surface a team reads never shows: {json}"
+    );
+    assert_eq!(
+        results
+            .iter()
+            .map(|one| one["level"].as_str().unwrap_or_default())
+            .collect::<Vec<&str>>(),
+        vec!["warning", "note", "error", "warning"],
+        "and each carries the level its kind earns: a gap in the tests is a warning, \
+         something nobody measured is a note, and a fault in the code under test is an \
+         error. A log that called them all one thing would be one a team filters by \
+         nothing: {json}"
+    );
+    assert!(
+        results[2]["locations"]
+            .as_array()
+            .is_some_and(Vec::is_empty)
+            && results[3]["locations"]
+                .as_array()
+                .is_some_and(Vec::is_empty),
+        "a finding about no place carries no place, rather than one the reader would \
+         open: {json}"
+    );
+    assert_eq!(
+        results[0]["partialFingerprints"]["rustMutantsMutantId/v1"].as_str(),
+        Some(format!("{:064x}", 1).as_str()),
+        "an alert about a mutation carries that mutation's identity under the name the \
+         reader groups by, or every run of the same gap is a new alert somebody has to \
+         triage again: {json}"
+    );
+    assert_eq!(
+        json["runs"][0]["tool"]["driver"]["rules"]
+            .as_array()
+            .map(Vec::len),
+        Some(1),
+        "and one descriptor per rule, however many findings that rule accounts for: {json}"
+    );
 }
 
 #[test]
-fn a_page_written_to_a_file_says_where_it_put_it() {
-    let fixture = measured();
-    let path = fixture.root.join("report.html");
-    let written = against(
-        &fixture,
-        &[
-            "report",
-            "--format",
-            "html",
-            "--output",
-            &path.to_string_lossy(),
+fn a_region_ends_where_the_original_does_when_the_original_is_one_line() {
+    let mut document = document();
+    document.mutants[0].original = ">".to_owned();
+    document.findings = vec![found("surviving-mutant", Some(&format!("{:064x}", 0)))];
+    let json = serde_json::to_value(sarif::log(&document)).expect("the log is a document");
+    let region =
+        json["runs"][0]["results"][0]["locations"][0]["physicalLocation"]["region"].clone();
+    assert_eq!(
+        (
+            region["startColumn"].as_u64(),
+            region["endColumn"].as_u64(),
+            region["snippet"]["text"].as_str()
+        ),
+        (Some(7), Some(8), Some(">")),
+        "a region ends one column past what the mutation replaced, and carries it, so \
+         the surface underlines the code and not the line: {region}"
+    );
+
+    let mut spanning = document.clone();
+    spanning.mutants[0].original = "if a {\n    b\n}".to_owned();
+    let json = serde_json::to_value(sarif::log(&spanning)).expect("the log is a document");
+    let region =
+        json["runs"][0]["results"][0]["locations"][0]["physicalLocation"]["region"].clone();
+    assert!(
+        region["endColumn"].is_null(),
+        "while one whose original runs over more than a line has no end column on that \
+         line: counting its bytes would underline into the middle of the next one: \
+         {region}"
+    );
+}
+
+#[test]
+fn the_sarif_log_carries_every_finding_where_a_reader_can_open_it() {
+    let log = sarif::log(&document());
+    let json = serde_json::to_value(&log).expect("the log is a document");
+    assert_eq!(json["version"], sarif::VERSION);
+    let results = json["runs"][0]["results"]
+        .as_array()
+        .expect("the results")
+        .clone();
+    assert_eq!(results.len(), 1, "one finding, one result: {json}");
+    assert_eq!(
+        results[0]["locations"][0]["physicalLocation"]["artifactLocation"]["uri"].as_str(),
+        Some("src/lib.rs"),
+        "an alert is on the file the mutation is in: a log that gave the identity \
+         instead puts every alert on a path nobody has: {json}"
+    );
+    assert_eq!(
+        results[0]["locations"][0]["physicalLocation"]["region"]["startLine"].as_u64(),
+        Some(2),
+        "and on the line it is on: {json}"
+    );
+}
+
+/// One mutant with the outcome and the reach a run gave it.
+fn outcome(index: u32, outcome: &str, unreached: bool) -> RunMutantDocument {
+    RunMutantDocument {
+        outcome: outcome.to_owned(),
+        unreached,
+        ..mutant(index, outcome, ">=")
+    }
+}
+
+/// What the stryker projection made of a document holding just these mutants.
+fn projected(mutants: Vec<RunMutantDocument>) -> serde_json::Value {
+    let mut document = document();
+    document.mutants = mutants;
+    let projection = stryker::project(
+        &document,
+        std::path::Path::new("."),
+        Thresholds { high: 80, low: 60 },
+        &sources(),
+    )
+    .expect("every mutated file is one the run measured");
+    serde_json::to_value(&projection).expect("the projection is a document")
+}
+
+#[test]
+fn every_outcome_is_said_in_the_word_that_reader_knows() {
+    let json = projected(vec![
+        outcome(0, "killed", false),
+        outcome(1, "survived", false),
+        outcome(2, "timed_out", false),
+        outcome(3, "inconclusive", false),
+        outcome(4, "errored", false),
+        outcome(5, "not_run", true),
+        outcome(6, "not_run", false),
+        outcome(7, "a word from a later release", false),
+    ]);
+    let mutants = json["files"]["src/lib.rs"]["mutants"]
+        .as_array()
+        .expect("the mutations")
+        .clone();
+    assert_eq!(
+        mutants
+            .iter()
+            .map(|one| one["status"].as_str().unwrap_or_default())
+            .collect::<Vec<&str>>(),
+        vec![
+            "Killed",
+            "Survived",
+            "Timeout",
+            "RuntimeError",
+            "RuntimeError",
+            "NoCoverage",
+            "Pending",
+            "Pending",
         ],
+        "this run's words and that reader's are two vocabularies, and every one of ours \
+         has to arrive as one of theirs: a status the reader does not know is a mutation \
+         it draws nothing for. A mutation nothing reached is `NoCoverage` and not \
+         `Survived`, because the two are different things to do about: {json}"
     );
-    assert!(stdout(&written).contains("report.html"), "{written:?}");
-    let text = std::fs::read_to_string(&path).expect("the page");
-    assert!(text.starts_with("<!doctype html>"), "{text}");
+    assert!(
+        mutants[3]["statusReason"]
+            .as_str()
+            .is_some_and(|it| it.contains("did not reproduce"))
+            && mutants[4]["statusReason"]
+                .as_str()
+                .is_some_and(|it| it.contains("exit")),
+        "and the two that arrive as one word carry the sentence that parts them: a \
+         timeout nobody could reproduce is not a harness that failed: {json}"
+    );
+    assert!(
+        mutants[0]["statusReason"].is_null(),
+        "while one whose status says everything carries no sentence: {json}"
+    );
 }
 
 #[test]
-fn the_doctor_answers_as_a_document_when_it_is_asked_to() {
-    let fixture = fixture("fixture-simple");
-    let asked = against(&fixture, &["doctor", "--json"]);
-    let document: serde_json::Value =
-        serde_json::from_str(&stdout(&asked)).expect("the answer is JSON");
-    assert_eq!(document["document_type"], "rust-mutants/doctor");
-    assert_eq!(document["schema_version"], 1);
-    assert!(document["ok"].is_boolean(), "{document}");
-    let checks = document["checks"].as_array().expect("the checks");
-    let names: Vec<&str> = checks
-        .iter()
-        .filter_map(|check| check["name"].as_str())
-        .collect();
-    assert!(names.contains(&"cargo"), "{names:?}");
-    assert!(names.contains(&"workspace"), "{names:?}");
-    for check in checks {
-        assert!(check["ok"].is_boolean(), "{check}");
+fn only_a_mutation_something_noticed_names_what_noticed_it() {
+    let mut named = outcome(0, "killed", false);
+    named.killed_by = vec!["demo::works".to_owned()];
+    let mut unnamed = outcome(1, "killed", false);
+    unnamed.killed_by = Vec::new();
+    let mut nowhere = outcome(2, "killed", false);
+    nowhere.killed_by = Vec::new();
+    nowhere.target = String::new();
+    let alive = outcome(3, "survived", false);
+
+    let json = projected(vec![named, unnamed, nowhere, alive]);
+    let mutants = json["files"]["src/lib.rs"]["mutants"]
+        .as_array()
+        .expect("the mutations")
+        .clone();
+    assert_eq!(
+        mutants[0]["killedBy"][0].as_str(),
+        Some("demo::works"),
+        "a harness that named the test that noticed is quoted: {json}"
+    );
+    assert_eq!(
+        mutants[1]["killedBy"][0].as_str(),
+        Some("demo/lib/demo"),
+        "one that did not leaves the binary, which is the smallest true thing this run \
+         can say about what noticed it: {json}"
+    );
+    assert!(
+        mutants[2]["killedBy"].is_null() && mutants[3]["killedBy"].is_null(),
+        "and where there is nothing to name, nothing is named: a survivor with a killer \
+         beside it is a report saying two things: {json}"
+    );
+}
+
+#[test]
+fn a_column_is_counted_the_way_that_reader_counts_it() {
+    let mut document = document();
+    document.mutants = vec![mutant(0, "killed", ">=")];
+    let wide = "pub fn wide(n: i32) -> bool {\n    // ★★★ n > 1\n}\n";
+    document.mutants[0].line = 2;
+    document.mutants[0].column = 20;
+    document.mutants[0].original = ">".to_owned();
+    let projection = stryker::project(
+        &document,
+        std::path::Path::new("."),
+        Thresholds { high: 80, low: 60 },
+        &BTreeMap::from([("src/lib.rs".to_owned(), Held::Measured(wide.to_owned()))]),
+    )
+    .expect("the file the run measured");
+    let json = serde_json::to_value(&projection).expect("the projection is a document");
+    let start = json["files"]["src/lib.rs"]["mutants"][0]["location"]["start"].clone();
+    assert_eq!(
+        (start["line"].as_u64(), start["column"].as_u64()),
+        (Some(2), Some(14)),
+        "this schema counts columns in UTF-16 and a run counts them in bytes, so a line \
+         with anything but ASCII before the mutation arrives at a different number: \
+         three stars are nine bytes and three units, so byte twenty is unit fourteen, \
+         and a reader handed the byte column underlines six columns to the right of the \
+         code: {start}"
+    );
+    let end = json["files"]["src/lib.rs"]["mutants"][0]["location"]["end"].clone();
+    assert_eq!(
+        end["column"].as_u64(),
+        Some(15),
+        "and the end is one unit past what was replaced, in the same counting: {end}"
+    );
+}
+
+#[test]
+fn a_mutation_over_several_lines_ends_on_the_last_of_them() {
+    let mut document = document();
+    document.mutants = vec![mutant(0, "killed", "")];
+    document.mutants[0].line = 1;
+    document.mutants[0].column = 1;
+    document.mutants[0].original = "if a {\n    b\n}".to_owned();
+    let projection = stryker::project(
+        &document,
+        std::path::Path::new("."),
+        Thresholds { high: 80, low: 60 },
+        &sources(),
+    )
+    .expect("the file the run measured");
+    let json = serde_json::to_value(&projection).expect("the projection is a document");
+    let location = json["files"]["src/lib.rs"]["mutants"][0]["location"].clone();
+    assert_eq!(
+        (
+            location["start"]["line"].as_u64(),
+            location["end"]["line"].as_u64(),
+            location["end"]["column"].as_u64()
+        ),
+        (Some(1), Some(3), Some(2)),
+        "a mutation that replaced three lines ends on the third of them, one past its \
+         last unit: ending it on the first would underline a line and a bit of it, and \
+         the reader would show the wrong code: {location}"
+    );
+    assert!(
+        json["files"]["src/lib.rs"]["mutants"][0]["replacement"].is_null(),
+        "and a mutation that replaced its bytes with nothing carries no replacement, \
+         rather than an empty one the reader would draw as a change to nothing: {json}"
+    );
+}
+
+#[test]
+fn the_page_says_what_the_run_decided_and_what_it_decided_nothing_about() {
+    let page = html::document(&document(), &sources());
+    assert!(
+        page.contains("50.0%") && page.contains("1 detected of 2 decided"),
+        "a score is the first thing on the page, with the two numbers it came from \
+         beside it: a percentage nobody can check is the one thing this program does not \
+         report: {page}"
+    );
+    for (name, count) in [("cataloged", 2), ("killed", 1), ("survived", 1)] {
         assert!(
-            check["detail"].as_str().is_some_and(|it| !it.is_empty()),
-            "{check}"
+            page.contains(&format!("<th>{name}</th><td>{count}</td>")),
+            "and every column of the accounting is on it, so a reader adding them up \
+             gets the catalog: {name} is not {count} in\n{page}"
         );
     }
+    assert!(
+        page.contains("surviving-mutant"),
+        "the findings are named: a page with a score and no findings is one a reader \
+         takes as a clean run: {page}"
+    );
+    assert!(
+        page.contains("pub fn wide"),
+        "and the source the run measured is on it, so a reader sees the mutation where \
+         it is rather than a line number to go and look up: {page}"
+    );
+
+    let mut nothing = document();
+    nothing.score = None;
+    nothing.mutants = Vec::new();
+    nothing.findings = Vec::new();
+    let page = html::document(&nothing, &sources());
+    assert!(
+        page.contains("decided nothing, which is not a score of zero"),
+        "a run that decided nothing says so: nought per cent is what a suite that \
+         noticed none of them earns, and a run that judged none of them earned nothing \
+         at all: {page}"
+    );
+    assert!(
+        page.contains("Nothing was found.") && page.contains("Nothing was cataloged."),
+        "and the empty sections say they are empty rather than being absent, because a \
+         section that is not there reads as one the release does not have: {page}"
+    );
 }
 
 #[test]
-fn the_doctor_says_the_same_thing_in_lines_and_in_a_document() {
-    let fixture = fixture("fixture-simple");
-    let lines = against(&fixture, &["doctor"]);
-    let document = against(&fixture, &["doctor", "--json"]);
-    assert_eq!(lines.status.code(), document.status.code());
-    let value: serde_json::Value =
-        serde_json::from_str(&stdout(&document)).expect("the answer is JSON");
-    for check in value["checks"].as_array().expect("the checks") {
-        let name = check["name"].as_str().expect("a name");
-        assert!(stdout(&lines).contains(name), "{name}");
-    }
+fn every_row_carries_the_place_it_takes_when_a_reader_asks_for_findings_first() {
+    let mut document = document();
+    let mut accepted = outcome(4, "survived", false);
+    accepted.expected = true;
+    document.mutants = vec![
+        outcome(0, "killed", false),
+        outcome(1, "survived", false),
+        outcome(2, "not_run", true),
+        outcome(3, "errored", false),
+        accepted,
+    ];
+    let page = html::document(&document, &sources());
+    let ranked: Vec<&str> = page
+        .lines()
+        .filter_map(|line| line.split("data-rank=\"").nth(1))
+        .filter_map(|rest| rest.split('"').next())
+        .collect();
+    assert_eq!(
+        ranked,
+        vec!["4", "0", "2", "1", "3"],
+        "the rows a person has to act on carry the lowest place — a survivor nobody \
+         accepted first, then what the run could not decide, then what nothing reached — \
+         and the ones something noticed carry the highest. A survivor a reviewer accepted \
+         goes below what nobody has looked at, because it is not a row anybody has to \
+         act on. Without this the four rows that matter sit under the four hundred that \
+         do not: {page}"
+    );
+}
+
+/// Where one recorded projection lives.
+fn recorded(name: &str) -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/testdata")
+        .join(name)
+}
+
+#[test]
+fn the_page_is_the_page_that_was_reviewed() {
+    let page = html::document(&document(), &sources());
+    njutest_devkit::golden::golden(&recorded("report.golden.html"), page.as_bytes())
+        .expect("the page a reviewer read");
+}
+
+#[test]
+fn the_stryker_projection_is_the_document_that_was_reviewed() {
+    let projection = stryker::project(
+        &document(),
+        std::path::Path::new("."),
+        Thresholds { high: 80, low: 60 },
+        &sources(),
+    )
+    .expect("every mutated file is one the run measured");
+    let text = serde_json::to_string_pretty(&projection).expect("the projection is a document");
+    njutest_devkit::golden::golden(
+        &recorded("stryker.golden.json"),
+        format!("{text}\n").as_bytes(),
+    )
+    .expect("the projection a reviewer read");
+}
+
+#[test]
+fn the_sarif_log_is_the_document_that_was_reviewed() {
+    let text =
+        serde_json::to_string_pretty(&sarif::log(&document())).expect("the log is a document");
+    njutest_devkit::golden::golden(
+        &recorded("sarif.golden.json"),
+        format!("{text}\n").as_bytes(),
+    )
+    .expect("the log a reviewer read");
+}
+
+/// A run whose report carries every side of itself: what nothing reached, what was
+/// refused, what discovery passed over, a file the tests noticed every mutation in, and
+/// text with the characters a page has to escape.
+fn everything() -> RunDocument {
+    let mut document = document();
+    let mut unreached = outcome(2, "not_run", true);
+    "src/other.rs".clone_into(&mut unreached.path);
+    let mut not_run = outcome(3, "not_run", false);
+    "src/other.rs".clone_into(&mut not_run.path);
+    let mut clean = outcome(4, "killed", false);
+    "src/clean.rs".clone_into(&mut clean.path);
+    document.mutants.extend([unreached, not_run, clean]);
+    document.rejections = vec![RejectionDocument {
+        index: 9,
+        id: format!("{:064x}", 9),
+        display_id: format!("{:020x}", 9),
+        path: "src/lib.rs".to_owned(),
+        rule: "gt-to-ge".to_owned(),
+        code: Some("E0308".to_owned()),
+        diagnostic: "expected `bool`, found `&str` in \"wide\" & elsewhere".to_owned(),
+        isolated: true,
+    }];
+    document.skips = vec![SkipDocument {
+        reason: "macro-invocation".to_owned(),
+        path: "src/lib.rs".to_owned(),
+        count: 3,
+        explanation: "what a macro expands to is decided during the build".to_owned(),
+    }];
+    document
+}
+
+fn everything_sources() -> BTreeMap<String, Held> {
+    BTreeMap::from([
+        ("src/lib.rs".to_owned(), Held::Measured(SOURCE.to_owned())),
+        ("src/other.rs".to_owned(), Held::Changed),
+        (
+            "src/clean.rs".to_owned(),
+            Held::Measured("pub fn clean() {}\n".to_owned()),
+        ),
+    ])
+}
+
+#[test]
+fn the_page_of_a_run_with_every_side_to_it_is_the_page_that_was_reviewed() {
+    let page = html::document(&everything(), &everything_sources());
+    njutest_devkit::golden::golden(&recorded("report-everything.golden.html"), page.as_bytes())
+        .expect("the page a reviewer read");
+}
+
+#[test]
+fn the_page_of_a_run_that_cataloged_nothing_says_so_in_every_section() {
+    let mut nothing = document();
+    nothing.score = None;
+    nothing.mutants = Vec::new();
+    nothing.findings = Vec::new();
+    let page = html::document(&nothing, &BTreeMap::new());
+    njutest_devkit::golden::golden(&recorded("report-nothing.golden.html"), page.as_bytes())
+        .expect("the page a reviewer read");
+}
+
+#[test]
+fn the_stryker_projection_of_a_run_with_every_side_to_it_is_the_one_reviewed() {
+    let mut document = everything();
+    document
+        .mutants
+        .retain(|mutant| mutant.path == "src/lib.rs" || mutant.path == "src/clean.rs");
+    let projection = stryker::project(
+        &document,
+        std::path::Path::new("."),
+        Thresholds { high: 80, low: 60 },
+        &everything_sources(),
+    )
+    .expect("every mutated file is one the run measured");
+    let text = serde_json::to_string_pretty(&projection).expect("the projection is a document");
+    njutest_devkit::golden::golden(
+        &recorded("stryker-everything.golden.json"),
+        format!("{text}\n").as_bytes(),
+    )
+    .expect("the projection a reviewer read");
 }

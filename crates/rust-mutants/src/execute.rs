@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Running one test process per mutant, and reading what its exit status means.
@@ -12,19 +12,41 @@ use crate::cargo::{
     CargoError, CargoErrorKind, CompileKind, CompileOptions, Driver, Message, Package, Target,
     compile,
 };
-use crate::instrument::{ACTIVE_ENV, CATALOG_ENV, STALE_CATALOG_EXIT};
+use crate::instrument::{ACTIVE_ENV, CATALOG_ENV, STALE_CATALOG_EXIT, TOUCH_ENV};
 use crate::outcome::Outcome;
 use crate::runner::{Cancel, EXIT_CODE_UNAVAILABLE, RunResult, Spec, run};
 use crate::trace::{ExecRecord, Recorder};
 
-/// Selects the mutant to probe rather than to activate. Reserved here so that a stale value from an outer probe run is stripped, and used by the probe phase.
-pub const PROBE_ENV: &str = "RUST_MUTANTS_PROBE";
-
 /// Every variable the engine owns. A test process sees exactly the ones this run set, never one an outer run left behind.
-pub const RESERVED_ENV: [&str; 3] = [ACTIVE_ENV, CATALOG_ENV, PROBE_ENV];
+pub const RESERVED_ENV: [&str; 3] = [ACTIVE_ENV, CATALOG_ENV, TOUCH_ENV];
+
+/// The variables a run composes for every test process it starts, which it therefore never lets one inherit.
+///
+/// The three reserved ones say which mutation is active and what the guards are
+/// to record, and an inherited one would decide what somebody else's run
+/// measured — or append this run's touches to a file another run is reading.
+/// `LLVM_PROFILE_FILE` is the fourth for a different reason: a measurement of
+/// this engine sets it, and an instrumented test process that inherited it
+/// would write over the very measurement that started the run. Removing it is
+/// not enough on its own — an instrumented binary with no path writes
+/// `default_*.profraw` into its working directory, which is the tree being
+/// measured — so a run puts a path of its own in its place.
+pub const COMPOSED_ENV: [&str; 4] = [
+    ACTIVE_ENV,
+    CATALOG_ENV,
+    TOUCH_ENV,
+    crate::coverage::PROFILE_ENV,
+];
+
+/// The name a test process writes its coverage profile under, when the run is not the one measuring.
+///
+/// `%p` is the process and `%m` the binary, which is what keeps two test
+/// processes of one run from writing one file.
+pub const SPILLED_PROFILE: &str = "spilled-coverage-%p-%m.profraw";
 
 /// The kinds of target that carry tests the engine runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
 pub enum TargetKind {
     /// The library's own unit tests.
     Lib,
@@ -103,7 +125,11 @@ pub fn target_id(package: &str, kind: TargetKind, name: &str) -> String {
 }
 
 /// One built test binary.
+///
+/// Built rather than spelled as a literal, so that a field added later is a
+/// method a caller may ignore instead of a compile error in every caller.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct TestTarget {
     /// `package/kind/name`.
     pub id: String,
@@ -119,6 +145,15 @@ pub struct TestTarget {
     pub cwd: PathBuf,
     /// What cargo sets for this target that the parent environment does not have: `CARGO_MANIFEST_DIR`, `CARGO_PKG_*`, `CARGO_BIN_EXE_*`.
     pub cargo_env: Vec<(OsString, OsString)>,
+    /// Whether the target is built with the libtest harness.
+    ///
+    /// A target with `harness = false` is a program that prints what it likes
+    /// and says what it found by exiting, so its exit status is the whole
+    /// answer and there is no summary line to read. Reading one anyway leaves
+    /// every mutation of such a target undecided.
+    pub harness: bool,
+    /// What a run could not establish about this target, each named.
+    pub limitations: Vec<String>,
     /// The arguments before the harness's own, for a target cargo runs rather than one the engine starts itself. Empty for a binary, and then `executable` is the binary.
     ///
     /// A library's documentation examples are compiled by rustdoc while cargo
@@ -129,6 +164,66 @@ pub struct TestTarget {
     /// `src/lib.rs - f (line 7)`, and a name ending in the line it is on
     /// cannot be the beginning of another one.
     pub through: Vec<OsString>,
+}
+
+impl TestTarget {
+    /// One built test binary, by everything cargo says about it that is not optional.
+    #[must_use]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "these six are what cargo says about a target and none of them has a sensible \
+                  default: a builder that let one be forgotten would build a target that names \
+                  no package or runs in no directory"
+    )]
+    pub fn new(
+        id: impl Into<String>,
+        package: impl Into<String>,
+        kind: TargetKind,
+        name: impl Into<String>,
+        executable: PathBuf,
+        cwd: PathBuf,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            package: package.into(),
+            kind,
+            name: name.into(),
+            executable,
+            cwd,
+            harness: true,
+            limitations: Vec::new(),
+            cargo_env: Vec::new(),
+            through: Vec::new(),
+        }
+    }
+
+    /// Whether the target is built with the libtest harness, which decides how its silence is read.
+    #[must_use]
+    pub const fn with_harness(mut self, harness: bool) -> Self {
+        self.harness = harness;
+        self
+    }
+
+    /// What a run could not establish about this target.
+    #[must_use]
+    pub fn with_limitations(mut self, limitations: Vec<String>) -> Self {
+        self.limitations = limitations;
+        self
+    }
+
+    /// What cargo sets for this target that the parent environment does not have.
+    #[must_use]
+    pub fn with_cargo_env(mut self, env: Vec<(OsString, OsString)>) -> Self {
+        self.cargo_env = env;
+        self
+    }
+
+    /// The arguments before the harness's own, for a target cargo runs rather than one the engine starts.
+    #[must_use]
+    pub fn with_through(mut self, through: Vec<OsString>) -> Self {
+        self.through = through;
+        self
+    }
 }
 
 /// The libtest summary line of one run.
@@ -160,6 +255,60 @@ impl Summary {
     pub const fn ran_nothing(&self) -> bool {
         self.tests_run() == 0
     }
+}
+
+/// What each test of one run said, by name.
+///
+/// The summary line says how many, and a person reading a survivor needs to
+/// know which: the test that killed a mutant is the sentence a report can
+/// hand somebody, and the tests that passed are the ones that could have.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Lines {
+    /// Every test that passed, in the order the harness printed them.
+    pub passed: Vec<String>,
+    /// Every test that failed.
+    pub failed: Vec<String>,
+    /// Every test that was ignored.
+    pub ignored: Vec<String>,
+}
+
+impl Lines {
+    /// Whether the harness printed no verdict at all.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.passed.is_empty() && self.failed.is_empty() && self.ignored.is_empty()
+    }
+}
+
+/// Reads every `test <name> ... <verdict>` line of a captured output.
+///
+/// The failures block at the end names each failed test a second time, and a
+/// name is one test however often the harness prints it, so only the verdict
+/// lines are read.
+#[must_use]
+pub fn parse_lines(output: &[u8]) -> Lines {
+    let text = String::from_utf8_lossy(output);
+    let mut lines = Lines::default();
+    for line in text.lines() {
+        let Some((name, verdict)) = verdict_of(line) else {
+            continue;
+        };
+        match verdict {
+            "ok" => lines.passed.push(name.to_owned()),
+            "FAILED" => lines.failed.push(name.to_owned()),
+            _ if verdict.starts_with("ignored") => lines.ignored.push(name.to_owned()),
+            _ => {}
+        }
+    }
+    lines
+}
+
+/// The name and verdict of one `test <name> ... <verdict>` line.
+fn verdict_of(line: &str) -> Option<(&str, &str)> {
+    let rest = line.trim_end().strip_prefix("test ")?;
+    let (name, verdict) = rest.rsplit_once(" ... ")?;
+    let name = name.trim();
+    (!name.is_empty()).then_some((name, verdict.trim()))
 }
 
 /// Reads the last `test result:` line of a captured output.
@@ -237,7 +386,7 @@ fn said(output: &[u8], needle: &str) -> bool {
 
 /// What one run of a test binary establishes about the mutant that was active during it. See the module documentation for the order.
 #[must_use]
-pub const fn outcome_of(observed: Observation, summary: Option<Summary>) -> Outcome {
+pub const fn outcome_of(observed: Observation, summary: Option<Summary>, harness: bool) -> Outcome {
     if observed.unstarted {
         return Outcome::Errored;
     }
@@ -253,10 +402,66 @@ pub const fn outcome_of(observed: Observation, summary: Option<Summary>) -> Outc
     if observed.exit_code != 0 {
         return Outcome::Killed;
     }
+    if !harness {
+        return Outcome::Survived;
+    }
     match summary {
         Some(summary) if !summary.ran_nothing() => Outcome::Survived,
         _ => Outcome::Inconclusive,
     }
+}
+
+/// Where the build put each binary, by package and by target name.
+///
+/// An integration test finds a binary of its own package through
+/// `CARGO_BIN_EXE_<name>`, and cargo points it at the file it actually built:
+/// under the profile the build used, with whatever extension this platform
+/// puts on an executable. Composing the path from a profile name and a target
+/// name guesses at both, and on Windows guesses wrong.
+fn binaries_built(messages: &[Message]) -> BTreeMap<String, BTreeMap<String, PathBuf>> {
+    let mut found: BTreeMap<String, BTreeMap<String, PathBuf>> = BTreeMap::new();
+    for message in messages {
+        let Message::CompilerArtifact(artifact) = message else {
+            continue;
+        };
+        let Some(executable) = &artifact.executable else {
+            continue;
+        };
+        if artifact.profile.test || !artifact.target.is_bin() {
+            continue;
+        }
+        let _replaced = found
+            .entry(artifact.package_id.clone())
+            .or_default()
+            .insert(artifact.target.name.clone(), executable.clone());
+    }
+    found
+}
+
+/// What a package's own build script left for every unit of that package: where it wrote, and what it put in the environment.
+///
+/// Cargo tells a unit that reads a build script where the script wrote, and
+/// the unit reads it back at run time through `OUT_DIR`. A test process the
+/// engine starts itself is told nothing unless the engine says it, and a test
+/// that reads a file its build script generated then fails for a reason that
+/// is not the mutation.
+fn built_by_a_script(messages: &[Message], package_id: &str) -> Vec<(OsString, OsString)> {
+    let mut found = Vec::new();
+    for message in messages {
+        let Message::BuildScriptExecuted(script) = message else {
+            continue;
+        };
+        if script.package_id != package_id {
+            continue;
+        }
+        if let Some(out_dir) = &script.out_dir {
+            found.push((OsString::from("OUT_DIR"), out_dir.as_os_str().to_owned()));
+        }
+        for (name, value) in &script.env {
+            found.push((OsString::from(name), OsString::from(value)));
+        }
+    }
+    found
 }
 
 /// The environment one test process runs with: the base the workspace was opened with, the variables cargo sets for the target, the activation, and a temporary directory of the worker's own.
@@ -270,9 +475,9 @@ pub fn environment(
     let mut env: BTreeMap<OsString, OsString> = base
         .iter()
         .filter(|(name, _)| {
-            !RESERVED_ENV
+            !COMPOSED_ENV
                 .iter()
-                .any(|reserved| name == OsStr::new(reserved))
+                .any(|composed| name == OsStr::new(composed))
         })
         .cloned()
         .collect();
@@ -288,14 +493,24 @@ pub fn environment(
         env.insert(OsString::from(ACTIVE_ENV), OsString::from(id));
         env.insert(OsString::from(CATALOG_ENV), OsString::from(catalog));
     }
-    if let Some(probe) = context.probe {
-        env.insert(OsString::from(PROBE_ENV), probe.as_os_str().to_owned());
+    if let Some(touch) = context.touch {
+        env.insert(OsString::from(TOUCH_ENV), touch.log.as_os_str().to_owned());
+        env.insert(OsString::from(CATALOG_ENV), OsString::from(touch.catalog));
     }
-    if let Some(profile) = context.profile {
-        env.insert(
-            OsString::from(crate::coverage::PROFILE_ENV),
-            profile.as_os_str().to_owned(),
-        );
+    match (context.profile, scratch) {
+        (Some(profile), _) => {
+            env.insert(
+                OsString::from(crate::coverage::PROFILE_ENV),
+                profile.as_os_str().to_owned(),
+            );
+        }
+        (None, Some(scratch)) => {
+            env.insert(
+                OsString::from(crate::coverage::PROFILE_ENV),
+                scratch.join(SPILLED_PROFILE).into_os_string(),
+            );
+        }
+        (None, None) => {}
     }
     if let Some(scratch) = scratch {
         for name in ["TMPDIR", "TMP", "TEMP"] {
@@ -327,11 +542,7 @@ fn library_path(sysroot: &Path, base: &[(OsString, OsString)]) -> (OsString, OsS
         value.push(&separator);
         value.push(triple.into_os_string());
     }
-    if let Some((_, existing)) = base
-        .iter()
-        .find(|(key, _)| key == OsStr::new(name))
-        .filter(|(_, existing)| !existing.is_empty())
-    {
+    if let Some(existing) = crate::vars::var(base, name).filter(|existing| !existing.is_empty()) {
         value.push(&separator);
         value.push(existing);
     }
@@ -356,7 +567,7 @@ fn rustlib_targets(sysroot: &Path) -> Vec<PathBuf> {
 #[derive(Debug, Clone)]
 pub struct ExecRequest<'a> {
     target: &'a TestTarget,
-    test: Option<String>,
+    tests: Vec<String>,
     args: Vec<String>,
     timeout: Option<Duration>,
     scratch: Option<PathBuf>,
@@ -368,7 +579,7 @@ impl<'a> ExecRequest<'a> {
     pub const fn new(target: &'a TestTarget) -> Self {
         Self {
             target,
-            test: None,
+            tests: Vec::new(),
             args: Vec::new(),
             timeout: None,
             scratch: None,
@@ -378,8 +589,25 @@ impl<'a> ExecRequest<'a> {
     /// Runs exactly the named test.
     #[must_use]
     pub fn with_test(mut self, test: impl Into<String>) -> Self {
-        self.test = Some(test.into());
+        self.tests = vec![test.into()];
         self
+    }
+
+    /// Runs exactly the named tests, which one process does in one go.
+    ///
+    /// Every free argument a libtest binary is given is a filter, and
+    /// `--exact` applies to all of them, so the tests a measurement named are
+    /// one process rather than one each.
+    #[must_use]
+    pub fn with_tests(mut self, tests: impl IntoIterator<Item = String>) -> Self {
+        self.tests = tests.into_iter().collect();
+        self
+    }
+
+    /// The tests this runs, or nothing when it runs every one of the target's.
+    #[must_use]
+    pub fn tests(&self) -> &[String] {
+        &self.tests
     }
 
     /// Passes further arguments to the harness.
@@ -409,7 +637,7 @@ impl<'a> ExecRequest<'a> {
         self.target
     }
 
-    /// The command line the binary receives. A named test is passed as a filter with `--exact`, so a name that is a prefix of another cannot drag it in.
+    /// The command line the binary receives. Every named test is passed as a filter with `--exact`, so a name that is a prefix of another cannot drag it in.
     #[must_use]
     pub fn argv(&self) -> Vec<OsString> {
         let mut argv = vec![self.target.executable.clone().into_os_string()];
@@ -417,11 +645,9 @@ impl<'a> ExecRequest<'a> {
             argv.extend(self.target.through.iter().cloned());
             argv.push(OsString::from("--"));
         }
-        if let Some(test) = &self.test {
-            argv.push(OsString::from(test));
-            if self.target.through.is_empty() {
-                argv.push(OsString::from("--exact"));
-            }
+        argv.extend(self.tests.iter().map(OsString::from));
+        if !self.tests.is_empty() && self.target.through.is_empty() {
+            argv.push(OsString::from("--exact"));
         }
         argv.extend(self.args.iter().map(OsString::from));
         argv
@@ -439,10 +665,24 @@ pub struct Context<'a> {
     pub sysroot: Option<&'a Path>,
     /// The mutant to activate: `(identity, catalog digest)`.
     pub active: Option<(&'a str, &'a str)>,
-    /// Where a probe process appends what it infected. `None` runs a process that records nothing.
-    pub probe: Option<&'a Path>,
+    /// Where the guards append which of the process's threads reached them, and the catalog the record is about. `None` runs a process whose guards record nothing.
+    pub touch: Option<Touching<'a>>,
     /// Where a coverage-instrumented process writes what it executed. `None` runs a process that measures nothing.
     pub profile: Option<&'a Path>,
+}
+
+/// Where the guards of one process append what they reached, and the catalog the record is about.
+///
+/// The catalog travels with the path because a record is about one catalog. A
+/// process built from another — a project whose own tests build and run
+/// instrumented trees, as this engine's do — records nothing rather than
+/// appending to somebody else's record and making the whole of it unreadable.
+#[derive(Debug, Clone, Copy)]
+pub struct Touching<'a> {
+    /// The file to append to.
+    pub log: &'a Path,
+    /// The catalog every guard that may write to it was generated from.
+    pub catalog: &'a str,
 }
 
 /// What one mutant execution established.
@@ -463,6 +703,27 @@ pub struct MutantResult {
     pub summary: Option<Summary>,
     /// How many tests ran, when the summary said.
     pub tests_run: Option<u32>,
+    /// The signal the process died from, on the platforms that have them.
+    pub signal: Option<i32>,
+    /// Every test that failed, by name, which is what a report hands a person reading a kill.
+    pub failed_tests: Vec<String>,
+    /// Every test that passed, by name, which is every test that could have noticed the mutation and did not.
+    pub passed_tests: Vec<String>,
+    /// Every test the harness was told to skip.
+    pub ignored_tests: Vec<String>,
+}
+
+/// Whether the target said anything about the mutation, which is what decides whether the next target is asked.
+///
+/// A run walks the targets a route holds and stops at the first that answers.
+/// `Inconclusive` is the outcome of a libtest target that ran no test or
+/// printed no summary: it said nothing, so the next target is asked. A target
+/// with no libtest harness answers by exiting and is never inconclusive, and
+/// a documentation target with no examples is inconclusive exactly like a
+/// libtest one that ran nothing.
+#[must_use]
+pub const fn answered(outcome: Outcome) -> bool {
+    !matches!(outcome, Outcome::Inconclusive)
 }
 
 /// Runs one test process and reads what it means.
@@ -481,14 +742,19 @@ pub fn exec(
     let result = run(&spec, cancel);
     trace.exec(ExecRecord::of(&spec, &result));
     let summary = parse_summary(&result.output);
+    let lines = parse_lines(&result.output);
     MutantResult {
-        outcome: outcome_of(Observation::of(&result), summary),
+        outcome: outcome_of(Observation::of(&result), summary, target.harness),
         target: target.id.clone(),
         exit_code: result.exit_code,
         duration: result.duration,
         output: result.output,
         summary,
         tests_run: summary.map(|summary| summary.tests_run()),
+        signal: result.signal,
+        failed_tests: lines.failed,
+        passed_tests: lines.passed,
+        ignored_tests: lines.ignored,
     }
 }
 
@@ -503,6 +769,8 @@ pub struct BuildOptions {
     pub offline: bool,
     /// The member packages whose test binaries are wanted. Empty is the whole workspace.
     pub packages: Vec<String>,
+    /// What the project is compiled as: its features, target, profile, and how many jobs cargo may use.
+    pub build: crate::cargo::BuildConfig,
 }
 
 /// Builds the test binaries of a tree and reports them.
@@ -525,6 +793,7 @@ pub fn build(
             offline: options.offline,
             timeout: None,
             env: Vec::new(),
+            build: options.build.clone(),
         },
     )?;
     if !compiled.success {
@@ -547,6 +816,8 @@ pub fn targets_of(
     packages: &[Package],
     target_dir: Option<&Path>,
 ) -> Vec<TestTarget> {
+    let binaries = binaries_built(messages);
+    let mut harnesses: BTreeMap<String, BTreeMap<(String, String), bool>> = BTreeMap::new();
     let mut targets = Vec::new();
     for message in messages {
         let Message::CompilerArtifact(artifact) = message else {
@@ -567,20 +838,64 @@ pub fn targets_of(
         else {
             continue;
         };
-        targets.push(TestTarget {
-            id: target_id(&package.name, kind, &artifact.target.name),
-            package: package.name.clone(),
+        let mut env = cargo_environment(
+            package,
             kind,
-            name: artifact.target.name.clone(),
-            executable: executable.clone(),
-            cwd: package.manifest_dir().to_path_buf(),
-            cargo_env: cargo_environment(package, kind, target_dir),
-            through: Vec::new(),
-        });
+            target_dir,
+            binaries
+                .get(&artifact.package_id)
+                .unwrap_or(&BTreeMap::new()),
+        );
+        env.extend(built_by_a_script(messages, &artifact.package_id));
+        let harness = harnesses
+            .entry(package.id.clone())
+            .or_insert_with(|| crate::cargo::manifest::harnesses(&package.manifest_path))
+            .get(&(kind.name().to_owned(), artifact.target.name.clone()))
+            .copied()
+            .unwrap_or(true);
+        targets.push(
+            TestTarget::new(
+                target_id(&package.name, kind, &artifact.target.name),
+                package.name.clone(),
+                kind,
+                artifact.target.name.clone(),
+                executable.clone(),
+                package.manifest_dir().to_path_buf(),
+            )
+            .with_harness(harness)
+            .with_limitations(if harness {
+                Vec::new()
+            } else {
+                vec![crate::limitation::CUSTOM_HARNESS.to_owned()]
+            })
+            .with_cargo_env(env),
+        );
     }
     targets.sort_by(|a, b| a.id.cmp(&b.id));
     targets.dedup_by(|a, b| a.id == b.id);
     targets
+}
+
+/// Every test target the members declare, as ids, without building one of them.
+///
+/// What a run builds is narrowed by the packages it was asked for; what the
+/// workspace declares is not. A name that is in neither is a name that is not
+/// a target's, which is the only thing a run can tell a reader about a name
+/// they typed.
+#[must_use]
+pub fn declared_targets(members: &[&Package]) -> std::collections::BTreeSet<String> {
+    let mut ids = std::collections::BTreeSet::new();
+    for package in members {
+        for target in &package.targets {
+            if let Some(kind) = TargetKind::of(target) {
+                let _added = ids.insert(target_id(&package.name, kind, &target.name));
+            }
+            if target.is_lib() && !target.is_proc_macro() && target.doctest {
+                let _added = ids.insert(target_id(&package.name, TargetKind::Doc, &target.name));
+            }
+        }
+    }
+    ids
 }
 
 /// One target for each library whose documentation cargo would run, which is a target this engine does not start itself.
@@ -610,16 +925,18 @@ pub fn documentation_targets(
             through.extend(arguments.iter().cloned());
             through.push(OsString::from("--package"));
             through.push(OsString::from(&package.name));
-            targets.push(TestTarget {
-                id: target_id(&package.name, TargetKind::Doc, &target.name),
-                package: package.name.clone(),
-                kind: TargetKind::Doc,
-                name: target.name.clone(),
-                executable: cargo.to_path_buf(),
-                cwd: package.manifest_dir().to_path_buf(),
-                cargo_env: Vec::new(),
-                through,
-            });
+            targets.push(
+                TestTarget::new(
+                    target_id(&package.name, TargetKind::Doc, &target.name),
+                    package.name.clone(),
+                    TargetKind::Doc,
+                    target.name.clone(),
+                    cargo.to_path_buf(),
+                    package.manifest_dir().to_path_buf(),
+                )
+                .with_through(through)
+                .with_limitations(vec![crate::limitation::DOCTESTS_ROUTED_BY_FILE.to_owned()]),
+            );
         }
     }
     targets.sort_by(|a, b| a.id.cmp(&b.id));
@@ -632,8 +949,46 @@ fn cargo_environment(
     package: &Package,
     kind: TargetKind,
     target_dir: Option<&Path>,
+    binaries: &BTreeMap<String, PathBuf>,
 ) -> Vec<(OsString, OsString)> {
-    let mut env: Vec<(OsString, OsString)> = vec![
+    let mut env = package_environment(package);
+    if matches!(kind, TargetKind::Test | TargetKind::Example) {
+        if let Some(target_dir) = target_dir {
+            env.push((
+                OsString::from("CARGO_TARGET_TMPDIR"),
+                target_dir.join("tmp").into_os_string(),
+            ));
+        }
+        for target in &package.targets {
+            if !target.is_bin() {
+                continue;
+            }
+            if let Some(built) = binaries.get(&target.name) {
+                env.push((
+                    OsString::from(format!("CARGO_BIN_EXE_{}", target.name)),
+                    built.as_os_str().to_owned(),
+                ));
+            }
+        }
+    }
+    env
+}
+
+/// What cargo tells every unit of a package about the package.
+///
+/// Cargo sets each of these for every compilation and every test process, and
+/// sets the empty string where the manifest says nothing rather than leaving
+/// the variable out. A run that starts the test process itself has to do the
+/// same, because `env!("CARGO_PKG_DESCRIPTION")` compiles either way and a
+/// test that reads one back would otherwise see something the project never
+/// wrote.
+#[must_use]
+pub fn package_environment(package: &Package) -> Vec<(OsString, OsString)> {
+    let (major, minor, patch, pre) = version_parts(&package.version);
+    let said = |value: Option<&str>| OsString::from(value.unwrap_or_default());
+    let named =
+        |value: Option<&Path>| value.map_or_else(OsString::new, |one| one.as_os_str().to_owned());
+    vec![
         (
             OsString::from("CARGO_MANIFEST_DIR"),
             package.manifest_dir().as_os_str().to_owned(),
@@ -650,24 +1005,63 @@ fn cargo_environment(
             OsString::from("CARGO_PKG_VERSION"),
             OsString::from(&package.version),
         ),
-    ];
-    if matches!(kind, TargetKind::Test | TargetKind::Example) {
-        if let Some(target_dir) = target_dir {
-            env.push((
-                OsString::from("CARGO_TARGET_TMPDIR"),
-                target_dir.join("tmp").into_os_string(),
-            ));
-        }
-        for target in &package.targets {
-            if target.is_bin()
-                && let Some(target_dir) = target_dir
-            {
-                env.push((
-                    OsString::from(format!("CARGO_BIN_EXE_{}", target.name)),
-                    target_dir.join("debug").join(&target.name).into_os_string(),
-                ));
-            }
-        }
-    }
-    env
+        (
+            OsString::from("CARGO_PKG_VERSION_MAJOR"),
+            OsString::from(major),
+        ),
+        (
+            OsString::from("CARGO_PKG_VERSION_MINOR"),
+            OsString::from(minor),
+        ),
+        (
+            OsString::from("CARGO_PKG_VERSION_PATCH"),
+            OsString::from(patch),
+        ),
+        (OsString::from("CARGO_PKG_VERSION_PRE"), OsString::from(pre)),
+        (
+            OsString::from("CARGO_PKG_AUTHORS"),
+            OsString::from(package.authors.join(":")),
+        ),
+        (
+            OsString::from("CARGO_PKG_DESCRIPTION"),
+            said(package.description.as_deref()),
+        ),
+        (
+            OsString::from("CARGO_PKG_HOMEPAGE"),
+            said(package.homepage.as_deref()),
+        ),
+        (
+            OsString::from("CARGO_PKG_REPOSITORY"),
+            said(package.repository.as_deref()),
+        ),
+        (
+            OsString::from("CARGO_PKG_LICENSE"),
+            said(package.license.as_deref()),
+        ),
+        (
+            OsString::from("CARGO_PKG_LICENSE_FILE"),
+            named(package.license_file.as_deref()),
+        ),
+        (
+            OsString::from("CARGO_PKG_RUST_VERSION"),
+            said(package.rust_version.as_deref()),
+        ),
+        (
+            OsString::from("CARGO_PKG_README"),
+            named(package.readme.as_deref()),
+        ),
+    ]
+}
+
+/// A semantic version cut the way cargo cuts it: three numbers and whatever follows the first hyphen.
+fn version_parts(version: &str) -> (&str, &str, &str, &str) {
+    let (numbers, pre) = version.split_once('-').unwrap_or((version, ""));
+    let (numbers, _build) = numbers.split_once('+').unwrap_or((numbers, ""));
+    let mut parts = numbers.split('.');
+    (
+        parts.next().unwrap_or_default(),
+        parts.next().unwrap_or_default(),
+        parts.next().unwrap_or_default(),
+        pre,
+    )
 }

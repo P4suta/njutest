@@ -1,9 +1,10 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Rewriting a file so that every compilable mutant of it lives in the file at once, dormant behind a guard.
 
 mod guards;
+mod observable;
 mod runtime;
 pub mod witness;
 
@@ -13,7 +14,7 @@ pub fn module_named_for(text: &str, stem: &str) -> String {
     runtime::module_named(text, stem)
 }
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use crate::catalog::Catalog;
@@ -22,10 +23,12 @@ use crate::flatten::flatten;
 use crate::interval::{self, Item, Node};
 use crate::span::Span;
 use crate::splice::{Splice, apply, count_lines};
+use crate::syntax::branch::Marker;
 use crate::syntax::{Form, Found, SiteHint};
 
 pub use runtime::{
-    ACTIVE_ENV, CATALOG_ENV, MODULE_STEM, RUNTIME_MARKER, STALE_CATALOG_EXIT, module_name,
+    ACTIVE_ENV, CATALOG_ENV, COMPILED_CATALOG_ENV, MODULE_STEM, RUNTIME_MARKER, Rendering,
+    STALE_CATALOG_EXIT, TOUCH_ENV, TOUCH_UNAVAILABLE_EXIT, module_name, render,
 };
 
 /// The first words the runtime prints before it exits [`runtime::STALE_CATALOG_EXIT`].
@@ -37,6 +40,23 @@ pub use runtime::{
 /// cargo does pass through is the output, and this is the engine's own
 /// sentence in it.
 pub const STALE_CATALOG_MARKER: &str = "rust-mutants: this binary was built from catalog ";
+
+/// Every lint a guard's own text can trip, which the attribute it carries turns off.
+///
+/// A crate that *forbids* one of these forbids the attribute too — `forbid`
+/// is the level `allow` cannot override — so no mutant of it would compile,
+/// and a run says so by name rather than refusing every candidate.
+pub const GUARD_NOISE_LINTS: [&str; 9] = [
+    "warnings",
+    "unused",
+    "unused_qualifications",
+    "unfulfilled_lint_expectations",
+    "clippy::all",
+    "clippy::pedantic",
+    "clippy::restriction",
+    "clippy::nursery",
+    "clippy::cargo",
+];
 
 /// The text inserted before the innermost function holding a guard, so that a guard's own lint noise never trips a crate's deny policy anywhere else. It holds no line break.
 pub const ALLOW_ATTRIBUTE: &str = "#[allow(warnings, unused, unused_qualifications, unfulfilled_lint_expectations, clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery, clippy::cargo)] ";
@@ -88,16 +108,29 @@ const fn shift(span: Span, by: u32) -> Span {
     }
 }
 
+/// What one file is rewritten with: the mutants, the shape they nest in, and the markers its branch proofs put in it.
+#[derive(Debug, Clone, Copy)]
+struct Planted<'a> {
+    /// The mutants placed in the file.
+    placements: &'a [Placement],
+    /// Which of them nest inside which, so an outer guard renders the inner ones in its own original branch.
+    forest: &'a interval::Forest<Placement>,
+    /// The markers that can be written where they are.
+    markers: &'a [Marker],
+}
+
 /// A rewritten file: its text and where every alternative landed in it.
 struct Rewritten {
     text: String,
     branches: Vec<Branch>,
+    compared: BTreeSet<u32>,
 }
 
-/// A rendered site: its text and where each alternative sits in it.
+/// A rendered site: its text, where each alternative sits in it, and which of them the guard evaluates beside what it replaces.
 struct Rendered {
     text: String,
     branches: Vec<(u32, Span)>,
+    compared: BTreeSet<u32>,
 }
 
 /// One instrumented file.
@@ -111,6 +144,14 @@ pub struct FileOutput {
     pub guards: Vec<Guard>,
     /// Every alternative branch, in file order: where each mutant's own text landed.
     pub branches: Vec<Branch>,
+    /// Every mutant whose guard in this text evaluates its two branches and records whether they differed, ascending.
+    ///
+    /// It is what the tree does rather than what it was offered: a form that
+    /// cannot compare reports nothing here, so a run reading it back never
+    /// rests a proof on a comparison no guard makes.
+    pub compared: Vec<u32>,
+    /// Every marker this text holds the call for, ascending, which is not every marker it was given: a body inside a guard's own site takes none.
+    pub marked: Vec<u32>,
     /// The name the runtime module took, empty when none was generated.
     pub module: String,
     /// Whether anything was rewritten. A file with no mutants comes back byte for byte, without a runtime: an unused module would only be noise, and a file cargo did not have to recompile is one this run does not pay for.
@@ -262,16 +303,39 @@ pub fn plan_file(
     Ok(placements)
 }
 
+/// One file to instrument: its bytes, the mutants placed in it, and the markers its branch proofs put in it.
+#[derive(Debug, Clone, Copy)]
+pub struct Instrumenting<'a> {
+    /// The workspace-relative path, which names the file's own runtime module.
+    pub path: &'a str,
+    /// The pristine bytes.
+    pub source: &'a [u8],
+    /// The mutants placed in it, each behind a guard.
+    pub placements: &'a [Placement],
+    /// The markers the branch proofs put at the first statement of the bodies they name.
+    pub markers: &'a [Marker],
+    /// Every mutant whose guard may compare its two branches, so a run records whether they ever differed.
+    pub comparable: &'a BTreeSet<u32>,
+    /// Every return replacement whose guard may ask what the value it replaces already held, with the question to ask.
+    pub probed: &'a BTreeMap<u32, crate::probe::Question>,
+    /// The catalog every guard names, which the runtime refuses to be activated under another of.
+    pub catalog_digest: &'a str,
+}
+
 /// Rewrites one file so that every placed mutant lives in it behind a guard.
 ///
 /// # Errors
 /// See [`InstrumentErrorKind`].
-pub fn instrument_file(
-    path: &str,
-    source: &[u8],
-    placements: &[Placement],
-    catalog_digest: &str,
-) -> Result<FileOutput, InstrumentError> {
+pub fn instrument_file(file: &Instrumenting<'_>) -> Result<FileOutput, InstrumentError> {
+    let Instrumenting {
+        path,
+        source,
+        placements,
+        markers,
+        comparable,
+        probed,
+        catalog_digest,
+    } = *file;
     let text = std::str::from_utf8(source).map_err(|error| {
         InstrumentError::new(
             InstrumentErrorKind::SourceMismatch,
@@ -285,6 +349,8 @@ pub fn instrument_file(
             text: text.to_owned(),
             guards: Vec::new(),
             branches: Vec::new(),
+            compared: Vec::new(),
+            marked: Vec::new(),
             module: String::new(),
             instrumented: false,
         });
@@ -293,20 +359,35 @@ pub fn instrument_file(
         path,
         text,
         module: module_name(path, text),
+        comparable,
+        probed,
     };
     file.check_placements(placements)?;
     let forest = file.forest(placements)?;
+    let markers = File::markable(markers, &forest);
 
-    let Rewritten { mut text, branches } = file.rewrite(source, placements, &forest)?;
+    let Rewritten {
+        mut text,
+        branches,
+        compared,
+    } = file.rewrite(
+        source,
+        &Planted {
+            placements,
+            forest: &forest,
+            markers: &markers,
+        },
+    )?;
     if !text.is_empty() && !text.ends_with('\n') {
         text.push('\n');
     }
-    text.push_str(&runtime::render(
-        &file.module,
+    text.push_str(&render(&Rendering {
+        module: &file.module,
         catalog_digest,
         placements,
-        file.newline(),
-    ));
+        markers: &markers,
+        newline: file.newline(),
+    }));
 
     let mut guards: Vec<Guard> = placements
         .iter()
@@ -323,6 +404,8 @@ pub fn instrument_file(
         text,
         guards,
         branches,
+        compared: compared.into_iter().collect(),
+        marked: markers.iter().map(|marker| marker.index).collect(),
         module: file.module,
         instrumented: true,
     })
@@ -333,6 +416,10 @@ struct File<'a> {
     path: &'a str,
     text: &'a str,
     module: String,
+    /// Every mutant of this file whose guard may compare its two branches.
+    comparable: &'a BTreeSet<u32>,
+    /// Every return replacement of this file whose guard may ask what the value it replaces already held.
+    probed: &'a BTreeMap<u32, crate::probe::Question>,
 }
 
 impl File<'_> {
@@ -433,19 +520,63 @@ impl File<'_> {
     }
 
     /// Applies every guard and every allow attribute to the file's bytes, and reports where each alternative landed in the result.
-    fn rewrite(
-        &self,
-        source: &[u8],
-        placements: &[Placement],
-        forest: &interval::Forest<Placement>,
-    ) -> Result<Rewritten, InstrumentError> {
+    /// The markers that can be written where they are, which is every one outside every guard's own site.
+    ///
+    /// A guard replaces its site with `if active { alternative } else {
+    /// original }`, and a marker strictly inside that site would have to be
+    /// written into both halves rather than spliced once. A body inside a
+    /// guard's site is left unmarked instead, which costs its claim the marker
+    /// and leaves the coverage region as the premise it rests on. A marker at
+    /// a site's own first byte is not inside it: the splice is an insertion,
+    /// it sorts before the replacement, and what it writes lands where the
+    /// body's first statement was about to be.
+    fn markable(markers: &[Marker], forest: &interval::Forest<Placement>) -> Vec<Marker> {
+        markers
+            .iter()
+            .copied()
+            .filter(|marker| {
+                !forest
+                    .roots()
+                    .iter()
+                    .any(|root| root.span.start < marker.at && marker.at < root.span.end)
+            })
+            .collect()
+    }
+
+    /// The call one marker becomes, in one line.
+    fn marker(&self, marker: &Marker) -> Splice {
+        Splice {
+            span: Span {
+                start: marker.at,
+                end: marker.at,
+            },
+            original: Vec::new(),
+            replacement: format!(
+                "{}{}::body({}); ",
+                "super::".repeat(usize::try_from(marker.super_depth).unwrap_or(0)),
+                self.module,
+                marker.index
+            )
+            .into_bytes(),
+        }
+    }
+
+    fn rewrite(&self, source: &[u8], planted: &Planted<'_>) -> Result<Rewritten, InstrumentError> {
+        let Planted {
+            placements,
+            forest,
+            markers,
+        } = *planted;
         let mut splices = Vec::new();
         let mut roots = Vec::new();
+        let mut compared = BTreeSet::new();
         for root in forest.roots() {
             let rendered = self.render(root)?;
             splices.push(self.splice(root.span, rendered.text.clone())?);
+            compared.extend(rendered.compared.iter().copied());
             roots.push((root.span, rendered));
         }
+        splices.extend(markers.iter().map(|marker| self.marker(marker)));
         splices.extend(Self::allow_splices(placements, forest.roots()));
         splices.sort_by_key(|splice| splice.span.start);
         let (rewritten, offsets) = apply(source, &splices).map_err(|error| {
@@ -472,7 +603,11 @@ impl File<'_> {
             }));
         }
         branches.sort_by_key(|branch| (branch.span.start, branch.index));
-        Ok(Rewritten { text, branches })
+        Ok(Rewritten {
+            text,
+            branches,
+            compared,
+        })
     }
 
     /// Renders one site: its alternatives, then its original branch with the sites nested inside it already rendered.
@@ -480,15 +615,18 @@ impl File<'_> {
         let Rendered {
             text: original,
             branches: nested,
+            mut compared,
         } = self.original_branch(node)?;
 
         let site = self.slice(node.span)?;
         let mut alternatives = Vec::with_capacity(node.alternatives.len());
         for placement in &node.alternatives {
-            alternatives.push((
-                placement.index,
-                self.alternative(node.span, site, placement)?,
-            ));
+            alternatives.push(guards::Alternative {
+                index: placement.index,
+                text: self.alternative(node.span, site, placement)?,
+                comparable: self.comparable.contains(&placement.index),
+                probe: self.probed.get(&placement.index).copied(),
+            });
         }
         let form = node
             .alternatives
@@ -500,7 +638,10 @@ impl File<'_> {
             .map_or(0, |placement| placement.hint.super_depth);
         let composed = guards::compose(
             form,
-            &guards::path(&self.module, depth),
+            &guards::Paths {
+                module: &self.module,
+                depth,
+            },
             &alternatives,
             &original,
         );
@@ -532,9 +673,11 @@ impl File<'_> {
                 .iter()
                 .map(|(index, span)| (*index, shift(*span, original_at))),
         );
+        compared.extend(composed.compared);
         Ok(Rendered {
             text: composed.text,
             branches,
+            compared,
         })
     }
 
@@ -546,6 +689,7 @@ impl File<'_> {
         };
         let mut text = String::new();
         let mut branches: Vec<(u32, Span)> = Vec::new();
+        let mut compared = BTreeSet::new();
         let mut cursor = node.span.start;
         for child in &node.children {
             text.push_str(self.slice(bounds(cursor, child.span.start)?)?);
@@ -557,11 +701,16 @@ impl File<'_> {
                     .iter()
                     .map(|(index, span)| (*index, shift(*span, at))),
             );
+            compared.extend(rendered.compared);
             text.push_str(&rendered.text);
             cursor = child.span.end;
         }
         text.push_str(self.slice(bounds(cursor, node.span.end)?)?);
-        Ok(Rendered { text, branches })
+        Ok(Rendered {
+            text,
+            branches,
+            compared,
+        })
     }
 
     /// One alternative: the pristine site with exactly this edit applied, folded onto one line.
@@ -589,6 +738,9 @@ impl File<'_> {
                 ),
             )
         })?;
+        if placement.hint.form == Form::M {
+            return Ok(replacement.to_owned());
+        }
         let text = format!("{head}{replacement}{tail}");
         debug_assert!(!site_text.is_empty() || text.is_empty());
         if text.trim().is_empty() {

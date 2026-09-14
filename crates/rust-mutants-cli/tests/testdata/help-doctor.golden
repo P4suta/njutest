@@ -1,0 +1,27 @@
+Say what a run would find in this environment: the toolchain, the configuration, the temporary
+directory
+
+Usage: rust-mutants doctor [OPTIONS]
+
+Options:
+      --color <WHEN>
+          Whether to paint the output. `auto` paints a terminal that has not set `NO_COLOR`
+
+          Possible values:
+          - auto:   Colour a terminal that has not asked to go without
+          - always: Always
+          - never:  Never
+          
+          [default: auto]
+
+      --root <DIR>
+          The workspace root. Defaults to the working directory
+
+  -p, --package <NAME>
+          Ask about these packages rather than every member. Repeatable
+
+      --json
+          Print the `rust-mutants/doctor` document rather than the lines a person reads
+
+  -h, --help
+          Print help (see a summary with '-h')

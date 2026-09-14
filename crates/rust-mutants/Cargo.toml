@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2026 mjutest contributors
+# SPDX-FileCopyrightText: 2026 njutest contributors
 # SPDX-License-Identifier: MIT OR Apache-2.0
 
 [package]
@@ -15,6 +15,10 @@ homepage.workspace = true
 authors.workspace = true
 readme.workspace = true
 
+[features]
+# Fakes and generators the suites drive the engine's own seams with. Never on for a product.
+testkit = []
+
 [dependencies]
 hex = { workspace = true }
 jiff = { workspace = true, features = ["serde"] }
@@ -26,6 +30,9 @@ sha2 = { workspace = true }
 # the engine never turns a syntax tree back into text.
 syn = { workspace = true, features = ["printing"] }
 thiserror = { workspace = true }
+# The `[patch]` table, which `cargo metadata` does not report: a patch that
+# points outside the tree points at nothing once the tree is copied.
+toml = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 rustix = { workspace = true }
@@ -35,12 +42,18 @@ windows-sys = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
-mjutest-devkit = { workspace = true }
+jsonschema = { workspace = true }
+rust-mutants = { workspace = true, features = ["testkit"] }
+njutest-devkit = { workspace = true }
 proptest = { workspace = true }
 tempfile = { workspace = true }
 
 [[bench]]
 name = "foundation"
+harness = false
+
+[[bench]]
+name = "pipeline"
 harness = false
 
 [lints]

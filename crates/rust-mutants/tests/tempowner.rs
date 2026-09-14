@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Owners, markers, locks, and the sweep that collects what dead runs left.
@@ -17,7 +17,7 @@ use std::time::{Duration, SystemTime};
 use jiff::Timestamp;
 use rust_mutants::tempowner::{
     ClaimError, LEGACY_MAX_AGE, LOCK_NAME, MARKER_NAME, MarkerError, Role, SCHEMA, acquire, claim,
-    claim_cache, lock_path, marker_path, read_marker, reclaim, sweep, sweep_with,
+    claim_cache, claim_cache_of, lock_path, marker_path, read_marker, reclaim, sweep, sweep_with,
 };
 
 /// The real clock: the legacy rule compares against real modification times.
@@ -121,12 +121,38 @@ fn dropping_a_lock_releases_it() {
     assert!(acquire(&path).expect("opens").is_some());
 }
 
+/// The flag Windows wants before it will open a directory as a handle.
+#[cfg(windows)]
+const BACKUP_SEMANTICS: u32 = 0x0200_0000;
+
+/// The access Windows wants before it will let a handle's timestamps be written.
+#[cfg(windows)]
+const ATTRIBUTES: u32 = 0x0080 | 0x0100;
+
+/// Opens `dir` as a handle its timestamps can be set through.
+///
+/// A directory is not a file to Windows unless the open says so, and reading
+/// its attributes is not permission to write them; asked for neither, the call
+/// is refused rather than answered: `Access is denied`.
+fn opened(dir: &Path) -> fs::File {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt as _;
+        fs::OpenOptions::new()
+            .access_mode(ATTRIBUTES)
+            .custom_flags(BACKUP_SEMANTICS)
+            .open(dir)
+            .expect("open")
+    }
+    #[cfg(not(windows))]
+    {
+        fs::File::open(dir).expect("open")
+    }
+}
+
 fn age(dir: &Path, by: Duration) {
     let past = SystemTime::now().checked_sub(by).expect("in range");
-    fs::File::open(dir)
-        .expect("open")
-        .set_modified(past)
-        .expect("set mtime");
+    opened(dir).set_modified(past).expect("set mtime");
 }
 
 #[test]
@@ -286,4 +312,101 @@ fn a_marker_written_before_roles_existed_still_reads() {
     let marker = read_marker(dir.path()).expect("a marker without a role reads");
     assert_eq!(marker.role, Role::Scratch);
     assert!(!marker.kept);
+}
+
+#[test]
+fn a_cache_whose_tree_is_gone_is_collected_rather_than_kept_for_a_run_that_cannot_come() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let parent = temp.path();
+    let tree = parent.join("tree");
+    fs::create_dir(&tree).expect("the tree");
+    let living = parent.join("rust-mutants-target-living");
+    let orphan = parent.join("rust-mutants-target-orphan");
+    fs::create_dir(&living).expect("the living cache");
+    fs::create_dir(&orphan).expect("the orphaned cache");
+    drop(
+        claim_cache_of(&living, now(), SCHEMA, &tree)
+            .expect("claim")
+            .release(),
+    );
+    drop(
+        claim_cache_of(&orphan, now(), SCHEMA, &parent.join("gone"))
+            .expect("claim")
+            .release(),
+    );
+
+    let swept = sweep(parent, &["rust-mutants-target-"], now()).expect("sweep");
+    assert!(
+        living.exists(),
+        "a cache the next run of that tree can still hit is what a cache is for"
+    );
+    assert!(
+        !orphan.exists(),
+        "a cache keyed to a tree nobody can name again is one no run will ever look up, and \
+         sparing it is how a temporary directory grows without bound: {:?}",
+        swept.removed
+    );
+    assert_eq!(
+        swept.cached, 1,
+        "and the one it spared is counted as spared"
+    );
+}
+
+#[test]
+fn a_cache_that_names_no_tree_is_spared_as_it_always_was() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let parent = temp.path();
+    let dir = parent.join("rust-mutants-target-unkeyed");
+    fs::create_dir(&dir).expect("the cache");
+    drop(claim_cache(&dir, now(), SCHEMA).expect("claim").release());
+
+    let swept = sweep(parent, &["rust-mutants-target-"], now()).expect("sweep");
+    assert!(
+        dir.exists(),
+        "a marker written before caches said what they are keyed to says nothing about whether \
+         a run can hit it, and a sweep that guessed would delete a cache somebody is about to use"
+    );
+    assert_eq!(swept.cached, 1);
+}
+
+#[test]
+fn the_size_of_a_directory_is_every_regular_file_below_it() {
+    use rust_mutants::tempowner::directory_size;
+
+    let root = tempfile::tempdir().expect("a directory");
+    let nested = root.path().join("one").join("two");
+    fs::create_dir_all(&nested).expect("directories below it");
+    fs::write(root.path().join("top"), b"1234567890").expect("a file at the top");
+    fs::write(nested.join("deep"), b"12345").expect("a file two levels down");
+
+    assert_eq!(
+        directory_size(root.path()),
+        15,
+        "a sweep says how much room it gave back, and a directory it walked only the top \
+         of says a number smaller than the room"
+    );
+    assert_eq!(
+        directory_size(&nested),
+        5,
+        "and the same question about a directory below it is about that one"
+    );
+}
+
+#[test]
+fn a_directory_with_nothing_in_it_and_one_that_is_not_there_are_both_nothing() {
+    use rust_mutants::tempowner::directory_size;
+
+    let root = tempfile::tempdir().expect("a directory");
+    assert_eq!(
+        directory_size(root.path()),
+        0,
+        "a directory with nothing in it gave back nothing"
+    );
+    assert_eq!(
+        directory_size(&root.path().join("was-never-made")),
+        0,
+        "and a directory that is not there is the same answer rather than a failure: \
+         both a sweep and a cache ask this while something else is removing what they \
+         are counting, and neither may stop because the answer moved"
+    );
 }

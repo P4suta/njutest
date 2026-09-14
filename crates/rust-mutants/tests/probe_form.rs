@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Which return replacements a probe can be stated for, and which expressions it is sound to evaluate a second time.
@@ -8,7 +8,7 @@
     reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
 )]
 
-use rust_mutants::probe::form::{PROBED, Question, is_effect_free, is_probed};
+use rust_mutants::probe::{PROBED, Question, is_effect_free, is_probed};
 
 fn effect_free(source: &str) -> bool {
     let expr: syn::Expr = syn::parse_str(source).expect("the expression parses");
@@ -99,4 +99,23 @@ fn a_call_inside_something_otherwise_inert_is_still_a_call() {
     assert!(!effect_free("(a, f(b))"));
     assert!(!effect_free("self.a.b == f(c)"));
     assert!(!effect_free("&f(x)"));
+}
+
+#[test]
+fn the_standard_library_types_a_guard_may_compare_are_ones_the_syntax_reaches() {
+    for source in [
+        "self.name",
+        "self.items",
+        "self.maybe",
+        "&self.name",
+        "Some(3)",
+        "Ok(0)",
+        "None",
+    ] {
+        assert!(
+            effect_free(source),
+            "{source} is a value the syntax offers a probe for, which is what makes the \
+             trait's widening past the primitives reachable at all"
+        );
+    }
 }

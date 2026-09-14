@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://njutest.dev/schema/rust-mutants-diagnostics-v1.json",
+  "title": "rust-mutants diagnostics v1",
+  "description": "What one diagnostics bundle holds, and what the run it was gathered from did not leave. No environment variable's value is ever recorded.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "document_type",
+    "schema_version",
+    "tool_version",
+    "run_id",
+    "run_directory",
+    "held",
+    "absent"
+  ],
+  "properties": {
+    "document_type": {
+      "const": "rust-mutants/diagnostics"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "tool_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "run_id": {
+      "description": "The run the bundle is about.",
+      "type": "string",
+      "minLength": 1
+    },
+    "run_directory": {
+      "description": "The directory it was gathered from.",
+      "type": "string",
+      "minLength": 1
+    },
+    "held": {
+      "description": "The names in the bundle, in the order they were looked for.",
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "absent": {
+      "description": "What the run did not leave, named so a reader knows it is not there rather than empty.",
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  }
+}

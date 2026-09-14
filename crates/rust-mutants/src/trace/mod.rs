@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The engine trace: what a run did while it did it, as diagnostic exhaust.
@@ -6,6 +6,7 @@
 mod event;
 mod reader;
 mod sink;
+pub mod summary;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -14,13 +15,15 @@ use jiff::Timestamp;
 use sha2::{Digest as _, Sha256};
 
 pub use event::{
-    AttributionRecord, BisectRecord, BuildRecord, DiscoverFileRecord, Event, ExecRecord,
-    InstrumentRecord, MutantExecRecord, NoteRecord, OpenRecord, Payload, PhaseRecord, RunRecord,
-    SCHEMA, SiteRecord, SkipCount, SnapshotRecord, SweepRecord, ValidateRoundRecord,
+    AttributionRecord, BisectRecord, BuildRecord, CacheRecord, DischargeRecord, DiscoverFileRecord,
+    EVERY_TYPE, Event, EvidenceRecord, ExecRecord, IdenticalRecord, InstrumentRecord, KeptRecord,
+    MutantExecRecord, NoteRecord, OpenRecord, Payload, PhaseRecord, RouteRecord, RunRecord, SCHEMA,
+    SelectRecord, SiteRecord, SkipClaimRecord, SkipCount, SnapshotRecord, SweepRecord,
+    TargetRecord, TouchRecord, ValidateRoundRecord, VerifyRecord, WitnessRecord,
 };
 pub use reader::{Problem, ReadError, check, read_events};
 pub use sink::{
-    DirSink, FILE_NAME, MemorySink, OUTPUT_DIRECTORY_NAME, OUTPUT_FILE_LIMIT, Sink,
+    ChannelSink, DirSink, FILE_NAME, MemorySink, OUTPUT_DIRECTORY_NAME, OUTPUT_FILE_LIMIT, Sink,
     TRUNCATION_MARKER,
 };
 
@@ -266,6 +269,56 @@ impl Recorder {
     /// Records the test binaries a build produced.
     pub fn build(&self, record: BuildRecord) {
         self.emit(Payload::Build { build: record });
+    }
+
+    /// Records one target run with nothing active.
+    pub fn verify(&self, record: VerifyRecord) {
+        self.emit(Payload::Verify { verify: record });
+    }
+
+    /// Records what one target's guards said they reached.
+    pub fn touch(&self, record: TouchRecord) {
+        self.emit(Payload::Touch { touch: record });
+    }
+
+    /// Records one branch claim put to the compiler.
+    pub fn witness(&self, record: WitnessRecord) {
+        self.emit(Payload::Witness { witness: record });
+    }
+
+    /// Records one directory the run kept rather than removed.
+    pub fn kept(&self, record: KeptRecord) {
+        self.emit(Payload::Kept { kept: record });
+    }
+
+    /// Records one `rust-mutants: skip` marker, and whether it hid anything.
+    pub fn skip_claim(&self, record: SkipClaimRecord) {
+        self.emit(Payload::SkipClaim { claim: record });
+    }
+
+    /// Records how one mutant's targets were chosen, and which of them ran.
+    pub fn route(&self, record: RouteRecord) {
+        self.emit(Payload::Route { route: record });
+    }
+
+    /// Records what the outcome store was asked about one mutant.
+    pub fn cache(&self, record: CacheRecord) {
+        self.emit(Payload::Cache { cache: record });
+    }
+
+    /// Records why one mutant was never executed.
+    pub fn select(&self, record: SelectRecord) {
+        self.emit(Payload::Select { select: record });
+    }
+
+    /// Records what the equivalence layer said about one mutation.
+    pub fn identical(&self, record: IdenticalRecord) {
+        self.emit(Payload::Identical { identical: record });
+    }
+
+    /// Records one file a run kept for an audit.
+    pub fn evidence(&self, record: EvidenceRecord) {
+        self.emit(Payload::Evidence { evidence: record });
     }
 
     /// Records one mutant executed against one target.

@@ -1,0 +1,134 @@
+{
+  "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/main/sarif-2.1/schema/sarif-schema-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "rust-mutants",
+          "version": "<version>",
+          "informationUri": "https://github.com/P4suta/njutest",
+          "rules": [
+            {
+              "id": "le-to-lt",
+              "name": "comparison",
+              "shortDescription": {
+                "text": "le-to-lt: the comparison family asks what the tests say when this changes"
+              }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "le-to-lt",
+          "level": "error",
+          "message": {
+            "text": "discharged-mutant: every target that could have noticed d8a9939330496216a17d was removed by a proof, so no test could have: the mutation is in code the tests run and never observe"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/lib.rs"
+                },
+                "region": {
+                  "startLine": 8,
+                  "startColumn": 14,
+                  "endColumn": 16,
+                  "snippet": {
+                    "text": "<="
+                  }
+                }
+              }
+            }
+          ],
+          "partialFingerprints": {
+            "rustMutantsMutantId/v1": "d8a9939330496216a17d27bab570a74d23823587e4ab6d7ef2fc6763645d45fe"
+          }
+        },
+        {
+          "ruleId": "le-to-lt",
+          "level": "warning",
+          "message": {
+            "text": "surviving-mutant: no test noticed 27e9c3f2d6bb568e5ef3; 1 test ran and passed"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/lib.rs"
+                },
+                "region": {
+                  "startLine": 16,
+                  "startColumn": 10,
+                  "endColumn": 12,
+                  "snippet": {
+                    "text": "<="
+                  }
+                }
+              }
+            }
+          ],
+          "partialFingerprints": {
+            "rustMutantsMutantId/v1": "27e9c3f2d6bb568e5ef3e92a982827a60c58c8d1775fb26e8ed863c00ff7681e"
+          }
+        },
+        {
+          "ruleId": "le-to-lt",
+          "level": "error",
+          "message": {
+            "text": "discharged-mutant: every target that could have noticed 7cfdea86ac571b743bd0 was removed by a proof, so no test could have: the mutation is in code the tests run and never observe"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/lib.rs"
+                },
+                "region": {
+                  "startLine": 36,
+                  "startColumn": 13,
+                  "endColumn": 15,
+                  "snippet": {
+                    "text": "<="
+                  }
+                }
+              }
+            }
+          ],
+          "partialFingerprints": {
+            "rustMutantsMutantId/v1": "7cfdea86ac571b743bd04a4bc0cf3d49466e64fd5910421f03389d50d6d1b260"
+          }
+        },
+        {
+          "ruleId": "le-to-lt",
+          "level": "error",
+          "message": {
+            "text": "discharged-mutant: every target that could have noticed 0a8ab9771954a24f9d25 was removed by a proof, so no test could have: the mutation is in code the tests run and never observe"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/lib.rs"
+                },
+                "region": {
+                  "startLine": 44,
+                  "startColumn": 34,
+                  "endColumn": 36,
+                  "snippet": {
+                    "text": "<="
+                  }
+                }
+              }
+            }
+          ],
+          "partialFingerprints": {
+            "rustMutantsMutantId/v1": "0a8ab9771954a24f9d25c1a5e4a83ee27f3994e896fac072c546be017f2173c2"
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://njutest.dev/schema/rust-mutants-explain-v1.json",
+  "title": "rust-mutants explain v1",
+  "description": "Everything one run established about one mutant, built from what the run stored.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "document_type",
+    "schema_version",
+    "tool_version",
+    "mutant",
+    "reproduce"
+  ],
+  "properties": {
+    "document_type": {
+      "const": "rust-mutants/explain"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "tool_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "mutant": {
+      "type": "object"
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "refused": {
+      "type": "string"
+    },
+    "outcome": {
+      "type": "string"
+    },
+    "target": {
+      "type": "string"
+    },
+    "killed_by": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "diff": {
+      "type": "string"
+    },
+    "source": {
+      "type": "string"
+    },
+    "route": {
+      "type": "object"
+    },
+    "duration_ms": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "retried": {
+      "type": "boolean"
+    },
+    "reproduce": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

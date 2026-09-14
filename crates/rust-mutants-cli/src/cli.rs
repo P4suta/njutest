@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Argument parsing. This module knows the command tree and nothing about executing it.
@@ -19,11 +19,15 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
         compilable mutant of the selected files once, builds the test binaries once, and \
         activates one mutant per test process through an environment variable. The source \
         workspace is never modified.",
+    after_help = crate::exit_codes(),
     arg_required_else_help = true,
     term_width = 100,
     color = clap::ColorChoice::Never
 )]
 pub struct Cli {
+    /// Whether to paint the output. `auto` paints a terminal that has not set `NO_COLOR`.
+    #[arg(long, value_enum, value_name = "WHEN", default_value_t = crate::ui::Color::Auto, global = true)]
+    pub color: crate::ui::Color,
     /// What to do.
     #[command(subcommand)]
     pub command: Command,
@@ -31,12 +35,20 @@ pub struct Cli {
 
 /// The subcommands.
 #[derive(Debug, Clone, Subcommand)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "the variants are the command line's own shape, and boxing one would put a \
+              heap indirection between the parser and the flags a person typed"
+)]
 pub enum Command {
     /// List the candidates the rules propose, before the compiler has ruled.
     List {
         /// Which workspace to read.
         #[command(flatten)]
         scope: Scope,
+        /// Only the candidates in this file, as a workspace-relative path.
+        #[arg(long, value_name = "PATH")]
+        file: Option<String>,
     },
     /// Ask the compiler, for every mutant, whether it renders it identically to the code it mutates.
     Equivalence {
@@ -55,6 +67,9 @@ pub enum Command {
         /// Print the catalog as one JSON document.
         #[arg(long)]
         json: bool,
+        /// Say only what the compiler refused, with its own words.
+        #[arg(long, conflicts_with = "json")]
+        rejections: bool,
     },
     /// Run the mutants and report what the tests noticed. Every accepted mutant unless one is named.
     Run {
@@ -76,9 +91,53 @@ pub enum Command {
         /// Do not write a run report under the report directory.
         #[arg(long, conflicts_with = "mutant")]
         no_report: bool,
-        /// Execute every mutant afresh rather than reading back what an earlier run of this exact tree established.
+        /// Remeasure coverage, the passing baseline, and every mutant instead of reading back what an earlier run of this exact tree established.
         #[arg(long, conflicts_with = "mutant")]
         no_cache: bool,
+        /// How much the run says while it is happening.
+        #[arg(long, value_enum, value_name = "MODE", default_value_t = crate::ui::Ui::Auto, conflicts_with = "json")]
+        ui: crate::ui::Ui,
+        /// Write the run as it happens, one JSON object per line, for a program rather than a person.
+        #[arg(long)]
+        json: bool,
+        /// Stop at the first thing a reader has to act on rather than measuring the rest.
+        #[arg(long, conflicts_with = "mutant")]
+        fail_fast: bool,
+        /// Measure only mutants of this rule. Repeatable.
+        #[arg(long = "rule", value_name = "NAME")]
+        rules: Vec<String>,
+        /// Measure only mutants of this family. Repeatable.
+        #[arg(long = "family", value_name = "NAME")]
+        families: Vec<String>,
+        /// Never measure mutants of this rule. Repeatable.
+        #[arg(long = "skip-rule", value_name = "NAME")]
+        skip_rules: Vec<String>,
+        /// Never measure mutants of this family. Repeatable.
+        #[arg(long = "skip-family", value_name = "NAME")]
+        skip_families: Vec<String>,
+        /// Measure only mutants in this file, and optionally only these lines, as `PATH[:FROM[-TO]]`. Repeatable.
+        #[arg(long = "file", value_name = "PATH")]
+        files: Vec<String>,
+        /// Measure only mutants whose identity starts with this. Repeatable.
+        #[arg(long = "id", value_name = "PREFIX")]
+        ids: Vec<String>,
+        /// Measure only the mutants a stored run left with this outcome. The newest run when no directory is named.
+        #[arg(long, value_name = "RUN", num_args = 0..=1, default_missing_value = "")]
+        from_report: Option<String>,
+        /// With `--from-report`, the outcome to take from it.
+        #[arg(
+            long,
+            value_name = "OUTCOME",
+            default_value = "survived",
+            requires = "from_report"
+        )]
+        outcome: String,
+        /// Prepare and verify, then say what a run would cost, without executing a mutant.
+        #[arg(long, conflicts_with_all = ["mutant", "json"])]
+        dry_run: bool,
+        /// Name this run, which is what its report directory is called. Letters, digits, `.`, `_` and `-`.
+        #[arg(long, value_name = "NAME", conflicts_with = "mutant")]
+        run_id: Option<String>,
         /// Arguments for the test harness itself.
         #[arg(last = true, value_name = "ARGS")]
         args: Vec<String>,
@@ -91,6 +150,15 @@ pub enum Command {
         /// The mutant, by identity or by any prefix that names exactly one.
         #[arg(value_name = "PREFIX")]
         mutant: String,
+        /// The run to read it from. The newest when none is named.
+        #[arg(long, value_name = "RUN")]
+        run: Option<String>,
+        /// Prepare the tree again rather than reading what the last run stored.
+        #[arg(long)]
+        fresh: bool,
+        /// Print the `rust-mutants/explain` document rather than the lines a person reads.
+        #[arg(long)]
+        json: bool,
     },
     /// Print one file as the engine rewrites it, guards and runtime included.
     Instrument {
@@ -100,12 +168,21 @@ pub enum Command {
         /// The file, as a workspace-relative path.
         #[arg(long, value_name = "PATH")]
         file: String,
+        /// Print only the guard this mutant lives behind, by identity or a prefix of one.
+        #[arg(long, value_name = "PREFIX")]
+        mutant: Option<String>,
     },
     /// Tally why places were passed over.
     WhySkipped {
         /// Which workspace to read.
         #[command(flatten)]
         scope: Scope,
+        /// Say every place in this file rather than tallying the whole tree.
+        #[arg(long, value_name = "PATH")]
+        file: Option<String>,
+        /// With `--file`, only the places on this line.
+        #[arg(long, value_name = "N", requires = "file")]
+        line: Option<u32>,
     },
     /// Write a `.rust-mutants.toml` whose every value is already the default.
     Init {
@@ -116,11 +193,26 @@ pub enum Command {
         #[arg(long)]
         force: bool,
     },
+    /// Put one finding back to the tests, from what a stored run said about it.
+    Replay {
+        /// Which workspace to read.
+        #[command(flatten)]
+        scope: Scope,
+        /// The mutant, by identity or by any prefix that names exactly one.
+        #[arg(value_name = "PREFIX")]
+        mutant: String,
+        /// The run to read it from. The newest when none is named.
+        #[arg(long, value_name = "RUN")]
+        run: Option<String>,
+    },
     /// Say what a run would find in this environment: the toolchain, the configuration, the temporary directory.
     Doctor {
         /// The workspace root. Defaults to the working directory.
         #[arg(long, value_name = "DIR")]
         root: Option<PathBuf>,
+        /// Ask about these packages rather than every member. Repeatable.
+        #[arg(long = "package", short = 'p', value_name = "NAME")]
+        packages: Vec<String>,
         /// Print the `rust-mutants/doctor` document rather than the lines a person reads.
         #[arg(long)]
         json: bool,
@@ -128,11 +220,23 @@ pub enum Command {
     /// Combine the reports of the parts of one catalog into the report the whole would have written.
     Merge {
         /// The reports to combine, one per part.
-        #[arg(value_name = "REPORT", required = true)]
+        #[arg(value_name = "REPORT", required_unless_present = "runs")]
         reports: Vec<PathBuf>,
+        /// The workspace root whose report directory the parts are under.
+        #[arg(long, value_name = "DIR")]
+        root: Option<PathBuf>,
+        /// The runs to combine, by name or as a glob against the report directory.
+        #[arg(long, value_name = "IDS", value_delimiter = ',')]
+        runs: Vec<String>,
         /// Write the combined report here rather than to standard output.
         #[arg(long, value_name = "FILE")]
         output: Option<PathBuf>,
+    },
+    /// Read a recording back: what it counted, what each phase took, and what moved between two of them.
+    Trace {
+        /// Which reading.
+        #[command(subcommand)]
+        command: TraceCommand,
     },
     /// Read back a stored run report.
     Report {
@@ -152,11 +256,47 @@ pub enum Command {
         #[arg(long, conflicts_with_all = ["format", "output"])]
         tui: bool,
     },
+    /// List the operators this release knows, with the tier and version that pin them.
+    Rules {
+        /// Only the rules this tier selects. Every tier when none is named.
+        #[arg(long, value_name = "TIER")]
+        tier: Option<String>,
+        /// Print the rules as a document rather than the lines a person reads.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Gather everything one run established into one directory, for a bug report.
+    Diagnostics {
+        /// The run, by its identity. Defaults to the newest.
+        #[arg(value_name = "RUN")]
+        run: Option<String>,
+        /// The workspace root. Defaults to the working directory.
+        #[arg(long, value_name = "DIR")]
+        root: Option<PathBuf>,
+        /// Write the bundle here rather than beside the run.
+        #[arg(long, value_name = "DIR")]
+        output: Option<PathBuf>,
+    },
     /// Say what the engine left in the temporary directory, and remove what no run still owns.
     Cache {
-        /// Remove every abandoned snapshot and target directory.
+        /// The workspace root, whose report directory holds the ledger of what was kept.
+        #[arg(long, value_name = "DIR")]
+        root: Option<PathBuf>,
+        /// Remove every abandoned snapshot, and the build caches no run can look up again.
         #[arg(long)]
         gc: bool,
+        /// With `--gc`, remove every build cache no live run has locked, not only the unowned ones.
+        #[arg(long, requires = "gc")]
+        all: bool,
+        /// With `--gc`, remove the directories a run was asked to keep, too.
+        #[arg(long, requires = "gc")]
+        kept: bool,
+        /// Empty the store of what earlier runs established, and say how much was in it.
+        #[arg(long, conflicts_with = "gc")]
+        clear_outcomes: bool,
+        /// Read and write the store under this directory rather than the user's cache directory.
+        #[arg(long, value_name = "DIR")]
+        cache_dir: Option<PathBuf>,
     },
 }
 
@@ -171,6 +311,12 @@ pub enum Format {
     Html,
     /// The mutation testing report every Stryker reader understands.
     Stryker,
+    /// The JUnit XML a continuous integration server already reads.
+    Junit,
+    /// The findings as SARIF 2.1.0, for a code scanning view.
+    Sarif,
+    /// The summary a person puts in a pull request.
+    Markdown,
 }
 
 /// What a command reads, and how much of it. Every value here also has a key in `.rust-mutants.toml`; a flag given on the command line wins.
@@ -194,7 +340,7 @@ pub struct Scope {
     /// Only mutate files matching this pattern. Repeatable.
     #[arg(long = "include", value_name = "GLOB")]
     pub include: Vec<String>,
-    /// Never mutate files matching this pattern. Repeatable.
+    /// Keep files matching this pattern out of the run entirely: the snapshot does not carry them and nothing in them is mutated. Repeatable.
     #[arg(long = "exclude", value_name = "GLOB")]
     pub exclude: Vec<String>,
     /// Mutate only the files that differ from `HEAD`, committed and not. Narrows `--include` rather than widening it.
@@ -206,9 +352,33 @@ pub struct Scope {
     /// Only mutate these packages. Repeatable.
     #[arg(long = "package", short = 'p', value_name = "NAME")]
     pub packages: Vec<String>,
+    /// Let the build read this directory from outside the root, copying it beside the tree. Repeatable.
+    #[arg(long = "allow-outside", value_name = "DIR")]
+    pub allow_outside: Vec<PathBuf>,
+    /// Compile with these cargo features. Repeatable, and each may be a comma-separated list.
+    #[arg(long = "features", value_name = "LIST", value_delimiter = ',')]
+    pub features: Vec<String>,
+    /// Compile for this target triple instead of the host. Not `run --target`, which names a test target.
+    #[arg(long = "build-target", value_name = "TRIPLE")]
+    pub build_target: Option<String>,
+    /// Compile with this cargo profile.
+    #[arg(long, value_name = "NAME")]
+    pub profile: Option<String>,
+    /// How many compilation jobs cargo may run at once.
+    #[arg(long = "build-jobs", value_name = "N")]
+    pub build_jobs: Option<u32>,
+    /// How many mutants to measure at once. Zero is as many as the machine has, capped at four.
+    #[arg(long, short = 'j', value_name = "N")]
+    pub jobs: Option<usize>,
+    /// Never start this target, by the id a report names it with. Repeatable.
+    #[arg(long = "skip-target", value_name = "PKG/KIND/NAME")]
+    pub skip_targets: Vec<String>,
     /// How long one mutant execution may take before it is retried serially, as in `90s` or `5m`.
     #[arg(long, value_name = "DURATION")]
     pub timeout: Option<String>,
+    /// Record what the run does, as JSON Lines. Without a directory a run writes beside its report and every other command under `<reports>/traces/`.
+    #[arg(long, value_name = "DIR", num_args = 0..=1, default_missing_value = "")]
+    pub trace: Option<String>,
     /// How the workspace is treated.
     #[command(flatten)]
     pub switches: Switches,
@@ -236,6 +406,24 @@ pub struct Switches {
     /// Measure once which target reached what, and run a mutant only against the targets that reached it.
     #[arg(long)]
     pub coverage: bool,
+    /// Run every mutant against every target, measuring no coverage and proving nothing about reach.
+    #[arg(long, conflicts_with = "coverage")]
+    pub no_coverage: bool,
+    /// Do not ask the guards which of each target's tests reached them, and so run every test of every target that could.
+    #[arg(long)]
+    pub no_touch: bool,
+    /// After the run, ask the compiler whether each survivor's mutation is one it renders at all.
+    #[arg(long)]
+    pub equivalence: bool,
+    /// Leave a library's documented examples out of the targets.
+    #[arg(long)]
+    pub no_doctests: bool,
+    /// Compile with every feature of every selected package.
+    #[arg(long)]
+    pub all_features: bool,
+    /// Compile with the default features off.
+    #[arg(long)]
+    pub no_default_features: bool,
 }
 
 /// The tiers, as the command line spells them.
@@ -266,17 +454,21 @@ impl Command {
     #[must_use]
     pub const fn scope(&self) -> Option<&Scope> {
         match self {
-            Self::List { scope }
+            Self::List { scope, .. }
             | Self::Equivalence { scope, .. }
             | Self::Catalog { scope, .. }
             | Self::Run { scope, .. }
             | Self::Explain { scope, .. }
             | Self::Instrument { scope, .. }
-            | Self::WhySkipped { scope } => Some(scope),
+            | Self::Replay { scope, .. }
+            | Self::WhySkipped { scope, .. } => Some(scope),
             Self::Init { .. }
             | Self::Doctor { .. }
             | Self::Merge { .. }
             | Self::Report { .. }
+            | Self::Trace { .. }
+            | Self::Diagnostics { .. }
+            | Self::Rules { .. }
             | Self::Cache { .. } => None,
         }
     }
@@ -285,10 +477,12 @@ impl Command {
     #[must_use]
     pub const fn root(&self) -> Option<&PathBuf> {
         match self {
-            Self::Init { root, .. } | Self::Doctor { root, .. } | Self::Report { root, .. } => {
-                root.as_ref()
-            }
-            Self::Cache { .. } | Self::Merge { .. } => None,
+            Self::Init { root, .. }
+            | Self::Doctor { root, .. }
+            | Self::Report { root, .. }
+            | Self::Cache { root, .. }
+            | Self::Diagnostics { root, .. }
+            | Self::Merge { root, .. } => root.as_ref(),
             _ => match self.scope() {
                 Some(scope) => scope.root.as_ref(),
                 None => None,
@@ -308,6 +502,23 @@ pub struct Usage {
     pub exit_code: u8,
 }
 
+/// The same arguments, less the word cargo repeats when it calls a subcommand.
+///
+/// `cargo rust-mutants run` runs `cargo-rust-mutants rust-mutants run`, so the
+/// subcommand's own name arrives twice. Dropping it is cargo's convention and
+/// not this program's: called directly, `rust-mutants rust-mutants run` is a
+/// mistake, and saying so is more use than guessing what was meant.
+fn subcommand(mut args: Vec<OsString>) -> Vec<OsString> {
+    let called_by_cargo = args
+        .first()
+        .and_then(|name| std::path::Path::new(name).file_stem())
+        .is_some_and(|stem| stem == "cargo-rust-mutants");
+    if called_by_cargo && args.get(1).is_some_and(|word| word == "rust-mutants") {
+        let _repeated = args.remove(1);
+    }
+    args
+}
+
 /// Parses `args`, program name first.
 ///
 /// # Errors
@@ -316,7 +527,7 @@ pub fn parse<I>(args: I) -> Result<Cli, Usage>
 where
     I: IntoIterator<Item = OsString>,
 {
-    Cli::try_parse_from(args).map_err(|error| {
+    Cli::try_parse_from(subcommand(args.into_iter().collect())).map_err(|error| {
         let to_stderr = error.use_stderr();
         Usage {
             text: error.render().to_string(),
@@ -324,4 +535,46 @@ where
             exit_code: if to_stderr { crate::EXIT_USAGE } else { 0 },
         }
     })
+}
+
+/// What to ask of a recording.
+#[derive(Debug, Clone, Subcommand)]
+pub enum TraceCommand {
+    /// What a recording counted, what every phase took, and which commands were the slowest.
+    Summary {
+        /// The workspace root. Defaults to the working directory.
+        #[arg(long, value_name = "DIR")]
+        root: Option<PathBuf>,
+        /// Read this run's recording rather than the newest one.
+        #[arg(long, value_name = "ID")]
+        run: Option<String>,
+        /// Read a recording in this directory instead of one under the report directory.
+        #[arg(long, value_name = "DIR")]
+        dir: Option<PathBuf>,
+        /// Name at most this many of the slowest commands.
+        #[arg(long, value_name = "N", default_value_t = 5)]
+        slowest: usize,
+    },
+    /// Say whether a recording is complete: it begins, it ends, it lost nothing, and every phase it opened it closed.
+    Check {
+        /// The workspace root. Defaults to the working directory.
+        #[arg(long, value_name = "DIR")]
+        root: Option<PathBuf>,
+        /// Check this run's recording rather than the newest one.
+        #[arg(long, value_name = "ID")]
+        run: Option<String>,
+        /// Check a recording in this directory instead of one under the report directory.
+        #[arg(long, value_name = "DIR")]
+        dir: Option<PathBuf>,
+    },
+    /// What moved between two recordings.
+    Diff {
+        /// The workspace root. Defaults to the working directory.
+        #[arg(long, value_name = "DIR")]
+        root: Option<PathBuf>,
+        /// The run to read first.
+        a: String,
+        /// The run to read second.
+        b: String,
+    },
 }

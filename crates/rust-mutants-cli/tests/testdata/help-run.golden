@@ -1,0 +1,195 @@
+Run the mutants and report what the tests noticed. Every accepted mutant unless one is named
+
+Usage: rust-mutants run [OPTIONS] [-- <ARGS>...]
+
+Arguments:
+  [ARGS]...
+          Arguments for the test harness itself
+
+Options:
+      --color <WHEN>
+          Whether to paint the output. `auto` paints a terminal that has not set `NO_COLOR`
+
+          Possible values:
+          - auto:   Colour a terminal that has not asked to go without
+          - always: Always
+          - never:  Never
+          
+          [default: auto]
+
+      --root <DIR>
+          The workspace root. Defaults to the working directory
+
+      --config <FILE>
+          Read this configuration file instead of the one in the workspace root
+
+      --no-config
+          Read no configuration file at all
+
+      --tier <TIER>
+          Which tier of operators to apply
+
+          Possible values:
+          - balanced: The operators worth running everywhere
+          - strong:   Balanced, plus the bitwise and compound-assignment families
+          - all:      Every operator, statement deletion included
+
+      --operator <RULE>
+          Apply exactly these operators, by name. Repeatable
+
+      --include <GLOB>
+          Only mutate files matching this pattern. Repeatable
+
+      --exclude <GLOB>
+          Keep files matching this pattern out of the run entirely: the snapshot does not carry them
+          and nothing in them is mutated. Repeatable
+
+      --changed
+          Mutate only the files that differ from `HEAD`, committed and not. Narrows `--include`
+          rather than widening it
+
+      --changed-from <REV>
+          Mutate only the files that differ from this revision
+
+  -p, --package <NAME>
+          Only mutate these packages. Repeatable
+
+      --allow-outside <DIR>
+          Let the build read this directory from outside the root, copying it beside the tree.
+          Repeatable
+
+      --features <LIST>
+          Compile with these cargo features. Repeatable, and each may be a comma-separated list
+
+      --build-target <TRIPLE>
+          Compile for this target triple instead of the host. Not `run --target`, which names a test
+          target
+
+      --profile <NAME>
+          Compile with this cargo profile
+
+      --build-jobs <N>
+          How many compilation jobs cargo may run at once
+
+  -j, --jobs <N>
+          How many mutants to measure at once. Zero is as many as the machine has, capped at four
+
+      --skip-target <PKG/KIND/NAME>
+          Never start this target, by the id a report names it with. Repeatable
+
+      --timeout <DURATION>
+          How long one mutant execution may take before it is retried serially, as in `90s` or `5m`
+
+      --trace [<DIR>]
+          Record what the run does, as JSON Lines. Without a directory a run writes beside its
+          report and every other command under `<reports>/traces/`
+
+      --offline
+          Never touch the network
+
+      --locked
+          Refuse to change `Cargo.lock`
+
+      --keep-temp
+          Keep the snapshot and the target directory instead of removing them
+
+      --no-verify
+          Skip the run of every target with nothing active
+
+      --coverage
+          Measure once which target reached what, and run a mutant only against the targets that
+          reached it
+
+      --no-coverage
+          Run every mutant against every target, measuring no coverage and proving nothing about
+          reach
+
+      --no-touch
+          Do not ask the guards which of each target's tests reached them, and so run every test of
+          every target that could
+
+      --equivalence
+          After the run, ask the compiler whether each survivor's mutation is one it renders at all
+
+      --no-doctests
+          Leave a library's documented examples out of the targets
+
+      --all-features
+          Compile with every feature of every selected package
+
+      --no-default-features
+          Compile with the default features off
+
+      --mutant <PREFIX>
+          Run only this mutant, by identity or by any prefix that names exactly one
+
+      --target <TARGET>
+          With `--mutant`, run only this target, by `package/kind/name` or by name
+
+      --test <TEST>
+          With `--mutant`, run only this test, by its libtest path
+
+      --shard <K/N>
+          Run only this part of the catalog, as `K/N`. Every part of one tree cuts the same way, so
+          the parts together are the whole
+
+      --no-report
+          Do not write a run report under the report directory
+
+      --no-cache
+          Remeasure coverage, the passing baseline, and every mutant instead of reading back what an
+          earlier run of this exact tree established
+
+      --ui <MODE>
+          How much the run says while it is happening
+
+          Possible values:
+          - auto:  A terminal gets the overwriting tally, anything else gets the plain lines
+          - plain: One line per phase and per mutant, and a tally every ten and at the end
+          - quiet: Nothing until the summary
+          
+          [default: auto]
+
+      --json
+          Write the run as it happens, one JSON object per line, for a program rather than a person
+
+      --fail-fast
+          Stop at the first thing a reader has to act on rather than measuring the rest
+
+      --rule <NAME>
+          Measure only mutants of this rule. Repeatable
+
+      --family <NAME>
+          Measure only mutants of this family. Repeatable
+
+      --skip-rule <NAME>
+          Never measure mutants of this rule. Repeatable
+
+      --skip-family <NAME>
+          Never measure mutants of this family. Repeatable
+
+      --file <PATH>
+          Measure only mutants in this file, and optionally only these lines, as `PATH[:FROM[-TO]]`.
+          Repeatable
+
+      --id <PREFIX>
+          Measure only mutants whose identity starts with this. Repeatable
+
+      --from-report [<RUN>]
+          Measure only the mutants a stored run left with this outcome. The newest run when no
+          directory is named
+
+      --outcome <OUTCOME>
+          With `--from-report`, the outcome to take from it
+          
+          [default: survived]
+
+      --dry-run
+          Prepare and verify, then say what a run would cost, without executing a mutant
+
+      --run-id <NAME>
+          Name this run, which is what its report directory is called. Letters, digits, `.`, `_` and
+          `-`
+
+  -h, --help
+          Print help (see a summary with '-h')

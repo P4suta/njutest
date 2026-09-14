@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The run as a mutation testing report every Stryker reader understands.
@@ -25,7 +25,7 @@ pub const LANGUAGE: &str = "rust";
 /// The file a projection is written to.
 pub const FILE_NAME: &str = "mutation.json";
 
-/// The thresholds the projection declares, which the schema requires and this engine does not use: a verdict is a claim a reader can check, and a percentage is not.
+/// The thresholds the projection declares when the configuration says nothing, which the schema requires and this engine does not use: a verdict is a claim a reader can check, and a percentage is not.
 pub const THRESHOLDS: Thresholds = Thresholds { high: 80, low: 60 };
 
 /// One mutation testing report.
@@ -105,18 +105,31 @@ pub struct Position {
     pub column: u32,
 }
 
-/// Projects one run report, reading the sources it names from `root`.
+/// Projects one run report from the sources it names, with the thresholds a reader colours by.
 ///
-/// A file that cannot be read is left out: a reader that cannot show the
-/// source cannot show the mutation either, and a document that names a file
-/// it has no source for is one no reader can use.
-#[must_use]
-pub fn project(document: &RunDocument, root: &Path) -> Projection {
+/// Every file the report names is here. A file this tree does not hold is
+/// [`crate::error::CliError::SourceUnreadable`] rather than a file quietly left out: a
+/// projection that lost every mutant of a file without saying so would be read
+/// as a run that had nothing to say about it.
+///
+/// # Errors
+/// [`crate::error::CliError::SourceUnreadable`] when a file the report names is not under
+/// `root`.
+pub fn project(
+    document: &RunDocument,
+    root: &Path,
+    thresholds: Thresholds,
+    sources: &BTreeMap<String, super::sources::Held>,
+) -> Result<Projection, crate::error::CliError> {
     let mut files: BTreeMap<String, FileResult> = BTreeMap::new();
     for mutant in &document.mutants {
         if !files.contains_key(&mutant.path) {
-            let Ok(source) = std::fs::read_to_string(root.join(&mutant.path)) else {
-                continue;
+            let source = match sources.get(&mutant.path) {
+                Some(super::sources::Held::Measured(text)) => text.clone(),
+                Some(super::sources::Held::Changed) => {
+                    return Err(crate::error::CliError::moved_on(&mutant.path));
+                }
+                None => return Err(crate::error::CliError::absent(&mutant.path, root)),
             };
             files.insert(
                 mutant.path.clone(),
@@ -142,12 +155,12 @@ pub fn project(document: &RunDocument, root: &Path) -> Projection {
             duration: mutant.duration_ms,
         });
     }
-    Projection {
+    Ok(Projection {
         schema_version: SCHEMA_VERSION.to_owned(),
-        thresholds: THRESHOLDS,
+        thresholds,
         project_root: root.to_string_lossy().into_owned(),
         files,
-    }
+    })
 }
 
 /// What this run's outcome is called in the other vocabulary.
@@ -179,12 +192,18 @@ fn reason_of(mutant: &super::run::RunMutantDocument) -> Option<String> {
     }
 }
 
-/// The targets that noticed it, which for this engine is the one that did.
+/// The tests that noticed it, and the target that held them when the harness did not name one.
 fn killed_by(mutant: &super::run::RunMutantDocument) -> Vec<String> {
-    if mutant.outcome == "killed" && !mutant.target.is_empty() {
-        vec![mutant.target.clone()]
-    } else {
+    if mutant.outcome != "killed" {
+        return Vec::new();
+    }
+    if !mutant.killed_by.is_empty() {
+        return mutant.killed_by.clone();
+    }
+    if mutant.target.is_empty() {
         Vec::new()
+    } else {
+        vec![mutant.target.clone()]
     }
 }
 

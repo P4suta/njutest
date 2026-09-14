@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: 2026 mjutest contributors
+SPDX-FileCopyrightText: 2026 njutest contributors
 SPDX-License-Identifier: MIT OR Apache-2.0
 -->
 
@@ -22,6 +22,13 @@ targeted receives `CHANGE_ASSURED`; an explicit package run receives
 `SCOPE_ASSURED`. If changeset impact cannot be determined safely, the resolved
 scope broadens to `full`, and the report records both requested and resolved
 scope.
+
+`[project] exclude` narrows the file scope and nothing else: the files it
+names are copied, compiled, and run like every other, and what a run is
+keyed on is the whole tree, so the exclusion removes findings rather than
+work or evidence. A run left with no mutation to put to a test concludes
+`INSUFFICIENT` whatever narrowed it away, because an assurance is the claim
+that every mutation was noticed and a run that made none has not made it.
 
 Replay is an operation, not a new project assurance. It returns `REPRODUCED`
 when the selected finding remains observable or `RESOLVED` when it does not.
@@ -69,7 +76,7 @@ documentation, and `--test-runtool` is what would attribute it to the example.
 A library that documents no example has nothing to run and is not a target: a
 target that ran nothing would raise a finding about documentation nobody
 wrote. A test binary that brings its own harness cannot be asked for one of
-its tests and is measured whole, which `custom-harness-whole-binary` says.
+its tests and is measured whole, which `custom-harness` says.
 
 A mutation is measured against a suite that passes. A run whose baseline saw a
 target fail reports that and measures no mutation: there is nothing for a
@@ -78,42 +85,64 @@ contract must be explicit rather than treating ordinary benchmarks as tests.
 
 ## Mutation routing
 
-A mutant is run by the measured targets that reach it. Reach is decided by the
-coverage regions of the baseline profiles and the start position — line and
-column, in the unit [report v1](report-v1.md) fixes — the catalog reports for
-the mutation: a target reaches the mutant when one of the regions it executed
-contains that position.
+A target is a test binary: a library's own tests, one integration test, a
+binary's own tests, an example, a procedural macro crate's own tests, or a
+library's documented examples. A route names the targets that could notice a
+mutation and, for each of them, which of its tests the mutation is put to. The
+tests belong to the target rather than sitting beside it, so a route cannot
+name tests of a target it does not keep, and cannot keep a target whose tests
+it forgot to say anything about.
 
-The decision gives way to the whole file whenever the evidence cannot carry it.
-A mutant with no reported position, and a position that lies in a gap between
-the regions the coverage toolchain cut, are both routed by every target that
-executed the file. A target restored from a checkpoint carries no regions and
-keeps reaching its whole file.
+Reach is decided by the guards the instrumented build compiled in, and the one
+run of every target that establishes the baseline is the run that records it.
+Each guard appends the site it evaluated under the name of the thread it
+evaluated it on, libtest names a test's thread after the test, and what comes
+back is therefore per test rather than per target. Nothing is measured twice
+because nothing is measured a second time at all: the measurement is the
+baseline.
+
+The decision widens whenever the evidence cannot carry it, and every widening
+runs more rather than less. The route names which one it was:
+
+| Fallback | What could not be established |
+| --- | --- |
+| `not-measured` | nothing was recorded at all, so every test of every target runs |
+| `position-unknown` | the catalog could not say where the mutation is |
+| `outside-blocks` | no instrumented region contains the position |
+| `coverage-incomplete` | a target the measurement could have named carries no profile |
+| `touch-incomplete` | a target's guards recorded nothing this run can route by |
+
+A target the record does not name is one nothing was established about, and it
+stays in the route with every test of it. A site recorded on a thread nothing
+names a test after reaches every test of its target, for the same reason.
+Being absent from a measurement is not the same as being measured and reaching
+nothing, and reading the first as the second turns a kill into a survivor.
 
 Saying that a position reaches nothing is a claim about the code rather than a
-gap in the measurement, and it rests on two premises: that instrumentation
-described the position, so a target's silence about it is a fact, and that
-every target routing reads carries coverage, so its silence is readable. A
-position both premises hold for, and no such target executed, is `unreached`:
-nothing runs, and the finding says no test executes this code. A library's
-documentation is not among the targets routing reads — it carries no coverage
-by construction rather than by accident, and `doctests-not-routed` says so.
+gap in the measurement, and it holds only for a target that was measured, was
+asked, and answered that nothing of it reached the site. A mutation no such
+target reached is `unreached`: nothing runs, and the finding says no test
+executes this code. The route names every target that was in a position to
+notice and did not. Naming them rather than counting them is what lets
+`xtask proofaudit` re-derive the layer rather than confirm that the engine
+said it.
 
-Where a premise fails there is no proof, and the fallback is toward running
-more. The package suite — every target the run prepared, in one execution —
-settles the mutation instead, and the route says which premise failed:
-`position-unknown` where the catalog could not say where the mutation is,
-`outside-blocks` where no instrumented region contains the position, and
-`coverage-incomplete` where a measured target carries no coverage at all.
-The suite's answer is an ordinary kill or survival, so no accounting column
-holds a mutation whose disposition rests on an absence of evidence.
+A library's documented examples are not among the targets a measurement names.
+rustdoc compiles them while cargo runs them, so no instrumented build reaches
+them — they are not unmeasured targets, they are targets this measurement is
+not about — and they reach a mutation when it is in a file their library is
+made of. `doctests-routed-by-file` says so, on every report where one ran.
 
 `unreached` is not `surviving`; both are `survived` in the mutant inventory,
 so the accounting equations below are unaffected by how a mutant was routed.
 
+The rule itself lives in the engine, and this runner asks it rather than
+keeping one of its own. Two rules for one question disagree eventually, and
+the disagreement this pair would make is a kill reported as a survivor.
+
 ### Discharging a test a branch proof rules out
 
-A reaching set decided by region is narrowed once more where the mutation
+A reaching set the measurement decided is narrowed once more where the mutation
 itself carries a proof. rust-mutants publishes one for an edit that can only
 make the condition of an `if` or a `while` less often true, and it names the
 span of the body that condition gates, from its opening brace to its closing
@@ -132,72 +161,83 @@ the reaching set without being executed, and named in the route's
 pays, never what it concludes.
 
 The narrowing applies only where the evidence carries it. It is attempted on a
-route decided by region with no fallback, and never on one decided by file. It
-requires that the body was instrumented at all — some instrumented region must
-begin inside the span — because otherwise no target's silence about the body
-means anything. A fuzz target is never discharged: it explores inputs beyond
-the corpus its coverage was measured on. Neither is a target restored from a
-checkpoint, which carries no regions to argue with.
+route the measurement decided with no fallback, and never on one that widened.
+It requires that the instrumenter wrote the body's marker at all, because
+otherwise no target's silence about the body means anything. A fuzz target is
+never discharged: it explores inputs beyond the corpus its measurement was
+taken on.
 
 A mutant every reaching target was discharged for is resolved without a single
 execution, and reported as a `surviving-mutant`. That no test takes the branch
 the mutation narrows is the finding — a real gap in the suite, stated for the
-cost of reading a coverage profile.
+cost of reading a record the baseline already wrote.
 
-### Discharging a test the probe pass shows cannot observe the mutation
+### Discharging a test that never saw the mutation make a difference
 
-A reaching set decided by region is narrowed a second time by what the probe
-pass measured. Write reaching for the routing decision as a whole:
+A reaching set the measurement decided is narrowed a second time by what the
+guards recorded. Write reaching for the routing decision as a whole:
 
 ```text
-reaching(m, t) = covered-region(m, t)
+reaching(m, t) = touched(m, t)
                ∧ ¬branch-discharged(m, t)
-               ∧ ¬(probed(m) ∧ measured(t) ∧ m ∉ infected(t))
+               ∧ ¬(compared(m) ∧ measured(t) ∧ m ∉ infected(t))
 ```
 
-The probe tree is the program the user wrote, with no mutant ever active. For
-each mutation the engine has a probe form of, that tree records — without
-effects of its own — whether the value the original computed at the mutated
-site ever differed from the constant the mutant would put there. The engine
-runs a test binary whole and records what that binary infected, so what the
-pass measures is a binary rather than one of its tests; a binary that never saw
-the site differ is one whose every test never saw it differ, and each of that
-binary's targets ran the original program and the mutated one through identical
-states. None of them can have observed the mutation. Such a target is
-*discharged* with reason `never-infected`. The coarseness costs discharges and
-never soundness: one test of a binary seeing the site differ keeps every test of
-that binary.
+The guard the instrumented tree carries for a mutation has two sides: the one
+the mutant takes when it is active, and the one the original takes when it is
+not. For a mutation the engine has a question for, the second side compares the
+value the original computed at the mutated site against the one the mutant
+would have put there, and records the site when the two differ. Nothing is
+built or run for this. The run that establishes the baseline is the run that
+records it, and it is the same run that records which test reached which site:
+one execution answers both questions, because the questions are about the same
+moment.
+
+The engine runs a test binary whole, so what it records is that some test of a
+binary saw the site differ and not which one; a binary that never saw it differ
+is one whose every test ran the original program and the mutated one through
+identical states, and none of them can have observed the mutation. Such a
+target is *discharged* with reason `never-infected`. The coarseness costs
+discharges and never soundness: one test of a binary seeing the site differ
+keeps every test of that binary.
 
 That the recording is a proof is the engine's obligation. A mutant does not
-evaluate the operand it replaced, so rust-mutants attaches a probe form only
-where leaving that operand unevaluated changes nothing observable — every
-operand of the statement is effect-free — where the recorded comparison is
-always reached — the replaced operand cannot panic — and where equal values
-mean equal behaviour. That last one is the narrowest. A probe reads `==` as the
-answer to whether a test could have seen the replacement, so it is stated only
-for the types whose equality is the whole of what a program can tell apart: the
-integers, `bool`, `char`, and the unit. The compiler itself refuses every other
-probe. A float is refused because `-0.0 == 0.0` holds and `-0.0` is not what
-the default writes; an equality that answers about one field while a test reads
-another is refused because the probe would otherwise say a test saw nothing
-while it watched the difference, and the discharge would remove the test that
-finds the defect. mjutest states nothing about a site the engine did not claim,
-and holds what the engine does claim to the recorded kills of every dogfood
-run through the offline `proofaudit` infection layer.
+evaluate the operand it replaced, so a question is attached only where leaving
+that operand unevaluated changes nothing observable — every operand of the
+statement is effect-free — where the recorded comparison is always reached —
+the replaced operand cannot panic — and where equal values mean equal
+behaviour. That last one is the narrowest, and it is the compiler that enforces
+it: the comparison is written against a sealed trait, and a type outside it
+does not compile. What is inside is the integers, `bool`, `char`, the unit,
+`str`, `String`, `Option<T>`, `Vec<T>`, and a reference to any of them — the
+types whose equality is the whole of what a program can tell apart. A float is
+refused because `-0.0 == 0.0` holds and `-0.0` is not what the default writes;
+an equality that answers about one field while a test reads another is refused
+because it would otherwise say a test saw nothing while it watched the
+difference, and the discharge would remove the test that finds the defect.
+
+The question is put to the compiler before it is written into the tree that has
+to build, on the pass that already asks whether each mutation is accepted. A
+site the compiler will not vouch for loses its question and keeps its mutation:
+the mutant is executed and measured like any other. njutest states nothing
+about a site the engine did not claim, and holds what the engine does claim to
+the recorded kills of every dogfood run through the offline `proofaudit`
+infection layer.
 
 The narrowing applies only where the measurement carries it, and everything
-else is kept. A mutant the engine compiled no probe form for — `probed` is
-false — is absent from every measurement there will ever be, so its absence
-from one says nothing. A target the pass did not measure carries no facts at
-all. Both proofs may answer for targets of the same route; they are applied in
-order — branch first, then infection.
+else is kept. A mutation the instrumented tree carries no comparison for —
+`compared` is false — is absent from every measurement there will ever be, so
+its absence from one says nothing. A target the guards did not record carries
+no facts at all. Both proofs may answer for targets of the same route; they are
+applied in order — branch first, then infection.
 
-The probe narrows and never widens. The pass runs each test binary whole, so
-what it records is that some test in a binary infected the mutation and not
+The infection layer narrows and never widens. It records per binary, so what it
+holds is that some test of a binary saw the mutation make a difference and not
 which one: putting a target back on the strength of that would put every test
-of the binary back, whatever the coverage of each said. The case it would be
-for — coverage silent about work the tests do — is the one the package suite
-already answers, and the suite runs more than the widening would.
+of the binary back, whatever the record of each said. The case it would be for
+— a measurement silent about work the tests do — is the one a fallback already
+answers, and a fallback runs every test of every target, which is more than
+the widening would.
 
 All three narrowings are proof layers in the sense of
 [ADR 0004](adr/0004-proof-layers-not-budgets.md): an execution is removed only
@@ -219,8 +259,8 @@ deterministic compiler nor a correct one
 Identical is what the engine says. `equivalent` is what this run says, and
 only where five premises hold: a control still builds the original to the
 bytes it built to, no test wrote into the tree while it was being measured,
-the package holds no `unsafe`, the route was decided by region and named at
-least one target, and no killer was recorded. The fourth carries the layer.
+the package holds no `unsafe`, the route was decided by the measurement with
+no fallback and named at least one target, and no killer was recorded. The fourth carries the layer.
 A mutation of a function no test calls is dropped by the linker and the
 artifacts come out identical for the opposite of a reassuring reason, so a
 mutation nothing reached keeps its finding whatever the compiler did with it.
@@ -298,6 +338,16 @@ executing them. A kill is an existential claim and a survival is the
 universal one; the two are reused under conditions of the same shape, over
 one target and over every target respectively.
 
+A believed record is an execution that did not happen, so this is a layer and
+[ADR 0004](adr/0004-proof-layers-not-budgets.md) decision 4 asks the same of it
+as of any other: the route of every mutant records either the run whose answer
+it took or why it took none — `nothing-recorded`, `unreadable`,
+`target-unknown`, `not-routed`, `key-changed`, `not-passing`,
+`target-entered`, `nothing-routed` — and never both. A run that kept no store
+of earlier answers records neither, which is what parts it from a run whose
+store refuses everything: told only how long the two took, nobody can tell
+them apart.
+
 #### A kill
 
 Reused when: the mutant has the same content-addressed identity; the recorded
@@ -311,16 +361,18 @@ Reused when the mutant has the same identity and **every** target this run's
 coverage routes to it, after every discharge, is one of the recorded targets
 with the same key, seen to pass by this run's baseline. A reaching set smaller
 than the recorded one is still covered; a target that entered it is a test
-nothing was ever run against. Fuzz targets and targets restored from a
-checkpoint disqualify a survival in both directions.
+nothing was ever run against. Fuzz targets disqualify a survival in both
+directions.
 
 #### A mutant the evidence cannot say nothing reaches
 
-Settled by running the package suite, which runs every prepared target, so the
-claim is recorded as the conjunction of those targets' own behaviour keys: a
-target that enters or leaves the suite refuses reuse where one key over the
-package would have hidden it. A mutant both premises of `unreached` hold for
-is a claim about the code and is reused by nothing.
+Settled by running the targets the route widened to, so the claim is recorded
+as the conjunction of those targets' own behaviour keys: a target that enters
+or leaves the route refuses reuse where one key over the package would have
+hidden it. A record this run cannot resolve to the targets its own baseline
+saw pass is neither believed nor written, because half of a set is a smaller
+claim wearing the same name. A mutant the premise of `unreached` holds for is
+a claim about the code and is reused by nothing.
 
 #### A timeout
 
@@ -344,7 +396,7 @@ given to it.
 
 An expired budget remains inconclusive under every bound. The record names the
 target time ran out under as the **last** of its executed targets, stored in
-execution order. `mjutest replay <finding-id>` bypasses
+execution order. `njutest replay <finding-id>` bypasses
 evidence entirely, which is how a timeout is deliberately re-run.
 
 #### The behaviour key
@@ -355,7 +407,7 @@ binary links (the package's own tests included, dependencies' tests excluded),
 the files beside those crates that `include_str!`, `include_bytes!`, and a
 build script's `rerun-if-changed` name, the manifests, the `Cargo.lock`
 checksums, the toolchain, the platform, the selected environment, the
-contract, the test arguments, the features, both timeouts, the mjutest and
+contract, the test arguments, the features, both timeouts, the njutest and
 rust-mutants versions, and a fuzz target's corpus. Diagnostics — tracing,
 kept temporaries — and parallelism are outside every key.
 
@@ -382,7 +434,7 @@ package with a build script whose `rerun-if-changed` cannot be read keys the
 whole tree as well. Nothing is excluded from testing or reuse by name.
 
 Two kinds of kill are neither recorded nor believed: a kill fuzzing found, and
-a kill by a batch or a package suite that does not name the killer. Reuse is
+a kill by a batch that does not name the killer. Reuse is
 confined to a first round, the whole project, no configured resources, and no
 replay. Nothing expires a record; a stale record is removed by being
 contradicted.
@@ -396,9 +448,62 @@ of the run reading it.
 ## Acceptances
 
 An acceptance is human authorization, not a mutation result. It requires a
-finding ID, non-empty reason, future RFC3339 expiry, and may carry owner and
-ticket. Every mutation marked `accepted` must reference a matching record.
-Expired acceptances are ignored.
+finding ID and a non-empty reason, and may carry an RFC3339 expiry, an owner
+and a ticket; `njutest accept` writes all of them. Every mutation marked
+`accepted` must reference a matching record. An acceptance whose expiry has
+passed answers for nothing, and the findings it was hiding are raised again:
+the expiry is when the reviewer said to look again, and a run that read it as
+a comment would go on exempting a mutation on the strength of a decision its
+author had already put an end to. One that names no date never lapses, which
+is what a reviewer who wrote none asked for.
+
+## Parts of one catalog
+
+`njutest verify --shard K/N` divides the judging. Every part measures the whole
+baseline, because a mutation cannot be judged against tests that were not run;
+what a shard divides is which mutations are put to those tests. The rule is the
+engine's, so both products cut a catalog the same way: the dense catalog index
+modulo N, counting K from one. Two runs of the same tree therefore agree about
+which part holds which mutation without saying a word to each other, and every
+mutation belongs to exactly one part — nothing is sampled, nothing is skipped,
+and no execution is paid for twice.
+
+That is what keeps dividing the work out of
+[ADR 0004](adr/0004-proof-layers-not-budgets.md)'s way. A budget decides not to
+run something; this decides which machine runs it. The parts balance by count
+rather than by cost, so a part holding a slow mutation takes longer, and how
+long is something to measure rather than to predict.
+
+A part concludes `PARTIAL` and records its shard. It assures nothing on its own:
+the mutations it did not judge are not mutations nothing noticed, they are
+mutations nobody put to a test, and a report that called that an assurance would
+be claiming the one thing it did not look at. A finding in a part is a finding,
+so a part that found a defect says `DEFECT`.
+
+`njutest merge <REPORT>…` writes the report the whole would have written. It
+passes one already unsharded report through, or requires exactly one report for
+every label `1/N` through `N/N`. It refuses no parts at all; a missing,
+repeated, malformed, mixed unsharded, or differently divided part; parts that
+disagree about the tree, configuration, contract, effective
+scope, or runner and engine versions; and two parts that both judged one
+mutation. Only a complete set is allowed to become an unsharded report: an
+absent shard has no mutant row with which to overlap, so disjoint rows alone
+cannot prove that the union is the whole. These refusals are this runner's and
+not the engine's. A run report is a collection of what running something said,
+and two collections add up whatever produced them; an assurance report is one
+claim, that a contract was met, and a claim assembled from a part that met it
+and a part that met something else is true of neither.
+
+The mutant rows of the whole are the union of the parts'. Its accounting is
+derived from that union rather than added up from what each part counted, so the
+whole's columns say what the whole's own records say. The exception is
+`accepted`, which is a fact about a reviewer rather than about a mutation and
+appears in no record, and is therefore summed — each mutation belongs to one
+part, so each acceptance is counted once. No score crosses a merge at all: two
+ratios over different denominators average into a number no run observed.
+
+Every run's identity carries its shard, so a part never reads back the whole's
+stored answer and a whole never reads back a part's.
 
 ## DEFECT, INSUFFICIENT, and ERROR
 

@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Failure modes of the engine, each with a stable code documented in `docs/errors.md`.
@@ -10,107 +10,148 @@ pub struct ErrorCode {
     pub code: &'static str,
     /// One line saying what the code means.
     pub summary: &'static str,
+    /// What to do about it, when there is one thing to do rather than a hundred.
+    ///
+    /// A remedy is the next step, not an explanation: a flag to pass, a
+    /// component to install, a variable to unset. Where the message already
+    /// names the file and the line, there is nothing a remedy could add and it
+    /// is `None`.
+    pub remedy: Option<&'static str>,
 }
 
 /// A rule name the canonical registry does not know.
 const RULE_UNKNOWN: ErrorCode = ErrorCode {
     code: "RM9001",
     summary: "a rule name the canonical registry does not know",
+    remedy: Some("`rust-mutants rules` lists every rule this release knows"),
 };
 
 /// A pattern that is not a pattern.
 const GLOB_INVALID: ErrorCode = ErrorCode {
     code: "RM9002",
     summary: "a pattern the caller gave is not a pattern",
+    remedy: None,
 };
 
 /// A duration that is not a duration.
 const DURATION_INVALID: ErrorCode = ErrorCode {
     code: "RM9003",
     summary: "a duration the caller gave is not a duration",
+    remedy: Some("write a duration as 30s, 5m, or 1h30m"),
 };
 
-const INTERRUPTED: ErrorCode = ErrorCode {
+/// The caller cancelled before the operation finished, so nothing it saw says anything.
+pub const INTERRUPTED: ErrorCode = ErrorCode {
     code: "RM0001",
     summary: "the caller cancelled the operation before it completed",
+    remedy: None,
 };
 
 /// A configuration file that could not be read. The command line reports it; the ledger of `RM` codes is one, so it lives here.
 pub const CONFIG_UNREADABLE: ErrorCode = ErrorCode {
     code: "RM0002",
     summary: "a configuration file that could not be read",
+    remedy: None,
 };
 
 /// A configuration file that is not the document this version understands.
 pub const CONFIG_UNPARSABLE: ErrorCode = ErrorCode {
     code: "RM0003",
     summary: "a configuration file that is not the document this version understands",
+    remedy: None,
 };
 
 /// A configuration that parses but says something a run cannot honour.
 pub const CONFIG_INVALID: ErrorCode = ErrorCode {
     code: "RM0004",
     summary: "a configuration that parses but says something a run cannot honour",
+    remedy: None,
 };
 
 /// A configuration whose `version` is not one this release understands.
 pub const CONFIG_UNSUPPORTED_VERSION: ErrorCode = ErrorCode {
     code: "RM0005",
     summary: "a configuration whose version is not one this release understands",
+    remedy: None,
 };
 
 /// A process environment that already selects a mutant.
 pub const ENVIRONMENT_RESERVED: ErrorCode = ErrorCode {
     code: "RM0006",
     summary: "a process environment that already selects a mutant or names a catalog",
+    remedy: Some("unset the RUST_MUTANTS_ variable the message names and run again"),
 };
 
 /// A stored run report that is not there or cannot be read.
 pub const REPORT_MISSING: ErrorCode = ErrorCode {
     code: "RM0007",
     summary: "a stored run report that is not there or cannot be read",
+    remedy: None,
 };
 
 /// A file a command would write that is already there.
 pub const FILE_EXISTS: ErrorCode = ErrorCode {
     code: "RM0008",
     summary: "a file a command would write that is already there",
+    remedy: None,
 };
 
 /// A directory a command has to write to and could not.
 pub const WRITE_FAILED: ErrorCode = ErrorCode {
     code: "RM0009",
     summary: "a report or configuration file that could not be written",
+    remedy: None,
 };
 
 /// A coverage export that could not be read.
 pub const COVERAGE_UNREADABLE: ErrorCode = ErrorCode {
     code: "RM6001",
     summary: "a coverage export that could not be read",
+    remedy: None,
 };
 
 /// The LLVM tools the toolchain ships, not installed.
 pub const COVERAGE_TOOLS_MISSING: ErrorCode = ErrorCode {
     code: "RM6002",
     summary: "the LLVM tools the toolchain ships are not installed",
+    remedy: Some("rustup component add llvm-tools, or run with --no-coverage"),
 };
 
 /// One of the LLVM tools failed.
 pub const COVERAGE_TOOL_FAILED: ErrorCode = ErrorCode {
     code: "RM6003",
     summary: "llvm-profdata or llvm-cov failed",
+    remedy: None,
 };
 
 /// A test process wrote no coverage profile at all.
 pub const COVERAGE_NOTHING_WRITTEN: ErrorCode = ErrorCode {
     code: "RM6004",
     summary: "a test process wrote no coverage profile at all",
+    remedy: None,
 };
 
 /// A change set that git could not be asked for.
 pub const CHANGE_SET_UNAVAILABLE: ErrorCode = ErrorCode {
     code: "RM0010",
     summary: "a change set git could not be asked for, which is never read as nothing changing",
+    remedy: Some("run inside a git working tree, or name what to measure with --include"),
+};
+
+/// Reports that are not the parts of one whole.
+pub const MERGE_REFUSED: ErrorCode = ErrorCode {
+    code: "RM0011",
+    summary: "the reports given are not the parts of one catalog",
+    remedy: Some(
+        "merge the parts of one run: the same tree, the same catalog, and one report per --shard",
+    ),
+};
+
+/// A source a report names that the tree does not hold.
+pub const SOURCE_UNREADABLE: ErrorCode = ErrorCode {
+    code: "RM0012",
+    summary: "a source file a report names cannot be read from the root given",
+    remedy: Some("pass --root at the tree the run measured, or check the file out again"),
 };
 
 macro_rules! snapshot_code {
@@ -118,6 +159,14 @@ macro_rules! snapshot_code {
         pub(crate) const $name: ErrorCode = ErrorCode {
             code: $code,
             summary: $summary,
+            remedy: None,
+        };
+    };
+    ($name:ident, $code:literal, $summary:literal, $remedy:literal) => {
+        pub(crate) const $name: ErrorCode = ErrorCode {
+            code: $code,
+            summary: $summary,
+            remedy: Some($remedy),
         };
     };
 }
@@ -203,6 +252,18 @@ snapshot_code!(
     "a --message-format=json line is not a message"
 );
 snapshot_code!(
+    WORKSPACE_REACHES_OUTSIDE,
+    "RM1017",
+    "the workspace reads code from outside itself, which a copy of it does not hold",
+    "--allow-outside DIR copies that directory beside the tree, or [project] allow_outside does"
+);
+snapshot_code!(
+    ROOT_IS_NOT_THE_WORKSPACE,
+    "RM1018",
+    "the root is a member of a workspace rather than the workspace",
+    "run with --root at the workspace root the message names, and --package to narrow it"
+);
+snapshot_code!(
     DEP_INFO_UNREADABLE,
     "RM2001",
     "a dep-info file has no rule to read"
@@ -236,6 +297,18 @@ snapshot_code!(
     DISCOVER_UNKNOWN_PACKAGE,
     "RM2007",
     "a selected package is not a workspace member"
+);
+snapshot_code!(
+    DISCOVER_ANNOTATION_WITHOUT_REASON,
+    "RM2008",
+    "a rust-mutants: skip marker names no reason",
+    "write the marker as `rust-mutants: skip <why this place is not worth measuring>`"
+);
+snapshot_code!(
+    DISCOVER_UNKNOWN_ANNOTATION,
+    "RM2009",
+    "a rust-mutants marker names a directive this release does not know",
+    "`skip` is the only directive this release knows"
 );
 snapshot_code!(
     INSTRUMENT_UNKNOWN_MUTANT,
@@ -275,7 +348,8 @@ snapshot_code!(
 snapshot_code!(
     VALIDATE_NOT_MUTANT_INDUCED,
     "RM4001",
-    "the tree does not compile before any mutant is live"
+    "the tree does not compile before any mutant is live",
+    "make `cargo test --no-run` pass on the tree as committed, then run again"
 );
 snapshot_code!(
     VALIDATE_NOT_ISOLATED,
@@ -290,12 +364,14 @@ snapshot_code!(
 snapshot_code!(
     SESSION_PRISTINE_BROKEN,
     "RM5001",
-    "the workspace does not compile before anything is instrumented"
+    "the workspace does not compile before anything is instrumented",
+    "make `cargo test --no-run` pass on the tree as committed, then run again"
 );
 snapshot_code!(
     SESSION_VERIFY_FAILED,
     "RM5002",
-    "the instrumented baseline fails a test the pristine tree passes"
+    "the instrumented baseline fails a test the pristine tree passes",
+    "[execution] skip_targets leaves that target out; --no-verify makes every result a result about instrumentation"
 );
 snapshot_code!(
     SESSION_UNKNOWN_MUTANT,
@@ -387,6 +463,8 @@ pub const fn error_codes() -> &'static [ErrorCode] {
         FILE_EXISTS,
         WRITE_FAILED,
         CHANGE_SET_UNAVAILABLE,
+        MERGE_REFUSED,
+        SOURCE_UNREADABLE,
         SNAPSHOT_INVALID_OPTIONS,
         SNAPSHOT_SOURCE_ROOT,
         SNAPSHOT_WALK,
@@ -403,6 +481,8 @@ pub const fn error_codes() -> &'static [ErrorCode] {
         CARGO_COMMAND_FAILED,
         CARGO_METADATA_UNPARSABLE,
         CARGO_MESSAGE_UNPARSABLE,
+        WORKSPACE_REACHES_OUTSIDE,
+        ROOT_IS_NOT_THE_WORKSPACE,
         DEP_INFO_UNREADABLE,
         DEP_INFO_MISSING,
         DISCOVER_FILE_UNREADABLE,
@@ -410,6 +490,8 @@ pub const fn error_codes() -> &'static [ErrorCode] {
         DISCOVER_OUTSIDE_ROOT,
         DISCOVER_CATALOG_FAILED,
         DISCOVER_UNKNOWN_PACKAGE,
+        DISCOVER_ANNOTATION_WITHOUT_REASON,
+        DISCOVER_UNKNOWN_ANNOTATION,
         INSTRUMENT_UNKNOWN_MUTANT,
         INSTRUMENT_SOURCE_MISMATCH,
         INSTRUMENT_SITE_CONFLICT,

@@ -1,150 +1,79 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Validation: the compiler decides which mutants are real, one at a time, with its own words attached to every refusal.
 
 #![expect(
-    clippy::expect_used,
     clippy::indexing_slicing,
-    clippy::too_many_lines,
     reason = "a test reports a setup failure by panicking, asserts with panics, and reads as a table"
 )]
 
-use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::PathBuf;
 
-use rust_mutants::cargo::{
-    CompileKind, CompileOptions, Driver, LocateOptions, Message, Metadata, MetadataOptions,
-    Toolchain, compile,
-};
-use rust_mutants::catalog::{Builder, Catalog};
-use rust_mutants::instrument::{Placement, instrument_file, plan_file};
-use rust_mutants::rule::{Registry, Tier};
+use rust_mutants::cargo::Message;
+use rust_mutants::instrument::{Instrumenting, instrument_file};
+use rust_mutants::rule::Tier;
 use rust_mutants::runner::Cancel;
-use rust_mutants::syntax::{Selection, discover_file};
+use rust_mutants::testkit::compile::{
+    ScriptedCompile, diagnostic_at, diagnostic_beside, diagnostic_noted,
+};
 use rust_mutants::trace::Recorder;
 use rust_mutants::validate::{
-    Attempt, Compile, ValidateError, ValidateOptions, Validated, attribute, validate,
+    Attempt, Compile, ValidateError, ValidateOptions, Validated, Validating, attribute, validate,
+    validate_selected,
 };
-
-static REGISTRY: Registry = Registry::canonical();
-
-/// Instruments one file for real, then decides the outcome from a script: which mutants are poison, and whether their diagnostic points inside the branch (attributable) or somewhere else (not).
-struct Scripted {
-    path: String,
-    source: Vec<u8>,
-    placements: Vec<Placement>,
-    catalog: Catalog,
-    attributable: BTreeSet<u32>,
-    unattributable: BTreeSet<u32>,
-    attempts: RefCell<Vec<BTreeSet<u32>>>,
-}
-
-impl Scripted {
-    fn new(source: &str, attributable: &[u32], unattributable: &[u32]) -> Self {
-        let selection = Selection::tier(&REGISTRY, Tier::All);
-        let discovery =
-            discover_file("src/lib.rs", source.as_bytes(), &selection).expect("discover");
-        let mut builder = Builder::new();
-        for found in &discovery.candidates {
-            builder.add(found.candidate.clone()).expect("add");
-        }
-        let catalog = builder.build().expect("catalog");
-        let placements = plan_file(&catalog, "src/lib.rs", &discovery.candidates).expect("plan");
-        Self {
-            path: "src/lib.rs".to_owned(),
-            source: source.as_bytes().to_vec(),
-            placements,
-            catalog,
-            attributable: attributable.iter().copied().collect(),
-            unattributable: unattributable.iter().copied().collect(),
-            attempts: RefCell::new(Vec::new()),
-        }
-    }
-
-    fn attempts(&self) -> Vec<BTreeSet<u32>> {
-        self.attempts.borrow().clone()
-    }
-}
-
-impl Compile for Scripted {
-    fn attempt(&mut self, condemned: &BTreeSet<u32>) -> Result<Attempt, ValidateError> {
-        self.attempts.borrow_mut().push(condemned.clone());
-        let kept: Vec<Placement> = self
-            .placements
-            .iter()
-            .filter(|placement| !condemned.contains(&placement.index))
-            .cloned()
-            .collect();
-        let file = instrument_file(&self.path, &self.source, &kept, self.catalog.digest())?;
-        let live: BTreeSet<u32> = kept.iter().map(|placement| placement.index).collect();
-        let mut messages = Vec::new();
-        for index in self.attributable.intersection(&live) {
-            let branch = file
-                .branches
-                .iter()
-                .find(|branch| branch.index == *index)
-                .expect("a branch for a live mutant");
-            messages.push(error_at(
-                &self.path,
-                branch.span.start,
-                branch.span.end,
-                *index,
-            ));
-        }
-        for index in self.unattributable.intersection(&live) {
-            messages.push(error_at(&self.path, 0, 1, *index));
-        }
-        let success = messages.is_empty();
-        messages.push(Message::BuildFinished { success });
-        Ok(Attempt {
-            files: vec![file],
-            messages,
-            success,
-        })
-    }
-}
-
-/// A `compiler-message` whose primary span covers `[start, end)`.
-fn error_at(path: &str, start: u32, end: u32, index: u32) -> Message {
-    let json = format!(
-        r#"{{"reason":"compiler-message","package_id":"p","manifest_path":"/w/Cargo.toml","target":{{"kind":["lib"],"crate_types":["lib"],"name":"demo","src_path":"/w/src/lib.rs","edition":"2024"}},"message":{{"message":"mutant {index} does not compile","code":{{"code":"E0999","explanation":""}},"level":"error","spans":[{{"file_name":"{path}","byte_start":{start},"byte_end":{end},"line_start":1,"line_end":1,"column_start":1,"column_end":2,"is_primary":true,"text":[],"label":null}}],"children":[],"rendered":"error[E0999]: mutant {index} does not compile\n"}}}}"#
-    );
-    rust_mutants::cargo::parse_messages(json.as_bytes()).expect("json")[0].clone()
-}
 
 fn options() -> ValidateOptions {
     ValidateOptions::default()
 }
 
-fn run(scripted: &mut Scripted) -> Result<Validated, ValidateError> {
-    let catalog = scripted.catalog.clone();
-    validate(&catalog, scripted, options(), &Recorder::disabled())
+fn validating<'a>(cancel: &'a Cancel, trace: &'a Recorder) -> Validating<'a> {
+    Validating {
+        options: options(),
+        cancel,
+        trace,
+    }
+}
+
+fn scripted(attributable: &[u32], unattributable: &[u32]) -> ScriptedCompile {
+    ScriptedCompile::from_source("src/lib.rs", SOURCE, Tier::All)
+        .refusing(attributable, unattributable)
+}
+
+fn run(scripted: &mut ScriptedCompile) -> Result<Validated, ValidateError> {
+    let catalog = scripted.catalog().clone();
+    validate(
+        &catalog,
+        scripted,
+        &validating(&Cancel::new(), &Recorder::disabled()),
+    )
 }
 
 const SOURCE: &str = "pub fn f(a: i32, b: i32) -> i32 {\n    let c = a + b;\n    let d = a - b;\n    let e = a * b;\n    c + d + e\n}\n";
 
 #[test]
 fn an_error_inside_a_branch_belongs_to_that_mutant_and_one_outside_belongs_to_nobody() {
-    let scripted = Scripted::new(SOURCE, &[], &[]);
-    let file = instrument_file(
-        "src/lib.rs",
-        &scripted.source,
-        &scripted.placements,
-        scripted.catalog.digest(),
-    )
+    let scripted = scripted(&[], &[]);
+    let file = instrument_file(&Instrumenting {
+        path: "src/lib.rs",
+        source: scripted.source(),
+        placements: scripted.placements(),
+        markers: &[],
+        comparable: &BTreeSet::default(),
+        probed: &BTreeMap::default(),
+        catalog_digest: scripted.catalog().digest(),
+    })
     .expect("instrument");
     let branch = file.branches[2];
     let messages = vec![
-        error_at(
+        diagnostic_at(
             "src/lib.rs",
             branch.span.start,
             branch.span.end,
             branch.index,
         ),
-        error_at("src/lib.rs", 0, 1, 999),
-        error_at("src/other.rs", branch.span.start, branch.span.end, 7),
+        diagnostic_at("src/lib.rs", 0, 1, 999),
+        diagnostic_at("src/other.rs", branch.span.start, branch.span.end, 7),
     ];
     let attributed = attribute(&[file], &messages);
     assert_eq!(attributed.condemned, BTreeSet::from([branch.index]));
@@ -162,16 +91,19 @@ fn an_error_inside_a_branch_belongs_to_that_mutant_and_one_outside_belongs_to_no
 
 #[test]
 fn a_warning_is_not_a_rejection() {
-    let scripted = Scripted::new(SOURCE, &[], &[]);
-    let file = instrument_file(
-        "src/lib.rs",
-        &scripted.source,
-        &scripted.placements,
-        scripted.catalog.digest(),
-    )
+    let scripted = scripted(&[], &[]);
+    let file = instrument_file(&Instrumenting {
+        path: "src/lib.rs",
+        source: scripted.source(),
+        placements: scripted.placements(),
+        markers: &[],
+        comparable: &BTreeSet::default(),
+        probed: &BTreeMap::default(),
+        catalog_digest: scripted.catalog().digest(),
+    })
     .expect("instrument");
     let branch = file.branches[0];
-    let warning = error_at(
+    let warning = diagnostic_at(
         "src/lib.rs",
         branch.span.start,
         branch.span.end,
@@ -188,21 +120,75 @@ fn a_warning_is_not_a_rejection() {
 
 #[test]
 fn a_tree_that_compiles_is_accepted_whole_in_one_round() {
-    let mut scripted = Scripted::new(SOURCE, &[], &[]);
+    let mut scripted = scripted(&[], &[]);
     let validated = run(&mut scripted).expect("validate");
     assert_eq!(validated.rounds, 1);
     assert!(validated.rejections.is_empty());
     assert_eq!(
         validated.accepted.len(),
-        scripted.catalog.len(),
+        scripted.catalog().len(),
         "every mutant is accepted"
     );
     assert_eq!(scripted.attempts(), [BTreeSet::new()]);
 }
 
 #[test]
+fn a_selected_validation_claims_only_the_indices_it_was_asked_about() {
+    let mut scripted = scripted(&[1], &[]);
+    let catalog = scripted.catalog().clone();
+    let selected = BTreeSet::from([1, 3]);
+    let validated = validate_selected(
+        &catalog,
+        &selected,
+        &mut scripted,
+        &validating(&Cancel::new(), &Recorder::disabled()),
+    )
+    .expect("validate the selected candidates");
+
+    assert_eq!(validated.accepted, [3]);
+    assert_eq!(
+        validated
+            .rejections
+            .iter()
+            .map(|rejection| rejection.index)
+            .collect::<Vec<_>>(),
+        [1]
+    );
+    assert!(
+        validated
+            .accepted
+            .iter()
+            .chain(
+                validated
+                    .rejections
+                    .iter()
+                    .map(|rejection| &rejection.index)
+            )
+            .all(|index| selected.contains(index)),
+        "validation must make no claim about a candidate outside the requested selection"
+    );
+}
+
+#[test]
+fn an_empty_selected_validation_still_compiles_the_pristine_tree_once() {
+    let mut scripted = scripted(&[], &[]);
+    let catalog = scripted.catalog().clone();
+    let validated = validate_selected(
+        &catalog,
+        &BTreeSet::new(),
+        &mut scripted,
+        &validating(&Cancel::new(), &Recorder::disabled()),
+    )
+    .expect("the build gate still runs");
+
+    assert!(validated.accepted.is_empty());
+    assert!(validated.rejections.is_empty());
+    assert_eq!(scripted.attempts(), [BTreeSet::new()]);
+}
+
+#[test]
 fn an_attributable_error_condemns_one_mutant_and_costs_one_more_round() {
-    let mut scripted = Scripted::new(SOURCE, &[1, 4], &[]);
+    let mut scripted = scripted(&[1, 4], &[]);
     let validated = run(&mut scripted).expect("validate");
     assert_eq!(validated.rounds, 2, "both are attributed in the same round");
     let rejected: Vec<u32> = validated
@@ -214,7 +200,7 @@ fn an_attributable_error_condemns_one_mutant_and_costs_one_more_round() {
     assert!(!validated.accepted.contains(&1) && !validated.accepted.contains(&4));
     assert_eq!(
         validated.accepted.len(),
-        scripted.catalog.len() - 2,
+        scripted.catalog().len() - 2,
         "a refusal never costs a sibling"
     );
     let rejection = &validated.rejections[0];
@@ -223,7 +209,7 @@ fn an_attributable_error_condemns_one_mutant_and_costs_one_more_round() {
     assert_eq!(rejection.path, "src/lib.rs");
     assert_eq!(
         rejection.id,
-        scripted.catalog.by_index(1).expect("mutant").id
+        scripted.catalog().by_index(1).expect("mutant").id
     );
     assert_eq!(
         scripted.attempts(),
@@ -233,7 +219,7 @@ fn an_attributable_error_condemns_one_mutant_and_costs_one_more_round() {
 
 #[test]
 fn an_unattributable_error_is_isolated_by_bisection() {
-    let mut scripted = Scripted::new(SOURCE, &[], &[3]);
+    let mut scripted = scripted(&[], &[3]);
     let validated = run(&mut scripted).expect("validate");
     let rejected: Vec<u32> = validated
         .rejections
@@ -248,7 +234,7 @@ fn an_unattributable_error_is_isolated_by_bisection() {
         scripted.attempts()
     );
     assert!(!validated.accepted.contains(&3));
-    assert_eq!(validated.accepted.len(), scripted.catalog.len() - 1);
+    assert_eq!(validated.accepted.len(), scripted.catalog().len() - 1);
 }
 
 #[test]
@@ -259,19 +245,19 @@ fn a_pristine_tree_that_does_not_compile_is_not_the_mutants_fault() {
             Ok(Attempt {
                 files: Vec::new(),
                 messages: vec![
-                    error_at("src/lib.rs", 0, 1, 0),
+                    diagnostic_at("src/lib.rs", 0, 1, 0),
                     Message::BuildFinished { success: false },
                 ],
                 success: false,
+                written: 0,
             })
         }
     }
-    let scripted = Scripted::new(SOURCE, &[], &[]);
+    let scripted = scripted(&[], &[]);
     let error = validate(
-        &scripted.catalog,
+        scripted.catalog(),
         &mut Broken,
-        options(),
-        &Recorder::disabled(),
+        &validating(&Cancel::new(), &Recorder::disabled()),
     )
     .unwrap_err();
     assert!(
@@ -281,231 +267,222 @@ fn a_pristine_tree_that_does_not_compile_is_not_the_mutants_fault() {
     assert!(error.to_string().contains("RM4001"), "{error}");
 }
 
-/// Instruments a copy of a fixture and compiles it with a real cargo.
-struct CargoScripted {
-    root: PathBuf,
-    sources: BTreeMap<String, Vec<u8>>,
-    placements: BTreeMap<String, Vec<Placement>>,
-    catalog: Catalog,
-    toolchain: Toolchain,
-    target: PathBuf,
-    _dir: tempfile::TempDir,
-    _target: tempfile::TempDir,
-}
-
-impl Compile for CargoScripted {
-    fn attempt(&mut self, condemned: &BTreeSet<u32>) -> Result<Attempt, ValidateError> {
-        let mut files = Vec::new();
-        for (path, placements) in &self.placements {
-            let kept: Vec<Placement> = placements
-                .iter()
-                .filter(|placement| !condemned.contains(&placement.index))
-                .cloned()
-                .collect();
-            let source = &self.sources[path];
-            let file = instrument_file(path, source, &kept, self.catalog.digest())
-                .map_err(ValidateError::from)?;
-            std::fs::write(self.root.join(path), &file.text).map_err(|error| {
-                ValidateError::AttemptFailed {
-                    message: format!("cannot write {path}: {error}"),
-                }
-            })?;
-            files.push(file);
-        }
-        let cancel = Cancel::new();
-        let trace = Recorder::disabled();
-        let checked = compile(
-            &Driver {
-                toolchain: &self.toolchain,
-                dir: &self.root,
-                cancel: &cancel,
-                trace: &trace,
-            },
-            &CompileOptions {
-                kind: CompileKind::Tests,
-                packages: Vec::new(),
-                target_dir: Some(self.target.clone()),
-                locked: true,
-                offline: true,
-                timeout: None,
-                env: Vec::new(),
-            },
-        )
-        .map_err(ValidateError::from)?;
-        Ok(Attempt {
-            files,
-            messages: checked.messages,
-            success: checked.success,
-        })
-    }
-}
-
-fn prepare_fixture(name: &str) -> CargoScripted {
-    let dir = tempfile::Builder::new()
-        .prefix("rust-mutants-validate-")
-        .tempdir()
-        .expect("tempdir");
-    let root = dir.path().join(name);
-    copy_dir(&mjutest_devkit::paths::fixtures_dir().join(name), &root);
-    let target = tempfile::Builder::new()
-        .prefix("rust-mutants-validate-target-")
-        .tempdir()
-        .expect("tempdir");
+#[test]
+fn a_cancelled_round_ends_validation_with_the_cancellation_code() {
     let cancel = Cancel::new();
-    let trace = Recorder::disabled();
-    let toolchain = Toolchain::locate(
-        &LocateOptions {
-            cargo: Some(mjutest_devkit::paths::cargo_binary()),
-            ..LocateOptions::default()
-        },
-        &root,
-        &cancel,
+    let mut scripted = ScriptedCompile::from_source("src/lib.rs", SOURCE, Tier::All)
+        .refusing(&[0], &[])
+        .cancelling_at(2, &cancel);
+    let catalog = scripted.catalog().clone();
+    let error = validate(
+        &catalog,
+        &mut scripted,
+        &validating(&cancel, &Recorder::disabled()),
     )
-    .expect("locate");
-    let driver = Driver {
-        toolchain: &toolchain,
-        dir: &root,
-        cancel: &cancel,
-        trace: &trace,
-    };
-    let metadata = Metadata::load(
-        &driver,
-        MetadataOptions {
-            locked: true,
-            offline: true,
-        },
-    )
-    .expect("metadata");
-    let checked = compile(
-        &driver,
-        &CompileOptions {
-            kind: CompileKind::Check,
-            packages: Vec::new(),
-            target_dir: Some(target.path().to_path_buf()),
-            locked: true,
-            offline: true,
-            timeout: None,
-            env: Vec::new(),
-        },
-    )
-    .expect("check");
-    let discovery = rust_mutants::discover::discover(
-        &rust_mutants::discover::Input {
-            root: &root,
-            metadata: &metadata,
-            units: &checked.units,
-        },
-        &rust_mutants::discover::DiscoverOptions {
-            selection: Selection::tier(&REGISTRY, Tier::All),
-            include: Vec::new(),
-            exclude: Vec::new(),
-            packages: Vec::new(),
-        },
-        &trace,
-    )
-    .expect("discover");
-    let found: Vec<rust_mutants::syntax::Found> = discovery
-        .candidates
-        .iter()
-        .map(|located| located.found.clone())
-        .collect();
-    let mut sources = BTreeMap::new();
-    let mut placements = BTreeMap::new();
-    for file in &discovery.files {
-        if file.candidates == 0 {
-            continue;
-        }
-        sources.insert(
-            file.path.clone(),
-            std::fs::read(root.join(&file.path)).expect("read"),
-        );
-        placements.insert(
-            file.path.clone(),
-            plan_file(&discovery.catalog, &file.path, &found).expect("plan"),
-        );
-    }
-    CargoScripted {
-        root,
-        sources,
-        placements,
-        catalog: discovery.catalog,
-        toolchain,
-        target: target.path().to_path_buf(),
-        _dir: dir,
-        _target: target,
-    }
+    .expect_err("a cancelled validation does not finish");
+    assert_eq!(error.code().code, "RM0001");
+    assert_eq!(
+        scripted.attempts().len(),
+        2,
+        "the round that was cancelled is the last one, and no bisection follows it"
+    );
 }
 
-fn copy_dir(from: &std::path::Path, to: &std::path::Path) {
-    std::fs::create_dir_all(to).expect("mkdir");
-    for entry in std::fs::read_dir(from).expect("read_dir") {
-        let entry = entry.expect("entry");
-        if entry.file_name() == "target" {
-            continue;
-        }
-        let destination = to.join(entry.file_name());
-        if entry.file_type().expect("type").is_dir() {
-            copy_dir(&entry.path(), &destination);
-        } else {
-            std::fs::copy(entry.path(), &destination).expect("copy");
-        }
+#[test]
+fn a_cancelled_compilation_condemns_nobody() {
+    let cancel = Cancel::new();
+    let mut scripted = ScriptedCompile::from_source("src/lib.rs", SOURCE, Tier::All)
+        .refusing(&[], &[0])
+        .cancelling_at(1, &cancel);
+    let catalog = scripted.catalog().clone();
+    let error = validate(
+        &catalog,
+        &mut scripted,
+        &validating(&cancel, &Recorder::disabled()),
+    )
+    .expect_err("a cancelled validation does not finish");
+    assert!(
+        matches!(error, ValidateError::Cancelled),
+        "a build nobody waited for is not a build that failed, and reading it as one condemns \
+         mutants the compiler never refused: {error:?}"
+    );
+}
+
+#[test]
+fn a_diagnostic_whose_primary_span_is_elsewhere_is_attributed_through_its_secondary_span() {
+    let scripted = scripted(&[], &[]);
+    let file = instrument_file(&Instrumenting {
+        path: "src/lib.rs",
+        source: scripted.source(),
+        placements: scripted.placements(),
+        markers: &[],
+        comparable: &BTreeSet::default(),
+        probed: &BTreeMap::default(),
+        catalog_digest: scripted.catalog().digest(),
+    })
+    .expect("instrument");
+    let branch = file.branches[1];
+    let attributed = attribute(
+        &[file],
+        &[diagnostic_beside(
+            "src/lib.rs",
+            branch.span.start,
+            branch.span.end,
+            branch.index,
+        )],
+    );
+    assert_eq!(
+        attributed.condemned,
+        BTreeSet::from([branch.index]),
+        "the compiler points at the place it decided, which for a type error is often the \
+         definition; the edit it is about is named by another span of the same message"
+    );
+    assert!(attributed.unattributed.is_empty());
+}
+
+#[test]
+fn a_diagnostic_whose_edit_is_named_only_by_a_child_note_is_attributed_through_it() {
+    let scripted = scripted(&[], &[]);
+    let file = instrument_file(&Instrumenting {
+        path: "src/lib.rs",
+        source: scripted.source(),
+        placements: scripted.placements(),
+        markers: &[],
+        comparable: &BTreeSet::default(),
+        probed: &BTreeMap::default(),
+        catalog_digest: scripted.catalog().digest(),
+    })
+    .expect("instrument");
+    let branch = file.branches[2];
+    let attributed = attribute(
+        &[file],
+        &[diagnostic_noted(
+            "src/lib.rs",
+            branch.span.start,
+            branch.span.end,
+            branch.index,
+        )],
+    );
+    assert_eq!(attributed.condemned, BTreeSet::from([branch.index]));
+    assert!(attributed.unattributed.is_empty());
+}
+
+#[test]
+fn a_diagnostic_that_names_no_branch_anywhere_still_belongs_to_nobody() {
+    let scripted = scripted(&[], &[]);
+    let file = instrument_file(&Instrumenting {
+        path: "src/lib.rs",
+        source: scripted.source(),
+        placements: scripted.placements(),
+        markers: &[],
+        comparable: &BTreeSet::default(),
+        probed: &BTreeMap::default(),
+        catalog_digest: scripted.catalog().digest(),
+    })
+    .expect("instrument");
+    let attributed = attribute(&[file], &[diagnostic_beside("src/lib.rs", 0, 1, 999)]);
+    assert!(
+        attributed.condemned.is_empty(),
+        "reading more spans widens what can be attributed, never what is guessed"
+    );
+    assert_eq!(attributed.unattributed.len(), 1);
+}
+
+#[test]
+fn each_isolated_offender_is_compiled_alone_once_to_capture_its_own_diagnostic() {
+    let mut scripted = scripted(&[], &[1, 3]);
+    let validated = run(&mut scripted).expect("validated");
+    let mut refused: Vec<&rust_mutants::validate::Rejection> =
+        validated.rejections.iter().collect();
+    refused.sort_by_key(|one| one.index);
+    let indices: Vec<u32> = refused.iter().map(|one| one.index).collect();
+    assert_eq!(indices, [1, 3]);
+    for one in &refused {
+        assert!(
+            one.isolated,
+            "bisection compiled it alone and it still failed, which is what isolated means"
+        );
+        assert!(
+            one.diagnostic.contains(&format!("mutant {} ", one.index)),
+            "an offender bisection named carries the compiler's words about itself, not a \
+             sentence saying there were none: {}",
+            one.diagnostic
+        );
+        assert_eq!(one.code.as_deref(), Some("E0999"));
     }
 }
 
 #[test]
-fn the_compiler_decides_which_mutants_are_real_and_says_why_for_each() {
-    let mut fixture = prepare_fixture("fixture-rejectable");
-    let catalog = fixture.catalog.clone();
-    let validated =
-        validate(&catalog, &mut fixture, options(), &Recorder::disabled()).expect("validate");
-
-    let mut rejected: Vec<(&str, &str)> = validated
-        .rejections
-        .iter()
-        .map(|rejection| {
-            (
-                catalog
-                    .by_index(rejection.index)
-                    .expect("mutant")
-                    .candidate
-                    .rule
-                    .name,
-                rejection.code.as_deref().unwrap_or(""),
-            )
-        })
-        .collect();
-    rejected.sort_unstable();
+fn an_interaction_of_two_mutants_condemns_the_pair_and_says_so() {
+    let mut scripted =
+        ScriptedCompile::from_source("src/lib.rs", SOURCE, Tier::All).interacting(&[1, 3]);
+    let validated = run(&mut scripted).expect("validated");
+    let mut indices: Vec<u32> = validated.rejections.iter().map(|one| one.index).collect();
+    indices.sort_unstable();
     assert_eq!(
-        rejected,
-        [
-            ("add-to-sub", "E0369"),
-            ("mul-to-div", "unconditional_panic"),
-            ("range-to-inclusive", "E0308"),
-            ("return-default", "E0277"),
+        indices,
+        [1, 3],
+        "neither half fails alone, so the pair is what the compiler refused"
+    );
+    for one in &validated.rejections {
+        assert!(
+            !one.isolated,
+            "nothing was isolated: each of them compiles on its own"
+        );
+        let other = if one.index == 1 { "3" } else { "1" };
+        assert!(
+            one.diagnostic
+                .contains(&format!("together with {other}, and each of them compiles")),
+            "a mutant condemned for what it does with another is told which one: {}",
+            one.diagnostic
+        );
+        assert!(
+            one.diagnostic.contains("does not compile"),
+            "and keeps the compiler's own words about the pair: {}",
+            one.diagnostic
+        );
+    }
+}
+
+#[test]
+fn a_message_before_an_error_does_not_stop_the_reading_of_the_rest() {
+    let scripted = scripted(&[], &[]);
+    let file = instrument_file(&Instrumenting {
+        path: "src/lib.rs",
+        source: scripted.source(),
+        placements: scripted.placements(),
+        markers: &[],
+        comparable: &BTreeSet::default(),
+        probed: &BTreeMap::default(),
+        catalog_digest: scripted.catalog().digest(),
+    })
+    .expect("instrument");
+    let branch = file.branches[0];
+    let at = |index: u32| diagnostic_at("src/lib.rs", branch.span.start, branch.span.end, index);
+    let Message::CompilerMessage(mut warning) = at(branch.index) else {
+        panic!("a compiler message");
+    };
+    warning.message.level = "warning".to_owned();
+
+    let alone = attribute(std::slice::from_ref(&file), &[at(branch.index)]);
+    assert_eq!(
+        alone.condemned.len(),
+        1,
+        "the error on its own condemns the mutant it names"
+    );
+
+    let after = attribute(
+        &[file],
+        &[
+            Message::BuildFinished { success: false },
+            Message::CompilerMessage(warning),
+            at(branch.index),
         ],
-        "{:?}",
-        validated
-            .rejections
-            .iter()
-            .map(|r| r.diagnostic.lines().next().unwrap_or(""))
-            .collect::<Vec<_>>()
-    );
-    assert!(
-        validated
-            .rejections
-            .iter()
-            .any(|rejection| rejection.diagnostic.contains("cannot subtract")),
-        "the compiler's own words are attached"
     );
     assert_eq!(
-        validated.accepted.len() + validated.rejections.len(),
-        catalog.len(),
-        "every mutant is accounted for"
+        after.condemned, alone.condemned,
+        "and a message that is not the compiler's, and a warning, are each passed over rather \
+         than ending the reading: a build that stopped at the first of them would accept every \
+         mutant the compiler refused after it"
     );
-    assert!(validated.rounds >= 2);
-
-    let final_attempt = fixture
-        .attempt(&validated.rejections.iter().map(|r| r.index).collect())
-        .expect("attempt");
-    assert!(final_attempt.success, "the accepted tree compiles");
 }

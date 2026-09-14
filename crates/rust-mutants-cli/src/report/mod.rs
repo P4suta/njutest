@@ -1,11 +1,22 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Rendering what the engine established, for a person and for a program.
 
 pub mod doctor;
 pub mod html;
-pub mod run;
+pub mod junit;
+pub mod markdown;
+pub mod sarif;
+pub mod sources;
+
+pub use rust_mutants::report::catalog::{
+    CatalogDocument, MutantDocument, PlatformDocument, RejectionDocument, SelectionDocument,
+    SkipDocument, WorkspaceDocument, document, mutant_document, rejection_documents,
+    selection_document, skip_documents, workspace_document,
+};
+/// The run as a document, as the engine writes it.
+pub use rust_mutants::report::run;
 pub mod stryker;
 
 use std::collections::BTreeMap;
@@ -16,7 +27,6 @@ use rust_mutants::discover::Discovery;
 use rust_mutants::execute::MutantResult;
 use rust_mutants::session::Session;
 use rust_mutants::syntax::{Position, Skip};
-use serde::{Deserialize, Serialize};
 
 /// `path:line:column`, the spelling every editor and every `::warning` consumer already understands.
 #[must_use]
@@ -32,10 +42,17 @@ pub fn position_in(source: &str, offset: u32) -> Position {
 
 /// One line per candidate: what it is, where it is, and what it does.
 #[must_use]
-pub fn list(discovery: &Discovery, sources: &BTreeMap<String, String>) -> String {
+pub fn list(
+    discovery: &Discovery,
+    sources: &BTreeMap<String, String>,
+    file: Option<&str>,
+) -> String {
     let mut text = String::new();
     for located in &discovery.candidates {
         let candidate = &located.found.candidate;
+        if file.is_some_and(|wanted| candidate.path != wanted) {
+            continue;
+        }
         let mutant = discovery
             .catalog
             .by_id(&candidate.id().unwrap_or_default())
@@ -81,6 +98,81 @@ pub fn why_skipped(skips: &[Skip]) -> String {
     }
     if text.is_empty() {
         text.push_str("nothing was passed over\n");
+    }
+    text
+}
+
+/// Every decision the walk took in one file, in source order.
+///
+/// The tally says how much each reason hid; this says what each place was, so
+/// a reader asking "why is there no mutant here" is answered about the place
+/// rather than about the file.
+#[must_use]
+pub fn decisions(discovery: &Discovery, file: &str, line: Option<u32>) -> String {
+    let mut text = String::new();
+    let Some(report) = discovery.files.iter().find(|one| one.path == file) else {
+        let written = writeln!(text, "{file} is not a file this run reads");
+        debug_assert!(written.is_ok(), "writing to a String cannot fail");
+        return text;
+    };
+    if let Some(reason) = report.whole_file {
+        let written = writeln!(
+            text,
+            "{file} was passed over whole: {}\n          {}",
+            reason.name(),
+            reason.explanation()
+        );
+        debug_assert!(written.is_ok(), "writing to a String cannot fail");
+        return text;
+    }
+    for decision in &discovery.decisions {
+        if decision.path != file {
+            continue;
+        }
+        if line.is_some_and(|wanted| decision.position.line != wanted) {
+            continue;
+        }
+        let what = match (decision.form, decision.skip) {
+            (Some(form), _) => form.letter().to_owned(),
+            (None, Some(reason)) => reason.name().to_owned(),
+            (None, None) => String::from("-"),
+        };
+        let note = decision
+            .note
+            .as_ref()
+            .map(|note| format!("  {note:?}"))
+            .unwrap_or_default();
+        let written = writeln!(
+            text,
+            "{}:{}  {:<26}  {what}{note}",
+            decision.position.line, decision.position.byte_column, decision.rule
+        );
+        debug_assert!(written.is_ok(), "writing to a String cannot fail");
+    }
+    if text.is_empty() {
+        let written = writeln!(text, "no rule targets anything there");
+        debug_assert!(written.is_ok(), "writing to a String cannot fail");
+    }
+    text
+}
+
+/// What the compiler refused, with its own words.
+#[must_use]
+pub fn rejections(session: &Session) -> String {
+    let mut text = String::new();
+    for rejection in session.rejections() {
+        let written = writeln!(
+            text,
+            "{} {}  {}\n          {}",
+            rejection.id.get(..20).unwrap_or(&rejection.id),
+            rejection.rule,
+            rejection.path,
+            rejection.diagnostic.lines().next().unwrap_or_default()
+        );
+        debug_assert!(written.is_ok(), "writing to a String cannot fail");
+    }
+    if text.is_empty() {
+        text.push_str("the compiler refused nothing\n");
     }
     text
 }
@@ -141,307 +233,85 @@ fn one_line(mutant: &Mutant) -> String {
     )
 }
 
-/// The catalog as one JSON document.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CatalogDocument {
-    /// Names the shape, so a reader can tell versions apart.
-    pub document_type: String,
-    /// The version of that shape.
-    pub schema_version: u32,
-    /// The engine that produced it.
-    pub tool_version: String,
-    /// The tree that was read.
-    pub workspace: WorkspaceDocument,
-    /// What the run asked for.
-    pub selection: SelectionDocument,
-    /// Every mutant the compiler accepted.
-    pub mutants: Vec<MutantDocument>,
-    /// Every candidate the compiler refused.
-    pub rejections: Vec<RejectionDocument>,
-    /// Every place discovery passed over.
-    pub skips: Vec<SkipDocument>,
-}
-
-/// The tree a catalog was read from.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct WorkspaceDocument {
-    /// The name of the directory the source root sits in.
-    pub root_name: String,
-    /// The toolchain, as it names itself.
-    pub toolchain: String,
-    /// The frozen digest of the copied tree.
-    pub workspace_digest: String,
-    /// The digest of the catalog itself.
-    pub catalog_digest: String,
-    /// Where it ran.
-    pub platform: PlatformDocument,
-}
-
-/// The machine a run happened on.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PlatformDocument {
-    /// The operating system.
-    pub os: String,
-    /// The architecture.
-    pub arch: String,
-    /// The target triple.
-    pub target: String,
-}
-
-/// What a run asked for.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct SelectionDocument {
-    /// The tier, when the run did not name operators.
-    pub tier: String,
-    /// The operators the run named.
-    pub operators: Vec<String>,
-    /// The include patterns.
-    pub include: Vec<String>,
-    /// The exclude patterns.
-    pub exclude: Vec<String>,
-    /// The packages.
-    pub packages: Vec<String>,
-}
-
-/// One accepted mutant.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct MutantDocument {
-    /// The dense catalog index the guards name.
-    pub index: u32,
-    /// The full identity.
-    pub id: String,
-    /// The short identity a person types.
-    pub display_id: String,
-    /// The workspace-relative path.
-    pub path: String,
-    /// The package that owns the file.
-    pub package: String,
-    /// The family the rule belongs to.
-    pub family: String,
-    /// The rule's name.
-    pub rule: String,
-    /// The rule's version, which enters the identity.
-    pub rule_version: u32,
-    /// The 1-based line of the edit.
-    pub line: u32,
-    /// The 1-based byte column of the edit.
-    pub column: u32,
-    /// The first byte of the edit.
-    pub start_byte: u32,
-    /// One past the last byte of the edit.
-    pub end_byte: u32,
-    /// The bytes the edit replaces.
-    pub original: String,
-    /// What they become.
-    pub replacement: String,
-}
-
-/// One refused candidate.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RejectionDocument {
-    /// The full identity.
-    pub id: String,
-    /// The short identity.
-    pub display_id: String,
-    /// The workspace-relative path.
-    pub path: String,
-    /// The rule that proposed it.
-    pub rule: String,
-    /// The compiler's error code, when it had one.
-    pub code: Option<String>,
-    /// What the compiler said.
-    pub diagnostic: String,
-}
-
-/// One reason places were passed over, and how many.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct SkipDocument {
-    /// The reason's name.
-    pub reason: String,
-    /// The workspace-relative path.
-    pub path: String,
-    /// How many candidates it hid.
-    pub count: u32,
-    /// One sentence about the reason.
-    pub explanation: String,
-}
-
-/// The catalog of a prepared session as a document.
+/// Everything one run established about one mutant, as the lines a person reads.
 #[must_use]
-pub fn document(session: &Session, config: &crate::config::Config) -> CatalogDocument {
-    CatalogDocument {
-        document_type: "rust-mutants/catalog".to_owned(),
-        schema_version: 1,
-        tool_version: rust_mutants::VERSION.to_owned(),
-        workspace: workspace_document(session),
-        selection: selection_document(config),
-        mutants: session
-            .accepted()
-            .iter()
-            .filter_map(|index| session.catalog().by_index(*index))
-            .map(|mutant| mutant_document(session, mutant))
-            .collect(),
-        rejections: rejection_documents(session),
-        skips: skip_documents(session),
-    }
-}
-
-/// The tree a session read, as a document.
-#[must_use]
-pub fn workspace_document(session: &Session) -> WorkspaceDocument {
-    let host = session.toolchain().host().to_owned();
-    let (arch, os) = host.split_once('-').unwrap_or((&host, ""));
-    WorkspaceDocument {
-        root_name: session.root_name(),
-        toolchain: session.toolchain().rustc_version().summary.clone(),
-        workspace_digest: session.workspace_digest().to_owned(),
-        catalog_digest: session.catalog().digest().to_owned(),
-        platform: PlatformDocument {
-            os: os.rsplit('-').next().unwrap_or_default().to_owned(),
-            arch: arch.to_owned(),
-            target: host.clone(),
-        },
-    }
-}
-
-/// What a command asked for, as a document.
-#[must_use]
-pub fn selection_document(config: &crate::config::Config) -> SelectionDocument {
-    SelectionDocument {
-        tier: config.mutation.tier.name().to_owned(),
-        operators: config.mutation.operators.clone(),
-        include: config.project.include.clone(),
-        exclude: config.project.exclude.clone(),
-        packages: config.project.packages.clone(),
-    }
-}
-
-/// Every candidate the compiler refused, as documents.
-#[must_use]
-pub fn rejection_documents(session: &Session) -> Vec<RejectionDocument> {
-    session
-        .rejections()
-        .iter()
-        .map(|rejection| RejectionDocument {
-            id: rejection.id.clone(),
-            display_id: rejection.display_id.clone(),
-            path: rejection.path.clone(),
-            rule: rejection.rule.clone(),
-            code: rejection.code.clone(),
-            diagnostic: rejection.diagnostic.clone(),
-        })
-        .collect()
-}
-
-/// Every place discovery passed over, as documents.
-#[must_use]
-pub fn skip_documents(session: &Session) -> Vec<SkipDocument> {
-    session
-        .skips()
-        .iter()
-        .map(|skip| SkipDocument {
-            reason: skip.reason.name().to_owned(),
-            path: skip.path.clone(),
-            count: skip.count,
-            explanation: skip.reason.explanation().to_owned(),
-        })
-        .collect()
-}
-
-/// One accepted mutant, as a document.
-#[must_use]
-pub fn mutant_document(session: &Session, mutant: &Mutant) -> MutantDocument {
-    let position = session.position(mutant).unwrap_or(Position {
-        line: 0,
-        byte_column: 0,
-        char_column: 0,
-    });
-    MutantDocument {
-        index: mutant.index,
-        id: mutant.id.clone(),
-        display_id: mutant.display_id.clone(),
-        path: mutant.candidate.path.clone(),
-        package: session
-            .package_of(mutant.index)
-            .unwrap_or_default()
-            .to_owned(),
-        family: mutant.candidate.rule.family.name().to_owned(),
-        rule: mutant.candidate.rule.name.to_owned(),
-        rule_version: mutant.candidate.rule.version,
-        line: position.line,
-        column: position.byte_column,
-        start_byte: mutant.candidate.span.start,
-        end_byte: mutant.candidate.span.end,
-        original: String::from_utf8_lossy(&mutant.candidate.original).into_owned(),
-        replacement: String::from_utf8_lossy(&mutant.candidate.replacement).into_owned(),
-    }
-}
-
-/// Everything known about one mutant.
-#[must_use]
-pub fn explain(session: &Session, mutant: &Mutant, source: Option<&str>) -> String {
-    let candidate = &mutant.candidate;
-    let where_ = source.map_or_else(
-        || format!("{}:{}", candidate.path, candidate.span),
-        |source| at(&candidate.path, position_in(source, candidate.span.start)),
-    );
+pub fn explained(document: &rust_mutants::report::explain::ExplainDocument) -> String {
+    let one = &document.mutant;
     let mut text = String::new();
-    for (label, value) in [
-        ("mutant", mutant.id.clone()),
-        ("short", mutant.display_id.clone()),
-        ("index", mutant.index.to_string()),
-        (
-            "rule",
-            format!("{} ({})", candidate.rule, candidate.rule.family.name()),
-        ),
-        ("where", where_),
-        (
-            "edit",
-            format!(
-                "{:?} => {:?}",
-                String::from_utf8_lossy(&candidate.original),
-                String::from_utf8_lossy(&candidate.replacement)
-            ),
-        ),
-        ("file", candidate.source_digest.clone()),
-    ] {
+    let mut say = |label: &str, value: &str| {
         let written = writeln!(text, "{label:<9} {value}");
         debug_assert!(written.is_ok(), "writing to a String cannot fail");
+    };
+    say("MUTANT", &one.id);
+    say("SHORT", &one.display_id);
+    say(
+        "RULE",
+        &format!("{}@{} ({})", one.rule, one.rule_version, one.family),
+    );
+    say(
+        "WHERE",
+        &format!("{}:{}:{}", one.path, one.line, one.column),
+    );
+    say(
+        "EDIT",
+        &format!("{:?} => {:?}", one.original, one.replacement),
+    );
+    if let Some(run) = &document.run_id {
+        say("RUN", run);
     }
-    text.push_str(&verdict(session, mutant));
-    text
-}
-
-/// What the compiler made of one mutant, and what would run it.
-fn verdict(session: &Session, mutant: &Mutant) -> String {
-    let mut text = String::new();
-    if let Some(rejection) = session
-        .rejections()
-        .iter()
-        .find(|rejection| rejection.id == mutant.id)
-    {
-        text.push_str("verdict   refused by the compiler\n");
-        for line in rejection.diagnostic.lines() {
-            let written = writeln!(text, "          {line}");
-            debug_assert!(written.is_ok(), "writing to a String cannot fail");
+    match (&document.outcome, &document.refused) {
+        (_, Some(diagnostic)) => {
+            say("OUTCOME", "refused by the compiler");
+            for line in diagnostic.lines() {
+                say("", line);
+            }
         }
-        return text;
+        (Some(outcome), None) => {
+            say("OUTCOME", outcome);
+            if let Some(target) = &document.target {
+                say("TARGET", target);
+            }
+            if !document.killed_by.is_empty() {
+                say("KILLED BY", &document.killed_by.join(", "));
+            }
+            if let Some(milliseconds) = document.duration_ms {
+                say(
+                    "TIMING",
+                    &format!(
+                        "{milliseconds} ms{}",
+                        if document.retried { ", retried" } else { "" }
+                    ),
+                );
+            }
+        }
+        (None, None) => say("OUTCOME", "no stored run answers for it"),
     }
-    text.push_str("verdict   accepted; it compiles and can be executed\n");
-    let targets: Vec<&str> = session
-        .targets()
-        .iter()
-        .map(|target| target.id.as_str())
-        .collect();
-    let written = writeln!(text, "targets   {}", targets.join(", "));
-    debug_assert!(written.is_ok(), "writing to a String cannot fail");
+    if let Some(route) = &document.route {
+        say(
+            "ROUTE",
+            &format!(
+                "{} reaching [{}] executed [{}]",
+                route.granularity,
+                route.reaching.join(", "),
+                route.executed.join(", ")
+            ),
+        );
+        for (target, tests) in &route.tests {
+            say("TESTS", &format!("{target}: {}", tests.join(", ")));
+        }
+        for one in &route.discharged {
+            say("PROVED", &format!("{}: {}", one.target, one.proof));
+        }
+    }
+    say("REPRODUCE", &document.reproduce);
+    match (&document.diff, &document.source) {
+        (Some(diff), _) => {
+            text.push('\n');
+            text.push_str(diff);
+        }
+        (None, Some(why)) => say("DIFF", &format!("none: {why}")),
+        (None, None) => {}
+    }
     text
 }
 
@@ -483,4 +353,112 @@ pub const fn exit_code(outcome: rust_mutants::outcome::Outcome) -> u8 {
         Outcome::Survived => 1,
         _ => crate::EXIT_USAGE,
     }
+}
+
+/// The run as lines a person reads: the tally, the score, and every finding.
+#[must_use]
+/// What a whole run would have started, what this one started, and what removed the rest.
+///
+/// A report from before the target list was written carries no work line at
+/// all: a share of nothing is not nought per cent, and a reader shown one
+/// would read a run that measured everything as a run that measured nothing.
+fn work_line(document: &run::RunDocument) -> String {
+    let work = rust_mutants::work::Work::of(document);
+    if work.whole == 0 {
+        return String::new();
+    }
+    let removed: Vec<String> = work
+        .removed
+        .iter()
+        .map(|one| format!("{}={}", one.reason, one.pairs))
+        .collect();
+    let mut line = format!(
+        "WORK      started={} of {} pairs across {} targets; {:.1}% removed",
+        work.started,
+        work.whole,
+        work.targets,
+        work.saved() * 100.0
+    );
+    if !removed.is_empty() {
+        let written = write!(line, " ({})", removed.join(" "));
+        debug_assert!(written.is_ok(), "writing to a String cannot fail");
+    }
+    if work.tests_whole > 0 {
+        let written = write!(
+            line,
+            "\n          tests={} of {}; {:.1}% removed",
+            work.tests_started,
+            work.tests_whole,
+            work.tests_saved() * 100.0
+        );
+        debug_assert!(written.is_ok(), "writing to a String cannot fail");
+        if work.established_tests() > 0 {
+            let written = write!(
+                line,
+                " ({} of them establishing that a filtered set answers on its own)",
+                work.established_tests()
+            );
+            debug_assert!(written.is_ok(), "writing to a String cannot fail");
+        }
+    }
+    if !work.answers_for_the_whole() {
+        line.push_str("\n          this run was asked for less than the whole catalog");
+    }
+    line.push('\n');
+    line
+}
+
+/// The stored run as the lines a person reads.
+#[must_use]
+pub fn lines(document: &run::RunDocument) -> String {
+    let a = &document.accounting;
+    let mut text = String::new();
+    let written = write!(
+        text,
+        "run       {}\nworkspace {}\ncatalog   {}\n\n\
+         MUTANTS   cataloged={} refused={} skipped={} executed={}\n\
+         OUTCOMES  killed={} survived={} timed_out={} inconclusive={} errored={} not_run={} \
+         unreached={} discharged={} expected={}\n",
+        document.run.id,
+        document.workspace.workspace_digest,
+        document.workspace.catalog_digest,
+        a.cataloged,
+        a.refused,
+        a.skipped,
+        a.executed,
+        a.killed,
+        a.survived,
+        a.timed_out,
+        a.inconclusive,
+        a.errored,
+        a.not_run,
+        a.unreached,
+        a.discharged,
+        a.expected,
+    );
+    debug_assert!(written.is_ok(), "writing to a String cannot fail");
+    match &document.score {
+        Some(score) => {
+            let percent = score.value * 100.0;
+            let written = writeln!(
+                text,
+                "SCORE     {percent:.1}%  ({} detected of {} decided)",
+                score.detected, score.decided
+            );
+            debug_assert!(written.is_ok(), "writing to a String cannot fail");
+        }
+        None => text.push_str("SCORE     none; the run decided nothing\n"),
+    }
+    text.push_str(&work_line(document));
+    if !document.findings.is_empty() {
+        text.push('\n');
+        for one in &document.findings {
+            let written = writeln!(text, "{:<22} {}", one.kind, one.detail);
+            debug_assert!(written.is_ok(), "writing to a String cannot fail");
+        }
+    }
+    if document.run.interrupted {
+        text.push_str("\nINTERRUPTED  the run stopped before every mutant was executed\n");
+    }
+    text
 }

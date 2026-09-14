@@ -1,9 +1,9 @@
-# SPDX-FileCopyrightText: 2026 mjutest contributors
+# SPDX-FileCopyrightText: 2026 njutest contributors
 # SPDX-License-Identifier: MIT OR Apache-2.0
 #
-# cargo-fuzz against the engine's fail-closed parsers and byte
-# transformations (fuzz/README.md lists the targets and their properties).
-# A pull request that touches the engine or the harness gets a short smoke;
+# cargo-fuzz against the fail-closed parsers and byte transformations of both
+# products (fuzz/README.md lists the targets and their properties).
+# A pull request that touches either of them or the harness gets a short smoke;
 # the weekly run spends real time. A crash is uploaded as an artifact and is
 # a test to write, never an input to blame.
 name: fuzz
@@ -12,6 +12,7 @@ on:
   pull_request:
     paths:
       - "crates/rust-mutants/**"
+      - "crates/njutest-cli/**"
       - "fuzz/**"
       - ".github/workflows/fuzz.yml"
   schedule:
@@ -34,6 +35,10 @@ jobs:
     name: fuzz (${{ matrix.target }})
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    env:
+      # The repository pins stable in rust-toolchain.toml. Make the fuzz
+      # process select the nightly that the action below installs.
+      RUSTUP_TOOLCHAIN: nightly
     strategy:
       fail-fast: false
       matrix:
@@ -44,21 +49,30 @@ jobs:
           - splice
           - normalize_path
           - discover_file
+          - annotations
           - config
           - coverage_export
           - libtest_summary
           - report_document
+          - carried_answers
+          - offered_candidates
           - engine_config
           - run_report
+          - engine_coverage_export
+          - depinfo
+          - cargo_config
+          - libtest_lines
+          - cargo_messages
+          - cargo_metadata
+          - touch_log
+          - duration
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
-      # Fuzzing needs nightly for the sanitizer; the `toolchain` input
-      # overrides the pinned action's branch default.
-      - uses: dtolnay/rust-toolchain@f133eefe930d61f0d9371efd474daf0125ed3dd1 # stable branch
-        with:
-          toolchain: nightly
+      # Fuzzing needs nightly for the sanitizer. Each rust-toolchain action
+      # branch bakes in its toolchain, so pin the nightly branch itself.
+      - uses: dtolnay/rust-toolchain@be39649afda95dbf70f87cce95f68b8d5797b296 # nightly branch
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: fuzz
@@ -71,12 +85,12 @@ jobs:
       - name: Build
         working-directory: fuzz
         env:
-          TARGET: ${{ matrix.target }}
-        run: cargo fuzz build "$TARGET"
+          FUZZ_TARGET: ${{ matrix.target }}
+        run: cargo fuzz build --target x86_64-unknown-linux-gnu "$FUZZ_TARGET"
       - name: Run
         working-directory: fuzz
         env:
-          TARGET: ${{ matrix.target }}
+          FUZZ_TARGET: ${{ matrix.target }}
           EVENT: ${{ github.event_name }}
         run: |
           if [ "$EVENT" = "pull_request" ]; then
@@ -84,7 +98,11 @@ jobs:
           else
             budget="-max_total_time=1500"
           fi
-          cargo fuzz run "$TARGET" -- "$budget" -max_len=4096
+          if [ -d "fuzz/seeds/$FUZZ_TARGET" ]; then
+            mkdir -p "fuzz/corpus/$FUZZ_TARGET"
+            cp "fuzz/seeds/$FUZZ_TARGET/"* "fuzz/corpus/$FUZZ_TARGET/"
+          fi
+          cargo fuzz run --target x86_64-unknown-linux-gnu "$FUZZ_TARGET" -- "$budget" -max_len=4096
       - name: Upload crash artifacts
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7

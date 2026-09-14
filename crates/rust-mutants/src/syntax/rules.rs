@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What each operator token becomes, and which spellings already are the default a return replacement would produce.
@@ -93,8 +93,98 @@ pub(super) fn method_swap(name: &str) -> Option<(&'static str, &'static str)> {
         "is_err" => ("is-err-to-is-ok", "is_ok"),
         "max" => ("max-to-min", "min"),
         "min" => ("min-to-max", "max"),
+        "all" => ("all-to-any", "any"),
+        "any" => ("any-to-all", "all"),
+        "first" => ("first-to-last", "last"),
+        "last" => ("last-to-first", "first"),
+        "skip" => ("skip-to-take", "take"),
+        "take" => ("take-to-skip", "skip"),
+        "sum" => ("sum-to-product", "product"),
+        "product" => ("product-to-sum", "sum"),
         _ => return None,
     })
+}
+
+/// Whether a method's name says it answers a question, so that asking the opposite question is a mutation.
+///
+/// The four `Option` and `Result` predicates are left out: a swap already
+/// asks the opposite of each of them, and two rules writing the same question
+/// at one span is one mutation reported twice.
+pub(super) fn bool_method(name: &str) -> bool {
+    if matches!(name, "is_some" | "is_none" | "is_ok" | "is_err") {
+        return false;
+    }
+    name.starts_with("is_")
+        || name.starts_with("has_")
+        || matches!(
+            name,
+            "contains" | "contains_key" | "starts_with" | "ends_with"
+        )
+}
+
+/// The literal one more or one less than `lit`, written in the radix and with the suffix it was written with.
+///
+/// Rust spells no negative literal — `-1` is a unary minus on `1` — so zero
+/// has no predecessor to write, and a suffix that names a type bounds what
+/// the literal may become. What the syntax cannot spell is not offered, which
+/// is a mutation the compiler would have refused.
+#[must_use]
+pub fn respell_int(lit: &syn::LitInt, delta: i32) -> Option<String> {
+    let raw = lit.token().to_string();
+    let suffix = lit.suffix();
+    let digits = raw.strip_suffix(suffix).unwrap_or(&raw).replace('_', "");
+    let (prefix, radix) = match digits.get(..2) {
+        Some("0x" | "0X") => ("0x", 16),
+        Some("0o" | "0O") => ("0o", 8),
+        Some("0b" | "0B") => ("0b", 2),
+        _ => ("", 10),
+    };
+    let body = digits.get(prefix.len()..)?;
+    let value = u128::from_str_radix(body, radix).ok()?;
+    let moved = if delta < 0 {
+        value.checked_sub(1)?
+    } else {
+        value.checked_add(1)?
+    };
+    if moved > ceiling(suffix) {
+        return None;
+    }
+    let written = match radix {
+        16 => format!("{moved:x}"),
+        8 => format!("{moved:o}"),
+        2 => format!("{moved:b}"),
+        _ => format!("{moved}"),
+    };
+    Some(format!("{prefix}{written}{suffix}"))
+}
+
+/// The largest value a suffix says the literal may hold. An unsuffixed literal is bounded by nothing the syntax knows, and `usize` and `isize` are read as the sixty-four bit ones the compiler will settle.
+fn ceiling(suffix: &str) -> u128 {
+    match suffix {
+        "u8" => u128::from(u8::MAX),
+        "u16" => u128::from(u16::MAX),
+        "u32" => u128::from(u32::MAX),
+        "u64" | "usize" => u128::from(u64::MAX),
+        "i8" => i8::MAX.unsigned_abs().into(),
+        "i16" => i16::MAX.unsigned_abs().into(),
+        "i32" => i32::MAX.unsigned_abs().into(),
+        "i64" | "isize" => i64::MAX.unsigned_abs().into(),
+        "i128" => i128::MAX.unsigned_abs(),
+        _ => u128::MAX,
+    }
+}
+
+/// The `else` an `if` chain ends with, when the chain ends with a block rather than another `if`.
+pub(super) fn terminal_else(expr: &Expr) -> Option<(&syn::Block, &syn::Block)> {
+    let Expr::If(one) = expr else {
+        return None;
+    };
+    let (_, otherwise) = one.else_branch.as_ref()?;
+    match otherwise.as_ref() {
+        Expr::Block(block) => Some((&one.then_branch, &block.block)),
+        nested @ Expr::If(_) => terminal_else(nested),
+        _ => None,
+    }
 }
 
 /// The last path segment of `expr` when it is a bare path.
@@ -116,11 +206,20 @@ fn unary_call<'e>(expr: &'e Expr, name: &str) -> Option<&'e Expr> {
     call.args.first()
 }
 
-/// Whether `expr` is spelled as the value `Default::default()` would produce, as far as syntax can tell: `0`, `0.0`, `false`, `""`, `()`, `None`, `[]`, `vec![]`, `Default::default()`, `T::default()`, and a zero-argument `T::new()`. A return replacement that would write the same value again is not a mutation, so these produce no candidate. The list is necessarily incomplete; what it misses is an equivalent mutant that survives, never a missed defect.
+/// Whether `expr` is spelled as the value `Default::default()` would produce, as far as syntax can tell: `0`, `0.0`, `false`, `""`, `()`, `None`, `[]`, `&[]`, `vec![]`, `Default::default()`, `T::default()`, and a zero-argument `T::new()`. A return replacement that would write the same value again is not a mutation, so these produce no candidate. The list is necessarily incomplete; what it misses is an equivalent mutant that survives, never a missed defect.
+///
+/// A borrow counts only in front of an empty array. `<&[T]>::default()` is an
+/// empty slice, so `&[]` writes what the replacement would; nothing else the
+/// standard library implements `Default` for behind a reference is spelled
+/// this way, and unwrapping every borrow would refuse mutations a test can
+/// notice.
 pub(super) fn is_default_spelling(expr: &Expr) -> bool {
     match expr {
         Expr::Paren(paren) => is_default_spelling(&paren.expr),
         Expr::Group(group) => is_default_spelling(&group.expr),
+        Expr::Reference(borrow) => {
+            matches!(borrow.expr.as_ref(), Expr::Array(array) if array.elems.is_empty())
+        }
         Expr::Lit(lit) => match &lit.lit {
             Lit::Int(int) => int.base10_digits() == "0",
             Lit::Float(float) => float
@@ -147,6 +246,11 @@ pub(super) fn is_default_spelling(expr: &Expr) -> bool {
 /// Whether `expr` is `Ok(<default>)`.
 pub(super) fn is_ok_default(expr: &Expr) -> bool {
     unary_call(expr, "Ok").is_some_and(is_default_spelling)
+}
+
+/// Whether `expr` is `Err(<default>)`.
+pub(super) fn is_err_default(expr: &Expr) -> bool {
+    unary_call(expr, "Err").is_some_and(is_default_spelling)
 }
 
 /// Whether `expr` is `Some(<default>)`.

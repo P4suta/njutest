@@ -1,0 +1,293 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://njutest.dev/schema/rust-mutants-run-stream-v1.json",
+  "title": "rust-mutants run stream v1",
+  "description": "One JSON object per line, written as a run happens. A reader takes a line at a time and ignores a type it does not know.",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "schema",
+        "tool_version",
+        "run_id",
+        "root_name",
+        "selection"
+      ],
+      "properties": {
+        "type": {
+          "const": "run-start"
+        },
+        "schema": {
+          "const": "rust-mutants-run-stream-v1"
+        },
+        "tool_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "run_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "root_name": {
+          "type": "string"
+        },
+        "selection": {
+          "type": "object"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "phase"
+      ],
+      "properties": {
+        "type": {
+          "const": "phase-start"
+        },
+        "phase": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "phase",
+        "duration_ms"
+      ],
+      "properties": {
+        "type": {
+          "const": "phase-end"
+        },
+        "phase": {
+          "type": "string",
+          "minLength": 1
+        },
+        "duration_ms": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "completed",
+        "total",
+        "mutant"
+      ],
+      "properties": {
+        "type": {
+          "const": "mutant"
+        },
+        "completed": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "total": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "mutant": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "index",
+            "id",
+            "display_id",
+            "rule",
+            "family",
+            "path",
+            "line",
+            "column",
+            "outcome",
+            "target",
+            "duration_ms",
+            "retried"
+          ],
+          "properties": {
+            "index": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "display_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "rule": {
+              "type": "string"
+            },
+            "family": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "line": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "column": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "outcome": {
+              "enum": [
+                "killed",
+                "survived",
+                "timed_out",
+                "inconclusive",
+                "errored",
+                "not_run",
+                "equivalent"
+              ]
+            },
+            "target": {
+              "type": "string"
+            },
+            "duration_ms": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "tests_run": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "failed_tests": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "retried": {
+              "type": "boolean"
+            },
+            "not_run_reason": {
+              "type": "string"
+            },
+            "source_run_id": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "finding"
+      ],
+      "properties": {
+        "type": {
+          "const": "finding"
+        },
+        "finding": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "mutant",
+            "detail"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "minLength": 1
+            },
+            "mutant": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "string"
+                }
+              ]
+            },
+            "detail": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "exit_code",
+        "interrupted",
+        "accounting"
+      ],
+      "properties": {
+        "type": {
+          "const": "run-end"
+        },
+        "exit_code": {
+          "type": "integer",
+          "enum": [
+            0,
+            1,
+            2,
+            130
+          ]
+        },
+        "interrupted": {
+          "type": "boolean"
+        },
+        "accounting": {
+          "type": "object"
+        },
+        "score": {
+          "type": "object"
+        },
+        "report": {
+          "type": "string"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "code",
+        "message"
+      ],
+      "properties": {
+        "type": {
+          "const": "error"
+        },
+        "code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        },
+        "remedy": {
+          "type": "string"
+        }
+      }
+    }
+  ]
+}

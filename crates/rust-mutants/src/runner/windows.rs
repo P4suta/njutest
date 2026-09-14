@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Windows supervision: a Job Object per child.
@@ -136,4 +136,9 @@ fn resume_entry_point() -> Result<NtResumeProcess, RunnerError> {
 /// The child's status; a process the job terminated is reported by the caller as unavailable, so only a real exit reaches here.
 pub(super) fn exit_code(status: ExitStatus) -> i32 {
     status.code().unwrap_or(EXIT_CODE_UNAVAILABLE)
+}
+
+/// Windows has no signals, so a process there never died from one.
+pub(super) const fn signal(_status: ExitStatus) -> Option<i32> {
+    None
 }

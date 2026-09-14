@@ -1,0 +1,31 @@
+# SPDX-FileCopyrightText: 2026 njutest contributors
+# SPDX-License-Identifier: MIT OR Apache-2.0
+#
+# What a run of each fixture costs, in two units. A **pair** is one mutant
+# asked of one target, which is one test process started. A **test** is what
+# that process is asked for: a route that puts a mutation to one test of a
+# target rather than to all of its two hundred costs the same pair and a
+# two-hundredth of the tests, so the two fall separately and both are here.
+# Neither is a duration: both are the same number on every machine, at every
+# job count, under every load, and a thing measured in durations cannot be
+# ratcheted.
+#
+# `whole` is what a run that asked every target about every mutant would start,
+# and `started` is what this engine starts. **This file may shrink and never
+# grow.** A change that makes the engine start more for the same question is a
+# change to argue for in a pull request, not one to notice in a graph later.
+#
+# The question is the fixture, and a fixture that gains code asks a bigger one.
+# Its `whole` columns are checked for equality rather than ratcheted, so a row
+# whose `started` rises beside a `whole` that rose is a fixture that grew; one
+# whose `started` rises on its own is the engine doing more, which is the thing
+# this file exists to refuse.
+#
+# The command is fixed so the numbers are: `run --tier all --offline --locked
+# --jobs 1`, with the configuration the fixture carries and nothing else.
+#
+# fixture             whole  started  tests  tests_started
+fixture-simple           33       10     33             10
+fixture-coverage         84       25    196             30
+fixture-unreached        16        4     16              4
+fixture-baseline         51       13     51             13

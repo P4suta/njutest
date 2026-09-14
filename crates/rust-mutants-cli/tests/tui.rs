@@ -1,15 +1,52 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Reading a run at the terminal: what is drawn, and what the keys do.
+
+#![expect(
+    clippy::expect_used,
+    reason = "a test reports a setup failure by panicking and asserts with panics"
+)]
 
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use rust_mutants_cli::report::run::{
     Accounting, RunDocument, RunMeta, RunMutantDocument, ScoreDocument,
 };
+use rust_mutants_cli::report::sources::Held;
 use rust_mutants_cli::report::{PlatformDocument, SelectionDocument, WorkspaceDocument};
-use rust_mutants_cli::tui::{Browser, Flow, draw, pressed};
+use rust_mutants_cli::tui::{Browser, Flow, Key, Pane, draw, pressed};
+
+const SOURCE: &str = "// SPDX-FileCopyrightText: 2026 njutest contributors\n\
+                      // SPDX-License-Identifier: MIT OR Apache-2.0\n\
+                      \n\
+                      //! A demo.\n\
+                      \n\
+                      /// Whether a is over b.\n\
+                      ///\n\
+                      /// The comparison the tests are about.\n\
+                      #[must_use]\n\
+                      pub const fn over(a: u32, b: u32) -> bool {\n\
+                      \x20   a > b\n\
+                      }\n\
+                      \n\
+                      #[cfg(test)]\n\
+                      mod tests {\n\
+                      \x20   use super::over;\n\
+                      \n\
+                      \x20   #[test]\n\
+                      \x20   fn two_is_over_one() {\n\
+                      \x20       assert!(over(2, 1));\n\
+                      \x20   }\n\
+                      }\n";
+
+fn sources() -> std::collections::BTreeMap<String, Held> {
+    std::iter::once(("src/lib.rs".to_owned(), Held::Measured(SOURCE.to_owned()))).collect()
+}
+
+fn browser() -> Browser {
+    Browser::of(document(), sources())
+}
 
 fn mutant(index: u32, outcome: &str, rule: &str) -> RunMutantDocument {
     RunMutantDocument {
@@ -23,6 +60,9 @@ fn mutant(index: u32, outcome: &str, rule: &str) -> RunMutantDocument {
         rule_version: 1,
         line: 11,
         column: 8,
+        start_byte: 100,
+        end_byte: 101,
+        source_digest: format!("{index:064x}"),
         original: ">".to_owned(),
         replacement: ">=".to_owned(),
         outcome: outcome.to_owned(),
@@ -30,6 +70,11 @@ fn mutant(index: u32, outcome: &str, rule: &str) -> RunMutantDocument {
         exit_code: 0,
         duration_ms: 41,
         tests_run: Some(1),
+        killed_by: Vec::new(),
+        signal: None,
+        not_run_reason: None,
+        route: None,
+        identical: None,
         retried: false,
         expected: false,
         unreached: false,
@@ -63,12 +108,15 @@ fn document() -> RunDocument {
             },
         },
         selection: SelectionDocument {
+            build: Vec::new(),
             tier: "balanced".to_owned(),
             operators: Vec::new(),
             include: Vec::new(),
             exclude: Vec::new(),
             packages: Vec::new(),
         },
+        targets: Vec::new(),
+        established_tests: 0,
         accounting: Accounting {
             cataloged: 3,
             refused: 0,
@@ -81,6 +129,7 @@ fn document() -> RunDocument {
             errored: 0,
             not_run: 0,
             unreached: 0,
+            discharged: 0,
             expected: 0,
         },
         score: Some(ScoreDocument {
@@ -123,28 +172,163 @@ fn drawn(browser: &Browser) -> String {
         .join("\n")
 }
 
-#[test]
-fn a_run_is_drawn_as_the_recorded_frame() {
-    let browser = Browser::of(document());
-    let golden = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testdata/tui.golden");
-    mjutest_devkit::golden::golden(&golden, format!("{}\n", drawn(&browser)).as_bytes())
+fn recorded(name: &str, browser: &Browser) {
+    let golden = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/testdata")
+        .join(name);
+    njutest_devkit::golden::golden(&golden, format!("{}\n", drawn(browser)).as_bytes())
         .expect("the frame is the recorded one");
 }
 
 #[test]
+fn a_run_is_drawn_as_the_recorded_frame() {
+    recorded("tui.golden", &browser());
+}
+
+#[test]
+fn the_source_pane_shows_the_file_the_run_measured_around_the_mutation() {
+    let mut browser = browser();
+    assert_eq!(pressed(&mut browser, Key::Char('p')), Flow::Continue);
+    assert_eq!(browser.pane(), Pane::Source);
+    recorded("tui-source.golden", &browser);
+    assert!(drawn(&browser).contains("a > b"), "{}", drawn(&browser));
+}
+
+#[test]
+fn a_file_the_tree_no_longer_holds_says_so_rather_than_showing_something_else() {
+    let mut browser = Browser::of(
+        document(),
+        std::iter::once(("src/lib.rs".to_owned(), Held::Changed)).collect(),
+    );
+    let _flow = pressed(&mut browser, Key::Char('p'));
+    assert!(
+        drawn(&browser).contains("changed since the run"),
+        "{}",
+        drawn(&browser)
+    );
+}
+
+#[test]
+fn searching_narrows_to_what_matches_and_the_query_is_shown() {
+    let mut browser = browser();
+    assert_eq!(pressed(&mut browser, Key::Char('/')), Flow::Continue);
+    for character in "add".chars() {
+        let _flow = pressed(&mut browser, Key::Char(character));
+    }
+    assert_eq!(browser.query(), "add");
+    assert_eq!(browser.shown().len(), 1);
+    assert_eq!(
+        browser.current().map(|one| one.rule.clone()),
+        Some("add-to-sub".to_owned())
+    );
+    recorded("tui-search.golden", &browser);
+    let _flow = pressed(&mut browser, Key::Backspace);
+    assert_eq!(browser.query(), "ad");
+    let _flow = pressed(&mut browser, Key::Escape);
+    assert_eq!(
+        browser.query(),
+        "",
+        "escape leaves the search with nothing in it"
+    );
+    assert_eq!(browser.shown().len(), 3);
+}
+
+#[test]
+fn a_search_that_is_being_typed_does_not_move_or_filter_or_quit() {
+    let mut browser = browser();
+    let _flow = pressed(&mut browser, Key::Char('/'));
+    for character in "qjf".chars() {
+        assert_eq!(pressed(&mut browser, Key::Char(character)), Flow::Continue);
+    }
+    assert_eq!(browser.query(), "qjf");
+    assert_eq!(browser.narrowing(), "all");
+    assert_eq!(browser.shown().len(), 0);
+    let _flow = pressed(&mut browser, Key::Enter);
+    assert_eq!(pressed(&mut browser, Key::Char('q')), Flow::Quit);
+}
+
+#[test]
+fn the_findings_pane_names_what_stops_the_run_from_being_clean() {
+    let mut document = document();
+    document.findings = vec![rust_mutants_cli::report::run::FindingDocument {
+        kind: "surviving-mutant".to_owned(),
+        mutant: Some(format!("{:064x}", 2)),
+        detail: "no test noticed 00000000000000000002; 1 test ran and passed".to_owned(),
+    }];
+    let mut browser = Browser::of(document, sources());
+    let _flow = pressed(&mut browser, Key::Char('F'));
+    assert_eq!(browser.pane(), Pane::Findings);
+    recorded("tui-findings.golden", &browser);
+}
+
+#[test]
+fn the_help_pane_names_every_key_the_browser_answers_to() {
+    let mut browser = browser();
+    let _flow = pressed(&mut browser, Key::Char('?'));
+    assert_eq!(browser.pane(), Pane::Help);
+    let drawn = drawn(&browser);
+    for key in ["j", "k", "/", "f", "r", "p", "F", "?", "y", "q"] {
+        assert!(drawn.contains(key), "{key} is not in the help: {drawn}");
+    }
+    recorded("tui-help.golden", &browser);
+    let _flow = pressed(&mut browser, Key::Char('?'));
+    assert_eq!(browser.pane(), Pane::Mutants, "asking again puts it away");
+}
+
+#[test]
+fn a_number_goes_straight_to_one_filter_and_a_page_moves_by_a_page() {
+    let mut browser = browser();
+    let _flow = pressed(&mut browser, Key::Char('2'));
+    assert_eq!(browser.narrowing(), "survived");
+    let _flow = pressed(&mut browser, Key::Char('1'));
+    assert_eq!(browser.narrowing(), "all");
+    let _flow = pressed(&mut browser, Key::End);
+    assert_eq!(
+        browser.current().map(|one| one.rule.clone()),
+        Some("add-to-sub".to_owned())
+    );
+    let _flow = pressed(&mut browser, Key::Home);
+    assert_eq!(
+        browser.current().map(|one| one.rule.clone()),
+        Some("gt-to-ge".to_owned())
+    );
+    let _flow = pressed(&mut browser, Key::PageDown);
+    assert_eq!(
+        browser.current().map(|one| one.rule.clone()),
+        Some("add-to-sub".to_owned()),
+        "a page past the end is the end"
+    );
+    let _flow = pressed(&mut browser, Key::PageUp);
+    assert_eq!(
+        browser.current().map(|one| one.rule.clone()),
+        Some("gt-to-ge".to_owned())
+    );
+}
+
+#[test]
+fn yanking_names_the_mutant_the_reader_was_on_and_quitting_hands_it_back() {
+    let mut browser = browser();
+    assert_eq!(browser.yanked(), None);
+    let _flow = pressed(&mut browser, Key::Char('j'));
+    assert_eq!(pressed(&mut browser, Key::Char('y')), Flow::Continue);
+    assert_eq!(browser.yanked(), Some(format!("{:064x}", 2).as_str()));
+    assert_eq!(pressed(&mut browser, Key::Char('q')), Flow::Quit);
+}
+
+#[test]
 fn moving_down_and_up_selects_what_is_next_and_stops_at_the_ends() {
-    let mut browser = Browser::of(document());
+    let mut browser = browser();
     assert_eq!(
         browser.current().map(|one| one.outcome.clone()),
         Some("killed".to_owned())
     );
-    assert_eq!(pressed(&mut browser, 'j'), Flow::Continue);
+    assert_eq!(pressed(&mut browser, Key::Char('j')), Flow::Continue);
     assert_eq!(
         browser.current().map(|one| one.rule.clone()),
         Some("eq-to-neq".to_owned())
     );
     for _step in 0..10 {
-        let _flow = pressed(&mut browser, 'j');
+        let _flow = pressed(&mut browser, Key::Char('j'));
     }
     assert_eq!(
         browser.current().map(|one| one.rule.clone()),
@@ -152,7 +336,7 @@ fn moving_down_and_up_selects_what_is_next_and_stops_at_the_ends() {
         "the last mutant is the last place to be"
     );
     for _step in 0..10 {
-        let _flow = pressed(&mut browser, 'k');
+        let _flow = pressed(&mut browser, Key::Char('k'));
     }
     assert_eq!(
         browser.current().map(|one| one.rule.clone()),
@@ -162,30 +346,30 @@ fn moving_down_and_up_selects_what_is_next_and_stops_at_the_ends() {
 
 #[test]
 fn narrowing_shows_one_outcome_and_starts_again_at_its_first() {
-    let mut browser = Browser::of(document());
+    let mut browser = browser();
     assert_eq!(browser.narrowing(), "all");
     assert_eq!(browser.shown().len(), 3);
-    let _flow = pressed(&mut browser, 'f');
+    let _flow = pressed(&mut browser, Key::Char('f'));
     assert_eq!(browser.narrowing(), "killed");
     assert_eq!(browser.shown().len(), 2);
     assert_eq!(
         browser.current().map(|one| one.rule.clone()),
         Some("gt-to-ge".to_owned())
     );
-    let _flow = pressed(&mut browser, 'f');
+    let _flow = pressed(&mut browser, Key::Char('f'));
     assert_eq!(browser.narrowing(), "survived");
     assert_eq!(browser.shown().len(), 1);
     for _step in 0..6 {
-        let _flow = pressed(&mut browser, 'f');
+        let _flow = pressed(&mut browser, Key::Char('f'));
     }
     assert_eq!(browser.narrowing(), "killed", "the filter comes back round");
 }
 
 #[test]
 fn a_filter_that_admits_nothing_draws_without_a_mutant() {
-    let mut browser = Browser::of(document());
+    let mut browser = browser();
     for _step in 0..3 {
-        let _flow = pressed(&mut browser, 'f');
+        let _flow = pressed(&mut browser, Key::Char('f'));
     }
     assert_eq!(browser.narrowing(), "timed_out");
     assert!(browser.shown().is_empty());
@@ -195,7 +379,16 @@ fn a_filter_that_admits_nothing_draws_without_a_mutant() {
 
 #[test]
 fn quitting_says_so() {
-    let mut browser = Browser::of(document());
-    assert_eq!(pressed(&mut browser, 'q'), Flow::Quit);
-    assert_eq!(pressed(&mut browser, 'x'), Flow::Continue);
+    let mut browser = browser();
+    assert_eq!(pressed(&mut browser, Key::Char('q')), Flow::Quit);
+    assert_eq!(pressed(&mut browser, Key::Char('x')), Flow::Continue);
+}
+
+#[test]
+fn escape_puts_a_pane_away_before_it_leaves() {
+    let mut browser = browser();
+    let _flow = pressed(&mut browser, Key::Char('p'));
+    assert_eq!(pressed(&mut browser, Key::Escape), Flow::Continue);
+    assert_eq!(browser.pane(), Pane::Mutants);
+    assert_eq!(pressed(&mut browser, Key::Escape), Flow::Quit);
 }

@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: 2026 mjutest contributors
+SPDX-FileCopyrightText: 2026 njutest contributors
 SPDX-License-Identifier: MIT OR Apache-2.0
 -->
 
@@ -10,7 +10,10 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 Accepted, 2026-09-05, inherited from goatest ADR 0004 (accepted 2026-09-02).
 Implemented by the coverage-region routing of `assure`, the branch-proof and
 never-infected discharges, the `route` events of the trace, and the
-`proofaudit` gate, as the milestones deliver them. This is the thesis of the
+`proofaudit` gate, as the milestones deliver them. `rust-mutants` is a runner
+of the same kind and is held to the same rule: it measures its own coverage,
+discharges with `prove::discharges` on it, records a `route` for every mutant
+it judges, and is re-decided by `cargo xtask engine-audit`. This is the thesis of the
 project; it governs every speed-related decision.
 
 ## Context
@@ -42,13 +45,14 @@ run already collects can sometimes establish before any mutant is built.
 2. **Every speed-up is a proof layer**: a rule that removes an execution
    because a lemma over evidence the run already holds says the execution
    could not observe the mutant. The layers are ordered by the way a mutant
-   survives — reach (no covered region contains the mutated position),
-   infection (a branch proof, or a probe that never saw the site differ), and
-   propagation, which is the next to build. A layer that cannot establish its
-   premise keeps the execution; the fallbacks are toward running more.
+   survives — reach (nothing of the target reached the site), infection (a
+   branch proof, a guard that never saw its two branches part, or a probe
+   that never saw the site differ), and propagation, which is the next to
+   build. A layer that cannot establish its premise keeps the execution; the
+   fallbacks are toward running more.
 3. **The lemma and the premise live on different sides.** rust-mutants states
    what it can prove about a mutant from the source and the compiler — the
-   branch proof, the probe form — and mjutest checks the premise against its
+   branch proof, the probe form — and njutest checks the premise against its
    per-target evidence. Neither side trusts the other beyond the contract
    that names the claim.
 4. **Every layer is visible.** A route records the granularity it was decided
@@ -71,7 +75,20 @@ run already collects can sometimes establish before any mutant is built.
   catalog, the runner gains a rule that consumes it, a trace vocabulary that
   shows it, documentation that states it, and an audit layer that checks it.
   A proof without all four is not finished.
+- **And a fifth: the sentence a person reads when the layer works, held by a
+  test of its own.** The four above establish that the proof is right; none of
+  them establishes that a reader is told it happened. That is not a
+  presentation concern. A survivor's sentence either says "write a test" or
+  says "a proof removed this, so check the proof", and a reader who gets the
+  wrong one acts on the wrong thing. Measured on both products, this is where
+  the sentences went unheld: `string-to-empty` survived on the one sentence
+  that names which proofs removed a mutation, leaving it to end mid-clause,
+  and on fourteen field names inside a refusal, leaving it to say that
+  something required was empty without saying what. A layer whose output is a
+  sentence is not tested by asserting that it spoke, and a refusal is not
+  tested by asserting that it refused: what a reader acts on is which thing it
+  said was wrong.
 - The layers share one blind spot: they see the coverage a test left behind.
   The limitations document names it once per layer.
-- A reader who sees mjutest go faster may ask which proof did it. The answer
+- A reader who sees njutest go faster may ask which proof did it. The answer
   is always in the trace, never in a configuration file.

@@ -1,0 +1,6 @@
+Report the toolchain and the tools a run needs
+
+Usage: njutest doctor
+
+Options:
+  -h, --help  Print help

@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Conventions of the fixture projects under `fixtures/`.
@@ -10,11 +10,15 @@ use walkdir::WalkDir;
 /// The rule, for the failure message.
 pub const RULE: &str = "A fixture is an independent cargo project: its Cargo.toml carries a \
     [workspace] table so cargo does not look upwards, its Cargo.lock is committed, its only \
-    dependencies are paths inside itself (fixtures build offline against no registry), and every \
-    .rs and Cargo.toml starts with the SPDX header. See fixtures/README.md.";
+    dependencies are paths inside itself (fixtures build offline against no registry), every \
+    .rs and Cargo.toml starts with the SPDX header, and its README.md states what a run of it \
+    establishes in a ```fates block. See fixtures/README.md.";
+
+/// The fence that opens the block of a README stating what a run of the fixture establishes.
+pub const FATES_FENCE: &str = "```fates";
 
 const SPDX_HEADER: [&str; 2] = [
-    "SPDX-FileCopyrightText: 2026 mjutest contributors",
+    "SPDX-FileCopyrightText: 2026 njutest contributors",
     "SPDX-License-Identifier: MIT OR Apache-2.0",
 ];
 
@@ -32,6 +36,7 @@ pub fn check_fixture(dir: &Path) -> Vec<String> {
             "Cargo.lock is missing (commit it: fixtures build with --locked --offline)".to_owned(),
         );
     }
+    problems.extend(check_readme(dir));
     for entry in WalkDir::new(dir)
         .sort_by_file_name()
         .into_iter()
@@ -60,6 +65,20 @@ pub fn check_fixture(dir: &Path) -> Vec<String> {
     }
     problems.sort();
     problems
+}
+
+/// The README, and the ledger of fates a fixture with mutable code has to keep.
+fn check_readme(dir: &Path) -> Vec<String> {
+    let Ok(readme) = std::fs::read_to_string(dir.join("README.md")) else {
+        return vec!["README.md is missing (it is where a fixture says what it is for)".to_owned()];
+    };
+    if readme.contains(FATES_FENCE) {
+        return Vec::new();
+    }
+    vec![format!(
+        "README.md has no {FATES_FENCE} block; a fixture whose fates nothing states is one a \
+         change can quietly re-decide"
+    )]
 }
 
 fn has_spdx_header(text: &str) -> bool {
@@ -131,8 +150,19 @@ fn is_local_path_dependency(value: &toml::Value) -> bool {
     let Some(toml::Value::String(path)) = spec.get("path") else {
         return false;
     };
-    !path.starts_with('/')
-        && !path.starts_with('\\')
-        && !path.contains(':')
-        && path.split(['/', '\\']).all(|component| component != "..")
+    if path.starts_with('/') || path.starts_with('\\') || path.contains(':') {
+        return false;
+    }
+    let parts: Vec<&str> = path.split(['/', '\\']).collect();
+    parts.iter().all(|component| *component != "..") || is_sibling_fixture(&parts)
+}
+
+/// Whether the path is `../fixture-…` and nothing more: the one shape allowed to climb.
+///
+/// A fixture that exists to have a dependency outside itself needs one, and
+/// the thing outside has to be a fixture too, so that the suite still builds
+/// from what this repository holds and still builds offline.
+fn is_sibling_fixture(parts: &[&str]) -> bool {
+    matches!(parts, [first, second]
+        if *first == ".." && second.starts_with("fixture-"))
 }

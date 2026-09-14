@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: 2026 mjutest contributors
+SPDX-FileCopyrightText: 2026 njutest contributors
 SPDX-License-Identifier: MIT OR Apache-2.0
 -->
 
@@ -7,12 +7,12 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 ## Status
 
-Accepted, 2026-09-05. Implemented by the `build_cache` module of
-`mjutest-cli` (M2, gc in M4).
+Superseded, 2026-09-11, by
+[ADR 0019](0019-the-engine-owns-the-compiled-build-cache.md).
 
 ## Context
 
-[ADR 0005](0005-build-cache-mjutest-owns.md) needs two layers and a rule
+[ADR 0005](0005-build-cache-njutest-owns.md) needs two layers and a rule
 about which commands write to which. Go offers `GOCACHEPROG`, a protocol by
 which the toolchain asks a program for every cache entry. Cargo has no such
 protocol; `target/` is the cache, and `CARGO_TARGET_DIR` and `--target-dir`

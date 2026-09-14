@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: 2026 mjutest contributors
+SPDX-FileCopyrightText: 2026 njutest contributors
 SPDX-License-Identifier: MIT OR Apache-2.0
 -->
 
@@ -7,14 +7,14 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 **Status: implemented.**
 
-`mjutest-assurance-checkpoint-v1` is strict scheduling state for continuing an
+`njutest-assurance-checkpoint-v1` is strict scheduling state for continuing an
 interrupted verification. It is never assurance evidence, never a partial
 report, and never updates `latest-any` or `latest-full`.
 
 One exact input identity owns one checkpoint:
 
 ```text
-<user cache>/mjutest/outcomes-v1/checkpoints/<identity>/checkpoint-v1.json
+<user cache>/njutest/outcomes-v1/checkpoints/<identity>/checkpoint-v1.json
 ```
 
 There is no resume flag: only a checkpoint under the newly computed,

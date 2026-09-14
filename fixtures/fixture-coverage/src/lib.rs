@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Conditions a branch proof can be stated about, and conditions it cannot.
@@ -31,6 +31,22 @@ pub fn short(items: &[i32]) -> bool {
     false
 }
 
+/// A condition over text, whose comparison is the library's rather than the program's: the compiler vouches for it too.
+pub fn named(name: &str) -> bool {
+    if name <= "m" {
+        return true;
+    }
+    false
+}
+
+/// A condition whose two comparisons are between different types, both of them the standard library's. One refused witness refuses the whole condition, so this is what says neither is refused.
+pub fn labelled(label: String, rank: u8) -> bool {
+    if label == "target" && rank <= 3 {
+        return true;
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -43,6 +59,18 @@ mod tests {
     fn a_version_is_earlier_than_a_later_one() {
         assert!(super::earlier(super::Version(1), super::Version(2)));
         assert!(!super::earlier(super::Version(3), super::Version(2)));
+    }
+
+    #[test]
+    fn a_name_before_m_is_named() {
+        assert!(super::named("alpha"));
+        assert!(!super::named("zulu"));
+    }
+
+    #[test]
+    fn a_labelled_target_of_low_rank_is_labelled() {
+        assert!(super::labelled("target".to_owned(), 1));
+        assert!(!super::labelled("other".to_owned(), 1));
     }
 
     #[test]

@@ -1,5 +1,0 @@
-error: integration capability 2 must not be blank
- --> tests/ui/blank_capability.rs:1:36
-  |
-1 | #[mjutest::integration("postgres", "  ")]
-  |                                    ^^^^

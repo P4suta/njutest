@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What changed between two assurance reports.
@@ -60,18 +60,92 @@ pub fn compare(before: (&str, &str), after: (&str, &str)) -> Result<Vec<Change>,
         before: &left,
         after: &right,
     };
-    for field in ["verdict", "run_kind", "contract"] {
-        compare_scalar(field, pair, &mut changes);
+    if is_run_report(pair) {
+        compare_run(pair, &mut changes);
+    } else {
+        compare_assurance(pair, &mut changes);
     }
-    for group in ["targets", "mutants", "soundness"] {
-        compare_counts(group, pair, &mut changes);
-    }
-    compare_named(("findings", "subject"), pair, &mut changes);
-    compare_named(("limitations", "name"), pair, &mut changes);
-    compare_named_records(("targets", "name"), pair, &mut changes);
-
     changes.sort();
     Ok(changes)
+}
+
+/// Whether both documents are what a mutation run writes.
+fn is_run_report(pair: Pair<'_>) -> bool {
+    [pair.before, pair.after].iter().all(|document| {
+        document
+            .get("document_type")
+            .and_then(serde_json::Value::as_str)
+            == Some(RUN_REPORT)
+    })
+}
+
+/// What a mutation run's document is compared by.
+///
+/// How long a run took is not a difference worth showing: the same tree
+/// measured twice takes two different amounts of time and establishes one
+/// thing. What moved is the accounting, the score, which mutants the tests
+/// noticed, and what the run found.
+fn compare_run(pair: Pair<'_>, changes: &mut Vec<Change>) {
+    compare_flat_counts("accounting", pair, changes);
+    for field in ["detected", "decided", "value"] {
+        compare_under(("score", field), pair, changes);
+    }
+    compare_named(("findings", "mutant"), pair, changes);
+    compare_named_records(("mutants", "display_id", "outcome"), pair, changes);
+}
+
+/// Every count of one top-level object of counts.
+fn compare_flat_counts(group: &str, pair: Pair<'_>, changes: &mut Vec<Change>) {
+    let at = |value: &serde_json::Value| {
+        value
+            .get(group)
+            .and_then(serde_json::Value::as_object)
+            .cloned()
+            .unwrap_or_default()
+    };
+    let (before, after) = (at(pair.before), at(pair.after));
+    let mut names: Vec<&String> = before.keys().chain(after.keys()).collect();
+    names.sort();
+    names.dedup();
+    for name in names {
+        let (was, is) = (text_of(before.get(name)), text_of(after.get(name)));
+        if was != is {
+            changes.push(Change {
+                subject: format!("{group}.{name}"),
+                before: was,
+                after: is,
+            });
+        }
+    }
+}
+
+/// What an assurance run's document is compared by.
+fn compare_assurance(pair: Pair<'_>, changes: &mut Vec<Change>) {
+    for field in ["verdict", "run_kind", "contract"] {
+        compare_scalar(field, pair, changes);
+    }
+    for group in ["targets", "mutants", "soundness"] {
+        compare_counts(group, pair, changes);
+    }
+    compare_named(("findings", "subject"), pair, changes);
+    compare_named(("limitations", "name"), pair, changes);
+    compare_named_records(("targets", "name", "status"), pair, changes);
+}
+
+/// The document type of a mutation run's report.
+const RUN_REPORT: &str = "rust-mutants/run-report";
+
+/// One value under a named object.
+fn compare_under((group, field): (&str, &str), pair: Pair<'_>, changes: &mut Vec<Change>) {
+    let of = |value: &serde_json::Value| text_of(value.get(group).and_then(|one| one.get(field)));
+    let (before, after) = (of(pair.before), of(pair.after));
+    if before != after {
+        changes.push(Change {
+            subject: format!("{group}.{field}"),
+            before,
+            after,
+        });
+    }
 }
 
 fn parse((path, text): (&str, &str)) -> Result<serde_json::Value, DiffError> {
@@ -144,7 +218,11 @@ fn compare_named((list, key): (&str, &str), pair: Pair<'_>, changes: &mut Vec<Ch
 }
 
 /// A list of records keyed by one field, compared on their status.
-fn compare_named_records((list, key): (&str, &str), pair: Pair<'_>, changes: &mut Vec<Change>) {
+fn compare_named_records(
+    (list, key, field): (&str, &str, &str),
+    pair: Pair<'_>,
+    changes: &mut Vec<Change>,
+) {
     let statuses = |value: &serde_json::Value| -> BTreeMap<String, String> {
         value
             .get(list)
@@ -154,7 +232,7 @@ fn compare_named_records((list, key): (&str, &str), pair: Pair<'_>, changes: &mu
                     .iter()
                     .filter_map(|item| {
                         let name = item.get(key)?.as_str()?.to_owned();
-                        let status = text_of(item.get("status"))?;
+                        let status = text_of(item.get(field))?;
                         Some((name, status))
                     })
                     .collect()

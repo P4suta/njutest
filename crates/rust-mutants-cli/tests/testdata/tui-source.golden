@@ -1,0 +1,20 @@
+┌ run ─────────────────────────────────────────────────────────────────────────┐
+│20260905T000000000Z  ·  demo                                                  │
+│66.7%  (2 detected of 3 decided)  ·  killed 2 survived 1 not run 0            │
+└──────────────────────────────────────────────────────────────────────────────┘
+┌ mutants: all (3) ────────────────┐┌ src/lib.rs ──────────────────────────────┐
+│killed     00000000000000000001 gt││    1 // SPDX-FileCopyrightText: 2026 njut│
+│survived   00000000000000000002 eq││    2 // SPDX-License-Identifier: MIT OR A│
+│killed     00000000000000000003 ad││    3                                     │
+│                                  ││    4 //! A demo.                         │
+│                                  ││    5                                     │
+│                                  ││    6 /// Whether a is over b.            │
+│                                  ││    7 ///                                 │
+│                                  ││    8 /// The comparison the tests are abo│
+│                                  ││    9 #[must_use]                         │
+│                                  ││   10 pub const fn over(a: u32, b: u32) ->│
+│                                  ││→  11     a > b                           │
+│                                  ││   12 }                                   │
+│                                  ││   13                                     │
+└──────────────────────────────────┘└──────────────────────────────────────────┘
+ j/k move · / search · f filter · p source · ? keys · q quit

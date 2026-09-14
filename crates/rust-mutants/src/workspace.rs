@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 mjutest contributors
+// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The public entry point: a read-only source tree, copied.
@@ -43,14 +43,21 @@ pub struct OpenOptions {
     pub offline: bool,
     /// Pass `--locked` to every cargo command.
     pub locked: bool,
+    /// Directories outside the root the workspace may read code from, each copied beside the tree.
+    ///
+    /// A run measures a copy, so a path dependency outside the root is not in
+    /// it. Naming one here says the run may copy it too, which makes the
+    /// measurement about a tree that is not the one on disk: it is a decision
+    /// for a person to make rather than one a run takes silently.
+    pub allow_outside: Vec<PathBuf>,
     /// Where the run records what it did. [`Recorder::disabled`] by default.
     pub trace: Recorder,
 }
 
 /// Claims the build cache for the life of this workspace, so a sweep elsewhere leaves it alone while cargo is writing into it. A cache that cannot be claimed is one another run is already using, which is not this run's business and not a reason to fail: cargo takes its own lock.
-fn claim_target(dir: &Path, now: jiff::Timestamp) -> Option<tempowner::Owner> {
+fn claim_target(dir: &Path, now: jiff::Timestamp, root: &Path) -> Option<tempowner::Owner> {
     std::fs::create_dir_all(dir).ok()?;
-    tempowner::claim_cache(dir, now, TARGET_OWNER_SCHEMA).ok()
+    tempowner::claim_cache_of(dir, now, TARGET_OWNER_SCHEMA, root).ok()
 }
 
 /// A read-only source tree and the disposable copy of it this run works in.
@@ -80,15 +87,61 @@ pub enum SessionError {
         /// The first error the compiler reported, rendered.
         first: String,
     },
+    /// The workspace reads code from outside itself, which the copy does not hold.
+    #[error(
+        "{}: {name} is read from {}, which is outside {} and so is not in the copy a run \
+         measures. {} declares it. Allow it with --allow-outside, or vendor it inside the tree",
+        error::WORKSPACE_REACHES_OUTSIDE.code,
+        path.display(),
+        root.display(),
+        manifest.display()
+    )]
+    ReachesOutside {
+        /// The dependency or patched crate.
+        name: String,
+        /// The manifest that declares it.
+        manifest: PathBuf,
+        /// Where it reads it from.
+        path: PathBuf,
+        /// The tree the run was given.
+        root: PathBuf,
+    },
+    /// The root names a member of a workspace rather than the workspace.
+    #[error(
+        "{}: {} is a member of the workspace at {}, and a member on its own is not a tree a \
+         run can build. Pass --root {}",
+        error::ROOT_IS_NOT_THE_WORKSPACE.code,
+        root.display(),
+        workspace_root.display(),
+        workspace_root.display()
+    )]
+    RootIsNotTheWorkspace {
+        /// The tree the run was given.
+        root: PathBuf,
+        /// The workspace it belongs to.
+        workspace_root: PathBuf,
+    },
     /// The instrumented baseline does not pass its own tests.
     #[error(
-        "{}: the instrumented baseline fails {target}, which the pristine tree passes:\n{output}",
-        error::SESSION_VERIFY_FAILED.code
+        "{}: {} fails with nothing active, so no outcome under a mutation would be about the \
+         mutation. Fix the test, leave the target out with {}, or pass --no-verify and read \
+         every result as being about the instrumentation as much as about the mutation:\n{output}",
+        error::SESSION_VERIFY_FAILED.code,
+        targets.join(", "),
+        targets
+            .iter()
+            .map(|target| format!("--skip-target {target}"))
+            .collect::<Vec<String>>()
+            .join(" ")
     )]
     VerifyFailed {
-        /// The target that failed.
-        target: String,
-        /// The tail of what it said.
+        /// Every target that failed, in identity order.
+        ///
+        /// A run does not stop at the first: somebody reading this is about to
+        /// fix what it names, and a refusal that names one of five sends them
+        /// round the loop five times.
+        targets: Vec<String>,
+        /// The tail of what the first of them said.
         output: String,
     },
     /// No prefix of the catalog matches, or several do.
@@ -98,14 +151,41 @@ pub enum SessionError {
         message: String,
     },
     /// The named target is not one this session built.
-    #[error("{}: no test target is named {name:?}", error::SESSION_UNKNOWN_TARGET.code)]
+    #[error(
+        "{}: no test target is named {name:?}; this session built {}",
+        error::SESSION_UNKNOWN_TARGET.code,
+        if available.is_empty() { String::from("none") } else { available.join(", ") }
+    )]
     UnknownTarget {
         /// The name that was asked for.
         name: String,
+        /// The targets there are, which is what a reader has to choose between.
+        available: Vec<String>,
+    },
+    /// A target a run was told to leave out is not one the workspace declares.
+    #[error(
+        "{}: no test target is named {name:?}, so leaving it out leaves nothing out; this \
+         workspace declares {}",
+        error::SESSION_UNKNOWN_TARGET.code,
+        if available.is_empty() { String::from("none") } else { available.join(", ") }
+    )]
+    SkippedTargetUnknown {
+        /// The name that was asked to be left out.
+        name: String,
+        /// Every target the workspace declares, which is more than a narrowed run builds.
+        available: Vec<String>,
     },
     /// The workspace has no test target at all, so nothing can be measured.
-    #[error("{}: the workspace builds no test target, so no mutant can be measured", error::SESSION_NO_TARGETS.code)]
-    NoTargets,
+    #[error(
+        "{}: the workspace builds no test target, so no mutant can be measured; {} {} selected",
+        error::SESSION_NO_TARGETS.code,
+        if packages.is_empty() { String::from("every package was") } else { packages.join(", ") },
+        if packages.len() == 1 { "was" } else { "were" }
+    )]
+    NoTargets {
+        /// The packages the run was about, which is where a reader looks for a test to write.
+        packages: Vec<String>,
+    },
     /// The instrumented tree could not be written.
     #[error("{}: cannot write {path} into the snapshot: {source}", error::SESSION_WRITE_FAILED.code)]
     WriteFailed {
@@ -125,14 +205,72 @@ impl SessionError {
             Self::PristineBroken { .. } => error::SESSION_PRISTINE_BROKEN,
             Self::VerifyFailed { .. } => error::SESSION_VERIFY_FAILED,
             Self::UnknownMutant { .. } => error::SESSION_UNKNOWN_MUTANT,
-            Self::UnknownTarget { .. } => error::SESSION_UNKNOWN_TARGET,
-            Self::NoTargets => error::SESSION_NO_TARGETS,
+            Self::UnknownTarget { .. } | Self::SkippedTargetUnknown { .. } => {
+                error::SESSION_UNKNOWN_TARGET
+            }
+            Self::NoTargets { .. } => error::SESSION_NO_TARGETS,
             Self::WriteFailed { .. } => error::SESSION_WRITE_FAILED,
+            Self::ReachesOutside { .. } => error::WORKSPACE_REACHES_OUTSIDE,
+            Self::RootIsNotTheWorkspace { .. } => error::ROOT_IS_NOT_THE_WORKSPACE,
         }
     }
 }
 
 impl Workspace {
+    /// Refuses a tree a copy of which would not build: one that is a member of a workspace, and one that reads code from outside itself.
+    ///
+    /// Both are asked of the tree on disk, before it is copied. Asked of the
+    /// copy they would be asked of a tree that already cannot resolve, and
+    /// cargo's answer would be about a manifest that is missing rather than
+    /// about what a run could have done instead.
+    fn reachable(
+        root: &Path,
+        toolchain: &Toolchain,
+        options: &OpenOptions,
+        cancel: &Cancel,
+    ) -> Result<(), crate::EngineError> {
+        let metadata = Metadata::load_no_deps(
+            &Driver {
+                toolchain,
+                dir: root,
+                cancel,
+                trace: &options.trace,
+            },
+            MetadataOptions {
+                locked: options.locked,
+                offline: options.offline,
+            },
+        )?;
+        let workspace_root = crate::canonical::canonical(&metadata.workspace_root)
+            .unwrap_or_else(|_error| metadata.workspace_root.clone());
+        if workspace_root != root {
+            return Err(SessionError::RootIsNotTheWorkspace {
+                root: root.to_path_buf(),
+                workspace_root,
+            }
+            .into());
+        }
+        let allowed: Vec<PathBuf> = options
+            .allow_outside
+            .iter()
+            .map(|path| crate::canonical::canonical(path).unwrap_or_else(|_error| path.clone()))
+            .collect();
+        let patches = crate::cargo::manifest::patches(root);
+        for outside in crate::cargo::reaching_outside(&metadata, root, &patches) {
+            if allowed.iter().any(|allow| outside.path.starts_with(allow)) {
+                continue;
+            }
+            return Err(SessionError::ReachesOutside {
+                name: outside.name,
+                manifest: outside.manifest,
+                path: outside.path,
+                root: root.to_path_buf(),
+            }
+            .into());
+        }
+        Ok(())
+    }
+
     /// Sweeps the temporary area, copies `root` into a snapshot, and locates the toolchain inside the copy.
     ///
     /// # Errors
@@ -144,13 +282,22 @@ impl Workspace {
         cancel: &Cancel,
     ) -> Result<Self, crate::EngineError> {
         let phase = options.trace.phase("open");
-        let root = root
-            .canonicalize()
-            .unwrap_or_else(|_error| root.to_path_buf());
+        let root = crate::canonical::canonical(root).unwrap_or_else(|_error| root.to_path_buf());
         let parent = options.temp_directory.clone();
         let now = jiff::Timestamp::now();
         let swept =
             tempowner::sweep(&parent, &[DIR_PREFIX, TARGET_DIR_PREFIX], now).unwrap_or_default();
+
+        let toolchain = Toolchain::locate(
+            &LocateOptions {
+                cargo: options.cargo.clone(),
+                search_path: options.search_path.clone(),
+                env: Some(options.env.clone()),
+            },
+            &root,
+            cancel,
+        )?;
+        Self::reachable(&root, &toolchain, &options, cancel)?;
 
         let snapshot = Self::copy(&root, &parent, &options, now)?;
         options.trace.open(OpenRecord {
@@ -166,15 +313,6 @@ impl Workspace {
                 failures: u64::try_from(swept.failures.len()).unwrap_or(u64::MAX),
             }),
         });
-        let toolchain = Toolchain::locate(
-            &LocateOptions {
-                cargo: options.cargo.clone(),
-                search_path: options.search_path.clone(),
-                env: Some(options.env.clone()),
-            },
-            snapshot.root(),
-            cancel,
-        )?;
         let base_env = options.env.clone();
         let metadata = Metadata::load(
             &Driver {
@@ -194,7 +332,7 @@ impl Workspace {
                 .strip_prefix(DIR_PREFIX)
                 .unwrap_or_default()
         ));
-        let target_owner = claim_target(&target_dir, now);
+        let target_owner = claim_target(&target_dir, now, &root);
         phase.end();
         Ok(Self {
             snapshot,
@@ -223,6 +361,7 @@ impl Workspace {
             root,
             &SnapshotOptions {
                 exclude: options.exclude.clone(),
+                beside: options.allow_outside.clone(),
                 report_dir: options.report_directory.clone(),
                 dest_parent: parent.to_path_buf(),
             },
@@ -294,7 +433,7 @@ impl Workspace {
         &self.target_dir
     }
 
-    /// Discovers, instruments, validates, and builds; see [`prepare`].
+    /// Discovers, instruments, validates, and builds; see [`prepare()`].
     ///
     /// # Errors
     /// Every failure of the phases it runs.

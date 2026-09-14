@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2026 mjutest contributors
+# SPDX-FileCopyrightText: 2026 njutest contributors
 # SPDX-License-Identifier: MIT OR Apache-2.0
 #
 # cargo-fuzz targets for the engine's fail-closed parsers and byte
@@ -18,10 +18,11 @@ cargo-fuzz = true
 [dependencies]
 arbitrary = { version = "1.4", features = ["derive"] }
 libfuzzer-sys = "0.4"
-mjutest-cli = { path = "../crates/mjutest-cli" }
+njutest-cli = { path = "../crates/njutest-cli" }
 rust-mutants = { path = "../crates/rust-mutants" }
 rust-mutants-cli = { path = "../crates/rust-mutants-cli" }
 serde_json = "1"
+tempfile = "3"
 toml = "1.1"
 
 [[bin]]
@@ -60,6 +61,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "annotations"
+path = "fuzz_targets/annotations.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "normalize_path"
 path = "fuzz_targets/normalize_path.rs"
 test = false
@@ -83,6 +91,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "libtest_lines"
+path = "fuzz_targets/libtest_lines.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "libtest_summary"
 path = "fuzz_targets/libtest_summary.rs"
 test = false
@@ -97,13 +112,78 @@ doc = false
 bench = false
 
 [[bin]]
+name = "carried_answers"
+path = "fuzz_targets/carried_answers.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "offered_candidates"
+path = "fuzz_targets/offered_candidates.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "engine_config"
 path = "fuzz_targets/engine_config.rs"
 test = false
 doc = false
+bench = false
 
 [[bin]]
 name = "run_report"
 path = "fuzz_targets/run_report.rs"
 test = false
 doc = false
+bench = false
+
+[[bin]]
+name = "engine_coverage_export"
+path = "fuzz_targets/engine_coverage_export.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "depinfo"
+path = "fuzz_targets/depinfo.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "cargo_config"
+path = "fuzz_targets/cargo_config.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "cargo_messages"
+path = "fuzz_targets/cargo_messages.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "cargo_metadata"
+path = "fuzz_targets/cargo_metadata.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "touch_log"
+path = "fuzz_targets/touch_log.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "duration"
+path = "fuzz_targets/duration.rs"
+test = false
+doc = false
+bench = false

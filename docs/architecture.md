@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: 2026 mjutest contributors
+SPDX-FileCopyrightText: 2026 njutest contributors
 SPDX-License-Identifier: MIT OR Apache-2.0
 -->
 
@@ -9,7 +9,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 this directory say they do; [`roadmap.md`](roadmap.md) says which milestone
 each part came from.
 `rust-mutants` discovers, instruments, validates, and executes mutants and
-has a command line. `mjutest verify` runs every test of a workspace on its
+has a command line. `njutest verify` runs every test of a workspace on its
 own under coverage instrumentation, records what each one reached, and
 writes an audited report; Every mutation the compiler
 accepts is then routed to the tests baseline coverage proves can reach it,
@@ -17,7 +17,7 @@ run against them cheapest first, and a kill is confirmed by a pair before it
 is believed. `plan`, `report`, `explain`, `replay`, `trace`, `diagnostics`,
 `init`, and `doctor` read, re-run, and prepare around it.
 
-mjutest is an orchestrator, not a replacement testing framework. Its core
+njutest is an orchestrator, not a replacement testing framework. Its core
 pipeline is:
 
 ```text
@@ -41,15 +41,30 @@ subprocesses behind strict JSON protocols; core contains no network client.
 
 ## Two products
 
-| | `rust-mutants` | `mjutest` |
+| | `rust-mutants` | `njutest` |
 | --- | --- | --- |
-| Crates | `crates/rust-mutants` (library), `crates/rust-mutants-cli` (binary) | `crates/mjutest-cli` (binary and library), `crates/mjutest` (public API), `crates/mjutest-macros` |
-| Family | ocaml-mutants → gleam-mutants → go-mutants → rust-mutants | goatest → mjutest |
+| Crates | `crates/rust-mutants` (library), `crates/rust-mutants-cli` (binary) | `crates/njutest-cli` (binary and library), `crates/njutest` (public API), `crates/njutest-macros` |
+| Family | ocaml-mutants → gleam-mutants → go-mutants → rust-mutants | goatest → njutest |
 | Role | one instrumented snapshot, every mutant behind a guard, one environment variable per test process | verdicts from coverage-routed mutation with proofs, not budgets |
 | Contracts | [engine/architecture](engine/architecture.md), [engine/operators](engine/operators.md), [engine/json-schema](engine/json-schema.md) | [assurance contract](assurance-contract.md), [report v1](report-v1.md), [checkpoint v1](checkpoint-v1.md), [trace v1](trace-v1.md) |
 
 The dependency direction is fixed and gated ([ADR 0012](adr/0012-one-workspace-two-products.md)):
 the runner depends on the engine, never the reverse.
+
+The engine's own pages, in the order somebody meets them:
+[getting started](engine/getting-started.md) ·
+[the command line](engine/command-line.md) ·
+[configuration](engine/configuration.md) ·
+[operators](engine/operators.md) ·
+[reports](engine/reports.md) ·
+[proofs](engine/proofs.md) ·
+[trace](engine/trace.md) ·
+[JSON documents](engine/json-schema.md) ·
+[limitations](limitations.md) ·
+[troubleshooting](engine/troubleshooting.md) ·
+[upgrading](engine/upgrading.md) ·
+[architecture](engine/architecture.md) ·
+[compared with cargo-mutants](engine/comparison-with-cargo-mutants.md)
 
 ## What is Rust-specific
 
@@ -66,10 +81,10 @@ reports — are inherited. Five decisions are Rust's own:
 - **`soundness` replaces `race`.** Safe Rust has no data races to detect; the
   residual fault class is `unsafe`, inventoried under `standard-v1` and run
   under Miri in `deep-v1` ([ADR 0009](adr/0009-soundness-replaces-race.md)).
-- **Target directories are the cache layers.** Compiling commands get
-  `--target-dir` into a machine-wide base layer; every process that runs tests
-  gets `CARGO_TARGET_DIR` into the run's scratch
-  ([ADR 0010](adr/0010-target-directories-are-the-cache-layers.md)).
+- **The engine owns the compiled build cache.** Its stable target directory is
+  shared by successive snapshots of one source root; every process that runs
+  tests gets `CARGO_TARGET_DIR` inside the run's scratch
+  ([ADR 0019](adr/0019-the-engine-owns-the-compiled-build-cache.md)).
 - **The mutant runtime lives at the end of each instrumented file**, so no
   crate root is edited and no line moves
   ([ADR 0011](adr/0011-the-runtime-lives-at-the-end-of-each-instrumented-file.md)).
@@ -101,7 +116,7 @@ See [the assurance contract](assurance-contract.md).
 ## Across runs
 
 The mutation phase keeps a store of what it established about each mutant,
-`.mjutest/cache/mutation-evidence-v1.json`. A kill is existential and is
+`.njutest/cache/mutation-evidence-v1.json`. A kill is existential and is
 reused when the recorded killer still reaches the mutant, has the same
 behaviour key, and passed this run's own baseline. A survival is universal
 and is reused only when every target that reaches the mutant now is one the
@@ -111,9 +126,9 @@ See [ADR 0007](adr/0007-survived-evidence-is-universal.md).
 ## Everything a run writes
 
 Every byte a run writes outside the repository goes below one scratch
-directory it makes for itself and removes when it ends, `mjutest-run-*`
+directory it makes for itself and removes when it ends, `njutest-run-*`
 under the configured temporary root, with an owner pair — an advisory lock
-held open for the whole run and an `mjutest-temp-owner-v1` marker
+held open for the whole run and an `njutest-temp-owner-v1` marker
 ([ADR 0006](adr/0006-every-temporary-directory-has-an-owner.md)). Verification
 is read-only: a killing fuzz input or a generated test is stored as an
 isolated candidate, and only `fix --apply` changes the worktree.
@@ -133,7 +148,7 @@ app                report persistence, doctor, fix, cache maintenance, trace rea
    ↓  assure::Dependencies (a table of the run's collaborators, passed, never global)
 assure             one round: the phases in order, each a function over its inputs
    ↓
-build, targets, coverage, rustflags, evidence, build_cache, cache, checkpoint, trace, ui,
+build, targets, coverage, rustflags, evidence, cache, checkpoint, trace, ui,
 repair, resource, provider, temp_owner, kept_ledger, retention, process_tree,
 advisory_lock, environment, test_args, report, config
 ```
