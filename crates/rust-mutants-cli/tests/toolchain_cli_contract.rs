@@ -310,11 +310,21 @@ fn the_equivalence_tally_counts_the_rows_it_printed() {
         .iter()
         .filter(|columns| columns.get(1) == Some(&"identical"))
         .count();
-    assert!(
-        identical > 0,
-        "this fixture is built at an optimisation level where the compiler renders \
-         `x + 0` and `x - 0` the same, which is the whole reason it exists: {text}"
-    );
+    if njutest_devkit::reproducible::builds_the_same_twice() {
+        assert!(
+            identical > 0,
+            "this fixture is built at an optimisation level where the compiler renders \
+             `x + 0` and `x - 0` the same, which is the whole reason it exists: {text}"
+        );
+    } else {
+        assert!(
+            rows.iter()
+                .all(|columns| columns.get(1) == Some(&"not-established")),
+            "a machine that renders one unchanged tree two ways establishes nothing here, \
+             and a row saying the compiler rendered a mutation would be reporting the \
+             machine's own difference as the mutation's: {text}"
+        );
+    }
     assert!(
         text.contains(&format!("asked={}\tidentical={identical}", rows.len())),
         "the tally is the count of the rows above it, and a tally that counted none \

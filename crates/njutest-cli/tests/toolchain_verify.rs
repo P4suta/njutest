@@ -945,16 +945,26 @@ fn a_mutation_the_compiler_renders_identically_is_not_a_gap_in_the_tests() {
             .to_owned()
     };
     assert_eq!(
+        by_rule("mul-to-div@1"),
+        "killed",
+        "`n * 2` and `n / 2` are not the same instructions"
+    );
+    if !njutest_devkit::reproducible::builds_the_same_twice() {
+        assert_eq!(
+            report["accounting"]["mutants"]["equivalent"], 0,
+            "a machine that renders one unchanged tree two ways establishes nothing here, \
+             and a run that took its own difference for the mutation's would remove a \
+             finding nobody proved: {}",
+            report["mutants"]
+        );
+        return;
+    }
+    assert_eq!(
         by_rule("add-to-sub@1"),
         "equivalent",
         "`n + 0` and `n - 0` are the same instructions at opt-level 2, and the tests ran \
          the position: {}",
         report["mutants"]
-    );
-    assert_eq!(
-        by_rule("mul-to-div@1"),
-        "killed",
-        "`n * 2` and `n / 2` are not the same instructions"
     );
     assert_eq!(
         report["accounting"]["mutants"]["equivalent"], 1,

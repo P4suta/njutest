@@ -57,19 +57,28 @@ fn a_mutation_the_compiler_renders_identically_is_identical_and_one_it_renders_i
             .clone()
     };
 
+    let rendered = prover
+        .identical(&by_rule("mul-to-div"), &cancel)
+        .expect("a comparison");
+    if prover.withdrawn() {
+        assert_eq!(
+            rendered,
+            Identity::NotEstablished(rust_mutants::equivalence::CONTROL_DRIFTED),
+            "a machine that renders one unchanged tree two ways is one this layer says \
+             nothing about: reporting a difference it did not cause would be reporting \
+             the machine"
+        );
+        prover.close().expect("the tree goes away");
+        return;
+    }
+
+    assert_eq!(rendered, Identity::Differs, "`n * 2` and `n / 2` are not");
     assert_eq!(
         prover
             .identical(&by_rule("add-to-sub"), &cancel)
             .expect("a comparison"),
         Identity::Identical,
         "`n + 0` and `n - 0` are the same instructions at opt-level 2"
-    );
-    assert_eq!(
-        prover
-            .identical(&by_rule("mul-to-div"), &cancel)
-            .expect("a comparison"),
-        Identity::Differs,
-        "`n * 2` and `n / 2` are not"
     );
     assert!(
         !prover.withdrawn(),

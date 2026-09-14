@@ -807,6 +807,16 @@ fn a_mutation_the_compiler_renders_identically_is_only_equivalent_where_the_test
 /// What the equivalence layer decided, and the one survivor it may not take.
 fn proved_equivalent(root: &std::path::Path) {
     let report = report_of(root);
+    if !njutest_devkit::reproducible::builds_the_same_twice() {
+        assert_eq!(
+            report["accounting"]["mutants"]["equivalent"].as_u64(),
+            Some(0),
+            "a machine that renders one unchanged tree two ways establishes nothing here, \
+             and a run that took its own difference for the mutation's would remove a \
+             finding nobody proved: {report}"
+        );
+        return;
+    }
     assert_eq!(
         report["accounting"]["mutants"]["equivalent"].as_u64(),
         Some(1),

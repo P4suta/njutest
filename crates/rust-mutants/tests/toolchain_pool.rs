@@ -316,12 +316,20 @@ fn the_equivalence_layer_asks_only_about_survivors_and_writes_identical_never_eq
             );
         }
     }
+    let survivors: Vec<&_> = finished
+        .judged
+        .iter()
+        .filter(|one| one.outcome == Outcome::Survived)
+        .collect();
     assert!(
-        finished
-            .judged
-            .iter()
-            .any(|one| one.outcome == Outcome::Survived && one.identical == Some(true)),
+        if njutest_devkit::reproducible::builds_the_same_twice() {
+            survivors.iter().any(|one| one.identical == Some(true))
+        } else {
+            survivors.iter().all(|one| one.identical.is_none())
+        },
         "the fixture holds a mutation the compiler renders identically, and what the layer \
-         says is identical rather than equivalent"
+         says is identical rather than equivalent — on a machine that renders one \
+         unchanged tree two ways it says nothing at all instead, because a difference it \
+         did not cause is not one to report"
     );
 }

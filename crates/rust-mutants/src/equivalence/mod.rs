@@ -82,6 +82,7 @@ pub struct ProveOptions {
 pub struct Prover {
     workspace: Workspace,
     original: Artifacts,
+    settled: bool,
     withdrawn: bool,
     options: ProveOptions,
 }
@@ -109,6 +110,7 @@ impl Prover {
         let mut prover = Self {
             workspace,
             original: Artifacts::new(),
+            settled: false,
             withdrawn: false,
             options: options.clone(),
         };
@@ -118,12 +120,16 @@ impl Prover {
 
     /// Whether the compiler renders `candidate` identically to what it mutates.
     ///
-    /// Every answer of [`Identity::Identical`] is followed by building the
-    /// original again and checking that it still builds to the bytes it built
-    /// to. A tree whose build is not reproducible proves nothing, and one
-    /// answer that fails that check withdraws every answer this prover would
-    /// give afterwards: a layer that cannot establish its premise keeps the
-    /// execution.
+    /// Both answers rest on one premise: that a difference between two builds
+    /// of this tree is the mutation's doing. So the original is built again and
+    /// has to still build to the bytes it built to — every time the answer is
+    /// [`Identity::Identical`], which is the stronger claim, and once before
+    /// the first [`Identity::Differs`], which is the same premise read the
+    /// other way. A machine whose linker stamps what it writes renders one
+    /// unchanged tree two ways, and a layer that reported that as the
+    /// mutation's doing would be reporting the machine. One failed check
+    /// withdraws every answer this prover would give afterwards: a layer that
+    /// cannot establish its premise keeps the execution.
     ///
     /// # Errors
     /// Whatever stopped a build or a write.
@@ -163,12 +169,15 @@ impl Prover {
             return Ok(Identity::NotEstablished(DOES_NOT_BUILD));
         };
         let answer = artifacts::compare(&self.original, &mutated);
-        if answer != Identity::Identical {
+        if matches!(answer, Identity::NotEstablished(_))
+            || (answer == Identity::Differs && self.settled)
+        {
             return Ok(answer);
         }
         let control = self.build(cancel)?.unwrap_or_default();
         if control == self.original {
-            Ok(Identity::Identical)
+            self.settled = true;
+            Ok(answer)
         } else {
             self.withdrawn = true;
             Ok(Identity::NotEstablished(CONTROL_DRIFTED))

@@ -12,3 +12,4 @@ pub mod paths;
 pub mod process;
 pub mod repo;
 pub mod report;
+pub mod reproducible;
