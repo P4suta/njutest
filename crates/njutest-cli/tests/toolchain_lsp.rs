@@ -59,7 +59,7 @@ fn verified(root: &std::path::Path) -> String {
         json!({ "directory": "reports/runs/one", "run_id": report.run_id }).to_string(),
     )
     .expect("the pointer a reader follows");
-    format!("file://{}", root.join("src/lib.rs").display())
+    njutest_cli::app::lsp::uri_of(&root.join("src/lib.rs"))
 }
 
 #[test]

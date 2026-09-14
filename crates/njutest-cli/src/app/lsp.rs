@@ -292,7 +292,8 @@ fn publish(output: &mut dyn Write, root: &Path, encoding: Encoding) {
 /// nobody has open. A URI separates with `/` whatever the platform separates
 /// with, and a path that begins at a volume rather than at a root needs the
 /// root the form puts before it.
-fn uri_of(path: &Path) -> String {
+#[must_use]
+pub fn uri_of(path: &Path) -> String {
     let text = rust_mutants::id::slashed(path);
     if text.starts_with('/') {
         format!("file://{text}")

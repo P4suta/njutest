@@ -516,7 +516,7 @@ fn what_the_last_run_found_is_published_when_a_file_is_opened_or_saved() {
     );
     assert_eq!(
         published[0]["params"]["uri"],
-        format!("file://{}", root.path().join("src/lib.rs").display()),
+        njutest_cli::app::lsp::uri_of(&root.path().join("src/lib.rs")),
         "the file a finding is in is the one it is shown in"
     );
     assert_eq!(
@@ -646,8 +646,8 @@ fn the_whole_exchange_an_editor_has_with_this_server_is_recorded() {
     for said in answers(output.said) {
         let text = serde_json::to_string(&said).expect("one line");
         lines.extend_from_slice(
-            text.replace(&root.path().display().to_string(), "<root>")
-                .replace(&rust_mutants::id::slashed(root.path()), "<root>")
+            text.replace(&njutest_cli::app::lsp::uri_of(root.path()), "file://<root>")
+                .replace(&root.path().display().to_string(), "<root>")
                 .as_bytes(),
         );
         lines.push(b'\n');
