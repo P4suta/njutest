@@ -144,6 +144,24 @@ doctests, which is what the pipeline runs. `cargo xtask test`'s own suite
 (`xtask/tests/tasks.rs`) holds the naming to the rule, so a test that quietly
 starts a toolchain cannot land in the inner loop.
 
+### The platform this machine is not
+
+The pipeline runs the suite on Linux, macOS, and Windows, and most of what the
+other two answer differently needs their machine to find out. Code behind
+`#[cfg(windows)]` does not: this machine's compiler never reads it, so a
+workspace that builds here can fail to build there on a lint nobody could have
+seen. `mise run check:windows` asks for the reading without the machine. It
+needs the target's standard library once:
+
+```console
+$ rustup target add x86_64-pc-windows-msvc
+$ mise run check:windows
+```
+
+It is not part of `mise run check`, because a machine without that target
+installed would fail a gate for the want of a download rather than for
+anything about the change.
+
 ### Which half a rule goes in
 
 The split is about speed, and it decides something else as well: **whether a

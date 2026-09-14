@@ -72,6 +72,16 @@ description = "Run clippy, rustdoc, the repository gates, the fuzz targets' own 
 depends = ["clippy", "doc", "gates", "fuzz:check"]
 run = ["typos", "actionlint"]
 
+# The suite is written for three platforms and run here on one. Most of what
+# the other two answer differently needs their machine to find out, but code
+# behind `#[cfg(windows)]` is not even read by this one's compiler, and a
+# workspace that builds here can fail to build there on a lint. This asks for
+# the reading without the machine, and needs the target's standard library:
+# `rustup target add x86_64-pc-windows-msvc`.
+[tasks."check:windows"]
+description = "Type-check every target for Windows, so code only that platform compiles is compiled here too"
+run = "cargo check --locked --workspace --all-targets --all-features --target x86_64-pc-windows-msvc"
+
 [tasks."build:examples"]
 description = "Build the scripted cargo the suite drives, which no test build produces"
 # `cargo test --all-targets` builds an example as a test harness rather than as

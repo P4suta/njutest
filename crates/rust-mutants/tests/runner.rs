@@ -342,8 +342,8 @@ fn a_windows_process_tree_is_killed_on_timeout() {
     )
     .expect("the script the run starts");
     let mut spec = Spec::new([
-        std::ffi::OsString::from("cmd"),
-        std::ffi::OsString::from("/C"),
+        OsString::from("cmd"),
+        OsString::from("/C"),
         script.clone().into_os_string(),
     ]);
     spec.timeout = Some(Duration::from_millis(500));
