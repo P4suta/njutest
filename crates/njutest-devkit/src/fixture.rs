@@ -175,8 +175,28 @@ fn sorted(dir: &Path) -> Vec<std::fs::DirEntry> {
     entries
 }
 
+/// `path` resolved, in the one spelling the products hold a directory in.
+///
+/// Windows answers `canonicalize` with the extended form, `\\?\C:\...`, and the
+/// products put what they resolved back into the plain one: the engine states
+/// the rule in `rust_mutants::canonical`, and the dependency direction
+/// `cargo xtask deps` holds keeps this crate below it rather than above, so the
+/// rule is stated again here for the suites. A fixture that handed a run the
+/// extended spelling would have the run answer in a name no assertion here
+/// writes.
 fn canonical(path: &Path) -> PathBuf {
-    path.canonicalize().unwrap_or_else(|_error| path.to_owned())
+    let resolved = path.canonicalize().unwrap_or_else(|_error| path.to_owned());
+    #[cfg(windows)]
+    {
+        let text = resolved.to_string_lossy();
+        if let Some(rest) = text.strip_prefix(r"\\?\")
+            && !rest.starts_with("UNC\\")
+            && Path::new(rest).is_absolute()
+        {
+            return PathBuf::from(rest);
+        }
+    }
+    resolved
 }
 
 /// The fence that opens the block of a fixture's README stating what a run of it establishes.
