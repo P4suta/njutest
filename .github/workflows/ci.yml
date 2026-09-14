@@ -12,9 +12,13 @@ on:
 permissions:
   contents: read
 
+# A pull request is asked again with every push to it, and the answer to the
+# question before is not one anybody wanted. `main` is different: its run is
+# the only thing that says the branch everything merges into is green, and one
+# merge arriving while the last is still measuring would leave that unsaid.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always

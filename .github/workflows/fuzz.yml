@@ -6,6 +6,11 @@
 # A pull request that touches either of them or the harness gets a short smoke;
 # the weekly run spends real time. A crash is uploaded as an artifact and is
 # a test to write, never an input to blame.
+#
+# This file is not in that list. What a change to it usually is, is the digest
+# of an action moving: twenty-three targets built and fuzzed to find out that
+# nothing about them changed. `actionlint` reads this file on every pull
+# request, and the weekly run is what says the targets still work.
 name: fuzz
 
 on:
@@ -14,7 +19,6 @@ on:
       - "crates/rust-mutants/**"
       - "crates/njutest-cli/**"
       - "fuzz/**"
-      - ".github/workflows/fuzz.yml"
   schedule:
     - cron: "17 4 * * 1"
   workflow_dispatch:
