@@ -58,9 +58,9 @@ fn the_canonical_table_has_the_documented_shape() {
         .validate()
         .expect("the canonical table satisfies every registry invariant");
     assert_eq!(registry.len(), CANONICAL_RULE_COUNT);
-    assert_eq!(CANONICAL_RULE_COUNT, 69);
+    assert_eq!(CANONICAL_RULE_COUNT, 72);
     assert_eq!(registry.families().len(), CANONICAL_FAMILY_COUNT);
-    assert_eq!(CANONICAL_FAMILY_COUNT, 15);
+    assert_eq!(CANONICAL_FAMILY_COUNT, 16);
     let expected: Vec<(Family, Tier, Vec<&str>)> = vec![
         (
             Family::BooleanLiteral,
@@ -199,6 +199,15 @@ fn the_canonical_table_has_the_documented_shape() {
             Tier::All,
             vec!["int-increment", "int-decrement", "string-to-empty"],
         ),
+        (
+            Family::SaturatingArithmetic,
+            Tier::All,
+            vec![
+                "saturating-add-to-wrapping-add",
+                "saturating-sub-to-wrapping-sub",
+                "saturating-mul-to-wrapping-mul",
+            ],
+        ),
     ];
     let mut position = 0;
     for (index, (family, tier, names)) in expected.iter().enumerate() {
@@ -254,7 +263,7 @@ fn select_tier_returns_every_rule_at_or_below_the_tier_in_table_order() {
     let all = registry.select_tier(Tier::All);
     assert_eq!(balanced.len(), 33);
     assert_eq!(strong.len(), 62);
-    assert_eq!(all.len(), 69);
+    assert_eq!(all.len(), 72);
     assert!(balanced.iter().all(|r| r.tier == Tier::Balanced));
     assert_eq!(
         &strong[..balanced.len()],

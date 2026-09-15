@@ -623,6 +623,30 @@ fn an_err_default_is_offered_only_where_the_error_type_spells_a_default() {
 }
 
 #[test]
+fn a_saturating_operation_is_asked_what_happens_when_it_wraps_instead() {
+    let src = "fn f(a: i32, b: i32) -> i32 {\n    let x = a.saturating_add(b);\n    let y = x.saturating_sub(b);\n    y.saturating_mul(2)\n}\n";
+    let d = discover(src);
+    assert_coherent(src, &d);
+    assert_eq!(
+        by_rule(
+            &d,
+            &[
+                "saturating-add-to-wrapping-add",
+                "saturating-sub-to-wrapping-sub",
+                "saturating-mul-to-wrapping-mul",
+            ]
+        ),
+        [
+            "saturating-add-to-wrapping-add@2 \"saturating_add\"=>\"wrapping_add\" E",
+            "saturating-sub-to-wrapping-sub@3 \"saturating_sub\"=>\"wrapping_sub\" E",
+            "saturating-mul-to-wrapping-mul@4 \"saturating_mul\"=>\"wrapping_mul\" E",
+        ],
+        "a quantity that clamps at a boundary is one the boundary is load-bearing for, \
+         and a mutant that wraps is the edit that asks whether anything noticed"
+    );
+}
+
+#[test]
 fn iterator_and_slice_method_swaps_edit_only_the_identifier() {
     let src = "fn f(v: &[i32]) -> bool {\n    let _ = v.iter().skip(1).take(2).sum::<i32>();\n    let _ = v.first();\n    let _ = v.iter().product::<i32>();\n    let _ = v.last();\n    v.iter().all(|n| *n > 0) && v.iter().any(|n| *n > 0)\n}\n";
     let d = discover(src);

@@ -81,6 +81,26 @@ pub(super) const fn unary_removal(op: &UnOp) -> Option<&'static str> {
 
 /// The rule that swaps a method whose name says the opposite of another the same receiver has, with the name it writes in its place.
 ///
+/// The saturating three are in the `all` tier rather than beside the rest, and
+/// the reason is a measurement. `saturating_add` and `wrapping_add` are the
+/// same function everywhere except at the type's boundary, so whether the
+/// mutant is observable at all is a question about the *values that arrive*,
+/// not about the edit. On an unsigned type the boundary is zero and index
+/// arithmetic reaches it constantly. On a wide signed type holding a small
+/// domain — a length in some fraction of an em, say, six orders of magnitude
+/// from `i32::MAX` — no input any test supplies can tell the two apart, and
+/// every mutant is a survivor no reading will resolve. Asked of one such crate,
+/// the three minted 438 mutants and killed none of them.
+///
+/// Nothing in this pass knows a type ([ADR 0008](../../../../docs/adr/0008-compiler-validated-acceptance-and-the-type-witness-pass.md)),
+/// so the engine cannot mint them only where they pay. A tier a person opts
+/// into is the honest place for a rule whose yield is a property of the
+/// caller's value range.
+///
+/// What is deliberately absent is `saturating_sub` to bare `-`: that mutant
+/// panics in one profile and wraps in another, and a mutant that means two
+/// things is one this engine does not mint.
+///
 /// The identifier is the whole of the edit: nothing here looks at a type, so a
 /// receiver that has no such method is a mutation the compiler refuses, which
 /// is where the engine settles acceptance
@@ -101,6 +121,9 @@ pub(super) fn method_swap(name: &str) -> Option<(&'static str, &'static str)> {
         "take" => ("take-to-skip", "skip"),
         "sum" => ("sum-to-product", "product"),
         "product" => ("product-to-sum", "sum"),
+        "saturating_add" => ("saturating-add-to-wrapping-add", "wrapping_add"),
+        "saturating_sub" => ("saturating-sub-to-wrapping-sub", "wrapping_sub"),
+        "saturating_mul" => ("saturating-mul-to-wrapping-mul", "wrapping_mul"),
         _ => return None,
     })
 }

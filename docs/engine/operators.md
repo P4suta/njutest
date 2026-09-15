@@ -6,7 +6,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 # Operators
 
 **Status: implemented** (`rust_mutants::syntax`, `rust_mutants::instrument`,
-`rust_mutants::validate`). The v1 table: fifteen families, sixty-nine rules,
+`rust_mutants::validate`). The v1 table: sixteen families, seventy-two rules,
 named `family` / `rule@version`. The version enters the mutant identity, so
 changing a rule's output is a new version and every old identity lapses with
 it. Adding a rule does not: what enters an identity is the rule's own name and
@@ -68,6 +68,7 @@ type-check. Replacements derive from the token, never from a string.
 | `method-swap` | `is-some-to-is-none`, `is-none-to-is-some`, `is-ok-to-is-err`, `is-err-to-is-ok`, `max-to-min`, `min-to-max`, `all-to-any`, `any-to-all`, `first-to-last`, `last-to-first`, `skip-to-take`, `take-to-skip`, `sum-to-product`, `product-to-sum` | strong |
 | `statement-deletion` | `delete-call-statement`, `delete-assignment`, `delete-compound-assignment`, `delete-else-branch` | all |
 | `literal` | `int-increment`, `int-decrement`, `string-to-empty` | all |
+| `saturating-arithmetic` | `saturating-add-to-wrapping-add`, `saturating-sub-to-wrapping-sub`, `saturating-mul-to-wrapping-mul` | all |
 
 `balanced ⊂ strong ⊂ all`, which the table's order carries: it is
 non-decreasing in tier, so each profile's rules are a prefix of the next
@@ -135,6 +136,34 @@ adds nothing to the project under test; the expansion is pretty-printed, which
 breaks byte splicing and the line-count invariant at the root; and both a
 mutant's identity and an llvm-cov region are coordinates in the original file,
 so there would be nothing to map an expansion's positions onto.
+
+
+### What the saturating three cost, and when they pay
+
+`saturating_add` and `wrapping_add` are the same function everywhere except at
+the type's boundary, so whether a mutant of one is observable is a question
+about the values that arrive rather than about the edit.
+
+On an **unsigned** type the boundary is zero, index arithmetic reaches it in
+every other line, and the mutant is observable — usually as a loop or an
+allocation over `usize::MAX`, which a run reports as a timeout rather than a
+kill. On a **wide signed** type holding a small domain — a typographic length
+in 1/720 em sits six orders of magnitude from `i32::MAX` — nothing any test
+supplies can tell the two apart, and every mutant is a survivor no amount of
+reading will resolve.
+
+Asked of one crate that saturates by lint policy, the three minted 438 mutants
+and killed none of them: 426 survived and 6 timed out, all six of the latter on
+`usize` indices. That is the reason they are in `all` rather than `strong`.
+Nothing in the syntax pass knows a type, so the engine cannot mint them only
+where they pay.
+
+A rule like this is expensive twice, which is worth saying because the
+intuition runs the other way. A killed mutant stops its target at the first
+failing test; a surviving one runs the suite to the end. In the run above the
+three cost 3.5 seconds a mutant against 0.45 for the same crate's whole
+catalog — eight times the price, for the mutants least likely to tell anybody
+anything.
 
 ## Proofs the engine states
 

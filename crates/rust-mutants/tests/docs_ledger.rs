@@ -140,10 +140,12 @@ fn spelled(count: usize) -> &'static str {
         12 => "twelve",
         13 => "thirteen",
         15 => "fifteen",
+        16 => "sixteen",
         51 => "fifty-one",
         61 => "sixty-one",
         63 => "sixty-three",
         69 => "sixty-nine",
+        72 => "seventy-two",
         other => panic!("nobody has spelled {other} on the operators page yet"),
     }
 }
