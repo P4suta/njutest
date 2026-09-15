@@ -54,6 +54,14 @@ pub struct OpenOptions {
     pub trace: Recorder,
 }
 
+/// `path` as a `/`-separated path under `root`, or nothing when it is not under it.
+fn within(root: &Path, path: &Path) -> Option<String> {
+    let resolved = crate::canonical::canonical(path).unwrap_or_else(|_error| path.to_path_buf());
+    let relative = resolved.strip_prefix(root).ok()?;
+    let named = crate::id::slashed(relative);
+    (!named.is_empty()).then_some(named)
+}
+
 /// Claims the build cache for the life of this workspace, so a sweep elsewhere leaves it alone while cargo is writing into it. A cache that cannot be claimed is one another run is already using, which is not this run's business and not a reason to fail: cargo takes its own lock.
 fn claim_target(dir: &Path, now: jiff::Timestamp, root: &Path) -> Option<tempowner::Owner> {
     std::fs::create_dir_all(dir).ok()?;
@@ -223,12 +231,17 @@ impl Workspace {
     /// copy they would be asked of a tree that already cannot resolve, and
     /// cargo's answer would be about a manifest that is missing rather than
     /// about what a run could have done instead.
+    /// Checks the root is the workspace and every path it reads is one the run may copy, and answers where cargo builds.
+    ///
+    /// The answer is the build directory as a source-root-relative path when
+    /// it is inside the root, and nothing when it is not — `CARGO_TARGET_DIR`
+    /// elsewhere is a directory the copy never walks into anyway.
     fn reachable(
         root: &Path,
         toolchain: &Toolchain,
         options: &OpenOptions,
         cancel: &Cancel,
-    ) -> Result<(), crate::EngineError> {
+    ) -> Result<Option<String>, crate::EngineError> {
         let metadata = Metadata::load_no_deps(
             &Driver {
                 toolchain,
@@ -268,7 +281,7 @@ impl Workspace {
             }
             .into());
         }
-        Ok(())
+        Ok(within(root, &metadata.target_directory))
     }
 
     /// Sweeps the temporary area, copies `root` into a snapshot, and locates the toolchain inside the copy.
@@ -297,9 +310,9 @@ impl Workspace {
             &root,
             cancel,
         )?;
-        Self::reachable(&root, &toolchain, &options, cancel)?;
+        let build_dir = Self::reachable(&root, &toolchain, &options, cancel)?;
 
-        let snapshot = Self::copy(&root, &parent, &options, now)?;
+        let snapshot = Self::copy(&root, (&parent, build_dir), &options, now)?;
         options.trace.open(OpenRecord {
             root: root.display().to_string(),
             snapshot_dir: snapshot.dir().display().to_string(),
@@ -352,7 +365,7 @@ impl Workspace {
     /// Copies the tree and records what that produced.
     fn copy(
         root: &Path,
-        parent: &Path,
+        (parent, build_dir): (&Path, Option<String>),
         options: &OpenOptions,
         now: jiff::Timestamp,
     ) -> Result<Snapshot, crate::EngineError> {
@@ -363,6 +376,7 @@ impl Workspace {
                 exclude: options.exclude.clone(),
                 beside: options.allow_outside.clone(),
                 report_dir: options.report_directory.clone(),
+                build_dir,
                 dest_parent: parent.to_path_buf(),
             },
             now,

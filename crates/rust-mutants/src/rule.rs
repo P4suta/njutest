@@ -70,6 +70,8 @@ pub enum Family {
     ReturnReplacement,
     /// `?` propagation.
     ErrorPropagation,
+    /// `saturating_add` ↔ `wrapping_add`, and its siblings: one operation, the other boundary.
+    SaturatingArithmetic,
     /// Deleting a match arm, and removing the guard that narrows one.
     MatchArm,
     /// `break` ↔ `continue`.
@@ -104,6 +106,7 @@ impl Family {
         Self::MethodSwap,
         Self::StatementDeletion,
         Self::Literal,
+        Self::SaturatingArithmetic,
     ];
 
     /// The family's canonical name.
@@ -125,6 +128,7 @@ impl Family {
             Self::MethodSwap => "method-swap",
             Self::StatementDeletion => "statement-deletion",
             Self::Literal => "literal",
+            Self::SaturatingArithmetic => "saturating-arithmetic",
         }
     }
 
@@ -162,9 +166,9 @@ impl fmt::Display for Rule {
 }
 
 /// The counts of the canonical v1 table, asserted by the registry tests.
-pub const CANONICAL_FAMILY_COUNT: usize = 15;
+pub const CANONICAL_FAMILY_COUNT: usize = 16;
 /// The number of rules in the canonical v1 table.
-pub const CANONICAL_RULE_COUNT: usize = 69;
+pub const CANONICAL_RULE_COUNT: usize = 72;
 
 const fn v1(family: Family, name: &'static str, tier: Tier) -> Rule {
     Rule {
@@ -326,6 +330,21 @@ pub const CANONICAL_TABLE: [Rule; CANONICAL_RULE_COUNT] = [
     v1(Family::Literal, "int-increment", Tier::All),
     v1(Family::Literal, "int-decrement", Tier::All),
     v1(Family::Literal, "string-to-empty", Tier::All),
+    v1(
+        Family::SaturatingArithmetic,
+        "saturating-add-to-wrapping-add",
+        Tier::All,
+    ),
+    v1(
+        Family::SaturatingArithmetic,
+        "saturating-sub-to-wrapping-sub",
+        Tier::All,
+    ),
+    v1(
+        Family::SaturatingArithmetic,
+        "saturating-mul-to-wrapping-mul",
+        Tier::All,
+    ),
 ];
 
 /// Whether a rule name is well formed: non-empty, and free of whitespace and of the `@` that separates the version in the rendered form.

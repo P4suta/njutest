@@ -414,6 +414,24 @@
       "name": "string-to-empty",
       "tier": "all",
       "version": 1
+    },
+    {
+      "family": "saturating-arithmetic",
+      "name": "saturating-add-to-wrapping-add",
+      "tier": "all",
+      "version": 1
+    },
+    {
+      "family": "saturating-arithmetic",
+      "name": "saturating-sub-to-wrapping-sub",
+      "tier": "all",
+      "version": 1
+    },
+    {
+      "family": "saturating-arithmetic",
+      "name": "saturating-mul-to-wrapping-mul",
+      "tier": "all",
+      "version": 1
     }
   ],
   "schema_version": 1,
