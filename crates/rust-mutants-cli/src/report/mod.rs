@@ -65,7 +65,7 @@ pub fn list(
             });
         let written = writeln!(
             text,
-            "{mutant}  {rule:<26}  {where_}  {original:?} => {replacement:?}",
+            "{mutant}  {rule:<30}  {where_}  {original:?} => {replacement:?}",
             rule = candidate.rule.to_string(),
             where_ = at(&candidate.path, position),
             original = String::from_utf8_lossy(&candidate.original),
@@ -144,7 +144,7 @@ pub fn decisions(discovery: &Discovery, file: &str, line: Option<u32>) -> String
             .unwrap_or_default();
         let written = writeln!(
             text,
-            "{}:{}  {:<26}  {what}{note}",
+            "{}:{}  {:<30}  {what}{note}",
             decision.position.line, decision.position.byte_column, decision.rule
         );
         debug_assert!(written.is_ok(), "writing to a String cannot fail");
@@ -206,7 +206,7 @@ pub fn catalog(session: &Session) -> String {
         for rejection in session.rejections() {
             let written = writeln!(
                 text,
-                "{}  {:<26}  {}  {}",
+                "{}  {:<30}  {}  {}",
                 rejection.display_id,
                 rejection.rule,
                 rejection.path,
@@ -224,7 +224,7 @@ pub fn catalog(session: &Session) -> String {
 
 fn one_line(mutant: &Mutant) -> String {
     format!(
-        "{}  {:<26}  {}  {:?} => {:?}",
+        "{}  {:<30}  {}  {:?} => {:?}",
         mutant.display_id,
         mutant.candidate.rule.to_string(),
         mutant.candidate.path,

@@ -1540,7 +1540,7 @@ fn rules(tier: Option<&str>, json: bool, stdout: &mut dyn Write) -> Result<u8, C
 /// The rules as the lines a person reads, in canonical table order.
 fn listed(selected: &[rust_mutants::rule::Rule]) -> String {
     let mut text = format!(
-        "{:<20} {:<26} {:<9} {}\n",
+        "{:<20} {:<30} {:<9} {}\n",
         "FAMILY", "RULE", "TIER", "VERSION"
     );
     let mut families: usize = 0;
@@ -1552,7 +1552,7 @@ fn listed(selected: &[rust_mutants::rule::Rule]) -> String {
         }
         let written = writeln!(
             text,
-            "{:<20} {:<26} {:<9} {}",
+            "{:<20} {:<30} {:<9} {}",
             rule.family.name(),
             rule.name,
             rule.tier.name(),

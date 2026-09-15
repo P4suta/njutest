@@ -196,7 +196,8 @@ Options:
           Print help (see a summary with '-h')
 
 $ rust-mutants list --help
-List the candidates the rules propose, before the compiler has ruled
+List the candidates that will be cataloged, before the compiler has ruled. What a configuration or
+an annotation removed is `why-skipped`
 
 Usage: rust-mutants list [OPTIONS]
 

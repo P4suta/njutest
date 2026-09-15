@@ -41,7 +41,7 @@ pub struct Cli {
               heap indirection between the parser and the flags a person typed"
 )]
 pub enum Command {
-    /// List the candidates the rules propose, before the compiler has ruled.
+    /// List the candidates that will be cataloged, before the compiler has ruled. What a configuration or an annotation removed is `why-skipped`.
     List {
         /// Which workspace to read.
         #[command(flatten)]
