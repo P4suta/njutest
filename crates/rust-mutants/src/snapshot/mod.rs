@@ -66,6 +66,16 @@ pub struct Options {
     pub beside: Vec<PathBuf>,
     /// The configured report directory as a source-root-relative path. `None` means the default. It is excluded in addition to, never instead of, [`DEFAULT_REPORT_DIR`].
     pub report_dir: Option<String>,
+    /// The directory cargo builds into, as a source-root-relative path, when it is inside the root.
+    ///
+    /// `CACHEDIR.TAG` is a hint a cooperating tool leaves, and cargo leaves it
+    /// only when it creates the directory itself. A project whose makefile put
+    /// something under `target/` before the first `cargo` invocation has a
+    /// build directory that is never tagged and never will be, and a walk that
+    /// knew only the tag copied thirteen gigabytes of somebody else's build
+    /// output. Cargo says where it builds, so the run asks it rather than
+    /// hoping. `None` leaves the tag as the only rule.
+    pub build_dir: Option<String>,
     /// The absolute directory the snapshot is created in. The composition root decides where the temporary area is; this module never asks the process environment.
     pub dest_parent: PathBuf,
 }
@@ -77,6 +87,7 @@ impl Options {
             beside: Vec::new(),
             exclude: Vec::new(),
             report_dir: None,
+            build_dir: None,
             dest_parent: dest_parent.into(),
         }
     }
@@ -569,6 +580,22 @@ fn exclusions(options: &Options) -> Result<Vec<Pattern>, SnapshotError> {
                 )
             })?);
         }
+    }
+    if let Some(build_dir) = &options.build_dir {
+        let normalized = normalize_path(build_dir).map_err(|error| {
+            SnapshotError::new(
+                SnapshotErrorKind::InvalidOptions,
+                build_dir.clone(),
+                format!("build directory is not a usable source-root-relative path: {error}"),
+            )
+        })?;
+        patterns.push(Pattern::compile(&normalized).map_err(|error| {
+            SnapshotError::new(
+                SnapshotErrorKind::InvalidOptions,
+                build_dir.clone(),
+                format!("build directory is not a usable pattern: {error}"),
+            )
+        })?);
     }
     patterns.extend(options.exclude.iter().cloned());
     Ok(patterns)

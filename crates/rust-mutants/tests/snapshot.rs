@@ -295,6 +295,54 @@ fn git_and_the_report_directories_are_always_excluded_and_patterns_skip_whole_di
 }
 
 #[test]
+fn the_directory_cargo_builds_into_is_skipped_whether_or_not_anybody_tagged_it() {
+    let fx = fixture();
+    write(
+        &fx.source,
+        "target/debug/deps/enormous.rlib",
+        b"pretend gigabytes",
+    );
+    write(
+        &fx.source,
+        "target/census/notes.txt",
+        b"a scratch directory somebody made",
+    );
+
+    let mut opts = options(&fx);
+    opts.build_dir = Some("target".to_owned());
+    let snap = create(&fx.source, &opts, now()).expect("create");
+
+    let rel: Vec<&str> = snap
+        .manifest()
+        .iter()
+        .map(|e| e.rel_path.as_str())
+        .collect();
+    assert_eq!(
+        rel,
+        ["Cargo.toml", "src/main.rs"],
+        "what cargo builds into is not source, and a run that copied it would copy \
+         gigabytes another cargo may be rewriting underneath it"
+    );
+    assert!(
+        !snap.root().join("target").exists(),
+        "the directory is not descended: `CACHEDIR.TAG` is a hint a cooperating tool \
+         leaves when it creates the directory, and a directory somebody else created \
+         first never gets one"
+    );
+}
+
+#[test]
+fn a_build_directory_that_escapes_the_root_is_an_invalid_option() {
+    let fx = fixture();
+    for bad in ["../elsewhere", "/abs/target", ""] {
+        let mut opts = options(&fx);
+        opts.build_dir = Some(bad.to_owned());
+        let error = create(&fx.source, &opts, now()).expect_err("an escaping build directory");
+        assert_eq!(error.kind(), SnapshotErrorKind::InvalidOptions, "{error:?}");
+    }
+}
+
+#[test]
 fn a_configured_report_directory_that_escapes_the_root_is_an_invalid_option() {
     let fx = fixture();
     for bad in ["../elsewhere", "/abs/reports", ""] {
