@@ -9,6 +9,12 @@ name: dependabot-auto-merge
 # has taken. So the merge is asked for as the pull request opens, and GitHub
 # performs it when `ci-success` passes and not before.
 #
+# Every push to the branch asks again, because a bump dependabot rebases is a
+# bump whose merge has to be asked for again. That is also how turning it off
+# by hand stopped working: a person switched auto-merge off and the next rebase
+# switched it back on. What says no is a label, because a label survives the
+# rebase and the answer is about the pull request rather than about the moment.
+#
 # `pull_request_target` rather than `pull_request`, because a workflow started
 # by dependabot gets a read-only token and no secrets, and enabling a merge
 # needs to write. It runs in the base repository's context with the base
@@ -29,7 +35,9 @@ concurrency:
 jobs:
   auto-merge:
     name: auto-merge
-    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    if: >-
+      github.event.pull_request.user.login == 'dependabot[bot]'
+      && !contains(github.event.pull_request.labels.*.name, 'no-auto-merge')
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
