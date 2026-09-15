@@ -20,6 +20,27 @@ pub const COMPILED_CATALOG_ENV: &str = "RUST_MUTANTS_COMPILED_CATALOG";
 /// The exit status of a test process whose tree was built from a different catalog than the one activating it.
 pub const STALE_CATALOG_EXIT: i32 = 97;
 
+/// Names the number of times the active mutant's guard may be taken before the process is stopped.
+///
+/// A mutant that does not terminate has to be stopped by something, and a
+/// clock is the wrong something: the same mutant on a loaded machine and a
+/// quiet one is two verdicts, which is the defect `xtask/work_ceiling.txt`
+/// refuses for the same reason — "a thing measured in durations cannot be
+/// ratcheted". A count of guard takes is the same number on every machine, at
+/// every job count, under every load.
+///
+/// The guard of the selected mutant sits where the mutation does, so a loop
+/// whose condition was mutated takes it once an iteration and a runaway is
+/// counted as it runs. Unset, or `0`, spends nothing and counts nothing.
+pub const STEPS_ENV: &str = "RUST_MUTANTS_STEPS";
+
+/// The exit status of a test process whose active mutant took its guard more times than the run allowed.
+///
+/// A distinct status rather than a signal, because the fact it reports is
+/// distinct: this process was stopped by a number every machine agrees on,
+/// where a timeout is stopped by a clock only this machine saw.
+pub const RUNAWAY_EXIT: i32 = 95;
+
 /// Names the file the guards append to, saying which of the process's threads reached them.
 pub const TOUCH_ENV: &str = "RUST_MUTANTS_TOUCH";
 
@@ -103,7 +124,11 @@ mod {{MODULE}} {
     const TOUCH_UNKNOWN: u8 = 0;
     const TOUCH_OFF: u8 = 1;
     const TOUCH_ON: u8 = 2;
+    const STEPS_UNINIT: usize = __rm_std::usize::MAX;
+    const STEPS_UNBOUNDED: usize = 0;
     static ACTIVE: __rm_std::sync::atomic::AtomicU32 = __rm_std::sync::atomic::AtomicU32::new(UNINIT);
+    static STEPS: __rm_std::sync::atomic::AtomicUsize = __rm_std::sync::atomic::AtomicUsize::new(0);
+    static BUDGET: __rm_std::sync::atomic::AtomicUsize = __rm_std::sync::atomic::AtomicUsize::new(STEPS_UNINIT);
     static TOUCHING: __rm_std::sync::atomic::AtomicU8 = __rm_std::sync::atomic::AtomicU8::new(TOUCH_UNKNOWN);
     static TOUCH_SINK: __rm_std::sync::OnceLock<__rm_std::sync::Mutex<__rm_std::fs::File>> = __rm_std::sync::OnceLock::new();
 
@@ -114,11 +139,48 @@ mod {{MODULE}} {
         }
         let selected = ACTIVE.load(__rm_std::sync::atomic::Ordering::Relaxed);
         if selected != UNINIT {
-            return selected == index;
+            return selected == index && spend();
         }
         let resolved = resolve();
         ACTIVE.store(resolved, __rm_std::sync::atomic::Ordering::Relaxed);
-        resolved == index
+        resolved == index && spend()
+    }
+
+    /// Counts one take of the active mutant's guard, and stops the process when the run's allowance is spent.
+    ///
+    /// Always answers `true`: it is the guard that decides whether the
+    /// mutation applies, and this only counts. The count is per process
+    /// because the process is what a run selects a mutant in, what it starts
+    /// one of per pair, and what it would otherwise kill by a clock — so a
+    /// number about the process needs no attribution to a thread, which a
+    /// harness running its tests as threads could not give it anyway.
+    fn spend() -> bool {
+        let allowed = BUDGET.load(__rm_std::sync::atomic::Ordering::Relaxed);
+        let allowed = if allowed == STEPS_UNINIT {
+            let read = __rm_std::env::var("{{STEPS_ENV}}")
+                .ok()
+                .and_then(|value| value.trim().parse::<usize>().ok())
+                .unwrap_or(STEPS_UNBOUNDED);
+            BUDGET.store(read, __rm_std::sync::atomic::Ordering::Relaxed);
+            read
+        } else {
+            allowed
+        };
+        if allowed == STEPS_UNBOUNDED {
+            return true;
+        }
+        let spent = STEPS
+            .fetch_add(1, __rm_std::sync::atomic::Ordering::Relaxed)
+            .saturating_add(1);
+        if spent > allowed {
+            let said = __rm_std::format!(
+                "rust-mutants: the active mutant took its guard {} times, past the {} this run allows\n",
+                spent, allowed
+            );
+            let _ = __rm_std::io::Write::write_all(&mut __rm_std::io::stderr(), said.as_bytes());
+            __rm_std::process::exit({{RUNAWAY_EXIT}});
+        }
+        true
     }
 
     struct Seen {
@@ -444,6 +506,8 @@ pub fn render(rendering: &Rendering<'_>) -> String {
         .replace("{{INFECTED}}", crate::touch::INFECTED)
         .replace("{{EXIT}}", &STALE_CATALOG_EXIT.to_string())
         .replace("{{TOUCH_EXIT}}", &TOUCH_UNAVAILABLE_EXIT.to_string())
+        .replace("{{STEPS_ENV}}", STEPS_ENV)
+        .replace("{{RUNAWAY_EXIT}}", &RUNAWAY_EXIT.to_string())
         .replace(
             "{{OBSERVABLE}}",
             &format!(

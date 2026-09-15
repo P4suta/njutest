@@ -12,19 +12,22 @@ use crate::cargo::{
     CargoError, CargoErrorKind, CompileKind, CompileOptions, Driver, Message, Package, Target,
     compile,
 };
-use crate::instrument::{ACTIVE_ENV, CATALOG_ENV, STALE_CATALOG_EXIT, TOUCH_ENV};
+use crate::instrument::{
+    ACTIVE_ENV, CATALOG_ENV, RUNAWAY_EXIT, STALE_CATALOG_EXIT, STEPS_ENV, TOUCH_ENV,
+};
 use crate::outcome::Outcome;
 use crate::runner::{Bound, Cancel, EXIT_CODE_UNAVAILABLE, RunResult, Spec, run};
 use crate::trace::{ExecRecord, Recorder};
 
 /// Every variable the engine owns. A test process sees exactly the ones this run set, never one an outer run left behind.
-pub const RESERVED_ENV: [&str; 3] = [ACTIVE_ENV, CATALOG_ENV, TOUCH_ENV];
+pub const RESERVED_ENV: [&str; 4] = [ACTIVE_ENV, CATALOG_ENV, TOUCH_ENV, STEPS_ENV];
 
 /// The variables a run composes for every test process it starts, which it therefore never lets one inherit.
-pub const COMPOSED_ENV: [&str; 4] = [
+pub const COMPOSED_ENV: [&str; 5] = [
     ACTIVE_ENV,
     CATALOG_ENV,
     TOUCH_ENV,
+    STEPS_ENV,
     crate::coverage::PROFILE_ENV,
 ];
 
@@ -356,6 +359,9 @@ pub const fn outcome_of(observed: Observation, summary: Option<Summary>, harness
     if observed.exit_code == STALE_CATALOG_EXIT || observed.stale_catalog {
         return Outcome::Errored;
     }
+    if observed.exit_code == RUNAWAY_EXIT {
+        return Outcome::TimedOut;
+    }
     if observed.exit_code != 0 {
         return Outcome::Killed;
     }
@@ -437,6 +443,9 @@ pub fn environment(
     if let Some((id, catalog)) = active {
         env.insert(OsString::from(ACTIVE_ENV), OsString::from(id));
         env.insert(OsString::from(CATALOG_ENV), OsString::from(catalog));
+        if let Some(steps) = context.steps {
+            env.insert(OsString::from(STEPS_ENV), OsString::from(steps.to_string()));
+        }
     }
     if let Some(touch) = context.touch {
         env.insert(OsString::from(TOUCH_ENV), touch.log.as_os_str().to_owned());
@@ -609,6 +618,13 @@ pub struct Context<'a> {
     pub sysroot: Option<&'a Path>,
     /// The mutant to activate: `(identity, catalog digest)`.
     pub active: Option<(&'a str, &'a str)>,
+    /// How many times the active mutant's guard may be taken before the process is stopped. `None` counts nothing.
+    ///
+    /// A mutant that does not terminate has to be stopped by something, and a
+    /// count is a number every machine agrees on where a clock is not. It is
+    /// spent per process because the process is what a run activates a mutant
+    /// in and what it would otherwise kill by that clock.
+    pub steps: Option<u64>,
     /// Where the guards append which of the process's threads reached them, and the catalog the record is about. `None` runs a process whose guards record nothing.
     pub touch: Option<Touching<'a>>,
     /// Where a coverage-instrumented process writes what it executed. `None` runs a process that measures nothing.
