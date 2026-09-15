@@ -2,9 +2,18 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 name: release-please
 
+# Asked for rather than automatic. Opening the release pull request needs a
+# permission this repository withholds from Actions, so every push to `main`
+# started this and failed:
+#
+#     release-please failed: GitHub Actions is not permitted to create or
+#     approve pull requests
+#
+# A branch that is red for a job nobody wanted is a branch whose colour says
+# nothing. The release train is still here and still the only way a version is
+# cut; it is started when somebody means to cut one, which is also when the
+# permission it needs is worth granting.
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 permissions:
