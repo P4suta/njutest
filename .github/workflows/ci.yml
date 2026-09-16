@@ -178,6 +178,19 @@ jobs:
       - name: Collect coverage (run the suite once)
         run: |
           set -euo pipefail
+          # The instrumented build lands in the ordinary `target/`, which the
+          # cache restored, and `report` reads the coverage mapping of every
+          # object file it finds there — including the ones built from a source
+          # version this commit no longer has. A file this branch changed then
+          # appears twice: once as the copy the tests ran, once as a copy
+          # nothing ran, and the floor is measured against a crate that is half
+          # phantom. On one pull request `snapshot/mod.rs` read 2604 regions and
+          # 42% where the same file on `main` read 1291 and 84%.
+          #
+          # `llvm-cov clean` removes the profiles and this run's own artifacts;
+          # what has to go is everything the cache brought. A measurement that
+          # gates a merge is worth the rebuild.
+          cargo clean
           cargo llvm-cov clean --workspace
           cargo llvm-cov show-env --export-prefix > "$RUNNER_TEMP/coverage-env.sh"
           . "$RUNNER_TEMP/coverage-env.sh"

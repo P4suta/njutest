@@ -124,6 +124,7 @@ depends = ["build:examples"]
 shell = "bash -c"
 run = """
 set -euo pipefail
+cargo clean
 cargo llvm-cov clean --workspace
 eval "$(cargo llvm-cov show-env --export-prefix)"
 cargo build --locked --examples -p rust-mutants
