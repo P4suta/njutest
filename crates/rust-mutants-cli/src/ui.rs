@@ -233,6 +233,12 @@ fn beside(judged: &Judged) -> Option<&str> {
 
 /// One phase line, from the recording the engine keeps while it prepares.
 ///
+/// A line when a phase begins as well as when it ends, because the longest
+/// phase of a run is otherwise the one that says nothing: a reader piping this
+/// into a log has no way to tell a slow `verify` from a hang, and the question
+/// arrives at minute ninety of a two-hour job. The recording has carried
+/// `phase-start` all along; this only reads it.
+///
 /// Preparing is not a run, so nothing observes it. What it does is in the
 /// recording, though, and a display is one more reader of that: a tee of the
 /// recorder's sink hands each event to this thread, which writes the line a
@@ -242,6 +248,7 @@ fn beside(judged: &Judged) -> Option<&str> {
 #[must_use]
 pub fn phase_line(event: &Event) -> Option<String> {
     match &event.payload {
+        Payload::PhaseStart { phase } => Some(format!("{:<12}{:>28}\n", phase.name, "started")),
         Payload::PhaseEnd { phase } => {
             let milliseconds = phase.duration_ms.unwrap_or_default();
             Some(format!(
@@ -254,7 +261,7 @@ pub fn phase_line(event: &Event) -> Option<String> {
     }
 }
 
-/// One line per phase the recorder has finished, in the order it finished them.
+/// One line per phase the recorder has started or finished, in the order it did.
 ///
 /// The channel is drained rather than waited on: preparing does not hand back
 /// control until it is done, so what a reader gets is what preparing did, as
