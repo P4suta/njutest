@@ -149,8 +149,9 @@ fn a_kept_snapshot_outlives_the_run_and_cache_names_the_run_that_kept_it() {
     );
     let removed = said(&against(&fixture, &["cache", "--gc", "--kept"]));
     assert!(
-        removed.contains("kept        2 removed"),
-        "the snapshot and the build cache are two directories one run kept: {removed}"
+        removed.contains("kept        3 removed"),
+        "the snapshot, the build cache and the scratch are the three directories one \
+         run kept: {removed}"
     );
     let after = said(&against(&fixture, &["cache"]));
     assert!(after.contains("kept        0"), "{after}");

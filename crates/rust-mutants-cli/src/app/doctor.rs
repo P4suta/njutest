@@ -95,10 +95,11 @@ pub(super) fn doctor_document(
         "temp",
         if temp.is_dir() { Well } else { Fail },
         &format!(
-            "{} (snapshots as {}*, target directories as {}*)",
+            "{} (snapshots as {}*, target directories as {}*, scratch as {}*)",
             temp.display(),
             snapshot::DIR_PREFIX,
-            workspace::TARGET_DIR_PREFIX
+            workspace::TARGET_DIR_PREFIX,
+            workspace::SCRATCH_DIR_PREFIX
         ),
         (!temp.is_dir()).then_some("set TMPDIR to a directory a run may write in"),
     ));
@@ -404,6 +405,7 @@ fn snapshots_check(reports: &Path, environment: &Environment) -> doctor_report::
                     let name = entry.file_name().to_string_lossy().into_owned();
                     name.starts_with(snapshot::DIR_PREFIX)
                         || name.starts_with(workspace::TARGET_DIR_PREFIX)
+                        || name.starts_with(workspace::SCRATCH_DIR_PREFIX)
                 })
                 .count()
         })

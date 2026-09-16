@@ -22,6 +22,70 @@ pub const TARGET_DIR_PREFIX: &str = "rust-mutants-target-";
 /// The schema a target directory's owner marker names, so a reader can tell a build cache from a run's scratch tree.
 pub const TARGET_OWNER_SCHEMA: &str = "rust-mutants-target-owner-v1";
 
+/// Where a run's test processes work, under the temporary root: one per run, beside the target directory rather than inside it.
+///
+/// A test process pays for every byte of this name. A Unix socket bound under
+/// the directory a test runs in has to fit in `sun_path` — 104 bytes on macOS,
+/// 108 on Linux — and the temporary root alone spends about forty of them, so
+/// a test that binds one passes on its own and fails under a run whose scratch
+/// path is long. What follows the prefix is therefore the smallest number that
+/// no other run holds, rather than the sixteen hexadecimal digits that key a
+/// build cache to its tree: a scratch directory is worth nothing once its run
+/// is over, so it has nothing to be keyed to.
+pub const SCRATCH_DIR_PREFIX: &str = "rm-scratch-";
+
+/// How many scratch directories the engine will look at before naming one after the process instead.
+const SCRATCH_ATTEMPTS: u32 = 1024;
+
+/// The schema a scratch directory's owner marker names, so a reader can tell a run's working area from a build cache.
+pub const SCRATCH_OWNER_SCHEMA: &str = "rust-mutants-scratch-owner-v1";
+
+/// Every prefix the engine names a temporary directory with, which is what a sweep collects.
+pub const SWEPT_PREFIXES: [&str; 3] = [DIR_PREFIX, TARGET_DIR_PREFIX, SCRATCH_DIR_PREFIX];
+
+/// The part of a stable name that identifies the source root.
+fn keyed(root: &Path) -> String {
+    snapshot::stable_name(root)
+        .strip_prefix(DIR_PREFIX)
+        .unwrap_or_default()
+        .to_owned()
+}
+
+/// Where cargo builds a run against `root`, under `parent`.
+#[must_use]
+pub fn target_of(parent: &Path, root: &Path) -> PathBuf {
+    parent.join(format!("{TARGET_DIR_PREFIX}{}", keyed(root)))
+}
+
+/// The `at`th scratch directory under `parent`, where a run's test processes work.
+#[must_use]
+pub fn scratch_of(parent: &Path, at: u32) -> PathBuf {
+    parent.join(format!("{SCRATCH_DIR_PREFIX}{at}"))
+}
+
+/// Takes the lowest-numbered scratch directory no other run holds, so the name stays short however many runs share a temporary root.
+///
+/// Every candidate is claimed rather than merely created, because the number
+/// says nothing about who is using it: the lock is what makes the directory
+/// this run's own. A run that claims none of them works in one named after its
+/// process, which no concurrent run can be using either.
+fn claim_scratch(parent: &Path, now: jiff::Timestamp) -> (PathBuf, Option<tempowner::Owner>) {
+    for at in 0..SCRATCH_ATTEMPTS {
+        let dir = scratch_of(parent, at);
+        if std::fs::create_dir_all(&dir).is_err() {
+            continue;
+        }
+        if let Ok(owner) = tempowner::claim_as(&dir, now, SCRATCH_OWNER_SCHEMA) {
+            return (dir, Some(owner));
+        }
+    }
+    let dir = parent.join(format!("{SCRATCH_DIR_PREFIX}p{}", std::process::id()));
+    let owner = std::fs::create_dir_all(&dir)
+        .ok()
+        .and_then(|()| tempowner::claim_as(&dir, now, SCRATCH_OWNER_SCHEMA).ok());
+    (dir, owner)
+}
+
 /// Configures [`Workspace::open`].
 #[derive(Debug, Clone, Default)]
 pub struct OpenOptions {
@@ -77,6 +141,10 @@ pub struct Workspace {
     pub(crate) target_dir: PathBuf,
     /// The claim on that directory: held for the life of the workspace so a concurrent sweep leaves it alone, and released without removing anything.
     pub(crate) target_owner: Option<tempowner::Owner>,
+    /// Where this run's test processes work: a sibling of the target directory, not a child, because its name has to stay inside `sun_path`.
+    pub(crate) scratch_dir: PathBuf,
+    /// The claim on that directory, held and released exactly as [`Workspace::target_owner`] is.
+    pub(crate) scratch_owner: Option<tempowner::Owner>,
     pub(crate) base_env: Vec<(OsString, OsString)>,
     pub(crate) swept: SweepResult,
     pub(crate) keep_temp: bool,
@@ -298,8 +366,7 @@ impl Workspace {
         let root = crate::canonical::canonical(root).unwrap_or_else(|_error| root.to_path_buf());
         let parent = options.temp_directory.clone();
         let now = jiff::Timestamp::now();
-        let swept =
-            tempowner::sweep(&parent, &[DIR_PREFIX, TARGET_DIR_PREFIX], now).unwrap_or_default();
+        let swept = tempowner::sweep(&parent, &SWEPT_PREFIXES, now).unwrap_or_default();
 
         let toolchain = Toolchain::locate(
             &LocateOptions {
@@ -339,13 +406,9 @@ impl Workspace {
                 offline: options.offline,
             },
         )?;
-        let target_dir = parent.join(format!(
-            "{TARGET_DIR_PREFIX}{}",
-            snapshot::stable_name(&root)
-                .strip_prefix(DIR_PREFIX)
-                .unwrap_or_default()
-        ));
+        let target_dir = target_of(&parent, &root);
         let target_owner = claim_target(&target_dir, now, &root);
+        let (scratch_dir, scratch_owner) = claim_scratch(&parent, now);
         phase.end();
         Ok(Self {
             snapshot,
@@ -353,6 +416,8 @@ impl Workspace {
             metadata,
             target_dir,
             target_owner,
+            scratch_dir,
+            scratch_owner,
             base_env,
             swept,
             keep_temp: options.keep_temp,
@@ -469,9 +534,16 @@ impl Workspace {
         }
         if self.keep_temp {
             let dir = self.snapshot.dir().to_path_buf();
+            if let Some(mut owner) = self.scratch_owner.take() {
+                drop(owner.keep());
+            }
             self.snapshot.keep()?;
-            return Ok(vec![dir, self.target_dir]);
+            return Ok(vec![dir, self.target_dir, self.scratch_dir]);
         }
+        if let Some(mut owner) = self.scratch_owner.take() {
+            drop(owner.release());
+        }
+        drop(std::fs::remove_dir_all(&self.scratch_dir));
         self.snapshot.cleanup()?;
         Ok(Vec::new())
     }

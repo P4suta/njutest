@@ -68,7 +68,7 @@ pub(super) fn cache(
         return Ok(0);
     }
     let now = Timestamp::now();
-    let scratch = [snapshot::DIR_PREFIX];
+    let scratch = [snapshot::DIR_PREFIX, workspace::SCRATCH_DIR_PREFIX];
     let caches = [workspace::TARGET_DIR_PREFIX];
     let nothing = |_dir: &Path| Ok(());
     let (left, taken) = match (asked.gc, asked.all) {

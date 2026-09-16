@@ -267,7 +267,7 @@ fn built(building: &Building<'_>) -> Result<Built, EngineError> {
             packages: options.packages.clone(),
         }));
     }
-    let scratch = workspace.target_dir.join("scratch");
+    let scratch = workspace.scratch_dir.clone();
     std::fs::create_dir_all(&scratch).map_err(|source| SessionError::WriteFailed {
         path: scratch.display().to_string(),
         source,

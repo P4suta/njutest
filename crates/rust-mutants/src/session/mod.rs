@@ -1122,7 +1122,7 @@ impl Session {
         let at = self
             .executions
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let own = self.scratch.join(format!("exec-{at}"));
+        let own = self.scratch.join(at.to_string());
         if std::fs::create_dir_all(&own).is_ok() {
             own
         } else {

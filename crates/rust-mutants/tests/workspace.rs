@@ -400,3 +400,23 @@ fn a_compile_stopped_by_cancellation_is_an_error_not_a_failed_build() {
     assert_eq!(error.kind().code().code, "RM0001");
     workspace.close().expect("close");
 }
+
+/// A test process binding a Unix socket under the directory it runs in pays for every byte of that directory's path.
+///
+/// `sun_path` is 104 bytes on macOS, where the temporary root already spends
+/// about fifty, and a test that binds a socket has to fit its own temporary
+/// directory and a name inside what is left. The engine's contribution is what
+/// decides whether that test passes under a run and fails outside one.
+#[test]
+fn what_a_run_adds_leaves_a_test_room_to_bind_a_socket() {
+    const SUN_PATH: usize = 104;
+    let parent = PathBuf::from("/var/folders/q9/8kq0lqv91bd3z5wz_0000gn/T");
+    let scratch = rust_mutants::workspace::scratch_of(&parent, 7);
+    let socket = scratch.join("7").join(".tmpAbCdEf").join("service.sock");
+    assert!(
+        socket.as_os_str().len() <= SUN_PATH,
+        "a run leaves a test {} bytes of the {SUN_PATH} a Unix socket has: {}",
+        SUN_PATH.saturating_sub(scratch.as_os_str().len()),
+        socket.display()
+    );
+}
