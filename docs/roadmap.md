@@ -5,7 +5,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # Roadmap
 
-**Status: M0 to M11 and M13, and E2 to E12, are done.** What remains of
+**Status: M0 to M11, M13, M14, and E2 to E12, are done.** What remains of
 M8 is the tag itself, which is a decision rather than a change: see
 `docs/release.md`. The user's decisions: one workspace, the engine first,
 the engine a standalone product too, every milestone completed, test-driven
