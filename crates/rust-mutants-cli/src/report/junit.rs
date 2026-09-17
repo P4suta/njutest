@@ -22,7 +22,7 @@ pub fn document(document: &RunDocument) -> String {
         "<testsuites name=\"rust-mutants\" tests=\"{tests}\" failures=\"{failures}\" \
          errors=\"{errors}\" skipped=\"{skipped}\" time=\"{time}\">",
         tests = counted.cataloged,
-        failures = counted.survived,
+        failures = counted.survived.saturating_sub(counted.expected),
         errors = counted.inconclusive.saturating_add(counted.errored),
         skipped = counted.not_run,
         time = seconds(document.run.duration_ms),
@@ -90,7 +90,10 @@ fn suite(out: &mut String, path: &str, mutants: &[&RunMutantDocument]) {
          errors=\"{errors}\" skipped=\"{skipped}\" time=\"{time}\">",
         name = escape(path),
         tests = mutants.len(),
-        failures = counted(&["survived"]),
+        failures = mutants
+            .iter()
+            .filter(|mutant| mutant.outcome == "survived" && !mutant.expected)
+            .count(),
         errors = counted(&["inconclusive", "errored"]),
         skipped = counted(&["not_run"]),
         time = seconds(elapsed),
@@ -121,6 +124,13 @@ fn case(out: &mut String, path: &str, mutant: &RunMutantDocument) {
         rendered(&mutant.replacement)
     );
     let body = match mutant.outcome.as_str() {
+        "survived" if mutant.expected => Some(format!(
+            "      <skipped message=\"{}\"/>\n",
+            escape(&format!(
+                "{change} at {path}:{}:{} survived, which a reviewer wrote down in advance",
+                mutant.line, mutant.column
+            ))
+        )),
         "survived" => Some(format!(
             "      <failure message=\"survived\" type=\"surviving-mutant\">{}</failure>\n",
             escape(&format!(

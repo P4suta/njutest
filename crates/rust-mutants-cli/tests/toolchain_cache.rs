@@ -106,15 +106,15 @@ fn cache_says_what_the_store_holds_and_clear_outcomes_empties_it() {
         ],
     );
     let listed = said(&against(&fixture, &["cache"]));
-    assert!(listed.contains("outcomes    "), "{listed}");
-    assert!(listed.contains("kept        0"), "{listed}");
+    assert!(listed.contains("outcomes     "), "{listed}");
+    assert!(listed.contains("kept         0"), "{listed}");
     let cleared = said(&against(&fixture, &["cache", "--clear-outcomes"]));
     assert!(
-        cleared.contains("outcomes    ") && cleared.contains("removed"),
+        cleared.contains("outcomes     ") && cleared.contains("removed"),
         "a store emptied says how much was in it: {cleared}"
     );
     let after = said(&against(&fixture, &["cache"]));
-    assert!(after.contains("outcomes    0 records"), "{after}");
+    assert!(after.contains("outcomes     0 records"), "{after}");
 }
 
 #[test]
@@ -149,12 +149,12 @@ fn a_kept_snapshot_outlives_the_run_and_cache_names_the_run_that_kept_it() {
     );
     let removed = said(&against(&fixture, &["cache", "--gc", "--kept"]));
     assert!(
-        removed.contains("kept        3 removed"),
+        removed.contains("kept         3 removed"),
         "the snapshot, the build cache and the scratch are the three directories one \
          run kept: {removed}"
     );
     let after = said(&against(&fixture, &["cache"]));
-    assert!(after.contains("kept        0"), "{after}");
+    assert!(after.contains("kept         0"), "{after}");
 }
 
 #[test]

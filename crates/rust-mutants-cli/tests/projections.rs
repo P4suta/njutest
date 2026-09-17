@@ -511,13 +511,23 @@ fn the_page_says_what_the_run_decided_and_what_it_decided_nothing_about() {
          beside it: a percentage nobody can check is the one thing this program does not \
          report: {page}"
     );
-    for (name, count) in [("cataloged", 2), ("killed", 1), ("survived", 1)] {
+    assert!(
+        page.contains("2 mutants were cataloged, of which 2 were executed"),
+        "the total says what it is the total of, in a sentence rather than as a row a \
+         reader would add to the outcomes below it: {page}"
+    );
+    for (name, count) in [("killed", 1), ("survived", 1)] {
         assert!(
             page.contains(&format!("<th>{name}</th><td>{count}</td>")),
-            "and every column of the accounting is on it, so a reader adding them up \
-             gets the catalog: {name} is not {count} in\n{page}"
+            "and the outcomes are the rows, so a reader adding the table up gets the \
+             catalog: {name} is not {count} in\n{page}"
         );
     }
+    assert!(
+        page.contains("Those six add to the 2 cataloged"),
+        "and the page says so, because a subset printed as a peer is a table that does \
+         not add up: {page}"
+    );
     assert!(
         page.contains("surviving-mutant"),
         "the findings are named: a page with a score and no findings is one a reader \

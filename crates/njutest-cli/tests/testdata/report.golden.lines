@@ -9,6 +9,8 @@ MUTANT	survived	cccccccc	crates/core/src/lib.rs:12:9	lt-to-le@1
 FINDING	surviving-mutant	cccccccc	no test noticed the edit at crates/core/src/lib.rs:12
 LIMITATION	mutation-phase-not-implemented	no mutant was executed, so nothing is claimed about the tests' strength
 TARGETS	selected=2	passed=1	failed=1	skipped=0	missing=0
-MUTANTS	cataloged=9	rejected=0	executed=0	killed=0	survived=1	timed_out=0	unreached=0	accepted=0	reused_killed=0	reused_survived=0
-SOUNDNESS	unsafe_items=0	packages=0	executed=false
+MUTANTS	cataloged=9	rejected=0	executed=0	unreached=0
+OUTCOMES	killed=0	survived=1	timed_out=0	equivalent=0
+WITHIN_OUTCOMES	accepted_of_survived=0	reused_of_killed=0	reused_of_survived=0
+SOUNDNESS	unsafe_items=0	packages_with_unsafe=0	was_executed=false
 VERDICT	INSUFFICIENT

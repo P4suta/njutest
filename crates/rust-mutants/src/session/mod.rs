@@ -84,7 +84,7 @@ pub enum LocateError {
     #[error("no mutation of this catalog is the one described")]
     Nothing,
     /// The catalog holds more than one, and the line did not separate them.
-    #[error("{} mutations of this catalog are the one described: {}", display_ids.len(), display_ids.join(", "))]
+    #[error("{} mutations of this catalog are the one described; add the line to say which: {}", display_ids.len(), display_ids.join(", "))]
     Several {
         /// What it could have meant.
         display_ids: Vec<String>,
@@ -419,7 +419,12 @@ impl Session {
             several => Err(LocateError::Several {
                 display_ids: several
                     .iter()
-                    .map(|mutant| mutant.display_id.clone())
+                    .map(|mutant| {
+                        self.position(mutant).map_or_else(
+                            || mutant.display_id.clone(),
+                            |at| format!("{}@{}", mutant.display_id, at.line),
+                        )
+                    })
                     .collect(),
             }),
         }
@@ -459,7 +464,12 @@ impl Session {
         let named = |several: &[&Mutant]| -> Vec<String> {
             several
                 .iter()
-                .map(|mutant| mutant.display_id.clone())
+                .map(|mutant| {
+                    self.position(mutant).map_or_else(
+                        || mutant.display_id.clone(),
+                        |at| format!("{}@{}", mutant.display_id, at.line),
+                    )
+                })
                 .collect()
         };
         match (narrowed.as_slice(), locator.count) {

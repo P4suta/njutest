@@ -51,7 +51,8 @@ fn an_estimate_counts_the_pairs_a_run_would_start_against_the_pairs_there_are() 
          however many tests its route names: {said}"
     );
     assert!(
-        line(&said, "REMOVED BY").contains("unreached=24 discharged=6 pairs, of the 32"),
+        line(&said, "REMOVED BY")
+            .contains("unreached=24 discharged=6 pairs the route removed, of 32"),
         "every pair removed is removed by something a person can go and look at, and the \
          two numbers add up to the pairs the line above says were removed: {said}"
     );

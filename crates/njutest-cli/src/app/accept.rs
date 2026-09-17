@@ -122,10 +122,15 @@ fn resolve(root: &std::path::Path, arguments: &Arguments) -> Result<String, Stri
             arguments.mutant
         )),
         several => Err(format!(
-            "{}: {} names {} mutants",
+            "{}: {} names {} mutants: {}",
             crate::error::RUN_NOT_FOUND.code,
             arguments.mutant,
-            several.len()
+            several.len(),
+            several
+                .iter()
+                .map(|one| format!("{} at {}:{}", one.display_id, one.path, one.position.line))
+                .collect::<Vec<String>>()
+                .join(", ")
         )),
     }
 }

@@ -105,25 +105,28 @@ fn score(document: &RunDocument) -> String {
 fn accounting(document: &RunDocument) -> String {
     let counted = &document.accounting;
     let rows = [
-        ("cataloged", counted.cataloged),
-        ("refused", counted.refused),
-        ("skipped", counted.skipped),
-        ("executed", counted.executed),
         ("killed", counted.killed),
         ("survived", counted.survived),
         ("timed out", counted.timed_out),
         ("inconclusive", counted.inconclusive),
         ("errored", counted.errored),
         ("not run", counted.not_run),
-        ("unreached", counted.unreached),
-        ("discharged", counted.discharged),
-        ("expected", counted.expected),
     ];
-    let mut out = String::from("<table>\n");
+    let mut out = format!(
+        "<p>{} mutants were cataloged, of which {} were executed. The compiler refused {} \
+         more, and {} places the rules target produced none.</p>\n<table>\n",
+        counted.cataloged, counted.executed, counted.refused, counted.skipped
+    );
     for (name, count) in rows {
         let _written = writeln!(out, "<tr><th>{name}</th><td>{count}</td></tr>");
     }
-    out.push_str("</table>");
+    let _written = write!(
+        out,
+        "</table>\n<p>Those six add to the {} cataloged. Within them, <em>not run</em> is {} \
+         unreached and {} discharged, and <em>survived</em> includes {} a reviewer \
+         expected.</p>",
+        counted.cataloged, counted.unreached, counted.discharged, counted.expected
+    );
     out
 }
 

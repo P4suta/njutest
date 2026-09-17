@@ -271,7 +271,7 @@ fn what_a_run_was_asked_to_keep_is_listed_and_never_swept() {
         said.out
     );
     assert!(
-        said.out.contains("kept        1") && said.out.contains("20260101T000000000Z"),
+        said.out.contains("kept         1") && said.out.contains("20260101T000000000Z"),
         "and it is listed with the run that asked, because that is what a person is \
          looking for when they go back to it: {}",
         said.out
@@ -316,7 +316,7 @@ fn collecting_what_was_kept_removes_it_and_says_how_many() {
         said.out
     );
     assert!(
-        said.out.contains("kept        1 removed"),
+        said.out.contains("kept         1 removed"),
         "and the count is said, because a ledger emptied without a number leaves a \
          person unsure whether it was already empty: {}",
         said.out

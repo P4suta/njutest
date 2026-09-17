@@ -111,10 +111,15 @@ fn selected(arguments: &Arguments, environment: &Environment) -> Result<Selected
             arguments.finding
         )),
         several => Err(format!(
-            "{}: {} names {} findings",
+            "{}: {} names {} findings: {}",
             crate::error::RUN_NOT_FOUND.code,
             arguments.finding,
-            several.len()
+            several.len(),
+            several
+                .iter()
+                .map(|one| format!("{} ({})", one.subject, one.kind_name()))
+                .collect::<Vec<String>>()
+                .join(", ")
         )),
     }
 }

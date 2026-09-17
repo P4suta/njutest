@@ -84,7 +84,7 @@ pub(super) fn cache(
     let verb = if asked.gc { "removed" } else { "reclaimable" };
     let written = write!(
         text,
-        "temp        {}\ncaches      {} {}, {} bytes; {} still in use, {} kept for the next run\nsnapshots   {} {}, {} bytes; {} still in use, {} preserved on purpose\noutcomes    {} records, {} bytes, at {}\nmeasurements {}\nfailures    {}\n",
+        "temp         {}\ncaches       {} {}, {} bytes; {} still in use, {} kept for the next run\nsnapshots    {} {}, {} bytes; {} still in use, {} preserved on purpose\noutcomes     {} records, {} bytes, at {}\nmeasurements {}\nfailures     {}\n",
         parent.display(),
         taken.removed.len(),
         verb,
@@ -103,6 +103,15 @@ pub(super) fn cache(
         left.failures.len().saturating_add(taken.failures.len()),
     );
     debug_assert!(written.is_ok(), "writing to a String cannot fail");
+    for failure in left.failures.iter().chain(taken.failures.iter()) {
+        let written = writeln!(
+            text,
+            "             {}: {}",
+            failure.dir.display(),
+            failure.source
+        );
+        debug_assert!(written.is_ok(), "writing to a String cannot fail");
+    }
     text.push_str(&unreached(left.unreached.saturating_add(taken.unreached)));
     write(stdout, &text);
     write(stdout, &preserved(asked, environment)?);
@@ -115,8 +124,8 @@ fn unreached(count: usize) -> String {
         return String::new();
     }
     format!(
-        "unreached   {count} left for the next sweep; it spent its {} seconds on the ones \
-         before them\n            try: something is holding a directory open, and a sweep \
+        "unreached    {count} left for the next sweep; it spent its {} seconds on the ones \
+         before them\n             try: something is holding a directory open, and a sweep \
          cannot take it back\n",
         tempowner::SWEEP_BUDGET.as_secs()
     )
@@ -155,11 +164,11 @@ fn preserved(asked: &Sweeping<'_>, environment: &Environment) -> Result<String, 
     if asked.kept {
         let (removed, left) = crate::kept::Ledger::clear(&directory)
             .map_err(|source| CliError::writing(&directory, source))?;
-        let mut text = format!("kept        {removed} removed\n");
+        let mut text = format!("kept         {removed} removed\n");
         for entry in &left.kept {
             let written = writeln!(
                 text,
-                "            still there: {} ({})",
+                "             still there: {} ({})",
                 entry.path.display(),
                 entry.run_id
             );
@@ -167,18 +176,18 @@ fn preserved(asked: &Sweeping<'_>, environment: &Environment) -> Result<String, 
         }
         if !left.kept.is_empty() {
             text.push_str(
-                "            try: something is holding these open, and a sweep cannot take \
+                "             try: something is holding these open, and a sweep cannot take \
                  them back\n",
             );
         }
         return Ok(text);
     }
     let ledger = crate::kept::Ledger::read(&directory);
-    let mut text = format!("kept        {}\n", ledger.kept.len());
+    let mut text = format!("kept         {}\n", ledger.kept.len());
     for entry in &ledger.kept {
         let written = writeln!(
             text,
-            "            {} ({})",
+            "             {} ({})",
             entry.path.display(),
             entry.run_id
         );

@@ -434,19 +434,18 @@ fn measured(
             let root = settings.root.clone();
             let open = settings.open_options(scope, environment, recorder.clone())?;
             workspace.close()?;
-            write(
-                stdout,
-                &rendered(&equivalence(
-                    &Asking {
-                        root: &root,
-                        open,
-                        discovery: &discovery,
-                        limit: *limit,
-                        trace: recorder,
-                    },
-                    cancel,
-                )?),
-            );
+            let cataloged = discovery.catalog.mutants().len();
+            let said = equivalence(
+                &Asking {
+                    root: &root,
+                    open,
+                    discovery: &discovery,
+                    limit: *limit,
+                    trace: recorder,
+                },
+                cancel,
+            )?;
+            write(stdout, &rendered(&said, cataloged));
             Ok(0)
         }
         cli::Command::List { .. }
@@ -564,22 +563,63 @@ fn selected(
 /// # Errors
 /// [`CliError::InvalidValue`] naming the path and how many files there are.
 fn narrowed(considered: &[String], named: &[String]) -> Result<(), CliError> {
-    for one in named {
-        let path = one
-            .rsplit_once(':')
-            .map_or(one.as_str(), |(head, _lines)| head);
-        if !considered.iter().any(|held| held == path) {
-            return Err(CliError::InvalidValue {
-                flag: "--file".to_owned(),
-                value: one.clone(),
-                expected: format!(
-                    "a workspace-relative path of one of the {} files this run reads",
-                    considered.len()
-                ),
-            });
-        }
-    }
-    Ok(())
+    let missing: Vec<&String> = named
+        .iter()
+        .filter(|one| {
+            let path = one
+                .rsplit_once(':')
+                .map_or(one.as_str(), |(head, _lines)| head);
+            !considered.iter().any(|held| held == path)
+        })
+        .collect();
+    let Some(first) = missing.first() else {
+        return Ok(());
+    };
+    Err(CliError::InvalidValue {
+        flag: "--file".to_owned(),
+        value: missing
+            .iter()
+            .map(|one| one.as_str())
+            .collect::<Vec<&str>>()
+            .join(", "),
+        expected: format!(
+            "a workspace-relative path of one of the {} files this run reads. Nearest to \
+             {first:?}: {}",
+            considered.len(),
+            nearest(first, considered)
+        ),
+    })
+}
+
+/// The three names most like `named`, so a typo is answered with what was meant.
+///
+/// A refusal that says "not one of the four hundred files this run reads" and
+/// stops has told somebody they are wrong and left them to find out how. The
+/// names are in hand.
+fn nearest(named: &str, considered: &[String]) -> String {
+    let mut ranked: Vec<(usize, &String)> = considered
+        .iter()
+        .map(|held| (distance(named, held), held))
+        .collect();
+    ranked.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(b.1)));
+    ranked
+        .into_iter()
+        .take(3)
+        .map(|(_at, held)| held.as_str())
+        .collect::<Vec<&str>>()
+        .join(", ")
+}
+
+/// How far apart two names are, counting the characters they do not share.
+fn distance(left: &str, right: &str) -> usize {
+    let shared = left
+        .chars()
+        .zip(right.chars())
+        .take_while(|(a, b)| a == b)
+        .count();
+    left.len()
+        .saturating_add(right.len())
+        .saturating_sub(shared.saturating_mul(2))
 }
 
 fn previewed(
@@ -1168,7 +1208,7 @@ fn replay(
     let (prefix, run) = asked;
     let session = prepared.session;
     let found = session.resolve(prefix)?.clone();
-    let stored = recorded(prepared.settings, run, &found.id)?;
+    let stored = recorded(prepared.settings, run, &found)?;
     let mut request = Request::new(found.display_id.clone());
     if let Some(row) = &stored {
         if !row.target.is_empty() {
@@ -1220,7 +1260,7 @@ fn verdict(stored: Option<&run_report::RunMutantDocument>, now: &str) -> String 
 fn recorded(
     settings: &Settings,
     run: Option<&str>,
-    id: &str,
+    found: &rust_mutants::catalog::Mutant,
 ) -> Result<Option<run_report::RunMutantDocument>, CliError> {
     let directory = settings.report_directory();
     let path = match stored::report_of(&directory, run) {
@@ -1234,7 +1274,40 @@ fn recorded(
     let text = std::fs::read_to_string(&path).map_err(|error| unreadable(&error.to_string()))?;
     let document: run_report::RunDocument =
         serde_json::from_str(&text).map_err(|error| unreadable(&error.to_string()))?;
-    Ok(document.mutants.into_iter().find(|one| one.id == id))
+    Ok(document
+        .mutants
+        .into_iter()
+        .find(|one| one.id == found.id)
+        .or_else(|| same_place(document_mutants(&text), found)))
+}
+
+/// The stored row for the same mutation, when the identity no longer matches.
+///
+/// An identity is a function of the file's bytes, so the edit a reader makes
+/// before replaying — adding the test that kills the survivor — re-mints it.
+/// Matching on the identity alone then finds nothing, and the replay says "was
+/// nothing, now killed" about a mutation the run had measured and called
+/// survived. Where the identity has moved, the place has not: one file, one
+/// rule, one original text and one replacement is the same mutation.
+fn same_place(
+    stored: Vec<run_report::RunMutantDocument>,
+    found: &rust_mutants::catalog::Mutant,
+) -> Option<run_report::RunMutantDocument> {
+    let mut matching = stored.into_iter().filter(|one| {
+        one.path == found.candidate.path
+            && one.rule == found.candidate.rule.name
+            && one.original.as_bytes() == found.candidate.original.as_slice()
+            && one.replacement.as_bytes() == found.candidate.replacement.as_slice()
+    });
+    let first = matching.next()?;
+    matching.next().is_none().then_some(first)
+}
+
+/// Every mutant row of a stored report, for a second look by place.
+fn document_mutants(text: &str) -> Vec<run_report::RunMutantDocument> {
+    serde_json::from_str::<run_report::RunDocument>(text)
+        .map(|document| document.mutants)
+        .unwrap_or_default()
 }
 
 /// One mutant, explained from a tree prepared for the purpose.
@@ -1814,8 +1887,8 @@ fn equivalence(asking: &Asking<'_>, cancel: &Cancel) -> Result<Vec<Rendered>, Cl
     Ok(said)
 }
 
-/// One line per mutant, and a count of each answer.
-fn rendered(said: &[Rendered]) -> String {
+/// One line per mutant, and a count of each answer against the catalog it was taken from.
+fn rendered(said: &[Rendered], cataloged: usize) -> String {
     let mut text = String::new();
     let mut identical = 0usize;
     for one in said {
@@ -1831,11 +1904,20 @@ fn rendered(said: &[Rendered]) -> String {
     }
     let written = writeln!(
         text,
-        "EQUIVALENCE\tasked={}\tidentical={}\tidentical is not equivalent: code nothing links \
-         comes out identical because the linker dropped it",
+        "EQUIVALENCE\tasked={} of {cataloged}\tidentical={}\tidentical is not equivalent: \
+         code nothing links comes out identical because the linker dropped it",
         said.len(),
         identical
     );
+    if said.len() < cataloged {
+        let written = writeln!(
+            text,
+            "             the other {} were never asked, so nothing here is a rate over the \
+             catalog",
+            cataloged.saturating_sub(said.len())
+        );
+        debug_assert!(written.is_ok(), "writing to a String cannot fail");
+    }
     debug_assert!(written.is_ok(), "writing to a String cannot fail");
     text
 }

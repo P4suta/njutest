@@ -427,11 +427,20 @@ fn work_line(document: &run::RunDocument) -> String {
         .collect();
     let mut line = format!(
         "WORK      started={} of {} pairs across {} targets; {:.1}% removed",
-        work.started,
+        work.pairs(),
         work.whole,
         work.targets,
         work.saved() * 100.0
     );
+    if work.started > work.pairs() {
+        let written = write!(
+            line,
+            "\n          {} of those were started twice, because a timeout is confirmed alone \
+             before it is believed",
+            work.started.saturating_sub(work.pairs())
+        );
+        debug_assert!(written.is_ok(), "writing to a String cannot fail");
+    }
     if !removed.is_empty() {
         let written = write!(line, " ({})", removed.join(" "));
         debug_assert!(written.is_ok(), "writing to a String cannot fail");
@@ -530,13 +539,15 @@ fn totals(document: &run::RunDocument) -> String {
     let mut text = String::new();
     let written = write!(
         text,
-        "MUTANTS   cataloged={} refused={} skipped={} executed={}\n\
+        "MUTANTS   cataloged={} of which executed={}; the compiler refused={} more, and \
+         skipped={} places produced none\n\
          OUTCOMES  killed={} survived={} timed_out={} inconclusive={} errored={} not_run={} \
-         unreached={} discharged={} expected={}\n",
+         (these add to cataloged)\n\
+         OF THOSE  not_run is unreached={} discharged={}; survived includes expected={}\n",
         a.cataloged,
+        a.executed,
         a.refused,
         a.skipped,
-        a.executed,
         a.killed,
         a.survived,
         a.timed_out,

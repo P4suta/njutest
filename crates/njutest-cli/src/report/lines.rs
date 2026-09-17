@@ -167,13 +167,28 @@ fn accounting(report: &Report, out: &mut String) {
             &format!("cataloged={}", mutants.cataloged),
             &format!("rejected={}", mutants.rejected),
             &format!("executed={}", mutants.executed),
+            &format!("unreached={}", mutants.unreached),
+        ],
+    );
+    out.push('\n');
+    record(
+        out,
+        "OUTCOMES",
+        &[
             &format!("killed={}", mutants.killed),
             &format!("survived={}", mutants.survived),
             &format!("timed_out={}", mutants.timed_out),
-            &format!("unreached={}", mutants.unreached),
-            &format!("accepted={}", mutants.accepted),
-            &format!("reused_killed={}", mutants.reused_killed),
-            &format!("reused_survived={}", mutants.reused_survived),
+            &format!("equivalent={}", mutants.equivalent),
+        ],
+    );
+    out.push('\n');
+    record(
+        out,
+        "WITHIN_OUTCOMES",
+        &[
+            &format!("accepted_of_survived={}", mutants.accepted),
+            &format!("reused_of_killed={}", mutants.reused_killed),
+            &format!("reused_of_survived={}", mutants.reused_survived),
         ],
     );
     out.push('\n');
@@ -183,8 +198,8 @@ fn accounting(report: &Report, out: &mut String) {
         "SOUNDNESS",
         &[
             &format!("unsafe_items={}", soundness.unsafe_items),
-            &format!("packages={}", soundness.packages_with_unsafe),
-            &format!("executed={}", soundness.executed),
+            &format!("packages_with_unsafe={}", soundness.packages_with_unsafe),
+            &format!("was_executed={}", soundness.executed),
         ],
     );
     out.push('\n');

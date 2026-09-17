@@ -80,17 +80,41 @@ pub fn run(
             ),
         );
     }
-    let accepted = report
-        .findings
-        .iter()
-        .all(|finding| finding.subject != mutant.display_id);
-    if mutant.outcome == "survived" && accepted {
-        super::say(
-            stdout,
-            "ACCEPTANCE\ta reviewer accepted this mutant, so it raised no finding",
-        );
+    if mutant.outcome == "survived" {
+        super::say(stdout, &acceptance(root, mutant));
     }
     EXIT_ASSURED
+}
+
+/// What a reviewer recorded about this survivor, or how to record something.
+///
+/// Reading "somebody accepted it" off the absence of a finding says a person
+/// signed this off when all that is known is that nothing complained, which is
+/// also what a shard, a suppressed kind and a merged report look like. The
+/// acceptances are in the configuration, so the question is asked of them, and
+/// where there is no answer the reader is told how to write one.
+fn acceptance(root: &std::path::Path, mutant: &crate::report::MutantRecord) -> String {
+    let accepted = crate::config::Config::load(root).ok().and_then(|config| {
+        config
+            .acceptance
+            .into_iter()
+            .find(|one| mutant.id.starts_with(&one.id))
+    });
+    let Some(one) = accepted else {
+        return format!(
+            "ACCEPTANCE\tnobody has recorded a reason for this one\tnjutest accept {} \
+             --reason \"...\" writes one into .njutest.toml",
+            mutant.display_id
+        );
+    };
+    format!(
+        "ACCEPTANCE\t{}\treason={}\towner={}\texpires={}",
+        one.id,
+        escape(&one.reason),
+        one.owner.as_deref().unwrap_or("(nobody named)"),
+        one.expires
+            .map_or_else(|| String::from("(never)"), |at| at.to_string())
+    )
 }
 
 /// The one mutant a prefix names, or a diagnostic saying why it names none or several.

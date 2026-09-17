@@ -359,9 +359,11 @@ fn open_and_then_accepted(it: &Verified, parsed: &serde_json::Value) {
         open.out
     );
     assert!(
-        !open.out.contains("ACCEPTANCE\t"),
-        "a survivor whose own finding still stands is not described as accepted, even when the \
-         report also has findings about other mutations: {}",
+        open.out
+            .contains("ACCEPTANCE\tnobody has recorded a reason"),
+        "a survivor whose own finding still stands is not described as accepted, even when \
+         the report also has findings about other mutations — and a reader looking at one \
+         is told how to record a reason rather than left to find the form: {}",
         open.out
     );
 
@@ -687,10 +689,13 @@ fn stored(it: &Verified) {
     .expect("a store bounded at nothing");
     let before = ask(&it.root, &["cache"]);
     assert!(
-        before.out.contains("collected 0 expired, 0 evicted"),
+        before
+            .out
+            .contains("collected nothing; --gc is what collects"),
         "a store nobody asked to collect takes nothing, however far over its bound it \
          is: a command that collected as a side effect of being asked what it holds \
-         would take answers from a run that is still using them: {}",
+         would take answers from a run that is still using them. And it says that is \
+         what happened, because three zeroes read as a store with nothing to collect: {}",
         before.out
     );
     let swept = ask(&it.root, &["cache", "--gc"]);

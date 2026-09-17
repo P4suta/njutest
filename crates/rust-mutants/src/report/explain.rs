@@ -120,9 +120,12 @@ pub fn explain(asked: &Asked<'_>) -> Result<ExplainDocument, ExplainError> {
     let row: Option<&RunMutantDocument> = asked
         .run
         .and_then(|run| run.mutants.iter().find(|one| one.id == mutant.id));
-    let refused = asked.catalog.rejections.iter().find_map(|one| {
-        (one.rule == mutant.rule && one.path == mutant.path).then(|| one.diagnostic.clone())
-    });
+    let refused = asked
+        .catalog
+        .rejections
+        .iter()
+        .find(|one| one.id == mutant.id)
+        .map(|one| one.diagnostic.clone());
     let (diff, source) = changed(&mutant, asked.source);
     Ok(ExplainDocument {
         document_type: DOCUMENT_TYPE.to_owned(),

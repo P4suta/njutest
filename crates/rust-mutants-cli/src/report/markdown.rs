@@ -40,24 +40,29 @@ fn score(out: &mut String, document: &RunDocument) {
 
 fn accounting(out: &mut String, document: &RunDocument) {
     let counted = &document.accounting;
-    out.push_str("| what | how many |\n| --- | --- |\n");
+    let _written = writeln!(
+        out,
+        "{} mutants were cataloged, of which {} were executed. The compiler refused {} more, \
+         and {} places the rules target produced none.\n",
+        counted.cataloged, counted.executed, counted.refused, counted.skipped
+    );
+    out.push_str("| outcome | how many |\n| --- | --- |\n");
     for (name, count) in [
-        ("cataloged", counted.cataloged),
         ("killed", counted.killed),
         ("survived", counted.survived),
         ("timed out", counted.timed_out),
         ("inconclusive", counted.inconclusive),
         ("errored", counted.errored),
         ("not run", counted.not_run),
-        ("unreached", counted.unreached),
-        ("discharged", counted.discharged),
-        ("expected", counted.expected),
-        ("refused", counted.refused),
-        ("skipped", counted.skipped),
     ] {
         let _written = writeln!(out, "| {name} | {count} |");
     }
-    out.push('\n');
+    let _written = writeln!(
+        out,
+        "\nThose six add to the {} cataloged. Within them, *not run* is {} unreached and {} \
+         discharged, and *survived* includes {} a reviewer expected.\n",
+        counted.cataloged, counted.unreached, counted.discharged, counted.expected
+    );
 }
 
 fn findings(out: &mut String, document: &RunDocument) {
