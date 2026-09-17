@@ -54,6 +54,16 @@ pub struct ExplainDocument {
     pub retried: bool,
     /// The command that puts this one mutation back to the tests.
     pub reproduce: String,
+    /// The configuration block that records this mutation as one a reason is written for.
+    ///
+    /// A survivor has two readings a reader has to tell apart: a gap in the
+    /// tests, and a claim about the code that somebody should write down.
+    /// Nothing said so here. One caller read ninety survivors, decided five of
+    /// them were the second kind, went looking for how to record them, and
+    /// found the form only after reading the configuration page — having
+    /// already known the feature existed. A block they can paste costs a
+    /// reader nothing and says the choice is theirs to make.
+    pub accept: String,
 }
 
 /// Why one mutant could not be explained.
@@ -144,6 +154,7 @@ pub fn explain(asked: &Asked<'_>) -> Result<ExplainDocument, ExplainError> {
         duration_ms: row.map(|one| one.duration_ms),
         retried: row.is_some_and(|one| one.retried),
         reproduce: reproduce(&mutant, row),
+        accept: accept(&mutant),
         mutant,
     })
 }
@@ -174,8 +185,45 @@ fn changed(mutant: &MutantDocument, source: Option<&str>) -> (Option<String>, Op
 }
 
 /// The command that puts one mutation back to the tests.
+/// How a reader names this mutation again, which has to hold after they have changed the file.
+///
+/// The identity is a function of the file's bytes, so the edit that fixes a
+/// survivor re-mints it — and in Rust that edit is usually a test added to the
+/// `#[cfg(test)] mod tests` at the bottom of the same file. A command printed
+/// with an identity in it stops working the moment it is followed. A locator
+/// says where the mutation is and what it edits, so it holds.
+#[must_use]
+pub fn names(mutant: &MutantDocument) -> String {
+    if mutant.item.is_empty() || mutant.path.is_empty() {
+        return mutant.display_id.clone();
+    }
+    format!(
+        "{}:{}:{}@{}",
+        mutant.path, mutant.item, mutant.rule, mutant.line
+    )
+}
+
+/// The `[[mutation.expect]]` a reader pastes to record this mutation with a reason.
+///
+/// It is written as a locator rather than as an identity for the same reason
+/// the reproduce command is: the identity is re-minted by any edit to the
+/// file, so a recorded one stops naming anything as soon as somebody touches
+/// the file it is about.
+fn accept(mutant: &MutantDocument) -> String {
+    if mutant.item.is_empty() || mutant.path.is_empty() {
+        return format!(
+            "[[mutation.expect]]\nid = {:?}\nreason = \"\"  # why this is not a gap in the tests\n",
+            mutant.display_id
+        );
+    }
+    format!(
+        "[[mutation.expect]]\npath = {:?}\nitem = {:?}\nrule = {:?}\noriginal = {:?}\nline = {}\nreason = \"\"  # why this is not a gap in the tests\n",
+        mutant.path, mutant.item, mutant.rule, mutant.original, mutant.line
+    )
+}
+
 fn reproduce(mutant: &MutantDocument, row: Option<&RunMutantDocument>) -> String {
-    let mut text = format!("rust-mutants run --mutant {}", mutant.display_id);
+    let mut text = format!("rust-mutants run --mutant {}", names(mutant));
     if let Some(one) = row {
         if !one.target.is_empty() {
             text.push_str(" --target ");

@@ -129,6 +129,7 @@ impl Settings {
             include: compile(&self.config.project.include)?,
             exclude: compile(&self.config.project.exclude)?,
             harness_args: self.config.execution.test_binary_args.clone(),
+            scratch_working_directory: self.config.execution.scratch_working_directory,
             packages: self.config.project.packages.clone(),
             verify: self.config.mutation.verify,
             coverage: self.config.mutation.coverage,

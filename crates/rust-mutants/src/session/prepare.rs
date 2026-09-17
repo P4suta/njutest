@@ -616,6 +616,7 @@ pub fn prepare(
         executions: std::sync::atomic::AtomicU64::new(0),
         mutant_timeout: options.mutant_timeout,
         harness_args: options.harness_args.clone(),
+        scratch_working_directory: options.scratch_working_directory,
         workspace,
     })
 }

@@ -124,5 +124,8 @@ Options:
       --file <PATH>
           Only the candidates in this file, as a workspace-relative path
 
+      --json
+          Write the candidates as one JSON document instead of as lines
+
   -h, --help
           Print help (see a summary with '-h')

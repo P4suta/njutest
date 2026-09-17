@@ -49,6 +49,9 @@ pub enum Command {
         /// Only the candidates in this file, as a workspace-relative path.
         #[arg(long, value_name = "PATH")]
         file: Option<String>,
+        /// Write the candidates as one JSON document instead of as lines.
+        #[arg(long)]
+        json: bool,
     },
     /// Ask the compiler, for every mutant, whether it renders it identically to the code it mutates.
     Equivalence {

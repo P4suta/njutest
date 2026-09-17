@@ -3,6 +3,7 @@
 
 //! Rendering what the engine established, for a person and for a program.
 
+pub mod candidates;
 pub mod doctor;
 pub mod html;
 pub mod junit;
@@ -40,6 +41,49 @@ pub fn position_in(source: &str, offset: u32) -> Position {
     rust_mutants::syntax::LineIndex::new(source).position(source, offset)
 }
 
+/// Every candidate as one document, for a reader who wants them in a program rather than on a screen.
+#[must_use]
+pub fn candidates(
+    discovery: &Discovery,
+    sources: &BTreeMap<String, String>,
+    file: Option<&str>,
+) -> candidates::CandidatesDocument {
+    let mut listed = Vec::new();
+    for located in &discovery.candidates {
+        let candidate = &located.found.candidate;
+        if file.is_some_and(|wanted| candidate.path != wanted) {
+            continue;
+        }
+        let id = candidate.id().unwrap_or_default();
+        let position = sources
+            .get(&candidate.path)
+            .map_or(located.found.position, |source| {
+                position_in(source, candidate.span.start)
+            });
+        listed.push(candidates::CandidateDocument {
+            display_id: id
+                .get(..rust_mutants::id::DISPLAY_ID_LENGTH)
+                .unwrap_or(&id)
+                .to_owned(),
+            id,
+            path: candidate.path.clone(),
+            item: located.found.item.clone(),
+            rule: candidate.rule.name.to_owned(),
+            line: position.line,
+            column: position.byte_column,
+            original: String::from_utf8_lossy(&candidate.original).into_owned(),
+            replacement: String::from_utf8_lossy(&candidate.replacement).into_owned(),
+        });
+    }
+    candidates::CandidatesDocument {
+        document_type: candidates::DOCUMENT_TYPE.to_owned(),
+        schema_version: candidates::SCHEMA_VERSION,
+        tool_version: rust_mutants::VERSION.to_owned(),
+        count: u32::try_from(listed.len()).unwrap_or(u32::MAX),
+        candidates: listed,
+    }
+}
+
 /// One line per candidate: what it is, where it is, and what it does.
 #[must_use]
 pub fn list(
@@ -48,6 +92,7 @@ pub fn list(
     file: Option<&str>,
 ) -> String {
     let mut text = String::new();
+    let mut shown = 0_u32;
     for located in &discovery.candidates {
         let candidate = &located.found.candidate;
         if file.is_some_and(|wanted| candidate.path != wanted) {
@@ -72,7 +117,14 @@ pub fn list(
             replacement = String::from_utf8_lossy(&candidate.replacement),
         );
         debug_assert!(written.is_ok(), "writing to a String cannot fail");
+        shown = shown.saturating_add(1);
     }
+    let written = writeln!(
+        text,
+        "\n{shown} candidates, which is what the rules propose. `catalog` says which of them \
+         the compiler accepts, and `--json` here writes them as a document."
+    );
+    debug_assert!(written.is_ok(), "writing to a String cannot fail");
     text
 }
 
@@ -304,6 +356,9 @@ pub fn explained(document: &rust_mutants::report::explain::ExplainDocument) -> S
         }
     }
     say("REPRODUCE", &document.reproduce);
+    for (at, line) in document.accept.lines().enumerate() {
+        say(if at == 0 { "ACCEPT" } else { "" }, line);
+    }
     match (&document.diff, &document.source) {
         (Some(diff), _) => {
             text.push('\n');
@@ -430,10 +485,59 @@ pub fn lines(document: &run::RunDocument) -> String {
             debug_assert!(written.is_ok(), "writing to a String cannot fail");
         }
     }
+    text.push_str(&survivors(document));
     text.push('\n');
     text.push_str(&totals(document));
     if document.run.interrupted {
         text.push_str("\nINTERRUPTED  the run stopped before every mutant was executed\n");
+    }
+    text
+}
+
+/// How many separate gaps the survivors are, which is not how many survivors there are.
+///
+/// A survivor of a rule that replaces the failing half of a fallible
+/// expression says a path was never taken. Twenty-seven of those in one file
+/// are twenty-seven instances of one proposition, and a reader who works
+/// through them one at a time reads the same sentence twenty-seven times. Every
+/// other survivor is its own finding: nine surviving comparisons are nine
+/// boundaries, and saying "these are one" would hide eight of them.
+///
+/// So this counts the two apart and says nothing else. It does not decide
+/// which gap is worth closing, and it does not remove a line from the findings
+/// above: a reader who wants all twenty-seven still has them.
+fn survivors(document: &run::RunDocument) -> String {
+    let mut folded: BTreeMap<(&str, &str), u32> = BTreeMap::new();
+    let mut alone = 0_u32;
+    for one in &document.mutants {
+        if one.outcome != "survived" || one.expected {
+            continue;
+        }
+        if rust_mutants::rule::Registry::canonical()
+            .lookup(&one.rule)
+            .is_some_and(|rule| rule.survivor_names_an_unexecuted_path())
+        {
+            let seen = folded
+                .entry((one.path.as_str(), one.rule.as_str()))
+                .or_default();
+            *seen = seen.saturating_add(1);
+        } else {
+            alone = alone.saturating_add(1);
+        }
+    }
+    if folded.is_empty() {
+        return String::new();
+    }
+    let counted: u32 = folded.values().copied().sum();
+    let mut text = format!(
+        "\nSURVIVORS    {} of them are {} unexercised paths, each named once below; the \
+         other {alone} are their own\n",
+        counted,
+        folded.len()
+    );
+    for ((path, rule), count) in &folded {
+        let written = writeln!(text, "  {count:>4} x {rule:<26} {path}");
+        debug_assert!(written.is_ok(), "writing to a String cannot fail");
     }
     text
 }

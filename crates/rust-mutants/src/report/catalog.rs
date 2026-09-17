@@ -91,6 +91,14 @@ pub struct MutantDocument {
     pub family: String,
     /// The rule's name.
     pub rule: String,
+    /// The item the mutation sits in, as a reader writes it: `mod::path::Type::method`.
+    ///
+    /// This is what lets a reader name the mutation again after they have
+    /// changed the file, which is the next thing they do: an identity is a
+    /// function of the file's bytes and is re-minted by the very edit that
+    /// fixes the survivor.
+    #[serde(default)]
+    pub item: String,
     /// The rule's version, which enters the identity.
     pub rule_version: u32,
     /// The 1-based line of the edit.
@@ -268,6 +276,7 @@ pub fn mutant_document(session: &Session, mutant: &Mutant) -> MutantDocument {
         id: mutant.id.clone(),
         display_id: mutant.display_id.clone(),
         path: mutant.candidate.path.clone(),
+        item: session.item_of(mutant.index).unwrap_or_default().to_owned(),
         package: session
             .package_of(mutant.index)
             .unwrap_or_default()

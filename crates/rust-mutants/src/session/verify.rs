@@ -709,7 +709,8 @@ fn target_key(key: &mut Key, target: &TestTarget, scratch: &Path, building: &Bui
     };
     let request = ExecRequest::new(target)
         .with_args(building.options.harness_args.clone())
-        .with_scratch(scratch);
+        .with_scratch(scratch)
+        .in_scratch(building.options.scratch_working_directory);
     let argv = request.argv();
     key.u64("argv-count", u64::try_from(argv.len()).unwrap_or(u64::MAX));
     for argument in argv {
@@ -822,7 +823,8 @@ fn ran(
     };
     let request = ExecRequest::new(target)
         .with_args(building.options.harness_args.clone())
-        .with_scratch(scratch);
+        .with_scratch(scratch)
+        .in_scratch(building.options.scratch_working_directory);
     execute::exec(&request, &context, cancel, &workspace.trace)
 }
 

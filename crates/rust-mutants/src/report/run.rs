@@ -378,6 +378,7 @@ fn mutant(one: &crate::run::Judged, catalog: Option<MutantDocument>) -> RunMutan
         package: String::new(),
         family: String::new(),
         rule: String::new(),
+        item: String::new(),
         rule_version: 0,
         line: 0,
         column: 0,

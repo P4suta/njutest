@@ -643,13 +643,17 @@ fn previewed(
         .map(|file| file.path.clone())
         .collect();
     match command {
-        cli::Command::List { file, .. } => {
+        cli::Command::List { file, json, .. } => {
             narrowed(&considered, file.as_slice())?;
-            Ok(report::list(
-                discovery,
-                &read_sources(workspace.snapshot_root(), discovery),
-                file.as_deref(),
-            ))
+            let sources = read_sources(workspace.snapshot_root(), discovery);
+            if *json {
+                return Ok(json_line(&report::candidates(
+                    discovery,
+                    &sources,
+                    file.as_deref(),
+                )));
+            }
+            Ok(report::list(discovery, &sources, file.as_deref()))
         }
         cli::Command::WhySkipped { file, line, .. } => {
             narrowed(&considered, file.as_slice())?;

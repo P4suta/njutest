@@ -60,6 +60,40 @@ pub struct Locator {
     pub count: Option<u32>,
 }
 
+impl Locator {
+    /// The locator a reader writes on a command line, or nothing when the text is not one.
+    ///
+    /// The spelling is `path:item:rule`, with `@line` after it where a file
+    /// holds two the rest would name together: `src/policy/gate.rs:reject:or-to-and`.
+    /// The item may be a suffix, so the function's own name is usually enough,
+    /// and the original text is left out because a reader reading a report has
+    /// the other three in front of them. A workspace-relative path has no
+    /// volume name and no backslashes, so the colons cannot be a drive letter.
+    ///
+    /// Anything without a colon is not a locator and is left for the identity
+    /// prefixes, which are hexadecimal and never contain one.
+    #[must_use]
+    pub fn parse(text: &str) -> Option<Self> {
+        let (rest, line) = match text.rsplit_once('@') {
+            Some((rest, digits)) => (rest, Some(digits.parse().ok()?)),
+            None => (text, None),
+        };
+        let (path, rest) = rest.split_once(':')?;
+        let (item, rule) = rest.rsplit_once(':')?;
+        if path.is_empty() || item.is_empty() || rule.is_empty() {
+            return None;
+        }
+        Some(Self {
+            path: path.to_owned(),
+            item: item.to_owned(),
+            rule: rule.to_owned(),
+            original: String::new(),
+            line,
+            count: None,
+        })
+    }
+}
+
 /// Why a locator named no one mutation.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
@@ -122,6 +156,20 @@ pub struct PrepareOptions {
     pub tier: Tier,
     /// Exactly these rules, by name. Empty means the tier.
     pub operators: Vec<String>,
+    /// Start every test process in a directory of its own rather than where cargo would.
+    ///
+    /// A test that writes into the directory it runs in writes into the tree
+    /// being measured, and the run then says `tree-written-during-measurement`
+    /// about every mutation after it: one instrumented snapshot cannot isolate
+    /// that the way a build per mutant would. Moving the working directory
+    /// puts those writes outside the tree with no change to the test, because
+    /// what a test resolves against "here" moves with it.
+    ///
+    /// It is off by default and has to be asked for, because a test that reads
+    /// a fixture by a path relative to where cargo starts it stops finding it.
+    /// Which of the two a suite does is a thing its author knows and a run
+    /// cannot.
+    pub scratch_working_directory: bool,
     /// Patterns a file must match to be mutable.
     pub include: Vec<Pattern>,
     /// Patterns that remove a file again.
@@ -213,6 +261,7 @@ impl Default for PrepareOptions {
         Self {
             tier: Tier::Balanced,
             operators: Vec::new(),
+            scratch_working_directory: false,
             include: Vec::new(),
             exclude: Vec::new(),
             packages: Vec::new(),
@@ -307,6 +356,8 @@ pub struct Session {
     eligible: BTreeSet<u32>,
     targets: Vec<TestTarget>,
     scratch: PathBuf,
+    /// Whether every test process starts in its own scratch rather than where cargo would.
+    scratch_working_directory: bool,
     /// How many executions this session has started, which is what names each one's own temporary directory.
     executions: std::sync::atomic::AtomicU64,
     mutant_timeout: Timeout,
@@ -516,7 +567,8 @@ impl Session {
             .filter(|mutant| {
                 mutant.candidate.path == locator.path
                     && mutant.candidate.rule.name == locator.rule
-                    && mutant.candidate.original == locator.original.as_bytes()
+                    && (locator.original.is_empty()
+                        || mutant.candidate.original == locator.original.as_bytes())
                     && self
                         .item_of(mutant.index)
                         .is_some_and(|item| names(item, &locator.item))
@@ -850,7 +902,8 @@ impl Session {
         let request = ExecRequest::new(target)
             .with_tests(tests.to_vec())
             .with_timeout(Some(timeout))
-            .with_scratch(self.exec_scratch());
+            .with_scratch(self.exec_scratch())
+            .in_scratch(self.scratch_working_directory);
         let result = execute::exec(&request, &context, cancel, &self.workspace.trace);
         let _asked = self.established.fetch_add(
             u64::try_from(tests.len()).unwrap_or(0),
@@ -1079,15 +1132,35 @@ impl Session {
             .unwrap_or_default()
     }
 
-    /// The mutant a prefix names.
+    /// The mutant a name refers to: an identity, a prefix of one, or a locator.
+    ///
+    /// An identity is a function of the file's bytes, so it is re-minted by
+    /// any edit to the file — including the edit that fixes the survivor it
+    /// names, since a Rust test module lives at the bottom of the file it
+    /// tests. Naming the same mutation afterwards is exactly what somebody
+    /// wants to do next, and an identity cannot do it. A locator can: it is
+    /// the same vocabulary `[[mutation.expect]]` already writes, and it holds
+    /// through an edit that leaves the mutation itself alone.
     ///
     /// # Errors
-    /// [`SessionError::UnknownMutant`] when no mutant matches, when several
-    /// do, or when the prefix is too short to be worth resolving.
-    pub fn resolve(&self, prefix: &str) -> Result<&Mutant, EngineError> {
-        self.catalog.resolve_prefix(prefix).map_err(|error| {
+    /// [`SessionError::UnknownMutant`] when nothing matches, when several do,
+    /// or when what was given is neither a locator nor a usable prefix.
+    pub fn resolve(&self, name: &str) -> Result<&Mutant, EngineError> {
+        let Some(locator) = Locator::parse(name) else {
+            return self.catalog.resolve_prefix(name).map_err(|error| {
+                EngineError::from(SessionError::UnknownMutant {
+                    message: error.to_string(),
+                })
+            });
+        };
+        let found = self.locate_all(&locator).map_err(|error| {
             EngineError::from(SessionError::UnknownMutant {
                 message: error.to_string(),
+            })
+        })?;
+        found.first().copied().ok_or_else(|| {
+            EngineError::from(SessionError::UnknownMutant {
+                message: format!("no mutation of {name}"),
             })
         })
     }
@@ -1251,7 +1324,8 @@ impl Session {
             let mut exec = ExecRequest::new(target)
                 .with_args(self.arguments(request))
                 .with_timeout(Some(timeout))
-                .with_scratch(self.exec_scratch());
+                .with_scratch(self.exec_scratch())
+                .in_scratch(self.scratch_working_directory);
             if let Some(test) = &request.test {
                 exec = exec.with_test(test.clone());
             } else if let Some(named) = self.filtering(target, chosen, cancel) {
@@ -1322,7 +1396,8 @@ impl Session {
             let mut exec = ExecRequest::new(target)
                 .with_args(self.arguments(request))
                 .with_timeout(Some(timeout))
-                .with_scratch(self.exec_scratch());
+                .with_scratch(self.exec_scratch())
+                .in_scratch(self.scratch_working_directory);
             if let Some(test) = &request.test {
                 exec = exec.with_test(test.clone());
             }

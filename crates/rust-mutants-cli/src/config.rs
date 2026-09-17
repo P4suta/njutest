@@ -360,6 +360,11 @@ impl Default for Mutation {
 }
 
 /// How the workspace is built and the tests are run.
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each is one switch a person writes in a file and one flag on the command line, and \
+              a switch is a bool wherever it is stored"
+)]
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Execution {
@@ -369,6 +374,19 @@ pub struct Execution {
     pub locked: bool,
     /// Harness flags to pass through; see [`ALLOWED_TEST_ARGS`].
     pub test_binary_args: Vec<String>,
+    /// Start every test process in a directory of its own rather than where cargo would.
+    ///
+    /// A test that writes into the directory it runs in writes into the tree
+    /// being measured, and the run says `tree-written-during-measurement`
+    /// about every mutation after it. Turning this on puts those writes
+    /// outside the tree without changing a line of the suite, because what a
+    /// test resolves against "here" moves with it — including a temporary
+    /// directory it makes in the current directory on purpose.
+    ///
+    /// It is off by default because a test that reads a fixture by a path
+    /// relative to where cargo starts it stops finding it. Which of the two a
+    /// suite does is a thing its author knows and a run cannot.
+    pub scratch_working_directory: bool,
     /// Run a library's documented examples as a target of their own.
     ///
     /// A documented example is a test the project wrote, and a mutation only
@@ -391,6 +409,7 @@ impl Default for Execution {
             locked: false,
             doctests: true,
             test_binary_args: Vec::new(),
+            scratch_working_directory: false,
             skip_targets: Vec::new(),
             jobs: 0,
         }
@@ -934,6 +953,9 @@ version = 1
 # skip_targets = []              # target ids never to start, as pkg/kind/name
 # jobs = 0                        # mutants measured at once; 0 = the machine, capped at 4
 # test_binary_args = []          # allowed: {allowed}
+# scratch_working_directory = false # start each test process in a directory of its own,
+#                                # so a test that writes where it runs does not write into
+#                                # the tree being measured
 
 [reports]
 # directory = \"{directory}\"   # workspace-relative

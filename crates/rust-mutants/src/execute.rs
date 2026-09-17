@@ -571,6 +571,8 @@ pub struct ExecRequest<'a> {
     args: Vec<String>,
     timeout: Option<Duration>,
     scratch: Option<PathBuf>,
+    /// Whether the process starts in its scratch directory rather than in the one cargo would give it.
+    scratch_cwd: bool,
 }
 
 impl<'a> ExecRequest<'a> {
@@ -583,6 +585,7 @@ impl<'a> ExecRequest<'a> {
             args: Vec::new(),
             timeout: None,
             scratch: None,
+            scratch_cwd: false,
         }
     }
 
@@ -628,6 +631,13 @@ impl<'a> ExecRequest<'a> {
     #[must_use]
     pub fn with_scratch(mut self, scratch: impl Into<PathBuf>) -> Self {
         self.scratch = Some(scratch.into());
+        self
+    }
+
+    /// Starts the process in its scratch directory rather than where cargo would.
+    #[must_use]
+    pub const fn in_scratch(mut self, within: bool) -> Self {
+        self.scratch_cwd = within;
         self
     }
 
@@ -736,7 +746,10 @@ pub fn exec(
 ) -> MutantResult {
     let target = request.target;
     let mut spec = Spec::new(request.argv());
-    spec.dir = Some(target.cwd.clone());
+    spec.dir = Some(match (&request.scratch, request.scratch_cwd) {
+        (Some(scratch), true) => scratch.clone(),
+        _ => target.cwd.clone(),
+    });
     spec.env = Some(environment(context, target, request.scratch.as_deref()));
     spec.timeout = request.timeout;
     let result = run(&spec, cancel);
