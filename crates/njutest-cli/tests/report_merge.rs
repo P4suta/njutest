@@ -45,7 +45,7 @@ fn part(shard: &str, mutants: &[(&str, &str)]) -> Report {
             killed_by: Some("pkg/lib/pkg".to_owned()),
             reused: false,
             source_run_id: None,
-            unnoticed_in: Vec::new(),
+            blind_in: Vec::new(),
         });
     }
     report
@@ -244,7 +244,7 @@ fn disposed(id: &str, outcome: &str, reused: bool) -> MutantRecord {
         killed_by: None,
         reused,
         source_run_id: reused.then(|| "an earlier run".to_owned()),
-        unnoticed_in: Vec::new(),
+        blind_in: Vec::new(),
     }
 }
 

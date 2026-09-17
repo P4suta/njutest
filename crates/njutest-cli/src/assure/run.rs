@@ -33,6 +33,10 @@ pub struct Request {
     pub root: PathBuf,
     /// The effective configuration.
     pub config: Config,
+    /// What cargo is told to build, which is what decides which program the run measures.
+    pub build: rust_mutants::cargo::BuildConfig,
+    /// What a report calls the build, which is [`crate::config::DEFAULT_CONFIGURATION`] for the one `[execution]` describes.
+    pub built_as: String,
     /// Packages the command line asked for, which narrow the configuration's.
     pub packages: Vec<String>,
     /// Arguments for the test binaries, after `--`.
@@ -463,7 +467,7 @@ fn considered(
             root: &request.root,
             environment,
             cargo: request.cargo,
-            build: request.config.execution.build(),
+            build: request.build.clone(),
             harness_args: request.test_args.clone(),
             skip_targets: request.config.execution.skip_targets.clone(),
             timeout: request.config.execution.timeout,
@@ -1084,7 +1088,7 @@ fn prove_equivalence(
                 locked: request.cargo.locked,
                 trace: rust_mutants::trace::Recorder::disabled(),
             },
-            build: request.config.execution.build(),
+            build: request.build.clone(),
             timeout: Some(request.config.execution.timeout),
             unsafe_packages: mutating.unsafe_packages.clone(),
             tree_written,
@@ -1129,7 +1133,7 @@ fn prepare(
             packages: request.packages.clone(),
             include: narrowing(request),
             exclude: request.config.project.excluded(),
-            build: request.config.execution.build(),
+            build: request.build.clone(),
             harness_args: request.test_args.clone(),
             verify: true,
             failing: rust_mutants::session::Failing::Exclude,
@@ -1229,7 +1233,7 @@ pub fn record(report: &mut Report, mutation: &mutation::Mutation, accepted: &BTr
             killed_by: judged.disposition.decided_by().map(ToOwned::to_owned),
             reused: judged.source_run_id.is_some(),
             source_run_id: judged.source_run_id.clone(),
-            unnoticed_in: Vec::new(),
+            blind_in: Vec::new(),
         })
         .collect();
     report.findings.extend(mutation.findings(accepted));

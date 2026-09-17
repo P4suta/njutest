@@ -662,7 +662,7 @@
         "original",
         "replacement",
         "outcome",
-        "unnoticed_in",
+        "blind_in",
         "killed_by",
         "reused",
         "source_run_id"
@@ -700,7 +700,7 @@
           "type": "string",
           "minLength": 1
         },
-        "unnoticed_in": {
+        "blind_in": {
           "type": "array",
           "description": "The builds under which nothing noticed it. Empty when the run measured one build, or when every build noticed.",
           "items": {

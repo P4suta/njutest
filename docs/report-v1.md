@@ -157,6 +157,31 @@ denominator: `rejected` keeps its place in
 never silent: a run that could not decide a mutation says so here and carries
 the finding that explains it.
 
+## More than one build
+
+`[[configuration]]` names further builds beyond the one `[execution]`
+describes, which a report calls `default`. Two builds of a project are two
+programs, so [ADR 0007](adr/0007-survived-evidence-is-universal.md)'s rule
+that a kill is existential does not carry across them — that rule is about
+one program measured twice. Across builds the quantifiers turn over: a
+mutation nothing noticed in the release build is one nothing noticed,
+whatever the debug build said, because the release build is a program
+somebody ships.
+
+So each mutation stands on **the weakest thing any build established**, in
+the order `undecided`, `unnoticed`, `unreached`, `types`, `tests`, `proved`
+— the first three being holes and the last three not. A run cannot come out
+better for having looked at more.
+
+`mutants[].blind_in` names the builds that are blind to a mutation: the ones
+where nothing noticed it, nothing ran it, or nothing decided it. A gap under
+one build and a gap everywhere are different things to act on. A run that
+measured one build names none, because which build is not a question it has.
+
+Builds that catalogued different mutations are refused rather than
+reconciled. Taking the answers there are would report one build's silence as
+agreement.
+
 ## What a finding is about
 
 A finding names its `subject` — a mutant, a target, a package — and an

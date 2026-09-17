@@ -13,8 +13,8 @@ use super::{Decision, MutantRecord, Report};
 pub struct Resolved {
     /// What the run records, which is the weakest thing any build established.
     pub decision: Decision,
-    /// The builds under which nothing noticed it, in the order a report lists them. A run of one build names none: which build is not a question it has.
-    pub unnoticed_in: Vec<String>,
+    /// The builds that are blind to it — nothing noticed, nothing ran it, or nothing decided — in the order a report lists them. A run of one build names none: which build is not a question it has.
+    pub blind_in: Vec<String>,
 }
 
 /// What `by_build` leaves one mutation standing on, which is the weakest of what its builds established.
@@ -25,15 +25,12 @@ pub fn across(by_build: &BTreeMap<String, Decision>) -> Resolved {
         .copied()
         .min_by_key(|decision| decision.standing())
         .unwrap_or(Decision::Undecided);
-    let unnoticed_in = by_build
+    let blind_in = by_build
         .iter()
-        .filter(|(_, held)| **held == Decision::Unnoticed)
+        .filter(|(_, held)| held.is_a_hole())
         .map(|(name, _)| name.clone())
         .collect();
-    Resolved {
-        decision,
-        unnoticed_in,
-    }
+    Resolved { decision, blind_in }
 }
 
 /// Why the builds a run measured are not builds of one catalog.
@@ -130,7 +127,7 @@ fn weakest(record: &MutantRecord, measured: &[(String, Report)]) -> MutantRecord
     } else {
         Resolved {
             decision: decision_of(record),
-            unnoticed_in: Vec::new(),
+            blind_in: Vec::new(),
         }
     };
     let weakest = measured
@@ -139,7 +136,7 @@ fn weakest(record: &MutantRecord, measured: &[(String, Report)]) -> MutantRecord
         .min_by_key(|one| decision_of(one).standing())
         .unwrap_or(record);
     MutantRecord {
-        unnoticed_in: resolved.unnoticed_in,
+        blind_in: resolved.blind_in,
         ..weakest.clone()
     }
 }

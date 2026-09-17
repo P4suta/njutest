@@ -399,7 +399,7 @@ fn mutant(id: &str) -> njutest_cli::report::MutantRecord {
         killed_by: Some("core/lib/core one".to_owned()),
         reused: false,
         source_run_id: None,
-        unnoticed_in: Vec::new(),
+        blind_in: Vec::new(),
     }
 }
 

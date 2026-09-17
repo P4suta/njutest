@@ -41,7 +41,7 @@ fn report(run: &str, outcomes: &[(&str, &str)]) -> Report {
             killed_by: None,
             reused: false,
             source_run_id: None,
-            unnoticed_in: Vec::new(),
+            blind_in: Vec::new(),
         })
         .collect();
     let mut observers = ObserverAccounting::default();
@@ -71,7 +71,7 @@ fn a_mutation_only_one_build_noticed_is_a_mutation_the_run_did_not_notice() {
          outvote it would turn measuring more into a way of claiming more"
     );
     assert_eq!(
-        whole.mutants[0].unnoticed_in,
+        whole.mutants[0].blind_in,
         vec!["release".to_owned()],
         "and the run says which build, because a survivor everywhere and a survivor \
          in one build are different things to act on"
@@ -90,7 +90,7 @@ fn a_mutation_every_build_noticed_is_noticed_and_names_no_build() {
 
     assert_eq!(whole.mutants[0].outcome, "killed");
     assert!(
-        whole.mutants[0].unnoticed_in.is_empty(),
+        whole.mutants[0].blind_in.is_empty(),
         "naming a build where nothing went wrong is a column a reader learns to skip"
     );
     assert_eq!(whole.accounting.mutants.observers.tests, 1);

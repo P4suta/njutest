@@ -158,7 +158,6 @@ fn establish(establishing: &Establishing<'_>, streams: Streams<'_>) -> u8 {
         evidence,
         store,
         trace,
-        watch,
         ..
     } = *establishing;
     let Streams {
@@ -176,6 +175,8 @@ fn establish(establishing: &Establishing<'_>, streams: Streams<'_>) -> u8 {
         root: root.to_path_buf(),
         configuration: read_from(root),
         config: establishing.config.clone(),
+        build: establishing.config.execution.build(),
+        built_as: crate::config::DEFAULT_CONFIGURATION.to_owned(),
         packages: packages(arguments, &establishing.config),
         test_args: harness_args(arguments, &establishing.config),
         cargo: Cargo {
@@ -192,20 +193,10 @@ fn establish(establishing: &Establishing<'_>, streams: Streams<'_>) -> u8 {
         evidence_store: (!arguments.no_cache).then(|| store.root().to_path_buf()),
         shard,
     };
-    let result = {
-        let mut notes = ui::Notes::of(arguments.ui, stderr);
-        run::run(&request, environment, &mut notes, watch)
+    let (report, kept) = match reconciled(&request, establishing, stderr) {
+        Ok(both) => both,
+        Err(code) => return code,
     };
-    let outcome = match result {
-        Ok(outcome) => outcome,
-        Err(error) => {
-            trace.run_end("ERROR", None, Some(error.to_string()));
-            super::complain(stderr, &error, error.code());
-            return EXIT_ERROR;
-        }
-    };
-
-    let report = outcome.report;
     trace.run_end(
         &lines::escape(&format!("{:?}", report.verdict)),
         Some(report.accounting),
@@ -220,7 +211,7 @@ fn establish(establishing: &Establishing<'_>, streams: Streams<'_>) -> u8 {
             store_it: !arguments.no_cache
                 && evidence.is_known()
                 && !environment.cancel.is_cancelled(),
-            kept: &outcome.kept,
+            kept: &kept,
         },
         arguments,
         stderr,
@@ -231,6 +222,92 @@ fn establish(establishing: &Establishing<'_>, streams: Streams<'_>) -> u8 {
 
     let _written = stdout.write_all(lines::kept(&report, &document).as_bytes());
     report.verdict.exit_code()
+}
+
+/// What every build the configuration named establishes, as one report and what the run kept.
+fn reconciled(
+    request: &Request,
+    establishing: &Establishing<'_>,
+    stderr: &mut dyn Write,
+) -> Result<(crate::report::Report, Vec<PathBuf>), u8> {
+    let measured = every_build(request, establishing, stderr)?;
+    let kept: Vec<PathBuf> = measured
+        .iter()
+        .flat_map(|(_, outcome)| outcome.kept.clone())
+        .collect();
+    let parts: Vec<(String, crate::report::Report)> = measured
+        .into_iter()
+        .map(|(name, outcome)| (name, outcome.report))
+        .collect();
+    match crate::report::across::configured(&parts) {
+        Ok(mut whole) => {
+            establishing.identity.clone_into(&mut whole.run_id);
+            Ok((whole, kept))
+        }
+        Err(error) => {
+            establishing
+                .trace
+                .run_end("ERROR", None, Some(error.to_string()));
+            super::diagnose(stderr, &error.to_string());
+            Err(EXIT_ERROR)
+        }
+    }
+}
+
+/// Every build the configuration named, measured, with what a report calls each.
+///
+/// The builds are measured in the order the file names them, the one
+/// `[execution]` describes first. Each is a program of its own, so each gets
+/// a scratch directory and an engine recording of its own, keyed by the name
+/// a report will call it.
+fn every_build(
+    request: &Request,
+    establishing: &Establishing<'_>,
+    stderr: &mut dyn Write,
+) -> Result<Vec<(String, run::Outcome)>, u8> {
+    let Establishing {
+        arguments,
+        environment,
+        root,
+        identity,
+        trace,
+        watch,
+        ..
+    } = *establishing;
+    let mut measured = Vec::new();
+    for configuration in std::iter::once(None).chain(request.config.configuration.iter().map(Some))
+    {
+        let name = configuration.map_or_else(
+            || crate::config::DEFAULT_CONFIGURATION.to_owned(),
+            |one| one.name.clone(),
+        );
+        let asked = configuration.map_or_else(
+            || request.clone(),
+            |one| {
+                let separate = format!("{identity}+{name}");
+                Request {
+                    build: one.build(),
+                    built_as: name.clone(),
+                    run_id: separate.clone(),
+                    engine_trace: engine_recorder(arguments, root, &separate),
+                    ..request.clone()
+                }
+            },
+        );
+        let result = {
+            let mut notes = ui::Notes::of(arguments.ui, &mut *stderr);
+            run::run(&asked, environment, &mut notes, watch)
+        };
+        match result {
+            Ok(outcome) => measured.push((name, outcome)),
+            Err(error) => {
+                trace.run_end("ERROR", None, Some(error.to_string()));
+                super::complain(stderr, &error, error.code());
+                return Err(EXIT_ERROR);
+            }
+        }
+    }
+    Ok(measured)
 }
 
 /// The change set, asked for with the directories this project writes left out.

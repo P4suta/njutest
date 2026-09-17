@@ -185,26 +185,26 @@ proptest! {
         prop_assert_eq!(across(&only).decision, one);
     }
 
-    /// Every build under which nothing noticed is named, because a reader has to know which.
+    /// Every build with a hole here is named, because a reader has to know which.
     #[test]
-    fn the_builds_nothing_noticed_in_are_the_ones_the_run_names(decisions in decisions()) {
+    fn the_builds_that_are_blind_to_a_mutation_are_the_ones_the_run_names(decisions in decisions()) {
         let by_build: BTreeMap<String, Decision> = decisions
             .iter()
             .enumerate()
             .map(|(at, decision)| (format!("build-{at}"), *decision))
             .collect();
-        let named = across(&by_build).unnoticed_in;
+        let named = across(&by_build).blind_in;
         let expected: Vec<String> = by_build
             .iter()
-            .filter(|(_, decision)| **decision == Decision::Unnoticed)
+            .filter(|(_, decision)| decision.is_a_hole())
             .map(|(name, _)| name.clone())
             .collect();
         prop_assert_eq!(
             named,
             expected,
-            "a survivor that is a survivor only under one build is a different thing \
-             to act on than one that survives everywhere, and the reader cannot tell \
-             them apart unless the run says which"
+            "a gap under one build is a different thing to act on than one that is \
+             there everywhere, and the reader cannot tell them apart unless the run \
+             says which"
         );
     }
 
@@ -385,7 +385,7 @@ fn reported(findings: Vec<njutest_cli::report::Finding>) -> njutest_cli::report:
             killed_by: None,
             reused: false,
             source_run_id: None,
-            unnoticed_in: Vec::new(),
+            blind_in: Vec::new(),
         })
         .collect();
     report.findings = findings;

@@ -395,6 +395,12 @@ impl Decision {
         }
     }
 
+    /// Whether this is a gap in the verification rather than something that stands behind the verdict.
+    #[must_use]
+    pub const fn is_a_hole(self) -> bool {
+        matches!(self, Self::Undecided | Self::Unnoticed | Self::Unreached)
+    }
+
     /// The wire name a report records.
     #[must_use]
     pub const fn name(self) -> &'static str {
@@ -534,9 +540,9 @@ pub struct MutantRecord {
     pub replacement: String,
     /// What the run established.
     pub outcome: String,
-    /// The builds under which nothing noticed it, empty when the run measured one build or every build noticed.
+    /// The builds that are blind to it — nothing noticed, nothing ran it, or nothing decided — empty when the run measured one build or every build answered for it.
     #[serde(default)]
-    pub unnoticed_in: Vec<String>,
+    pub blind_in: Vec<String>,
     /// The target that noticed it, when one did.
     pub killed_by: Option<String>,
     /// Whether this came from a previous run.

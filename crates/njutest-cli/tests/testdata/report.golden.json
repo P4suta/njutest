@@ -150,7 +150,7 @@
       "original": ">",
       "replacement": "",
       "outcome": "killed",
-      "unnoticed_in": [
+      "blind_in": [
         "release"
       ],
       "killed_by": "0123456789abcdef",

@@ -22,6 +22,8 @@ fn asked(root: &str) -> Request {
         configuration: ".njutest.toml".to_owned(),
         root: PathBuf::from(root),
         config: Config::default(),
+        build: Config::default().execution.build(),
+        built_as: njutest_cli::config::DEFAULT_CONFIGURATION.to_owned(),
         packages: Vec::new(),
         test_args: Vec::new(),
         cargo: Cargo::default(),
