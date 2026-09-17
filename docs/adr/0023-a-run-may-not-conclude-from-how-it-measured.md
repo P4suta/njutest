@@ -114,6 +114,18 @@ unrepresentable.
    them sound. A framing that cannot be made honest is retracted rather than
    qualified.
 
+**A catch-all is wrong over a set this workspace closes and right over one it
+does not.** The test is whether the values can be listed from this repository's
+own source. A mutation's outcome, a build's decision, a fault's rule, a thing
+the doctor checks: all written here, all closable, and a `_` over any of them
+is this defect waiting. A method arriving over LSP, a line read out of a file
+somebody else wrote: not ours, growing without us, and a protocol that says a
+server answers an unknown request rather than refusing it. There the catch-all
+*is* the handling — with the same condition as everywhere else, that what it
+could not read is counted and travels with the answer rather than being
+dropped. Both kinds are named in the code as what they are, so the next person
+applying this rule does not arrive at the second with a patch.
+
 **A check the type makes impossible is deleted rather than kept.** An audit
 variant that refuses a value the enum can no longer hold does not add a
 second guarantee; it says the type is not trusted, and it is one more place
@@ -128,6 +140,17 @@ unrepresentable, the runtime refusal of it goes with it.
 these: the premise fell apart in the first three lines of writing the fixture
 that was meant to exercise it. A gate that makes somebody demonstrate a
 finding is worth more than one that checks they spelled it consistently.
+
+**A test that names what it is about survives a bad merge.** Two branches
+that both changed `verify.rs` were resolved by taking one side whole, which
+dropped the loop that measures every build a project names. Nothing in the
+conflict markers said so; a resolution is the one place in this workflow where
+correctness is decided by somebody reading, and it is the place no type can
+reach. What caught it was
+`a_mutation_only_one_of_the_builds_notices_is_a_survivor_that_names_the_other`,
+which failed on a report whose `blind_in` named no build at all. A test called
+`verify_works` would have gone green on a run that had quietly stopped
+answering one of its questions.
 
 **The tests for a finding are mostly about the traps.** Of the four that hold
 `hollow::found`, three are: a target never asked is not accused, a target
