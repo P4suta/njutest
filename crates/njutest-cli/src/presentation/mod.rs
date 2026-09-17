@@ -643,6 +643,22 @@ fn changed(spot: &Spot) -> Changed<'_> {
     Changed::From(&spot.was, &spot.now)
 }
 
+/// What a reader is told about one blind spot, naming the builds it is in when a run measured more than one.
+#[must_use]
+pub fn blindness_of(mutant: &crate::report::MutantRecord, waited: bool) -> String {
+    let word = if waited {
+        Blindness::Waited.word()
+    } else if mutant.outcome == "unreached" {
+        Blindness::Never.word()
+    } else {
+        Blindness::Ran.word()
+    };
+    if mutant.blind_in.is_empty() {
+        return word.to_owned();
+    }
+    format!("{word} in {}", mutant.blind_in.join(", "))
+}
+
 /// How many columns `text` takes on a terminal, counting nothing for what it is painted with.
 ///
 /// An escape sequence moves the cursor nowhere, so a folder that counted its

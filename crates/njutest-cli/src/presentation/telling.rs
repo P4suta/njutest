@@ -135,7 +135,7 @@ fn spot(mutant: &MutantRecord, finding: &Finding) -> Spot {
         column: mutant.position.column,
         was: mutant.original.clone(),
         now: mutant.replacement.clone(),
-        said: blindness.word().to_owned(),
+        said: super::blindness_of(mutant, blindness == Blindness::Waited),
         blindness,
         locator: locator(mutant),
     }

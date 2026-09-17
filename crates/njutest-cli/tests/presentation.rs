@@ -171,6 +171,45 @@ fn a_file_that_moved_under_the_run_is_said_rather_than_drawn() {
 }
 
 #[test]
+fn a_gap_that_is_only_in_one_build_says_which_build_it_is_in() {
+    let mut record = njutest_cli::report::MutantRecord {
+        id: "a".repeat(64),
+        display_id: "a".repeat(20),
+        path: "src/lib.rs".to_owned(),
+        position: njutest_cli::report::Position {
+            line: 8,
+            column: 10,
+            character_column: 10,
+        },
+        rule: "gt-to-ge".to_owned(),
+        item: "sign".to_owned(),
+        original: ">".to_owned(),
+        replacement: ">=".to_owned(),
+        outcome: "survived".to_owned(),
+        blind_in: vec!["release".to_owned()],
+        killed_by: None,
+        reused: false,
+        source_run_id: None,
+    };
+
+    let said = njutest_cli::presentation::blindness_of(&record, false);
+    assert!(
+        said.contains("release"),
+        "a gap only the release build has is closed by a different change than one \
+         every build has, and a reader told neither goes looking in the wrong \
+         program: {said}"
+    );
+
+    record.blind_in = Vec::new();
+    let said = njutest_cli::presentation::blindness_of(&record, false);
+    assert!(
+        !said.contains("in "),
+        "and a run of one build names none, because which build is not a question \
+         it has: {said}"
+    );
+}
+
+#[test]
 fn what_the_type_system_refused_is_said_where_the_kills_are_said() {
     let mut refused = told();
     refused.headline.refused_by_types = 3;
