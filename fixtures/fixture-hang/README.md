@@ -48,6 +48,8 @@ src/lib.rs:13:17 int-decrement timed_out
 src/lib.rs:13:17 int-increment killed
 src/lib.rs:15:5 return-default killed
 src/lib.rs:25:5 return-default killed
+src/lib.rs:25:8 condition-to-false killed
+src/lib.rs:25:8 condition-to-true killed
 src/lib.rs:25:8 negate-condition killed
 src/lib.rs:25:10 gt-to-ge survived
 src/lib.rs:25:12 int-increment survived

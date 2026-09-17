@@ -33,6 +33,7 @@ const SHAPES: [(&str, Terminal); 4] = [
             width: 80,
             colour: false,
             unicode: false,
+            drawing: true,
         },
     ),
     (
@@ -41,6 +42,7 @@ const SHAPES: [(&str, Terminal); 4] = [
             width: 40,
             colour: false,
             unicode: false,
+            drawing: true,
         },
     ),
     (
@@ -49,6 +51,7 @@ const SHAPES: [(&str, Terminal); 4] = [
             width: 80,
             colour: true,
             unicode: false,
+            drawing: true,
         },
     ),
     (
@@ -57,6 +60,7 @@ const SHAPES: [(&str, Terminal); 4] = [
             width: 80,
             colour: false,
             unicode: true,
+            drawing: true,
         },
     ),
 ];
@@ -78,18 +82,11 @@ fn headline(verdict: Verdict, killed: u32, survived: u32, unreached: u32) -> Hea
         project: "fixture-baseline".to_owned(),
         cataloged: killed.saturating_add(survived).saturating_add(unreached),
         killed,
-        refused_by_types: 0,
         survived,
         unreached,
         duration_ms: 1911,
         kept: kept("20260101T000000Z-aaaaaa"),
     }
-}
-
-const fn refused(mut headline: Headline, types: u32) -> Headline {
-    headline.refused_by_types = types;
-    headline.cataloged = headline.cataloged.saturating_add(types);
-    headline
 }
 
 fn site(at: (u32, u32), excerpt: Excerpt, label: &str, width: usize) -> Site {
@@ -405,55 +402,6 @@ fn cases() -> Vec<(&'static str, Told)> {
             "a part of a catalog",
             told(Vec::new(), headline(Verdict::Partial, 3, 0, 0), Vec::new()),
         ),
-        (
-            "a target that noticed none of what it was put to",
-            Told {
-                headline: headline(Verdict::Insufficient, 31, 0, 0),
-                places: Vec::new(),
-                diagnostics: vec![Diagnostic {
-                    severity: Severity::Gap,
-                    code: "NJ-HOLLOW-TARGET",
-                    title: "this test target noticed none of the changes it was put to".to_owned(),
-                    at: None,
-                    notes: vec![
-                        "core/test/smoke answered about 31 mutations and noticed none \
-                         of them"
-                            .to_owned(),
-                    ],
-                    actions: Vec::new(),
-                }],
-                limitations: Vec::new(),
-            },
-        ),
-        (
-            "a seam the suite carried on through",
-            Told {
-                headline: headline(Verdict::Insufficient, 40, 0, 0),
-                places: Vec::new(),
-                diagnostics: vec![Diagnostic {
-                    severity: Severity::Gap,
-                    code: "NJ-WIRE",
-                    title: "the suite carried on through what a seam was asked".to_owned(),
-                    at: None,
-                    notes: vec![
-                        "nothing noticed when the run was told to answer 500 where the \
-                         upstream answered otherwise, answering POST /orders on the \
-                         payments seam"
-                            .to_owned(),
-                    ],
-                    actions: Vec::new(),
-                }],
-                limitations: Vec::new(),
-            },
-        ),
-        (
-            "a run where the type system caught most of it",
-            told(
-                Vec::new(),
-                refused(headline(Verdict::Assured, 12, 0, 0), 31),
-                Vec::new(),
-            ),
-        ),
     ]
 }
 
@@ -469,8 +417,64 @@ fn every_shape_a_person_is_shown_is_one_somebody_has_looked_at() {
             out.push_str(&human::draw(&told, terminal));
         }
     }
+    for (name, told) in cases() {
+        let _written = writeln!(out, "\n=== {name} — as a briefing\n");
+        out.push_str(&njutest_cli::presentation::agent::brief(&told));
+    }
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testdata/gallery.golden");
     if let Err(error) = njutest_devkit::golden::golden(&path, out.as_bytes()) {
         panic!("the gallery: {error}");
     }
+}
+
+/// What a line is allowed to run past the edge for: code, a mark under code, and a command.
+///
+/// Folding any of the three makes it worse. A wrapped source line takes the
+/// caret away from the column it is under; a mark that is not at that column
+/// points at nothing, so it is exactly as wide as the code it is about and no
+/// narrower; and a wrapped command is one a reader cannot select. Everything
+/// else is prose, and prose that runs past the edge is wrapped by the terminal
+/// at whatever column it happens to reach, which is the one place nobody chose.
+fn unbreakable(line: &str) -> bool {
+    let trimmed = line.trim_start();
+    if trimmed.starts_with("njutest ") || trimmed.starts_with("cargo ") {
+        return true;
+    }
+    let numbered = |before: &str| {
+        let seen = before.trim();
+        !seen.is_empty() && seen.chars().all(|one| one.is_ascii_digit())
+    };
+    if line
+        .split_once(" | ")
+        .is_some_and(|(before, _)| numbered(before))
+    {
+        return true;
+    }
+    line.split_once('|').is_some_and(|(_, after)| {
+        let marked = after.trim();
+        !marked.is_empty() && marked.chars().all(|one| one == '^' || one == '\u{25b2}')
+    })
+}
+
+#[test]
+fn nothing_a_person_is_shown_runs_past_the_edge_but_the_two_things_that_must() {
+    let mut over: Vec<String> = Vec::new();
+    for (name, told) in cases() {
+        for (shape, terminal) in SHAPES {
+            for line in human::draw(&told, terminal).lines() {
+                if unbreakable(line) || njutest_cli::presentation::wide(line) <= terminal.width {
+                    continue;
+                }
+                over.push(format!("{name} — {shape}: {line}"));
+            }
+        }
+    }
+    assert!(
+        over.is_empty(),
+        "a renderer that is given the width and then draws past it has not been given \
+         anything: the terminal wraps the line wherever it reaches, which is the one place \
+         nobody chose, and the two halves of a sentence end up in different parts of the \
+         drawing:\n{}",
+        over.join("\n")
+    );
 }

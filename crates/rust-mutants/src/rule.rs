@@ -76,6 +76,8 @@ pub enum Family {
     MatchArm,
     /// `break` ↔ `continue`.
     ControlFlow,
+    /// Fixing an `if` condition at `true` or at `false`, so each branch is asked for on its own.
+    ConditionRemoval,
     /// `&`, `|`, `^`, `<<`, `>>`.
     Bitwise,
     /// `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=`.
@@ -101,6 +103,7 @@ impl Family {
         Self::ErrorPropagation,
         Self::MatchArm,
         Self::ControlFlow,
+        Self::ConditionRemoval,
         Self::Bitwise,
         Self::CompoundAssignment,
         Self::MethodSwap,
@@ -123,6 +126,7 @@ impl Family {
             Self::ErrorPropagation => "error-propagation",
             Self::MatchArm => "match-arm",
             Self::ControlFlow => "control-flow",
+            Self::ConditionRemoval => "condition-removal",
             Self::Bitwise => "bitwise",
             Self::CompoundAssignment => "compound-assignment",
             Self::MethodSwap => "method-swap",
@@ -181,9 +185,9 @@ impl fmt::Display for Rule {
 }
 
 /// The counts of the canonical v1 table, asserted by the registry tests.
-pub const CANONICAL_FAMILY_COUNT: usize = 16;
+pub const CANONICAL_FAMILY_COUNT: usize = 17;
 /// The number of rules in the canonical v1 table.
-pub const CANONICAL_RULE_COUNT: usize = 72;
+pub const CANONICAL_RULE_COUNT: usize = 74;
 
 const fn v1(family: Family, name: &'static str, tier: Tier) -> Rule {
     Rule {
@@ -261,6 +265,16 @@ pub const CANONICAL_TABLE: [Rule; CANONICAL_RULE_COUNT] = [
     v1(Family::MatchArm, "remove-match-guard", Tier::Balanced),
     v1(Family::ControlFlow, "break-to-continue", Tier::Balanced),
     v1(Family::ControlFlow, "continue-to-break", Tier::Balanced),
+    v1(
+        Family::ConditionRemoval,
+        "condition-to-true",
+        Tier::Balanced,
+    ),
+    v1(
+        Family::ConditionRemoval,
+        "condition-to-false",
+        Tier::Balanced,
+    ),
     v1(Family::Bitwise, "band-to-bor", Tier::Strong),
     v1(Family::Bitwise, "bor-to-band", Tier::Strong),
     v1(Family::Bitwise, "xor-to-band", Tier::Strong),

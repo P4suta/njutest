@@ -39,6 +39,7 @@ fn environment(
         program: std::path::PathBuf::from(env!("CARGO_BIN_EXE_njutest")),
         vars,
         cancel: Cancel::new(),
+        terminal: njutest_cli::presentation::Terminal::default(),
     }
 }
 

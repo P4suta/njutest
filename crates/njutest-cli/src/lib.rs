@@ -18,6 +18,7 @@ pub mod evidence;
 pub mod git;
 pub mod kept;
 pub mod limitation;
+pub mod naming;
 pub mod presentation;
 pub mod provider;
 pub mod repair;
@@ -41,6 +42,58 @@ use std::io::Write;
 
 /// The version of this runner, as recorded in every report.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// What the composition root can find out about where the output is going.
+///
+/// The gathering, not the deciding: [`presentation::Terminal::of`] holds the
+/// rules and is asserted on its own, and this is the one place that asks the
+/// operating system (ADR 0001).
+#[must_use]
+pub fn asked(vars: &[(OsString, OsString)]) -> presentation::Asked {
+    use std::io::IsTerminal as _;
+    let said = |name: &str| {
+        rust_mutants::vars::var(vars, name).map(|value| value.to_string_lossy().into_owned())
+    };
+    let locale = said("LC_ALL")
+        .or_else(|| said("LC_CTYPE"))
+        .or_else(|| said("LANG"))
+        .unwrap_or_default()
+        .to_ascii_uppercase();
+    let forced = said("CLICOLOR_FORCE").is_some_and(|value| !value.is_empty() && value != "0");
+    let refused = said("NO_COLOR").is_some_and(|value| !value.is_empty());
+    presentation::Asked {
+        reader: if std::io::stdout().is_terminal() {
+            presentation::Reader::Person
+        } else {
+            presentation::Reader::Program
+        },
+        columns: columns(),
+        colour: match (forced, refused) {
+            (true, _) => presentation::Wanted::Forced,
+            (false, true) => presentation::Wanted::Refused,
+            (false, false) => presentation::Wanted::Unsaid,
+        },
+        term: said("TERM"),
+        glyphs: if locale.contains("UTF-8") || locale.contains("UTF8") || cfg!(windows) {
+            presentation::Glyphs::Drawn
+        } else {
+            presentation::Glyphs::Plain
+        },
+    }
+}
+
+/// How wide the terminal says it is, where it can be asked.
+#[cfg(unix)]
+fn columns() -> Option<usize> {
+    let size = rustix::termios::tcgetwinsize(std::io::stdout()).ok()?;
+    usize::from(size.ws_col).checked_sub(0).filter(|it| *it > 0)
+}
+
+/// How wide the terminal says it is, where this release cannot ask.
+#[cfg(not(unix))]
+const fn columns() -> Option<usize> {
+    None
+}
 
 /// A cancellation flag the process raises on `SIGINT` and `SIGTERM`, and the number of the signal that raised it.
 #[must_use]

@@ -39,6 +39,8 @@ refuses a difference, and `UPDATE_FATES=1` rewrites the block below.
 shared/util.rs:8:5 return-true killed
 shared/util.rs:8:7 le-to-lt killed
 shared/util.rs:13:5 return-default killed
+shared/util.rs:13:8 condition-to-false killed
+shared/util.rs:13:8 condition-to-true killed
 shared/util.rs:13:8 negate-condition killed
 shared/util.rs:13:10 lt-to-le not_run
 shared/util.rs:13:20 return-default killed

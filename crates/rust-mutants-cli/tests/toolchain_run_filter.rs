@@ -64,7 +64,7 @@ fn a_filtered_out_mutant_is_not_run_for_the_stated_reason_and_is_not_a_finding()
         "only what the rule names ran: {text}"
     );
     assert!(
-        text.contains("not_run=11"),
+        text.contains("not_run=13"),
         "and the rest are accounted for rather than left out: {text}"
     );
     assert!(
@@ -96,7 +96,7 @@ fn a_family_a_file_and_an_identity_each_narrow_the_same_way() {
         &fixture,
         &["--ui", "plain", "--skip-family", "literal"],
     ));
-    assert_eq!(judged(&skipped).len(), 8, "{skipped}");
+    assert_eq!(judged(&skipped).len(), 10, "{skipped}");
     let bad = run(&fixture, &["--file", "src/lib.rs:nine"]);
     assert_eq!(bad.status.code(), Some(2), "{bad:?}");
     assert!(
@@ -141,7 +141,7 @@ fn a_dry_run_says_what_it_would_cost_without_executing_a_mutant() {
         "it says the size of the job in work rather than in time: {text}"
     );
     assert!(
-        text.contains("(11 mutants against"),
+        text.contains("(13 mutants against"),
         "it says how many mutants and how many targets: {text}"
     );
     assert!(
@@ -149,7 +149,7 @@ fn a_dry_run_says_what_it_would_cost_without_executing_a_mutant() {
         "and what a proof already took off the bill: {text}"
     );
     assert!(
-        text.lines().filter(|line| line.starts_with('#')).count() == 11,
+        text.lines().filter(|line| line.starts_with('#')).count() == 13,
         "and what each one is: {text}"
     );
     let roughly = text
@@ -178,12 +178,12 @@ fn a_scoped_dry_run_counts_the_whole_catalog_and_marks_unvalidated_candidates_un
 
     assert_eq!(output.status.code(), Some(0), "{text}");
     assert!(
-        text.contains("(11 mutants against"),
+        text.contains("(13 mutants against"),
         "the estimate retains the complete catalog denominator: {text}"
     );
     assert!(
-        text.contains("unselected=10"),
-        "the ten candidates omitted before compiler validation remain explicit: {text}"
+        text.contains("unselected=12"),
+        "the twelve candidates omitted before compiler validation remain explicit: {text}"
     );
     assert_eq!(
         text.lines().filter(|line| line.starts_with('#')).count(),
@@ -225,7 +225,7 @@ fn from_report_that_names_nothing_measures_nothing_rather_than_everything() {
          again, not a run of the whole catalog: {text}"
     );
     assert!(
-        text.contains("not_run=11"),
+        text.contains("not_run=13"),
         "and every mutant says why it was not measured: {text}"
     );
     assert_eq!(again.status.code(), Some(0), "{text}");

@@ -246,6 +246,7 @@ fn an_exec_event_digests_the_output_rather_than_carrying_it() {
 fn a_progress_note_and_an_artifact_are_records_of_their_own() {
     let trace = recording();
     trace.progress(ProgressRecord {
+        subject: String::new(),
         message: "running targets".to_owned(),
         done: Some(3),
         total: Some(7),
@@ -611,6 +612,7 @@ fn the_wire_shape_is_the_recorded_one() {
         ..ExecRecord::default()
     });
     trace.progress(ProgressRecord {
+        subject: String::new(),
         message: "1 of 2".to_owned(),
         done: Some(1),
         total: Some(2),

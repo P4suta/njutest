@@ -95,10 +95,18 @@ fn selected(arguments: &Arguments, environment: &Environment) -> Result<Selected
     let root = &environment.working_directory;
     let run = runs::resolve(root, arguments.run.as_deref()).map_err(|error| error.to_string())?;
     let report = runs::report(root, &run).map_err(|error| error.to_string())?;
+    let every: Vec<&crate::report::MutantRecord> = report.mutants.iter().collect();
+    let named: Vec<&str> = crate::naming::matching(&every, &arguments.finding)
+        .iter()
+        .map(|mutant| mutant.display_id.as_str())
+        .collect();
     let matching: Vec<&crate::report::Finding> = report
         .findings
         .iter()
-        .filter(|finding| finding.subject.starts_with(&arguments.finding))
+        .filter(|finding| {
+            finding.subject.starts_with(&arguments.finding)
+                || named.contains(&finding.subject.as_str())
+        })
         .collect();
     match matching.as_slice() {
         [only] => Ok(Selected {

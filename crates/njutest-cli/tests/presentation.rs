@@ -60,7 +60,6 @@ fn told() -> Told {
             project: "fixture-baseline".to_owned(),
             cataloged: 10,
             killed: 7,
-            refused_by_types: 0,
             survived: 2,
             unreached: 1,
             duration_ms: 1911,
@@ -135,14 +134,6 @@ fn a_caret_lands_under_the_code_however_wide_the_characters_before_it_are() {
     );
 }
 
-/// The line of a drawing that carries the counts, which is the last thing a reader is left with.
-fn headline(drawn: &str) -> &str {
-    drawn
-        .lines()
-        .find(|line| line.contains("killed,"))
-        .unwrap_or(drawn)
-}
-
 /// How wide `text` is on a terminal, which is what a caret is placed by.
 fn width(text: &str) -> usize {
     njutest_cli::presentation::wide(text)
@@ -171,70 +162,6 @@ fn a_file_that_moved_under_the_run_is_said_rather_than_drawn() {
 }
 
 #[test]
-fn a_gap_that_is_only_in_one_build_says_which_build_it_is_in() {
-    let mut record = njutest_cli::report::MutantRecord {
-        id: "a".repeat(64),
-        display_id: "a".repeat(20),
-        path: "src/lib.rs".to_owned(),
-        position: njutest_cli::report::Position {
-            line: 8,
-            column: 10,
-            character_column: 10,
-        },
-        rule: "gt-to-ge".to_owned(),
-        item: "sign".to_owned(),
-        original: ">".to_owned(),
-        replacement: ">=".to_owned(),
-        outcome: njutest_cli::report::Outcome::parse("survived")
-            .unwrap_or(njutest_cli::report::Outcome::Errored),
-        blind_in: vec![njutest_cli::report::BlindIn {
-            build: "release".to_owned(),
-            decision: njutest_cli::report::Blind::Unnoticed,
-        }],
-        routing: None,
-        killed_by: None,
-        reused: false,
-        source_run_id: None,
-    };
-
-    let said = njutest_cli::presentation::blindness_of(&record, false);
-    assert!(
-        said.contains("release"),
-        "a gap only the release build has is closed by a different change than one \
-         every build has, and a reader told neither goes looking in the wrong \
-         program: {said}"
-    );
-
-    record.blind_in = Vec::new();
-    let said = njutest_cli::presentation::blindness_of(&record, false);
-    assert!(
-        !said.contains("in "),
-        "and a run of one build names none, because which build is not a question \
-         it has: {said}"
-    );
-}
-
-#[test]
-fn what_the_type_system_refused_is_said_where_the_kills_are_said() {
-    let mut refused = told();
-    refused.headline.refused_by_types = 3;
-    let drawn = human::draw(&refused, Terminal::plain(80));
-    assert!(
-        headline(&drawn).contains("7 killed, 3 refused by types, 2 survived"),
-        "a mutation the compiler refuses is one the type system caught, and a reader \
-         who is never told cannot see how much of what could go wrong is answered \
-         before a test runs: {drawn}"
-    );
-
-    let none = human::draw(&told(), Terminal::plain(80));
-    assert!(
-        !headline(&none).contains("refused"),
-        "and a run where the type system caught nothing says nothing about it, \
-         because a zero in a headline is a column a reader learns to skip: {none}"
-    );
-}
-
-#[test]
 fn a_run_with_nothing_to_say_says_that_and_stops() {
     let told = Told {
         headline: Headline {
@@ -242,7 +169,6 @@ fn a_run_with_nothing_to_say_says_that_and_stops() {
             project: "fixture-assured".to_owned(),
             cataloged: 4,
             killed: 4,
-            refused_by_types: 0,
             survived: 0,
             unreached: 0,
             duration_ms: 1388,
@@ -255,10 +181,78 @@ fn a_run_with_nothing_to_say_says_that_and_stops() {
     assert_eq!(
         human::draw(&told, Terminal::plain(80)),
         format!(
-            "  ASSURED   4 killed, 0 survived, 0 unreached   1.4s\n  {}\n",
+            "  ASSURED   4 killed  0 survived  0 unreached  1.4s\n  {}\n",
             kept("20260101T000000Z-bbbbbb")
         ),
         "a run that found nothing is four lines of nothing in most tools and one line \
          here, because the answer is the whole of what it has to say"
+    );
+}
+
+#[test]
+fn what_to_draw_for_is_decided_from_what_was_found_out_and_nothing_else() {
+    use njutest_cli::presentation::{Asked, Glyphs, ROOM, Reader, Wanted};
+
+    let piped = Terminal::of(&Asked::default());
+    assert!(
+        !piped.colour && !piped.unicode && !piped.drawing && piped.width == ROOM,
+        "a stream nobody said anything about gets the record stream, no colour, and a \
+         width that is not eighty, because eighty is the width of a punched card: {piped:?}"
+    );
+
+    let asked = Asked {
+        reader: Reader::Person,
+        columns: Some(132),
+        glyphs: Glyphs::Drawn,
+        ..Asked::default()
+    };
+    assert_eq!(
+        Terminal::of(&asked),
+        Terminal {
+            width: 132,
+            colour: true,
+            unicode: true,
+            drawing: true
+        },
+        "a person at a terminal that said how wide it is, and whose locale says the font \
+         has more than ASCII, gets all of it"
+    );
+
+    assert!(
+        !Terminal::of(&Asked {
+            colour: Wanted::Refused,
+            ..asked.clone()
+        })
+        .colour,
+        "NO_COLOR is honoured, because a person who set it meant it"
+    );
+    assert!(
+        Terminal::of(&Asked {
+            colour: Wanted::Forced,
+            ..Asked::default()
+        })
+        .drawing,
+        "and CLICOLOR_FORCE draws even into a pipe, which is how somebody captures it on \
+         purpose"
+    );
+
+    let dumb = Terminal::of(&Asked {
+        term: Some("dumb".to_owned()),
+        ..asked
+    });
+    assert!(
+        !dumb.colour && !dumb.unicode,
+        "a terminal that says it is dumb is taken at its word: {dumb:?}"
+    );
+
+    assert_eq!(
+        Terminal::of(&Asked {
+            columns: Some(3),
+            reader: Reader::Person,
+            ..Asked::default()
+        })
+        .width,
+        ROOM,
+        "and a width nothing can be drawn in is one nobody meant, so it is not believed"
     );
 }

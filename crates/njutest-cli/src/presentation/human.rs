@@ -67,39 +67,7 @@ fn blind(out: &mut String, place: &Place, terminal: Terminal) {
         .chain(place.spots.iter().map(|spot| spot.line.to_string().len()))
         .max()
         .unwrap_or(1);
-    let counted = match place.spots.len() {
-        1 => "1 blind spot".to_owned(),
-        many => format!("{many} blind spots"),
-    };
-    let at = place.spots.first().map_or_else(
-        || place.path.clone(),
-        |spot| format!("{}:{}", place.path, spot.line),
-    );
-    let _written = writeln!(
-        out,
-        "{:gutter$} {} {}   {}   {}",
-        "",
-        telling.frame(strokes.opening),
-        telling.painted(Style::Subject, &place.item),
-        telling.painted(
-            Style::Frame,
-            &telling.linked(&format!("file://{}", place.path), &at)
-        ),
-        telling.painted(Style::Gap, &counted)
-    );
-    if let Some(instead) = &place.instead {
-        let why = match instead {
-            Excerpt::Moved => "the file has changed since the run, so the lines are not shown",
-            _ => "the file could not be read, so the lines are not shown",
-        };
-        let _written = writeln!(
-            out,
-            "{:gutter$} {} {}",
-            "",
-            telling.frame(strokes.rule),
-            telling.painted(Style::Limitation, why)
-        );
-    }
+    heads(out, place, gutter, telling);
     for (line, text) in &place.excerpt {
         let here: Vec<&super::Spot> = place
             .spots
@@ -124,31 +92,165 @@ fn blind(out: &mut String, place: &Place, terminal: Terminal) {
             }
         }
     }
-    let named: Vec<&str> = place
-        .spots
-        .iter()
-        .map(|spot| spot.locator.as_str())
-        .collect();
-    if let Some(first) = named.first() {
+    wants(out, place, gutter, telling);
+}
+
+/// What the item is, where it is, and how much of it the tests do not see.
+///
+/// The counts go beside the name while there is room for them and under it
+/// when there is not, rather than off the edge, where a narrow terminal breaks
+/// them wherever they happen to reach.
+fn heads(out: &mut String, place: &Place, gutter: usize, telling: Telling) {
+    let strokes = telling.strokes();
+    let counted = counting(place);
+    let at = place.spots.first().map_or_else(
+        || place.path.clone(),
+        |spot| format!("{}:{}", place.path, spot.line),
+    );
+    let named = format!(
+        "{:gutter$} {} {}   {}",
+        "",
+        telling.frame(strokes.opening),
+        telling.painted(Style::Subject, &place.item),
+        telling.painted(
+            Style::Frame,
+            &telling.linked(&format!("file://{}", place.path), &at)
+        )
+    );
+    let opening = gutter
+        .saturating_add(1)
+        .saturating_add(strokes.opening.chars().count())
+        .saturating_add(1);
+    let heading = telling.painted(Style::Gap, &counted);
+    if super::wide(&named)
+        .saturating_add(3)
+        .saturating_add(counted.len())
+        <= telling.room(0)
+    {
+        let _written = writeln!(out, "{named}   {heading}");
+    } else {
+        let _written = writeln!(out, "{named}");
+        for folded in super::folded(&heading, telling.room(opening)) {
+            let _written = writeln!(out, "{:opening$}{folded}", "");
+        }
+    }
+    let Some(instead) = &place.instead else {
+        return;
+    };
+    let why = match instead {
+        Excerpt::Moved => "the file has changed since the run, so the lines are not shown",
+        _ => "the file could not be read, so the lines are not shown",
+    };
+    let opening = gutter
+        .saturating_add(1)
+        .saturating_add(strokes.rule.chars().count());
+    let mut lines = super::folded(why, telling.room(opening.saturating_add(1))).into_iter();
+    if let Some(first) = lines.next() {
         let _written = writeln!(
             out,
             "{:gutter$} {} {}",
             "",
-            telling.frame(strokes.closing),
-            telling.command(&format!("njutest explain {first}"))
+            telling.frame(strokes.rule),
+            telling.painted(Style::Limitation, &first)
         );
     }
+    for rest in lines {
+        let _written = writeln!(
+            out,
+            "{:opening$} {}",
+            "",
+            telling.painted(Style::Limitation, &rest)
+        );
+    }
+}
+
+/// What this item asks for, and the command that starts each piece of the work.
+///
+/// A command goes on its own line rather than being folded when it will not
+/// fit beside what it answers: a wrapped command is one nobody can select.
+fn wants(out: &mut String, place: &Place, gutter: usize, telling: Telling) {
+    let strokes = telling.strokes();
+    for (at, (asks, first)) in asked(place).into_iter().enumerate() {
+        let corner = if at == 0 {
+            strokes.closing
+        } else {
+            strokes.branch
+        };
+        let command = format!("njutest explain {first}");
+        let opening = gutter
+            .saturating_add(1)
+            .saturating_add(corner.chars().count())
+            .saturating_add(1);
+        let asked = telling.painted(Style::Gap, asks);
+        let typed = telling.command(&command);
+        let head = format!("{:gutter$} {} {asked}", "", telling.frame(corner));
+        let together = asks
+            .len()
+            .saturating_add(2)
+            .saturating_add(command.len())
+            .saturating_add(opening);
+        if together <= telling.room(0) {
+            let _written = writeln!(out, "{head}  {typed}");
+        } else {
+            let _written = writeln!(out, "{head}");
+            let _written = writeln!(out, "{:opening$}{typed}", "");
+        }
+    }
+}
+
+/// How many places the tests do not see here, and what kinds they are.
+///
+/// One number over three kinds would say they are one fact. They are one
+/// drawing, because they are in one item and a reader reads it once, and they
+/// are not one fact, because each kind asks for different work.
+fn counting(place: &Place) -> String {
+    let mut kinds: Vec<(super::Blindness, usize)> = Vec::new();
+    for spot in &place.spots {
+        match kinds.iter_mut().find(|(kind, _)| *kind == spot.blindness) {
+            Some((_, count)) => *count = count.saturating_add(1),
+            None => kinds.push((spot.blindness, 1)),
+        }
+    }
+    kinds
+        .into_iter()
+        .map(|(kind, count)| format!("{count} {}", kind.counted()))
+        .collect::<Vec<String>>()
+        .join(", ")
+}
+
+/// What this item asks for, once per distinct kind of work, with one place to start on each.
+fn asked(place: &Place) -> Vec<(&'static str, &str)> {
+    let mut found: Vec<(&'static str, &str)> = Vec::new();
+    for spot in &place.spots {
+        let asks = spot.blindness.asks();
+        if !found.iter().any(|(said, _)| *said == asks) {
+            found.push((asks, spot.locator.as_str()));
+        }
+    }
+    found
 }
 
 /// One diagnostic: what it is, where it is, and what to do about it.
 fn said(out: &mut String, diagnostic: &Diagnostic, terminal: Terminal) {
     let telling = Telling::of(terminal);
-    let _written = writeln!(
-        out,
-        "{} {}",
-        telling.severity(diagnostic.severity, diagnostic.code),
-        telling.painted(Style::Subject, &diagnostic.title)
-    );
+    let severity = telling.severity(diagnostic.severity, diagnostic.code);
+    let opening = super::wide(&severity).saturating_add(1);
+    let mut titled = super::folded(&diagnostic.title, telling.room(opening)).into_iter();
+    if let Some(first) = titled.next() {
+        let _written = writeln!(
+            out,
+            "{severity} {}",
+            telling.painted(Style::Subject, &first)
+        );
+    }
+    for rest in titled {
+        let _written = writeln!(
+            out,
+            "{:opening$}{}",
+            "",
+            telling.painted(Style::Subject, &rest)
+        );
+    }
     let gutter = diagnostic
         .at
         .as_ref()
@@ -171,14 +273,26 @@ fn said(out: &mut String, diagnostic: &Diagnostic, terminal: Terminal) {
         .map(|action| super::wide(&action.said))
         .max()
         .unwrap_or_default();
+    let hung = gutter
+        .saturating_add(2)
+        .saturating_add(telling.strokes().closing.chars().count());
     for action in &diagnostic.actions {
         written = written.saturating_add(1);
-        let said = format!(
-            "{:column$}  {}",
-            action.said,
-            telling.command(&action.command)
-        );
-        under(out, (gutter, written == last), &said, telling);
+        let together = column
+            .saturating_add(2)
+            .saturating_add(action.command.len())
+            .saturating_add(hung);
+        if together <= telling.room(0) {
+            let said = format!(
+                "{:column$}  {}",
+                action.said,
+                telling.command(&action.command)
+            );
+            under(out, (gutter, written == last), &said, telling);
+        } else {
+            under(out, (gutter, written == last), &action.said, telling);
+            let _written = writeln!(out, "{:hung$}{}", "", telling.command(&action.command));
+        }
     }
 }
 
@@ -266,7 +380,6 @@ fn headline(out: &mut String, told: &Told, terminal: Terminal) {
     let Headline {
         verdict,
         killed,
-        refused_by_types,
         survived,
         unreached,
         duration_ms,
@@ -274,18 +387,15 @@ fn headline(out: &mut String, told: &Told, terminal: Terminal) {
         ..
     } = &told.headline;
     let seconds = as_secs(*duration_ms);
-    let refused = if *refused_by_types == 0 {
-        String::new()
-    } else {
-        format!("{refused_by_types} refused by types, ")
-    };
     let counted = telling.painted(
         Style::Frame,
-        &format!(
-            "{killed} killed, {refused}{survived} survived, {unreached} unreached   {seconds}"
-        ),
+        &format!("{killed} killed  {survived} survived  {unreached} unreached  {seconds}"),
     );
-    let _written = writeln!(out, "  {}   {counted}", telling.verdict(*verdict));
+    headed(
+        out,
+        &format!("{}   {counted}", telling.verdict(*verdict)),
+        telling,
+    );
     let kept = telling.painted(Style::Frame, kept);
     if told.places.is_empty()
         && !told
@@ -293,14 +403,29 @@ fn headline(out: &mut String, told: &Told, terminal: Terminal) {
             .iter()
             .any(|one| one.severity == super::Severity::Gap)
     {
-        let _written = writeln!(out, "  {kept}");
+        headed(out, &kept, telling);
         return;
     }
-    let _written = writeln!(
+    headed(
         out,
-        "  {}   {kept}",
-        telling.painted(Style::Gap, &gaps(told))
+        &format!("{}   {kept}", telling.painted(Style::Gap, &gaps(told))),
+        telling,
     );
+}
+
+/// One line of the headline, indented and folded like everything else.
+///
+/// A headline that ran past the edge was the one line nothing folded, so a
+/// narrow terminal wrapped it wherever it happened to reach and the two halves
+/// of a verdict ended up in different places.
+fn headed(out: &mut String, text: &str, telling: Telling) {
+    let mut lines = super::folded(text, telling.room(2)).into_iter();
+    if let Some(first) = lines.next() {
+        let _written = writeln!(out, "  {first}");
+    }
+    for rest in lines {
+        let _written = writeln!(out, "    {rest}");
+    }
 }
 
 /// How many gaps there are and how many files they are in, which is what a reader wants before the list.
@@ -328,13 +453,10 @@ fn gaps(told: &Told) -> String {
                 .map(|site| site.path.as_str()),
         )
         .collect();
-    let plural = if count == 1 { "" } else { "s" };
-    if files.is_empty() {
-        return format!("{count} gap{plural}");
-    }
-    let files = files.len();
+    let files = files.len().max(1);
     format!(
-        "{count} gap{plural} in {files} file{}",
+        "{count} gap{} in {files} file{}",
+        if count == 1 { "" } else { "s" },
         if files == 1 { "" } else { "s" }
     )
 }

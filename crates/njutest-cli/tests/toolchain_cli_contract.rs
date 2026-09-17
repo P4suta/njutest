@@ -57,6 +57,7 @@ fn environment(directory: &Path, named: &[(&str, &str)]) -> Environment {
         program: std::path::PathBuf::from("this test never runs it"),
         vars,
         cancel: Cancel::new(),
+        terminal: njutest_cli::presentation::Terminal::default(),
     }
 }
 

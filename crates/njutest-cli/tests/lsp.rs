@@ -42,11 +42,11 @@ fn reported() -> Report {
             column: 9,
             character_column: 5,
         },
-        rule: "gt-to-ge@1".to_owned(),
+        rule: "gt-to-ge".to_owned(),
         item: "demo".to_owned(),
         original: ">".to_owned(),
         replacement: String::new(),
-        outcome: Outcome::parse("survived").unwrap_or(Outcome::Errored),
+        outcome: Outcome::Survived,
         killed_by: None,
         reused: false,
         source_run_id: None,
@@ -56,7 +56,7 @@ fn reported() -> Report {
     report.findings.push(Finding {
         kind: FindingKind::SurvivingMutant,
         subject: "aaaaaaaaaaaa".to_owned(),
-        detail: "no test noticed gt-to-ge@1".to_owned(),
+        detail: "no test noticed gt-to-ge".to_owned(),
         path: None,
         position: None,
     });
@@ -77,7 +77,13 @@ fn a_finding_is_shown_where_the_mutation_it_names_is() {
         "a report counts lines and columns from one and the protocol counts from zero: \
          a finding shown one line down is a finding about the wrong code"
     );
-    assert_eq!(shown[0].diagnostics[0]["data"]["mutant"], "aaaaaaaaaaaa");
+    assert_eq!(
+        shown[0].diagnostics[0]["data"]["mutant"], "src/lib.rs:demo:gt-to-ge@7",
+        "an editor's quick fix is a command somebody runs, so the name in it is the name \
+         every other surface of this run prints: a digest here and a locator in the \
+         terminal is one mutation with two names"
+    );
+    assert_eq!(shown[0].diagnostics[0]["data"]["id"], "aaaaaaaaaaaa");
 }
 
 #[test]
@@ -643,7 +649,7 @@ fn the_whole_exchange_an_editor_has_with_this_server_is_recorded() {
             json!({ "jsonrpc": "2.0", "method": "textDocument/didOpen" }),
             json!({ "jsonrpc": "2.0", "id": 2, "method": "textDocument/codeAction",
                 "params": { "context": { "diagnostics": [
-                    { "data": { "mutant": "aaaaaaaaaaaa", "rule": "gt-to-ge@1" } }
+                    { "data": { "mutant": "src/lib.rs:demo:gt-to-ge@7", "id": "aaaaaaaaaaaa", "rule": "gt-to-ge" } }
                 ] } } }),
             json!({ "jsonrpc": "2.0", "id": 3, "method": "shutdown" }),
             json!({ "jsonrpc": "2.0", "method": "exit" }),

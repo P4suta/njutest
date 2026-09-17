@@ -31,6 +31,19 @@ Options:
           
           [default: plain]
 
+      --format <FORMAT>
+          What to write when the run is over. The default is the drawing at a terminal and the
+          record stream anywhere else
+
+          Possible values:
+          - lines: The record stream
+          - json:  The canonical document, exactly as the run wrote it
+          - spec:  What the seams the run watched observed the system doing, and who holds each
+            sentence up
+          - human: What a person reads: the source, with every place the tests do not see marked on
+            it
+          - agent: A briefing for something that will act on this without a screen, as Markdown
+
       --trace[=<DIR>]
           Record what the run does, under DIR or `.njutest/trace/<run>`
 

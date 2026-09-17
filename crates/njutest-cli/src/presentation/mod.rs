@@ -3,6 +3,7 @@
 
 //! What a person is told about a run, as a value every surface is a projection of.
 
+pub mod agent;
 pub mod human;
 mod telling;
 pub mod tint;
@@ -50,8 +51,6 @@ pub struct Headline {
     pub cataloged: u32,
     /// How many a test noticed.
     pub killed: u32,
-    /// How many the compiler refused, which is the type system noticing.
-    pub refused_by_types: u32,
     /// How many ran and nothing noticed.
     pub survived: u32,
     /// How many nothing reached.
@@ -162,6 +161,35 @@ impl Blindness {
             Self::Ran => "ran, not noticed",
             Self::Never => "never run",
             Self::Waited => "timed out",
+        }
+    }
+
+    /// The same, in the words a count stands in front of.
+    ///
+    /// No comma in any of them: a heading that reads `1 ran, not noticed, 1
+    /// never run` parses on sight as four things rather than two, and a
+    /// heading is read at a glance or not at all.
+    #[must_use]
+    pub const fn counted(self) -> &'static str {
+        match self {
+            Self::Ran => "not noticed",
+            Self::Never => "never run",
+            Self::Waited => "timed out",
+        }
+    }
+
+    /// What a reader is being asked to do about it, which is not the same for all three.
+    ///
+    /// A test that notices a change, a test that reaches the line at all, and
+    /// an investigation into why nothing finished are three different pieces
+    /// of work. Drawing them under one heading, or handing all three the same
+    /// instruction, teaches somebody something false about two of them.
+    #[must_use]
+    pub const fn asks(self) -> &'static str {
+        match self {
+            Self::Ran => "write a test that notices it",
+            Self::Never => "write a test that reaches it",
+            Self::Waited => "find out why nothing finished",
         }
     }
 }
@@ -277,6 +305,22 @@ pub struct Terminal {
     pub colour: bool,
     /// Whether the font is expected to have more than ASCII.
     pub unicode: bool,
+    /// Whether a person is reading this, rather than a program.
+    ///
+    /// The one thing that is not a capability: it decides which projection is
+    /// written at all, and a pipe gets the record stream because that is a
+    /// contract with whatever is on the other end of it.
+    pub drawing: bool,
+}
+
+impl Default for Terminal {
+    /// What a stream nobody has said anything about gets, which is what a pipe gets.
+    fn default() -> Self {
+        Self {
+            drawing: false,
+            ..Self::plain(ROOM)
+        }
+    }
 }
 
 impl Terminal {
@@ -287,6 +331,7 @@ impl Terminal {
             width,
             colour: false,
             unicode: false,
+            drawing: true,
         }
     }
 }
@@ -484,11 +529,44 @@ impl Telling {
         let indent = wide(&before);
         let width = site.width.max(1);
         let painted = self.painted(Style::Gap, &self.strokes().point.repeat(width));
+        self.marked(
+            &painted,
+            Marked {
+                indent,
+                width,
+                gutter,
+            },
+            &site.label,
+        )
+    }
+
+    /// A mark at the column it is about, and what to say about it, beside it or under it.
+    ///
+    /// Beside is where a reader looks first, and it is where the label goes
+    /// while there is room for it. A caret far enough to the right leaves no
+    /// room, and a label hung under it there is folded to nothing and drawn
+    /// past the edge anyway; below the mark it is narrow but whole.
+    fn marked(self, mark: &str, at: Marked, label: &str) -> Vec<String> {
+        let Marked {
+            indent,
+            width,
+            gutter,
+        } = at;
         let hanging = indent.saturating_add(width).saturating_add(1);
         let room = self.room(gutter.saturating_add(3).saturating_add(hanging));
-        let mut folded = folded(&site.label, room).into_iter();
+        if room < BESIDE {
+            let under = gutter.saturating_add(5);
+            let mut lines = vec![format!("{:indent$}{mark}", "")];
+            lines.extend(
+                folded(label, self.room(under))
+                    .into_iter()
+                    .map(|one| format!("  {one}")),
+            );
+            return lines;
+        }
+        let mut folded = folded(label, room).into_iter();
         let first = folded.next().unwrap_or_default();
-        let mut lines = vec![format!("{:indent$}{painted} {first}", "")];
+        let mut lines = vec![format!("{:indent$}{mark} {first}", "")];
         lines.extend(folded.map(|rest| format!("{:hanging$}{rest}", "")));
         lines
     }
@@ -598,13 +676,15 @@ impl Telling {
             Blindness::Waited => Style::Limitation,
         };
         let said = format!("{change}   {}", self.painted(style, &spot.said));
-        let hanging = indent.saturating_add(width).saturating_add(1);
-        let room = self.room(gutter.saturating_add(3).saturating_add(hanging));
-        let mut folded = folded(&said, room).into_iter();
-        let first = folded.next().unwrap_or_default();
-        let mut lines = vec![format!("{:indent$}{mark} {first}", "")];
-        lines.extend(folded.map(|rest| format!("{:hanging$}{rest}", "")));
-        lines
+        self.marked(
+            &mark,
+            Marked {
+                indent,
+                width,
+                gutter,
+            },
+            &said,
+        )
     }
 
     /// How many columns there are for prose after `indent` has been spent.
@@ -641,60 +721,6 @@ fn changed(spot: &Spot) -> Changed<'_> {
         return Changed::Into(&spot.now);
     }
     Changed::From(&spot.was, &spot.now)
-}
-
-/// What a reader is told about one blind spot, naming the builds it is in when a run measured more than one.
-///
-/// A build that established nothing is named apart from the ones the word is
-/// about. Naming them together would say the tests ran and noticed nothing in
-/// a build where nothing ran at all, and send somebody looking for an
-/// assertion where what is missing is an answer.
-#[must_use]
-pub fn blindness_of(mutant: &crate::report::MutantRecord, waited: bool) -> String {
-    let word = if waited {
-        Blindness::Waited.word()
-    } else if mutant.outcome == crate::report::Outcome::Unreached {
-        Blindness::Never.word()
-    } else {
-        Blindness::Ran.word()
-    };
-    if mutant.blind_in.is_empty() {
-        return word.to_owned();
-    }
-    let mut clauses: Vec<String> = Vec::new();
-    for way in crate::report::Blind::ALL {
-        let builds = named(&mutant.blind_in, way);
-        if builds.is_empty() {
-            continue;
-        }
-        clauses.push(format!("{} in {builds}", worded(way, waited)));
-    }
-    clauses.join("; ")
-}
-
-/// What one way of being a hole reads as, which is total over the ways there are.
-///
-/// A run that read a build where nothing was established as one whose tests
-/// ran and noticed nothing would send somebody looking for an assertion where
-/// what is missing is an answer.
-const fn worded(way: crate::report::Blind, waited: bool) -> &'static str {
-    match way {
-        crate::report::Blind::Unnoticed if waited => Blindness::Waited.word(),
-        crate::report::Blind::Unnoticed => Blindness::Ran.word(),
-        crate::report::Blind::Unreached => Blindness::Never.word(),
-        crate::report::Blind::Waited => "nothing finished",
-        crate::report::Blind::Errored => "nothing established",
-    }
-}
-
-/// The builds of `blind_in` that are a hole in the way `way` says, in the order the record lists them.
-fn named(blind_in: &[crate::report::BlindIn], way: crate::report::Blind) -> String {
-    blind_in
-        .iter()
-        .filter(|one| one.decision == way)
-        .map(|one| one.build.clone())
-        .collect::<Vec<_>>()
-        .join(", ")
 }
 
 /// How many columns `text` takes on a terminal, counting nothing for what it is painted with.
@@ -856,4 +882,99 @@ fn lines_of(text: &str) -> Vec<String> {
     text.lines()
         .map(|line| line.trim_end_matches('\r').to_owned())
         .collect()
+}
+
+/// Who is on the other end of the output.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Reader {
+    /// A person at a terminal.
+    Person,
+    /// Something that will parse it.
+    #[default]
+    Program,
+}
+
+/// What was said about colour, which is three answers rather than two flags.
+///
+/// `NO_COLOR` and `CLICOLOR_FORCE` are not independent — both set means forced
+/// — so they are one question with three answers rather than two booleans a
+/// caller can set to a combination nobody meant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Wanted {
+    /// `CLICOLOR_FORCE`: colour even where nothing else asks for it.
+    Forced,
+    /// `NO_COLOR`: none, whatever else is true.
+    Refused,
+    /// Nothing said, so whether the reader is a person decides.
+    #[default]
+    Unsaid,
+}
+
+/// What the font is expected to have.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Glyphs {
+    /// More than ASCII.
+    Drawn,
+    /// ASCII, which every terminal has.
+    #[default]
+    Plain,
+}
+
+/// What the composition root found out about where the output is going.
+///
+/// The pieces rather than the conclusion, so the rules that turn them into a
+/// [`Terminal`] — which of `NO_COLOR` and `CLICOLOR_FORCE` wins, what a `dumb`
+/// terminal means, what to do when nothing says how wide it is — are asserted
+/// in a test rather than believed.
+#[derive(Debug, Clone, Default)]
+pub struct Asked {
+    /// Who is on the other end.
+    pub reader: Reader,
+    /// How wide it said it is.
+    pub columns: Option<usize>,
+    /// What was said about colour.
+    pub colour: Wanted,
+    /// What `TERM` says.
+    pub term: Option<String>,
+    /// What the locale says the font has.
+    pub glyphs: Glyphs,
+}
+
+/// The least room a label needs beside a mark before it reads better under one.
+const BESIDE: usize = 24;
+
+/// Where a mark goes on a line, and what is to the left of it.
+#[derive(Debug, Clone, Copy)]
+struct Marked {
+    /// How many columns of the line come before the mark.
+    indent: usize,
+    /// How many columns the mark covers, which is how wide the code under it is.
+    width: usize,
+    /// How wide the line numbers to its left are.
+    gutter: usize,
+}
+
+/// How wide to draw when nothing said.
+///
+/// Wider than eighty, because eighty is the width of a punched card and a
+/// diagnostic that fits one has been trimmed to fit a machine nobody has.
+pub const ROOM: usize = 100;
+
+impl Terminal {
+    /// What to draw for, given what was found out.
+    #[must_use]
+    pub fn of(asked: &Asked) -> Self {
+        let dumb = asked.term.as_deref() == Some("dumb");
+        let a_person = asked.reader == Reader::Person;
+        Self {
+            width: asked.columns.filter(|it| *it >= 20).unwrap_or(ROOM),
+            colour: match asked.colour {
+                Wanted::Forced => true,
+                Wanted::Refused => false,
+                Wanted::Unsaid => a_person && !dumb,
+            },
+            unicode: asked.glyphs == Glyphs::Drawn && !dumb,
+            drawing: a_person || asked.colour == Wanted::Forced,
+        }
+    }
 }

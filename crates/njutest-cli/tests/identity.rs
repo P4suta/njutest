@@ -185,6 +185,7 @@ fn a_run_that_could_not_ask_git_says_so_before_it_compiles_anything() {
         program: PathBuf::from("this test never runs it"),
         cache_directory: parent.path().to_owned(),
         cancel: cancel.clone(),
+        terminal: njutest_cli::presentation::Terminal::default(),
     };
 
     let mut report = identity(&request);
@@ -263,6 +264,7 @@ fn every_limitation_a_report_states_before_it_runs_is_a_finished_sentence() {
         program: PathBuf::from("this test never runs it"),
         cache_directory: parent.path().to_owned(),
         cancel: cancel.clone(),
+        terminal: njutest_cli::presentation::Terminal::default(),
     };
 
     let mut report = identity(&request);

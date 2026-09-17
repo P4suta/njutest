@@ -81,6 +81,8 @@ pub struct Environment {
     pub cache_directory: PathBuf,
     /// Raised when the process is asked to stop. The composition root owns the signals; every phase reads this flag.
     pub cancel: Cancel,
+    /// What the composition root found out about where the output is going, which a renderer is given rather than asks (ADR 0001).
+    pub terminal: crate::presentation::Terminal,
 }
 
 impl Environment {
@@ -232,6 +234,9 @@ pub struct Verify {
     /// How to write progress.
     #[arg(long, value_enum, default_value_t = Ui::Plain)]
     pub ui: Ui,
+    /// What to write when the run is over. The default is the drawing at a terminal and the record stream anywhere else.
+    #[arg(long, value_enum, value_name = "FORMAT")]
+    pub format: Option<Format>,
     /// Record what the run does, under DIR or `.njutest/trace/<run>`.
     #[arg(
         long,
@@ -410,7 +415,7 @@ pub enum TraceCommand {
     },
 }
 
-/// How a stored report is written out.
+/// What a run, stored or just finished, is written out as.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, ValueEnum)]
 #[value(rename_all = "lower")]
 pub enum Format {
@@ -421,6 +426,10 @@ pub enum Format {
     Json,
     /// What the seams the run watched observed the system doing, and who holds each sentence up.
     Spec,
+    /// What a person reads: the source, with every place the tests do not see marked on it.
+    Human,
+    /// A briefing for something that will act on this without a screen, as Markdown.
+    Agent,
 }
 
 /// How a run writes what it is doing while it does it.

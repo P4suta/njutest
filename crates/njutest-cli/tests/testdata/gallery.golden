@@ -3,76 +3,81 @@ Written by crates/njutest-cli/tests/gallery.rs; UPDATE_GOLDEN=1 rewrites it.
 
 === a run that found nothing — eighty columns, no colour
 
-  ASSURED   4 killed, 0 survived, 0 unreached   1.9s
+  ASSURED   4 killed  0 survived  0 unreached  1.9s
   reports/runs/20260101T000000Z-aaaaaa
 
 === a run that found nothing — forty columns, no colour
 
-  ASSURED   4 killed, 0 survived, 0 unreached   1.9s
+  ASSURED   4 killed  0 survived  0
+    unreached  1.9s
   reports/runs/20260101T000000Z-aaaaaa
 
 === a run that found nothing — eighty columns, colour
 
-  [1;38;5;114mASSURED[0m   [38;5;244m4 killed, 0 survived, 0 unreached   1.9s[0m
+  [1;38;5;114mASSURED[0m   [38;5;244m4 killed  0 survived  0 unreached  1.9s[0m
   [38;5;244mreports/runs/20260101T000000Z-aaaaaa[0m
 
 === a run that found nothing — eighty columns, unicode
 
-  ✓ ASSURED   4 killed, 0 survived, 0 unreached   1.9s
+  ✓ ASSURED   4 killed  0 survived  0 unreached  1.9s
   reports/runs/20260101T000000Z-aaaaaa
 
 === one item, one blind spot — eighty columns, no colour
 
-  --> sign   src/lib.rs:8   1 blind spot
+  --> sign   src/lib.rs:8   1 not noticed
 7 | pub fn sign(n: i32) -> &'static str {
 8 |     if n > 0 {
   |          ^ > => >=   ran, not noticed
 9 |         "positive"
-  = njutest explain src/lib.rs:sign:gt-to-ge@8
+  = write a test that notices it  njutest explain src/lib.rs:sign:gt-to-ge@8
 
-  INSUFFICIENT   7 killed, 1 survived, 0 unreached   1.9s
+  INSUFFICIENT   7 killed  1 survived  0 unreached  1.9s
   1 gap in 1 file   reports/runs/20260101T000000Z-aaaaaa
 
 === one item, one blind spot — forty columns, no colour
 
-  --> sign   src/lib.rs:8   1 blind spot
+  --> sign   src/lib.rs:8
+      1 not noticed
 7 | pub fn sign(n: i32) -> &'static str {
 8 |     if n > 0 {
   |          ^ > => >=   ran, not
   |            noticed
 9 |         "positive"
-  = njutest explain src/lib.rs:sign:gt-to-ge@8
+  = write a test that notices it
+    njutest explain src/lib.rs:sign:gt-to-ge@8
 
-  INSUFFICIENT   7 killed, 1 survived, 0 unreached   1.9s
-  1 gap in 1 file   reports/runs/20260101T000000Z-aaaaaa
+  INSUFFICIENT   7 killed  1 survived  0
+    unreached  1.9s
+  1 gap in 1 file
+    reports/runs/20260101T000000Z-aaaaaa
 
 === one item, one blind spot — eighty columns, colour
 
-  [38;5;244m-->[0m [1;38;5;253msign[0m   [38;5;244m]8;;file://src/lib.rssrc/lib.rs:8]8;;[0m   [1;38;5;214m1 blind spot[0m
+  [38;5;244m-->[0m [1;38;5;253msign[0m   [38;5;244m]8;;file://src/lib.rssrc/lib.rs:8]8;;[0m   [1;38;5;214m1 not noticed[0m
 [38;5;244m7[0m [38;5;244m|[0m [38;5;176mpub[0m[38;5;250m [0m[38;5;176mfn[0m[38;5;250m [0m[38;5;111msign[0m[38;5;250m([0m[38;5;250mn[0m[38;5;250m: [0m[38;5;250mi32[0m[38;5;250m) -> &[0m[38;5;139m'static[0m[38;5;250m [0m[38;5;250mstr[0m[38;5;250m {[0m
 [38;5;244m8[0m [38;5;244m|[0m [38;5;250m    [0m[38;5;176mif[0m[38;5;250m [0m[38;5;250mn[0m[38;5;250m [0m[1;4;38;5;204m>[0m[38;5;250m [0m[38;5;179m0[0m[38;5;250m {[0m
   [38;5;244m|[0m          [1;38;5;214m^[0m [38;5;250m>[0m [1;38;5;214m=>[0m [38;5;250m>=[0m   [1;38;5;214mran, not noticed[0m
 [38;5;244m9[0m [38;5;244m|[0m [38;5;250m        [0m[38;5;150m"positive"[0m
-  [38;5;244m=[0m [38;5;252mnjutest explain src/lib.rs:sign:gt-to-ge@8[0m
+  [38;5;244m=[0m [1;38;5;214mwrite a test that notices it[0m  [38;5;252mnjutest explain src/lib.rs:sign:gt-to-ge@8[0m
 
-  [1;38;5;214mINSUFFICIENT[0m   [38;5;244m7 killed, 1 survived, 0 unreached   1.9s[0m
+  [1;38;5;214mINSUFFICIENT[0m   [38;5;244m7 killed  1 survived  0 unreached  1.9s[0m
   [1;38;5;214m1 gap in 1 file[0m   [38;5;244mreports/runs/20260101T000000Z-aaaaaa[0m
 
 === one item, one blind spot — eighty columns, unicode
 
-  ╭─ sign   src/lib.rs:8   1 blind spot
+  ╭─ sign   src/lib.rs:8   1 not noticed
 7 │ pub fn sign(n: i32) -> &'static str {
 8 │     if n > 0 {
   ·          ▲ > ⇢ >=   ran, not noticed
 9 │         "positive"
-  ╰─ njutest explain src/lib.rs:sign:gt-to-ge@8
+  ╰─ write a test that notices it  njutest explain src/lib.rs:sign:gt-to-ge@8
 
-  ✗ INSUFFICIENT   7 killed, 1 survived, 0 unreached   1.9s
+  ✗ INSUFFICIENT   7 killed  1 survived  0 unreached  1.9s
   1 gap in 1 file   reports/runs/20260101T000000Z-aaaaaa
 
 === one item, every kind of blindness on it at once — eighty columns, no colour
 
-   --> sign   src/lib.rs:8   3 blind spots
+   --> sign   src/lib.rs:8   1 not noticed, 1 never run, 1 timed out
  7 | pub fn sign(n: i32) -> &'static str {
  8 |     if n > 0 {
    |          ^ > => >=   ran, not noticed
@@ -84,37 +89,50 @@ Written by crates/njutest-cli/tests/gallery.rs; UPDATE_GOLDEN=1 rewrites it.
 13 |         "zero"
    |         ^^^^^^ "zero" => Default::default()   timed out
 14 |     }
-   = njutest explain src/lib.rs:sign:gt-to-ge@8
+   = write a test that notices it  njutest explain src/lib.rs:sign:gt-to-ge@8
+   = write a test that reaches it  njutest explain src/lib.rs:sign:lt-to-le@10
+   = find out why nothing finished
+     njutest explain src/lib.rs:sign:return-default@13
 
-  INSUFFICIENT   7 killed, 2 survived, 1 unreached   1.9s
+  INSUFFICIENT   7 killed  2 survived  1 unreached  1.9s
   3 gaps in 1 file   reports/runs/20260101T000000Z-aaaaaa
 
 === one item, every kind of blindness on it at once — forty columns, no colour
 
-   --> sign   src/lib.rs:8   3 blind spots
+   --> sign   src/lib.rs:8
+       1 not noticed, 1 never run, 1
+       timed out
  7 | pub fn sign(n: i32) -> &'static str {
  8 |     if n > 0 {
    |          ^ > => >=   ran, not
    |            noticed
  9 |         "positive"
 10 |     } else if n < 0 {
-   |                 ^ < => <=   never
-   |                   run
+   |                 ^
+   |   < => <=   never run
 11 |         "negative"
 12 |     } else {
 13 |         "zero"
-   |         ^^^^^^ "zero" =>
-   |                Default::default()
-   |                timed out
+   |         ^^^^^^
+   |   "zero" => Default::default()
+   |   timed out
 14 |     }
-   = njutest explain src/lib.rs:sign:gt-to-ge@8
+   = write a test that notices it
+     njutest explain src/lib.rs:sign:gt-to-ge@8
+   = write a test that reaches it
+     njutest explain src/lib.rs:sign:lt-to-le@10
+   = find out why nothing finished
+     njutest explain src/lib.rs:sign:return-default@13
 
-  INSUFFICIENT   7 killed, 2 survived, 1 unreached   1.9s
-  3 gaps in 1 file   reports/runs/20260101T000000Z-aaaaaa
+  INSUFFICIENT   7 killed  2 survived  1
+    unreached  1.9s
+  3 gaps in 1 file
+    reports/runs/20260101T000000Z-aaaaaa
 
 === one item, every kind of blindness on it at once — eighty columns, colour
 
-   [38;5;244m-->[0m [1;38;5;253msign[0m   [38;5;244m]8;;file://src/lib.rssrc/lib.rs:8]8;;[0m   [1;38;5;214m3 blind spots[0m
+   [38;5;244m-->[0m [1;38;5;253msign[0m   [38;5;244m]8;;file://src/lib.rssrc/lib.rs:8]8;;[0m
+       [1;38;5;214m1 not noticed, 1 never run, 1 timed out[0m
 [38;5;244m7[0m [38;5;244m|[0m [38;5;176mpub[0m[38;5;250m [0m[38;5;176mfn[0m[38;5;250m [0m[38;5;111msign[0m[38;5;250m([0m[38;5;250mn[0m[38;5;250m: [0m[38;5;250mi32[0m[38;5;250m) -> &[0m[38;5;139m'static[0m[38;5;250m [0m[38;5;250mstr[0m[38;5;250m {[0m
 [38;5;244m8[0m [38;5;244m|[0m [38;5;250m    [0m[38;5;176mif[0m[38;5;250m [0m[38;5;250mn[0m[38;5;250m [0m[1;4;38;5;204m>[0m[38;5;250m [0m[38;5;179m0[0m[38;5;250m {[0m
    [38;5;244m|[0m          [1;38;5;214m^[0m [38;5;250m>[0m [1;38;5;214m=>[0m [38;5;250m>=[0m   [1;38;5;214mran, not noticed[0m
@@ -126,14 +144,17 @@ Written by crates/njutest-cli/tests/gallery.rs; UPDATE_GOLDEN=1 rewrites it.
 [38;5;244m13[0m [38;5;244m|[0m [38;5;250m        [0m[1;4;38;5;204m"zero"[0m
    [38;5;244m|[0m         [1;38;5;214m^^^^^^[0m [38;5;150m"zero"[0m [1;38;5;214m=>[0m [38;5;79mDefault[0m[38;5;250m::[0m[38;5;111mdefault[0m[38;5;250m()[0m   [38;5;73mtimed out[0m
 [38;5;244m14[0m [38;5;244m|[0m [38;5;250m    }[0m
-   [38;5;244m=[0m [38;5;252mnjutest explain src/lib.rs:sign:gt-to-ge@8[0m
+   [38;5;244m=[0m [1;38;5;214mwrite a test that notices it[0m  [38;5;252mnjutest explain src/lib.rs:sign:gt-to-ge@8[0m
+   [38;5;244m=[0m [1;38;5;214mwrite a test that reaches it[0m  [38;5;252mnjutest explain src/lib.rs:sign:lt-to-le@10[0m
+   [38;5;244m=[0m [1;38;5;214mfind out why nothing finished[0m
+     [38;5;252mnjutest explain src/lib.rs:sign:return-default@13[0m
 
-  [1;38;5;214mINSUFFICIENT[0m   [38;5;244m7 killed, 2 survived, 1 unreached   1.9s[0m
+  [1;38;5;214mINSUFFICIENT[0m   [38;5;244m7 killed  2 survived  1 unreached  1.9s[0m
   [1;38;5;214m3 gaps in 1 file[0m   [38;5;244mreports/runs/20260101T000000Z-aaaaaa[0m
 
 === one item, every kind of blindness on it at once — eighty columns, unicode
 
-   ╭─ sign   src/lib.rs:8   3 blind spots
+   ╭─ sign   src/lib.rs:8   1 not noticed, 1 never run, 1 timed out
  7 │ pub fn sign(n: i32) -> &'static str {
  8 │     if n > 0 {
    ·          ▲ > ⇢ >=   ran, not noticed
@@ -145,173 +166,192 @@ Written by crates/njutest-cli/tests/gallery.rs; UPDATE_GOLDEN=1 rewrites it.
 13 │         "zero"
    ·         ▲▲▲▲▲▲ "zero" ⇢ Default::default()   timed out
 14 │     }
-   ╰─ njutest explain src/lib.rs:sign:gt-to-ge@8
+   ╰─ write a test that notices it  njutest explain src/lib.rs:sign:gt-to-ge@8
+   ├─ write a test that reaches it  njutest explain src/lib.rs:sign:lt-to-le@10
+   ├─ find out why nothing finished
+      njutest explain src/lib.rs:sign:return-default@13
 
-  ✗ INSUFFICIENT   7 killed, 2 survived, 1 unreached   1.9s
+  ✗ INSUFFICIENT   7 killed  2 survived  1 unreached  1.9s
   3 gaps in 1 file   reports/runs/20260101T000000Z-aaaaaa
 
 === two items of one file — eighty columns, no colour
 
-  --> sign   src/lib.rs:8   1 blind spot
+  --> sign   src/lib.rs:8   1 not noticed
 7 | pub fn sign(n: i32) -> &'static str {
 8 |     if n > 0 {
   |          ^ > => >=   ran, not noticed
 9 |         "positive"
-  = njutest explain src/lib.rs:sign:gt-to-ge@8
+  = write a test that notices it  njutest explain src/lib.rs:sign:gt-to-ge@8
 
-   --> double   src/lib.rs:19   1 blind spot
+   --> double   src/lib.rs:19   1 not noticed
 18 | pub fn double(n: i32) -> i32 {
 19 |     n * 2
    |       ^ * => /   ran, not noticed
 20 | }
-   = njutest explain src/lib.rs:double:mul-to-div@19
+   = write a test that notices it
+     njutest explain src/lib.rs:double:mul-to-div@19
 
-  INSUFFICIENT   7 killed, 2 survived, 0 unreached   1.9s
+  INSUFFICIENT   7 killed  2 survived  0 unreached  1.9s
   2 gaps in 1 file   reports/runs/20260101T000000Z-aaaaaa
 
 === two items of one file — forty columns, no colour
 
-  --> sign   src/lib.rs:8   1 blind spot
+  --> sign   src/lib.rs:8
+      1 not noticed
 7 | pub fn sign(n: i32) -> &'static str {
 8 |     if n > 0 {
   |          ^ > => >=   ran, not
   |            noticed
 9 |         "positive"
-  = njutest explain src/lib.rs:sign:gt-to-ge@8
+  = write a test that notices it
+    njutest explain src/lib.rs:sign:gt-to-ge@8
 
-   --> double   src/lib.rs:19   1 blind spot
+   --> double   src/lib.rs:19
+       1 not noticed
 18 | pub fn double(n: i32) -> i32 {
 19 |     n * 2
    |       ^ * => /   ran, not noticed
 20 | }
-   = njutest explain src/lib.rs:double:mul-to-div@19
+   = write a test that notices it
+     njutest explain src/lib.rs:double:mul-to-div@19
 
-  INSUFFICIENT   7 killed, 2 survived, 0 unreached   1.9s
-  2 gaps in 1 file   reports/runs/20260101T000000Z-aaaaaa
+  INSUFFICIENT   7 killed  2 survived  0
+    unreached  1.9s
+  2 gaps in 1 file
+    reports/runs/20260101T000000Z-aaaaaa
 
 === two items of one file — eighty columns, colour
 
-  [38;5;244m-->[0m [1;38;5;253msign[0m   [38;5;244m]8;;file://src/lib.rssrc/lib.rs:8]8;;[0m   [1;38;5;214m1 blind spot[0m
+  [38;5;244m-->[0m [1;38;5;253msign[0m   [38;5;244m]8;;file://src/lib.rssrc/lib.rs:8]8;;[0m   [1;38;5;214m1 not noticed[0m
 [38;5;244m7[0m [38;5;244m|[0m [38;5;176mpub[0m[38;5;250m [0m[38;5;176mfn[0m[38;5;250m [0m[38;5;111msign[0m[38;5;250m([0m[38;5;250mn[0m[38;5;250m: [0m[38;5;250mi32[0m[38;5;250m) -> &[0m[38;5;139m'static[0m[38;5;250m [0m[38;5;250mstr[0m[38;5;250m {[0m
 [38;5;244m8[0m [38;5;244m|[0m [38;5;250m    [0m[38;5;176mif[0m[38;5;250m [0m[38;5;250mn[0m[38;5;250m [0m[1;4;38;5;204m>[0m[38;5;250m [0m[38;5;179m0[0m[38;5;250m {[0m
   [38;5;244m|[0m          [1;38;5;214m^[0m [38;5;250m>[0m [1;38;5;214m=>[0m [38;5;250m>=[0m   [1;38;5;214mran, not noticed[0m
 [38;5;244m9[0m [38;5;244m|[0m [38;5;250m        [0m[38;5;150m"positive"[0m
-  [38;5;244m=[0m [38;5;252mnjutest explain src/lib.rs:sign:gt-to-ge@8[0m
+  [38;5;244m=[0m [1;38;5;214mwrite a test that notices it[0m  [38;5;252mnjutest explain src/lib.rs:sign:gt-to-ge@8[0m
 
-   [38;5;244m-->[0m [1;38;5;253mdouble[0m   [38;5;244m]8;;file://src/lib.rssrc/lib.rs:19]8;;[0m   [1;38;5;214m1 blind spot[0m
+   [38;5;244m-->[0m [1;38;5;253mdouble[0m   [38;5;244m]8;;file://src/lib.rssrc/lib.rs:19]8;;[0m   [1;38;5;214m1 not noticed[0m
 [38;5;244m18[0m [38;5;244m|[0m [38;5;176mpub[0m[38;5;250m [0m[38;5;176mfn[0m[38;5;250m [0m[38;5;111mdouble[0m[38;5;250m([0m[38;5;250mn[0m[38;5;250m: [0m[38;5;250mi32[0m[38;5;250m) -> [0m[38;5;250mi32[0m[38;5;250m {[0m
 [38;5;244m19[0m [38;5;244m|[0m [38;5;250m    [0m[38;5;250mn[0m[38;5;250m [0m[1;4;38;5;204m*[0m[38;5;250m [0m[38;5;179m2[0m
    [38;5;244m|[0m       [1;38;5;214m^[0m [38;5;250m*[0m [1;38;5;214m=>[0m [38;5;250m/[0m   [1;38;5;214mran, not noticed[0m
 [38;5;244m20[0m [38;5;244m|[0m [38;5;250m}[0m
-   [38;5;244m=[0m [38;5;252mnjutest explain src/lib.rs:double:mul-to-div@19[0m
+   [38;5;244m=[0m [1;38;5;214mwrite a test that notices it[0m
+     [38;5;252mnjutest explain src/lib.rs:double:mul-to-div@19[0m
 
-  [1;38;5;214mINSUFFICIENT[0m   [38;5;244m7 killed, 2 survived, 0 unreached   1.9s[0m
+  [1;38;5;214mINSUFFICIENT[0m   [38;5;244m7 killed  2 survived  0 unreached  1.9s[0m
   [1;38;5;214m2 gaps in 1 file[0m   [38;5;244mreports/runs/20260101T000000Z-aaaaaa[0m
 
 === two items of one file — eighty columns, unicode
 
-  ╭─ sign   src/lib.rs:8   1 blind spot
+  ╭─ sign   src/lib.rs:8   1 not noticed
 7 │ pub fn sign(n: i32) -> &'static str {
 8 │     if n > 0 {
   ·          ▲ > ⇢ >=   ran, not noticed
 9 │         "positive"
-  ╰─ njutest explain src/lib.rs:sign:gt-to-ge@8
+  ╰─ write a test that notices it  njutest explain src/lib.rs:sign:gt-to-ge@8
 
-   ╭─ double   src/lib.rs:19   1 blind spot
+   ╭─ double   src/lib.rs:19   1 not noticed
 18 │ pub fn double(n: i32) -> i32 {
 19 │     n * 2
    ·       ▲ * ⇢ /   ran, not noticed
 20 │ }
-   ╰─ njutest explain src/lib.rs:double:mul-to-div@19
+   ╰─ write a test that notices it
+      njutest explain src/lib.rs:double:mul-to-div@19
 
-  ✗ INSUFFICIENT   7 killed, 2 survived, 0 unreached   1.9s
+  ✗ INSUFFICIENT   7 killed  2 survived  0 unreached  1.9s
   2 gaps in 1 file   reports/runs/20260101T000000Z-aaaaaa
 
 === a file that moved under the run — eighty columns, no colour
 
-  --> sign   src/lib.rs:8   1 blind spot
+  --> sign   src/lib.rs:8   1 not noticed
   | the file has changed since the run, so the lines are not shown
-  = njutest explain src/lib.rs:sign:gt-to-ge@8
+  = write a test that notices it  njutest explain src/lib.rs:sign:gt-to-ge@8
 
-  INSUFFICIENT   7 killed, 1 survived, 0 unreached   1.9s
+  INSUFFICIENT   7 killed  1 survived  0 unreached  1.9s
   1 gap in 1 file   reports/runs/20260101T000000Z-aaaaaa
 
 === a file that moved under the run — forty columns, no colour
 
-  --> sign   src/lib.rs:8   1 blind spot
-  | the file has changed since the run, so the lines are not shown
-  = njutest explain src/lib.rs:sign:gt-to-ge@8
+  --> sign   src/lib.rs:8
+      1 not noticed
+  | the file has changed since the run,
+    so the lines are not shown
+  = write a test that notices it
+    njutest explain src/lib.rs:sign:gt-to-ge@8
 
-  INSUFFICIENT   7 killed, 1 survived, 0 unreached   1.9s
-  1 gap in 1 file   reports/runs/20260101T000000Z-aaaaaa
+  INSUFFICIENT   7 killed  1 survived  0
+    unreached  1.9s
+  1 gap in 1 file
+    reports/runs/20260101T000000Z-aaaaaa
 
 === a file that moved under the run — eighty columns, colour
 
-  [38;5;244m-->[0m [1;38;5;253msign[0m   [38;5;244m]8;;file://src/lib.rssrc/lib.rs:8]8;;[0m   [1;38;5;214m1 blind spot[0m
+  [38;5;244m-->[0m [1;38;5;253msign[0m   [38;5;244m]8;;file://src/lib.rssrc/lib.rs:8]8;;[0m   [1;38;5;214m1 not noticed[0m
   [38;5;244m|[0m [38;5;73mthe file has changed since the run, so the lines are not shown[0m
-  [38;5;244m=[0m [38;5;252mnjutest explain src/lib.rs:sign:gt-to-ge@8[0m
+  [38;5;244m=[0m [1;38;5;214mwrite a test that notices it[0m  [38;5;252mnjutest explain src/lib.rs:sign:gt-to-ge@8[0m
 
-  [1;38;5;214mINSUFFICIENT[0m   [38;5;244m7 killed, 1 survived, 0 unreached   1.9s[0m
+  [1;38;5;214mINSUFFICIENT[0m   [38;5;244m7 killed  1 survived  0 unreached  1.9s[0m
   [1;38;5;214m1 gap in 1 file[0m   [38;5;244mreports/runs/20260101T000000Z-aaaaaa[0m
 
 === a file that moved under the run — eighty columns, unicode
 
-  ╭─ sign   src/lib.rs:8   1 blind spot
+  ╭─ sign   src/lib.rs:8   1 not noticed
   │ the file has changed since the run, so the lines are not shown
-  ╰─ njutest explain src/lib.rs:sign:gt-to-ge@8
+  ╰─ write a test that notices it  njutest explain src/lib.rs:sign:gt-to-ge@8
 
-  ✗ INSUFFICIENT   7 killed, 1 survived, 0 unreached   1.9s
+  ✗ INSUFFICIENT   7 killed  1 survived  0 unreached  1.9s
   1 gap in 1 file   reports/runs/20260101T000000Z-aaaaaa
 
 === a line whose characters are wider than one byte — eighty columns, no colour
 
-  --> heading   src/lib.rs:3   1 blind spot
+  --> heading   src/lib.rs:3   1 not noticed
 2 | pub fn heading(count: usize) -> bool {
 3 |     let 見出し = count > 0;
   |                           ^ > => >=   ran, not noticed
 4 |     見出し
-  = njutest explain src/lib.rs:heading:gt-to-ge@3
+  = write a test that notices it  njutest explain src/lib.rs:heading:gt-to-ge@3
 
-  INSUFFICIENT   0 killed, 1 survived, 0 unreached   1.9s
+  INSUFFICIENT   0 killed  1 survived  0 unreached  1.9s
   1 gap in 1 file   reports/runs/20260101T000000Z-aaaaaa
 
 === a line whose characters are wider than one byte — forty columns, no colour
 
-  --> heading   src/lib.rs:3   1 blind spot
+  --> heading   src/lib.rs:3
+      1 not noticed
 2 | pub fn heading(count: usize) -> bool {
 3 |     let 見出し = count > 0;
-  |                           ^ > => >=
-  |                               ran,
-  |                             not
-  |                             noticed
+  |                           ^
+  |   > => >=   ran, not noticed
 4 |     見出し
-  = njutest explain src/lib.rs:heading:gt-to-ge@3
+  = write a test that notices it
+    njutest explain src/lib.rs:heading:gt-to-ge@3
 
-  INSUFFICIENT   0 killed, 1 survived, 0 unreached   1.9s
-  1 gap in 1 file   reports/runs/20260101T000000Z-aaaaaa
+  INSUFFICIENT   0 killed  1 survived  0
+    unreached  1.9s
+  1 gap in 1 file
+    reports/runs/20260101T000000Z-aaaaaa
 
 === a line whose characters are wider than one byte — eighty columns, colour
 
-  [38;5;244m-->[0m [1;38;5;253mheading[0m   [38;5;244m]8;;file://src/lib.rssrc/lib.rs:3]8;;[0m   [1;38;5;214m1 blind spot[0m
+  [38;5;244m-->[0m [1;38;5;253mheading[0m   [38;5;244m]8;;file://src/lib.rssrc/lib.rs:3]8;;[0m   [1;38;5;214m1 not noticed[0m
 [38;5;244m2[0m [38;5;244m|[0m [38;5;176mpub[0m[38;5;250m [0m[38;5;176mfn[0m[38;5;250m [0m[38;5;111mheading[0m[38;5;250m([0m[38;5;250mcount[0m[38;5;250m: [0m[38;5;250musize[0m[38;5;250m) -> [0m[38;5;250mbool[0m[38;5;250m {[0m
 [38;5;244m3[0m [38;5;244m|[0m [38;5;250m    [0m[38;5;176mlet[0m[38;5;250m [0m[38;5;250m見出し[0m[38;5;250m = [0m[38;5;250mcount[0m[38;5;250m > [0m[38;5;179m0[0m[1;4;38;5;204m;[0m
   [38;5;244m|[0m                           [1;38;5;214m^[0m [38;5;250m>[0m [1;38;5;214m=>[0m [38;5;250m>=[0m   [1;38;5;214mran, not noticed[0m
 [38;5;244m4[0m [38;5;244m|[0m [38;5;250m    [0m[38;5;250m見出し[0m
-  [38;5;244m=[0m [38;5;252mnjutest explain src/lib.rs:heading:gt-to-ge@3[0m
+  [38;5;244m=[0m [1;38;5;214mwrite a test that notices it[0m  [38;5;252mnjutest explain src/lib.rs:heading:gt-to-ge@3[0m
 
-  [1;38;5;214mINSUFFICIENT[0m   [38;5;244m0 killed, 1 survived, 0 unreached   1.9s[0m
+  [1;38;5;214mINSUFFICIENT[0m   [38;5;244m0 killed  1 survived  0 unreached  1.9s[0m
   [1;38;5;214m1 gap in 1 file[0m   [38;5;244mreports/runs/20260101T000000Z-aaaaaa[0m
 
 === a line whose characters are wider than one byte — eighty columns, unicode
 
-  ╭─ heading   src/lib.rs:3   1 blind spot
+  ╭─ heading   src/lib.rs:3   1 not noticed
 2 │ pub fn heading(count: usize) -> bool {
 3 │     let 見出し = count > 0;
   ·                           ▲ > ⇢ >=   ran, not noticed
 4 │     見出し
-  ╰─ njutest explain src/lib.rs:heading:gt-to-ge@3
+  ╰─ write a test that notices it  njutest explain src/lib.rs:heading:gt-to-ge@3
 
-  ✗ INSUFFICIENT   0 killed, 1 survived, 0 unreached   1.9s
+  ✗ INSUFFICIENT   0 killed  1 survived  0 unreached  1.9s
   1 gap in 1 file   reports/runs/20260101T000000Z-aaaaaa
 
 === what a run could not establish, which is not what it found — eighty columns, no colour
@@ -320,7 +360,7 @@ Written by crates/njutest-cli/tests/gallery.rs; UPDATE_GOLDEN=1 rewrites it.
     commit it verified
   | skipped-test-code 1 place was not mutated: test-code
 
-  ASSURED   4 killed, 0 survived, 0 unreached   1.9s
+  ASSURED   4 killed  0 survived  0 unreached  1.9s
   reports/runs/20260101T000000Z-aaaaaa
 
 === what a run could not establish, which is not what it found — forty columns, no colour
@@ -331,7 +371,8 @@ Written by crates/njutest-cli/tests/gallery.rs; UPDATE_GOLDEN=1 rewrites it.
   | skipped-test-code 1 place was not
     mutated: test-code
 
-  ASSURED   4 killed, 0 survived, 0 unreached   1.9s
+  ASSURED   4 killed  0 survived  0
+    unreached  1.9s
   reports/runs/20260101T000000Z-aaaaaa
 
 === what a run could not establish, which is not what it found — eighty columns, colour
@@ -340,7 +381,7 @@ Written by crates/njutest-cli/tests/gallery.rs; UPDATE_GOLDEN=1 rewrites it.
     commit it verified[0m
   [38;5;244m|[0m [38;5;73mskipped-test-code[0m [38;5;244m1 place was not mutated: test-code[0m
 
-  [1;38;5;114mASSURED[0m   [38;5;244m4 killed, 0 survived, 0 unreached   1.9s[0m
+  [1;38;5;114mASSURED[0m   [38;5;244m4 killed  0 survived  0 unreached  1.9s[0m
   [38;5;244mreports/runs/20260101T000000Z-aaaaaa[0m
 
 === what a run could not establish, which is not what it found — eighty columns, unicode
@@ -349,7 +390,7 @@ Written by crates/njutest-cli/tests/gallery.rs; UPDATE_GOLDEN=1 rewrites it.
     commit it verified
   · skipped-test-code 1 place was not mutated: test-code
 
-  ✓ ASSURED   4 killed, 0 survived, 0 unreached   1.9s
+  ✓ ASSURED   4 killed  0 survived  0 unreached  1.9s
   reports/runs/20260101T000000Z-aaaaaa
 
 === a run that could not proceed — eighty columns, no colour
@@ -363,24 +404,27 @@ refused[NJ5001]: the workspace does not compile before anything is instrumented
   = a run measures a suite that passes, so there is nothing here to measure
   = see it yourself  cargo test --workspace --no-run
 
-  ERROR   0 killed, 0 survived, 0 unreached   1.9s
+  ERROR   0 killed  0 survived  0 unreached  1.9s
   reports/runs/20260101T000000Z-aaaaaa
 
 === a run that could not proceed — forty columns, no colour
 
-refused[NJ5001]: the workspace does not compile before anything is instrumented
+refused[NJ5001]: the workspace does not
+                 compile before anything
+                 is instrumented
   --> src/lib.rs:4:5
   |
 4 |     undefined_function();
-  |     ^^^^^^^^^^^^^^^^^^ cannot find
-  |                        function
-  |                        `undefined_function`
-  |                        in this scope
+  |     ^^^^^^^^^^^^^^^^^^
+  |   cannot find function
+  |   `undefined_function` in this scope
   = a run measures a suite that passes,
     so there is nothing here to measure
-  = see it yourself  cargo test --workspace --no-run
+  = see it yourself
+    cargo test --workspace --no-run
 
-  ERROR   0 killed, 0 survived, 0 unreached   1.9s
+  ERROR   0 killed  0 survived  0
+    unreached  1.9s
   reports/runs/20260101T000000Z-aaaaaa
 
 === a run that could not proceed — eighty columns, colour
@@ -394,7 +438,7 @@ refused[NJ5001]: the workspace does not compile before anything is instrumented
   [38;5;244m=[0m a run measures a suite that passes, so there is nothing here to measure
   [38;5;244m=[0m see it yourself  [38;5;252mcargo test --workspace --no-run[0m
 
-  [1;38;5;203mERROR[0m   [38;5;244m0 killed, 0 survived, 0 unreached   1.9s[0m
+  [1;38;5;203mERROR[0m   [38;5;244m0 killed  0 survived  0 unreached  1.9s[0m
   [38;5;244mreports/runs/20260101T000000Z-aaaaaa[0m
 
 === a run that could not proceed — eighty columns, unicode
@@ -408,12 +452,12 @@ refused[NJ5001]: the workspace does not compile before anything is instrumented
   ├─ a run measures a suite that passes, so there is nothing here to measure
   ╰─ see it yourself  cargo test --workspace --no-run
 
-  ✗ ERROR   0 killed, 0 survived, 0 unreached   1.9s
+  ✗ ERROR   0 killed  0 survived  0 unreached  1.9s
   reports/runs/20260101T000000Z-aaaaaa
 
 === the rules a run actually applies, on one function — eighty columns, no colour
 
-   --> settle   src/lib.rs:21   7 blind spots
+   --> settle   src/lib.rs:21   5 not noticed, 2 never run
 20 | pub fn settle(&mut self, kind: Kind, n: u32) -> Result<u32, Error> {
 21 |     let held = self.store.read()?;
    |                                 ^ ? => .unwrap()   ran, not noticed
@@ -434,54 +478,58 @@ refused[NJ5001]: the workspace does not compile before anything is instrumented
    |                                         not noticed
 29 |     }
 30 | }
-   = njutest explain src/lib.rs:settle:question-to-unwrap@21
+   = write a test that notices it
+     njutest explain src/lib.rs:settle:question-to-unwrap@21
+   = write a test that reaches it
+     njutest explain src/lib.rs:settle:delete-call-statement@23
 
-  INSUFFICIENT   24 killed, 6 survived, 1 unreached   1.9s
+  INSUFFICIENT   24 killed  6 survived  1 unreached  1.9s
   7 gaps in 1 file   reports/runs/20260101T000000Z-aaaaaa
 
 === the rules a run actually applies, on one function — forty columns, no colour
 
-   --> settle   src/lib.rs:21   7 blind spots
+   --> settle   src/lib.rs:21
+       5 not noticed, 2 never run
 20 | pub fn settle(&mut self, kind: Kind, n: u32) -> Result<u32, Error> {
 21 |     let held = self.store.read()?;
-   |                                 ^ ?
-   |                                   =>
-   |                                   .unwrap()
-   |                                   
-   |                                   
-   |                                   ran,
-   |                                   not
-   |                                   noticed
+   |                                 ^
+   |   ? => .unwrap()   ran, not noticed
 22 |     self.count += 1;
-   |     ^^^^^^^^^^^^^^^^ deleted   ran,
-   |                      not noticed
+   |     ^^^^^^^^^^^^^^^^
+   |   deleted   ran, not noticed
 23 |     log("settling");
-   |     ^^^^^^^^^^^^^^^^ deleted
-   |                      never run
+   |     ^^^^^^^^^^^^^^^^
+   |   deleted   never run
 24 |     let total = held.saturating_add(n);
-   |                      ^^^^^^^^^^^^^^ saturating_add => wrapping_add   ran, not noticed
+   |                      ^^^^^^^^^^^^^^
+   |   saturating_add => wrapping_add
+   |   ran, not noticed
 25 |     match kind {
 26 |         Kind::Whole if total > 0 => Ok(total),
-   |                     ^^^^^^^^^^^^^ deleted
-   |                                   
-   |                                   
-   |                                   ran,
-   |                                   not
-   |                                   noticed
+   |                     ^^^^^^^^^^^^^
+   |   deleted   ran, not noticed
 27 |         Kind::Part => Ok(total / 2),
-   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ deleted   never run
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |   deleted   never run
 28 |         Kind::None => Err(Error::Empty),
-   |                       ^^^^^^^^^^^^^^^^^ => Ok(Default::default())   ran, not noticed
+   |                       ^^^^^^^^^^^^^^^^^
+   |   => Ok(Default::default())   ran,
+   |   not noticed
 29 |     }
 30 | }
-   = njutest explain src/lib.rs:settle:question-to-unwrap@21
+   = write a test that notices it
+     njutest explain src/lib.rs:settle:question-to-unwrap@21
+   = write a test that reaches it
+     njutest explain src/lib.rs:settle:delete-call-statement@23
 
-  INSUFFICIENT   24 killed, 6 survived, 1 unreached   1.9s
-  7 gaps in 1 file   reports/runs/20260101T000000Z-aaaaaa
+  INSUFFICIENT   24 killed  6 survived
+    1 unreached  1.9s
+  7 gaps in 1 file
+    reports/runs/20260101T000000Z-aaaaaa
 
 === the rules a run actually applies, on one function — eighty columns, colour
 
-   [38;5;244m-->[0m [1;38;5;253msettle[0m   [38;5;244m]8;;file://src/lib.rssrc/lib.rs:21]8;;[0m   [1;38;5;214m7 blind spots[0m
+   [38;5;244m-->[0m [1;38;5;253msettle[0m   [38;5;244m]8;;file://src/lib.rssrc/lib.rs:21]8;;[0m   [1;38;5;214m5 not noticed, 2 never run[0m
 [38;5;244m20[0m [38;5;244m|[0m [38;5;176mpub[0m[38;5;250m [0m[38;5;176mfn[0m[38;5;250m [0m[38;5;111msettle[0m[38;5;250m(&[0m[38;5;176mmut[0m[38;5;250m [0m[38;5;176mself[0m[38;5;250m, [0m[38;5;250mkind[0m[38;5;250m: [0m[38;5;79mKind[0m[38;5;250m, [0m[38;5;250mn[0m[38;5;250m: [0m[38;5;250mu32[0m[38;5;250m) -> [0m[38;5;79mResult[0m[38;5;250m<[0m[38;5;250mu32[0m[38;5;250m, [0m[38;5;79mError[0m[38;5;250m> {[0m
 [38;5;244m21[0m [38;5;244m|[0m [38;5;250m    [0m[38;5;176mlet[0m[38;5;250m [0m[38;5;250mheld[0m[38;5;250m = [0m[38;5;176mself[0m[38;5;250m.[0m[38;5;250mstore[0m[38;5;250m.[0m[38;5;111mread[0m[38;5;250m()[0m[1;4;38;5;204m?[0m[38;5;250m;[0m
    [38;5;244m|[0m                                 [1;38;5;214m^[0m [38;5;250m?[0m [1;38;5;214m=>[0m [38;5;250m.[0m[38;5;111munwrap[0m[38;5;250m()[0m   [1;38;5;214mran, not noticed[0m
@@ -502,14 +550,17 @@ refused[NJ5001]: the workspace does not compile before anything is instrumented
    [38;5;244m|[0m                                         not noticed[0m
 [38;5;244m29[0m [38;5;244m|[0m [38;5;250m    }[0m
 [38;5;244m30[0m [38;5;244m|[0m [38;5;250m}[0m
-   [38;5;244m=[0m [38;5;252mnjutest explain src/lib.rs:settle:question-to-unwrap@21[0m
+   [38;5;244m=[0m [1;38;5;214mwrite a test that notices it[0m
+     [38;5;252mnjutest explain src/lib.rs:settle:question-to-unwrap@21[0m
+   [38;5;244m=[0m [1;38;5;214mwrite a test that reaches it[0m
+     [38;5;252mnjutest explain src/lib.rs:settle:delete-call-statement@23[0m
 
-  [1;38;5;214mINSUFFICIENT[0m   [38;5;244m24 killed, 6 survived, 1 unreached   1.9s[0m
+  [1;38;5;214mINSUFFICIENT[0m   [38;5;244m24 killed  6 survived  1 unreached  1.9s[0m
   [1;38;5;214m7 gaps in 1 file[0m   [38;5;244mreports/runs/20260101T000000Z-aaaaaa[0m
 
 === the rules a run actually applies, on one function — eighty columns, unicode
 
-   ╭─ settle   src/lib.rs:21   7 blind spots
+   ╭─ settle   src/lib.rs:21   5 not noticed, 2 never run
 20 │ pub fn settle(&mut self, kind: Kind, n: u32) -> Result<u32, Error> {
 21 │     let held = self.store.read()?;
    ·                                 ▲ ? ⇢ .unwrap()   ran, not noticed
@@ -530,119 +581,408 @@ refused[NJ5001]: the workspace does not compile before anything is instrumented
    ·                                         noticed
 29 │     }
 30 │ }
-   ╰─ njutest explain src/lib.rs:settle:question-to-unwrap@21
+   ╰─ write a test that notices it
+      njutest explain src/lib.rs:settle:question-to-unwrap@21
+   ├─ write a test that reaches it
+      njutest explain src/lib.rs:settle:delete-call-statement@23
 
-  ✗ INSUFFICIENT   24 killed, 6 survived, 1 unreached   1.9s
+  ✗ INSUFFICIENT   24 killed  6 survived  1 unreached  1.9s
   7 gaps in 1 file   reports/runs/20260101T000000Z-aaaaaa
 
 === a part of a catalog — eighty columns, no colour
 
-  |PARTIAL   3 killed, 0 survived, 0 unreached   1.9s
+  |PARTIAL   3 killed  0 survived  0 unreached  1.9s
   reports/runs/20260101T000000Z-aaaaaa
 
 === a part of a catalog — forty columns, no colour
 
-  |PARTIAL   3 killed, 0 survived, 0 unreached   1.9s
+  |PARTIAL   3 killed  0 survived  0
+    unreached  1.9s
   reports/runs/20260101T000000Z-aaaaaa
 
 === a part of a catalog — eighty columns, colour
 
-  [38;5;110m|PARTIAL[0m   [38;5;244m3 killed, 0 survived, 0 unreached   1.9s[0m
+  [38;5;110m|PARTIAL[0m   [38;5;244m3 killed  0 survived  0 unreached  1.9s[0m
   [38;5;244mreports/runs/20260101T000000Z-aaaaaa[0m
 
 === a part of a catalog — eighty columns, unicode
 
-  ·PARTIAL   3 killed, 0 survived, 0 unreached   1.9s
+  ·PARTIAL   3 killed  0 survived  0 unreached  1.9s
   reports/runs/20260101T000000Z-aaaaaa
 
-=== a target that noticed none of what it was put to — eighty columns, no colour
+=== a run that found nothing — as a briefing
 
-gap[NJ-HOLLOW-TARGET]: this test target noticed none of the changes it was put to
-  = core/test/smoke answered about 31 mutations and noticed none of them
+# njutest: ASSURED — 0 places the tests do not see
 
-  INSUFFICIENT   31 killed, 0 survived, 0 unreached   1.9s
-  1 gap   reports/runs/20260101T000000Z-aaaaaa
+A mutation run changed the code in 4 places and ran the tests each time. 4 of those changes were noticed and 0 were not.
 
-=== a target that noticed none of what it was put to — forty columns, no colour
+There is nothing to do.
 
-gap[NJ-HOLLOW-TARGET]: this test target noticed none of the changes it was put to
-  = core/test/smoke answered about 31
-    mutations and noticed none of them
+=== one item, one blind spot — as a briefing
 
-  INSUFFICIENT   31 killed, 0 survived, 0 unreached   1.9s
-  1 gap   reports/runs/20260101T000000Z-aaaaaa
+# njutest: INSUFFICIENT — 1 place the tests do not see
 
-=== a target that noticed none of what it was put to — eighty columns, colour
+A mutation run changed the code in 8 places and ran the tests each time. 7 of those changes were noticed and 1 were not.
 
-[1;38;5;214mgap[0m[38;5;244m[[0m[1;38;5;214mNJ-HOLLOW-TARGET[38;5;244m][0m[0m: [1;38;5;253mthis test target noticed none of the changes it was put to[0m
-  [38;5;244m=[0m core/test/smoke answered about 31 mutations and noticed none of them
+For each place below, do one of two things:
 
-  [1;38;5;214mINSUFFICIENT[0m   [38;5;244m31 killed, 0 survived, 0 unreached   1.9s[0m
-  [1;38;5;214m1 gap[0m   [38;5;244mreports/runs/20260101T000000Z-aaaaaa[0m
+1. **Write a test that notices the change.** The change is shown; a test that would fail with it in place is a test the suite is missing.
+2. **Record why it is not a gap**, with `njutest accept <name> --reason "..."`, if the change cannot affect anything a caller can observe.
 
-=== a target that noticed none of what it was put to — eighty columns, unicode
+Each place says which of the two it wants; they are not interchangeable. Where a `replay` command is given, run it after your change: it puts that one change back to the tests and says whether they notice it now. Where none is given, the run established nothing there and there is nothing for a replay to prove.
 
-gap[NJ-HOLLOW-TARGET]: this test target noticed none of the changes it was put to
-  ╰─ core/test/smoke answered about 31 mutations and noticed none of them
+## 1. `sign` in `src/lib.rs`
 
-  ✗ INSUFFICIENT   31 killed, 0 survived, 0 unreached   1.9s
-  1 gap   reports/runs/20260101T000000Z-aaaaaa
+```rust
+   7 | pub fn sign(n: i32) -> &'static str {
+   8 |     if n > 0 {
+   9 |         "positive"
+```
 
-=== a seam the suite carried on through — eighty columns, no colour
+### `src/lib.rs:sign:gt-to-ge@8` at line 8
 
-gap[NJ-WIRE]: the suite carried on through what a seam was asked
-  = nothing noticed when the run was told to answer 500 where the upstream
-    answered otherwise, answering POST /orders on the payments seam
+On line 8, `>` became `>=`, and the tests ran this line and passed anyway, so nothing asserts what it decides.
 
-  INSUFFICIENT   40 killed, 0 survived, 0 unreached   1.9s
-  1 gap   reports/runs/20260101T000000Z-aaaaaa
+**Write a test that fails with this change in place.** The tests already run this line; what is missing is an assertion about what it decides.
 
-=== a seam the suite carried on through — forty columns, no colour
+```console
+njutest explain src/lib.rs:sign:gt-to-ge@8   # which targets reached it, and what each did
+njutest replay  src/lib.rs:sign:gt-to-ge@8   # after your test: `REPRODUCED` means the gap is still open
+```
 
-gap[NJ-WIRE]: the suite carried on through what a seam was asked
-  = nothing noticed when the run was
-    told to answer 500 where the
-    upstream answered otherwise,
-    answering POST /orders on the
-    payments seam
+If the change cannot affect anything a caller can observe, record that instead: `njutest accept src/lib.rs:sign:gt-to-ge@8 --reason "..."`.
 
-  INSUFFICIENT   40 killed, 0 survived, 0 unreached   1.9s
-  1 gap   reports/runs/20260101T000000Z-aaaaaa
+=== one item, every kind of blindness on it at once — as a briefing
 
-=== a seam the suite carried on through — eighty columns, colour
+# njutest: INSUFFICIENT — 3 places the tests do not see
 
-[1;38;5;214mgap[0m[38;5;244m[[0m[1;38;5;214mNJ-WIRE[38;5;244m][0m[0m: [1;38;5;253mthe suite carried on through what a seam was asked[0m
-  [38;5;244m=[0m nothing noticed when the run was told to answer 500 where the upstream
-    answered otherwise, answering POST /orders on the payments seam
+A mutation run changed the code in 10 places and ran the tests each time. 7 of those changes were noticed and 3 were not.
 
-  [1;38;5;214mINSUFFICIENT[0m   [38;5;244m40 killed, 0 survived, 0 unreached   1.9s[0m
-  [1;38;5;214m1 gap[0m   [38;5;244mreports/runs/20260101T000000Z-aaaaaa[0m
+For each place below, do one of two things:
 
-=== a seam the suite carried on through — eighty columns, unicode
+1. **Write a test that notices the change.** The change is shown; a test that would fail with it in place is a test the suite is missing.
+2. **Record why it is not a gap**, with `njutest accept <name> --reason "..."`, if the change cannot affect anything a caller can observe.
 
-gap[NJ-WIRE]: the suite carried on through what a seam was asked
-  ╰─ nothing noticed when the run was told to answer 500 where the upstream
-     answered otherwise, answering POST /orders on the payments seam
+Each place says which of the two it wants; they are not interchangeable. Where a `replay` command is given, run it after your change: it puts that one change back to the tests and says whether they notice it now. Where none is given, the run established nothing there and there is nothing for a replay to prove.
 
-  ✗ INSUFFICIENT   40 killed, 0 survived, 0 unreached   1.9s
-  1 gap   reports/runs/20260101T000000Z-aaaaaa
+## 1. `sign` in `src/lib.rs`
 
-=== a run where the type system caught most of it — eighty columns, no colour
+```rust
+   7 | pub fn sign(n: i32) -> &'static str {
+   8 |     if n > 0 {
+   9 |         "positive"
+  10 |     } else if n < 0 {
+  11 |         "negative"
+  12 |     } else {
+  13 |         "zero"
+  14 |     }
+```
 
-  ASSURED   12 killed, 31 refused by types, 0 survived, 0 unreached   1.9s
-  reports/runs/20260101T000000Z-aaaaaa
+### `src/lib.rs:sign:gt-to-ge@8` at line 8
 
-=== a run where the type system caught most of it — forty columns, no colour
+On line 8, `>` became `>=`, and the tests ran this line and passed anyway, so nothing asserts what it decides.
 
-  ASSURED   12 killed, 31 refused by types, 0 survived, 0 unreached   1.9s
-  reports/runs/20260101T000000Z-aaaaaa
+**Write a test that fails with this change in place.** The tests already run this line; what is missing is an assertion about what it decides.
 
-=== a run where the type system caught most of it — eighty columns, colour
+```console
+njutest explain src/lib.rs:sign:gt-to-ge@8   # which targets reached it, and what each did
+njutest replay  src/lib.rs:sign:gt-to-ge@8   # after your test: `REPRODUCED` means the gap is still open
+```
 
-  [1;38;5;114mASSURED[0m   [38;5;244m12 killed, 31 refused by types, 0 survived, 0 unreached   1.9s[0m
-  [38;5;244mreports/runs/20260101T000000Z-aaaaaa[0m
+If the change cannot affect anything a caller can observe, record that instead: `njutest accept src/lib.rs:sign:gt-to-ge@8 --reason "..."`.
 
-=== a run where the type system caught most of it — eighty columns, unicode
+### `src/lib.rs:sign:lt-to-le@10` at line 10
 
-  ✓ ASSURED   12 killed, 31 refused by types, 0 survived, 0 unreached   1.9s
-  reports/runs/20260101T000000Z-aaaaaa
+On line 10, `<` became `<=`, and no test executes this line at all, so nothing could have noticed.
+
+**Write a test that reaches this line at all.** Asserting harder elsewhere will not close this: nothing executes the line, so nothing can notice anything about it.
+
+```console
+njutest explain src/lib.rs:sign:lt-to-le@10   # why every measured target answered that it does not reach it
+njutest replay  src/lib.rs:sign:lt-to-le@10   # after your test: `REPRODUCED` means it is still unreached
+```
+
+If the line is unreachable by construction, record that instead: `njutest accept src/lib.rs:sign:lt-to-le@10 --reason "..."`.
+
+### `src/lib.rs:sign:return-default@13` at line 13
+
+On line 13, `"zero"` became `Default::default()`, and nothing finished, so the run established nothing about it.
+
+**Do not write a test for this yet.** The run established nothing here, so there is no gap to close and no way to tell whether one exists. `replay` can pass without proving anything, which would say a fix worked when nothing was fixed.
+
+```console
+njutest explain src/lib.rs:sign:return-default@13   # what ran, and how long it ran for
+```
+
+Find out why nothing finished — a mutation that does not terminate, a bound that is too tight, a machine that was busy — and run the verification again.
+
+=== two items of one file — as a briefing
+
+# njutest: INSUFFICIENT — 2 places the tests do not see
+
+A mutation run changed the code in 9 places and ran the tests each time. 7 of those changes were noticed and 2 were not.
+
+For each place below, do one of two things:
+
+1. **Write a test that notices the change.** The change is shown; a test that would fail with it in place is a test the suite is missing.
+2. **Record why it is not a gap**, with `njutest accept <name> --reason "..."`, if the change cannot affect anything a caller can observe.
+
+Each place says which of the two it wants; they are not interchangeable. Where a `replay` command is given, run it after your change: it puts that one change back to the tests and says whether they notice it now. Where none is given, the run established nothing there and there is nothing for a replay to prove.
+
+## 1. `sign` in `src/lib.rs`
+
+```rust
+   7 | pub fn sign(n: i32) -> &'static str {
+   8 |     if n > 0 {
+   9 |         "positive"
+```
+
+### `src/lib.rs:sign:gt-to-ge@8` at line 8
+
+On line 8, `>` became `>=`, and the tests ran this line and passed anyway, so nothing asserts what it decides.
+
+**Write a test that fails with this change in place.** The tests already run this line; what is missing is an assertion about what it decides.
+
+```console
+njutest explain src/lib.rs:sign:gt-to-ge@8   # which targets reached it, and what each did
+njutest replay  src/lib.rs:sign:gt-to-ge@8   # after your test: `REPRODUCED` means the gap is still open
+```
+
+If the change cannot affect anything a caller can observe, record that instead: `njutest accept src/lib.rs:sign:gt-to-ge@8 --reason "..."`.
+
+## 2. `double` in `src/lib.rs`
+
+```rust
+  18 | pub fn double(n: i32) -> i32 {
+  19 |     n * 2
+  20 | }
+```
+
+### `src/lib.rs:double:mul-to-div@19` at line 19
+
+On line 19, `*` became `/`, and the tests ran this line and passed anyway, so nothing asserts what it decides.
+
+**Write a test that fails with this change in place.** The tests already run this line; what is missing is an assertion about what it decides.
+
+```console
+njutest explain src/lib.rs:double:mul-to-div@19   # which targets reached it, and what each did
+njutest replay  src/lib.rs:double:mul-to-div@19   # after your test: `REPRODUCED` means the gap is still open
+```
+
+If the change cannot affect anything a caller can observe, record that instead: `njutest accept src/lib.rs:double:mul-to-div@19 --reason "..."`.
+
+=== a file that moved under the run — as a briefing
+
+# njutest: INSUFFICIENT — 1 place the tests do not see
+
+A mutation run changed the code in 8 places and ran the tests each time. 7 of those changes were noticed and 1 were not.
+
+For each place below, do one of two things:
+
+1. **Write a test that notices the change.** The change is shown; a test that would fail with it in place is a test the suite is missing.
+2. **Record why it is not a gap**, with `njutest accept <name> --reason "..."`, if the change cannot affect anything a caller can observe.
+
+Each place says which of the two it wants; they are not interchangeable. Where a `replay` command is given, run it after your change: it puts that one change back to the tests and says whether they notice it now. Where none is given, the run established nothing there and there is nothing for a replay to prove.
+
+## 1. `sign` in `src/lib.rs`
+
+The source cannot be shown: the file has changed since the run, so read it yourself before acting
+
+
+### `src/lib.rs:sign:gt-to-ge@8` at line 8
+
+On line 8, `>` became `>=`, and the tests ran this line and passed anyway, so nothing asserts what it decides.
+
+**Write a test that fails with this change in place.** The tests already run this line; what is missing is an assertion about what it decides.
+
+```console
+njutest explain src/lib.rs:sign:gt-to-ge@8   # which targets reached it, and what each did
+njutest replay  src/lib.rs:sign:gt-to-ge@8   # after your test: `REPRODUCED` means the gap is still open
+```
+
+If the change cannot affect anything a caller can observe, record that instead: `njutest accept src/lib.rs:sign:gt-to-ge@8 --reason "..."`.
+
+=== a line whose characters are wider than one byte — as a briefing
+
+# njutest: INSUFFICIENT — 1 place the tests do not see
+
+A mutation run changed the code in 1 places and ran the tests each time. 0 of those changes were noticed and 1 were not.
+
+For each place below, do one of two things:
+
+1. **Write a test that notices the change.** The change is shown; a test that would fail with it in place is a test the suite is missing.
+2. **Record why it is not a gap**, with `njutest accept <name> --reason "..."`, if the change cannot affect anything a caller can observe.
+
+Each place says which of the two it wants; they are not interchangeable. Where a `replay` command is given, run it after your change: it puts that one change back to the tests and says whether they notice it now. Where none is given, the run established nothing there and there is nothing for a replay to prove.
+
+## 1. `heading` in `src/lib.rs`
+
+```rust
+   2 | pub fn heading(count: usize) -> bool {
+   3 |     let 見出し = count > 0;
+   4 |     見出し
+```
+
+### `src/lib.rs:heading:gt-to-ge@3` at line 3
+
+On line 3, `>` became `>=`, and the tests ran this line and passed anyway, so nothing asserts what it decides.
+
+**Write a test that fails with this change in place.** The tests already run this line; what is missing is an assertion about what it decides.
+
+```console
+njutest explain src/lib.rs:heading:gt-to-ge@3   # which targets reached it, and what each did
+njutest replay  src/lib.rs:heading:gt-to-ge@3   # after your test: `REPRODUCED` means the gap is still open
+```
+
+If the change cannot affect anything a caller can observe, record that instead: `njutest accept src/lib.rs:heading:gt-to-ge@3 --reason "..."`.
+
+=== what a run could not establish, which is not what it found — as a briefing
+
+# njutest: ASSURED — 0 places the tests do not see
+
+A mutation run changed the code in 4 places and ran the tests each time. 4 of those changes were noticed and 0 were not.
+
+There is nothing to do.
+
+## What this run could not establish
+
+- `git-metadata-unavailable` — git could not be asked, so the run cannot name the commit it verified
+- `skipped-test-code` — 1 place was not mutated: test-code
+
+These are not gaps in the tests. They bound what the verdict above claims.
+
+=== a run that could not proceed — as a briefing
+
+# njutest: ERROR — 0 places the tests do not see
+
+A mutation run changed the code in 0 places and ran the tests each time. 0 of those changes were noticed and 0 were not.
+
+There is nothing to do.
+
+=== the rules a run actually applies, on one function — as a briefing
+
+# njutest: INSUFFICIENT — 7 places the tests do not see
+
+A mutation run changed the code in 31 places and ran the tests each time. 24 of those changes were noticed and 7 were not.
+
+For each place below, do one of two things:
+
+1. **Write a test that notices the change.** The change is shown; a test that would fail with it in place is a test the suite is missing.
+2. **Record why it is not a gap**, with `njutest accept <name> --reason "..."`, if the change cannot affect anything a caller can observe.
+
+Each place says which of the two it wants; they are not interchangeable. Where a `replay` command is given, run it after your change: it puts that one change back to the tests and says whether they notice it now. Where none is given, the run established nothing there and there is nothing for a replay to prove.
+
+## 1. `settle` in `src/lib.rs`
+
+```rust
+  20 | pub fn settle(&mut self, kind: Kind, n: u32) -> Result<u32, Error> {
+  21 |     let held = self.store.read()?;
+  22 |     self.count += 1;
+  23 |     log("settling");
+  24 |     let total = held.saturating_add(n);
+  25 |     match kind {
+  26 |         Kind::Whole if total > 0 => Ok(total),
+  27 |         Kind::Part => Ok(total / 2),
+  28 |         Kind::None => Err(Error::Empty),
+  29 |     }
+  30 | }
+```
+
+### `src/lib.rs:settle:question-to-unwrap@21` at line 21
+
+On line 21, `?` became `.unwrap()`, and the tests ran this line and passed anyway, so nothing asserts what it decides.
+
+**Write a test that fails with this change in place.** The tests already run this line; what is missing is an assertion about what it decides.
+
+```console
+njutest explain src/lib.rs:settle:question-to-unwrap@21   # which targets reached it, and what each did
+njutest replay  src/lib.rs:settle:question-to-unwrap@21   # after your test: `REPRODUCED` means the gap is still open
+```
+
+If the change cannot affect anything a caller can observe, record that instead: `njutest accept src/lib.rs:settle:question-to-unwrap@21 --reason "..."`.
+
+### `src/lib.rs:settle:delete-compound-assignment@22` at line 22
+
+On line 22, deleting `self.count += 1;`, and the tests ran this line and passed anyway, so nothing asserts what it decides.
+
+**Write a test that fails with this change in place.** The tests already run this line; what is missing is an assertion about what it decides.
+
+```console
+njutest explain src/lib.rs:settle:delete-compound-assignment@22   # which targets reached it, and what each did
+njutest replay  src/lib.rs:settle:delete-compound-assignment@22   # after your test: `REPRODUCED` means the gap is still open
+```
+
+If the change cannot affect anything a caller can observe, record that instead: `njutest accept src/lib.rs:settle:delete-compound-assignment@22 --reason "..."`.
+
+### `src/lib.rs:settle:delete-call-statement@23` at line 23
+
+On line 23, deleting `log("settling");`, and no test executes this line at all, so nothing could have noticed.
+
+**Write a test that reaches this line at all.** Asserting harder elsewhere will not close this: nothing executes the line, so nothing can notice anything about it.
+
+```console
+njutest explain src/lib.rs:settle:delete-call-statement@23   # why every measured target answered that it does not reach it
+njutest replay  src/lib.rs:settle:delete-call-statement@23   # after your test: `REPRODUCED` means it is still unreached
+```
+
+If the line is unreachable by construction, record that instead: `njutest accept src/lib.rs:settle:delete-call-statement@23 --reason "..."`.
+
+### `src/lib.rs:settle:saturating-add-to-wrapping-add@24` at line 24
+
+On line 24, `saturating_add` became `wrapping_add`, and the tests ran this line and passed anyway, so nothing asserts what it decides.
+
+**Write a test that fails with this change in place.** The tests already run this line; what is missing is an assertion about what it decides.
+
+```console
+njutest explain src/lib.rs:settle:saturating-add-to-wrapping-add@24   # which targets reached it, and what each did
+njutest replay  src/lib.rs:settle:saturating-add-to-wrapping-add@24   # after your test: `REPRODUCED` means the gap is still open
+```
+
+If the change cannot affect anything a caller can observe, record that instead: `njutest accept src/lib.rs:settle:saturating-add-to-wrapping-add@24 --reason "..."`.
+
+### `src/lib.rs:settle:remove-match-guard@26` at line 26
+
+On line 26, deleting `if total > 0`, and the tests ran this line and passed anyway, so nothing asserts what it decides.
+
+**Write a test that fails with this change in place.** The tests already run this line; what is missing is an assertion about what it decides.
+
+```console
+njutest explain src/lib.rs:settle:remove-match-guard@26   # which targets reached it, and what each did
+njutest replay  src/lib.rs:settle:remove-match-guard@26   # after your test: `REPRODUCED` means the gap is still open
+```
+
+If the change cannot affect anything a caller can observe, record that instead: `njutest accept src/lib.rs:settle:remove-match-guard@26 --reason "..."`.
+
+### `src/lib.rs:settle:delete-match-arm@27` at line 27
+
+On line 27, deleting `Kind::Part => Ok(total / 2),`, and no test executes this line at all, so nothing could have noticed.
+
+**Write a test that reaches this line at all.** Asserting harder elsewhere will not close this: nothing executes the line, so nothing can notice anything about it.
+
+```console
+njutest explain src/lib.rs:settle:delete-match-arm@27   # why every measured target answered that it does not reach it
+njutest replay  src/lib.rs:settle:delete-match-arm@27   # after your test: `REPRODUCED` means it is still unreached
+```
+
+If the line is unreachable by construction, record that instead: `njutest accept src/lib.rs:settle:delete-match-arm@27 --reason "..."`.
+
+### `src/lib.rs:settle:return-ok-default@28` at line 28
+
+On line 28, `Err(Error::Empty)` became `Ok(Default::default())`, and the tests ran this line and passed anyway, so nothing asserts what it decides.
+
+**Write a test that fails with this change in place.** The tests already run this line; what is missing is an assertion about what it decides.
+
+```console
+njutest explain src/lib.rs:settle:return-ok-default@28   # which targets reached it, and what each did
+njutest replay  src/lib.rs:settle:return-ok-default@28   # after your test: `REPRODUCED` means the gap is still open
+```
+
+If the change cannot affect anything a caller can observe, record that instead: `njutest accept src/lib.rs:settle:return-ok-default@28 --reason "..."`.
+
+=== a part of a catalog — as a briefing
+
+# njutest: PARTIAL — 0 places the tests do not see
+
+A mutation run changed the code in 3 places and ran the tests each time. 3 of those changes were noticed and 0 were not.
+
+There is nothing to do.

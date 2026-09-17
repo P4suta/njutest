@@ -2,23 +2,23 @@
   "accounting": {
     "mutants": {
       "accepted": 0,
-      "cataloged": 10,
+      "cataloged": 14,
       "equivalent": 0,
-      "executed": 9,
-      "killed": 7,
+      "executed": 13,
+      "killed": 10,
       "observers": {
         "errored": 0,
         "proved": 0,
-        "tests": 7,
+        "tests": 10,
         "types": 0,
-        "unnoticed": 2,
+        "unnoticed": 3,
         "unreached": 1,
         "waited": 0
       },
       "rejected": 0,
       "reused_killed": 0,
       "reused_survived": 0,
-      "survived": 2,
+      "survived": 3,
       "timed_out": 0,
       "unreached": 1
     },
@@ -48,6 +48,17 @@
         "line": 8
       },
       "subject": "7590b327de928142a7d4"
+    },
+    {
+      "detail": "no test noticed condition-to-true at src/lib.rs:10; 1 target ran it and none of them noticed",
+      "kind": "surviving-mutant",
+      "path": "src/lib.rs",
+      "position": {
+        "character_column": 15,
+        "column": 15,
+        "line": 10
+      },
+      "subject": "411d46d889aef733e693"
     },
     {
       "detail": "no test could have noticed lt-to-le at src/lib.rs:10: every one of the 1 targets that reach it was removed without being run, by never-infected",
@@ -184,6 +195,105 @@
         ]
       },
       "rule": "negate-condition",
+      "source_run_id": null
+    },
+    {
+      "blind_in": [],
+      "display_id": "2b790ae1807763839712",
+      "id": "2b790ae18077638397123282456b96c9c86738a836da2c56a44dc2c1b36952a4",
+      "item": "sign",
+      "killed_by": "fixture-baseline/lib/fixture_baseline",
+      "original": "n > 0",
+      "outcome": "killed",
+      "path": "src/lib.rs",
+      "position": {
+        "character_column": 8,
+        "column": 8,
+        "line": 8
+      },
+      "replacement": "false",
+      "reused": false,
+      "routing": {
+        "answered": [
+          {
+            "outcome": "killed",
+            "target": "<volatile>"
+          }
+        ],
+        "discharged": [],
+        "fallback": null,
+        "granularity": "block",
+        "reaching": [
+          "fixture-baseline/lib/fixture_baseline"
+        ]
+      },
+      "rule": "condition-to-false",
+      "source_run_id": null
+    },
+    {
+      "blind_in": [],
+      "display_id": "2f0c4aff9635ecc97852",
+      "id": "2f0c4aff9635ecc97852a2b8cfb545e3b8080597920de0906af1c4048a363639",
+      "item": "sign",
+      "killed_by": "fixture-baseline/lib/fixture_baseline",
+      "original": "n > 0",
+      "outcome": "killed",
+      "path": "src/lib.rs",
+      "position": {
+        "character_column": 8,
+        "column": 8,
+        "line": 8
+      },
+      "replacement": "true",
+      "reused": false,
+      "routing": {
+        "answered": [
+          {
+            "outcome": "killed",
+            "target": "<volatile>"
+          }
+        ],
+        "discharged": [],
+        "fallback": null,
+        "granularity": "block",
+        "reaching": [
+          "fixture-baseline/lib/fixture_baseline"
+        ]
+      },
+      "rule": "condition-to-true",
+      "source_run_id": null
+    },
+    {
+      "blind_in": [],
+      "display_id": "411d46d889aef733e693",
+      "id": "411d46d889aef733e693cf673e90b067bfa5667c3caf264c85ab4e67e2fc4c58",
+      "item": "sign",
+      "killed_by": null,
+      "original": "n < 0",
+      "outcome": "survived",
+      "path": "src/lib.rs",
+      "position": {
+        "character_column": 15,
+        "column": 15,
+        "line": 10
+      },
+      "replacement": "true",
+      "reused": false,
+      "routing": {
+        "answered": [
+          {
+            "outcome": "survived",
+            "target": "<volatile>"
+          }
+        ],
+        "discharged": [],
+        "fallback": null,
+        "granularity": "block",
+        "reaching": [
+          "fixture-baseline/lib/fixture_baseline"
+        ]
+      },
+      "rule": "condition-to-true",
       "source_run_id": null
     },
     {
@@ -345,6 +455,39 @@
         ]
       },
       "rule": "return-default",
+      "source_run_id": null
+    },
+    {
+      "blind_in": [],
+      "display_id": "9f9db85e50c14a6e3fcc",
+      "id": "9f9db85e50c14a6e3fcc17e6af4f6f090b119e886870d248fa3002f4ff568167",
+      "item": "sign",
+      "killed_by": "fixture-baseline/lib/fixture_baseline",
+      "original": "n < 0",
+      "outcome": "killed",
+      "path": "src/lib.rs",
+      "position": {
+        "character_column": 15,
+        "column": 15,
+        "line": 10
+      },
+      "replacement": "false",
+      "reused": false,
+      "routing": {
+        "answered": [
+          {
+            "outcome": "killed",
+            "target": "<volatile>"
+          }
+        ],
+        "discharged": [],
+        "fallback": null,
+        "granularity": "block",
+        "reaching": [
+          "fixture-baseline/lib/fixture_baseline"
+        ]
+      },
+      "rule": "condition-to-false",
       "source_run_id": null
     },
     {

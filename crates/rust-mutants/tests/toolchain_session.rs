@@ -125,8 +125,8 @@ fn preparing_catalogs_instruments_validates_and_builds() {
     let before = fingerprint(fixture.root());
     let session = prepare(&fixture);
 
-    assert_eq!(session.catalog().len(), 11);
-    assert_eq!(session.accepted().len(), 11, "{:?}", session.rejections());
+    assert_eq!(session.catalog().len(), 13);
+    assert_eq!(session.accepted().len(), 13, "{:?}", session.rejections());
     assert!(session.rejections().is_empty());
     let skips: Vec<(&str, u32)> = session
         .skips()
@@ -185,7 +185,7 @@ fn a_scoped_session_keeps_the_catalog_but_cannot_execute_an_unvalidated_candidat
         )
         .expect("prepare only the selected rule");
 
-    assert_eq!(session.catalog().len(), 11, "identity remains global");
+    assert_eq!(session.catalog().len(), 13, "identity remains global");
     assert_eq!(session.accepted().len(), 1, "validation follows the scope");
     let outside = session
         .catalog()

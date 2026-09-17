@@ -6,6 +6,7 @@
 use super::{
     Action, Blindness, Diagnostic, Headline, Place, Severity, Site, Sources, Spot, Stated, Told,
 };
+use crate::report::Outcome;
 use crate::report::{Finding, FindingKind, MutantRecord, Report};
 
 impl Told {
@@ -18,7 +19,6 @@ impl Told {
                 project: report.repository.root_name.clone(),
                 cataloged: report.accounting.mutants.cataloged,
                 killed: report.accounting.mutants.killed,
-                refused_by_types: report.accounting.mutants.observers.types,
                 survived: report.accounting.mutants.survived,
                 unreached: report.accounting.mutants.unreached,
                 duration_ms: report.timing.duration_ms,
@@ -125,17 +125,25 @@ fn drawn(path: &str, item: &str, spots: Vec<Spot>, sources: &Sources) -> Place {
 
 /// One blind spot: what the run changed, and what it established by changing it.
 fn spot(mutant: &MutantRecord, finding: &Finding) -> Spot {
-    let blindness = match (mutant.outcome.name(), finding.kind) {
-        (_, FindingKind::Timeout) => Blindness::Waited,
-        ("unreached", _) => Blindness::Never,
-        _ => Blindness::Ran,
+    let blindness = match (mutant.outcome, finding.kind) {
+        (_, FindingKind::Timeout) | (Outcome::TimedOut, _) => Blindness::Waited,
+        (Outcome::Unreached, _) => Blindness::Never,
+        (
+            Outcome::CompileRejected
+            | Outcome::Killed
+            | Outcome::Survived
+            | Outcome::Equivalent
+            | Outcome::Unconfirmed
+            | Outcome::Errored,
+            _,
+        ) => Blindness::Ran,
     };
     Spot {
         line: mutant.position.line,
         column: mutant.position.column,
         was: mutant.original.clone(),
         now: mutant.replacement.clone(),
-        said: super::blindness_of(mutant, blindness == Blindness::Waited),
+        said: blindness.word().to_owned(),
         blindness,
         locator: locator(mutant),
     }
@@ -147,7 +155,7 @@ fn said(finding: &Finding, report: &Report, sources: &Sources) -> Diagnostic {
         .mutants
         .iter()
         .find(|one| one.display_id == finding.subject || one.id == finding.subject);
-    let unreached = mutant.is_some_and(|one| one.outcome == crate::report::Outcome::Unreached);
+    let unreached = mutant.is_some_and(|one| one.outcome == Outcome::Unreached);
     let (severity, code, title) = about(finding.kind, unreached);
     Diagnostic {
         severity,
@@ -194,8 +202,8 @@ fn site(mutant: &MutantRecord, sources: &Sources) -> Site {
 /// What to say under the mark: what the run changed, and what noticed.
 fn labelled(mutant: &MutantRecord) -> String {
     let rule = &mutant.rule;
-    match (mutant.outcome.name(), mutant.killed_by.as_deref()) {
-        ("unreached", _) => format!("{rule} here, and nothing executed it"),
+    match (mutant.outcome, mutant.killed_by.as_deref()) {
+        (Outcome::Unreached, _) => format!("{rule} here, and nothing executed it"),
         (_, Some(target)) => format!("{rule} here, and {target} noticed"),
         (_, None) => format!("{rule} here, and nothing noticed"),
     }

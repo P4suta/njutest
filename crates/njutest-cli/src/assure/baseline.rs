@@ -53,15 +53,48 @@ pub struct Reporting<'a, 'b> {
     pub watch: Watch<'a>,
 }
 
+/// One step of a phase, in the two forms its two readers want.
+///
+/// A person watching reads `said`; an audit follows `subject` back to the one
+/// thing the step was about. Held together so a caller cannot give one and
+/// forget the other.
+#[derive(Debug, Clone, Copy)]
+pub struct Step<'a> {
+    /// What a person watching reads.
+    pub said: &'a str,
+    /// What a later command takes, where the step is about something that has a name.
+    pub subject: &'a str,
+}
+
+impl<'a> Step<'a> {
+    /// A step about nothing a later command can be given.
+    #[must_use]
+    pub const fn of(said: &'a str) -> Self {
+        Self { said, subject: "" }
+    }
+
+    /// A step about `subject`.
+    #[must_use]
+    pub const fn about(said: &'a str, subject: &'a str) -> Self {
+        Self { said, subject }
+    }
+}
+
 impl Reporting<'_, '_> {
     /// Says how far a phase has got, to the person watching and to the recording alike.
     pub fn progress(&mut self, message: &str, done: u64, total: u64) {
+        self.about(Step::of(message), done, total);
+    }
+
+    /// The same, where the step is about something a later command can be given.
+    pub fn about(&mut self, step: Step<'_>, done: u64, total: u64) {
         self.watch.trace.progress(ProgressRecord {
-            message: message.to_owned(),
+            message: step.said.to_owned(),
+            subject: step.subject.to_owned(),
             done: Some(done),
             total: Some(total),
         });
-        self.notes.progress(message, done, total);
+        self.notes.progress(step.said, done, total);
     }
 }
 

@@ -32,14 +32,8 @@ pub fn run(
         }
     };
 
-    let matching: Vec<&crate::report::MutantRecord> = report
-        .mutants
-        .iter()
-        .filter(|mutant| {
-            mutant.id.starts_with(&arguments.mutant)
-                || mutant.display_id.starts_with(&arguments.mutant)
-        })
-        .collect();
+    let every: Vec<&crate::report::MutantRecord> = report.mutants.iter().collect();
+    let matching = crate::naming::matching(&every, &arguments.mutant);
     let Some(mutant) = one(&matching, &arguments.mutant, stderr) else {
         return EXIT_ERROR;
     };
@@ -107,7 +101,7 @@ fn acceptance(root: &std::path::Path, mutant: &crate::report::MutantRecord) -> S
         return format!(
             "ACCEPTANCE\tnobody has recorded a reason for this one\tnjutest accept {} \
              --reason \"...\" writes one into .njutest.toml",
-            mutant.display_id
+            crate::naming::locator(mutant)
         );
     };
     format!(
