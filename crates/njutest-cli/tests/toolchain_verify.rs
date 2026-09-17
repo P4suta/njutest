@@ -70,6 +70,7 @@ fn environment(root: &Path, cache: &Path, named: &[(&str, &str)]) -> Environment
         program: PathBuf::from("this test never runs it"),
         vars,
         cancel: Cancel::new(),
+        terminal: njutest_cli::presentation::Terminal::default(),
     }
 }
 
@@ -167,7 +168,7 @@ fn the_report_is_written_where_a_reader_will_look_and_validates_against_the_sche
     assert_eq!(report["accounting"]["targets"]["selected"], 2);
     assert_eq!(report["accounting"]["targets"]["passed"], 2);
     assert_eq!(report["accounting"]["targets"]["skipped"], 0);
-    assert_eq!(report["findings"].as_array().expect("findings").len(), 3);
+    assert_eq!(report["findings"].as_array().expect("findings").len(), 4);
     assert_eq!(
         report["toolchain"]["target"].as_str().unwrap_or_default(),
         report["toolchain"]["target"].as_str().unwrap_or("x"),
@@ -924,7 +925,7 @@ fn a_mutation_only_another_process_reaches_is_settled_by_the_suite_that_reaches_
     );
     assert_eq!(
         outcomes.iter().filter(|one| **one == "killed").count(),
-        4,
+        6,
         "the test runs the binary, the binary calls the library, and every mutation but \
          the boundary makes it say something else: {outcomes:?}"
     );
@@ -1159,5 +1160,70 @@ fn a_run_that_was_given_a_package_says_it_looked_at_that_one() {
     assert!(
         packages.iter().all(|package| *package == "fixture-core"),
         "and it ran the package it was given and no other: {packages:?}"
+    );
+}
+
+#[test]
+fn a_run_briefs_whatever_asked_for_it_rather_than_whatever_it_guessed() {
+    let fixture = fixture("fixture-baseline");
+    let briefed = verify(&fixture, &["--format", "agent"]);
+    let text = String::from_utf8_lossy(&briefed.stdout);
+    assert!(
+        text.starts_with("# njutest:"),
+        "a thing without a screen runs `njutest verify` like everybody else, and what it \
+         gets back is decided by whether stdout happened to be a terminal. The briefing \
+         exists and nothing that reads it can ask for it: {text}"
+    );
+    assert!(
+        text.contains("njutest replay"),
+        "and the briefing is the one surface that says what to do after the change, which \
+         is the whole of what it is for: {text}"
+    );
+
+    let streamed = verify(&fixture, &["--format", "lines"]);
+    let text = String::from_utf8_lossy(&streamed.stdout);
+    assert!(
+        text.lines().any(|line| line.starts_with("VERDICT\t")),
+        "and a program that wants the stream can still say so, whatever it is writing \
+         into: {text}"
+    );
+
+    let whole = verify(&fixture, &["--format", "json"]);
+    let text = String::from_utf8_lossy(&whole.stdout);
+    let document: serde_json::Value =
+        serde_json::from_str(&text).unwrap_or_else(|error| panic!("{error}: {text}"));
+    assert_eq!(
+        document["schema"], "njutest-assurance-report-v1",
+        "and the document is the one on disk rather than the report serialized a second \
+         time, because the second time is a second answer to compare against the first"
+    );
+}
+
+#[test]
+fn a_run_that_reads_an_answer_back_says_it_the_way_a_run_that_established_one_does() {
+    let fixture = fixture("fixture-baseline");
+    let first = verify(&fixture, &["--format", "agent"]);
+    let second = verify(&fixture, &["--format", "agent"]);
+    let (established, read_back) = (
+        String::from_utf8_lossy(&first.stdout),
+        String::from_utf8_lossy(&second.stdout),
+    );
+    assert!(
+        read_back.starts_with("# njutest:"),
+        "the second run of the same inputs answers from the store, and until now it \
+         answered in the one shape the reading-back path happened to be written with, \
+         whatever the reader asked for or the terminal said. A cached answer that is a \
+         different answer is a reason not to cache: {read_back}"
+    );
+    assert_eq!(
+        established
+            .lines()
+            .filter(|line| line.starts_with("### "))
+            .count(),
+        read_back
+            .lines()
+            .filter(|line| line.starts_with("### "))
+            .count(),
+        "and it names the same places:\n{established}\n---\n{read_back}"
     );
 }

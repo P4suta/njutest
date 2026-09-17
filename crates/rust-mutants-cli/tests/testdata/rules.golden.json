@@ -200,6 +200,18 @@
       "version": 1
     },
     {
+      "family": "condition-removal",
+      "name": "condition-to-true",
+      "tier": "balanced",
+      "version": 1
+    },
+    {
+      "family": "condition-removal",
+      "name": "condition-to-false",
+      "tier": "balanced",
+      "version": 1
+    },
+    {
       "family": "bitwise",
       "name": "band-to-bor",
       "tier": "strong",

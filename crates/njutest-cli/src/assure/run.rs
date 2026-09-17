@@ -1224,6 +1224,7 @@ pub fn record(report: &mut Report, mutation: &mutation::Mutation, accepted: &BTr
             rule: judged.rule.clone(),
             item: judged.item.clone(),
             original: judged.original.clone(),
+            replacement: judged.replacement.clone(),
             outcome: judged.disposition.name().to_owned(),
             killed_by: judged.disposition.decided_by().map(ToOwned::to_owned),
             reused: judged.source_run_id.is_some(),

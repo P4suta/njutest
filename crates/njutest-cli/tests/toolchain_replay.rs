@@ -65,6 +65,7 @@ fn environment(root: &Path, cache: &Path, named: &[(&str, &str)]) -> Environment
         program: PathBuf::from("this test never runs it"),
         vars,
         cancel: Cancel::new(),
+        terminal: njutest_cli::presentation::Terminal::default(),
     }
 }
 

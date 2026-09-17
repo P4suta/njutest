@@ -14,7 +14,7 @@ use crate::assure::run::{self, Request};
 use crate::build::Cargo;
 use crate::cache::lock::{self, Lease};
 use crate::cache::store::Store;
-use crate::cli::{EXIT_ERROR, Environment, Verify};
+use crate::cli::{EXIT_ERROR, Environment, Format, Verify};
 use crate::config::Config;
 use crate::evidence::digest::Mode;
 use crate::report::lines;
@@ -80,6 +80,7 @@ pub fn run(
             run_id: &identity,
             started,
             root: &root,
+            environment,
         },
         arguments,
         &cancel,
@@ -153,8 +154,6 @@ fn establish(establishing: &Establishing<'_>, streams: Streams<'_>) -> u8 {
         arguments,
         environment,
         root,
-        identity,
-        started,
         evidence,
         store,
         trace,
@@ -172,26 +171,7 @@ fn establish(establishing: &Establishing<'_>, streams: Streams<'_>) -> u8 {
             return EXIT_ERROR;
         }
     };
-    let request = Request {
-        root: root.to_path_buf(),
-        configuration: read_from(root),
-        config: establishing.config.clone(),
-        packages: packages(arguments, &establishing.config),
-        test_args: harness_args(arguments, &establishing.config),
-        cargo: Cargo {
-            offline: arguments.offline,
-            locked: arguments.locked,
-        },
-        keep_temp: arguments.keep_temp,
-        run_id: identity.to_owned(),
-        started,
-        engine_trace: engine_recorder(arguments, root, identity),
-        evidence: evidence.clone(),
-        changed: establishing.changed.clone(),
-        checkpoints: (!arguments.no_cache).then(|| store.root().join(CHECKPOINTS)),
-        evidence_store: (!arguments.no_cache).then(|| store.root().to_path_buf()),
-        shard,
-    };
+    let request = asking(establishing, shard);
     let result = {
         let mut notes = ui::Notes::of(arguments.ui, stderr);
         run::run(&request, environment, &mut notes, watch)
@@ -229,8 +209,84 @@ fn establish(establishing: &Establishing<'_>, streams: Streams<'_>) -> u8 {
         Err(code) => return code,
     };
 
-    let _written = stdout.write_all(lines::kept(&report, &document).as_bytes());
+    let _written = stdout
+        .write_all(said(&report, root, &document, (environment, arguments.format)).as_bytes());
     report.verdict.exit_code()
+}
+
+/// Everything one run is asking for, gathered from the arguments, the configuration and the store.
+fn asking(establishing: &Establishing<'_>, shard: Option<rust_mutants::run::Shard>) -> Request {
+    let Establishing {
+        arguments,
+        root,
+        identity,
+        started,
+        evidence,
+        store,
+        ..
+    } = *establishing;
+    Request {
+        root: root.to_path_buf(),
+        configuration: read_from(root),
+        config: establishing.config.clone(),
+        packages: packages(arguments, &establishing.config),
+        test_args: harness_args(arguments, &establishing.config),
+        cargo: Cargo {
+            offline: arguments.offline,
+            locked: arguments.locked,
+        },
+        keep_temp: arguments.keep_temp,
+        run_id: identity.to_owned(),
+        started,
+        engine_trace: engine_recorder(arguments, root, identity),
+        evidence: evidence.clone(),
+        changed: establishing.changed.clone(),
+        checkpoints: (!arguments.no_cache).then(|| store.root().join(CHECKPOINTS)),
+        evidence_store: (!arguments.no_cache).then(|| store.root().to_path_buf()),
+        shard,
+    }
+}
+
+/// What a run has to say, in the shape the thing reading it wants.
+///
+/// Guessed from where the output is going when nobody said, and taken at its
+/// word when somebody did. The guess is right for the two readers it was
+/// written for — a person at a terminal and a program reading a stream — and
+/// wrong for the one that is neither, which runs the same command through a
+/// pipe and is handed a stream because of how it was started rather than
+/// because of what it is. Every shape is a projection of one value (ADR 0020),
+/// so answering a third reader is naming the projection, not writing a report
+/// again.
+fn said(
+    report: &crate::report::Report,
+    root: &Path,
+    document: &Path,
+    (environment, asked): (&Environment, Option<Format>),
+) -> String {
+    let shape = asked.unwrap_or(if environment.terminal.drawing {
+        Format::Human
+    } else {
+        Format::Lines
+    });
+    match shape {
+        Format::Json => std::fs::read_to_string(document).unwrap_or_else(|error| {
+            format!(
+                "the run wrote {} and it cannot be read back: {error}\n",
+                document.display()
+            )
+        }),
+        Format::Lines => lines::kept(report, &reports::Store::read(root).said(document)),
+        Format::Human | Format::Agent => {
+            let kept = reports::Store::read(root).said(document);
+            let sources = crate::presentation::Sources::read(root, report);
+            let told = crate::presentation::Told::of(report, &sources, &kept);
+            if shape == Format::Agent {
+                crate::presentation::agent::brief(&told)
+            } else {
+                crate::presentation::human::draw(&told, environment.terminal)
+            }
+        }
+    }
 }
 
 /// The change set, asked for with the directories this project writes left out.
@@ -409,7 +465,7 @@ fn persist(
     persisting: &Persisting<'_>,
     arguments: &Verify,
     stderr: &mut dyn Write,
-) -> Result<String, u8> {
+) -> Result<PathBuf, u8> {
     let Persisting {
         root,
         report,
@@ -446,7 +502,7 @@ fn persist(
     if let Some(error) = stored {
         notes.note("not-stored", &error.to_string());
     }
-    Ok(reports::Store::read(root).said(&written.document))
+    Ok(written.document)
 }
 
 /// Whether an earlier run of the same inputs has already answered, and the claim this run holds while it establishes its own.
@@ -481,12 +537,12 @@ fn settled(
         out: stdout,
         err: stderr,
     } = streams;
-    if let Reuse::Answered(code) = reuse(asking, stdout, stderr) {
+    if let Reuse::Answered(code) = reuse(asking, arguments.format, stdout, stderr) {
         return Settled::Answered(code);
     }
     let lease = claim(asking, arguments, cancel, stderr);
     if lease.is_some()
-        && let Reuse::Answered(code) = reuse(asking, stdout, stderr)
+        && let Reuse::Answered(code) = reuse(asking, arguments.format, stdout, stderr)
     {
         return Settled::Answered(code);
     }
@@ -500,6 +556,8 @@ struct Asking<'a> {
     run_id: &'a str,
     started: Timestamp,
     root: &'a Path,
+    /// Where the answer is going, so a run that reads one back says it the way a run that established one would.
+    environment: &'a Environment,
 }
 
 /// Whether this run has to establish anything at all.
@@ -511,13 +569,19 @@ enum Reuse {
 }
 
 /// Reads back what an earlier run of the same inputs established, and writes it as this run's report.
-fn reuse(asking: &Asking<'_>, stdout: &mut dyn Write, stderr: &mut dyn Write) -> Reuse {
+fn reuse(
+    asking: &Asking<'_>,
+    asked: Option<Format>,
+    stdout: &mut dyn Write,
+    stderr: &mut dyn Write,
+) -> Reuse {
     let Asking {
         store,
         identity,
         run_id,
         started,
         root,
+        environment,
     } = *asking;
     let stored = match store.get(identity) {
         Ok(Some(stored)) => stored,
@@ -541,9 +605,8 @@ fn reuse(asking: &Asking<'_>, stdout: &mut dyn Write, stderr: &mut dyn Write) ->
             return Reuse::Establish;
         }
     };
-    let _written = stdout.write_all(
-        lines::kept(&report, &reports::Store::read(root).said(&written.document)).as_bytes(),
-    );
+    let _written =
+        stdout.write_all(said(&report, root, &written.document, (environment, asked)).as_bytes());
     Reuse::Answered(report.verdict.exit_code())
 }
 

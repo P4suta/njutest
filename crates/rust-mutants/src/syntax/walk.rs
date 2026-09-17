@@ -16,9 +16,9 @@ use super::branch;
 use super::position::LineIndex;
 use super::rules::{
     arguments, assertion_arity, assertion_is_condition, binary_swap, bool_method, has_let,
-    is_compound_assignment, is_connective, is_default_spelling, is_err_default, is_not,
-    is_ok_default, is_some_default, is_true_literal, method_swap, respell_int, terminal_else,
-    unary_removal,
+    is_bool_literal, is_compound_assignment, is_connective, is_default_spelling, is_err_default,
+    is_not, is_ok_default, is_some_default, is_true_literal, method_swap, respell_int,
+    terminal_else, unary_removal,
 };
 use super::shape::{
     block_tail, deletable_arm, expr_attrs, guard_of, implemented, item_attrs, parameters,
@@ -1290,8 +1290,35 @@ impl<'a> Walker<'a> {
         );
     }
 
+    /// Fix a condition at each answer in turn, so a reader is asked about each branch separately.
+    fn settle(&mut self, cond: &Expr) {
+        if has_let(cond) || is_bool_literal(cond) {
+            return;
+        }
+        let span = self.span(cond);
+        let site = Some(Site {
+            form: Form::C,
+            span,
+        });
+        for (rule, replacement) in [
+            ("condition-to-true", "true"),
+            ("condition-to-false", "false"),
+        ] {
+            self.emit(
+                rule,
+                Edit {
+                    span,
+                    replacement: replacement.as_bytes().to_vec(),
+                    site,
+                    probe: None,
+                },
+            );
+        }
+    }
+
     fn walk_if(&mut self, i: &syn::ExprIf, ctx: Ctx) {
         self.negate("negate-condition", &i.cond);
+        self.settle(&i.cond);
         let gate = self.gate(&i.cond, &i.then_branch);
         self.gates.push(gate);
         self.walk_expr(&i.cond, ctx.negated(Kind::Bool));

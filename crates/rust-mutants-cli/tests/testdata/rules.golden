@@ -32,6 +32,8 @@ match-arm            delete-match-arm               balanced  1
 match-arm            remove-match-guard             balanced  1
 control-flow         break-to-continue              balanced  1
 control-flow         continue-to-break              balanced  1
+condition-removal    condition-to-true              balanced  1
+condition-removal    condition-to-false             balanced  1
 bitwise              band-to-bor                    strong    1
 bitwise              bor-to-band                    strong    1
 bitwise              xor-to-band                    strong    1
@@ -72,4 +74,4 @@ saturating-arithmetic saturating-add-to-wrapping-add all       1
 saturating-arithmetic saturating-sub-to-wrapping-sub all       1
 saturating-arithmetic saturating-mul-to-wrapping-mul all       1
 
-72 rules in 16 families. `operators = [...]` in .rust-mutants.toml pins exactly these; a tier selects them by name.
+74 rules in 17 families. `operators = [...]` in .rust-mutants.toml pins exactly these; a tier selects them by name.

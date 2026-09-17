@@ -140,6 +140,7 @@
       "rule": "lt-to-le@1",
       "item": "demo",
       "original": ">",
+      "replacement": "",
       "outcome": "killed",
       "killed_by": "0123456789abcdef",
       "reused": true,

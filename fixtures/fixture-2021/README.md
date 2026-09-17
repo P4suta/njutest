@@ -28,6 +28,8 @@ src/lib.rs:12:19 int-increment killed
 src/lib.rs:14:9 delete-compound-assignment killed
 src/lib.rs:14:13 add-assign-to-sub-assign killed
 src/lib.rs:16:5 return-default killed
+src/lib.rs:23:12 condition-to-false killed
+src/lib.rs:23:12 condition-to-true killed
 src/lib.rs:23:12 negate-condition killed
 src/lib.rs:23:17 gt-to-ge killed
 src/lib.rs:24:13 delete-call-statement killed

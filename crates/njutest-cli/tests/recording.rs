@@ -20,6 +20,7 @@ fn judged(display_id: &str, disposition: Disposition, reused: bool) -> Judged {
         rule: "add-to-sub@1".to_owned(),
         item: "demo".to_owned(),
         original: ">".to_owned(),
+        replacement: String::new(),
         position: None,
         disposition,
         source_run_id: reused.then(|| "20260905T081500Z-000000".to_owned()),

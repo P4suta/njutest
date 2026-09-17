@@ -260,6 +260,16 @@ pub(super) fn has_let(expr: &Expr) -> bool {
     }
 }
 
+/// Whether the expression is a `true` or a `false` somebody wrote, through any parentheses around it.
+pub(super) fn is_bool_literal(expr: &Expr) -> bool {
+    match expr {
+        Expr::Lit(lit) => matches!(lit.lit, Lit::Bool(_)),
+        Expr::Paren(paren) => is_bool_literal(&paren.expr),
+        Expr::Group(group) => is_bool_literal(&group.expr),
+        _ => false,
+    }
+}
+
 /// How many of an assertion macro's leading arguments are expressions the tests are about.
 pub(super) fn assertion_arity(path: &syn::Path) -> Option<usize> {
     if path.segments.len() != 1 {

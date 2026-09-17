@@ -93,10 +93,23 @@ fn a_process_that_aborts_is_a_kill_on_every_platform() {
 }
 
 #[test]
-fn every_mutation_of_the_fixture_is_noticed() {
+fn every_mutation_but_the_one_no_test_in_this_process_can_reach_is_noticed() {
     let fixture = Fixture::copy("fixture-panics");
     let document = rows(&fixture);
     let accounting = &document["accounting"];
-    assert_eq!(accounting["survived"].as_u64(), Some(0), "{accounting}");
-    assert_eq!(accounting["killed"].as_u64(), Some(9), "{accounting}");
+    assert_eq!(
+        accounting["killed"].as_u64(),
+        Some(12),
+        "a process that ends without failing an assertion is a kill, whichever way it \
+         ends: {accounting}"
+    );
+    assert_eq!(
+        accounting["survived"].as_u64(),
+        Some(1),
+        "and one is not, by construction. `capacity(0)` aborts, so the only test that \
+         could notice `if n == 0` being made false is one that calls it, and a test that \
+         calls it takes the harness with it. The mutation that makes the abort happen is \
+         noticed; the one that makes it not happen cannot be, and a fixture that claimed \
+         otherwise would be claiming a test nobody can write: {accounting}"
+    );
 }

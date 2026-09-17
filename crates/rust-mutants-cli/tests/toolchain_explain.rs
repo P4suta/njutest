@@ -138,7 +138,7 @@ fn a_prefix_that_names_more_than_one_says_what_it_could_have_meant() {
     let output = against(&fixture, &["explain", ""]);
     assert_eq!(output.status.code(), Some(2), "{output:?}");
     let complaint = String::from_utf8_lossy(&output.stderr);
-    assert!(complaint.contains("11 mutants"), "{complaint}");
+    assert!(complaint.contains("13 mutants"), "{complaint}");
 }
 
 #[test]

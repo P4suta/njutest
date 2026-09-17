@@ -45,6 +45,7 @@ fn environment(root: &Path) -> Environment {
         program: PathBuf::from("this test never runs it"),
         vars: njutest_devkit::paths::environment_for_a_run(),
         cancel: Cancel::new(),
+        terminal: njutest_cli::presentation::Terminal::default(),
     }
 }
 
@@ -1079,4 +1080,39 @@ fn two_trees_and_nowhere_to_write(it: &Verified, one: &Path) {
         unwritable.out,
         unwritable.err
     );
+}
+
+#[test]
+fn the_command_a_run_tells_a_reader_to_type_is_one_that_works() {
+    let it = verified();
+    let said = ask(&it.root, &["report"]);
+    let printed: Vec<String> = said
+        .out
+        .lines()
+        .chain(said.err.lines())
+        .filter_map(|line| line.split_once("njutest explain ").map(|(_, rest)| rest))
+        .map(|rest| {
+            rest.split_whitespace()
+                .next()
+                .unwrap_or_default()
+                .to_owned()
+        })
+        .filter(|named| !named.is_empty())
+        .collect();
+    assert!(
+        !printed.is_empty(),
+        "a run with survivors in it tells a reader what to type next: {}{}",
+        said.out,
+        said.err
+    );
+    for named in printed {
+        let answered = ask(&it.root, &["explain", &named]);
+        assert_eq!(
+            answered.code, 0,
+            "a tool that prints a command a reader cannot run has told them nothing, and \
+             something following it has been sent in a circle: `njutest explain {named}` \
+             said {}{}",
+            answered.out, answered.err
+        );
+    }
 }

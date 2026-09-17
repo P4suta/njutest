@@ -143,6 +143,7 @@ fn populated() -> Report {
             rule: "lt-to-le@1".to_owned(),
             item: "demo".to_owned(),
             original: ">".to_owned(),
+            replacement: String::new(),
             outcome: "killed".to_owned(),
             killed_by: Some("0123456789abcdef".to_owned()),
             reused: true,

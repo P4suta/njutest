@@ -223,8 +223,15 @@ impl ExecRecord {
 /// How far the run had got, as the user interface saw it.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct ProgressRecord {
-    /// What was happening.
+    /// What was happening, in the words a person watching reads.
     pub message: String,
+    /// What it was about, by the name a later command takes. Empty where the step is about nothing that has one.
+    ///
+    /// Held apart from the message because the two have different readers: an
+    /// audit follows this back to one mutation, and a person watching a run
+    /// learns nothing from a digest.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub subject: String,
     /// How many of it are done.
     pub done: Option<u64>,
     /// How many there are.

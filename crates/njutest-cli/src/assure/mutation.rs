@@ -153,6 +153,8 @@ pub struct Judged {
     pub item: String,
     /// The bytes the edit replaces.
     pub original: String,
+    /// The bytes it puts there instead.
+    pub replacement: String,
     /// Where it is, when the catalog could say.
     pub position: Option<crate::report::Position>,
     /// What was established.
@@ -241,6 +243,20 @@ fn answered_by(judged: &Judged, accepted: &BTreeSet<String>) -> bool {
         judged.disposition,
         Disposition::Survived { .. } | Disposition::Unreached | Disposition::Equivalent { .. }
     ) && accepted.contains(&judged.id)
+}
+
+/// What a person watching a run wants to read as each answer lands.
+///
+/// An identity says nothing to anybody watching; it is a name for going back
+/// to one afterwards. Where it is, what was tried, and what came of it is what
+/// somebody is waiting to learn.
+fn watching(judged: &Judged) -> String {
+    let named = if judged.item.is_empty() {
+        judged.path.clone()
+    } else {
+        format!("{}:{}", judged.path, judged.item)
+    };
+    format!("{named} {} {}", judged.rule, judged.disposition.name())
 }
 
 /// The finding one disposition raises, if it raises one. What a survivor's finding says, which is not the same sentence when nothing ran.
@@ -444,7 +460,11 @@ pub fn run_resuming(
     for (index, answer) in measured.into_iter().enumerate() {
         let judged = answer?;
         let done = u64::try_from(index).unwrap_or(u64::MAX).saturating_add(1);
-        reporting.progress(&judged.display_id, done, total);
+        reporting.about(
+            crate::assure::baseline::Step::about(&watching(&judged), &judged.display_id),
+            done,
+            total,
+        );
         (resume.record)(&judged);
         mutation.judged.push(judged);
     }
@@ -504,6 +524,7 @@ fn establish(
             .unwrap_or_default()
             .to_owned(),
         original: String::from_utf8_lossy(&mutant.candidate.original).into_owned(),
+        replacement: String::from_utf8_lossy(&mutant.candidate.replacement).into_owned(),
         position,
         disposition,
         source_run_id: source,

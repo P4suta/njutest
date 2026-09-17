@@ -76,7 +76,7 @@ fn a_json_run_streams_one_object_per_event_as_it_happens() {
         .iter()
         .filter(|line| matches!(line, Line::Mutant { .. }))
         .collect();
-    assert_eq!(judged.len(), 11, "one line per mutant");
+    assert_eq!(judged.len(), 13, "one line per mutant");
     let mut seen = 0;
     for line in &judged {
         let Line::Mutant {

@@ -107,6 +107,8 @@ fn comparisons_in_conditions_take_form_c_and_nested_arithmetic_form_e() {
         render(&d),
         [
             "negate-condition@2:8 \"a + 1 < b\"=>\"!(a + 1 < b)\" C[\"a + 1 < b\"]",
+            "condition-to-true@2:8 \"a + 1 < b\"=>\"true\" C[\"a + 1 < b\"]",
+            "condition-to-false@2:8 \"a + 1 < b\"=>\"false\" C[\"a + 1 < b\"]",
             "add-to-sub@2:10 \"+\"=>\"-\" E[\"a + 1\"]",
             "int-increment@2:12 \"1\"=>\"2\" E[\"1\"]",
             "int-decrement@2:12 \"1\"=>\"0\" E[\"1\"]",
@@ -131,6 +133,8 @@ fn loops_connectives_and_negations_are_bool_positions_and_let_chains_are_left_al
             "true-to-false@2:11 \"true\"=>\"false\" C[\"true\"]",
             "negate-loop-condition@2:11 \"true\"=>\"!(true)\" C[\"true\"]",
             "negate-condition@3:12 \"x && !x\"=>\"!(x && !x)\" C[\"x && !x\"]",
+            "condition-to-true@3:12 \"x && !x\"=>\"true\" C[\"x && !x\"]",
+            "condition-to-false@3:12 \"x && !x\"=>\"false\" C[\"x && !x\"]",
             "and-to-or@3:14 \"&&\"=>\"||\" C[\"x && !x\"]",
             "remove-not@3:17 \"!x\"=>\"x\" C[\"!x\"]",
             "break-to-continue@4:13 \"break\"=>\"continue\" E[\"break\"]",
@@ -170,6 +174,8 @@ fn return_replacements_follow_the_signature_and_never_spell_the_default_again() 
         render(&d),
         [
             "negate-condition@2:8 \"x < 0\"=>\"!(x < 0)\" C[\"x < 0\"]",
+            "condition-to-true@2:8 \"x < 0\"=>\"true\" C[\"x < 0\"]",
+            "condition-to-false@2:8 \"x < 0\"=>\"false\" C[\"x < 0\"]",
             "lt-to-le@2:10 \"<\"=>\"<=\" C[\"x < 0\"]",
             "int-increment@2:12 \"0\"=>\"1\" E[\"0\"]",
             "return-ok-default@3:16 \"Err(String::new())\"=>\"Ok(Default::default())\" E[\"Err(String::new())\"]",
@@ -804,7 +810,7 @@ fn an_end_of_line_marker_hides_that_lines_candidates_and_states_the_text() {
     assert!(d.candidates.is_empty(), "{:?}", render(&d));
     assert_eq!(
         skips(&d),
-        [("annotated", 5)],
+        [("annotated", 7)],
         "every edit that starts on the marked line is hidden, and the count says how many"
     );
     let claim = d.annotations.first().expect("a claim");
@@ -946,5 +952,44 @@ fn a_borrowed_value_that_is_not_the_default_is_still_offered() {
         "a borrow of something is not a borrow of nothing, and refusing this one would drop a \
          mutation the tests can notice: {:?}",
         render(&discover(src))
+    );
+}
+
+#[test]
+fn a_condition_is_asked_to_stand_still_as_well_as_to_invert() {
+    let src = "fn f(a: i32, b: i32) -> i32 {\n    if a < b {\n        1\n    } else {\n        2\n    }\n}\n";
+    let rendered = render(&discover(src));
+    assert!(
+        rendered.contains(&"condition-to-true@2:8 \"a < b\"=>\"true\" C[\"a < b\"]".to_owned())
+            && rendered
+                .contains(&"condition-to-false@2:8 \"a < b\"=>\"false\" C[\"a < b\"]".to_owned()),
+        "a suite that kills `negate-condition` has one test whose branch changed, and that \
+         one test kills exactly one of these two: the pair says which side is checked and \
+         which is not, where the negation says only that one of them is. It is the same \
+         question `remove-match-guard` and `delete-match-arm` already ask of an arm: {rendered:?}"
+    );
+}
+
+#[test]
+fn a_condition_that_is_already_a_literal_is_not_asked_to_become_itself() {
+    let src = "fn f() -> i32 {\n    if true {\n        1\n    } else {\n        2\n    }\n}\n";
+    let rendered = render(&discover(src));
+    assert!(
+        !rendered.iter().any(|one| one.contains("condition-to-true")),
+        "writing `true` where `true` is written is a mutation with no mutation in it, and an \
+         equivalent mutant offered by construction is worse than one nobody thought of: \
+         {rendered:?}"
+    );
+}
+
+#[test]
+fn a_loop_is_not_asked_to_run_forever() {
+    let src = "fn f(mut n: i32) {\n    while n > 0 {\n        n -= 1;\n    }\n}\n";
+    let rendered = render(&discover(src));
+    assert!(
+        !rendered.iter().any(|one| one.contains("condition-to-true")),
+        "`while true` does not answer a question about the tests: it hangs, the run bounds it, \
+         and the bound is recorded as a kill that nobody learned anything from. The cost is the \
+         whole timeout and the signal is zero: {rendered:?}"
     );
 }

@@ -42,6 +42,8 @@ refuses a difference, and `UPDATE_FATES=1` rewrites the block below.
 src/lib.rs:19:5 return-true killed
 src/lib.rs:19:11 le-to-lt killed
 src/lib.rs:24:5 return-ok-default killed
+src/lib.rs:24:8 condition-to-false killed
+src/lib.rs:24:8 condition-to-true killed
 src/lib.rs:24:8 negate-condition killed
 src/lib.rs:25:9 return-ok-default killed
 src/lib.rs:27:9 return-ok-default killed
@@ -62,6 +64,8 @@ src/lib.rs:59:30 remove-match-guard killed
 src/lib.rs:63:5 return-default killed
 src/lib.rs:82:9 return-true killed
 src/lib.rs:82:17 lt-to-le killed
+src/lib.rs:90:12 condition-to-false killed
+src/lib.rs:90:12 condition-to-true killed
 src/lib.rs:90:12 negate-condition killed
 src/lib.rs:90:12 remove-not killed
 src/lib.rs:91:20 return-some-default killed

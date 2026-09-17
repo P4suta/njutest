@@ -538,7 +538,7 @@ fn a_filtered_run_compiler_validates_only_the_mutants_it_selected() {
         selected, witnessed,
         "the proof compiler pass asks about the selected candidate only: {events:?}"
     );
-    assert_eq!(report["accounting"]["cataloged"], 11, "{report}");
+    assert_eq!(report["accounting"]["cataloged"], 13, "{report}");
     assert_eq!(
         report["mutants"]
             .as_array()
@@ -546,7 +546,7 @@ fn a_filtered_run_compiler_validates_only_the_mutants_it_selected() {
             .iter()
             .filter(|mutant| mutant["not_run_reason"] == "unselected")
             .count(),
-        10,
+        12,
         "the candidates not compiled remain visible as an explicit selection decision: {report}"
     );
 }

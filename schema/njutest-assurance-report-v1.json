@@ -626,6 +626,7 @@
         "rule",
         "item",
         "original",
+        "replacement",
         "outcome",
         "killed_by",
         "reused",
@@ -655,6 +656,9 @@
           "type": "string"
         },
         "original": {
+          "type": "string"
+        },
+        "replacement": {
           "type": "string"
         },
         "outcome": {
