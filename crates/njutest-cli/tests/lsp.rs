@@ -42,6 +42,8 @@ fn reported() -> Report {
             character_column: 5,
         },
         rule: "gt-to-ge@1".to_owned(),
+        item: "demo".to_owned(),
+        original: ">".to_owned(),
         outcome: "survived".to_owned(),
         killed_by: None,
         reused: false,

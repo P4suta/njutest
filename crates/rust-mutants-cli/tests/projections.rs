@@ -37,6 +37,7 @@ fn mutant(index: u32, outcome: &str, replacement: &str) -> RunMutantDocument {
         package: "demo".to_owned(),
         family: "comparison".to_owned(),
         rule: "gt-to-ge".to_owned(),
+        item: "demo".to_owned(),
         rule_version: 1,
         line: 2,
         column: 7,
@@ -255,10 +256,12 @@ fn a_sarif_alert_carries_the_level_its_kind_earns_and_the_place_it_is_about() {
          open: {json}"
     );
     assert_eq!(
-        results[0]["partialFingerprints"]["rustMutantsMutantId/v1"].as_str(),
-        Some(format!("{:064x}", 1).as_str()),
-        "an alert about a mutation carries that mutation's identity under the name the \
-         reader groups by, or every run of the same gap is a new alert somebody has to \
+        results[0]["partialFingerprints"]["rustMutantsMutation/v2"].as_str(),
+        Some("src/lib.rs:demo:gt-to-ge:>"),
+        "an alert about a mutation carries the place it is in under the name the reader \
+         groups by — not the file's bytes, which the next commit re-mints, closing every \
+         alert in the file and reopening it with the dismissals gone. Otherwise every \
+         run of the same gap is a new alert somebody has to \
          triage again: {json}"
     );
     assert_eq!(

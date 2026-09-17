@@ -69,7 +69,11 @@ allowed_paths = ["**/tests/**/*.rs", "**/fuzz/corpus/**"]
 environment = ["GENERATOR_TOKEN"]
 
 [[acceptance]]
-id = "0123456789abcdef"
+path = "src/lib.rs"
+item = "clamp"
+rule = "le-to-lt"
+original = "<="
+line = 42
 reason = "reviewed equivalent boundary"
 expires = "2026-12-31T00:00:00Z"
 owner = "quality-team"
@@ -129,7 +133,12 @@ verification — and no `toolchain` key: `rust-toolchain.toml` is the idiomatic
 pin and `rustc -vV` is recorded. Environment entries are names, never
 `KEY=value`; values are not written to reports. `njutest accept` appends an
 `[[acceptance]]` table while preserving the comments of the file, and writes
-every field one can carry. An acceptance whose `expires` has passed answers
+every field one can carry. It writes the locator — `path`, `item`, `rule`,
+`original` and the line as a hint — rather than the identity, because an
+identity is a function of the whole file and the edit that closes a survivor is
+an edit to that file: a recorded identity stops naming anything the moment
+somebody does the thing the acceptance was written about. An `id` is still read
+for a record written before this, and still resolves by prefix. An acceptance whose `expires` has passed answers
 for nothing and the findings it was hiding are raised again; one that names no
 date never lapses.
 

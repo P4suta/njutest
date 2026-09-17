@@ -149,6 +149,10 @@ pub struct Judged {
     pub path: String,
     /// The rule that proposed it.
     pub rule: String,
+    /// The item it sits in, which is how a reader names it after editing the file.
+    pub item: String,
+    /// The bytes the edit replaces.
+    pub original: String,
     /// Where it is, when the catalog could say.
     pub position: Option<crate::report::Position>,
     /// What was established.
@@ -492,7 +496,14 @@ fn establish(
         id: mutant.id.clone(),
         display_id: mutant.display_id.clone(),
         path: mutant.candidate.path.clone(),
-        rule: mutant.candidate.rule.to_string(),
+        rule: mutant.candidate.rule.name.to_owned(),
+        item: judging
+            .subject
+            .session
+            .item_of(mutant.index)
+            .unwrap_or_default()
+            .to_owned(),
+        original: String::from_utf8_lossy(&mutant.candidate.original).into_owned(),
         position,
         disposition,
         source_run_id: source,

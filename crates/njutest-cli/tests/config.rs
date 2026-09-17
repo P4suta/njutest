@@ -332,6 +332,11 @@ fn an_acceptance_expires_at_the_instant_it_names() {
     let after = jiff::Timestamp::from_second(1_800_000_001).expect("in range");
     let expiring = Acceptance {
         id: "0123456789abcdef".to_owned(),
+        path: None,
+        item: None,
+        rule: None,
+        original: None,
+        line: None,
         reason: "reviewed".to_owned(),
         expires: Some(boundary),
         owner: None,

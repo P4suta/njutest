@@ -26,6 +26,7 @@ fn mutant(path: &str, digest: &str) -> RunMutantDocument {
         package: "demo".to_owned(),
         family: "comparison".to_owned(),
         rule: "gt-to-ge".to_owned(),
+        item: "demo".to_owned(),
         rule_version: 1,
         line: 2,
         column: 7,

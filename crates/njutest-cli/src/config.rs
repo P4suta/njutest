@@ -307,7 +307,29 @@ pub struct Generation {
 #[serde(deny_unknown_fields)]
 pub struct Acceptance {
     /// The mutant, by identity or by a prefix that names exactly one.
+    ///
+    /// An identity is a function of the whole file, so it is re-minted by any
+    /// edit to that file — including the edit somebody makes next. An
+    /// acceptance is a durable record, so it is worth writing the locator
+    /// instead: `path`, `item`, `rule` and `original` name the same mutation
+    /// after the file has changed around it.
+    #[serde(default)]
     pub id: String,
+    /// The workspace-relative path the mutation is in, for a locator.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    /// The item the mutation is in, by a suffix of its path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub item: Option<String>,
+    /// The rule that produced it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rule: Option<String>,
+    /// The bytes the edit replaces, as text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original: Option<String>,
+    /// The line, as a hint that separates two mutations the rest would name together.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line: Option<u32>,
     /// Why it was accepted. Required: an acceptance without a reason is a suppression, and a report cannot audit one.
     pub reason: String,
     /// When the acceptance lapses, after which it answers for nothing.
@@ -322,6 +344,28 @@ pub struct Acceptance {
 }
 
 impl Acceptance {
+    /// The locator this acceptance writes, when it writes one rather than an identity.
+    #[must_use]
+    pub fn locator(&self) -> Option<rust_mutants::session::Locator> {
+        Some(rust_mutants::session::Locator {
+            path: self.path.clone()?,
+            item: self.item.clone()?,
+            rule: self.rule.clone()?,
+            original: self.original.clone().unwrap_or_default(),
+            line: self.line,
+            count: None,
+        })
+    }
+
+    /// What a reader wrote to name the mutation, for a message about it.
+    #[must_use]
+    pub fn named(&self) -> String {
+        self.locator().map_or_else(
+            || self.id.clone(),
+            |one| format!("{}:{}:{}", one.path, one.item, one.rule),
+        )
+    }
+
     /// Whether this acceptance still answers for anything at `now`.
     #[must_use]
     pub fn holds(&self, now: jiff::Timestamp) -> bool {
@@ -613,7 +657,11 @@ contract = \"standard-v1\"        # \"standard-v1\" | \"deep-v1\"
 # environment = [\"GENERATOR_TOKEN\"]
 
 # [[acceptance]]
-# id = \"0123456789abcdef\"
+# path = \"src/lib.rs\"      # a locator survives an edit to the file; an identity does not,
+# item = \"clamp\"           # because it is a function of the file's bytes and the edit
+# rule = \"le-to-lt\"        # that fixes a survivor is one to the same file
+# original = \"<=\"
+# line = 42                 # a hint, when the rest names more than one
 # reason = \"reviewed equivalent boundary\"
 # expires = \"2026-12-31T00:00:00Z\"
 # owner = \"quality-team\"

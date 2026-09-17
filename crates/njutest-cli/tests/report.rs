@@ -362,6 +362,8 @@ fn mutant(id: &str) -> njutest_cli::report::MutantRecord {
             character_column: 1,
         },
         rule: "gt-to-ge@1".to_owned(),
+        item: "demo".to_owned(),
+        original: ">".to_owned(),
         outcome: "killed".to_owned(),
         killed_by: Some("core/lib/core one".to_owned()),
         reused: false,

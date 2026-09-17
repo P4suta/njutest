@@ -20,6 +20,7 @@ fn mutant(index: u32, outcome: &str, expected: bool) -> RunMutantDocument {
         package: "demo".to_owned(),
         family: "comparison".to_owned(),
         rule: "gt-to-ge".to_owned(),
+        item: "demo".to_owned(),
         rule_version: 1,
         line: 11,
         column: 8,
@@ -393,6 +394,7 @@ fn survivor(path: &str, rule: &str, line: u32) -> RunMutantDocument {
     RunMutantDocument {
         path: path.to_owned(),
         rule: rule.to_owned(),
+        item: "demo".to_owned(),
         line,
         ..mutant(line, "survived", false)
     }

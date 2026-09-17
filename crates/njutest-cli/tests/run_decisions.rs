@@ -39,6 +39,11 @@ fn candidate(path: &str, span: (u32, u32)) -> Candidate {
 fn acceptance(id: &str, expires: Option<jiff::Timestamp>) -> Acceptance {
     Acceptance {
         id: id.to_owned(),
+        path: None,
+        item: None,
+        rule: None,
+        original: None,
+        line: None,
         reason: "reviewed".to_owned(),
         expires,
         owner: None,
@@ -96,6 +101,7 @@ fn only_an_unexpired_acceptance_that_uniquely_names_this_catalog_is_honoured() {
 
     let resolved = resolve_acceptances(
         &catalog,
+        &|_locator| Err(String::from("this test writes no locators")),
         &[
             acceptance(unique_prefix, None),
             acceptance("not-hex", None),

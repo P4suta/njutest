@@ -395,6 +395,12 @@ pub struct MutantRecord {
     pub position: Position,
     /// The rule that proposed it.
     pub rule: String,
+    /// The item the mutation sits in, which is how a reader names it after editing the file.
+    #[serde(default)]
+    pub item: String,
+    /// The bytes the edit replaces, which narrow a locator to one of several on a line.
+    #[serde(default)]
+    pub original: String,
     /// What the run established.
     pub outcome: String,
     /// The target that noticed it, when one did.

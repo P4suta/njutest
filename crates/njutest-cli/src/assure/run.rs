@@ -921,6 +921,7 @@ pub struct ResolvedAcceptances {
 #[must_use]
 pub fn resolve_acceptances(
     catalog: &rust_mutants::catalog::Catalog,
+    locate: &dyn Fn(&rust_mutants::session::Locator) -> Result<String, String>,
     acceptances: &[Acceptance],
     now: Timestamp,
 ) -> ResolvedAcceptances {
@@ -932,13 +933,22 @@ pub fn resolve_acceptances(
         .iter()
         .filter(|acceptance| acceptance.holds(now))
     {
-        match catalog.resolve_prefix(&acceptance.id) {
-            Ok(mutant) => {
-                let _new = resolved.ids.insert(mutant.id.clone());
+        let found = acceptance.locator().map_or_else(
+            || {
+                catalog
+                    .resolve_prefix(&acceptance.id)
+                    .map(|mutant| mutant.id.clone())
+                    .map_err(|error| error.to_string())
+            },
+            |locator| locate(&locator),
+        );
+        match found {
+            Ok(id) => {
+                let _new = resolved.ids.insert(id);
             }
             Err(error) => resolved.findings.push(Finding::new(
                 FindingKind::UnmatchedAcceptance,
-                &acceptance.id,
+                &acceptance.named(),
                 &format!(
                     "the acceptance names no single mutant in this catalog: {error}; review or remove it"
                 ),
@@ -958,6 +968,12 @@ fn run_mutation(
     let session = mutating.session;
     let accepted = resolve_acceptances(
         session.catalog(),
+        &|locator| {
+            session
+                .locate(locator)
+                .map(|mutant| mutant.id.clone())
+                .map_err(|error| error.to_string())
+        },
         &mutating.request.config.acceptance,
         mutating.request.started,
     );
@@ -1186,6 +1202,8 @@ pub fn record(report: &mut Report, mutation: &mutation::Mutation, accepted: &BTr
                 character_column: 1,
             }),
             rule: judged.rule.clone(),
+            item: judged.item.clone(),
+            original: judged.original.clone(),
             outcome: judged.disposition.name().to_owned(),
             killed_by: judged.disposition.decided_by().map(ToOwned::to_owned),
             reused: judged.source_run_id.is_some(),

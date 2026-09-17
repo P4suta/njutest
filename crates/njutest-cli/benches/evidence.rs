@@ -72,6 +72,8 @@ fn survivors(count: u32) -> (Vec<Judged>, Vec<Decided>) {
             display_id: format!("crates/core/src/lib.rs:{index}:comparison-swap"),
             path: "crates/core/src/lib.rs".to_owned(),
             rule: "le-to-lt".to_owned(),
+            item: "demo".to_owned(),
+            original: ">".to_owned(),
             position: None,
             disposition: Disposition::Survived {
                 route: Route::All {

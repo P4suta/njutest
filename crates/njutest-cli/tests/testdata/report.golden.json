@@ -138,6 +138,8 @@
         "character_column": 9
       },
       "rule": "lt-to-le@1",
+      "item": "demo",
+      "original": ">",
       "outcome": "killed",
       "killed_by": "0123456789abcdef",
       "reused": true,

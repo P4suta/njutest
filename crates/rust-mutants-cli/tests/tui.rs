@@ -57,6 +57,7 @@ fn mutant(index: u32, outcome: &str, rule: &str) -> RunMutantDocument {
         package: "demo".to_owned(),
         family: "comparison".to_owned(),
         rule: rule.to_owned(),
+        item: "demo".to_owned(),
         rule_version: 1,
         line: 11,
         column: 8,

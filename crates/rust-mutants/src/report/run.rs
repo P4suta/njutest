@@ -143,6 +143,9 @@ pub struct RunMutantDocument {
     pub family: String,
     /// The rule's name.
     pub rule: String,
+    /// The item the mutation sits in, which is how a finding is matched across an edit.
+    #[serde(default)]
+    pub item: String,
     /// The rule's version, which enters the identity.
     pub rule_version: u32,
     /// The 1-based line of the edit.
@@ -391,6 +394,7 @@ fn mutant(one: &crate::run::Judged, catalog: Option<MutantDocument>) -> RunMutan
         package: catalog.package,
         family: catalog.family,
         rule: catalog.rule,
+        item: catalog.item,
         rule_version: catalog.rule_version,
         line: catalog.line,
         column: catalog.column,

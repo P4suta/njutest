@@ -624,6 +624,8 @@
         "path",
         "position",
         "rule",
+        "item",
+        "original",
         "outcome",
         "killed_by",
         "reused",
@@ -648,6 +650,12 @@
         "rule": {
           "type": "string",
           "minLength": 1
+        },
+        "item": {
+          "type": "string"
+        },
+        "original": {
+          "type": "string"
         },
         "outcome": {
           "type": "string",
