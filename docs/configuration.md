@@ -50,6 +50,9 @@ target = ""                     # target triple; empty = the host
 [mutation]
 equivalence = false             # ask the compiler whether it renders each survivor identically
 
+[oracle]
+ask = false                     # weaken each assertion the tests make and see whether the test fails
+
 [cache]
 max_bytes = 5368709120          # 5 GiB
 ttl = "720h"                    # 30 days

@@ -127,6 +127,8 @@ pub struct PrepareOptions {
     pub tier: Tier,
     /// Exactly these rules, by name. Empty means the tier.
     pub operators: Vec<String>,
+    /// Mutate the tests rather than passing over them, which asks whether their own assertions are load-bearing.
+    pub oracle: bool,
     /// Start every test process in a directory of its own rather than where cargo would.
     pub scratch_working_directory: bool,
     /// Patterns a file must match to be mutable.
@@ -172,6 +174,7 @@ impl Default for PrepareOptions {
         Self {
             tier: Tier::Balanced,
             operators: Vec::new(),
+            oracle: false,
             scratch_working_directory: false,
             include: Vec::new(),
             exclude: Vec::new(),

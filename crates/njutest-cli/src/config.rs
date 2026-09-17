@@ -84,6 +84,8 @@ pub struct Config {
     pub acceptance: Vec<Acceptance>,
     /// The builds to measure beyond the one `[execution]` describes.
     pub configuration: Vec<Configuration>,
+    /// Whether the run asks the tests whether their own assertions are load-bearing.
+    pub oracle: Oracle,
 }
 
 impl Default for Config {
@@ -102,6 +104,7 @@ impl Default for Config {
             generation: None,
             acceptance: Vec::new(),
             configuration: Vec::new(),
+            oracle: Oracle::default(),
         }
     }
 }
@@ -321,6 +324,14 @@ pub struct Generation {
     /// Environment variable names it may see.
     #[serde(default)]
     pub environment: Vec<String>,
+}
+
+/// Whether a run asks the tests about themselves.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct Oracle {
+    /// Weaken each assertion the tests make and see whether the test that holds it fails. It costs a second preparation of the whole tree, and a test that passes with its own assertion weakened is a finding.
+    pub ask: bool,
 }
 
 /// What the report calls the build `[execution]` describes.
@@ -725,6 +736,9 @@ contract = \"standard-v1\"        # \"standard-v1\" | \"deep-v1\"
 
 [mutation]
 # equivalence = false            # ask the compiler about every survivor
+
+[oracle]
+# ask = false                    # weaken each assertion the tests make and see whether they fail
 
 [cache]
 # max_bytes = {max_bytes}
