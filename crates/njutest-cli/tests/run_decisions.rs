@@ -48,6 +48,7 @@ fn acceptance(id: &str, expires: Option<jiff::Timestamp>) -> Acceptance {
 
 fn request(config: Config, packages: &[&str]) -> Request {
     Request {
+        configuration: ".njutest.toml".to_owned(),
         root: std::path::PathBuf::from("/nowhere"),
         config,
         packages: packages.iter().map(|name| (*name).to_owned()).collect(),

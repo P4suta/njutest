@@ -47,9 +47,11 @@
     "resolved_packages": [
       "core"
     ],
+    "included": [],
     "excluded": [
       "**/generated/**"
     ],
+    "configuration": ".njutest.toml",
     "shard": null
   },
   "timing": {

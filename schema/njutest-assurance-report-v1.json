@@ -185,7 +185,9 @@
       "required": [
         "requested_packages",
         "resolved_packages",
+        "included",
         "excluded",
+        "configuration",
         "shard"
       ],
       "properties": {
@@ -206,6 +208,15 @@
           "items": {
             "type": "string"
           }
+        },
+        "included": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "configuration": {
+          "type": "string"
         },
         "shard": {
           "oneOf": [

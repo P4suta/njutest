@@ -113,6 +113,20 @@ pub fn run(
 }
 
 /// Everything one verification needs to establish its own answer.
+/// The configuration file this run read, or nothing when it read none.
+///
+/// A repository that uses both products has `.njutest.toml` and
+/// `.rust-mutants.toml` a few lines apart in the same directory, and somebody
+/// who has just written one of them and then runs the other tool is looking at
+/// settings they did not write. Saying which file the scope came from costs a
+/// line and is the only thing in a position to say it.
+fn read_from(root: &Path) -> String {
+    if root.join(crate::config::FILE_NAME).is_file() {
+        return crate::config::FILE_NAME.to_owned();
+    }
+    String::new()
+}
+
 struct Establishing<'a> {
     arguments: &'a Verify,
     environment: &'a Environment,
@@ -171,6 +185,7 @@ fn establish(establishing: &Establishing<'_>, streams: Streams<'_>) -> u8 {
     };
     let request = Request {
         root: root.to_path_buf(),
+        configuration: read_from(root),
         config: establishing.config.clone(),
         packages: packages(arguments, &establishing.config),
         test_args: harness_args(arguments, &establishing.config),

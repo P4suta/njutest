@@ -25,6 +25,7 @@ contract = "standard-v1"        # "standard-v1" | "deep-v1"
 
 [project]
 packages = []                   # cargo package names; empty = every workspace member
+include = []                    # workspace-relative globs a file must match to be mutated
 exclude = ["**/generated/**"]   # workspace-relative globs; the files are not mutated
 
 [execution]
@@ -106,8 +107,10 @@ baseline, the mutation phase, the equivalence layer, `plan`, `replay` and
 run that measured the default build while the project ships another would put
 a verdict on a program nobody runs.
 
-`[project] exclude` says which files are mutated and nothing else. Every file
-it names is still copied into the tree, still compiled, and still run, so the
+`[project] include` and `[project] exclude` say which files are mutated and
+nothing else, and they are each other's pair: a project verifying four files
+out of a hundred writes four patterns rather than ninety-six. Every file they
+name is still copied into the tree, still compiled, and still run, so the
 patterns never turn a workspace that builds into one that does not, and a run
 is a function of their bytes whether or not a mutation was put to them: the
 evidence a run leaves behind is keyed on the whole tree, and `njutest watch`
@@ -116,10 +119,10 @@ findings, which is why the report carries the patterns in `scope.excluded` and
 why a run left with no mutation to put to a test concludes `INSUFFICIENT`
 rather than assuring what it did not ask. A pattern that is not a pattern —
 a leading or trailing `/`, an empty string — is refused when the file is read,
-so a typo narrows nothing silently. The engine spells the same key
-differently: `rust-mutants`' `[project] exclude` removes a path from the
-snapshot as well, which is a decision a tool that only mutates can take and an
-assurance runner cannot.
+so a typo narrows nothing silently. `rust-mutants` spells both keys the same
+way and means the same thing by them. A file the copy should not carry at all
+is `[snapshot] omit`, which only the engine has, because a runner that did not
+copy a file could not compile the workspace it is verifying.
 
 There is no `profile` key — `cargo test`'s `test` profile is the one under
 verification — and no `toolchain` key: `rust-toolchain.toml` is the idiomatic

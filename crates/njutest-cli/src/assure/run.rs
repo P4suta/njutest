@@ -49,6 +49,8 @@ pub struct Request {
     pub engine_trace: rust_mutants::trace::Recorder,
     /// What this run is, as numbers. Empty when the tree could not be read, which states a limitation rather than failing the run.
     pub evidence: crate::assure::identity::Evidence,
+    /// The configuration file the run read, as a reader would name it. Empty when there was none.
+    pub configuration: String,
     /// The change set to mutate within, when the run was asked for one.
     pub changed: Option<git::Change>,
     /// Where scheduling state for an interrupted run is kept. `None` keeps none, which is what a run told to establish everything afresh does.
@@ -642,8 +644,16 @@ pub fn identity(request: &Request) -> Report {
     report.scope.shard = request.shard.map(|shard| shard.to_string());
     report
         .scope
+        .included
+        .clone_from(&request.config.project.include);
+    report
+        .scope
         .excluded
         .clone_from(&request.config.project.exclude);
+    report
+        .scope
+        .configuration
+        .clone_from(&request.configuration);
     if !request.config.execution.skip_targets.is_empty() {
         report.limitations.push(Limitation::new(
             rust_mutants::limitation::TARGET_SKIPPED_BY_CONFIGURATION,
@@ -1170,7 +1180,7 @@ fn prepare(
     Ok(workspace.prepare(
         &rust_mutants::session::PrepareOptions {
             packages: request.packages.clone(),
-            include: within(request.changed.as_ref()),
+            include: narrowing(request),
             exclude: request.config.project.excluded(),
             build: request.config.execution.build(),
             harness_args: request.test_args.clone(),
@@ -1253,9 +1263,18 @@ fn package_id(metadata: &Metadata, name: &str) -> Option<String> {
         .map(|package| package.id.clone())
 }
 
-/// The files a change set names, as the patterns the engine mutates within. A run that is not about a change set restricts nothing.
-fn within(change: Option<&git::Change>) -> Vec<rust_mutants::glob::Pattern> {
-    change.map_or_else(Vec::new, |change| rust_mutants::git::within(change, &[]))
+/// Which files anything may be mutated in: what the configuration allows, narrowed to what changed.
+///
+/// An empty include list is every file, so either one alone is itself. Both
+/// together is the intersection and never the union: `--changed` narrows what
+/// a run looks at, and a run told to look at four files and then told to look
+/// at what changed has not been told to look at more.
+fn narrowing(request: &Request) -> Vec<rust_mutants::glob::Pattern> {
+    let configured = request.config.project.included();
+    let Some(change) = request.changed.as_ref() else {
+        return configured;
+    };
+    rust_mutants::git::within(change, &configured)
 }
 
 /// Puts what the mutation phase judged into the report: the counts, one row per mutation, the findings, and what was not mutated.

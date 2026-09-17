@@ -106,6 +106,15 @@ impl Default for Config {
 pub struct Project {
     /// The cargo packages to verify. Empty is every workspace member.
     pub packages: Vec<String>,
+    /// Workspace-relative globs a file must match for anything in it to be mutated. Empty is every file.
+    ///
+    /// The pair of [`Project::exclude`], and here for the reason a pair is
+    /// worth having: a project that wants four files verified out of a hundred
+    /// writes four patterns here, and one that has only this key writes
+    /// ninety-six there. The engine has both, and a project narrowing the same
+    /// scope in both files should not have to say it as a permission in one
+    /// and a prohibition in the other.
+    pub include: Vec<String>,
     /// Workspace-relative globs whose files are left out of the mutations, which the report carries as an explicit limitation.
     pub exclude: Vec<String>,
 }
@@ -119,6 +128,15 @@ impl Project {
     /// pattern that does not compile cannot reach here, because
     /// [`Config::parse`] refuses it; one that somehow does is left out, which
     /// mutates more rather than less.
+    #[must_use]
+    pub fn included(&self) -> Vec<rust_mutants::glob::Pattern> {
+        self.include
+            .iter()
+            .filter_map(|pattern| rust_mutants::glob::Pattern::compile(pattern).ok())
+            .collect()
+    }
+
+    /// The exclusions, compiled.
     #[must_use]
     pub fn excluded(&self) -> Vec<rust_mutants::glob::Pattern> {
         self.exclude
@@ -571,6 +589,7 @@ contract = \"standard-v1\"        # \"standard-v1\" | \"deep-v1\"
 
 [project]
 # packages = []                  # cargo package names; empty = every member
+# include = []                   # workspace-relative globs a file must match to be mutated
 # exclude = []                   # workspace-relative globs; the files are not mutated
 
 [execution]

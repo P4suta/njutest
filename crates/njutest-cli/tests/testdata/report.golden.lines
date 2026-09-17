@@ -1,7 +1,7 @@
 RUN	run=20260905T081500Z-abcdef	kind=full	contract=standard-v1
 TOOLCHAIN	rustc=unavailable	cargo=unavailable	target=unavailable	os=unavailable	arch=unavailable
 REPOSITORY	root=fixture-workspace	packages=2	commit=unavailable	branch=unavailable	dirty=false
-SCOPE	requested=(nothing named)	resolved=(nothing named)	excluded=(nothing named)
+SCOPE	requested=(nothing named)	resolved=(nothing named)	included=(nothing named)	excluded=(nothing named)	from=(defaults)
 TIMING	started=2026-09-05T08:15:00Z	finished=2026-09-05T08:16:12Z	duration_ms=72000
 TARGETS	selected=2	passed=1	failed=1	skipped=0	missing=0
 MUTANTS	cataloged=9	rejected=0	executed=0	killed=0	survived=1	timed_out=0	unreached=0	accepted=0	reused_killed=0	reused_survived=0

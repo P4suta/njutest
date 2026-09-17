@@ -111,7 +111,16 @@ fn identity(report: &Report, out: &mut String) {
         &[
             &format!("requested={}", named(&report.scope.requested_packages)),
             &format!("resolved={}", named(&report.scope.resolved_packages)),
+            &format!("included={}", named(&report.scope.included)),
             &format!("excluded={}", named(&report.scope.excluded)),
+            &format!(
+                "from={}",
+                if report.scope.configuration.is_empty() {
+                    "(defaults)"
+                } else {
+                    &report.scope.configuration
+                }
+            ),
         ],
     );
     out.push('\n');

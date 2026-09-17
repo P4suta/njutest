@@ -76,7 +76,9 @@ fn populated() -> Report {
         scope: Scope {
             requested_packages: vec!["core".to_owned()],
             resolved_packages: vec!["core".to_owned()],
+            included: Vec::new(),
             excluded: vec!["**/generated/**".to_owned()],
+            configuration: ".njutest.toml".to_owned(),
             shard: None,
         },
         timing: Timing {

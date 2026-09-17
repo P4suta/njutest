@@ -19,6 +19,7 @@ use njutest_cli::report::{RunKind, UNAVAILABLE};
 
 fn asked(root: &str) -> Request {
     Request {
+        configuration: ".njutest.toml".to_owned(),
         root: PathBuf::from(root),
         config: Config::default(),
         packages: Vec::new(),

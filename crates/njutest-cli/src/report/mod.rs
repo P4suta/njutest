@@ -256,8 +256,19 @@ pub struct Scope {
     pub requested_packages: Vec<String>,
     /// The packages the run settled on.
     pub resolved_packages: Vec<String>,
+    /// The patterns a file had to match for anything in it to be mutated.
+    #[serde(default)]
+    pub included: Vec<String>,
     /// The patterns that removed files from the scope.
     pub excluded: Vec<String>,
+    /// The file these came from, so a reader knows which of two configurations they are looking at.
+    ///
+    /// A repository that uses both products has two configuration files a few
+    /// lines apart. Somebody who has just set one of them up and then runs the
+    /// other tool is looking at settings they did not write, and the run is
+    /// the only thing in a position to say which file it read.
+    #[serde(default)]
+    pub configuration: String,
     /// Which part of the catalog this run judged, as `K/N`, or nothing when it judged every one.
     #[serde(default)]
     pub shard: Option<String>,
