@@ -84,6 +84,7 @@ fn report() -> Report {
         rule: "lt-to-le@1".to_owned(),
         item: "demo".to_owned(),
         original: ">".to_owned(),
+        replacement: ">=".to_owned(),
         outcome: "survived".to_owned(),
         killed_by: None,
         reused: false,

@@ -135,6 +135,10 @@ windows-sys = { version = "0.61", features = [
 ] }
 jiff = "0.2"
 ratatui = "0.30"
+# How wide a character is on a terminal, which is not how many bytes or how many
+# `char`s it is. Already in the graph under ratatui, so this costs nothing but
+# the honesty of naming what the renderer depends on.
+unicode-width = "0.2"
 signal-hook = { version = "0.4", default-features = false }
 globset = "0.4"
 walkdir = "2.5"
