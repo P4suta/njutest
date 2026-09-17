@@ -11,7 +11,7 @@ Accepted, 2026-09-18. Bounds every finding this workspace can raise.
 
 ## Context
 
-Seven times now, in two independent lines of work, the same defect has been
+Eight times now, in two independent lines of work, the same defect has been
 written and then caught. Each time it looked like a new inference about the
 suite. Each time it was a restatement of how the run had measured, wearing
 the grammar of a conclusion.
@@ -56,6 +56,23 @@ True, and unknowable from a recording that kept the parsed status code and
 discarded the status line, because the injection rebuilds a reason phrase and
 the recording no longer says what the original one was.
 
+**A mutation that ran out of time was decided by the tests.** The engine is
+right to say so — the process hung with the mutation active, and that is a
+detection. njutest is measuring something else: it gives a timeout its own
+column, and raises a finding reading *an expired budget establishes nothing
+about the mutation*, because a bound is a budget and a result resting on one
+is not a proof ([ADR 0004](0004-proof-layers-not-budgets.md)). A third table
+then said a timeout was a detection at the second-highest standing, so a
+build that timed out was not a hole and a release-only timeout vanished from
+`blind_in` entirely.
+
+That last one is a different sub-kind and the reason it is here: nothing about
+it was *wrong to write*. Three tables each said something defensible about the
+same fact, and the defect was that there were three. A value with more than one
+source of truth disagrees eventually, and the disagreement is invisible until
+somebody reads all three at once — which is not a thing to arrange. One table,
+read through by everything that needs it, cannot contradict itself.
+
 ## Decision
 
 **A run concludes about its subject. It may not conclude from an artifact of
@@ -63,23 +80,45 @@ how it measured.** Before a finding is raised, the premise it rests on has to
 be something the run actually established, not something the measurement's own
 shape makes true.
 
-Four ways out, in the order to try them:
+Five ways out. Which comes first depends on where the fault is: when the
+measurement is short, capture what is missing; when the measurement is there
+and the type is too wide to say what was measured, make the wrong reading
+unrepresentable.
 
-1. **Capture what is missing.** The gap is usually in the measurement rather
+1. **Make the state unrepresentable, and say each fact once.** A `String`
+   whose legal values are a fixed list, a `match` with a `_` arm over a closed
+   set, one enum whose arms answer to different invariants, and one fact
+   spelled out in three tables are all the same thing: a program with room in
+   it for a sentence nobody meant. Close the set and the compiler
+   refuses the defect rather than a reviewer catching it. Three of the seven
+   above are of this kind, and each was found the moment the type narrowed:
+   `Decision::blind()` returning `Option<Blind>` over three values rather than
+   a `filter` over six turned "which builds is this a hole in" into a question
+   the compiler makes somebody answer for every decision there will ever be,
+   and splitting `Blindness` in two made `njutest verify` stop counting a
+   timed-out mutation as a gap in somebody's tests, because the function that
+   counts gaps could no longer be handed one.
+2. **Capture what is missing.** The gap is usually in the measurement rather
    than the reasoning: record whether the exchange came past, record the status
    line beside the parsed code. Then the premise is checkable rather than
    assumed.
-2. **Count only what was answered.** An attempt that established nothing is
+3. **Count only what was answered.** An attempt that established nothing is
    not a chance the subject failed to take, and the count is the whole weight
    of a claim like "put to 31 and noticed none".
-3. **Refuse at a scope that cannot answer.** A part says `SCOPE_ASSURED` and
+4. **Refuse at a scope that cannot answer.** A part says `SCOPE_ASSURED` and
    not `ASSURED`; the same rule one level down means a part does not raise a
    finding about a target over the whole catalog, and `njutest merge` raises
    it from the combined records.
-4. **Abandon the inference.** Weakening an assertion and the first-killer
+5. **Abandon the inference.** Weakening an assertion and the first-killer
    artifact have no repair, because there is no measurement that would make
    them sound. A framing that cannot be made honest is retracted rather than
    qualified.
+
+**A check the type makes impossible is deleted rather than kept.** An audit
+variant that refuses a value the enum can no longer hold does not add a
+second guarantee; it says the type is not trusted, and it is one more place
+to drift out of step with the model it is checking. When a state becomes
+unrepresentable, the runtime refusal of it goes with it.
 
 ## Consequences
 
@@ -107,6 +146,15 @@ matches every `FindingKind` with no catch-all, so a new kind does not silently
 inherit another's sentence. The same applies to a mutation's outcome and to a
 build's decision: a `_` arm in either is this defect waiting to be written
 again by somebody who adds a variant.
+
+**Two things that answer to different invariants are two types.** A gap in the
+tests has a test that closes it and a `replay` that proves the closing; a gap
+in the run has neither, and offering either tells somebody they succeeded at
+something they did not do. Held in one enum, that invariant is a note for
+whoever adds the next arm. Held apart, `Blindness::replay_proves` exists and
+`Unsettled` has no such method, so the briefing's only function that offers a
+`replay` is the one that takes a `Blindness` — and the wrong briefing cannot
+be written rather than being caught in review.
 
 **Nothing here is a budget.** No threshold, no cutoff, no "more than N is
 suspicious" ([ADR 0004](0004-proof-layers-not-budgets.md)). A finding either
