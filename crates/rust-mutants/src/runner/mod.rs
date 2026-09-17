@@ -65,6 +65,38 @@ impl Cancel {
     }
 }
 
+/// How long a child may run before this process stops it.
+///
+/// A required argument rather than a field with a default, because a wait
+/// nobody bounded is a wait that can be forever: five commands here asked a
+/// tool for its version with no bound at all, and one of them held a Windows
+/// runner for forty minutes until the job's own timeout killed it. There is no
+/// value of this that can be reached by forgetting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Bound {
+    /// Stopped after this long, and reported as [`RunResult::timed_out`].
+    After(Duration),
+    /// Never stopped by this process, which is a claim that something else ends it.
+    Unbounded,
+}
+
+/// How long a tool asked a question it already knows the answer to may take.
+///
+/// A version banner, a path the compiler prints, a line from git: none of them
+/// does work, so a minute is already an answer of its own.
+pub const PROBE: Duration = Duration::from_secs(60);
+
+impl Bound {
+    /// The bound as the runner holds it.
+    #[must_use]
+    pub const fn timeout(self) -> Option<Duration> {
+        match self {
+            Self::After(bound) => Some(bound),
+            Self::Unbounded => None,
+        }
+    }
+}
+
 /// One process to run.
 #[derive(Debug, Clone, Default)]
 #[non_exhaustive]
@@ -84,15 +116,16 @@ pub struct Spec {
 }
 
 impl Spec {
-    /// A spec for `argv` with every default.
+    /// A spec for `argv`, bounded as `bound` says, with every other default.
     #[must_use]
-    pub fn new<I, S>(argv: I) -> Self
+    pub fn new<I, S>(argv: I, bound: Bound) -> Self
     where
         I: IntoIterator<Item = S>,
         S: Into<OsString>,
     {
         Self {
             argv: argv.into_iter().map(Into::into).collect(),
+            timeout: bound.timeout(),
             ..Self::default()
         }
     }

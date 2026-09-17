@@ -13,6 +13,10 @@ use std::time::Duration;
 /// nothing on the machine that needed the answer. What it prevents is a probe
 /// on a wedged filesystem hanging instead of reporting the slow execution it
 /// was there to find.
+///
+/// macOS evaluates a newly written Mach-O before it may run and Windows scans
+/// a newly written executable, so both are machines this measures; what varies
+/// is only the name the copy has to have.
 pub const PROBE_LIMIT: Duration = Duration::from_secs(600);
 
 /// Copies a program nobody has run from this path before, runs it twice, and hands back what each run took.
@@ -24,7 +28,6 @@ pub const PROBE_LIMIT: Duration = Duration::from_secs(600);
 /// # Errors
 /// What stopped the measurement, which is itself a thing to be told: a silence
 /// here reads as a machine that is well.
-#[cfg(unix)]
 pub fn exec_twice(temp: &Path, program: &Path) -> Result<(Duration, Duration), String> {
     let dir = temp.join(format!(
         "{}exec-{}",
@@ -37,11 +40,10 @@ pub fn exec_twice(temp: &Path, program: &Path) -> Result<(Duration, Duration), S
 }
 
 /// The two runs, or what stopped them, which is a thing to be told rather than a silence.
-#[cfg(unix)]
 fn made(dir: &Path, program: &Path) -> Result<(Duration, Duration), String> {
     std::fs::create_dir_all(dir)
         .map_err(|why| format!("{} could not be made: {why}", dir.display()))?;
-    let path = dir.join("probe");
+    let path = dir.join(if cfg!(windows) { "probe.exe" } else { "probe" });
     std::fs::copy(program, &path).map_err(|why| {
         format!(
             "{} could not be copied to {}: {why}",
@@ -52,23 +54,12 @@ fn made(dir: &Path, program: &Path) -> Result<(Duration, Duration), String> {
     Ok((timed(&path)?, timed(&path)?))
 }
 
-/// Copies a program nobody has run from this path before, runs it twice, and hands back what each run took.
-///
-/// # Errors
-/// That this platform is not one this release measures on.
-#[cfg(not(unix))]
-pub fn exec_twice(_temp: &Path, _program: &Path) -> Result<(Duration, Duration), String> {
-    Err(format!(
-        "this release measures it on Unix and this is {}",
-        std::env::consts::OS
-    ))
-}
-
 /// How long one run of `path` took, or nothing when it could not be started or would not finish.
-#[cfg(unix)]
 fn timed(path: &Path) -> Result<Duration, String> {
-    let mut spec = crate::runner::Spec::new([path.as_os_str().to_owned(), "--version".into()]);
-    spec.timeout = Some(PROBE_LIMIT);
+    let spec = crate::runner::Spec::new(
+        [path.as_os_str().to_owned(), "--version".into()],
+        crate::runner::Bound::After(PROBE_LIMIT),
+    );
     let result = crate::runner::run(&spec, &crate::runner::Cancel::new());
     if let Some(why) = result.error {
         return Err(format!("{} would not start: {why}", path.display()));

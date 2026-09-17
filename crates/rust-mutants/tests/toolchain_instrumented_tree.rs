@@ -203,7 +203,10 @@ impl Tree {
     /// Runs one test binary with the given activation.
     fn exec(&self, binary: &str, active: Option<&str>, catalog: Option<&str>) -> RunResult {
         let executable = self.binaries.get(binary).expect("a built test binary");
-        let mut spec = Spec::new([executable.as_os_str()]);
+        let mut spec = Spec::new(
+            [executable.as_os_str()],
+            rust_mutants::runner::Bound::Unbounded,
+        );
         spec.dir = Some(self.root.clone());
         let mut env: Vec<(OsString, OsString)> = std::env::vars_os()
             .filter(|(key, _)| {

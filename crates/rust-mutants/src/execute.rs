@@ -14,7 +14,7 @@ use crate::cargo::{
 };
 use crate::instrument::{ACTIVE_ENV, CATALOG_ENV, STALE_CATALOG_EXIT, TOUCH_ENV};
 use crate::outcome::Outcome;
-use crate::runner::{Cancel, EXIT_CODE_UNAVAILABLE, RunResult, Spec, run};
+use crate::runner::{Bound, Cancel, EXIT_CODE_UNAVAILABLE, RunResult, Spec, run};
 use crate::trace::{ExecRecord, Recorder};
 
 /// Every variable the engine owns. A test process sees exactly the ones this run set, never one an outer run left behind.
@@ -668,7 +668,10 @@ pub fn exec(
     trace: &Recorder,
 ) -> MutantResult {
     let target = request.target;
-    let mut spec = Spec::new(request.argv());
+    let mut spec = Spec::new(
+        request.argv(),
+        request.timeout.map_or(Bound::Unbounded, Bound::After),
+    );
     spec.dir = Some(match (&request.scratch, request.scratch_cwd) {
         (Some(scratch), true) => scratch.clone(),
         _ => target.cwd.clone(),

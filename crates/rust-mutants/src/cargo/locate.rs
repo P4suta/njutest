@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use super::version::{VersionInfo, parse_version};
 use super::{CargoError, CargoErrorKind};
-use crate::runner::{Cancel, PROBE_OUTPUT_LIMIT, Spec, run};
+use crate::runner::{Bound, Cancel, PROBE, PROBE_OUTPUT_LIMIT, Spec, run};
 
 /// Configures [`Toolchain::locate`].
 #[derive(Debug, Clone, Default)]
@@ -55,7 +55,10 @@ impl Toolchain {
             Ok,
         )?;
         let banner = |program: &Path| -> Result<VersionInfo, CargoError> {
-            let mut spec = Spec::new([program.as_os_str(), OsStr::new("-vV")]);
+            let mut spec = Spec::new(
+                [program.as_os_str(), OsStr::new("-vV")],
+                Bound::After(PROBE),
+            );
             spec.dir = Some(dir.to_path_buf());
             spec.env.clone_from(&options.env);
             spec.structured_stdout = Some(PROBE_OUTPUT_LIMIT);
@@ -120,7 +123,7 @@ impl Toolchain {
         self.env.as_deref()
     }
 
-    /// A spec that runs `cargo <args>` inside `dir` with the toolchain's environment. The caller adds a timeout, an output limit, or a structured stdout as the command warrants.
+    /// A spec that runs `cargo <args>` inside `dir` with the toolchain's environment, unbounded until the caller says otherwise. The length of a build or a test run is the project's, so the caller assigns [`Spec::timeout`] with the number that applies to it; the caller adds an output limit or a structured stdout as the command warrants.
     pub fn command<I, S>(&self, dir: &Path, args: I) -> Spec
     where
         I: IntoIterator<Item = S>,
@@ -128,7 +131,7 @@ impl Toolchain {
     {
         let mut command_line = vec![self.cargo.clone().into_os_string()];
         command_line.extend(args.into_iter().map(Into::into));
-        let mut spec = Spec::new(command_line);
+        let mut spec = Spec::new(command_line, Bound::Unbounded);
         spec.dir = Some(dir.to_path_buf());
         spec.env.clone_from(&self.env);
         spec
@@ -235,11 +238,14 @@ fn sysroot_of(
     env: Option<&[(OsString, OsString)]>,
     cancel: &Cancel,
 ) -> Option<PathBuf> {
-    let mut spec = Spec::new([
-        rustc.as_os_str(),
-        OsStr::new("--print"),
-        OsStr::new("sysroot"),
-    ]);
+    let mut spec = Spec::new(
+        [
+            rustc.as_os_str(),
+            OsStr::new("--print"),
+            OsStr::new("sysroot"),
+        ],
+        Bound::After(PROBE),
+    );
     spec.dir = Some(dir.to_path_buf());
     spec.env = env.map(<[(OsString, OsString)]>::to_vec);
     spec.structured_stdout = Some(PROBE_OUTPUT_LIMIT);

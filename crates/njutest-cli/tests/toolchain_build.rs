@@ -186,7 +186,10 @@ fn an_instrumented_build_lands_under_the_host_triple_and_writes_a_profile_when_i
 
     let profiles = outcome.target_dir.join("profiles");
     std::fs::create_dir_all(&profiles).expect("somewhere to write");
-    let mut spec = Spec::new([unit.executable.as_os_str().to_owned()]);
+    let mut spec = Spec::new(
+        [unit.executable.as_os_str().to_owned()],
+        rust_mutants::runner::Bound::After(rust_mutants::runner::PROBE),
+    );
     spec.dir = Some(unit.cwd.clone());
     let mut env = unit.env.clone();
     env.push((

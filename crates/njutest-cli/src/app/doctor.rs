@@ -301,6 +301,7 @@ impl Probe<'_> {
         let mut spec = Spec::new(
             std::iter::once(program.into_os_string())
                 .chain(arguments.iter().map(std::ffi::OsString::from)),
+            rust_mutants::runner::Bound::After(rust_mutants::runner::PROBE),
         );
         spec.dir = Some(self.dir.to_path_buf());
         spec.env = Some(self.environment.vars.clone());
@@ -308,6 +309,13 @@ impl Probe<'_> {
         let result = run_process(&spec, self.cancel);
         if let Some(error) = &result.error {
             return State::Refused(format!("it is installed and would not start: {error}"));
+        }
+        if result.timed_out {
+            return State::Refused(format!(
+                "it is installed and did not answer within {} seconds, which a run \
+                 would have waited for too",
+                rust_mutants::runner::PROBE.as_secs()
+            ));
         }
         if result.exit_code != 0 {
             let said = String::from_utf8_lossy(&result.output)

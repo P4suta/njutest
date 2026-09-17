@@ -7,7 +7,7 @@ use std::ffi::OsString;
 use std::path::Path;
 
 use crate::glob::Pattern;
-use crate::runner::{Spec, Watch, run};
+use crate::runner::{Bound, Spec, Watch, run};
 
 /// The revision a change set is computed against when the caller names none.
 pub const DEFAULT_BASE: &str = "HEAD";
@@ -177,7 +177,7 @@ fn ask<W: Watch>(
 ) -> Option<String> {
     let mut argv: Vec<OsString> = vec![OsString::from("git")];
     argv.extend(arguments.iter().map(OsString::from));
-    let mut spec = Spec::new(argv);
+    let mut spec = Spec::new(argv, Bound::After(crate::runner::PROBE));
     spec.dir = Some(asking.root.to_path_buf());
     spec.env = Some(asking.env.to_vec());
     spec.structured_stdout = Some(1 << 20);

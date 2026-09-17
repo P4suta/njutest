@@ -8,12 +8,12 @@ use std::time::{Duration, Instant};
 
 use rust_mutants::runner::output::{TailBuffer, truncation_notice};
 use rust_mutants::runner::{
-    Cancel, DEFAULT_OUTPUT_LIMIT, EXIT_CODE_UNAVAILABLE, IO_DRAIN_GRACE, MIN_OUTPUT_LIMIT,
+    Bound, Cancel, DEFAULT_OUTPUT_LIMIT, EXIT_CODE_UNAVAILABLE, IO_DRAIN_GRACE, MIN_OUTPUT_LIMIT,
     OUTPUT_TRUNCATED_PREFIX, PROBE_OUTPUT_LIMIT, RunnerError, Spec, run,
 };
 
 fn sh(script: &str) -> Spec {
-    Spec::new(["sh", "-c", script])
+    Spec::new(["sh", "-c", script], Bound::Unbounded)
 }
 
 #[test]
@@ -37,7 +37,7 @@ fn a_child_that_runs_and_fails_is_data_not_an_error() {
 #[test]
 fn a_program_that_cannot_start_is_an_error_with_no_exit_status() {
     let result = run(
-        &Spec::new(["/nonexistent/rust-mutants-test-program"]),
+        &Spec::new(["/nonexistent/rust-mutants-test-program"], Bound::Unbounded),
         &Cancel::new(),
     );
     assert!(
@@ -50,13 +50,16 @@ fn a_program_that_cannot_start_is_an_error_with_no_exit_status() {
 
 #[test]
 fn a_spec_without_a_program_is_refused_before_anything_runs() {
-    let empty = run(&Spec::new(Vec::<OsString>::new()), &Cancel::new());
+    let empty = run(
+        &Spec::new(Vec::<OsString>::new(), Bound::Unbounded),
+        &Cancel::new(),
+    );
     assert!(
         matches!(empty.error, Some(RunnerError::SpecInvalid { .. })),
         "{:?}",
         empty.error
     );
-    let blank = run(&Spec::new(["  "]), &Cancel::new());
+    let blank = run(&Spec::new(["  "], Bound::Unbounded), &Cancel::new());
     assert!(
         matches!(blank.error, Some(RunnerError::SpecInvalid { .. })),
         "{:?}",
@@ -301,7 +304,7 @@ fn the_head_buffer_keeps_the_first_bytes_and_admits_the_cut() {
 /// A command line the platform's own shell understands.
 #[cfg(windows)]
 fn shell(script: &str) -> Spec {
-    Spec::new(["cmd", "/C", script])
+    Spec::new(["cmd", "/C", script], Bound::Unbounded)
 }
 
 #[cfg(windows)]
@@ -337,12 +340,14 @@ fn a_windows_process_tree_is_killed_on_timeout() {
         ),
     )
     .expect("the script the run starts");
-    let mut spec = Spec::new([
-        OsString::from("cmd"),
-        OsString::from("/C"),
-        script.clone().into_os_string(),
-    ]);
-    spec.timeout = Some(Duration::from_millis(500));
+    let spec = Spec::new(
+        [
+            OsString::from("cmd"),
+            OsString::from("/C"),
+            script.clone().into_os_string(),
+        ],
+        Bound::After(Duration::from_millis(500)),
+    );
     let started = Instant::now();
     let result = run(&spec, &Cancel::new());
     assert!(result.timed_out, "{result:?}");

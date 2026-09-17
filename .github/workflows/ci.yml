@@ -33,7 +33,12 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     strategy:
-      fail-fast: false
+      # One platform failing means the commit is red whatever the other two
+      # say, and a person who has to wait for the slowest of three to be told
+      # so waits for the wrong reason. `mise run check` already answered for
+      # this machine before the push; what these add is the other two, and the
+      # first of them to say no is the answer.
+      fail-fast: true
       matrix:
         os: [ubuntu-24.04, macos-15, windows-2025]
     steps:
@@ -47,13 +52,22 @@ jobs:
       - name: Fetch the locked dependency graph
         env:
           CARGO_NET_OFFLINE: "false"
+        shell: bash
         run: cargo fetch --locked
       # `cargo test --all-targets` builds an example as a test harness, not as
       # the program it is, and part of this suite drives a scripted `cargo`
       # that is one. Building it plainly is what makes those tests able to run.
       - name: Build the scripted toolchain the suite drives
+        shell: bash
         run: cargo build --locked --examples -p rust-mutants
+      # `shell: bash` rather than the default, which is PowerShell on Windows:
+      # a native command that fails there does not stop the script, so the
+      # suite below ran on after the first half had already failed and the
+      # step's status became the second half's. A failing test took the job's
+      # forty-five minute timeout to be reported, and would have been reported
+      # as a pass had the second half succeeded.
       - name: Test every target
+        shell: bash
         run: |
           cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast --status-level fail -E 'not binary(/^toolchain_/)'
           # Each test in these binaries drives its own Cargo. Two outer tests
@@ -61,6 +75,7 @@ jobs:
           # resource exhaustion; the ordinary suite above remains fully parallel.
           cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast --status-level fail --test-threads 2 -E 'binary(/^toolchain_/)'
       - name: Doctests
+        shell: bash
         run: cargo test --locked --workspace --doc
 
   lint:

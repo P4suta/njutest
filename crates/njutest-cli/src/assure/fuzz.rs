@@ -129,20 +129,25 @@ pub fn fuzz(fuzzing: &Fuzzing<'_>, watch: Watch<'_>) -> Fuzzed {
 /// Drives one target and reads what it left behind.
 fn one(done: &mut Fuzzed, fuzzing: &Fuzzing<'_>, target: &str, watch: Watch<'_>) {
     let before = artifacts(fuzzing.root, target);
-    let mut spec = Spec::new([
-        fuzzing.cargo.as_os_str().to_owned(),
-        OsString::from("+nightly"),
-        OsString::from("fuzz"),
-        OsString::from("run"),
-        OsString::from(target),
-        OsString::from("--"),
-        OsString::from(format!(
-            "-max_total_time={}",
-            fuzzing.max_total_time.as_secs()
-        )),
-    ]);
+    let mut spec = Spec::new(
+        [
+            fuzzing.cargo.as_os_str().to_owned(),
+            OsString::from("+nightly"),
+            OsString::from("fuzz"),
+            OsString::from("run"),
+            OsString::from(target),
+            OsString::from("--"),
+            OsString::from(format!(
+                "-max_total_time={}",
+                fuzzing.max_total_time.as_secs()
+            )),
+        ],
+        fuzzing.timeout.map_or(
+            rust_mutants::runner::Bound::Unbounded,
+            rust_mutants::runner::Bound::After,
+        ),
+    );
     spec.dir = Some(fuzzing.root.to_path_buf());
-    spec.timeout = fuzzing.timeout;
     spec.env = Some(fuzzing.env.clone());
 
     let ran = run(&spec, watch.cancel);

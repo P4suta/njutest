@@ -90,9 +90,14 @@ pub fn interpret(
     if interpreting.locked {
         argv.push(OsString::from("--locked"));
     }
-    let mut spec = Spec::new(argv);
+    let mut spec = Spec::new(
+        argv,
+        interpreting.timeout.map_or(
+            rust_mutants::runner::Bound::Unbounded,
+            rust_mutants::runner::Bound::After,
+        ),
+    );
     spec.dir = Some(interpreting.root.to_path_buf());
-    spec.timeout = interpreting.timeout;
     spec.env = Some(environment(interpreting));
 
     let ran = run(&spec, watch.cancel);
@@ -121,12 +126,15 @@ pub fn interpret(
 
 /// What the toolchain says when it has no interpreter, asked once the run it was given has failed.
 fn missing(interpreting: &Interpreting<'_>, watch: Watch<'_>) -> Option<String> {
-    let mut spec = Spec::new([
-        interpreting.cargo.as_os_str().to_owned(),
-        OsString::from("+nightly"),
-        OsString::from("miri"),
-        OsString::from("--version"),
-    ]);
+    let mut spec = Spec::new(
+        [
+            interpreting.cargo.as_os_str().to_owned(),
+            OsString::from("+nightly"),
+            OsString::from("miri"),
+            OsString::from("--version"),
+        ],
+        rust_mutants::runner::Bound::After(rust_mutants::runner::PROBE),
+    );
     spec.dir = Some(interpreting.root.to_path_buf());
     spec.env = Some(environment(interpreting));
     let asked = run(&spec, watch.cancel);

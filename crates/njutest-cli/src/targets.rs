@@ -267,12 +267,15 @@ impl TargetError {
 /// [`TargetErrorKind::ListFailed`] when the binary could not be started at
 /// all, which is not the same as a binary that answered differently.
 pub fn enumerate(unit: &Unit, watch: Watch<'_>) -> Result<Vec<Target>, TargetError> {
-    let mut spec = Spec::new([
-        unit.executable.as_os_str().to_owned(),
-        OsString::from("--list"),
-        OsString::from("--format"),
-        OsString::from("terse"),
-    ]);
+    let mut spec = Spec::new(
+        [
+            unit.executable.as_os_str().to_owned(),
+            OsString::from("--list"),
+            OsString::from("--format"),
+            OsString::from("terse"),
+        ],
+        rust_mutants::runner::Bound::After(rust_mutants::runner::PROBE),
+    );
     spec.dir = Some(unit.cwd.clone());
     spec.env = Some(unit.env.clone());
     spec.timeout = Some(LIST_TIMEOUT);
@@ -335,13 +338,16 @@ pub fn whole_binary(unit: &Unit) -> Target {
 
 /// Which of a binary's tests libtest will skip unless asked.
 fn ignored_paths(unit: &Unit, watch: Watch<'_>) -> std::collections::BTreeSet<String> {
-    let mut spec = Spec::new([
-        unit.executable.as_os_str().to_owned(),
-        OsString::from("--list"),
-        OsString::from("--ignored"),
-        OsString::from("--format"),
-        OsString::from("terse"),
-    ]);
+    let mut spec = Spec::new(
+        [
+            unit.executable.as_os_str().to_owned(),
+            OsString::from("--list"),
+            OsString::from("--ignored"),
+            OsString::from("--format"),
+            OsString::from("terse"),
+        ],
+        rust_mutants::runner::Bound::After(rust_mutants::runner::PROBE),
+    );
     spec.dir = Some(unit.cwd.clone());
     spec.env = Some(unit.env.clone());
     spec.timeout = Some(LIST_TIMEOUT);

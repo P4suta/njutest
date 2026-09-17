@@ -109,9 +109,14 @@ fn one(done: &mut Sanitized, sanitizing: &Sanitizing<'_>, sanitizer: &str, watch
     if sanitizing.locked {
         argv.push(OsString::from("--locked"));
     }
-    let mut spec = Spec::new(argv);
+    let mut spec = Spec::new(
+        argv,
+        sanitizing.timeout.map_or(
+            rust_mutants::runner::Bound::Unbounded,
+            rust_mutants::runner::Bound::After,
+        ),
+    );
     spec.dir = Some(sanitizing.root.to_path_buf());
-    spec.timeout = sanitizing.timeout;
     spec.env = Some(instrumenting(&sanitizing.env, sanitizer));
 
     let ran = run(&spec, watch.cancel);
