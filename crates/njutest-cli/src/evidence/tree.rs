@@ -21,16 +21,54 @@ pub const CORPUS_DOMAIN: &str = "njutest-evidence-corpus-v1";
 /// The domain of the dependency digest.
 pub const DEPENDENCIES_DOMAIN: &str = "njutest-evidence-dependencies-v1";
 
-/// Directories a run writes rather than reads. Nothing under them is part of what the tests are about.
-pub const EXCLUDED_DIRECTORIES: [&str; 7] = [
+/// Directories every project writes rather than reads. Nothing under them is part of what the tests are about.
+pub const EXCLUDED_DIRECTORIES: [&str; 6] = [
     ".git",
     ".njutest",
-    "reports",
     "dist",
     "target",
     "fuzz/target",
     "fuzz/artifacts",
 ];
+
+/// What a walk of one project leaves out: what any run writes, and where this one was told to keep its reports.
+///
+/// The report directory used to be a word in the list above, so a project
+/// that moved it digested its own reports into the run identity, watched
+/// itself write them, and asked git about them. Where a project writes is
+/// configuration, so the list is a value rather than a constant.
+#[derive(Debug, Clone)]
+pub struct Excluded(Vec<String>);
+
+impl Excluded {
+    /// The directories a project that keeps its reports at `reports` does not verify.
+    #[must_use]
+    pub fn beside(reports: &Path) -> Self {
+        let mut names: Vec<String> = EXCLUDED_DIRECTORIES
+            .iter()
+            .map(|name| (*name).to_owned())
+            .chain(std::iter::once(
+                reports.to_string_lossy().replace('\\', "/"),
+            ))
+            .filter(|name| !name.is_empty())
+            .collect();
+        names.sort();
+        names.dedup();
+        Self(names)
+    }
+
+    /// Every one of them, as a git command wants them.
+    #[must_use]
+    pub fn names(&self) -> Vec<&str> {
+        self.0.iter().map(String::as_str).collect()
+    }
+
+    /// Whether `relative` names one.
+    #[must_use]
+    pub fn holds(&self, relative: &str) -> bool {
+        self.0.iter().any(|name| name == relative)
+    }
+}
 
 /// Where fuzz corpora live. They are digested apart from the tree because a corpus grows without the code changing, and a run that only grew its corpus is a different run without being a different program.
 pub const CORPUS_DIRECTORY: &str = "fuzz/corpus";
@@ -128,19 +166,30 @@ pub enum Entry {
     Irregular,
 }
 
+/// What one walk of a tree leaves out: what the configuration excluded, what is kept elsewhere, and what any run writes.
+#[derive(Debug, Clone, Copy)]
+pub struct Bounds<'a> {
+    /// Patterns the configuration excluded, matched against each `/`-normalized relative path.
+    pub exclude: &'a [Pattern],
+    /// Directories kept outside the tree, named either relatively or absolutely.
+    pub elsewhere: &'a [&'a Path],
+    /// Directories a run writes rather than reads.
+    pub excluded: &'a Excluded,
+}
+
 /// Every path under `root` that is part of what a run verifies, in no particular order.
 ///
 /// # Errors
 /// See [`ScanError`].
-pub fn walk<V>(
-    root: &Path,
-    exclude: &[Pattern],
-    elsewhere: &[&Path],
-    mut visit: V,
-) -> Result<(), ScanError>
+pub fn walk<V>(root: &Path, within: &Bounds<'_>, mut visit: V) -> Result<(), ScanError>
 where
     V: FnMut(&str, Entry) -> Result<(), ScanError>,
 {
+    let Bounds {
+        exclude,
+        elsewhere,
+        excluded,
+    } = *within;
     let written: Vec<String> = elsewhere
         .iter()
         .filter_map(|path| relative_to(root, path))
@@ -179,7 +228,7 @@ where
                 continue;
             }
             if kind.is_dir() {
-                if is_excluded_directory(&relative) || written.contains(&relative) {
+                if excluded.holds(&relative) || written.contains(&relative) {
                     continue;
                 }
                 pending.push((path, relative));
@@ -202,12 +251,12 @@ where
 ///
 /// # Errors
 /// See [`ScanError`].
-pub fn scan(root: &Path, exclude: &[Pattern], elsewhere: &[&Path]) -> Result<Scan, ScanError> {
+pub fn scan(root: &Path, within: &Bounds<'_>) -> Result<Scan, ScanError> {
     let mut tree: BTreeMap<String, String> = BTreeMap::new();
     let mut corpus: BTreeMap<String, String> = BTreeMap::new();
     let mut files = 0u32;
     let mut bytes = 0u64;
-    walk(root, exclude, elsewhere, |relative, entry| {
+    walk(root, within, |relative, entry| {
         match entry {
             Entry::Link(target) => {
                 let _replaced = tree.insert(relative.to_owned(), format!("link:{target}"));
@@ -307,10 +356,6 @@ fn fold(domain: &str, entries: &BTreeMap<String, String>) -> String {
             .map(|(name, value)| format!("{name}\u{0}{value}")),
     );
     fields.finish()
-}
-
-fn is_excluded_directory(relative: &str) -> bool {
-    EXCLUDED_DIRECTORIES.contains(&relative)
 }
 
 /// `path` as a slash-separated path relative to `root`, whether it was given absolute or relative, or `None` when it is not under `root` at all.

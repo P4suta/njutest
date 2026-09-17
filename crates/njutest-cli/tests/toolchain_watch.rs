@@ -442,17 +442,12 @@ fn judged(events: &[njutest_cli::trace::Event]) {
 
 /// The report the latest run of `root` wrote, found the way a person finds it.
 fn report_of(root: &std::path::Path) -> serde_json::Value {
-    let index: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(root.join("reports/latest-any.json")).expect("the latest index"),
-    )
-    .expect("the index is JSON");
-    let directory = index["directory"].as_str().expect("the run's directory");
+    let directory = njutest_cli::app::reports::Store::read(root)
+        .run_of(njutest_cli::app::reports::Index::Any)
+        .expect("the index names a run");
     serde_json::from_str(
-        &std::fs::read_to_string(
-            root.join(directory)
-                .join("njutest-assurance-report-v1.json"),
-        )
-        .expect("the report"),
+        &std::fs::read_to_string(directory.join(njutest_cli::app::reports::DOCUMENT_NAME))
+            .expect("the report"),
     )
     .expect("the report is JSON")
 }
@@ -1332,9 +1327,15 @@ fn a_run_of_one_tree_says_the_same_thing_however_many_times_and_however_widely_i
         njutest_devkit::report::normalize(&together),
         "and measuring eight mutations at once rather than one changes which processes          overlap and nothing a report says: a verdict that moved with the machine's load          would be a verdict about the machine"
     );
+    let unsaid = once(
+        "fixture-baseline",
+        dir.path(),
+        "unsaid",
+        Some("version = 1\n"),
+    );
     assert_eq!(
         njutest_devkit::report::normalize(&alone),
-        njutest_devkit::report::normalize(&first),
+        njutest_devkit::report::normalize(&unsaid),
         "and neither does saying nothing about how many"
     );
 }

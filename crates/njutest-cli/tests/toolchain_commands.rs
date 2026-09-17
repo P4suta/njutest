@@ -106,12 +106,9 @@ fn report_json_prints_the_document_the_run_wrote_byte_for_byte() {
     let output = njutest(&fixture, &["report", "--format", "json"]);
     assert_eq!(output.status.code(), Some(0));
 
-    let index = fixture.root.join(njutest_cli::app::reports::LATEST_ANY);
-    let value: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(index).expect("the index")).expect("JSON");
-    let path = fixture
-        .root
-        .join(value["directory"].as_str().expect("a directory"))
+    let path = njutest_cli::app::reports::Store::read(&fixture.root)
+        .run_of(njutest_cli::app::reports::Index::Any)
+        .expect("the index names a run")
         .join(njutest_cli::app::reports::DOCUMENT_NAME);
     assert_eq!(
         stdout(&output),
@@ -323,7 +320,9 @@ fn plan_names_every_target_a_run_would_measure_without_measuring_one() {
     assert!(text.contains("fixture-baseline/test/doubling"), "{text}");
     assert!(text.contains("TARGETS\t2"), "{text}");
     assert!(
-        !fixture.root.join("reports").exists(),
+        !njutest_cli::app::reports::Store::read(&fixture.root)
+            .runs()
+            .exists(),
         "a plan is not a run: it writes no report"
     );
 }
@@ -431,12 +430,9 @@ fn answers_one_machine_established_are_the_answers_another_one_holds() {
 
 /// Where the run a fixture just finished wrote its report.
 fn latest_report(fixture: &Fixture) -> PathBuf {
-    let index = fixture.root.join(njutest_cli::app::reports::LATEST_ANY);
-    let value: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(index).expect("the index")).expect("JSON");
-    fixture
-        .root
-        .join(value["directory"].as_str().expect("a directory"))
+    njutest_cli::app::reports::Store::read(&fixture.root)
+        .run_of(njutest_cli::app::reports::Index::Any)
+        .expect("the index names a run")
         .join(njutest_cli::app::reports::DOCUMENT_NAME)
 }
 
@@ -471,6 +467,12 @@ fn merge_combines_the_parts_of_one_catalog_and_refuses_the_parts_of_two() {
             "--output",
             &whole.display().to_string(),
         ],
+    );
+    assert!(
+        whole.is_file(),
+        "a merge that was asked for a file writes one: {}{}",
+        stdout(&output),
+        String::from_utf8_lossy(&output.stderr)
     );
     let text = std::fs::read_to_string(&whole).expect("the whole");
     let combined = njutest_cli::report::json::parse(&text).expect("the whole reads back");

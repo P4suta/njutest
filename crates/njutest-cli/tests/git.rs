@@ -31,7 +31,19 @@ fn env() -> Vec<(OsString, OsString)> {
 fn ask(root: &Path) -> njutest_cli::report::Git {
     let cancel = Cancel::new();
     let trace = Recorder::disabled();
-    git::describe(root, &env(), Watch::new(&cancel, &trace))
+    git::describe(&git::Asked {
+        root,
+        env: &env(),
+        excluded: &excluded(),
+        watch: Watch::new(&cancel, &trace),
+    })
+}
+
+/// What no verification reads, for a project that has said nothing about where it writes.
+fn excluded() -> njutest_cli::evidence::tree::Excluded {
+    njutest_cli::evidence::tree::Excluded::beside(
+        &njutest_cli::config::Config::default().reports.directory,
+    )
 }
 
 /// A repository with one commit, built with git's own plumbing so the fixture is the same on every machine: `commit-tree` writes a commit without consulting anybody's configuration, and the identity comes from the environment rather than from a global file.
@@ -123,11 +135,12 @@ fn a_machine_without_git_is_unavailable_rather_than_a_failure() {
     let dir = repository();
     let cancel = Cancel::new();
     let trace = Recorder::disabled();
-    let facts = git::describe(
-        dir.path(),
-        &[(OsString::from("PATH"), OsString::from("/nonexistent"))],
-        Watch::new(&cancel, &trace),
-    );
+    let facts = git::describe(&git::Asked {
+        root: dir.path(),
+        env: &[(OsString::from("PATH"), OsString::from("/nonexistent"))],
+        excluded: &excluded(),
+        watch: Watch::new(&cancel, &trace),
+    });
     assert!(!facts.available);
     assert_eq!(facts.commit, UNAVAILABLE);
 }

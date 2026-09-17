@@ -111,9 +111,8 @@ fn whole(phase_ms: u64, dropped: u64) -> Vec<String> {
 
 /// Writes `lines` as the recording of `name` beside its run, and answers where it went.
 fn recorded(fixture: &Fixture, name: &str, lines: &[String]) -> PathBuf {
-    let directory = fixture
+    let directory = rust_mutants_cli::app::stored::Store::read(fixture.root())
         .root()
-        .join(rust_mutants_cli::config::DEFAULT_REPORTS_DIRECTORY)
         .join(name)
         .join("trace");
     write_at(&directory, lines);
@@ -122,9 +121,8 @@ fn recorded(fixture: &Fixture, name: &str, lines: &[String]) -> PathBuf {
 
 /// The same, under `traces/`, which is where a command that wrote no report keeps one.
 fn beside(fixture: &Fixture, name: &str, lines: &[String]) -> PathBuf {
-    let directory = fixture
+    let directory = rust_mutants_cli::app::stored::Store::read(fixture.root())
         .root()
-        .join(rust_mutants_cli::config::DEFAULT_REPORTS_DIRECTORY)
         .join("traces")
         .join(name);
     write_at(&directory, lines);
@@ -342,9 +340,7 @@ fn a_recording_nobody_can_read_is_refused_by_naming_the_file() {
 #[test]
 fn a_directory_beside_the_runs_with_no_recording_in_it_is_not_one() {
     let fixture = Fixture::copy("fixture-simple");
-    let reports = fixture
-        .root()
-        .join(rust_mutants_cli::config::DEFAULT_REPORTS_DIRECTORY);
+    let reports = rust_mutants_cli::app::stored::Store::read(fixture.root()).root();
     std::fs::create_dir_all(reports.join("20260109T000000000Z").join("trace"))
         .expect("a run whose recording was removed");
     let _at = recorded(&fixture, "20260101T000000000Z", &whole(5, 0));

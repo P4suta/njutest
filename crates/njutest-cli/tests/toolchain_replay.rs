@@ -73,14 +73,11 @@ fn stdout(output: &Output) -> String {
 }
 
 fn survivor(fixture: &Fixture) -> String {
-    let index = fixture.root.join(njutest_cli::app::reports::LATEST_ANY);
-    let value: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(index).expect("the index")).expect("JSON");
     let report: serde_json::Value = serde_json::from_str(
         &std::fs::read_to_string(
-            fixture
-                .root
-                .join(value["directory"].as_str().expect("a directory"))
+            njutest_cli::app::reports::Store::read(&fixture.root)
+                .run_of(njutest_cli::app::reports::Index::Any)
+                .expect("the index names a run")
                 .join(njutest_cli::app::reports::DOCUMENT_NAME),
         )
         .expect("the document"),

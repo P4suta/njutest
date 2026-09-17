@@ -146,6 +146,7 @@ fn apply(
         harness_args: config.execution.test_binary_args,
         skip_targets: config.execution.skip_targets,
         timeout: RECHECK_TIMEOUT,
+        reports: crate::app::reports::Store::of(root, &config.reports.directory),
     };
     let mut written = 0u32;
     let mut already = 0u32;

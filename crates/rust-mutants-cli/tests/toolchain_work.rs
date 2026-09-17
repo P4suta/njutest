@@ -74,7 +74,9 @@ fn measured(name: &str) -> Work {
         output.status.code().is_some_and(|code| code <= 1),
         "{name}: {output:?}"
     );
-    let directory = njutest_devkit::fixture::newest_run(fixture.root());
+    let directory = njutest_devkit::fixture::newest_run(
+        &rust_mutants_cli::app::stored::Store::read(fixture.root()).root(),
+    );
     let text = std::fs::read_to_string(directory.join("run-report-v1.json")).expect("the report");
     let document: rust_mutants::report::run::RunDocument =
         serde_json::from_str(&text).expect("the report reads back");
@@ -175,12 +177,13 @@ fn programs(name: &str, extra: &[&str]) -> std::collections::BTreeMap<String, u6
         "{name}: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let directory = std::fs::read_dir(fixture.root().join("reports/mutation"))
-        .expect("the run stored a report")
-        .flatten()
-        .map(|entry| entry.path())
-        .find(|path| path.join("trace").is_dir())
-        .expect("a recording");
+    let directory =
+        std::fs::read_dir(rust_mutants_cli::app::stored::Store::read(fixture.root()).root())
+            .expect("the run stored a report")
+            .flatten()
+            .map(|entry| entry.path())
+            .find(|path| path.join("trace").is_dir())
+            .expect("a recording");
     let text = std::fs::read_to_string(directory.join("trace").join("trace.jsonl"))
         .expect("the recording");
     let events = rust_mutants::trace::read_events(text.as_bytes()).expect("it reads back");
@@ -242,13 +245,14 @@ fn a_second_run_of_a_tree_nothing_changed_measures_nothing_again() {
             "{}",
             String::from_utf8_lossy(&output.stderr)
         );
-        let directory = std::fs::read_dir(fixture.root().join("reports/mutation"))
-            .expect("the run stored a report")
-            .flatten()
-            .map(|entry| entry.path())
-            .filter(|path| path.join("trace").is_dir())
-            .max()
-            .expect("the newest recording");
+        let directory =
+            std::fs::read_dir(rust_mutants_cli::app::stored::Store::read(fixture.root()).root())
+                .expect("the run stored a report")
+                .flatten()
+                .map(|entry| entry.path())
+                .filter(|path| path.join("trace").is_dir())
+                .max()
+                .expect("the newest recording");
         let text = std::fs::read_to_string(directory.join("trace").join("trace.jsonl"))
             .expect("the recording");
         let events =
@@ -301,13 +305,14 @@ fn a_tree_that_changed_is_measured_again_rather_than_remembered() {
             "{}",
             String::from_utf8_lossy(&output.stderr)
         );
-        let directory = std::fs::read_dir(fixture.root().join("reports/mutation"))
-            .expect("the run stored a report")
-            .flatten()
-            .map(|entry| entry.path())
-            .filter(|path| path.join("trace").is_dir())
-            .max()
-            .expect("the newest recording");
+        let directory =
+            std::fs::read_dir(rust_mutants_cli::app::stored::Store::read(fixture.root()).root())
+                .expect("the run stored a report")
+                .flatten()
+                .map(|entry| entry.path())
+                .filter(|path| path.join("trace").is_dir())
+                .max()
+                .expect("the newest recording");
         let text = std::fs::read_to_string(directory.join("trace").join("trace.jsonl"))
             .expect("the recording");
         let events =

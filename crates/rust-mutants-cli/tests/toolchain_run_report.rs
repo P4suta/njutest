@@ -62,8 +62,10 @@ fn count(value: usize) -> u64 {
 
 /// The report the newest run stored, as a document.
 fn stored(fixture: &Fixture) -> serde_json::Value {
-    serde_json::from_str(&njutest_devkit::fixture::stored_report(fixture.root()))
-        .expect("the report is a document")
+    serde_json::from_str(&njutest_devkit::fixture::stored_report(
+        &rust_mutants_cli::app::stored::Store::read(fixture.root()).root(),
+    ))
+    .expect("the report is a document")
 }
 
 #[test]
@@ -78,7 +80,7 @@ fn a_whole_run_judges_every_mutant_scores_the_workspace_and_writes_the_report() 
          removes that mutation and one test has to notice it: {text}{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(text.contains("MUTANTS   cataloged="), "{text}");
+    assert!(text.contains("mutants were cataloged"), "{text}");
     assert!(text.contains("SCORE     "), "{text}");
     assert!(text.contains("surviving-mutant"), "{text}");
 
@@ -189,7 +191,7 @@ fn the_stored_report_is_read_back_by_the_report_command() {
         "reading a report back reports what the run reported"
     );
     let text = stdout(&read_back);
-    assert!(text.contains("MUTANTS   cataloged="), "{text}");
+    assert!(text.contains("mutants were cataloged"), "{text}");
 
     let as_json = against(&fixture, &["report", "--format", "json"]);
     assert_eq!(as_json.status.code(), Some(0));
@@ -746,7 +748,7 @@ fn an_older_reader_accepts_a_newer_report() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let directory = fixture.root().join("reports/mutation");
+    let directory = rust_mutants_cli::app::stored::Store::read(fixture.root()).root();
     let pointer: serde_json::Value = serde_json::from_str(
         &std::fs::read_to_string(directory.join("latest.json")).expect("a pointer"),
     )
@@ -879,7 +881,9 @@ fn evidence_of(extra: &[&str]) -> (PathBuf, Fixture) {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let directory = njutest_devkit::fixture::newest_run(fixture.root());
+    let directory = njutest_devkit::fixture::newest_run(
+        &rust_mutants_cli::app::stored::Store::read(fixture.root()).root(),
+    );
     (directory, fixture)
 }
 
@@ -1206,7 +1210,7 @@ fn the_parts_of_a_catalog_can_be_named_by_a_glob_against_the_report_directory() 
         "{}",
         String::from_utf8_lossy(&ran.stderr)
     );
-    let reports = fixture.root().join("reports/mutation");
+    let reports = rust_mutants_cli::app::stored::Store::read(fixture.root()).root();
     let stored_id = std::fs::read_dir(&reports)
         .expect("the report directory")
         .flatten()
@@ -1239,7 +1243,14 @@ fn the_parts_of_a_catalog_can_be_named_by_a_glob_against_the_report_directory() 
     );
     let said = String::from_utf8_lossy(&nothing.stderr).into_owned();
     assert!(
-        said.contains("20240101*") && said.contains("reports"),
+        said.contains("20240101*")
+            && said.contains(&format!(
+                "{}",
+                rust_mutants_cli::config::Config::default()
+                    .reports
+                    .directory
+                    .display()
+            )),
         "and the refusal says which pattern found nothing and where it looked, because \
          the usual cause is a report directory somewhere else: {said}"
     );
@@ -1267,7 +1278,7 @@ fn a_glob_that_names_the_same_part_twice_is_still_the_same_part_twice() {
         "{}",
         String::from_utf8_lossy(&ran.stderr)
     );
-    let reports = fixture.root().join("reports/mutation");
+    let reports = rust_mutants_cli::app::stored::Store::read(fixture.root()).root();
     let document = serde_json::to_string(&stored(&fixture)).expect("renders");
     for name in ["20260101T000000000Z", "20260102T000000000Z"] {
         let directory = reports.join(name);

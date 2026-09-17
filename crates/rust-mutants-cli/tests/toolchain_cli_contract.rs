@@ -51,13 +51,15 @@ fn list_names_every_candidate_without_building_anything() {
         String::from_utf8_lossy(&output.stderr)
     );
     let text = stdout(&output);
-    let lines: Vec<&str> = text.lines().collect();
-    assert_eq!(lines.len(), 11, "{text}");
+    let rows: Vec<&str> = text.lines().filter(|line| line.contains(" => ")).collect();
+    assert_eq!(rows.len(), 11, "{text}");
     assert!(
-        lines
-            .iter()
-            .all(|line| line.contains("src/lib.rs:") && line.contains(" => ")),
+        rows.iter().all(|line| line.contains("src/lib.rs:")),
         "{text}"
+    );
+    assert!(
+        text.contains("11 candidates, which is what the rules propose"),
+        "a list says how many it listed and what listing them is not: {text}"
     );
     assert!(text.contains("gt-to-ge@1"), "{text}");
     assert!(text.contains("\">\" => \">=\""), "{text}");
@@ -331,7 +333,11 @@ fn the_equivalence_tally_counts_the_rows_it_printed() {
         );
     }
     assert!(
-        text.contains(&format!("asked={}\tidentical={identical}", rows.len())),
+        text.contains(&format!(
+            "asked={} of {}\tidentical={identical}",
+            rows.len(),
+            rows.len()
+        )),
         "the tally is the count of the rows above it, and a tally that counted none \
          would read exactly like a tree the compiler renders every mutation of: {text}"
     );

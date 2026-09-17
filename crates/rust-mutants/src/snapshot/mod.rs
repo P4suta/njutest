@@ -32,9 +32,6 @@ pub const DIR_PREFIX: &str = "rust-mutants-snap-";
 /// The subdirectory of a snapshot directory that holds the copy.
 pub const TREE_NAME: &str = "tree";
 
-/// The conventional location of a run's reports, excluded from every snapshot whether or not it is the configured one.
-pub const DEFAULT_REPORT_DIR: &str = "reports/mutation";
-
 /// How much of the source root's digest [`stable_name`] spells out.
 pub const STABLE_NAME_HEX_LENGTH: usize = 16;
 
@@ -57,7 +54,7 @@ pub struct Options {
     pub exclude: Vec<Pattern>,
     /// Directories to copy beside the tree, each under its own name.
     pub beside: Vec<PathBuf>,
-    /// The configured report directory as a source-root-relative path. `None` means the default. It is excluded in addition to, never instead of, [`DEFAULT_REPORT_DIR`].
+    /// Where the caller writes its reports, as a source-root-relative path, excluded from the snapshot. `None` is a caller that writes none inside the tree.
     pub report_dir: Option<String>,
     /// The directory cargo builds into, as a source-root-relative path, when it is inside the root.
     pub build_dir: Option<String>,
@@ -526,18 +523,21 @@ fn write_length_prefixed(hasher: &mut Sha256, s: &str) {
     hasher.update(s.as_bytes());
 }
 
-/// Builds the pattern list: the always-on defaults first, then the caller's.
+/// Builds the pattern list: what no snapshot of a git tree wants, then what the caller named.
+///
+/// The engine excludes the one directory it knows about whatever the caller
+/// is. Where the caller writes its own output is the caller's to say, and an
+/// engine that guessed it excluded a directory of somebody else's source.
 fn exclusions(options: &Options) -> Result<Vec<Pattern>, SnapshotError> {
     let mut patterns = Vec::with_capacity(options.exclude.len().saturating_add(3));
-    for builtin in ["**/.git", DEFAULT_REPORT_DIR] {
-        patterns.push(Pattern::compile(builtin).map_err(|error| {
-            SnapshotError::new(
-                SnapshotErrorKind::InvalidOptions,
-                builtin,
-                format!("built-in exclusion is not a usable pattern: {error}"),
-            )
-        })?);
-    }
+    let git = "**/.git";
+    patterns.push(Pattern::compile(git).map_err(|error| {
+        SnapshotError::new(
+            SnapshotErrorKind::InvalidOptions,
+            git,
+            format!("built-in exclusion is not a usable pattern: {error}"),
+        )
+    })?);
     if let Some(report_dir) = &options.report_dir {
         let normalized = normalize_path(report_dir).map_err(|error| {
             SnapshotError::new(
@@ -546,15 +546,13 @@ fn exclusions(options: &Options) -> Result<Vec<Pattern>, SnapshotError> {
                 format!("report directory is not a usable source-root-relative path: {error}"),
             )
         })?;
-        if normalized != DEFAULT_REPORT_DIR {
-            patterns.push(Pattern::compile(&normalized).map_err(|error| {
-                SnapshotError::new(
-                    SnapshotErrorKind::InvalidOptions,
-                    report_dir.clone(),
-                    format!("report directory is not a usable pattern: {error}"),
-                )
-            })?);
-        }
+        patterns.push(Pattern::compile(&normalized).map_err(|error| {
+            SnapshotError::new(
+                SnapshotErrorKind::InvalidOptions,
+                report_dir.clone(),
+                format!("report directory is not a usable pattern: {error}"),
+            )
+        })?);
     }
     if let Some(build_dir) = &options.build_dir {
         let normalized = normalize_path(build_dir).map_err(|error| {

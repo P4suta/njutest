@@ -23,7 +23,10 @@ pub const FILE_NAME: &str = ".rust-mutants.toml";
 pub const DEFAULT_TIMEOUT: Timeout = Timeout::Auto;
 
 /// Where run reports are written when the file does not say.
-pub const DEFAULT_REPORTS_DIRECTORY: &str = "reports/mutation";
+///
+/// Reached through [`crate::app::stored::Store`] and never joined anywhere
+/// else: a command that joins it is a command that ignores the configuration.
+pub(crate) const DEFAULT_REPORTS_DIRECTORY: &str = "reports/mutation";
 
 /// How many run directories are kept when the file does not say.
 pub const DEFAULT_REPORTS_KEEP: u32 = 20;

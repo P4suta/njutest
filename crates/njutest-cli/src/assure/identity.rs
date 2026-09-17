@@ -98,7 +98,14 @@ pub fn inputs(
         vars,
         elsewhere,
     } = *asked;
-    let scanned = scan(root, &[], elsewhere)?;
+    let scanned = scan(
+        root,
+        &crate::evidence::tree::Bounds {
+            exclude: &[],
+            elsewhere,
+            excluded: &crate::evidence::tree::Excluded::beside(&config.reports.directory),
+        },
+    )?;
     Ok(Inputs {
         tree: scanned.tree,
         corpus: scanned.corpus,
@@ -124,7 +131,14 @@ pub fn of(
     common: Common,
     shard: Option<String>,
 ) -> Result<Evidence, ScanError> {
-    let scanned = scan(asked.root, &[], asked.elsewhere)?;
+    let scanned = scan(
+        asked.root,
+        &crate::evidence::tree::Bounds {
+            exclude: &[],
+            elsewhere: asked.elsewhere,
+            excluded: &crate::evidence::tree::Excluded::beside(&asked.config.reports.directory),
+        },
+    )?;
     let dependencies = dependencies_of(asked.root)?;
     let read = Inputs {
         tree: scanned.tree.clone(),

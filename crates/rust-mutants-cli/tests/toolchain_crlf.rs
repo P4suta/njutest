@@ -82,7 +82,7 @@ fn run(fixture: &Fixture) -> (Vec<Fate>, Vec<String>) {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let directory = fixture.root().join("reports/mutation");
+    let directory = rust_mutants_cli::app::stored::Store::read(fixture.root()).root();
     let mut runs: Vec<PathBuf> = std::fs::read_dir(&directory)
         .unwrap_or_else(|error| panic!("{}: {error}", directory.display()))
         .flatten()

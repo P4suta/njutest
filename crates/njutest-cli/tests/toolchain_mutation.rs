@@ -73,12 +73,9 @@ fn environment(root: &Path, cache: &Path, named: &[(&str, &str)]) -> Environment
 }
 
 fn document(fixture: &Fixture) -> serde_json::Value {
-    let index = fixture.root.join(njutest_cli::app::reports::LATEST_ANY);
-    let value: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(index).expect("the index")).expect("JSON");
-    let path = fixture
-        .root
-        .join(value["directory"].as_str().expect("a directory"))
+    let path = njutest_cli::app::reports::Store::read(&fixture.root)
+        .run_of(njutest_cli::app::reports::Index::Any)
+        .expect("the index names a run")
         .join(njutest_cli::app::reports::DOCUMENT_NAME);
     serde_json::from_str(&std::fs::read_to_string(path).expect("the document")).expect("JSON")
 }
@@ -147,7 +144,7 @@ fn a_gap_the_suite_cannot_see_is_insufficient_and_named() {
         .collect();
     assert_eq!(
         rules,
-        ["gt-to-ge@1", "lt-to-le@1"],
+        ["gt-to-ge", "lt-to-le"],
         "the two sides of the zero nobody tests"
     );
     for finding in findings {
@@ -413,13 +410,18 @@ fn what_a_run_concludes_does_not_depend_on_how_many_workers_measured_it() {
 fn accept_records_a_mutation_no_test_reaches() {
     let fixture = fixture("fixture-unreached");
     verify(&fixture, &[]);
-    let unreached = document(&fixture)["mutants"]
+    let found = document(&fixture)["mutants"]
         .as_array()
         .expect("mutants")
         .iter()
         .find(|mutant| mutant["outcome"] == "unreached")
-        .and_then(|mutant| mutant["display_id"].as_str().map(ToOwned::to_owned))
+        .cloned()
         .expect("a mutation no test reaches");
+    let unreached = found["display_id"]
+        .as_str()
+        .expect("a name for it")
+        .to_owned();
+    let rule = found["rule"].as_str().expect("the rule").to_owned();
 
     let output = njutest(
         &fixture,
@@ -439,7 +441,11 @@ fn accept_records_a_mutation_no_test_reaches() {
         String::from_utf8_lossy(&output.stderr)
     );
     let written = std::fs::read_to_string(fixture.root.join(".njutest.toml")).expect("the file");
-    assert!(written.contains(&unreached), "{written}");
+    assert!(
+        written.contains(&rule) && written.contains("src/lib.rs"),
+        "an acceptance names where the mutation is rather than the identity the next \
+         edit re-mints: {written}"
+    );
 }
 
 #[test]
@@ -580,14 +586,15 @@ fn recording_an_acceptance_keeps_the_configuration_a_person_wrote() {
     )
     .expect("a configuration somebody wrote");
 
-    let survivor = document(&fixture)["mutants"]
+    let found = document(&fixture)["mutants"]
         .as_array()
         .expect("mutants")
         .iter()
         .find(|mutant| mutant["outcome"] == "survived" || mutant["outcome"] == "unreached")
-        .and_then(|mutant| mutant["id"].as_str())
-        .expect("a survivor")
-        .to_owned();
+        .cloned()
+        .expect("a survivor");
+    let survivor = found["id"].as_str().expect("its identity").to_owned();
+    let rule = found["rule"].as_str().expect("the rule").to_owned();
 
     let recorded = njutest(&fixture, &["accept", &survivor, "--reason", "reviewed"]);
     assert_eq!(
@@ -608,7 +615,7 @@ fn recording_an_acceptance_keeps_the_configuration_a_person_wrote() {
         "and everything else the file said: {after}"
     );
     assert!(
-        after.contains(&survivor) && after.contains("reviewed"),
+        after.contains(&rule) && after.contains("reviewed"),
         "with the acceptance appended: {after}"
     );
 
@@ -630,7 +637,7 @@ fn recording_an_acceptance_keeps_the_configuration_a_person_wrote() {
     );
     let twice = std::fs::read_to_string(&path).expect("the configuration");
     assert_eq!(
-        twice.matches(&survivor).count(),
+        twice.matches("[[acceptance]]").count(),
         1,
         "and the file holds one, because two acceptances of one mutation are two \
          reviewers disagreeing with themselves: {twice}"

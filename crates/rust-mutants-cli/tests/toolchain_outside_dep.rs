@@ -71,11 +71,11 @@ fn an_allowed_sibling_is_copied_beside_the_tree_and_the_run_measures() {
     );
     let text = String::from_utf8_lossy(&output.stdout);
     assert!(
-        text.contains("MUTANTS   cataloged="),
+        text.contains("mutants were cataloged"),
         "the run measured the tree: {text}"
     );
     assert!(
-        !text.contains("cataloged=0"),
+        !text.contains("MUTANTS    0 mutants"),
         "and found something to measure: {text}"
     );
 }

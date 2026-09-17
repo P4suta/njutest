@@ -268,7 +268,8 @@ fn doctor_says_a_run_can_go_ahead_when_only_the_optional_tools_are_missing() {
         "an optional tool is one a run says a limitation about rather than one it needs,          so a machine with every required tool and no optional one can still verify:          {stdout}"
     );
     assert!(
-        stdout.ends_with("\n\na standard-v1 run can go ahead on this machine\n"),
+        stdout.contains("\n\na standard-v1 run can go ahead:")
+            && stdout.ends_with("every required one answered\n"),
         "and the doctor says so in the last line, set off from the table by a blank one: \
          {stdout:?}"
     );

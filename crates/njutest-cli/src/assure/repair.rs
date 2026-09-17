@@ -38,6 +38,8 @@ pub struct Checking<'a> {
     pub skip_targets: Vec<String>,
     /// How long one execution may take.
     pub timeout: Duration,
+    /// Where this project keeps what its runs leave behind, which the tree under test is copied without.
+    pub reports: crate::app::reports::Store,
 }
 
 /// What putting a candidate to the tests established.
@@ -89,7 +91,7 @@ pub fn check(
                 .map(std::ffi::OsStr::to_owned),
             env: checking.environment.vars.clone(),
             temp_directory: checking.environment.temp_directory.clone(),
-            report_directory: Some("reports".to_owned()),
+            report_directory: Some(checking.reports.relative()),
             exclude: Vec::new(),
             keep_temp: false,
             offline: checking.cargo.offline,

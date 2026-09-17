@@ -467,6 +467,10 @@ fn considered(
             harness_args: request.test_args.clone(),
             skip_targets: request.config.execution.skip_targets.clone(),
             timeout: request.config.execution.timeout,
+            reports: crate::app::reports::Store::of(
+                &request.root,
+                &request.config.reports.directory,
+            ),
         },
         proposal,
         mutant,
@@ -741,7 +745,12 @@ fn open_phase(report: &mut Report, opening: &Opening<'_>, watch: Watch<'_>) {
              while the run is still using it",
         ));
     }
-    report.repository.git = git::describe(&request.root, &environment.vars, watch);
+    report.repository.git = git::describe(&git::Asked {
+        root: &request.root,
+        env: &environment.vars,
+        excluded: &crate::evidence::tree::Excluded::beside(&request.config.reports.directory),
+        watch,
+    });
     let Some(change) = &request.changed else {
         return;
     };
@@ -1061,7 +1070,13 @@ fn prove_equivalence(
                     .map(std::ffi::OsStr::to_owned),
                 env: mutating.environment.vars.clone(),
                 temp_directory: mutating.environment.temp_directory.clone(),
-                report_directory: Some("reports".to_owned()),
+                report_directory: Some(
+                    crate::app::reports::Store::of(
+                        &request.root,
+                        &request.config.reports.directory,
+                    )
+                    .relative(),
+                ),
                 exclude: Vec::new(),
                 keep_temp: false,
                 offline: request.cargo.offline,
@@ -1096,7 +1111,10 @@ fn prepare(
             search_path: environment.var("PATH").map(std::ffi::OsStr::to_owned),
             env: environment.vars.clone(),
             temp_directory: environment.temp_directory.clone(),
-            report_directory: Some("reports".to_owned()),
+            report_directory: Some(
+                crate::app::reports::Store::of(&request.root, &request.config.reports.directory)
+                    .relative(),
+            ),
             exclude: Vec::new(),
             keep_temp: request.keep_temp,
             offline: request.cargo.offline,

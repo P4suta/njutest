@@ -290,7 +290,7 @@ fn a_process_that_cannot_record_costs_its_target_the_measurement_and_not_the_run
         &Cancel::new(),
     )
     .expect("open");
-    let logs = workspace.target_dir().join("scratch/touch");
+    let logs = workspace.scratch_dir().join("touch");
     std::fs::create_dir_all(&logs).expect("the directory the records go in");
     std::fs::set_permissions(&logs, std::fs::Permissions::from_mode(0o555))
         .expect("a directory nothing may write in");

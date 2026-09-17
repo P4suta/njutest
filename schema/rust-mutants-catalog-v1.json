@@ -83,6 +83,7 @@
         "index": { "type": "integer", "minimum": 0 },
         "id": { "$ref": "#/$defs/digest" },
         "display_id": { "type": "string", "pattern": "^[0-9a-f]{20}$" },
+        "item": { "type": "string" },
         "path": { "type": "string", "minLength": 1 },
         "package": { "type": "string" },
         "family": { "type": "string", "minLength": 1 },

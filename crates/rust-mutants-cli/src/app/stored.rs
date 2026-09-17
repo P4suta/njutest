@@ -12,6 +12,49 @@ use crate::cli;
 use crate::error::CliError;
 use crate::report::run as run_report;
 
+/// Where this project keeps what its runs leave behind, and the only thing that knows it.
+///
+/// The directory is configuration, so every command has to ask the same
+/// question the same way. Three of them used to join the default instead, and
+/// a project that had moved the directory got two commands reading a place
+/// nothing was written to.
+#[derive(Debug, Clone)]
+pub struct Store {
+    root: PathBuf,
+}
+
+impl Store {
+    /// The store `configured` names under `root`.
+    #[must_use]
+    pub fn of(root: &Path, configured: &Path) -> Self {
+        Self {
+            root: root.join(configured),
+        }
+    }
+
+    /// The store this project is configured for, defaulting when the configuration cannot be read.
+    #[must_use]
+    pub fn read(root: &Path) -> Self {
+        let configured = crate::config::Config::load(root).map_or_else(
+            |_error| PathBuf::from(crate::config::DEFAULT_REPORTS_DIRECTORY),
+            |config| config.reports.directory,
+        );
+        Self::of(root, &configured)
+    }
+
+    /// The directory every run writes its own directory under.
+    #[must_use]
+    pub fn root(&self) -> PathBuf {
+        self.root.clone()
+    }
+
+    /// Where one run writes.
+    #[must_use]
+    pub fn run(&self, id: &str) -> PathBuf {
+        self.root.join(id)
+    }
+}
+
 /// The name this run goes by, which is what its report directory is called.
 ///
 /// # Errors

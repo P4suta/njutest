@@ -1613,7 +1613,7 @@ fn report_back(
     } = wanted;
     let root = environment.rooted(root);
     let config = crate::config::Config::load(&root)?;
-    let directory = root.join(&config.reports.directory);
+    let directory = stored::Store::of(&root, &config.reports.directory).root();
     let path = match run {
         Some(id) => directory.join(id).join(run_report::FILE_NAME),
         None => newest(&directory)?,
@@ -1759,7 +1759,7 @@ fn parts(
         return Ok(reports.to_vec());
     }
     let root = environment.rooted(root);
-    let directory = root.join(crate::config::DEFAULT_REPORTS_DIRECTORY);
+    let directory = stored::Store::read(&root).root();
     let mut found: Vec<PathBuf> = reports.to_vec();
     for named in runs {
         let pattern = rust_mutants::glob::Pattern::compile(named).map_err(|error| {

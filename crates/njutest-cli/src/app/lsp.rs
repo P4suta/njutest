@@ -262,10 +262,9 @@ pub fn uri_of(path: &Path) -> String {
 
 /// The report of the run that finished last, or nothing when none has.
 fn latest(root: &Path) -> Option<Report> {
-    let index = std::fs::read_to_string(root.join(super::reports::LATEST_ANY)).ok()?;
-    let index: Value = serde_json::from_str(&index).ok()?;
-    let directory = index.get("directory").and_then(Value::as_str)?;
-    let path: PathBuf = root.join(directory).join(super::reports::DOCUMENT_NAME);
+    let path: PathBuf = super::reports::Store::read(root)
+        .run_of(super::reports::Index::Any)?
+        .join(super::reports::DOCUMENT_NAME);
     serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()
 }
 

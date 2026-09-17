@@ -52,6 +52,7 @@ pub fn run(
             harness_args: config.execution.test_binary_args,
             skip_targets: config.execution.skip_targets,
             timeout: None,
+            reports: crate::app::reports::Store::of(root, &config.reports.directory),
         },
         &found.subject,
         found.kind,

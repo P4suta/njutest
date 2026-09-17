@@ -58,7 +58,7 @@ pub fn run(
     let cancel = environment.cancel.clone();
 
     let watch = Watch::new(&cancel, &trace);
-    let changed = match change_set(arguments, &root, environment, watch) {
+    let changed = match asked_about(arguments, (&root, &config), environment, watch) {
         Ok(changed) => changed,
         Err(message) => {
             super::diagnose(stderr, &message);
@@ -232,12 +232,30 @@ fn establish(establishing: &Establishing<'_>, streams: Streams<'_>) -> u8 {
     report.verdict.exit_code()
 }
 
+/// The change set, asked for with the directories this project writes left out.
+fn asked_about(
+    arguments: &Verify,
+    about: (&Path, &Config),
+    environment: &Environment,
+    watch: Watch<'_>,
+) -> Result<Option<crate::git::Change>, String> {
+    let (root, config) = about;
+    let excluded = crate::evidence::tree::Excluded::beside(&config.reports.directory);
+    change_set(
+        arguments,
+        &crate::git::Asked {
+            root,
+            env: &environment.vars,
+            excluded: &excluded,
+            watch,
+        },
+    )
+}
+
 /// The change set a run was asked to mutate within, or nothing when it was not asked.
 fn change_set(
     arguments: &Verify,
-    root: &Path,
-    environment: &Environment,
-    watch: Watch<'_>,
+    asked: &crate::git::Asked<'_>,
 ) -> Result<Option<crate::git::Change>, String> {
     if !arguments.changed && arguments.changed_from.is_none() {
         return Ok(None);
@@ -246,14 +264,12 @@ fn change_set(
         .changed_from
         .as_deref()
         .unwrap_or(crate::git::DEFAULT_BASE);
-    crate::git::changed(root, &environment.vars, base, watch)
-        .map(Some)
-        .ok_or_else(|| {
-            format!(
-                "git could not say what differs from {base:?}, and a run that cannot see what \
+    crate::git::changed(asked, base).map(Some).ok_or_else(|| {
+        format!(
+            "git could not say what differs from {base:?}, and a run that cannot see what \
                  changed cannot claim to have verified what changed"
-            )
-        })
+        )
+    })
 }
 
 /// What a run was asked to verify, before anything has been established about it.

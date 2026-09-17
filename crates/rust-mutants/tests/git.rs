@@ -134,10 +134,10 @@ fn a_file_written_since_the_commit_is_in_the_change_set_before_it_is_committed()
 
 #[test]
 fn a_directory_the_caller_excluded_is_not_a_change_to_the_code() {
-    let asked = Asked::new(vec!["reports"]);
+    let asked = Asked::new(vec!["artifacts"]);
     asked.repo.package("demo").lib("pub fn f() {}\n");
     asked.repo.commit();
-    asked.repo.write("reports/latest.json", "{}\n");
+    asked.repo.write("artifacts/latest.json", "{}\n");
     asked.repo.write("src/added.rs", "pub fn g() {}\n");
 
     let change = asked.changed(DEFAULT_BASE).expect("git can be asked");

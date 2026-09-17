@@ -46,7 +46,8 @@ max_bytes = 5368709120          # 5 GiB
 ttl = "720h"                    # 30 days
 
 [reports]
-keep = 20                       # run directories kept under reports/runs
+keep = 20                       # run directories kept
+directory = "reports"           # where every run writes, one directory each under <directory>/runs
 
 [fuzz]
 run = false                    # drive the fuzz targets, not only find them

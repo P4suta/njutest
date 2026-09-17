@@ -60,11 +60,11 @@ pub(super) fn doctor_document(
     checks.push(workspace_check(&root, &manifest));
 
     let config_path = root.join(crate::config::FILE_NAME);
-    let mut reports = root.join(crate::config::DEFAULT_REPORTS_DIRECTORY);
+    let mut reports = super::stored::Store::read(&root).root();
     if config_path.is_file() {
         match crate::config::Config::load(&root) {
             Ok(read) => {
-                reports = root.join(&read.reports.directory);
+                reports = super::stored::Store::of(&root, &read.reports.directory).root();
                 checks.push(noted("config", Well, &config_path.display().to_string()));
             }
             Err(error) => checks.push(doctor_report::Check::new(

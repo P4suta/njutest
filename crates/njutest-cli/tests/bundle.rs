@@ -12,7 +12,7 @@
 use std::path::Path;
 
 use njutest_cli::app::diagnostics::{MANIFEST_NAME, copy, copy_tree, record, run};
-use njutest_cli::app::reports::{DOCUMENT_NAME, RUNS_DIR};
+use njutest_cli::app::reports::{DOCUMENT_NAME, Store};
 use njutest_cli::cli::{Diagnostics, Environment};
 
 const RUN: &str = "20260101T000000Z-aaaaaa";
@@ -46,7 +46,7 @@ fn invoke(root: &Path) -> (u8, String, String) {
 }
 
 fn empty_run(root: &Path) {
-    std::fs::create_dir_all(root.join(RUNS_DIR).join(RUN)).expect("an existing run");
+    std::fs::create_dir_all(Store::read(root).run(RUN)).expect("an existing run");
 }
 
 #[test]

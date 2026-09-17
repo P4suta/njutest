@@ -69,6 +69,8 @@ pub struct Replaying<'a> {
     pub skip_targets: Vec<String>,
     /// How long one execution may take.
     pub timeout: Option<Duration>,
+    /// Where this project keeps what its runs leave behind, which the tree under test is copied without.
+    pub reports: crate::app::reports::Store,
 }
 
 /// Offers `mutant` to the tests again and says whether `kind` is still observable.
@@ -95,7 +97,7 @@ pub fn replay(
                 .map(std::ffi::OsStr::to_owned),
             env: replaying.environment.vars.clone(),
             temp_directory: replaying.environment.temp_directory.clone(),
-            report_directory: Some("reports".to_owned()),
+            report_directory: Some(replaying.reports.relative()),
             exclude: Vec::new(),
             keep_temp: false,
             offline: replaying.cargo.offline,

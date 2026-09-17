@@ -12,7 +12,7 @@ use rust_mutants::runner::Cancel;
 
 use crate::cli::{EXIT_ERROR, Environment, Watch as Arguments};
 use crate::config::Config;
-use crate::evidence::tree::{Entry, ScanError, walk};
+use crate::evidence::tree::{Bounds, Entry, Excluded, ScanError, walk};
 
 /// How often the tree is asked whether it changed, when the caller does not say.
 pub const POLL: Duration = Duration::from_millis(500);
@@ -24,9 +24,14 @@ pub type Seen = BTreeMap<String, (Option<SystemTime>, u64)>;
 ///
 /// # Errors
 /// See [`ScanError`].
-pub fn look(root: &Path) -> Result<Seen, ScanError> {
+pub fn look(root: &Path, excluded: &Excluded) -> Result<Seen, ScanError> {
     let mut seen = Seen::new();
-    walk(root, &[], &[], |relative, entry| {
+    let within = Bounds {
+        exclude: &[],
+        elsewhere: &[],
+        excluded,
+    };
+    walk(root, &within, |relative, entry| {
         if let Entry::File(path) = entry
             && let Ok(held) = std::fs::metadata(&path)
         {
@@ -81,10 +86,14 @@ pub fn run(
     stderr: &mut dyn Write,
 ) -> u8 {
     let root = environment.rooted(arguments.verify.directory.as_deref());
-    if let Err(error) = Config::load(&root) {
-        super::complain(stderr, &error, error.code());
-        return EXIT_ERROR;
-    }
+    let config = match Config::load(&root) {
+        Ok(config) => config,
+        Err(error) => {
+            super::complain(stderr, &error, error.code());
+            return EXIT_ERROR;
+        }
+    };
+    let excluded = Excluded::beside(&config.reports.directory);
     let poll = arguments.poll_ms.map_or(POLL, Duration::from_millis);
     let cancel = environment.cancel.clone();
     super::say(
@@ -94,7 +103,7 @@ pub fn run(
     until(
         &cancel,
         poll,
-        || look(&root).ok(),
+        || look(&root, &excluded).ok(),
         || {
             let code = super::verify::run(&arguments.verify, environment, stdout, stderr);
             super::say(stdout, "waiting\tfor the next change");

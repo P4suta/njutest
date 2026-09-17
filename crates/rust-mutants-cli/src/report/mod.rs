@@ -298,7 +298,7 @@ pub fn explained(document: &rust_mutants::report::explain::ExplainDocument) -> S
         let written = writeln!(text, "{label:<9} {value}");
         debug_assert!(written.is_ok(), "writing to a String cannot fail");
     };
-    say("WHERE", &rust_mutants::report::explain::names(one));
+    say("NAME", &rust_mutants::report::explain::names(one));
     say("MUTANT", &one.id);
     say("SHORT", &one.display_id);
     say(

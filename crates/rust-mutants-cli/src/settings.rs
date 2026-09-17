@@ -147,7 +147,7 @@ impl Settings {
     /// Where run reports go.
     #[must_use]
     pub fn report_directory(&self) -> PathBuf {
-        self.root.join(&self.config.reports.directory)
+        crate::app::stored::Store::of(&self.root, &self.config.reports.directory).root()
     }
 }
 

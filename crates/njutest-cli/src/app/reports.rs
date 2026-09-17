@@ -9,14 +9,121 @@ use std::path::{Path, PathBuf};
 use crate::error::{self, ErrorCode};
 use crate::report::{Report, json};
 
-/// The directory every run directory lives under.
-pub const RUNS_DIR: &str = "reports/runs";
+/// Where the runs of one report directory live, and the only thing that knows the layout.
+///
+/// Every place that wanted a path used to join a constant, tests included, so
+/// the layout was a fact spread across the tree and the configuration could
+/// not name it without moving all of them. Production and a test now ask the
+/// same value the same way, and a project that already means something by
+/// `reports/` can say so.
+#[derive(Debug, Clone)]
+pub struct Store {
+    runs: PathBuf,
+    root: PathBuf,
+    configured: PathBuf,
+}
 
-/// The index of the latest completed run of any scope.
-pub const LATEST_ANY: &str = "reports/latest-any.json";
+impl Store {
+    /// The store `configured` names under `root`.
+    #[must_use]
+    pub fn of(root: &Path, configured: &Path) -> Self {
+        let here = root.join(configured);
+        Self {
+            runs: here.join(RUNS_NAME),
+            root: here,
+            configured: configured.to_path_buf(),
+        }
+    }
 
-/// The index of the latest completed full run.
-pub const LATEST_FULL: &str = "reports/latest-full.json";
+    /// Where this project writes, relative to its own root, which is what the engine is told to keep out of a snapshot.
+    #[must_use]
+    pub fn relative(&self) -> String {
+        self.configured.to_string_lossy().into_owned()
+    }
+
+    /// The store a command uses when it has read the configuration.
+    #[must_use]
+    pub fn read(root: &Path) -> Self {
+        let configured = crate::config::Config::load(root).map_or_else(
+            |_error| PathBuf::from(crate::config::DEFAULT_REPORTS_DIRECTORY),
+            |config| config.reports.directory,
+        );
+        Self::of(root, &configured)
+    }
+
+    /// The directory every run writes its own directory under.
+    #[must_use]
+    pub fn runs(&self) -> &Path {
+        &self.runs
+    }
+
+    /// Where one run writes.
+    #[must_use]
+    pub fn run(&self, id: &str) -> PathBuf {
+        self.runs.join(id)
+    }
+
+    /// The directory of the run one index names, or nothing when it names none.
+    ///
+    /// An index holds a path relative to itself, so resolving one against the
+    /// project root reads as a run nobody stored the moment the report
+    /// directory moves. Every reader asks here instead.
+    #[must_use]
+    pub fn run_of(&self, index: Index) -> Option<PathBuf> {
+        let text = std::fs::read_to_string(self.index(index)).ok()?;
+        let value: serde_json::Value = serde_json::from_str(&text).ok()?;
+        let directory = value.get("directory")?.as_str()?;
+        Some(self.within(directory))
+    }
+
+    /// Where something one index names sits, which an index names relative to itself so that moving the directory moves what it says.
+    #[must_use]
+    pub fn within(&self, relative: &str) -> PathBuf {
+        self.root.join(relative)
+    }
+
+    /// Where one index that names the newest run sits.
+    #[must_use]
+    pub fn index(&self, index: Index) -> PathBuf {
+        self.root.join(index.file())
+    }
+
+    /// What an index calls one run's directory, which is relative to the index itself.
+    #[must_use]
+    pub fn named(run_id: &str) -> String {
+        format!("{RUNS_NAME}/{run_id}")
+    }
+}
+
+/// The directory runs sit in, under the report directory the configuration names.
+const RUNS_NAME: &str = "runs";
+
+/// One of the two files that name the newest run.
+///
+/// A file name is not a path: joined onto the wrong root it reads as a run
+/// nobody stored, which is what happened to six tests when the report
+/// directory became configuration. Only [`Store`] turns one into a path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Index {
+    /// The latest completed run of any scope.
+    Any,
+    /// The latest completed run that looked at the whole project.
+    Full,
+}
+
+impl Index {
+    /// Both, in the order a run advances them.
+    pub const BOTH: [Self; 2] = [Self::Any, Self::Full];
+
+    /// What the file is called inside the report directory.
+    #[must_use]
+    pub const fn file(self) -> &'static str {
+        match self {
+            Self::Any => "latest-any.json",
+            Self::Full => "latest-full.json",
+        }
+    }
+}
 
 /// The canonical document inside a run directory.
 pub const DOCUMENT_NAME: &str = "njutest-assurance-report-v1.json";
@@ -80,9 +187,10 @@ pub struct Kept {
 /// written then — and [`StoreError::NotKept`] for the I/O failure.
 pub fn keep(root: &Path, report: &Report) -> Result<Kept, StoreError> {
     let document_text = json::document(report)?;
-    let directory = root.join(RUNS_DIR).join(&report.run_id);
+    let store = Store::read(root);
+    let directory = store.run(&report.run_id);
 
-    disowned(&root.join(RUNS_DIR));
+    disowned(store.runs());
     let document = directory.join(DOCUMENT_NAME);
     write(&document, document_text.as_bytes())?;
     write(&directory.join(SCHEMA_NAME), SCHEMA_TEXT.as_bytes())?;
@@ -104,9 +212,9 @@ pub fn keep(root: &Path, report: &Report) -> Result<Kept, StoreError> {
         crate::report::junit::document(report).as_bytes(),
     )?;
 
-    point(root, LATEST_ANY, &report.run_id)?;
+    point(&store, Index::Any, &report.run_id)?;
     if report.run_kind == crate::report::RunKind::Full {
-        point(root, LATEST_FULL, &report.run_id)?;
+        point(&store, Index::Full, &report.run_id)?;
     }
     Ok(Kept {
         directory,
@@ -117,7 +225,7 @@ pub fn keep(root: &Path, report: &Report) -> Result<Kept, StoreError> {
 /// Removes the oldest run directories beyond `keep`, newest first by name — which is chronological, because that is what a run identity is for.
 #[must_use]
 pub fn retain(root: &Path, keep: u32) -> Vec<PathBuf> {
-    let runs = root.join(RUNS_DIR);
+    let runs = Store::read(root).runs().to_path_buf();
     let mut names: Vec<PathBuf> = match std::fs::read_dir(&runs) {
         Ok(entries) => entries
             .flatten()
@@ -128,9 +236,9 @@ pub fn retain(root: &Path, keep: u32) -> Vec<PathBuf> {
     };
     names.sort();
     names.reverse();
-    let protected: Vec<String> = [LATEST_ANY, LATEST_FULL]
+    let protected: Vec<String> = Index::BOTH
         .iter()
-        .filter_map(|index| pointed_at(root, index))
+        .filter_map(|index| pointed_at(root, *index))
         .collect();
 
     let keep = usize::try_from(keep).unwrap_or(usize::MAX);
@@ -150,8 +258,8 @@ pub fn retain(root: &Path, keep: u32) -> Vec<PathBuf> {
 
 /// The run one index names, if it names one.
 #[must_use]
-pub fn pointed_at(root: &Path, index: &str) -> Option<String> {
-    let text = std::fs::read_to_string(root.join(index)).ok()?;
+pub fn pointed_at(root: &Path, index: Index) -> Option<String> {
+    let text = std::fs::read_to_string(Store::read(root).index(index)).ok()?;
     let value: serde_json::Value = serde_json::from_str(&text).ok()?;
     value
         .get("run_id")
@@ -172,12 +280,12 @@ fn disowned(directory: &Path) {
 }
 
 /// Writes one index.
-fn point(root: &Path, index: &str, run_id: &str) -> Result<(), StoreError> {
-    let path = root.join(index);
+fn point(store: &Store, index: Index, run_id: &str) -> Result<(), StoreError> {
+    let path = store.index(index);
     let mut text = serde_json::to_string_pretty(&serde_json::json!({
         "schema": crate::report::SCHEMA,
         "run_id": run_id,
-        "directory": format!("{RUNS_DIR}/{run_id}"),
+        "directory": Store::named(run_id),
     }))
     .unwrap_or_default();
     text.push('\n');

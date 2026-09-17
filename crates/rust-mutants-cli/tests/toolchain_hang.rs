@@ -33,7 +33,7 @@ fn run(fixture: &Fixture, env: &[(&str, String)]) -> Output {
 
 /// The row of the mutation one rule proposed at one line.
 fn row(fixture: &Fixture, rule: &str, line: u64) -> serde_json::Value {
-    let directory = fixture.root().join("reports/mutation");
+    let directory = rust_mutants_cli::app::stored::Store::read(fixture.root()).root();
     let mut runs: Vec<std::path::PathBuf> = std::fs::read_dir(&directory)
         .unwrap_or_else(|error| panic!("{}: {error}", directory.display()))
         .flatten()

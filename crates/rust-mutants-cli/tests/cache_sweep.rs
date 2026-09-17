@@ -238,9 +238,7 @@ fn everything_is_counted_in_bytes_as_well_as_in_directories() {
 fn what_a_run_was_asked_to_keep_is_listed_and_never_swept() {
     let fixture = Fixture::copy("fixture-simple");
     let environment = environment(&fixture);
-    let reports = fixture
-        .root()
-        .join(rust_mutants_cli::config::DEFAULT_REPORTS_DIRECTORY);
+    let reports = rust_mutants_cli::app::stored::Store::read(fixture.root()).root();
     let preserved = fixture.temp().join(format!(
         "{}kept-on-purpose",
         rust_mutants::snapshot::DIR_PREFIX
@@ -288,9 +286,7 @@ fn what_a_run_was_asked_to_keep_is_listed_and_never_swept() {
 fn collecting_what_was_kept_removes_it_and_says_how_many() {
     let fixture = Fixture::copy("fixture-simple");
     let environment = environment(&fixture);
-    let reports = fixture
-        .root()
-        .join(rust_mutants_cli::config::DEFAULT_REPORTS_DIRECTORY);
+    let reports = rust_mutants_cli::app::stored::Store::read(fixture.root()).root();
     let preserved = fixture.temp().join(format!(
         "{}kept-on-purpose",
         rust_mutants::snapshot::DIR_PREFIX
@@ -499,7 +495,7 @@ fn a_directory_a_run_holds_is_counted_as_in_use_rather_than_removed() {
 #[test]
 fn a_directory_that_would_not_go_is_still_in_the_ledger_afterwards() {
     let fixture = Fixture::copy("fixture-simple");
-    let reports = fixture.root().join("reports/mutation");
+    let reports = rust_mutants_cli::app::stored::Store::read(fixture.root()).root();
     std::fs::create_dir_all(&reports).expect("a report directory");
     let held = fixture.temp().join("held-open");
     std::fs::create_dir_all(&held).expect("a directory something is holding");

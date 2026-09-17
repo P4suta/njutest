@@ -38,8 +38,10 @@ fn report(fixture: &Fixture) -> serde_json::Value {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    serde_json::from_str(&njutest_devkit::fixture::stored_report(fixture.root()))
-        .expect("the report is a document")
+    serde_json::from_str(&njutest_devkit::fixture::stored_report(
+        &rust_mutants_cli::app::stored::Store::read(fixture.root()).root(),
+    ))
+    .expect("the report is a document")
 }
 
 #[test]

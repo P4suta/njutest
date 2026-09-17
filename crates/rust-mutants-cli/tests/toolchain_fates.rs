@@ -80,7 +80,7 @@ fn recorded(fixture: &Fixture, args: &[String]) -> Vec<Fate> {
     let output = njutest_devkit::process::answered(code, out, err);
     let code = output.status.code();
     let said = String::from_utf8_lossy(&output.stderr);
-    let directory = fixture.root().join("reports/mutation");
+    let directory = rust_mutants_cli::app::stored::Store::read(fixture.root()).root();
     if !directory.is_dir() {
         assert_eq!(
             code,

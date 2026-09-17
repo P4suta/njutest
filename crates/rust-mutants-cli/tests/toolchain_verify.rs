@@ -59,7 +59,9 @@ fn a_baseline_that_fails_its_own_test_refuses_the_session_with_rm5002() {
         "the refusal says what to do about it: {said}"
     );
     assert!(
-        !fixture.root().join("reports/mutation").exists(),
+        !rust_mutants_cli::app::stored::Store::read(fixture.root())
+            .root()
+            .exists(),
         "a run that established nothing writes no report"
     );
 }

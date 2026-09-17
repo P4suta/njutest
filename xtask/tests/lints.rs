@@ -228,3 +228,78 @@ fn a_command_built_from_an_identity_is_refused() {
         "a locator holds through that edit, which is the whole reason it exists: {found:?}"
     );
 }
+
+/// A test that joins a layout constant is refused, and one that asks for the path is not.
+#[test]
+fn a_test_that_decides_the_layout_is_refused() {
+    let source = "pub const LAYOUT: &str = \"reports/runs\";\n";
+    let exported = xtask::lints::exported_strings(source);
+    assert_eq!(
+        exported,
+        vec![(String::from("LAYOUT"), 1)],
+        "a constant with a separator in it spells a structure rather than a name"
+    );
+    assert!(
+        xtask::lints::exported_strings("pub const NAME: &str = \"runs\";\n").is_empty(),
+        "and one without a separator is a name, which is a thing worth exporting"
+    );
+
+    let test = "use njutest_cli::app::reports::LAYOUT;\nlet path = root.join(LAYOUT);\n";
+    assert!(xtask::lints::joins(test, "LAYOUT"));
+    assert_eq!(
+        xtask::lints::imported_from(test, "LAYOUT").as_deref(),
+        Some("reports"),
+        "the import is what tells four constants of the same name apart"
+    );
+
+    let asking = "use njutest_cli::app::reports::Store;\nlet path = Store::read(root).runs();\n";
+    assert!(
+        !xtask::lints::joins(asking, "LAYOUT"),
+        "a test that asks the type that owns the layout decides nothing"
+    );
+    assert_eq!(
+        xtask::lints::imported_from("let it = a::b::config::LAYOUT;\n", "LAYOUT").as_deref(),
+        Some("config"),
+        "a name written out in full at the point it is used is reached from a module too"
+    );
+}
+
+#[test]
+fn a_directory_the_configuration_can_move_is_spelled_in_one_place() {
+    let source = "/// where reports/runs went\npub(crate) const DEFAULT_REPORTS_DIRECTORY: &str \
+                  = \"artifacts\";\nconst OTHER_DIR: &str = \"vendor\";\n";
+    assert_eq!(
+        xtask::lints::configured_directories(source),
+        vec![String::from("artifacts")],
+        "a default the configuration falls back to is a directory somebody can rename, \
+         and one that is not a default is not"
+    );
+
+    let directories = vec![String::from("artifacts")];
+    assert_eq!(
+        xtask::lints::spelled(
+            "let path = root.join(\"artifacts/runs/one\");\n",
+            &directories
+        ),
+        vec![1],
+        "a path literal under a directory the configuration can move decides it"
+    );
+    assert_eq!(
+        xtask::lints::spelled("let path = root.join(\"artifacts\");\n", &directories),
+        vec![1],
+        "and so does the directory itself, joined onto a root"
+    );
+    assert!(
+        xtask::lints::spelled("let held = it.expect(\"artifacts\");\n", &directories).is_empty(),
+        "while the same word said to a reader is not a path at all"
+    );
+    assert!(
+        xtask::lints::spelled("/// under artifacts/runs\n", &directories).is_empty(),
+        "and documentation may say where things are, which is what it is for"
+    );
+    assert!(
+        xtask::lints::spelled("let path = Store::read(root).run(\"one\");\n", &directories)
+            .is_empty(),
+        "asking the type that owns the layout decides nothing"
+    );
+}

@@ -10,7 +10,8 @@
     "schema_version",
     "tool_version",
     "mutant",
-    "reproduce"
+    "reproduce",
+    "accept"
   ],
   "properties": {
     "document_type": {
@@ -62,6 +63,10 @@
       "type": "boolean"
     },
     "reproduce": {
+      "type": "string",
+      "minLength": 1
+    },
+    "accept": {
       "type": "string",
       "minLength": 1
     }

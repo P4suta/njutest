@@ -59,7 +59,9 @@ fn established(name: &str, extra: &[&str]) -> Established {
         "{name} {extra:?}: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let directory = njutest_devkit::fixture::newest_run(fixture.root());
+    let directory = njutest_devkit::fixture::newest_run(
+        &rust_mutants_cli::app::stored::Store::read(fixture.root()).root(),
+    );
     let text = std::fs::read_to_string(directory.join("run-report-v1.json")).expect("the report");
     let document: RunDocument = serde_json::from_str(&text).expect("the report reads back");
     Established {
@@ -234,7 +236,9 @@ fn a_remembered_measurement_routes_a_run_exactly_as_a_fresh_one_would() {
             "{}",
             String::from_utf8_lossy(&output.stderr)
         );
-        let directory = njutest_devkit::fixture::newest_run(fixture.root());
+        let directory = njutest_devkit::fixture::newest_run(
+            &rust_mutants_cli::app::stored::Store::read(fixture.root()).root(),
+        );
         let text =
             std::fs::read_to_string(directory.join("run-report-v1.json")).expect("the report");
         let document: RunDocument = serde_json::from_str(&text).expect("the report reads back");

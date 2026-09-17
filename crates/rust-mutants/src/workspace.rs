@@ -479,6 +479,12 @@ impl Workspace {
         &self.target_dir
     }
 
+    /// The directory this run's test processes work in: beside the target directory, and removed when the run closes.
+    #[must_use]
+    pub fn scratch_dir(&self) -> &Path {
+        &self.scratch_dir
+    }
+
     /// Discovers, instruments, validates, and builds; see [`prepare()`].
     ///
     /// # Errors

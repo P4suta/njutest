@@ -64,9 +64,12 @@ pub fn lints(root: &Path) -> Result<String, GateFailure> {
                 .map_err(|error| GateFailure(format!("{label}: {error}")))?,
         );
     }
+    found.extend(loose_layouts(root, &files)?);
+    found.sort();
     if found.is_empty() {
         return Ok(format!(
-            "lints: {} files carry no #[allow], no Box<dyn Trait>, and no comment beside the code",
+            "lints: {} files carry no #[allow], no Box<dyn Trait>, no comment beside the \
+             code, and no layout anybody but the configuration has decided",
             files.len()
         ));
     }
@@ -75,6 +78,97 @@ pub fn lints(root: &Path) -> Result<String, GateFailure> {
         let _written = writeln!(report, "{finding}");
     }
     Err(GateFailure(report.trim_end().to_owned()))
+}
+
+/// Every exported constant that more than one module joins onto a path for itself.
+///
+/// This is the shape the report layout had: a `pub const` spelling a structure,
+/// joined in six places and in the tests, so the configuration could not own
+/// it and moving it meant moving all of them. One module joining its own
+/// constant is not that — it is a name it happens to have written down — and a
+/// document type or a URL is not a path at all, which is why this counts the
+/// joiners rather than reading the spelling.
+fn loose_layouts(root: &Path, files: &[PathBuf]) -> Result<Vec<lint_scan::Finding>, GateFailure> {
+    let mut layouts = Vec::new();
+    let mut configured: Vec<String> = Vec::new();
+    for path in files {
+        let source = std::fs::read_to_string(path)
+            .map_err(|error| GateFailure(format!("{}: {error}", path.display())))?;
+        let module = path
+            .file_stem()
+            .map(|stem| stem.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        for (name, _line) in lint_scan::exported_strings(&source) {
+            layouts.push((module.clone(), name));
+        }
+    }
+    for path in production_sources(root) {
+        let source = std::fs::read_to_string(&path)
+            .map_err(|error| GateFailure(format!("{}: {error}", path.display())))?;
+        configured.extend(lint_scan::configured_directories(&source));
+    }
+    configured.sort();
+    configured.dedup();
+    let mut found = Vec::new();
+    for path in files {
+        if path.file_name().is_some_and(|name| name == "config.rs") {
+            continue;
+        }
+        let source = std::fs::read_to_string(path)
+            .map_err(|error| GateFailure(format!("{}: {error}", path.display())))?;
+        let label = relative_slash(root, path);
+        for line in lint_scan::spelled(&source, &configured) {
+            found.push(lint_scan::Finding {
+                kind: lint_scan::Kind::LooseLayout,
+                file: label.clone(),
+                line,
+            });
+        }
+    }
+    for path in tests_under(root) {
+        let source = std::fs::read_to_string(&path)
+            .map_err(|error| GateFailure(format!("{}: {error}", path.display())))?;
+        let label = relative_slash(root, &path);
+        for (module, name) in &layouts {
+            if !lint_scan::joins(&source, name)
+                || lint_scan::imported_from(&source, name).as_ref() != Some(module)
+            {
+                continue;
+            }
+            let line = source
+                .lines()
+                .position(|line| lint_scan::joins(line, name))
+                .map_or(1, |at| at.saturating_add(1));
+            found.push(lint_scan::Finding {
+                kind: lint_scan::Kind::LooseLayout,
+                file: label.clone(),
+                line,
+            });
+        }
+    }
+    Ok(found)
+}
+
+/// Every test source of the workspace, which is where a layout being joined freezes it.
+fn tests_under(root: &Path) -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    for base in ["crates", "xtask"] {
+        for entry in WalkDir::new(root.join(base))
+            .sort_by_file_name()
+            .into_iter()
+            .filter_map(Result::ok)
+        {
+            let path = entry.path();
+            let relative = relative_slash(root, path);
+            if entry.file_type().is_file()
+                && path.extension().is_some_and(|one| one == "rs")
+                && relative.contains("/tests/")
+            {
+                found.push(path.to_path_buf());
+            }
+        }
+    }
+    found
 }
 
 /// The production source files the seam ratchet scans.

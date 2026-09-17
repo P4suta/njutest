@@ -4,7 +4,7 @@
 //! `.njutest.toml`: optional, strict, and defaulted.
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -23,6 +23,9 @@ pub const DEFAULT_CACHE_MAX_BYTES: u64 = 5 * 1024 * 1024 * 1024;
 
 /// How long a cached outcome is kept when the file does not say.
 pub const DEFAULT_CACHE_TTL: Duration = Duration::from_hours(720);
+
+/// Where a run writes, unless the configuration says otherwise.
+pub const DEFAULT_REPORTS_DIRECTORY: &str = "reports";
 
 /// How many run directories are kept when the file does not say.
 pub const DEFAULT_REPORTS_KEEP: u32 = 20;
@@ -212,17 +215,24 @@ impl Default for Cache {
 }
 
 /// What is kept under `reports/`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Reports {
     /// How many run directories are kept.
     pub keep: u32,
+    /// The workspace-relative directory every run writes under.
+    ///
+    /// A project that already means something by `reports/` says so here
+    /// rather than living with it. Runs go in `<directory>/runs`, one
+    /// directory each, and the indexes that name the newest sit beside them.
+    pub directory: PathBuf,
 }
 
 impl Default for Reports {
     fn default() -> Self {
         Self {
             keep: DEFAULT_REPORTS_KEEP,
+            directory: PathBuf::from(DEFAULT_REPORTS_DIRECTORY),
         }
     }
 }
@@ -634,9 +644,10 @@ contract = \"standard-v1\"        # \"standard-v1\" | \"deep-v1\"
 # ttl = \"{ttl}h\"
 
 [reports]
-# keep = {keep}                       # run directories kept under reports/runs, which is
-#                             # where every run writes: the JSON report, the record stream,
-#                             # and the HTML, SARIF and JUnit projections of the same run
+# keep = {keep}                       # run directories kept
+# directory = \"reports\"        # where every run writes: the JSON report, the record stream,
+#                             # and the HTML, SARIF and JUnit projections of the same run,
+#                             # one directory per run under <directory>/runs
 
 [fuzz]
 # run = false                    # drive the fuzz targets, not only find them

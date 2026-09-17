@@ -21,16 +21,19 @@ pub enum Kind {
     UnboundedRemoval,
     /// A command or a configuration key built with an identity in it, which the next edit re-mints.
     PerishableHandle,
+    /// An exported constant that spells a directory structure rather than one name.
+    LooseLayout,
 }
 
 impl Kind {
     /// Every kind, in the order a report lists them.
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::AllowAttribute,
         Self::BoxedTraitObject,
         Self::Comment,
         Self::UnboundedRemoval,
         Self::PerishableHandle,
+        Self::LooseLayout,
     ];
 
     /// What to write in a report.
@@ -42,6 +45,7 @@ impl Kind {
             Self::Comment => "comment",
             Self::UnboundedRemoval => "unbounded-removal",
             Self::PerishableHandle => "perishable-handle",
+            Self::LooseLayout => "loose-layout",
         }
     }
 
@@ -73,6 +77,13 @@ impl Kind {
                  has changed; a mutant identity is a function of the whole file, so the \
                  edit that closes a survivor re-mints it and the command or the record \
                  that names it stops naming anything"
+            }
+            Self::LooseLayout => {
+                "a layout written down here freezes it: the configuration cannot name a \
+                 directory somebody else has already decided, which is how a report \
+                 directory stayed unconfigurable while four commands read the wrong \
+                 place. Ask the type that owns the layout for the path, the way the code \
+                 under test does, and let the default live in the configuration alone"
             }
         }
     }
@@ -140,6 +151,151 @@ pub fn scan_source(file: &str, source: &str) -> Result<Vec<Finding>, syn::Error>
     scan.found.extend(handles(file, source));
     scan.found.sort();
     Ok(scan.found)
+}
+
+/// Every exported `&str` constant of `source`, by name, with the line it is on.
+///
+/// The cross-file pass needs these because what makes a constant a layout is
+/// not how it is spelled — `"rust-mutants/explain"` is a document type and
+/// `"reports/runs"` is a structure, and they look the same — but that more
+/// than one module joins it onto a path.
+#[must_use]
+pub fn exported_strings(source: &str) -> Vec<(String, usize)> {
+    declared(source)
+        .filter(|(_at, _name, value)| value.contains('/'))
+        .map(|(at, name, _value)| (name.to_owned(), at.saturating_add(1)))
+        .collect()
+}
+
+/// Every `&str` constant a file declares, whatever its visibility, as line, name and value.
+fn declared(source: &str) -> impl Iterator<Item = (usize, &str, &str)> {
+    source.lines().enumerate().filter_map(|(at, line)| {
+        let rest = line.trim_start();
+        let rest = rest
+            .split_once("const ")
+            .filter(|(before, _rest)| before.is_empty() || before.starts_with("pub"))
+            .map(|(_before, rest)| rest)?;
+        let (name, value) = rest.split_once(": &str = ")?;
+        Some((
+            at,
+            name.trim(),
+            value.trim().trim_matches(|it| it == ';' || it == '"'),
+        ))
+    })
+}
+
+/// The first path segment of every directory the configuration is allowed to move.
+///
+/// A default a configuration field falls back to is a directory somebody can
+/// rename, so a test that writes it down decides it for them. Reading the
+/// defaults rather than a list here means a directory added later is gated
+/// the day its default is written.
+#[must_use]
+pub fn configured_directories(source: &str) -> Vec<String> {
+    declared(source)
+        .filter(|(_at, name, _value)| {
+            name.starts_with("DEFAULT_") && (name.ends_with("_DIRECTORY") || name.ends_with("_DIR"))
+        })
+        .filter_map(|(_at, _name, value)| value.split('/').next())
+        .filter(|head| !head.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+/// Every line of `source` that spells one of `directories` as the head of a path literal.
+///
+/// A directory the configuration can move is one no file may write down. The
+/// literal is what makes it immovable, whether it is joined onto a root, asked
+/// to exist, or handed to the engine as the place this tool writes.
+#[must_use]
+pub fn spelled(source: &str, directories: &[String]) -> Vec<usize> {
+    let mut found = Vec::new();
+    for (at, line) in source.lines().enumerate() {
+        let start = line.trim_start();
+        if start.starts_with("///") || start.starts_with("//!") || start.starts_with("//") {
+            continue;
+        }
+        for literal in literals(line) {
+            let structure = literal.contains('/')
+                && directories
+                    .iter()
+                    .any(|head| literal.split('/').next() == Some(head.as_str()));
+            let joined = directories.iter().any(|head| head == literal)
+                && line.contains(&format!(".join(\"{literal}\")"));
+            if structure || joined {
+                found.push(at.saturating_add(1));
+                break;
+            }
+        }
+    }
+    found
+}
+
+/// Every double-quoted literal on one line, which is close enough for a line of Rust that holds no escaped quote.
+fn literals(line: &str) -> Vec<&str> {
+    line.split('"')
+        .skip(1)
+        .step_by(2)
+        .filter(|it| !it.is_empty())
+        .collect()
+}
+
+/// Whether `source` joins `name` onto a path, which is what makes holding it a layout decision.
+#[must_use]
+pub fn joins(source: &str, name: &str) -> bool {
+    source.contains(&format!(".join({name})"))
+        || source.contains(&format!("{{{name}}}/"))
+        || source.contains(&format!(".join(&{name})"))
+}
+
+/// Which module `source` imports `name` from, when it imports it by name.
+///
+/// A bare `FILE_NAME` is four different constants in this tree, and only one
+/// of them spells a structure. Reading the import is what tells them apart,
+/// and a name nothing imports is one this cannot speak about.
+#[must_use]
+pub fn imported_from(source: &str, name: &str) -> Option<String> {
+    qualified(source, name).or_else(|| by_use(source, name))
+}
+
+/// The module of a name written out in full at the point it is used.
+fn qualified(source: &str, name: &str) -> Option<String> {
+    let (before, _rest) = source.split_once(&format!("::{name}"))?;
+    let module = before.rsplit("::").next()?;
+    module
+        .chars()
+        .all(|it| it.is_ascii_lowercase() || it.is_ascii_digit() || it == '_')
+        .then(|| module.to_owned())
+}
+
+fn by_use(source: &str, name: &str) -> Option<String> {
+    source
+        .lines()
+        .filter(|line| line.trim_start().starts_with("use "))
+        .find(|line| {
+            line.contains(&format!("::{name}"))
+                || line.contains(&format!("{{{name}")) && line.contains("::")
+                || line.contains(&format!(" {name},"))
+                || line.contains(&format!(", {name}"))
+        })
+        .and_then(|line| {
+            let path = line
+                .trim_start()
+                .strip_prefix("use ")?
+                .trim_end_matches(';');
+            let head = path.split_once('{').map_or(path, |(head, _rest)| head);
+            let head = head.trim().trim_end_matches("::");
+            let last = head.rsplit("::").next()?;
+            if last == name {
+                head.trim_end_matches(name)
+                    .trim_end_matches("::")
+                    .rsplit("::")
+                    .next()
+                    .map(str::to_owned)
+            } else {
+                Some(last.to_owned())
+            }
+        })
 }
 
 /// Every format string that hands a reader a command with an identity in it.

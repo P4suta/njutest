@@ -48,7 +48,7 @@ const fn american_parenthesis() -> char {
 
 /// An interrupted run still writes what it did establish, and says what it never reached.
 fn what_it_established(root: &Path) {
-    let directory = root.join("reports/mutation");
+    let directory = rust_mutants_cli::app::stored::Store::read(root).root();
     let pointer = directory.join("latest.json");
     assert!(
         pointer.is_file(),
@@ -211,7 +211,9 @@ fn ctrl_c_during_a_compilation_exits_130_and_writes_no_rejection() {
         "the cancellation says so by its own code: {said}"
     );
     assert!(
-        !root.join("reports").exists(),
+        !rust_mutants_cli::app::stored::Store::read(&root)
+            .root()
+            .exists(),
         "a run that never got a session establishes nothing and writes nothing"
     );
 

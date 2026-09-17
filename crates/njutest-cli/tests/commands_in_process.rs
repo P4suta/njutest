@@ -15,6 +15,7 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
+use njutest_cli::app::reports::Store;
 use njutest_cli::cli::Environment;
 use njutest_devkit::fixture::copy_tree;
 use rust_mutants::runner::Cancel;
@@ -23,6 +24,7 @@ use rust_mutants::runner::Cancel;
 struct Verified {
     root: PathBuf,
     run: String,
+    store: Store,
     _dir: tempfile::TempDir,
 }
 
@@ -83,8 +85,9 @@ fn verified() -> Verified {
         "this fixture has a gap its own tests cannot see: {}{}",
         said.out, said.err
     );
+    let store = Store::read(&root);
     let index: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(root.join(njutest_cli::app::reports::LATEST_ANY))
+        &std::fs::read_to_string(store.index(njutest_cli::app::reports::Index::Any))
             .expect("the index"),
     )
     .expect("the index is JSON");
@@ -95,6 +98,7 @@ fn verified() -> Verified {
     Verified {
         root,
         run,
+        store,
         _dir: dir,
     }
 }
@@ -151,8 +155,7 @@ fn every_command_that_reads_a_run_reads_the_one_that_ran() {
 /// What `report` says about a run directory whose document is not one.
 fn unreadable(it: &Verified) {
     let hollow = "20270101T000000Z-hollow";
-    std::fs::create_dir_all(it.root.join("reports/runs").join(hollow))
-        .expect("a run directory with nothing in it");
+    std::fs::create_dir_all(it.store.run(hollow)).expect("a run directory with nothing in it");
     let empty = ask(&it.root, &["report", hollow]);
     assert!(
         empty.code == 3 && empty.err.contains(hollow),
@@ -164,7 +167,7 @@ fn unreadable(it: &Verified) {
     );
 
     let broken = "20270101T000000Z-broken";
-    let directory = it.root.join("reports/runs").join(broken);
+    let directory = it.store.run(broken);
     std::fs::create_dir_all(&directory).expect("a run directory");
     std::fs::write(
         directory.join(njutest_cli::app::reports::DOCUMENT_NAME),
@@ -194,7 +197,7 @@ fn unreadable(it: &Verified) {
 
 /// What a run leaves in its own directory, and where the pointers point.
 fn kept(it: &Verified) {
-    let directory = it.root.join("reports/runs").join(&it.run);
+    let directory = it.store.run(&it.run);
     for name in [
         njutest_cli::app::reports::DOCUMENT_NAME,
         njutest_cli::app::reports::HTML_NAME,
@@ -211,18 +214,16 @@ fn kept(it: &Verified) {
         );
     }
 
-    for index in [
-        njutest_cli::app::reports::LATEST_ANY,
-        njutest_cli::app::reports::LATEST_FULL,
-    ] {
-        let text = std::fs::read_to_string(it.root.join(index)).expect("the index");
+    for index in njutest_cli::app::reports::Index::BOTH {
+        let text = std::fs::read_to_string(it.store.index(index)).expect("the index");
         let pointer: serde_json::Value = serde_json::from_str(&text).expect("the index is JSON");
         assert_eq!(
             pointer["run_id"].as_str(),
             Some(it.run.as_str()),
             "and points both indexes at it: this run looked at the whole project, so it \
              is the latest of any kind and the latest full one, and an index left behind \
-             names a run whose directory the next collection may take: {index}"
+             names a run whose directory the next collection may take: {}",
+            index.file()
         );
     }
 }
@@ -599,12 +600,8 @@ fn accept_propagates_both_a_missing_run_and_an_unreadable_report() {
     );
 
     let run = "20260101T000000Z-broken";
-    std::fs::create_dir_all(
-        dir.path()
-            .join(njutest_cli::app::reports::RUNS_DIR)
-            .join(run),
-    )
-    .expect("a run directory without a report");
+    std::fs::create_dir_all(Store::read(dir.path()).run(run))
+        .expect("a run directory without a report");
     let unreadable = ask(
         dir.path(),
         &["accept", "abcdef", "--reason", "reviewed", "--run", run],
@@ -979,9 +976,8 @@ fn a_configuration_is_written_once_and_never_over_one_somebody_wrote() {
 fn the_parts_of_one_catalog_are_put_back_together_and_the_parts_of_two_refused() {
     let it = verified();
     let one = it
-        .root
-        .join("reports/runs")
-        .join(&it.run)
+        .store
+        .run(&it.run)
         .join(njutest_cli::app::reports::DOCUMENT_NAME);
 
     let whole = ask(&it.root, &["merge", &one.display().to_string()]);

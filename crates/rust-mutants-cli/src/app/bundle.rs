@@ -39,7 +39,7 @@ pub(super) fn bundle(
     cancel: &Cancel,
 ) -> Result<u8, CliError> {
     let root = environment.rooted(asked.root);
-    let reports = root.join(crate::config::DEFAULT_REPORTS_DIRECTORY);
+    let reports = super::stored::Store::read(&root).root();
     let directory = report_of(&reports, asked.run)?
         .parent()
         .map(Path::to_path_buf)

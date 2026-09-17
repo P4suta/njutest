@@ -272,7 +272,7 @@ fn stored(wanted: &Where<'_>, environment: &Environment) -> Result<(String, Path
 fn reports_directory(root: Option<&Path>, environment: &Environment) -> Result<PathBuf, CliError> {
     let root = environment.rooted(root);
     let config = crate::config::Config::load(&root)?;
-    Ok(root.join(&config.reports.directory))
+    Ok(super::stored::Store::of(&root, &config.reports.directory).root())
 }
 
 /// Every stored recording, oldest first: a run's own beside its report, and every other command's under `traces/`.

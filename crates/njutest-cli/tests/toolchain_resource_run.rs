@@ -93,13 +93,9 @@ fn environment(root: &Path, cache: &Path, named: &[(&str, &str)]) -> Environment
 }
 
 fn document(fixture: &Fixture) -> serde_json::Value {
-    let index = fixture.root.join(njutest_cli::app::reports::LATEST_ANY);
-    let text = std::fs::read_to_string(&index).expect("the latest index");
-    let value: serde_json::Value = serde_json::from_str(&text).expect("JSON");
-    let directory = value["directory"].as_str().expect("a directory");
-    let path = fixture
-        .root
-        .join(directory)
+    let path = njutest_cli::app::reports::Store::read(&fixture.root)
+        .run_of(njutest_cli::app::reports::Index::Any)
+        .expect("the index names a run")
         .join(njutest_cli::app::reports::DOCUMENT_NAME);
     serde_json::from_str(&std::fs::read_to_string(&path).expect("the report")).expect("JSON")
 }

@@ -11,27 +11,28 @@
 use std::path::{Path, PathBuf};
 
 use njutest_cli::app::reports::{
-    DOCUMENT_NAME, HTML_NAME, JUNIT_NAME, LATEST_ANY, LATEST_FULL, RUNS_DIR, SARIF_NAME,
-    SCHEMA_NAME, StoreError, keep, pointed_at, retain,
+    DOCUMENT_NAME, HTML_NAME, Index, JUNIT_NAME, SARIF_NAME, SCHEMA_NAME, Store, StoreError, keep,
+    pointed_at, retain,
 };
 use njutest_cli::report::{Report, RunKind, Verdict};
 
 /// A workspace with one directory per run named, and an index pointing where asked.
-fn filled(runs: &[&str], indexes: &[(&str, &str)]) -> (tempfile::TempDir, PathBuf) {
+fn filled(runs: &[&str], indexes: &[(Index, &str)]) -> (tempfile::TempDir, PathBuf) {
     let dir = tempfile::tempdir().expect("tempdir");
     let root = dir.path().to_path_buf();
+    let store = Store::read(&root);
     for run in runs {
-        std::fs::create_dir_all(root.join("reports/runs").join(run)).expect("a run directory");
+        std::fs::create_dir_all(store.run(run)).expect("a run directory");
     }
     for (index, run) in indexes {
-        let path = root.join(index);
+        let path = store.index(*index);
         std::fs::create_dir_all(path.parent().unwrap_or(&root)).expect("the index's directory");
         std::fs::write(
             &path,
             serde_json::json!({
                 "schema": "njutest-report-index-v1",
                 "run_id": run,
-                "directory": format!("reports/runs/{run}"),
+                "directory": Store::named(run),
             })
             .to_string(),
         )
@@ -42,7 +43,7 @@ fn filled(runs: &[&str], indexes: &[(&str, &str)]) -> (tempfile::TempDir, PathBu
 
 /// The names of the run directories still there.
 fn left(root: &Path) -> Vec<String> {
-    let mut names: Vec<String> = std::fs::read_dir(root.join("reports/runs"))
+    let mut names: Vec<String> = std::fs::read_dir(Store::read(root).runs())
         .expect("the runs directory")
         .flatten()
         .map(|entry| entry.file_name().to_string_lossy().into_owned())
@@ -89,7 +90,7 @@ fn a_collection_never_takes_a_run_an_index_still_names() {
         "20260102T000000Z-bbbbbb",
         "20260103T000000Z-cccccc",
     ];
-    let (_dir, root) = filled(&runs, &[(LATEST_ANY, runs[2]), (LATEST_FULL, runs[0])]);
+    let (_dir, root) = filled(&runs, &[(Index::Any, runs[2]), (Index::Full, runs[0])]);
 
     let _removed = retain(&root, 1);
     let kept = left(&root);
@@ -131,15 +132,16 @@ fn a_collection_asked_to_keep_everything_takes_nothing() {
 fn an_index_that_names_nothing_is_read_as_naming_nothing() {
     let (_dir, root) = filled(&["20260101T000000Z-aaaaaa"], &[]);
     assert_eq!(
-        pointed_at(&root, LATEST_ANY),
+        pointed_at(&root, Index::Any),
         None,
         "a directory where no run has finished has no latest run, and answering with one \
          would send a reader to a report nobody wrote"
     );
 
-    std::fs::write(root.join(LATEST_ANY), "not an index\n").expect("a file that is not one");
+    std::fs::write(Store::read(&root).index(Index::Any), "not an index\n")
+        .expect("a file that is not one");
     assert_eq!(
-        pointed_at(&root, LATEST_ANY),
+        pointed_at(&root, Index::Any),
         None,
         "and an index this release cannot read is one that names nothing rather than one \
          that names whatever the bytes happen to look like"
@@ -147,10 +149,10 @@ fn an_index_that_names_nothing_is_read_as_naming_nothing() {
 
     let (_other, named) = filled(
         &["20260101T000000Z-aaaaaa"],
-        &[(LATEST_ANY, "20260101T000000Z-aaaaaa")],
+        &[(Index::Any, "20260101T000000Z-aaaaaa")],
     );
     assert_eq!(
-        pointed_at(&named, LATEST_ANY).as_deref(),
+        pointed_at(&named, Index::Any).as_deref(),
         Some("20260101T000000Z-aaaaaa"),
         "while one that names a run answers with it"
     );
@@ -200,17 +202,18 @@ fn a_run_keeps_every_projection_beside_its_document_and_points_both_indexes() {
         "the schema beside a report is the exact schema this release publishes"
     );
     assert_eq!(
-        std::fs::read_to_string(root.join(LATEST_ANY)).expect("the latest index"),
+        std::fs::read_to_string(Store::read(root).index(Index::Any)).expect("the latest index"),
         format!(
-            "{{\n  \"directory\": \"reports/runs/{run}\",\n  \"run_id\": \"{run}\",\n  \
-             \"schema\": \"njutest-assurance-report-v1\"\n}}\n"
+            "{{\n  \"directory\": \"{}\",\n  \"run_id\": \"{run}\",\n  \
+             \"schema\": \"njutest-assurance-report-v1\"\n}}\n",
+            Store::named(run)
         ),
         "an index is a stable newline-terminated interface, not merely JSON that happens to parse"
     );
     assert_eq!(
         (
-            pointed_at(root, LATEST_ANY).as_deref(),
-            pointed_at(root, LATEST_FULL).as_deref()
+            pointed_at(root, Index::Any).as_deref(),
+            pointed_at(root, Index::Full).as_deref()
         ),
         (Some(run), Some(run)),
         "a run over the whole project is the latest of any kind and the latest full one"
@@ -220,8 +223,8 @@ fn a_run_keeps_every_projection_beside_its_document_and_points_both_indexes() {
     let _kept = keep(root, &keepable(narrowed, RunKind::Changed)).expect("a report");
     assert_eq!(
         (
-            pointed_at(root, LATEST_ANY).as_deref(),
-            pointed_at(root, LATEST_FULL).as_deref()
+            pointed_at(root, Index::Any).as_deref(),
+            pointed_at(root, Index::Full).as_deref()
         ),
         (Some(narrowed), Some(run)),
         "while a run that looked at only what changed is the latest of any kind and not \
@@ -245,7 +248,7 @@ fn a_report_that_fails_its_own_audit_is_not_written_at_all() {
 
     let refused = keep(root, &wrong).expect_err("a report that says two things at once");
     assert!(
-        !root.join("reports/runs").join(run).exists() && pointed_at(root, LATEST_ANY).is_none(),
+        !Store::read(root).runs().join(run).exists() && pointed_at(root, Index::Any).is_none(),
         "an assurance is the claim that nothing was found, so one carrying a finding is \
          a report nobody may be handed — and half of one on disk with no index naming it \
          is worse than none: a later collection reads the directory as a run: {refused}"
@@ -256,23 +259,27 @@ fn a_report_that_fails_its_own_audit_is_not_written_at_all() {
 fn every_failed_projection_and_index_names_the_path_that_was_not_kept() {
     let run = "20260101T000000Z-aaaaaa";
     let blocked = [
-        (format!("{RUNS_DIR}/{run}"), true),
-        (format!("{RUNS_DIR}/{run}/{DOCUMENT_NAME}"), false),
-        (format!("{RUNS_DIR}/{run}/{SCHEMA_NAME}"), false),
+        (Store::named(run), true),
+        (format!("{}/{DOCUMENT_NAME}", Store::named(run)), false),
+        (format!("{}/{SCHEMA_NAME}", Store::named(run)), false),
         (
-            format!("{RUNS_DIR}/{run}/{}", njutest_cli::report::lines::FILE_NAME),
+            format!(
+                "{}/{}",
+                Store::named(run),
+                njutest_cli::report::lines::FILE_NAME
+            ),
             false,
         ),
-        (format!("{RUNS_DIR}/{run}/{HTML_NAME}"), false),
-        (format!("{RUNS_DIR}/{run}/{SARIF_NAME}"), false),
-        (format!("{RUNS_DIR}/{run}/{JUNIT_NAME}"), false),
-        (LATEST_ANY.to_owned(), false),
-        (LATEST_FULL.to_owned(), false),
+        (format!("{}/{HTML_NAME}", Store::named(run)), false),
+        (format!("{}/{SARIF_NAME}", Store::named(run)), false),
+        (format!("{}/{JUNIT_NAME}", Store::named(run)), false),
+        (Index::Any.file().to_owned(), false),
+        (Index::Full.file().to_owned(), false),
     ];
 
     for (relative, file_in_place_of_directory) in blocked {
         let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join(&relative);
+        let path = Store::read(dir.path()).within(&relative);
         std::fs::create_dir_all(path.parent().unwrap_or_else(|| dir.path())).expect("the parent");
         if file_in_place_of_directory {
             std::fs::write(&path, "occupied").expect("a file where a directory is needed");

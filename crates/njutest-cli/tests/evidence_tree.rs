@@ -10,11 +10,38 @@
 
 use std::path::Path;
 
-use njutest_cli::evidence::tree::{EXCLUDED_DIRECTORIES, Scan, dependencies, scan};
+use njutest_cli::evidence::tree::{
+    Bounds, EXCLUDED_DIRECTORIES, Excluded, Scan, dependencies, scan,
+};
 use njutest_devkit::repo::Repo;
 
 fn read(root: &Path) -> Scan {
-    scan(root, &[], &[]).expect("the tree reads")
+    scan(root, &within(&[], &[])).expect("the tree reads")
+}
+
+/// What one walk of a tree this test wrote leaves out.
+fn within<'a>(exclude: &'a [rust_mutants::glob::Pattern], elsewhere: &'a [&'a Path]) -> Bounds<'a> {
+    Bounds {
+        exclude,
+        elsewhere,
+        excluded: &EXCLUDED,
+    }
+}
+
+/// What no verification reads, for a project that has said nothing about where it writes.
+static EXCLUDED: std::sync::LazyLock<Excluded> = std::sync::LazyLock::new(|| {
+    Excluded::beside(&njutest_cli::config::Config::default().reports.directory)
+});
+
+/// Where such a project writes, as a path inside it.
+fn written(name: &str) -> String {
+    format!(
+        "{}/{name}",
+        njutest_cli::config::Config::default()
+            .reports
+            .directory
+            .display()
+    )
 }
 
 fn repo() -> Repo {
@@ -58,7 +85,7 @@ fn what_a_run_writes_is_not_what_a_run_reads() {
         repo.write(&format!("{directory}/noise.txt"), "whatever\n");
     }
     repo.write("target/debug/thing", "binary\n");
-    repo.write("reports/runs/a/report.json", "{}\n");
+    repo.write(&written("a/report.json"), "{}\n");
     assert_eq!(
         read(repo.root()).tree,
         before,
@@ -76,9 +103,9 @@ fn the_target_directory_cargo_names_is_left_out_wherever_it_is() {
         before,
         "an unremarkable directory counts"
     );
-    let with = scan(repo.root(), &[], &[Path::new("elsewhere")]).expect("the tree reads");
+    let with = scan(repo.root(), &within(&[], &[Path::new("elsewhere")])).expect("the tree reads");
     let absolute = repo.root().join("elsewhere");
-    let without = scan(repo.root(), &[], &[absolute.as_path()]).expect("the tree reads");
+    let without = scan(repo.root(), &within(&[], &[absolute.as_path()])).expect("the tree reads");
     assert_eq!(
         with.tree, without.tree,
         "cargo names its target directory absolutely and a configuration may name it relatively"
@@ -105,18 +132,20 @@ fn a_pattern_the_configuration_excludes_is_left_out_too() {
     let repo = repo();
     repo.write("src/generated.rs", "pub fn g() {}\n");
     let counted = read(repo.root()).tree;
-    let excluded = scan(
+    let skipped = scan(
         repo.root(),
-        &[rust_mutants::glob::Pattern::compile("**/generated.rs").expect("a pattern")],
-        &[],
+        &within(
+            &[rust_mutants::glob::Pattern::compile("**/generated.rs").expect("a pattern")],
+            &[],
+        ),
     )
     .expect("the tree reads")
     .tree;
-    assert_ne!(counted, excluded);
+    assert_ne!(counted, skipped);
     std::fs::remove_file(repo.root().join("src/generated.rs")).expect("remove");
     assert_eq!(
         read(repo.root()).tree,
-        excluded,
+        skipped,
         "a file left out reads as a file that is not there"
     );
 }
@@ -142,7 +171,7 @@ fn a_symbolic_link_is_read_as_the_link_it_is_and_never_followed() {
 
 #[test]
 fn a_missing_root_says_so_rather_than_reading_as_an_empty_tree() {
-    let error = scan(Path::new("/no/such/tree/anywhere"), &[], &[])
+    let error = scan(Path::new("/no/such/tree/anywhere"), &within(&[], &[]))
         .expect_err("a tree that is not there is not an empty tree");
     assert!(error.to_string().contains("NJ2"), "{error}");
 }

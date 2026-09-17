@@ -5,7 +5,7 @@
 
 use std::fmt::Write as _;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use jiff::Timestamp;
 use rust_mutants::{snapshot, tempowner, workspace};
@@ -149,18 +149,10 @@ fn measurements(environment: &Environment) -> String {
     format!("{held} records, {bytes} bytes, at {}", directory.display())
 }
 
-/// Where this project keeps its reports, which is where the ledger of kept directories lives.
-fn reports_directory(root: &Path) -> PathBuf {
-    crate::config::Config::load(root).map_or_else(
-        |_error| PathBuf::from(crate::config::DEFAULT_REPORTS_DIRECTORY),
-        |config| config.reports.directory,
-    )
-}
-
 /// The directories runs were asked to keep, listed or removed.
 fn preserved(asked: &Sweeping<'_>, environment: &Environment) -> Result<String, CliError> {
     let root = environment.rooted(asked.root);
-    let directory = root.join(reports_directory(&root));
+    let directory = super::stored::Store::read(&root).root();
     if asked.kept {
         let (removed, left) = crate::kept::Ledger::clear(&directory)
             .map_err(|source| CliError::writing(&directory, source))?;

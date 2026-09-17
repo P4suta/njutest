@@ -19,9 +19,9 @@ use std::time::Duration;
 use jiff::Timestamp;
 use rust_mutants::glob::Pattern;
 use rust_mutants::snapshot::{
-    CLEANUP_ATTEMPTS, CLEANUP_BACKOFF, DEFAULT_REPORT_DIR, DIR_PREFIX, Drift, Entry, Options,
-    STABLE_NAME_HEX_LENGTH, SnapshotErrorKind, TREE_NAME, WORKSPACE_DOMAIN, cleanup_guard, create,
-    stable_name, workspace_digest,
+    CLEANUP_ATTEMPTS, CLEANUP_BACKOFF, DIR_PREFIX, Drift, Entry, Options, STABLE_NAME_HEX_LENGTH,
+    SnapshotErrorKind, TREE_NAME, WORKSPACE_DOMAIN, cleanup_guard, create, stable_name,
+    workspace_digest,
 };
 use rust_mutants::tempowner::{self, read_marker};
 use sha2::{Digest as _, Sha256};
@@ -94,7 +94,6 @@ fn the_constants_are_frozen() {
     assert_eq!(WORKSPACE_DOMAIN, "rust-mutants-workspace-v1");
     assert_eq!(DIR_PREFIX, "rust-mutants-snap-");
     assert_eq!(TREE_NAME, "tree");
-    assert_eq!(DEFAULT_REPORT_DIR, "reports/mutation");
     assert_eq!(STABLE_NAME_HEX_LENGTH, 16);
     assert_eq!(CLEANUP_ATTEMPTS, 5);
     assert_eq!(CLEANUP_BACKOFF, Duration::from_millis(20));
@@ -261,11 +260,10 @@ fn a_relative_or_missing_source_root_is_refused_before_anything_is_created() {
 }
 
 #[test]
-fn git_and_the_report_directories_are_always_excluded_and_patterns_skip_whole_directories() {
+fn git_and_the_directory_the_caller_names_are_excluded_and_patterns_skip_whole_directories() {
     let fx = fixture();
     write(&fx.source, ".git/config", b"[core]\n");
     write(&fx.source, "vendor/.git/HEAD", b"ref\n");
-    write(&fx.source, "reports/mutation/run.json", b"{}");
     write(&fx.source, "out/custom/report.html", b"<html>");
     write(&fx.source, "target/debug/deps/x.d", b"x");
     write(&fx.source, "vendor/dep/lib.rs", b"// vendored\n");
@@ -289,8 +287,6 @@ fn git_and_the_report_directories_are_always_excluded_and_patterns_skip_whole_di
         !snap.root().join("target").exists(),
         "an excluded directory is not descended"
     );
-    assert!(snap.root().join("reports").is_dir());
-    assert!(!snap.root().join("reports/mutation").exists());
     assert!(!snap.root().join("out/custom").exists());
 }
 
@@ -592,11 +588,11 @@ fn redigest_reports_added_removed_and_changed_paths_sorted_and_is_empty_for_a_cl
 fn redigest_applies_no_exclusions_so_a_report_written_into_the_tree_is_drift() {
     let fx = fixture();
     let snap = create(&fx.source, &options(&fx), now()).expect("create");
-    write(snap.root(), "reports/mutation/late.json", b"{}");
+    write(snap.root(), "elsewhere/late.json", b"{}");
     write(snap.root(), ".git/HEAD", b"ref\n");
     let drifts = snap.redigest().expect("redigest");
     let paths: Vec<&str> = drifts.iter().map(Drift::rel_path).collect();
-    assert_eq!(paths, [".git/HEAD", "reports/mutation/late.json"]);
+    assert_eq!(paths, [".git/HEAD", "elsewhere/late.json"]);
 }
 
 #[cfg(unix)]

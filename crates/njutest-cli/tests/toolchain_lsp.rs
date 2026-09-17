@@ -48,17 +48,20 @@ fn verified(root: &std::path::Path) -> String {
         path: None,
         position: None,
     });
-    std::fs::create_dir_all(root.join("reports/runs/one")).expect("mkdir");
+    let store = njutest_cli::app::reports::Store::read(root);
+    std::fs::create_dir_all(store.run("one")).expect("mkdir");
     std::fs::create_dir_all(root.join("src")).expect("mkdir");
     std::fs::write(root.join("src/lib.rs"), "fn f() {}\n").expect("the file it is in");
     std::fs::write(
-        root.join("reports/runs/one/njutest-assurance-report-v1.json"),
+        store
+            .run("one")
+            .join(njutest_cli::app::reports::DOCUMENT_NAME),
         serde_json::to_string(&report).expect("a report"),
     )
     .expect("the report");
     std::fs::write(
-        root.join("reports/latest-any.json"),
-        json!({ "directory": "reports/runs/one", "run_id": report.run_id }).to_string(),
+        store.index(njutest_cli::app::reports::Index::Any),
+        json!({ "directory": njutest_cli::app::reports::Store::named("one"), "run_id": report.run_id }).to_string(),
     )
     .expect("the pointer a reader follows");
     njutest_cli::app::lsp::uri_of(&root.join("src/lib.rs"))

@@ -220,9 +220,8 @@ fn a_bundle_goes_where_it_was_asked_to_go_and_holds_the_same_thing_there() {
         gathered.out
     );
     assert!(
-        !fixture
+        !rust_mutants_cli::app::stored::Store::read(fixture.root())
             .root()
-            .join("reports/mutation")
             .join(
                 manifest(&elsewhere)["run_id"]
                     .as_str()

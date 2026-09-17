@@ -79,7 +79,7 @@ fn explain_reads_the_stored_run_and_says_what_it_established() {
         "OUTCOME   not_run",
         "ROUTE     discharged",
         "PROVED    fixture-simple/lib/fixture_simple: never-infected",
-        "REPRODUCE rust-mutants run --mutant 16b0cd40508fc0785477",
+        "REPRODUCE rust-mutants run --mutant src/lib.rs:max:gt-to-ge@11",
     ] {
         assert!(text.contains(said), "{said} in {text}");
     }
@@ -149,7 +149,10 @@ fn list_why_skipped_instrument_and_catalog_each_answer_about_one_thing() {
     )
     .into_owned();
     assert!(
-        listed.lines().all(|line| line.contains("src/lib.rs")),
+        listed
+            .lines()
+            .filter(|line| line.contains(" => "))
+            .all(|line| line.contains("src/lib.rs")),
         "a file names its own candidates: {listed}"
     );
 
@@ -226,8 +229,10 @@ fn explain_names_the_tests_a_route_put_the_mutation_to() {
         "{output:?}"
     );
     let document: serde_json::Value =
-        serde_json::from_str(&njutest_devkit::fixture::stored_report(fixture.root()))
-            .expect("the report is a document");
+        serde_json::from_str(&njutest_devkit::fixture::stored_report(
+            &rust_mutants_cli::app::stored::Store::read(fixture.root()).root(),
+        ))
+        .expect("the report is a document");
     let narrowed = document["mutants"]
         .as_array()
         .expect("the rows")
@@ -263,7 +268,9 @@ fn a_tree_with_no_stored_run_explains_a_mutation_by_preparing_one_when_asked() {
         .expect("a candidate")
         .to_owned();
     assert!(
-        !fixture.root().join("reports/mutation").exists(),
+        !rust_mutants_cli::app::stored::Store::read(fixture.root())
+            .root()
+            .exists(),
         "nothing has stored a run in this tree"
     );
 
@@ -434,7 +441,14 @@ fn explain_reads_the_run_it_is_told_to_and_refuses_a_name_nobody_stored() {
     );
     let message = String::from_utf8_lossy(&wrong.stderr);
     assert!(
-        message.contains("tuesday") && message.contains("reports/mutation"),
+        message.contains("tuesday")
+            && message.contains(&format!(
+                "{}",
+                rust_mutants_cli::config::Config::default()
+                    .reports
+                    .directory
+                    .display()
+            )),
         "naming what was asked for and where runs are kept: {message}"
     );
 }

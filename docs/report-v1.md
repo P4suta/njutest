@@ -26,6 +26,9 @@ reports/runs/<run-id>/
   njutest-assurance-report-v1.schema.json
 ```
 
+The directory is `[reports] directory`, `reports` unless the configuration
+says otherwise, and every path an index holds is relative to it.
+
 `reports/latest-any.json` and `.njutest/latest-any.json` track the latest
 completed run of any scope. `latest-full.json` exists in both locations and
 advances only when `run_kind` is `full`. The history is bounded by

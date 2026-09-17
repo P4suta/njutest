@@ -50,8 +50,10 @@ fn environment(fixture: &Fixture) -> Environment {
 }
 
 fn report(fixture: &Fixture) -> serde_json::Value {
-    serde_json::from_str(&njutest_devkit::fixture::stored_report(fixture.root()))
-        .expect("the report is a document")
+    serde_json::from_str(&njutest_devkit::fixture::stored_report(
+        &rust_mutants_cli::app::stored::Store::read(fixture.root()).root(),
+    ))
+    .expect("the report is a document")
 }
 
 #[test]
@@ -94,8 +96,7 @@ fn a_skipped_target_is_never_started_and_is_listed_as_a_limitation() {
         &[
             "--skip-target",
             "fixture-custom-harness/test/by_exit_code",
-            "--trace",
-            &directory.to_string_lossy(),
+            &format!("--trace={}", directory.display()),
         ],
     );
     assert!(
@@ -148,7 +149,7 @@ fn a_skipped_target_is_never_started_and_is_listed_as_a_limitation() {
 fn the_recording_says_what_each_target_is_and_which_one_was_skipped() {
     let fixture = Fixture::copy("fixture-custom-harness");
     let directory = fixture.temp().join("recording");
-    let output = against(&fixture, &["--trace", &directory.to_string_lossy()]);
+    let output = against(&fixture, &[&format!("--trace={}", directory.display())]);
     assert!(
         output.status.code().is_some_and(|code| code < 2),
         "{}",

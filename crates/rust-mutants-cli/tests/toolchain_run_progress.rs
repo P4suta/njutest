@@ -77,7 +77,7 @@ fn a_quiet_run_says_nothing_until_the_summary() {
         "nothing about one mutant: {text}"
     );
     assert!(
-        text.contains("MUTANTS   cataloged="),
+        text.contains("mutants were cataloged"),
         "and the summary all the same: {text}"
     );
 }

@@ -46,10 +46,12 @@ impl RunError {
 /// [`RunError::NotFound`] when there is no such run, or none at all.
 pub fn resolve(root: &Path, named: Option<&str>) -> Result<String, RunError> {
     let Some(run) = named else {
-        return reports::pointed_at(root, reports::LATEST_ANY).ok_or_else(|| RunError::NotFound {
+        return reports::pointed_at(root, reports::Index::Any).ok_or_else(|| RunError::NotFound {
             message: format!(
                 "no run has completed here yet: {} names none",
-                root.join(reports::LATEST_ANY).display()
+                reports::Store::read(root)
+                    .index(reports::Index::Any)
+                    .display()
             ),
         });
     };
@@ -59,7 +61,7 @@ pub fn resolve(root: &Path, named: Option<&str>) -> Result<String, RunError> {
     Err(RunError::NotFound {
         message: format!(
             "there is no run {run} under {}",
-            root.join(reports::RUNS_DIR).display()
+            reports::Store::read(root).runs().display()
         ),
     })
 }
@@ -67,7 +69,7 @@ pub fn resolve(root: &Path, named: Option<&str>) -> Result<String, RunError> {
 /// Where one run's report directory is.
 #[must_use]
 pub fn directory(root: &Path, run: &str) -> PathBuf {
-    root.join(reports::RUNS_DIR).join(run)
+    reports::Store::read(root).run(run)
 }
 
 /// Where one run's recording is, whether or not it was asked for.
