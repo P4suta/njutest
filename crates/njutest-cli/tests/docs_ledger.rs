@@ -18,6 +18,26 @@ fn page(relative: &str) -> String {
 }
 
 #[test]
+fn every_way_a_run_can_choose_and_every_reason_it_widened_is_on_the_report_page() {
+    let text = page("docs/report-v1.md");
+    let mut words: Vec<&str> = rust_mutants::session::Route::GRANULARITIES.to_vec();
+    for fallback in rust_mutants::session::Fallback::ALL {
+        words.push(fallback.name());
+    }
+    let missing: Vec<&str> = words
+        .into_iter()
+        .filter(|word| !text.contains(&format!("`{word}`")))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "a survivor is a claim about the targets a run chose, so the page names \
+         every way it can choose and every reason it gave up narrowing. A word the \
+         page does not carry is one a reader finds in a record and cannot look up: \
+         {missing:?}"
+    );
+}
+
+#[test]
 fn the_ways_the_page_says_a_mutation_is_decided_are_the_ways_there_are() {
     let text = page("docs/report-v1.md");
     let listed: Vec<(String, Vec<String>)> = text

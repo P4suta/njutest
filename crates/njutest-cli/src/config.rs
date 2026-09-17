@@ -84,8 +84,6 @@ pub struct Config {
     pub acceptance: Vec<Acceptance>,
     /// The builds to measure beyond the one `[execution]` describes.
     pub configuration: Vec<Configuration>,
-    /// Whether the run asks the tests whether their own assertions are load-bearing.
-    pub oracle: Oracle,
 }
 
 impl Default for Config {
@@ -104,7 +102,6 @@ impl Default for Config {
             generation: None,
             acceptance: Vec::new(),
             configuration: Vec::new(),
-            oracle: Oracle::default(),
         }
     }
 }
@@ -306,6 +303,12 @@ pub struct Resource {
     /// Environment variable names the provider may see.
     #[serde(default)]
     pub environment: Vec<String>,
+    /// The variable of the provider's answer that names where the tests dial, which is the seam an interposer sits in front of. Empty watches nothing.
+    #[serde(default)]
+    pub interpose: String,
+    /// How much of what goes past that seam is read.
+    #[serde(default)]
+    pub wire: crate::wire::Wire,
 }
 
 const fn default_resource_timeout() -> Duration {
@@ -324,14 +327,6 @@ pub struct Generation {
     /// Environment variable names it may see.
     #[serde(default)]
     pub environment: Vec<String>,
-}
-
-/// Whether a run asks the tests about themselves.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
-#[serde(deny_unknown_fields, default)]
-pub struct Oracle {
-    /// Weaken each assertion the tests make and see whether the test that holds it fails. It costs a second preparation of the whole tree, and a test that passes with its own assertion weakened is a finding.
-    pub ask: bool,
 }
 
 /// What the report calls the build `[execution]` describes.
@@ -737,9 +732,6 @@ contract = \"standard-v1\"        # \"standard-v1\" | \"deep-v1\"
 [mutation]
 # equivalence = false            # ask the compiler about every survivor
 
-[oracle]
-# ask = false                    # weaken each assertion the tests make and see whether they fail
-
 [cache]
 # max_bytes = {max_bytes}
 # ttl = \"{ttl}h\"
@@ -764,6 +756,8 @@ contract = \"standard-v1\"        # \"standard-v1\" | \"deep-v1\"
 # timeout = \"30s\"
 # shared = true                  # or exclusive = true (forces jobs = 1)
 # environment = [\"POSTGRES_IMAGE\"]
+# interpose = \"\"                 # the variable of the answer naming where the tests dial
+# wire = \"raw\"                   # how much of what goes past that seam is read: raw | http
 
 # [generation]
 # command = [\"./tools/test-generator\"]

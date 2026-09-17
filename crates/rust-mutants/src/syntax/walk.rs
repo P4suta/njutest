@@ -590,7 +590,7 @@ impl<'a> Walker<'a> {
     }
 
     fn maybe_suppressed(&mut self, attrs: &[Attribute], walk: impl FnOnce(&mut Self)) {
-        match suppression_of(attrs, self.selection.asks_the_tests()) {
+        match suppression_of(attrs) {
             Some(reason) => self.with_suppression(reason, walk),
             None => walk(self),
         }
@@ -931,7 +931,7 @@ impl<'a> Walker<'a> {
         let attrs = expr_attrs(expr);
         if !attrs.is_empty()
             && !ctx.direct_stmt
-            && let Some(reason) = suppression_of(attrs, self.selection.asks_the_tests())
+            && let Some(reason) = suppression_of(attrs)
         {
             self.with_suppression(reason, |walker| walker.walk_expr_inner(expr, ctx));
             return;

@@ -172,6 +172,8 @@ pub struct Judged {
     pub position: Option<crate::report::Position>,
     /// What was established.
     pub disposition: Disposition,
+    /// Which targets could have noticed it, and what removed the rest. `None` where the run never asked, which is a mutation the compiler refused.
+    pub routing: Option<crate::report::Routing>,
     /// The run that established it, when it was not this one.
     pub source_run_id: Option<String>,
 }
@@ -482,6 +484,7 @@ fn establish(
         character_column: at.char_column,
     });
     let mut source: Option<String> = None;
+    let mut routing: Option<crate::report::Routing> = None;
     let disposition = if let Some(saved) = state
         .and_then(|state| state.mutant(&mutant.id))
         .and_then(inherited)
@@ -493,6 +496,7 @@ fn establish(
         }
     } else {
         let route = session.route(mutant);
+        routing = Some(crate::report::Routing::of(&route));
         let consulted = reuse(options, &route, &mutant.id);
         record_route(watch, mutant, &route, &consulted);
         if let Consulted::Believed {
@@ -503,7 +507,10 @@ fn establish(
             source = Some(run_id);
             disposition
         } else {
-            let established = judge(judging, mutant, route.clone())?;
+            let (established, asked) = judge(judging, mutant, route.clone())?;
+            if let Some(routed) = routing.as_mut() {
+                routed.answered = asked;
+            }
             keep(options, &mutant.id, &route, &established);
             established
         }
@@ -523,6 +530,7 @@ fn establish(
         replacement: String::from_utf8_lossy(&mutant.candidate.replacement).into_owned(),
         position,
         disposition,
+        routing,
         source_run_id: source,
     })
 }
@@ -723,13 +731,14 @@ fn judge(
     judging: &Judging<'_>,
     mutant: &Mutant,
     route: Route,
-) -> Result<Disposition, crate::error::RunnerError> {
+) -> Result<(Disposition, Vec<crate::report::Answered>), crate::error::RunnerError> {
     let baseline = judging.subject.baseline;
+    let mut answered: Vec<crate::report::Answered> = Vec::new();
     if let Route::Discharged { .. } = route {
-        return Ok(Disposition::Survived { route });
+        return Ok((Disposition::Survived { route }, answered));
     }
     if route.reaching().is_empty() {
-        return Ok(Disposition::Unreached);
+        return Ok((Disposition::Unreached, answered));
     }
     for target in route.reaching() {
         let Some(measured) = baseline
@@ -738,11 +747,19 @@ fn judge(
         else {
             continue;
         };
-        if let Some(disposition) = against(judging, mutant, Some(measured))? {
-            return Ok(disposition);
+        let established = against(judging, mutant, Some(measured))?;
+        answered.push(crate::report::Answered {
+            target: target.to_owned(),
+            outcome: established
+                .as_ref()
+                .map_or("survived", Disposition::name)
+                .to_owned(),
+        });
+        if let Some(disposition) = established {
+            return Ok((disposition, answered));
         }
     }
-    Ok(Disposition::Survived { route })
+    Ok((Disposition::Survived { route }, answered))
 }
 
 /// What one mutation comes to against one test, or against every test in the package when no proof says which could notice it. Nothing at all means it ran and nobody noticed, which the caller folds into the route's own answer.

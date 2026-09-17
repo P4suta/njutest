@@ -41,6 +41,16 @@ fn populated() -> Report {
             accepted: true,
             why: None,
         }],
+        seams: vec![njutest_cli::report::SeamRecord {
+            id: "c".repeat(64),
+            capability: "api".to_owned(),
+            seq: 3,
+            asked: "GET /orders".to_owned(),
+            answered: Some(200),
+            rule: "status-server-error".to_owned(),
+            decision: njutest_cli::report::Decision::Unnoticed,
+            noticed_by: None,
+        }],
         resources: vec![njutest_cli::report::ResourceRecord {
             capability: "postgres".to_owned(),
             instance: "pg-1".to_owned(),
@@ -157,6 +167,19 @@ fn populated() -> Report {
             reused: true,
             source_run_id: Some("20260904T101500Z-123456".to_owned()),
             blind_in: vec!["release".to_owned()],
+            routing: Some(njutest_cli::report::Routing {
+                granularity: "block".to_owned(),
+                reaching: vec!["0123456789abcdef".to_owned()],
+                discharged: vec![njutest_cli::report::Discharged {
+                    target: "fedcba9876543210".to_owned(),
+                    proof: "never-infected".to_owned(),
+                }],
+                fallback: None,
+                answered: vec![njutest_cli::report::Answered {
+                    target: "0123456789abcdef".to_owned(),
+                    outcome: "killed".to_owned(),
+                }],
+            }),
         }],
         findings: Vec::new(),
         limitations: vec![Limitation::new(

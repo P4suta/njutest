@@ -50,6 +50,7 @@ fn reported() -> Report {
         reused: false,
         source_run_id: None,
         blind_in: Vec::new(),
+        routing: None,
     });
     report.findings.push(Finding {
         kind: FindingKind::SurvivingMutant,

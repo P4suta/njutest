@@ -79,6 +79,7 @@ fn judged_from(dispositions: Vec<Disposition>) -> Mutation {
                 position: None,
                 disposition,
                 source_run_id: None,
+                routing: None,
             })
             .collect(),
         skips: BTreeMap::new(),
@@ -386,6 +387,7 @@ fn reported(findings: Vec<njutest_cli::report::Finding>) -> njutest_cli::report:
             reused: false,
             source_run_id: None,
             blind_in: Vec::new(),
+            routing: None,
         })
         .collect();
     report.findings = findings;

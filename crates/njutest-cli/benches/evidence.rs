@@ -83,6 +83,7 @@ fn survivors(count: u32) -> (Vec<Judged>, Vec<Decided>) {
                 },
             },
             source_run_id: None,
+            routing: None,
         })
         .collect();
     let decided = (0..count)

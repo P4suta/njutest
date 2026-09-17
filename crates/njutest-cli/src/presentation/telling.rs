@@ -238,6 +238,16 @@ fn locator(mutant: &MutantRecord) -> String {
 /// reads as "the run found something".
 const fn about(kind: FindingKind, unreached: bool) -> (Severity, &'static str, &'static str) {
     match kind {
+        FindingKind::WireUnnoticed => (
+            Severity::Gap,
+            "NJ-WIRE",
+            "the suite carried on through what a seam was asked",
+        ),
+        FindingKind::HollowTarget => (
+            Severity::Gap,
+            "NJ-HOLLOW-TARGET",
+            "this test target noticed none of the changes it was put to",
+        ),
         FindingKind::SurvivingMutant if unreached => (
             Severity::Gap,
             "NJ-UNREACHED",

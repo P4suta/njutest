@@ -124,6 +124,44 @@ fn document(fixture: &Fixture) -> serde_json::Value {
 }
 
 #[test]
+fn a_target_put_to_mutations_that_noticed_none_is_named_with_how_many() {
+    let fixture = fixture("fixture-hollow");
+    let output = verify(&fixture, &[]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let document = document(&fixture);
+    let hollow: Vec<&serde_json::Value> = document["findings"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the report lists findings: {document}\n{stderr}"))
+        .iter()
+        .filter(|one| one["kind"] == "hollow-target")
+        .collect();
+
+    assert_eq!(
+        hollow.len(),
+        1,
+        "`smoke` runs `double` and asserts nothing about what came back, so every \
+         mutation of `double` survives it; the library target noticed its own, so \
+         only one target is hollow here: {document}\n{stderr}"
+    );
+    let named = hollow[0]["subject"]
+        .as_str()
+        .unwrap_or_else(|| panic!("a finding names its subject: {}", hollow[0]));
+    assert!(
+        named.contains("smoke"),
+        "and it is the one that asserts nothing, not the one that does: {named}"
+    );
+    let detail = hollow[0]["detail"].as_str().unwrap_or_default();
+    assert!(
+        detail.contains('2'),
+        "the count is the claim, and it is what was asked rather than what the \
+         catalog holds: four mutations of `double` survive the engine on its own, \
+         and a proof discharged two of them here without an execution, so `smoke` \
+         was put to two. A finding that said only `noticed nothing` would read the \
+         same whether it was asked once or a hundred times: {detail}"
+    );
+}
+
+#[test]
 fn a_mutation_only_one_of_the_builds_notices_is_a_survivor_that_names_the_other() {
     let fixture = fixture("fixture-features");
     std::fs::write(

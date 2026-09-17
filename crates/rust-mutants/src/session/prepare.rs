@@ -27,17 +27,11 @@ use crate::workspace::{SessionError, Workspace};
 /// The rules a set of options selects.
 pub(super) fn selection(options: &PrepareOptions) -> Result<Selection<'static>, EngineError> {
     static REGISTRY: Registry = Registry::canonical();
-    let chosen = if options.operators.is_empty() {
-        Selection::tier(&REGISTRY, options.tier)
-    } else {
-        let names: Vec<&str> = options.operators.iter().map(String::as_str).collect();
-        Selection::rules(&REGISTRY, &names)?
-    };
-    Ok(if options.oracle {
-        chosen.asking_the_tests()
-    } else {
-        chosen
-    })
+    if options.operators.is_empty() {
+        return Ok(Selection::tier(&REGISTRY, options.tier));
+    }
+    let names: Vec<&str> = options.operators.iter().map(String::as_str).collect();
+    Ok(Selection::rules(&REGISTRY, &names)?)
 }
 
 /// Refuses a tree that does not compile before anything is instrumented, and hands back the units the check compiled.

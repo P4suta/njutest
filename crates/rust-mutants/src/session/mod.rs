@@ -127,8 +127,6 @@ pub struct PrepareOptions {
     pub tier: Tier,
     /// Exactly these rules, by name. Empty means the tier.
     pub operators: Vec<String>,
-    /// Mutate the tests rather than passing over them, which asks whether their own assertions are load-bearing.
-    pub oracle: bool,
     /// Start every test process in a directory of its own rather than where cargo would.
     pub scratch_working_directory: bool,
     /// Patterns a file must match to be mutable.
@@ -174,7 +172,6 @@ impl Default for PrepareOptions {
         Self {
             tier: Tier::Balanced,
             operators: Vec::new(),
-            oracle: false,
             scratch_working_directory: false,
             include: Vec::new(),
             exclude: Vec::new(),
@@ -967,15 +964,17 @@ impl Session {
     pub fn exec(&self, request: &Request, cancel: &Cancel) -> Result<MutantResult, EngineError> {
         let mutant = self.executable(&request.mutant)?;
         let chosen = self.chosen(request, mutant, Asking::Anything);
-        self.execute(
-            request,
-            Running {
-                alone: false,
-                chosen: &chosen,
-                mutant,
-            },
-            cancel,
-        )
+        Ok(self
+            .execute(
+                request,
+                Running {
+                    alone: false,
+                    chosen: &chosen,
+                    mutant,
+                },
+                cancel,
+            )?
+            .taken)
     }
 
     /// What one mutant is, decided: executed, and when a budget expired, confirmed with the machine to itself.
@@ -997,26 +996,31 @@ impl Session {
             chosen: &chosen,
             mutant,
         };
-        let first = quiet.shared(|| self.execute(request, running(false), cancel))?;
+        let ran = quiet.shared(|| self.execute(request, running(false), cancel))?;
+        let (first, mut asked) = (ran.taken, ran.asked);
         let (timeout, timeout_source) = self.timeout_for(request, &first.target);
         let judgement =
             if first.outcome != crate::outcome::Outcome::TimedOut || cancel.is_cancelled() {
                 Judgement {
                     result: first.clone(),
                     attempts: vec![first],
+                    asked,
                     retried: false,
                     timeout,
                     timeout_source,
                     route,
                 }
             } else {
-                let mut again = quiet.alone(|| self.execute(request, running(true), cancel))?;
+                let repeated = quiet.alone(|| self.execute(request, running(true), cancel))?;
+                let mut again = repeated.taken;
+                asked.extend(repeated.asked);
                 if again.outcome != crate::outcome::Outcome::TimedOut && !again.outcome.detected() {
                     again.outcome = crate::outcome::Outcome::Inconclusive;
                 }
                 Judgement {
                     result: again.clone(),
                     attempts: vec![first, again],
+                    asked,
                     retried: true,
                     timeout,
                     timeout_source,
@@ -1038,7 +1042,7 @@ impl Session {
         request: &Request,
         how: Running<'_>,
         cancel: &Cancel,
-    ) -> Result<MutantResult, EngineError> {
+    ) -> Result<Ran, EngineError> {
         let Running {
             alone,
             chosen,
@@ -1053,7 +1057,10 @@ impl Session {
                     .filter(|target| only.iter().any(|one| one == &target.id))
                     .collect();
                 if routed.is_empty() {
-                    return Ok(unreached());
+                    return Ok(Ran {
+                        taken: unreached(),
+                        asked: Vec::new(),
+                    });
                 }
                 routed
             }
@@ -1068,6 +1075,7 @@ impl Session {
         };
         let mut last = None;
         let mut silent = None;
+        let mut asked: Vec<MutantResult> = Vec::new();
         for target in targets {
             let (timeout, source) = self.timeout_for(request, &target.id);
             let mut exec = ExecRequest::new(target)
@@ -1095,8 +1103,12 @@ impl Session {
                 timeout_source: source.name().to_owned(),
                 alone,
             });
+            asked.push(result.clone());
             if result.outcome.detected() || cancel.is_cancelled() {
-                return Ok(result);
+                return Ok(Ran {
+                    taken: result,
+                    asked,
+                });
             }
             if spoke(&result) {
                 last = Some(result);
@@ -1104,11 +1116,12 @@ impl Session {
                 silent = Some(result);
             }
         }
-        last.or(silent).ok_or_else(|| {
+        let taken = last.or(silent).ok_or_else(|| {
             EngineError::from(SessionError::NoTargets {
                 packages: self.packages(),
             })
-        })
+        })?;
+        Ok(Ran { taken, asked })
     }
 
     /// The arguments one execution's test binary is started with.
@@ -1375,6 +1388,15 @@ impl Chosen {
     }
 }
 
+/// What running one mutation against the targets a route chose came to.
+#[derive(Debug, Clone)]
+struct Ran {
+    /// The answer the run takes: the first detection, or the last target that spoke.
+    taken: MutantResult,
+    /// Every target that was asked, in the order they were asked.
+    asked: Vec<MutantResult>,
+}
+
 /// What a run notes when a set of tests does not answer on its own, so the whole target ran instead.
 pub const TEST_ROUTING_UNSOUND: &str = "test-routing-unsound";
 
@@ -1389,6 +1411,8 @@ pub struct Judgement {
     pub result: MutantResult,
     /// Every execution, in order. One unless a budget expired.
     pub attempts: Vec<MutantResult>,
+    /// Every target that was actually asked, in the order they were asked, with what each answered. A target that reaches a mutation and is absent from this was never given the chance: one before it detected, or the run was cancelled.
+    pub asked: Vec<MutantResult>,
     /// Whether an expired budget was confirmed with the machine to itself.
     pub retried: bool,
     /// The budget the target that answered was given.

@@ -46,6 +46,7 @@ fn part(shard: &str, mutants: &[(&str, &str)]) -> Report {
             reused: false,
             source_run_id: None,
             blind_in: Vec::new(),
+            routing: None,
         });
     }
     report
@@ -245,6 +246,7 @@ fn disposed(id: &str, outcome: &str, reused: bool) -> MutantRecord {
         reused,
         source_run_id: reused.then(|| "an earlier run".to_owned()),
         blind_in: Vec::new(),
+        routing: None,
     }
 }
 

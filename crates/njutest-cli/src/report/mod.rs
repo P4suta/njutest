@@ -5,12 +5,14 @@
 
 pub mod across;
 pub mod audit;
+pub mod hollow;
 pub mod html;
 pub mod json;
 pub mod junit;
 pub mod lines;
 pub mod merge;
 pub mod sarif;
+pub mod spec;
 
 use serde::{Deserialize, Serialize};
 
@@ -328,6 +330,75 @@ pub struct MutantAccounting {
     pub observers: ObserverAccounting,
 }
 
+/// One target a proof removed from a mutation's question, and the proof that removed it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Discharged {
+    /// The target, by the identity a report names it with.
+    pub target: String,
+    /// The proof's name.
+    pub proof: String,
+}
+
+/// One target a run actually asked about a mutation, and what it answered.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Answered {
+    /// The target, by the identity a report names it with.
+    pub target: String,
+    /// What it said, as an outcome a report records.
+    pub outcome: String,
+}
+
+/// Which targets could have noticed one mutation, and what removed the ones that could not.
+///
+/// The trace carried this and the report did not, so the predicate the
+/// assurance contract states — a mutation goes to the tests that reached it,
+/// less the ones a proof discharged — could only be checked against
+/// diagnostics. ADR 0002 says a trace is never evidence, so a reader holding
+/// a survivor to that predicate was holding it to something the run does not
+/// answer for.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Routing {
+    /// How narrowly the run chose, one of [`rust_mutants::session::Route::GRANULARITIES`].
+    pub granularity: String,
+    /// The targets that could have noticed it.
+    pub reaching: Vec<String>,
+    /// The targets a proof removed, each with the proof that removed it.
+    pub discharged: Vec<Discharged>,
+    /// What widened the question, when the run could not narrow it.
+    pub fallback: Option<String>,
+    /// The targets the run actually asked, in the order it asked them, with what each answered. A target in `reaching` and not here reached the mutation and was never given the chance, because one asked before it noticed.
+    #[serde(default)]
+    pub answered: Vec<Answered>,
+}
+
+impl Routing {
+    /// What a route says, as a report records it.
+    #[must_use]
+    pub fn of(route: &rust_mutants::session::Route) -> Self {
+        Self {
+            granularity: route.granularity().to_owned(),
+            reaching: route
+                .reaching()
+                .into_iter()
+                .map(ToOwned::to_owned)
+                .collect(),
+            discharged: route
+                .discharged()
+                .iter()
+                .map(|one| Discharged {
+                    target: one.target.clone(),
+                    proof: one.proof.to_owned(),
+                })
+                .collect(),
+            fallback: route.fallback().map(ToOwned::to_owned),
+            answered: Vec::new(),
+        }
+    }
+}
+
 /// Who decided one mutation, which is what stands behind the verdict it feeds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -413,6 +484,33 @@ impl Decision {
             Self::Undecided => "undecided",
         }
     }
+}
+
+/// One question a seam's recording licensed, and what the run made of it.
+///
+/// A `wire-unnoticed` finding names a question by its identity, and a reader
+/// who cannot look that identity up has been handed a name and no way to know
+/// what it stands for. This is what they look it up in: ADR 0002 keeps a finding
+/// off the recording, so what the finding rests on has to be in the report.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SeamRecord {
+    /// The question's identity, which is what a finding names.
+    pub id: String,
+    /// The capability the seam serves, as `[resources.<name>]` names it.
+    pub capability: String,
+    /// Which exchange on that seam, from zero.
+    pub seq: u64,
+    /// What the caller asked, where the wire says how to read one. Empty where it does not.
+    pub asked: String,
+    /// What the upstream answered, where the wire says how to read one. `None` where it does not.
+    pub answered: Option<u16>,
+    /// What the question asks of the exchange.
+    pub rule: String,
+    /// Who decided it.
+    pub decision: Decision,
+    /// The target that noticed, or the proof that discharged it. `None` where neither did.
+    pub noticed_by: Option<String>,
 }
 
 /// Who noticed each mutation the run catalogued, and what became of the ones nobody did.
@@ -543,6 +641,9 @@ pub struct MutantRecord {
     /// The builds that are blind to it — nothing noticed, nothing ran it, or nothing decided — empty when the run measured one build or every build answered for it.
     #[serde(default)]
     pub blind_in: Vec<String>,
+    /// Which targets could have noticed it, and what removed the rest. `null` where the run never asked.
+    #[serde(default)]
+    pub routing: Option<Routing>,
     /// The target that noticed it, when one did.
     pub killed_by: Option<String>,
     /// Whether this came from a previous run.
@@ -572,11 +673,15 @@ pub enum FindingKind {
     UnmatchedAcceptance,
     /// The interpreter found unsoundness in what the compiler cannot check.
     UndefinedBehaviour,
+    /// A target was put to mutations and noticed none of them.
+    HollowTarget,
+    /// The suite carried on through a question a seam licensed: a fault nothing noticed.
+    WireUnnoticed,
 }
 
 impl FindingKind {
     /// Every kind, in declaration order.
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 10] = [
         Self::BuildFailure,
         Self::FailingTest,
         Self::TargetMissing,
@@ -585,6 +690,8 @@ impl FindingKind {
         Self::NotMeasured,
         Self::UnmatchedAcceptance,
         Self::UndefinedBehaviour,
+        Self::HollowTarget,
+        Self::WireUnnoticed,
     ];
 
     /// The name this carries in a report, which is the one a person greps for.
@@ -599,6 +706,8 @@ impl FindingKind {
             Self::NotMeasured => "not-measured",
             Self::UnmatchedAcceptance => "unmatched-acceptance",
             Self::UndefinedBehaviour => "undefined-behaviour",
+            Self::HollowTarget => "hollow-target",
+            Self::WireUnnoticed => "wire-unnoticed",
         }
     }
 
@@ -611,7 +720,9 @@ impl FindingKind {
             | Self::SurvivingMutant
             | Self::Timeout
             | Self::NotMeasured
-            | Self::UnmatchedAcceptance => false,
+            | Self::UnmatchedAcceptance
+            | Self::HollowTarget
+            | Self::WireUnnoticed => false,
         }
     }
 }
@@ -763,6 +874,9 @@ pub struct Report {
     /// Every repair a provider offered, and what putting it to the tests established.
     #[serde(default)]
     pub candidates: Vec<CandidateRecord>,
+    /// Every question a watched seam licensed, and what became of it.
+    #[serde(default)]
+    pub seams: Vec<SeamRecord>,
     /// Every target it selected, slowest first.
     pub targets: Vec<TargetRecord>,
     /// Every mutant it has something to say about.
@@ -803,6 +917,7 @@ impl Report {
             accounting: Accounting::default(),
             resources: Vec::new(),
             candidates: Vec::new(),
+            seams: Vec::new(),
             targets: Vec::new(),
             mutants: Vec::new(),
             findings: Vec::new(),

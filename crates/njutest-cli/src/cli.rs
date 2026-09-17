@@ -419,6 +419,8 @@ pub enum Format {
     Lines,
     /// The canonical document, exactly as the run wrote it.
     Json,
+    /// What the seams the run watched observed the system doing, and who holds each sentence up.
+    Spec,
 }
 
 /// How a run writes what it is doing while it does it.

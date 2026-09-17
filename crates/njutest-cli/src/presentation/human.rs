@@ -328,10 +328,13 @@ fn gaps(told: &Told) -> String {
                 .map(|site| site.path.as_str()),
         )
         .collect();
-    let files = files.len().max(1);
+    let plural = if count == 1 { "" } else { "s" };
+    if files.is_empty() {
+        return format!("{count} gap{plural}");
+    }
+    let files = files.len();
     format!(
-        "{count} gap{} in {files} file{}",
-        if count == 1 { "" } else { "s" },
+        "{count} gap{plural} in {files} file{}",
         if files == 1 { "" } else { "s" }
     )
 }

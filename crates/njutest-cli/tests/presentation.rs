@@ -187,6 +187,7 @@ fn a_gap_that_is_only_in_one_build_says_which_build_it_is_in() {
         replacement: ">=".to_owned(),
         outcome: "survived".to_owned(),
         blind_in: vec!["release".to_owned()],
+        routing: None,
         killed_by: None,
         reused: false,
         source_run_id: None,

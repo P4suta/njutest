@@ -290,6 +290,8 @@ fn resource(exclusive: bool) -> njutest_cli::config::Resource {
         shared: !exclusive,
         exclusive,
         environment: Vec::new(),
+        interpose: String::new(),
+        wire: njutest_cli::wire::Wire::Raw,
     }
 }
 

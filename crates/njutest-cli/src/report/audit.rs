@@ -25,6 +25,11 @@ pub enum Violation {
         /// What the decisions add up to.
         decided: u32,
     },
+    /// A finding about a seam names a question the report does not hold.
+    SeamFindingNamesNothing {
+        /// The question's identity, as the finding names it.
+        id: String,
+    },
     /// The target records and the target accounting disagree.
     TargetRecordsDisagree {
         /// What the accounting says.
@@ -104,6 +109,12 @@ impl fmt::Display for Violation {
                  the type system, a test, a proof, nothing that ran, nothing that \
                  could run, or nobody"
             ),
+            Self::SeamFindingNamesNothing { id } => write!(
+                f,
+                "the report calls {id} a question nothing noticed and holds no such \
+                 question; a reader handed a name with nothing to look it up in has \
+                 been told nothing they can act on"
+            ),
             Self::FindingsDisagree {
                 verdict,
                 findings,
@@ -164,6 +175,7 @@ pub fn validate_for_persistence(report: &Report) -> Vec<Violation> {
     check_required(report, &mut violations);
     check_targets(report, &mut violations);
     check_decisions(report, &mut violations);
+    check_seams(report, &mut violations);
     check_verdict(report, &mut violations);
     check_git(report, &mut violations);
     check_findings(report, &mut violations);
@@ -181,6 +193,21 @@ fn check_decisions(report: &Report, violations: &mut Vec<Violation>) {
             cataloged: counts.cataloged,
             decided,
         });
+    }
+}
+
+/// Whether every finding about a seam names a question the report itself holds.
+fn check_seams(report: &Report, violations: &mut Vec<Violation>) {
+    for finding in report
+        .findings
+        .iter()
+        .filter(|finding| finding.kind == FindingKind::WireUnnoticed)
+    {
+        if !report.seams.iter().any(|one| one.id == finding.subject) {
+            violations.push(Violation::SeamFindingNamesNothing {
+                id: finding.subject.clone(),
+            });
+        }
     }
 }
 

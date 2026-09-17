@@ -555,6 +555,83 @@ refused[NJ5001]: the workspace does not compile before anything is instrumented
   ·PARTIAL   3 killed, 0 survived, 0 unreached   1.9s
   reports/runs/20260101T000000Z-aaaaaa
 
+=== a target that noticed none of what it was put to — eighty columns, no colour
+
+gap[NJ-HOLLOW-TARGET]: this test target noticed none of the changes it was put to
+  = core/test/smoke was put to 31 mutations and noticed none of them, so nothing
+    it asserts is held up by any of the changes this run made
+
+  INSUFFICIENT   31 killed, 0 survived, 0 unreached   1.9s
+  1 gap   reports/runs/20260101T000000Z-aaaaaa
+
+=== a target that noticed none of what it was put to — forty columns, no colour
+
+gap[NJ-HOLLOW-TARGET]: this test target noticed none of the changes it was put to
+  = core/test/smoke was put to 31
+    mutations and noticed none of them,
+    so nothing it asserts is held up by
+    any of the changes this run made
+
+  INSUFFICIENT   31 killed, 0 survived, 0 unreached   1.9s
+  1 gap   reports/runs/20260101T000000Z-aaaaaa
+
+=== a target that noticed none of what it was put to — eighty columns, colour
+
+[1;38;5;214mgap[0m[38;5;244m[[0m[1;38;5;214mNJ-HOLLOW-TARGET[38;5;244m][0m[0m: [1;38;5;253mthis test target noticed none of the changes it was put to[0m
+  [38;5;244m=[0m core/test/smoke was put to 31 mutations and noticed none of them, so nothing
+    it asserts is held up by any of the changes this run made
+
+  [1;38;5;214mINSUFFICIENT[0m   [38;5;244m31 killed, 0 survived, 0 unreached   1.9s[0m
+  [1;38;5;214m1 gap[0m   [38;5;244mreports/runs/20260101T000000Z-aaaaaa[0m
+
+=== a target that noticed none of what it was put to — eighty columns, unicode
+
+gap[NJ-HOLLOW-TARGET]: this test target noticed none of the changes it was put to
+  ╰─ core/test/smoke was put to 31 mutations and noticed none of them, so
+     nothing it asserts is held up by any of the changes this run made
+
+  ✗ INSUFFICIENT   31 killed, 0 survived, 0 unreached   1.9s
+  1 gap   reports/runs/20260101T000000Z-aaaaaa
+
+=== a seam the suite carried on through — eighty columns, no colour
+
+gap[NJ-WIRE]: the suite carried on through what a seam was asked
+  = nothing noticed when the run was told to answer 500 where the upstream
+    answered otherwise, answering POST /orders on the payments seam
+
+  INSUFFICIENT   40 killed, 0 survived, 0 unreached   1.9s
+  1 gap   reports/runs/20260101T000000Z-aaaaaa
+
+=== a seam the suite carried on through — forty columns, no colour
+
+gap[NJ-WIRE]: the suite carried on through what a seam was asked
+  = nothing noticed when the run was
+    told to answer 500 where the
+    upstream answered otherwise,
+    answering POST /orders on the
+    payments seam
+
+  INSUFFICIENT   40 killed, 0 survived, 0 unreached   1.9s
+  1 gap   reports/runs/20260101T000000Z-aaaaaa
+
+=== a seam the suite carried on through — eighty columns, colour
+
+[1;38;5;214mgap[0m[38;5;244m[[0m[1;38;5;214mNJ-WIRE[38;5;244m][0m[0m: [1;38;5;253mthe suite carried on through what a seam was asked[0m
+  [38;5;244m=[0m nothing noticed when the run was told to answer 500 where the upstream
+    answered otherwise, answering POST /orders on the payments seam
+
+  [1;38;5;214mINSUFFICIENT[0m   [38;5;244m40 killed, 0 survived, 0 unreached   1.9s[0m
+  [1;38;5;214m1 gap[0m   [38;5;244mreports/runs/20260101T000000Z-aaaaaa[0m
+
+=== a seam the suite carried on through — eighty columns, unicode
+
+gap[NJ-WIRE]: the suite carried on through what a seam was asked
+  ╰─ nothing noticed when the run was told to answer 500 where the upstream
+     answered otherwise, answering POST /orders on the payments seam
+
+  ✗ INSUFFICIENT   40 killed, 0 survived, 0 unreached   1.9s
+  1 gap   reports/runs/20260101T000000Z-aaaaaa
+
 === a run where the type system caught most of it — eighty columns, no colour
 
   ASSURED   12 killed, 31 refused by types, 0 survived, 0 unreached   1.9s

@@ -10,8 +10,9 @@
 
 use njutest_cli::report::audit::{Violation, validate_for_persistence};
 use njutest_cli::report::{
-    Finding, FindingKind, Git, Limitation, MutantAccounting, ObserverAccounting, Position, Report,
-    RunKind, SCHEMA, TargetAccounting, TargetRecord, TargetStatus, UNAVAILABLE, Verdict,
+    Decision, Finding, FindingKind, Git, Limitation, MutantAccounting, ObserverAccounting,
+    Position, Report, RunKind, SCHEMA, SeamRecord, TargetAccounting, TargetRecord, TargetStatus,
+    UNAVAILABLE, Verdict,
 };
 
 /// A report that satisfies every invariant, for a test to break one thing in. One field of a report, and how to leave it saying nothing.
@@ -400,6 +401,7 @@ fn mutant(id: &str) -> njutest_cli::report::MutantRecord {
         reused: false,
         source_run_id: None,
         blind_in: Vec::new(),
+        routing: None,
     }
 }
 
@@ -868,5 +870,46 @@ fn every_refusal_is_a_finished_sentence() {
         "one report for each way this refuses one, and every way says something \
          different: {kinds} refusals, {} of them distinct",
         seen.len()
+    );
+}
+
+#[test]
+fn a_seam_finding_that_names_a_question_the_report_does_not_hold_is_refused() {
+    let mut report = Report::new(
+        "20260918T090000Z-aaaaaa",
+        RunKind::Full,
+        njutest_cli::config::Contract::StandardV1,
+    );
+    report.findings.push(Finding::new(
+        FindingKind::WireUnnoticed,
+        &"c".repeat(64),
+        "nothing noticed when the run was told to answer 500",
+    ));
+    let refused = validate_for_persistence(&report);
+    assert!(
+        refused
+            .iter()
+            .any(|one| matches!(one, Violation::SeamFindingNamesNothing { .. })),
+        "a reader handed a sixty-four character name with nothing in the report to \
+         look it up in has been told nothing they can act on, and ADR 0002 keeps the \
+         thing it stands for off the recording: {refused:?}"
+    );
+
+    report.seams.push(SeamRecord {
+        id: "c".repeat(64),
+        capability: "api".to_owned(),
+        seq: 3,
+        asked: "GET /orders".to_owned(),
+        answered: Some(200),
+        rule: "status-server-error".to_owned(),
+        decision: Decision::Unnoticed,
+        noticed_by: None,
+    });
+    let allowed = validate_for_persistence(&report);
+    assert!(
+        !allowed
+            .iter()
+            .any(|one| matches!(one, Violation::SeamFindingNamesNothing { .. })),
+        "and once the report holds the question, the finding resolves: {allowed:?}"
     );
 }

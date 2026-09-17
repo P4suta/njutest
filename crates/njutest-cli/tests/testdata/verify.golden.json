@@ -102,6 +102,20 @@
       },
       "replacement": "Default::default()",
       "reused": false,
+      "routing": {
+        "answered": [
+          {
+            "outcome": "killed",
+            "target": "<volatile>"
+          }
+        ],
+        "discharged": [],
+        "fallback": null,
+        "granularity": "block",
+        "reaching": [
+          "fixture-baseline/lib/fixture_baseline"
+        ]
+      },
       "rule": "return-default",
       "source_run_id": null
     },
@@ -121,6 +135,20 @@
       },
       "replacement": "Default::default()",
       "reused": false,
+      "routing": {
+        "answered": [
+          {
+            "outcome": "killed",
+            "target": "<volatile>"
+          }
+        ],
+        "discharged": [],
+        "fallback": null,
+        "granularity": "block",
+        "reaching": [
+          "fixture-baseline/lib/fixture_baseline"
+        ]
+      },
       "rule": "return-default",
       "source_run_id": null
     },
@@ -140,6 +168,20 @@
       },
       "replacement": "!(n < 0)",
       "reused": false,
+      "routing": {
+        "answered": [
+          {
+            "outcome": "killed",
+            "target": "<volatile>"
+          }
+        ],
+        "discharged": [],
+        "fallback": null,
+        "granularity": "block",
+        "reaching": [
+          "fixture-baseline/lib/fixture_baseline"
+        ]
+      },
       "rule": "negate-condition",
       "source_run_id": null
     },
@@ -159,6 +201,20 @@
       },
       "replacement": "/",
       "reused": false,
+      "routing": {
+        "answered": [
+          {
+            "outcome": "killed",
+            "target": "<volatile>"
+          }
+        ],
+        "discharged": [],
+        "fallback": null,
+        "granularity": "block",
+        "reaching": [
+          "fixture-baseline/test/doubling"
+        ]
+      },
       "rule": "mul-to-div",
       "source_run_id": null
     },
@@ -178,6 +234,18 @@
       },
       "replacement": "<=",
       "reused": false,
+      "routing": {
+        "answered": [],
+        "discharged": [
+          {
+            "proof": "never-infected",
+            "target": "<volatile>"
+          }
+        ],
+        "fallback": null,
+        "granularity": "discharged",
+        "reaching": []
+      },
       "rule": "lt-to-le",
       "source_run_id": null
     },
@@ -197,6 +265,18 @@
       },
       "replacement": ">=",
       "reused": false,
+      "routing": {
+        "answered": [],
+        "discharged": [
+          {
+            "proof": "never-infected",
+            "target": "<volatile>"
+          }
+        ],
+        "fallback": null,
+        "granularity": "discharged",
+        "reaching": []
+      },
       "rule": "gt-to-ge",
       "source_run_id": null
     },
@@ -216,6 +296,20 @@
       },
       "replacement": "Default::default()",
       "reused": false,
+      "routing": {
+        "answered": [
+          {
+            "outcome": "killed",
+            "target": "<volatile>"
+          }
+        ],
+        "discharged": [],
+        "fallback": null,
+        "granularity": "block",
+        "reaching": [
+          "fixture-baseline/test/doubling"
+        ]
+      },
       "rule": "return-default",
       "source_run_id": null
     },
@@ -235,6 +329,20 @@
       },
       "replacement": "Default::default()",
       "reused": false,
+      "routing": {
+        "answered": [
+          {
+            "outcome": "killed",
+            "target": "<volatile>"
+          }
+        ],
+        "discharged": [],
+        "fallback": null,
+        "granularity": "block",
+        "reaching": [
+          "fixture-baseline/lib/fixture_baseline"
+        ]
+      },
       "rule": "return-default",
       "source_run_id": null
     },
@@ -254,6 +362,20 @@
       },
       "replacement": "!(n > 0)",
       "reused": false,
+      "routing": {
+        "answered": [
+          {
+            "outcome": "killed",
+            "target": "<volatile>"
+          }
+        ],
+        "discharged": [],
+        "fallback": null,
+        "granularity": "block",
+        "reaching": [
+          "fixture-baseline/lib/fixture_baseline"
+        ]
+      },
       "rule": "negate-condition",
       "source_run_id": null
     },
@@ -273,6 +395,13 @@
       },
       "replacement": "Default::default()",
       "reused": false,
+      "routing": {
+        "answered": [],
+        "discharged": [],
+        "fallback": null,
+        "granularity": "unreached",
+        "reaching": []
+      },
       "rule": "return-default",
       "source_run_id": null
     }
@@ -311,6 +440,7 @@
     "resolved_packages": [],
     "shard": null
   },
+  "seams": [],
   "targets": [
     {
       "duration_ms": 0,

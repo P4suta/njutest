@@ -73,6 +73,7 @@ fn report() -> Report {
         reused: false,
         source_run_id: None,
         blind_in: Vec::new(),
+        routing: None,
     }];
     report.findings = vec![Finding::new(
         FindingKind::SurvivingMutant,

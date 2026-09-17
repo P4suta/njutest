@@ -406,6 +406,48 @@ fn cases() -> Vec<(&'static str, Told)> {
             told(Vec::new(), headline(Verdict::Partial, 3, 0, 0), Vec::new()),
         ),
         (
+            "a target that noticed none of what it was put to",
+            Told {
+                headline: headline(Verdict::Insufficient, 31, 0, 0),
+                places: Vec::new(),
+                diagnostics: vec![Diagnostic {
+                    severity: Severity::Gap,
+                    code: "NJ-HOLLOW-TARGET",
+                    title: "this test target noticed none of the changes it was put to".to_owned(),
+                    at: None,
+                    notes: vec![
+                        "core/test/smoke was put to 31 mutations and noticed none of \
+                         them, so nothing it asserts is held up by any of the changes \
+                         this run made"
+                            .to_owned(),
+                    ],
+                    actions: Vec::new(),
+                }],
+                limitations: Vec::new(),
+            },
+        ),
+        (
+            "a seam the suite carried on through",
+            Told {
+                headline: headline(Verdict::Insufficient, 40, 0, 0),
+                places: Vec::new(),
+                diagnostics: vec![Diagnostic {
+                    severity: Severity::Gap,
+                    code: "NJ-WIRE",
+                    title: "the suite carried on through what a seam was asked".to_owned(),
+                    at: None,
+                    notes: vec![
+                        "nothing noticed when the run was told to answer 500 where the \
+                         upstream answered otherwise, answering POST /orders on the \
+                         payments seam"
+                            .to_owned(),
+                    ],
+                    actions: Vec::new(),
+                }],
+                limitations: Vec::new(),
+            },
+        ),
+        (
             "a run where the type system caught most of it",
             told(
                 Vec::new(),

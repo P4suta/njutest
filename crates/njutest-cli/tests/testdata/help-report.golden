@@ -13,6 +13,8 @@ Options:
           Possible values:
           - lines: The record stream
           - json:  The canonical document, exactly as the run wrote it
+          - spec:  What the seams the run watched observed the system doing, and who holds each
+            sentence up
           
           [default: lines]
 

@@ -42,6 +42,7 @@ fn report(run: &str, outcomes: &[(&str, &str)]) -> Report {
             reused: false,
             source_run_id: None,
             blind_in: Vec::new(),
+            routing: None,
         })
         .collect();
     let mut observers = ObserverAccounting::default();

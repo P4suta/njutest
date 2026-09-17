@@ -73,7 +73,7 @@ unavailable-metadata invariants that JSON Schema alone cannot express
 (`report::audit::validate_for_persistence`).
 
 A **finding** is an actionable problem in the project or its verification
-configuration. There are eight kinds, and a report carries the name rather
+configuration. There are ten kinds, and a report carries the name rather
 than a number, because the name is what a person greps for and what a
 projection shows:
 
@@ -87,6 +87,8 @@ projection shows:
 | `timeout` | a target, or a mutation of one, ran out of the time it was given | no |
 | `not-measured` | something a run could not measure, so it claims nothing about it | no |
 | `unmatched-acceptance` | an unexpired acceptance does not name exactly one mutant in this catalog | no |
+| `hollow-target` | a test target was put to mutations and noticed none of them | no |
+| `wire-unnoticed` | the suite carried on through a question a seam licensed: a fault nothing noticed | no |
 
 The last column is the one a reader acts on first: a defect is a fault in the
 code under test, and the rest are gaps in what was established. Both are
@@ -126,6 +128,48 @@ ID. A mutant disposition may say `reused: true` with a `source_run_id`; the
 accounting carries `reused_killed` and `reused_survived`, each part of
 `killed` and `survived`.
 
+## What a seam was asked
+
+`seams` holds every question a watched seam's recording licensed and what
+became of it: the question's `id`, the `capability` and the `seq` of the
+exchange it is about, what was `asked` and what the upstream `answered` where
+the wire says how to read one, the `rule` it applies, the `decision`, and
+`noticed_by` — the target that noticed, or the proof that discharged it.
+
+A `wire-unnoticed` finding names a question by its `id` and nothing else. A
+reader handed a sixty-four character name with nothing to look it up in has
+been told nothing they can act on, and [ADR 0002](adr/0002-trace-is-not-evidence.md)
+keeps the thing it stands for off the recording, so it is here. The audit
+refuses to persist a report whose seam finding names a question the report does
+not hold.
+
+`decision` is the same six-way partition the mutations use. `proved` is a
+question no observer could have answered — cutting an answer with no body short
+hands the caller the bytes it had — and `unreached` is a question the run could
+not put, which is stated as a `not-measured` finding and never as a survivor.
+
+## What the run observed the system doing
+
+`njutest report --format spec` reads `seams` back as one sentence per exchange
+and says who is holding each one up:
+
+```text
+POST /orders on payments answers 201 — held up by pkg/test/orders
+GET /orders/1 on payments answers 200 — nobody holds this up; 5 question(s) nothing noticed
+```
+
+The sentences are made of what went past and nothing else, so they are always
+true of the system as it ran. That is what makes the annotation the useful half:
+the question is never whether the behaviour is real, only whether anybody would
+notice it changing. A reviewer can be told, about a change to the second line,
+that nobody was holding it up.
+
+A question a proof discharged holds nothing up and leaves nothing wanting —
+nobody could have noticed it, so counting it against the tests would ask them
+for something no test can give. A question the run could not put is counted
+apart from one nothing noticed, because writing a test is what closes the first
+and there is nothing to write for the second.
+
 ## Who decided each mutation
 
 The counts beside each other overlap — `executed` holds `killed` and
@@ -156,6 +200,51 @@ denominator: `rejected` keeps its place in
 `undecided` is a gap in the verification rather than in the project, and it is
 never silent: a run that could not decide a mutation says so here and carries
 the finding that explains it.
+
+## Who could have noticed
+
+`mutants[].routing` is what a survivor is a claim about. The assurance
+contract's predicate — a mutation goes to the targets that reached it, less
+the ones a proof discharged — decided every execution, and until now it was
+visible only in the trace. [ADR 0002](adr/0002-trace-is-not-evidence.md) says
+a trace is never evidence, so a reader holding a survivor to that predicate
+was holding it to something the run does not answer for. The record answers
+for it now.
+
+| field | what it says |
+| --- | --- |
+| `granularity` | how narrowly the run chose: `all`, `block`, `test`, `discharged`, `unreached` |
+| `reaching` | the targets that could have noticed it |
+| `discharged` | the targets a proof removed, each with the proof that removed it |
+| `fallback` | what widened the question, when the run could not narrow it: `not-measured`, `position-unknown`, `outside-blocks`, `coverage-incomplete`, `touch-incomplete` |
+| `answered` | the targets the run actually asked, in order, each with what it said |
+
+`routing` is `null` where the run never asked, which is a mutation the
+compiler refused: a program that does not exist is not one any test could
+have noticed.
+
+The difference between an empty `reaching` with a `discharged` list and an
+empty one without is the difference a reader acts on. The first is a proof —
+nothing could have noticed. The second is a hole — nothing looked.
+
+`answered` is who was actually asked, in the order they were asked, and what
+each said. `reaching` is who *could* have noticed; the two differ because a
+run stops at the first detection and asks the cheapest targets first. A
+target in `reaching` and absent from `answered` reached the mutation and was
+never given the chance.
+
+That distinction is the whole of why `answered` is recorded, and it is what
+makes `hollow-target` sound. A target is executed against a mutation only
+when every target earlier in the route already survived it — so every
+execution that happened is one where that target had its chance and did not
+take it. The early return is not an obstacle the finding works around; it is
+the reason the finding is true.
+
+A target absent from every `killed_by` is a different thing entirely and
+proves nothing: a run records the first detection, so a target that is
+outranked every time never appears there however sharp it is. A reader
+settling "was this target put to mutations and did it notice none" from
+`killed_by` would get it wrong; from `answered` they get it right.
 
 ## More than one build
 

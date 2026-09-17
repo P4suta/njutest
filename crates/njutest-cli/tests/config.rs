@@ -433,16 +433,6 @@ fn an_acceptance_without_a_reason_is_not_an_acceptance() {
 }
 
 #[test]
-fn asking_the_tests_is_something_a_project_turns_on() {
-    assert!(
-        !Config::default().oracle.ask,
-        "asking the tests costs a second preparation of the whole tree, so it is a \
-         thing somebody asks for rather than a thing every run pays"
-    );
-    assert!(expect_ok("[oracle]\nask = true\n").oracle.ask);
-}
-
-#[test]
 fn a_configuration_is_a_named_way_to_build_the_project_and_is_named_once() {
     let read = expect_ok(
         "[[configuration]]\nname = \"all-features\"\nall_features = true\n\n\
@@ -534,7 +524,7 @@ fn canonical_configuration_is_the_complete_serialized_contract() {
         serde_json::to_string(&config).expect("the configuration is serializable")
     );
     assert!(canonical.starts_with("{\"version\":1,"), "{canonical}");
-    assert!(canonical.ends_with("\"ask\":false}}"), "{canonical}");
+    assert!(canonical.ends_with("\"configuration\":[]}"), "{canonical}");
     assert_eq!(config.digest().len(), 64);
 
     let mut two = Config::default();

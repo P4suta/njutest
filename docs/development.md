@@ -92,6 +92,17 @@ JSON rather than through the code that wrote them, and a run recorded without
 which ships a proof layer only against a re-implementation that is not asked
 whether it agrees with itself.
 
+The `wire` layer is the same rule for the seams. It mints the fault catalogue
+again from the exchanges the recording holds — by the rules and the identity
+recipe written out in `xtask/src/wire.rs`, which never calls the runner's — and
+holds it to what the run says became of each question: a question the exchanges
+license and the recording has nobody putting, a question the run put that no
+exchange licenses, a question nothing noticed that the report does not name,
+and a finding the report carries that no run put. The identity recipe is
+pinned as a literal digest in `xtask/tests/wire.rs` and again in
+`crates/njutest-cli/tests/derive.rs`, so the two implementations agreeing is
+evidence rather than two copies of one mistake.
+
 `cargo xtask engine-audit <run-directory> [--trace <recording>] [--shard
 <report>…] [--ledger .rust-mutants.toml]` is the same rule for the engine's
 own runs. It reads that run's `run-report-v1.json` and re-decides it in nine

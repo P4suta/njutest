@@ -24,6 +24,7 @@ fn judged(display_id: &str, disposition: Disposition, reused: bool) -> Judged {
         position: None,
         disposition,
         source_run_id: reused.then(|| "20260905T081500Z-000000".to_owned()),
+        routing: None,
     }
 }
 

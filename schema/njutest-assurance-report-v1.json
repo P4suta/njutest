@@ -21,6 +21,7 @@
     "accounting",
     "candidates",
     "resources",
+    "seams",
     "targets",
     "mutants",
     "findings",
@@ -528,6 +529,70 @@
       "items": {
         "$ref": "#/$defs/limitation"
       }
+    },
+    "seams": {
+      "description": "Every question a watched seam's recording licensed, and what became of it. A wire-unnoticed finding names a question by its identity; this is what a reader looks that identity up in, so the finding rests on the report rather than on the recording.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "capability",
+          "seq",
+          "asked",
+          "answered",
+          "rule",
+          "decision",
+          "noticed_by"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "capability": {
+            "type": "string",
+            "minLength": 1
+          },
+          "seq": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "asked": {
+            "type": "string"
+          },
+          "answered": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 599
+          },
+          "rule": {
+            "type": "string",
+            "minLength": 1
+          },
+          "decision": {
+            "type": "string",
+            "enum": [
+              "types",
+              "tests",
+              "proved",
+              "unnoticed",
+              "unreached",
+              "undecided"
+            ]
+          },
+          "noticed_by": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      }
     }
   },
   "$defs": {
@@ -663,6 +728,7 @@
         "replacement",
         "outcome",
         "blind_in",
+        "routing",
         "killed_by",
         "reused",
         "source_run_id"
@@ -706,6 +772,89 @@
           "items": {
             "type": "string",
             "minLength": 1
+          }
+        },
+        "routing": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "description": "Which targets could have noticed it, and what removed the rest. Null where the run never asked, which is a mutation the compiler refused.",
+          "required": [
+            "granularity",
+            "reaching",
+            "discharged",
+            "fallback",
+            "answered"
+          ],
+          "properties": {
+            "granularity": {
+              "type": "string",
+              "enum": [
+                "all",
+                "block",
+                "test",
+                "discharged",
+                "unreached"
+              ]
+            },
+            "reaching": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "discharged": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "target",
+                  "proof"
+                ],
+                "properties": {
+                  "target": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "proof": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              }
+            },
+            "fallback": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "answered": {
+              "type": "array",
+              "description": "The targets the run actually asked, in the order it asked them. A target in reaching and not here reached the mutation and was never given the chance, because one asked before it noticed.",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "target",
+                  "outcome"
+                ],
+                "properties": {
+                  "target": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "outcome": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              }
+            }
           }
         },
         "killed_by": {

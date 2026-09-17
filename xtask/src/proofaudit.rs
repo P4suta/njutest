@@ -96,6 +96,10 @@ pub enum Layer {
     Reuse,
     /// The layers that removed an execution, held to the kills the run recorded.
     Proofs,
+    /// The targets the recording says were put to mutations and noticed none, held to the findings that name them.
+    Hollow,
+    /// The faults a seam recording licensed, re-derived and held to what the run says it put and what nothing noticed.
+    Wire,
 }
 
 impl Layer {
@@ -109,6 +113,8 @@ impl Layer {
             Self::Acceptances => "acceptances",
             Self::Reuse => "reuse",
             Self::Proofs => "proofs",
+            Self::Hollow => "hollow",
+            Self::Wire => "wire",
         }
     }
 }
@@ -334,6 +340,8 @@ pub fn audit(path: &str, text: &str, recorded: Option<&str>) -> Result<Audit, Au
     acceptances(&recording, &mut audit);
     reuse(&recording, &mut audit);
     proofs(&recording, recorded, &mut audit);
+    hollow(&recording, recorded, &mut audit);
+    wire(&recording, recorded, &mut audit);
     audit.remarks.sort();
     audit.remarks.dedup();
     Ok(audit)
@@ -384,6 +392,191 @@ struct FindingRow {
 }
 
 /// Whether any layer removed a target that then killed the mutation it removed.
+/// The targets the recording says noticed nothing, held to the findings that name them.
+///
+/// Re-derived from the executions alone. A target is asked about a mutation
+/// only after every target before it in the route survived it, so every
+/// execution the recording holds is one where that target had its chance.
+fn hollow(recording: &Recording<'_>, recorded: Option<&str>, audit: &mut Audit) {
+    let mut notes = Notes::on(audit, Layer::Hollow);
+    let Some(recorded) = recorded else {
+        notes.unaudited(
+            "executions",
+            "the run kept no recording of what it ran, so which targets were put to a \
+             mutation and noticed none cannot be re-derived"
+                .to_owned(),
+        );
+        return;
+    };
+    let routing = crate::route::read(recorded);
+    if routing.execs.is_empty() {
+        notes.unaudited(
+            "executions",
+            "the recording holds no mutation execution, so no target was put to anything \
+             this audit could hold it to"
+                .to_owned(),
+        );
+        return;
+    }
+    let mut asked: BTreeMap<&str, (u64, bool)> = BTreeMap::new();
+    for exec in &routing.execs {
+        let held = asked.entry(exec.target.as_str()).or_insert((0, false));
+        held.0 = held.0.saturating_add(1);
+        if matches!(exec.outcome.as_str(), "killed" | "timed_out") {
+            held.1 = true;
+        }
+    }
+    let owed: BTreeSet<&str> = asked
+        .iter()
+        .filter(|(_, (count, noticed))| *count > 0 && !*noticed)
+        .map(|(target, _)| *target)
+        .collect();
+    let named: BTreeSet<&str> = recording
+        .document
+        .get("findings")
+        .and_then(serde_json::Value::as_array)
+        .map(|findings| {
+            findings
+                .iter()
+                .filter(|one| {
+                    one.get("kind").and_then(serde_json::Value::as_str) == Some("hollow-target")
+                })
+                .filter_map(|one| one.get("subject").and_then(serde_json::Value::as_str))
+                .collect()
+        })
+        .unwrap_or_default();
+    for target in owed.difference(&named) {
+        let (count, _) = asked.get(target).copied().unwrap_or((0, false));
+        notes.violated(
+            target,
+            format!(
+                "{target} was put to {count} mutation(s) and answered none of them with a \
+                 detection, and the report names no hollow-target finding about it"
+            ),
+        );
+    }
+    for target in named.difference(&owed) {
+        notes.violated(
+            target,
+            format!(
+                "the report calls {target} hollow, and the recording has it noticing \
+                 something or being asked nothing"
+            ),
+        );
+    }
+}
+
+/// The faults a seam recording licensed, re-derived here and held to what the run says became of them.
+///
+/// The catalogue is minted again from the exchanges alone, by the rules and
+/// the identity recipe written out in `crate::wire`, so a fault this audit
+/// does not derive is one the run invented and a fault it derives that the
+/// run never put is a question the report is quiet about.
+fn wire(recording: &Recording<'_>, recorded: Option<&str>, audit: &mut Audit) {
+    let mut notes = Notes::on(audit, Layer::Wire);
+    let Some(recorded) = recorded else {
+        return;
+    };
+    let watched = crate::wire::read(recorded);
+    if watched.exchanges.is_empty() && watched.execs.is_empty() {
+        return;
+    }
+    let mut owed: BTreeMap<String, String> = BTreeMap::new();
+    for exchange in &watched.exchanges {
+        for (id, rule) in crate::wire::licensed(exchange) {
+            owed.insert(id, rule);
+        }
+    }
+    let put: BTreeMap<&str, &crate::wire::Exec> = watched
+        .execs
+        .iter()
+        .map(|one| (one.fault.as_str(), one))
+        .collect();
+    if put.is_empty() {
+        notes.unaudited(
+            "faults",
+            format!(
+                "{} exchange(s) went past a seam and licensed {} question(s), and the \
+                 recording holds none of them being put, so what the suite would have \
+                 done with them cannot be re-derived",
+                watched.exchanges.len(),
+                owed.len()
+            ),
+        );
+        return;
+    }
+    for (id, rule) in &owed {
+        if !put.contains_key(id.as_str()) {
+            notes.violated(
+                id,
+                format!(
+                    "the exchanges the recording holds license {rule} here, and the run \
+                     records neither putting it nor why it did not"
+                ),
+            );
+        }
+    }
+    for (id, exec) in &put {
+        if !owed.contains_key(*id) {
+            notes.violated(
+                id,
+                format!(
+                    "the run put {} on the {} seam at exchange {}, and no exchange this \
+                     audit re-derives from the recording licenses it",
+                    exec.rule, exec.capability, exec.seq
+                ),
+            );
+        }
+    }
+    gaps(recording, &put, &mut notes);
+}
+
+/// The questions the recording says nothing noticed, held to the findings that name them.
+fn gaps(
+    recording: &Recording<'_>,
+    put: &BTreeMap<&str, &crate::wire::Exec>,
+    notes: &mut Notes<'_>,
+) {
+    let named: BTreeSet<&str> = recording
+        .findings
+        .iter()
+        .filter(|one| one.kind == "wire-unnoticed")
+        .map(|one| one.subject.as_str())
+        .collect();
+    for (id, exec) in put {
+        let unnoticed = exec.decision == "unnoticed";
+        if unnoticed && !named.contains(*id) {
+            notes.violated(
+                id,
+                format!(
+                    "the recording has nothing noticing {} on the {} seam, and the report \
+                     names no wire-unnoticed finding about it",
+                    exec.rule, exec.capability
+                ),
+            );
+        }
+        if !unnoticed && named.contains(*id) {
+            notes.violated(
+                id,
+                format!(
+                    "the report calls this a gap, and the recording has it decided by {}",
+                    exec.decision
+                ),
+            );
+        }
+    }
+    for id in named {
+        if !put.contains_key(id) {
+            notes.violated(
+                id,
+                "the report names a question nothing noticed, and the recording has no \
+                 run putting it"
+                    .to_owned(),
+            );
+        }
+    }
+}
+
 fn proofs(recording: &Recording<'_>, recorded: Option<&str>, audit: &mut Audit) {
     let mut notes = Notes::on(audit, Layer::Proofs);
     let Some(recorded) = recorded else {
@@ -451,7 +644,9 @@ fn believed(routes: &[crate::route::Route], notes: &mut Notes<'_>) {
             notes.violated(
                 &route.mutant,
                 format!(
-                    "the route says the answer was read back from {run} and that it was                      refused as {refusal}; one of those is not what happened, and a                      recording that says both cannot be held to either"
+                    "the route says the answer was read back from {run} and that it was \
+                     refused as {refusal}; one of those is not what happened, and a \
+                     recording that says both cannot be held to either"
                 ),
             );
         }

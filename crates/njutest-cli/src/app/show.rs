@@ -26,6 +26,9 @@ pub fn run(
     };
     let text = match arguments.format {
         Format::Json => runs::document(root, &run).map_err(|error| error.to_string()),
+        Format::Spec => runs::report(root, &run)
+            .map(|report| crate::report::spec::page(&report))
+            .map_err(|error| error.to_string()),
         Format::Lines => runs::report(root, &run)
             .map(|report| {
                 let store = crate::app::reports::Store::read(root);
