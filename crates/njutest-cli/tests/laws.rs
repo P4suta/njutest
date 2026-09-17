@@ -17,6 +17,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use njutest_cli::assure::mutation::{Disposition, Judged, Mutation, Unconfirmed};
 use njutest_cli::config::Contract;
 use njutest_cli::evidence::digest::{Inputs, Mode, identity};
+use njutest_cli::report::Decision;
+use njutest_cli::report::across::across;
 use proptest::prelude::*;
 use rust_mutants::session::{Fallback, Route};
 
@@ -48,6 +50,16 @@ fn disposition() -> impl Strategy<Value = Disposition> {
             detail: "no binary".to_owned(),
         }),
     ]
+}
+
+/// One way a mutation can be decided.
+fn decision_of() -> impl Strategy<Value = Decision> {
+    proptest::sample::select(Decision::ALL.to_vec())
+}
+
+/// What a handful of builds each decided about one mutation.
+fn decisions() -> impl Strategy<Value = Vec<Decision>> {
+    proptest::collection::vec(decision_of(), 0..5)
 }
 
 /// A run that judged these mutations, each under an identity of its own.
@@ -127,6 +139,72 @@ proptest! {
              noticed. Counting it only as work the run did not do throws away the \
              one measurement nothing else makes: {:?}",
             counts
+        );
+    }
+
+    /// Measuring one more build of a project already measured never makes it look better.
+    ///
+    /// The precondition is real rather than tidy: going from no build to one
+    /// is not measuring more of the same thing, it is measuring at all, and a
+    /// mutation nothing looked at stands on less than one a build decided.
+    #[test]
+    fn a_further_build_can_only_leave_a_mutation_standing_where_it_was_or_worse(
+        first in proptest::collection::vec(decision_of(), 1..5),
+        second in decisions(),
+    ) {
+        let one: BTreeMap<String, Decision> = first
+            .iter()
+            .enumerate()
+            .map(|(at, decision)| (format!("build-{at}"), *decision))
+            .collect();
+        let mut both = one.clone();
+        both.extend(
+            second
+                .iter()
+                .enumerate()
+                .map(|(at, decision)| (format!("later-{at}"), *decision)),
+        );
+
+        let before = across(&one).decision.standing();
+        let after = across(&both).decision.standing();
+        prop_assert!(
+            after <= before,
+            "a run that measured a release build as well as a debug one cannot come \
+             out better for having looked: every build is a program of its own, so \
+             a mutation nothing noticed in one of them is one nothing noticed, and a \
+             rule that let the good build outvote the bad one would turn measuring \
+             more into a way of claiming more. before={before:?} after={after:?} \
+             one={one:?} both={both:?}"
+        );
+    }
+
+    /// What one build decided is what the run records, when there is only the one.
+    #[test]
+    fn a_single_build_is_answered_for_by_itself(one in decision_of()) {
+        let only = BTreeMap::from([("default".to_owned(), one)]);
+        prop_assert_eq!(across(&only).decision, one);
+    }
+
+    /// Every build under which nothing noticed is named, because a reader has to know which.
+    #[test]
+    fn the_builds_nothing_noticed_in_are_the_ones_the_run_names(decisions in decisions()) {
+        let by_build: BTreeMap<String, Decision> = decisions
+            .iter()
+            .enumerate()
+            .map(|(at, decision)| (format!("build-{at}"), *decision))
+            .collect();
+        let named = across(&by_build).unnoticed_in;
+        let expected: Vec<String> = by_build
+            .iter()
+            .filter(|(_, decision)| **decision == Decision::Unnoticed)
+            .map(|(name, _)| name.clone())
+            .collect();
+        prop_assert_eq!(
+            named,
+            expected,
+            "a survivor that is a survivor only under one build is a different thing \
+             to act on than one that survives everywhere, and the reader cannot tell \
+             them apart unless the run says which"
         );
     }
 

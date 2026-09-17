@@ -3,6 +3,7 @@
 
 //! What a completed verification says, and what a durable one must satisfy.
 
+pub mod across;
 pub mod audit;
 pub mod html;
 pub mod json;
@@ -375,6 +376,23 @@ impl Decision {
             .iter()
             .find(|(name, _)| *name == outcome)
             .map(|&(_, decision)| decision)
+    }
+
+    /// How much a mutation decided this way stands on, where less is a weaker run.
+    ///
+    /// The first three are holes in the verification and the last three are
+    /// not; the order inside each group decides only which sentence a reader
+    /// is given when two builds disagree.
+    #[must_use]
+    pub const fn standing(self) -> u8 {
+        match self {
+            Self::Undecided => 0,
+            Self::Unnoticed => 1,
+            Self::Unreached => 2,
+            Self::Types => 3,
+            Self::Tests => 4,
+            Self::Proved => 5,
+        }
     }
 
     /// The wire name a report records.
