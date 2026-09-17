@@ -936,6 +936,28 @@ fn concluded(
         debug_assert!(ok.is_ok(), "writing to a String cannot fail");
         write(stdout, &line);
     }
+    write(stdout, &onward(document));
+}
+
+/// Where a reader goes from a wall of findings, which is the next thing they want and the one thing the run does not say.
+///
+/// A survivor is a decision to make, not a fact to file: either the tests have
+/// a gap or the code has a claim in it somebody should write down. `explain`
+/// is where both are answered — it prints what reached the mutation, and the
+/// block that records a reason — and nothing on the way there named it.
+fn onward(document: &run_report::RunDocument) -> String {
+    let Some(first) = document
+        .mutants
+        .iter()
+        .find(|one| one.outcome == "survived" && !one.expected)
+    else {
+        return String::new();
+    };
+    format!(
+        "NEXT      rust-mutants explain {}:{}:{}@{}\n          says which tests reached one \
+         of these, and writes the block that records a reason for it\n",
+        first.path, first.item, first.rule, first.line
+    )
 }
 
 /// Everything the run itself needs beyond the session, so a caller chooses one display and hands it over.
@@ -1470,7 +1492,14 @@ fn init(
     std::fs::write(&path, crate::config::skeleton())
         .map_err(|source| CliError::writing(&path, source))?;
     let mut line = String::new();
-    let written = writeln!(line, "wrote {}", path.display());
+    let written = writeln!(
+        line,
+        "wrote {}\nevery key in it is commented out, because every one has a default: the \
+         file is a place to disagree rather than a thing a run needs\nnext: `rust-mutants \
+         doctor` says whether a run can go ahead here, and `rust-mutants run --dry-run` \
+         says what one would cost before spending it",
+        path.display()
+    );
     debug_assert!(written.is_ok(), "writing to a String cannot fail");
     write(stdout, &line);
     Ok(0)

@@ -8,6 +8,7 @@ TARGET	passed	12ms	fedcba9876543210	core/lib/adds::rounds
 MUTANT	survived	cccccccc	crates/core/src/lib.rs:12:9	lt-to-le@1
 FINDING	surviving-mutant	cccccccc	no test noticed the edit at crates/core/src/lib.rs:12
 LIMITATION	mutation-phase-not-implemented	no mutant was executed, so nothing is claimed about the tests' strength
+NEXT	njutest explain cccccccc	says which tests reached it	njutest accept cccccccc --reason "..."	records why it is not a gap
 TARGETS	selected=2	passed=1	failed=1	skipped=0	missing=0
 MUTANTS	cataloged=9	rejected=0	executed=0	unreached=0
 OUTCOMES	killed=0	survived=1	timed_out=0	equivalent=0

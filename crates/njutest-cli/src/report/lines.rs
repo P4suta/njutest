@@ -62,10 +62,34 @@ pub fn stream(report: &Report) -> String {
         append(&mut out, &limitation.detail);
         out.push('\n');
     }
+    onward(report, &mut out);
     accounting(report, &mut out);
     record(&mut out, "VERDICT", &[&verdict_name(report)]);
     out.push('\n');
     out
+}
+
+/// Where a reader goes from a wall of findings, which is the next thing they want.
+///
+/// A survivor is a decision to make, not a fact to file: either the tests have
+/// a gap or the code has a claim in it somebody should write down. `explain`
+/// answers the first and `accept` records the second, and nothing on the way
+/// here named either.
+fn onward(report: &Report, out: &mut String) {
+    let Some(first) = report.mutants.iter().find(|one| one.outcome == "survived") else {
+        return;
+    };
+    record(
+        out,
+        "NEXT",
+        &[
+            &format!("njutest explain {}", first.display_id),
+            "says which tests reached it",
+            &format!("njutest accept {} --reason \"...\"", first.display_id),
+            "records why it is not a gap",
+        ],
+    );
+    out.push('\n');
 }
 
 /// What the run was and what it ran on.

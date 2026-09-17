@@ -814,7 +814,8 @@ pub fn stated(taken: &soundness::Inventory) -> Vec<Limitation> {
             crate::limitation::SOUNDNESS_NOT_EXECUTED,
             &format!(
                 "{} places in {} packages step outside what the compiler guarantees, and this \
-                 contract counts them rather than executing them",
+                 contract counts them rather than executing them; `contract = \"deep-v1\"` \
+                 interprets them under miri",
                 taken.items.len(),
                 taken.packages.len()
             ),

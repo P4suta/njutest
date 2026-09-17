@@ -634,7 +634,9 @@ contract = \"standard-v1\"        # \"standard-v1\" | \"deep-v1\"
 # ttl = \"{ttl}h\"
 
 [reports]
-# keep = {keep}                       # run directories kept under reports/runs
+# keep = {keep}                       # run directories kept under reports/runs, which is
+#                             # where every run writes: the JSON report, the record stream,
+#                             # and the HTML, SARIF and JUnit projections of the same run
 
 [fuzz]
 # run = false                    # drive the fuzz targets, not only find them

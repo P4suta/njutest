@@ -98,7 +98,7 @@ pub fn found(targets: &[String]) -> Limitation {
         crate::limitation::FUZZ_NOT_EXECUTED,
         &format!(
             "{} fuzz targets are here and were not driven, so nothing is claimed about what \
-             they would find: {}",
+             they would find; `[fuzz] run = true` drives them: {}",
             targets.len(),
             targets.join(", ")
         ),
