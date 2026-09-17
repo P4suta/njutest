@@ -1047,3 +1047,59 @@ fn accept_writes_the_expiry_it_is_given_and_a_run_reads_it() {
         "written where the next run reads it: {written}"
     );
 }
+
+/// What a command wrote to standard output.
+fn said(output: &Output) -> String {
+    String::from_utf8_lossy(&output.stdout).into_owned()
+}
+
+#[test]
+fn every_surface_that_prints_a_command_names_the_mutation_the_same_way() {
+    let fixture = fixture("fixture-baseline");
+    verify(&fixture, &[]);
+    let document = document(&fixture);
+    let survivor = document["mutants"]
+        .as_array()
+        .expect("mutants")
+        .iter()
+        .find(|one| one["outcome"] == "survived")
+        .expect("a survivor")
+        .clone();
+    let hash = survivor["display_id"].as_str().expect("a display id");
+    let locator = format!(
+        "{}:{}:{}@{}",
+        survivor["path"].as_str().unwrap_or_default(),
+        survivor["item"].as_str().unwrap_or_default(),
+        survivor["rule"].as_str().unwrap_or_default(),
+        survivor["position"]["line"].as_u64().unwrap_or_default()
+    );
+
+    let mut hashed = Vec::new();
+    for (surface, text) in [
+        ("verify", said(&verify(&fixture, &["--format", "lines"]))),
+        (
+            "verify --format agent",
+            said(&verify(&fixture, &["--format", "agent"])),
+        ),
+        ("explain", said(&njutest(&fixture, &["explain", &locator]))),
+        (
+            "report --format agent",
+            said(&njutest(&fixture, &["report", "--format", "agent"])),
+        ),
+    ] {
+        for line in text.lines().filter(|line| line.contains("njutest accept")) {
+            if line.contains(hash) {
+                hashed.push(format!("{surface}: {line}"));
+            }
+        }
+    }
+    assert!(
+        hashed.is_empty(),
+        "one run told a reader two names for one mutation. A name is what somebody types \
+         back, and a tool that prints `{locator}` everywhere and `{hash}` in one place has \
+         taught them that the readable one is not the real one. That is the defect \
+         `naming::locator` exists to end, left in whichever surface did not go through \
+         it:\n{}",
+        hashed.join("\n")
+    );
+}

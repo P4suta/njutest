@@ -85,7 +85,11 @@ pub fn diagnostics(report: &Report, root: &Path, encoding: Encoding) -> Vec<Repo
             "source": "njutest",
             "code": finding.kind_name(),
             "message": format!("{}: {}", finding.subject, finding.detail),
-            "data": { "mutant": mutant.display_id, "rule": mutant.rule },
+            "data": {
+                "mutant": crate::naming::locator(mutant),
+                "id": mutant.display_id,
+                "rule": mutant.rule,
+            },
         }));
     }
     by_file

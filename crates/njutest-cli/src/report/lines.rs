@@ -95,16 +95,6 @@ fn written(report: &Report, document: Option<&str>) -> String {
 /// answers the first and `accept` records the second, and nothing on the way
 /// here named either.
 /// How a reader names this mutation again, which has to hold after they have changed the file.
-fn locating(mutant: &crate::report::MutantRecord) -> String {
-    if mutant.item.is_empty() || mutant.path.is_empty() {
-        return mutant.display_id.clone();
-    }
-    format!(
-        "{}:{}:{}@{}",
-        mutant.path, mutant.item, mutant.rule, mutant.position.line
-    )
-}
-
 fn onward(report: &Report, out: &mut String) {
     let Some(first) = report.mutants.iter().find(|one| one.outcome == "survived") else {
         return;
@@ -113,9 +103,12 @@ fn onward(report: &Report, out: &mut String) {
         out,
         "NEXT",
         &[
-            &format!("njutest explain {}", locating(first)),
+            &format!("njutest explain {}", crate::naming::locator(first)),
             "says which tests reached it",
-            &format!("njutest accept {} --reason \"...\"", locating(first)),
+            &format!(
+                "njutest accept {} --reason \"...\"",
+                crate::naming::locator(first)
+            ),
             "records why it is not a gap",
         ],
     );

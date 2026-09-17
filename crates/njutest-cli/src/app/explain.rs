@@ -98,7 +98,7 @@ fn acceptance(root: &std::path::Path, mutant: &crate::report::MutantRecord) -> S
         return format!(
             "ACCEPTANCE\tnobody has recorded a reason for this one\tnjutest accept {} \
              --reason \"...\" writes one into .njutest.toml",
-            mutant.display_id
+            crate::naming::locator(mutant)
         );
     };
     format!(
