@@ -63,7 +63,7 @@ fn reading(fixture: &Fixture, args: &[&str]) -> Output {
 
 /// Where a fixture's reports are stored.
 fn reports(fixture: &Fixture) -> PathBuf {
-    fixture.root().join("reports/mutation")
+    rust_mutants_cli::app::stored::Store::read(fixture.root()).root()
 }
 
 fn stdout(output: &Output) -> String {
@@ -155,7 +155,10 @@ fn run_with_trace_records_under_the_run_directory_and_ends_with_run_end() {
 fn list_with_a_named_trace_directory_records_open_and_preview() {
     let fixture = Fixture::copy("fixture-simple");
     let directory = fixture.temp().join("named");
-    let output = against(&fixture, &["list", "--trace", &directory.to_string_lossy()]);
+    let output = against(
+        &fixture,
+        &["list", &format!("--trace={}", directory.display())],
+    );
     assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
     let events = recorded(&directory);
     let names = types(&events);
@@ -260,7 +263,10 @@ fn trace_summary_reads_the_newest_run_and_names_the_slowest_command() {
 fn trace_check_exits_1_on_a_recording_without_run_end() {
     let fixture = Fixture::copy("fixture-simple");
     let directory = fixture.temp().join("named");
-    let listed = against(&fixture, &["list", "--trace", &directory.to_string_lossy()]);
+    let listed = against(
+        &fixture,
+        &["list", &format!("--trace={}", directory.display())],
+    );
     assert_eq!(listed.status.code(), Some(0), "{}", stderr(&listed));
     let whole = reading(&fixture, &["check", "--dir", &directory.to_string_lossy()]);
     assert_eq!(whole.status.code(), Some(0), "{}", stdout(&whole));
@@ -347,7 +353,10 @@ fn a_trace_directory_that_cannot_be_created_costs_one_line_on_stderr_not_the_run
     let fixture = Fixture::copy("fixture-simple");
     let blocked = fixture.temp().join("blocked");
     std::fs::write(&blocked, "not a directory").expect("the file in the way");
-    let output = against(&fixture, &["list", "--trace", &blocked.to_string_lossy()]);
+    let output = against(
+        &fixture,
+        &["list", &format!("--trace={}", blocked.display())],
+    );
     assert_eq!(
         output.status.code(),
         Some(0),
@@ -584,6 +593,7 @@ fn environment(fixture: &Fixture) -> Environment {
     Environment {
         vars: njutest_devkit::paths::environment_for_a_run(),
         temp_directory: fixture.temp().to_path_buf(),
+        program: PathBuf::from("this test never runs it"),
         cache_directory: fixture.cache().to_path_buf(),
         working_directory: fixture.root().to_path_buf(),
         no_color: true,

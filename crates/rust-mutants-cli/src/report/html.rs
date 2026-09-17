@@ -2,16 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The run as one self-contained page: no font, no stylesheet, nothing to fetch, and one script of its own.
-//!
-//! A survivor is only worth reading where it is, so every file that holds one
-//! is shown whole with its mutants on the lines they are on. A file whose
-//! every mutation the tests noticed is counted rather than printed: a page
-//! that shows a thousand lines nobody has to read is a page nobody opens.
-//!
-//! The page shows a file only when it is the one the run measured, which the
-//! recorded digest settles; a file that changed since is named as changed
-//! rather than shown, because showing the new bytes would be a lie about what
-//! was measured.
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -113,27 +103,12 @@ fn score(document: &RunDocument) -> String {
 }
 
 fn accounting(document: &RunDocument) -> String {
-    let counted = &document.accounting;
-    let rows = [
-        ("cataloged", counted.cataloged),
-        ("refused", counted.refused),
-        ("skipped", counted.skipped),
-        ("executed", counted.executed),
-        ("killed", counted.killed),
-        ("survived", counted.survived),
-        ("timed out", counted.timed_out),
-        ("inconclusive", counted.inconclusive),
-        ("errored", counted.errored),
-        ("not run", counted.not_run),
-        ("unreached", counted.unreached),
-        ("discharged", counted.discharged),
-        ("expected", counted.expected),
-    ];
-    let mut out = String::from("<table>\n");
-    for (name, count) in rows {
+    let tally = super::tally::Tally::of(document);
+    let mut out = format!("<p>{}</p>\n<table>\n", escape(&tally.said()));
+    for (name, count) in &tally.parts {
         let _written = writeln!(out, "<tr><th>{name}</th><td>{count}</td></tr>");
     }
-    out.push_str("</table>");
+    let _written = write!(out, "</table>\n<p>{}</p>", escape(&tally.within_said()));
     out
 }
 

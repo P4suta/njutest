@@ -29,16 +29,6 @@ pub const EXIT_TERMINATED: u8 = 143;
 pub const PROGRAM: &str = "njutest";
 
 /// What a person reads at the foot of `--help`: every exit code, with the names that earn it.
-///
-/// The help a person reads, the page a consumer reads, and the code that
-/// decides are three statements of one thing, and a third written by hand is
-/// one of them wrong. This is the one, read out of the verdicts themselves, so
-/// a verdict that arrives arrives here too. `docs/report-v1.md` is held to it
-/// by `docs_ledger.rs` rather than written beside it.
-///
-/// The last three lines name no verdict: a run that could not start, one a
-/// person stopped, and one the machine stopped are outcomes no report was
-/// written for.
 #[must_use]
 pub fn exit_codes() -> String {
     let mut named: std::collections::BTreeMap<u8, Vec<&'static str>> =
@@ -79,6 +69,14 @@ pub struct Environment {
     pub working_directory: PathBuf,
     /// The operating system's temporary directory.
     pub temp_directory: PathBuf,
+    /// This program's own path, which `doctor` copies to measure what running a newly written file costs.
+    ///
+    /// An argument for the same reason the temporary directory is: the
+    /// composition root is where the operating system is asked. It has to be a
+    /// program somebody may copy and run — a system binary is signed in place
+    /// and is killed when it is run from anywhere else — and this one is both
+    /// to hand and known to run.
+    pub program: PathBuf,
     /// The user's cache directory, which earlier outcomes live under.
     pub cache_directory: PathBuf,
     /// Raised when the process is asked to stop. The composition root owns the signals; every phase reads this flag.
@@ -87,13 +85,6 @@ pub struct Environment {
 
 impl Environment {
     /// The workspace a command was pointed at: what it named, or where it was started.
-    ///
-    /// A name that is not an absolute path is resolved against the working
-    /// directory the command was given rather than against the process's own.
-    /// The two are the same for the binary, which composes one from the other,
-    /// and they are not the same for anything else that calls the entry point:
-    /// a caller that says where it is and then gets an answer about somewhere
-    /// else has been told about a tree it did not name.
     #[must_use]
     pub fn rooted(&self, named: Option<&Path>) -> PathBuf {
         named.map_or_else(
@@ -455,11 +446,6 @@ pub struct Usage {
 }
 
 /// The same arguments, less the word cargo repeats when it calls a subcommand.
-///
-/// `cargo njutest verify` runs `cargo-njutest njutest verify`, so the
-/// subcommand's own name arrives twice. Dropping it is cargo's convention and
-/// not this program's: called directly, `njutest njutest verify` is a mistake,
-/// and saying so is more use than guessing what was meant.
 fn subcommand(mut args: Vec<OsString>) -> Vec<OsString> {
     let called_by_cargo = args
         .first()

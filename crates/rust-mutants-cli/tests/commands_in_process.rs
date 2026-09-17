@@ -2,12 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The commands that read what a run left behind, driven in this process against one real run.
-//!
-//! Thirty-seven test files drive this program and every one of them starts a
-//! process, which is what a person does and what the exit codes are about. A
-//! measurement of what a crate's own tests reach does not follow a guard into
-//! a child, so the command layer — `app/mod.rs` alone is 1680 lines — was
-//! reached by nothing at all.
 
 #![expect(
     clippy::indexing_slicing,
@@ -34,6 +28,7 @@ fn environment(fixture: &Fixture) -> Environment {
     Environment {
         vars: njutest_devkit::paths::environment_for_a_run(),
         temp_directory: fixture.temp().to_path_buf(),
+        program: std::path::PathBuf::from("this test never runs it"),
         cache_directory: fixture.cache().to_path_buf(),
         working_directory: fixture.root().to_path_buf(),
         no_color: true,

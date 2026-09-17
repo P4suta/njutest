@@ -123,10 +123,6 @@ fn ledger() -> String {
 }
 
 /// The text of every Rust file of the runner, with the ledger's declarations taken out.
-///
-/// A code is declared once and reported wherever a failure carries it, and it
-/// is the second that this looks for. Leaving the declarations in would make
-/// every code report itself, which is the one thing being checked against.
 fn sources() -> Vec<String> {
     let root = njutest_devkit::paths::workspace_root().join("crates/njutest-cli/src");
     let mut found = Vec::new();
@@ -153,10 +149,6 @@ fn sources() -> Vec<String> {
 }
 
 /// The ledger with everything that declares a code taken out, so a declaration is not a report.
-///
-/// That is both halves of it: the `code!` invocations and the list they are
-/// gathered into. Leaving either in would let a code name itself, which is the
-/// one thing being checked against.
 fn declarations_removed(text: &str) -> String {
     let text = text.split_once("pub const fn error_codes()").map_or_else(
         || text.to_owned(),
@@ -190,4 +182,48 @@ fn every_configuration_failure_has_a_code_in_the_configuration_area() {
         );
         assert!(!kind.code().summary.is_empty());
     }
+}
+
+/// A diagnostic that names what went wrong and stops has left a reader to find the way out.
+#[test]
+fn every_code_says_what_to_do_about_it() {
+    let silent: Vec<&str> = error_codes()
+        .iter()
+        .filter(|code| code.remedy.trim().is_empty())
+        .map(|code| code.code)
+        .collect();
+    assert!(
+        silent.is_empty(),
+        "these say what went wrong and nothing a reader can act on. Where the answer is \
+         that the fault is this tool's, that is worth saying too: somebody reading it \
+         would otherwise spend an afternoon looking for the mistake they made. {silent:?}"
+    );
+}
+
+/// The page a reader searches by code says the same thing the code carries.
+#[test]
+fn every_code_documents_the_remedy_it_carries() {
+    let text =
+        std::fs::read_to_string(njutest_devkit::paths::workspace_root().join("docs/errors.md"))
+            .expect("docs/errors.md");
+    let documented: BTreeMap<String, String> = text
+        .lines()
+        .filter_map(|line| {
+            let cell = line.strip_prefix("| `")?;
+            let (code, rest) = cell.split_once("` | ")?;
+            let remedy = rest.rsplit_once(" |")?.0.rsplit_once(" | ")?.1;
+            code.starts_with("NJ")
+                .then(|| (code.to_owned(), remedy.trim().to_owned()))
+        })
+        .collect();
+    let wrong: Vec<String> = error_codes()
+        .iter()
+        .filter(|code| documented.get(code.code).map_or("", String::as_str) != code.remedy)
+        .map(|code| code.code.to_owned())
+        .collect();
+    assert!(
+        wrong.is_empty(),
+        "a reader who searches the page by code is told something the code does not \
+         carry, which is worse than being told nothing: {wrong:?}"
+    );
 }

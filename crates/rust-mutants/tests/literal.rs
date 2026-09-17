@@ -36,9 +36,6 @@ fn a_literal_moves_by_one_in_the_radix_it_was_written_in() {
 
 proptest::proptest! {
     /// A literal moved one way and then the other is the value it started as.
-    ///
-    /// The spelling may lose an underscore, so what round trips is the value
-    /// the compiler reads, not the bytes the author wrote.
     #[test]
     fn respelling_round_trips_plus_and_minus_one(value in 1u64..u64::from(u32::MAX), radix in 0usize..4) {
         let text = match radix {

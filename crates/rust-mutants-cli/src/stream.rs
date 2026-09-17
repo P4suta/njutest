@@ -13,10 +13,6 @@ use rust_mutants::session::Session;
 use rust_mutants::trace::{Event, Payload};
 
 /// Writes one line, and says nothing at all when it cannot.
-///
-/// A stream is what a consumer reads, and a consumer that has closed the pipe
-/// is a consumer that has what it wanted. Losing the line it did not wait for
-/// is not a reason to fail a run that measured everything it was asked to.
 pub fn say(stream: &mut dyn Write, line: &Line) {
     let Ok(text) = serde_json::to_string(line) else {
         return;
@@ -27,11 +23,6 @@ pub fn say(stream: &mut dyn Write, line: &Line) {
 }
 
 /// The line that opens the stream, written before anything is prepared.
-///
-/// A consumer that has to wait for the snapshot, the instrumented build and
-/// the validation rounds before it hears anything cannot tell a slow run from
-/// a hung one, which is the one thing a stream is for. This says what the run
-/// is about at the moment it begins.
 pub fn started(
     stream: &mut dyn Write,
     run_id: &str,
@@ -54,10 +45,6 @@ pub fn started(
 const LOOKING: Duration = Duration::from_millis(200);
 
 /// Writes each phase as it ends, for as long as `working` says there is work.
-///
-/// The same reason as the display a person reads: a consumer shown nothing
-/// until preparing is over cannot tell a slow run from a hung one. The
-/// difference is only what the lines look like.
 pub fn watch(events: &Receiver<Event>, stream: &mut dyn Write, working: &dyn Fn() -> bool) {
     loop {
         match events.recv_timeout(LOOKING) {

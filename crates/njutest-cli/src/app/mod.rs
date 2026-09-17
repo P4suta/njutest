@@ -73,6 +73,16 @@ pub fn diagnose(stderr: &mut dyn Write, message: &str) {
     let _written = writeln!(stderr, "{PROGRAM}: {message}");
 }
 
+/// Writes one failure and the next step it carries.
+pub fn complain(
+    stderr: &mut dyn Write,
+    error: &impl std::fmt::Display,
+    code: crate::error::ErrorCode,
+) {
+    diagnose(stderr, &error.to_string());
+    let _written = writeln!(stderr, "        try: {}", code.remedy);
+}
+
 /// Writes one line of output.
 pub fn say(stdout: &mut dyn Write, line: &str) {
     let _written = writeln!(stdout, "{line}");

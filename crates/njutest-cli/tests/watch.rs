@@ -2,12 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The watch loop: what makes it run a round, and what makes it stop.
-//!
-//! Every test here bounds how many times the loop may look before the watch
-//! is cancelled. Without that, a rule broken in the loop stops the test from
-//! terminating rather than making it fail, and a test that hangs when a rule
-//! goes missing is not a test that holds the rule — it is one that has to be
-//! killed by a timeout and reports nothing.
 
 use std::cell::Cell;
 use std::ffi::OsString;
@@ -27,6 +21,7 @@ fn stopped(root: &Path) -> Environment {
         vars: Vec::new(),
         working_directory: root.to_owned(),
         temp_directory: root.to_owned(),
+        program: std::path::PathBuf::from("this test never runs it"),
         cache_directory: root.to_owned(),
         cancel,
     }
@@ -287,18 +282,27 @@ fn a_tree_that_did_not_change_is_waited_on_rather_than_given_up_on() {
     );
 }
 
+/// What no verification reads, for a project that has said nothing about where it writes.
+fn excluded() -> njutest_cli::evidence::tree::Excluded {
+    njutest_cli::evidence::tree::Excluded::beside(
+        &njutest_cli::config::Config::default().reports.directory,
+    )
+}
+
 #[test]
 fn looking_reads_every_file_under_verification_and_none_of_what_a_run_writes() {
     let root = tempfile::tempdir().expect("a directory");
     std::fs::create_dir_all(root.path().join("src")).expect("mkdir");
     std::fs::create_dir_all(root.path().join("target")).expect("mkdir");
-    std::fs::create_dir_all(root.path().join("reports")).expect("mkdir");
+    let reports = njutest_cli::config::Config::default().reports.directory;
+    std::fs::create_dir_all(root.path().join(&reports)).expect("mkdir");
     std::fs::write(root.path().join("src/lib.rs"), "pub fn f() {}\n").expect("a source file");
     std::fs::write(root.path().join("Cargo.toml"), "[package]\n").expect("a manifest");
     std::fs::write(root.path().join("target/debug"), "x").expect("something a build wrote");
-    std::fs::write(root.path().join("reports/latest.json"), "{}").expect("something a run wrote");
+    std::fs::write(root.path().join(&reports).join("latest.json"), "{}")
+        .expect("something a run wrote");
 
-    let seen = look(root.path()).expect("a directory that can be walked");
+    let seen = look(root.path(), &excluded()).expect("a directory that can be walked");
 
     assert_eq!(
         seen.get("src/lib.rs").map(|(_when, held)| *held),
@@ -320,10 +324,10 @@ fn looking_reads_every_file_under_verification_and_none_of_what_a_run_writes() {
 fn a_file_that_grows_is_a_file_that_changed() {
     let root = tempfile::tempdir().expect("a directory");
     std::fs::write(root.path().join("one.rs"), "fn f() {}\n").expect("a source file");
-    let before = look(root.path()).expect("a walk");
+    let before = look(root.path(), &excluded()).expect("a walk");
 
     std::fs::write(root.path().join("one.rs"), "fn f() { g() }\n").expect("an edit");
-    let after = look(root.path()).expect("a walk");
+    let after = look(root.path(), &excluded()).expect("a walk");
 
     assert_ne!(
         before, after,
@@ -338,7 +342,7 @@ fn a_directory_that_cannot_be_walked_is_not_a_tree_that_changed() {
     let path = gone.path().join("never-made");
 
     assert!(
-        look(&path).is_err(),
+        look(&path, &excluded()).is_err(),
         "a path that is not there is a question this cannot answer, and answering it \
          with an empty tree would read as every file having been deleted"
     );

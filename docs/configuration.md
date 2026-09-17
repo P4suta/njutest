@@ -11,7 +11,7 @@ tests; `njutest init` writes the skeleton below, and a test loads the
 untouched skeleton and asserts it is exactly the defaults.
 
 `.njutest.toml` is optional and strict. Missing configuration uses
-`standard-v1`, the whole workspace, a ten-minute execution timeout, and a
+`standard-v1`, the whole workspace, a ten-minute measurement timeout, and a
 cache capped at 5 GiB and 30 days. Unknown keys, malformed values, and any
 `version` other than `1` are errors.
 
@@ -25,6 +25,7 @@ contract = "standard-v1"        # "standard-v1" | "deep-v1"
 
 [project]
 packages = []                   # cargo package names; empty = every workspace member
+include = []                    # workspace-relative globs a file must match to be mutated
 exclude = ["**/generated/**"]   # workspace-relative globs; the files are not mutated
 
 [execution]
@@ -33,7 +34,8 @@ all_features = false
 no_default_features = false
 test_binary_args = []           # allowed: --test-threads=N, --include-ignored, --nocapture, --show-output
 environment = []                # variable names only, never values; RUST_TEST_* is refused
-timeout = "10m"                 # upper bound for one executed command; Go duration syntax
+timeout = "10m"                 # upper bound for one measurement; Go duration syntax
+build_timeout = ""              # upper bound for one build; empty = no bound
 jobs = 0                        # mutation workers; 0 = logical CPUs capped at four
 skip_targets = []               # stable target ids never to start; every one is reported
 
@@ -45,7 +47,8 @@ max_bytes = 5368709120          # 5 GiB
 ttl = "720h"                    # 30 days
 
 [reports]
-keep = 20                       # run directories kept under reports/runs
+keep = 20                       # run directories kept
+directory = "reports"           # where every run writes, one directory each under <directory>/runs
 
 [fuzz]
 run = false                    # drive the fuzz targets, not only find them
@@ -68,7 +71,11 @@ allowed_paths = ["**/tests/**/*.rs", "**/fuzz/corpus/**"]
 environment = ["GENERATOR_TOKEN"]
 
 [[acceptance]]
-id = "0123456789abcdef"
+path = "src/lib.rs"
+item = "clamp"
+rule = "le-to-lt"
+original = "<="
+line = 42
 reason = "reviewed equivalent boundary"
 expires = "2026-12-31T00:00:00Z"
 owner = "quality-team"
@@ -106,8 +113,10 @@ baseline, the mutation phase, the equivalence layer, `plan`, `replay` and
 run that measured the default build while the project ships another would put
 a verdict on a program nobody runs.
 
-`[project] exclude` says which files are mutated and nothing else. Every file
-it names is still copied into the tree, still compiled, and still run, so the
+`[project] include` and `[project] exclude` say which files are mutated and
+nothing else, and they are each other's pair: a project verifying four files
+out of a hundred writes four patterns rather than ninety-six. Every file they
+name is still copied into the tree, still compiled, and still run, so the
 patterns never turn a workspace that builds into one that does not, and a run
 is a function of their bytes whether or not a mutation was put to them: the
 evidence a run leaves behind is keyed on the whole tree, and `njutest watch`
@@ -116,17 +125,22 @@ findings, which is why the report carries the patterns in `scope.excluded` and
 why a run left with no mutation to put to a test concludes `INSUFFICIENT`
 rather than assuring what it did not ask. A pattern that is not a pattern —
 a leading or trailing `/`, an empty string — is refused when the file is read,
-so a typo narrows nothing silently. The engine spells the same key
-differently: `rust-mutants`' `[project] exclude` removes a path from the
-snapshot as well, which is a decision a tool that only mutates can take and an
-assurance runner cannot.
+so a typo narrows nothing silently. `rust-mutants` spells both keys the same
+way and means the same thing by them. A file the copy should not carry at all
+is `[snapshot] omit`, which only the engine has, because a runner that did not
+copy a file could not compile the workspace it is verifying.
 
 There is no `profile` key — `cargo test`'s `test` profile is the one under
 verification — and no `toolchain` key: `rust-toolchain.toml` is the idiomatic
 pin and `rustc -vV` is recorded. Environment entries are names, never
 `KEY=value`; values are not written to reports. `njutest accept` appends an
 `[[acceptance]]` table while preserving the comments of the file, and writes
-every field one can carry. An acceptance whose `expires` has passed answers
+every field one can carry. It writes the locator — `path`, `item`, `rule`,
+`original` and the line as a hint — rather than the identity, because an
+identity is a function of the whole file and the edit that closes a survivor is
+an edit to that file: a recorded identity stops naming anything the moment
+somebody does the thing the acceptance was written about. An `id` is still read
+for a record written before this, and still resolves by prefix. An acceptance whose `expires` has passed answers
 for nothing and the findings it was hiding are raised again; one that names no
 date never lapses.
 

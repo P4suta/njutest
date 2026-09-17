@@ -5,8 +5,19 @@
 #
 # Strictness policy:
 # - pre-commit is the gentle pass: format-and-restage, deny obvious mistakes.
-# - pre-push is the strict gate: no writes; every check that can run locally
-#   runs here. If anything fails, the push is blocked.
+# - pre-push runs `mise run check`, which is every gate this machine can
+#   answer: formatting, the build, clippy, rustdoc, the repository gates, the
+#   fuzz crate's type check, spelling, TOML, the workflows, the whole suite
+#   including the toolchain one, the doctests, licences, advisories, the book,
+#   and the packaging a release would do. Minutes, not seconds — deliberately.
+#   Waiting for CI to say a golden is stale is waiting twenty minutes to be
+#   told something this machine knew in three, and a red `main` costs more
+#   than every push that was ever made to wait.
+#
+#   Four answers are still CI's alone, because this machine cannot give them:
+#   the suite on Linux and Windows, the coverage ratchets (a second
+#   instrumented run of everything), the suite under Miri, and the composite
+#   action driven the way another repository drives it.
 
 pre-commit:
   parallel: true
@@ -37,30 +48,11 @@ commit-msg:
       run: committed --commit-file {1}
 
 pre-push:
-  parallel: true
   skip:
     - rebase
   commands:
-    rust-fmt-check:
-      run: cargo fmt --all -- --check
-    rust-clippy:
-      run: cargo clippy --workspace --all-targets --all-features -- -D warnings
-    rust-test:
-      run: mise run test
-    rust-doc:
-      run: cargo doc --workspace --no-deps --document-private-items
-      env:
-        RUSTDOCFLAGS: "-D warnings"
-    gates:
-      run: cargo xtask all
-    typos:
-      run: typos
-    deny:
-      run: command -v cargo-deny >/dev/null && cargo deny --all-features check || true
-    taplo:
-      run: if command -v taplo >/dev/null 2>&1; then taplo fmt --check && taplo lint; fi
-    actionlint:
-      run: if command -v actionlint >/dev/null 2>&1; then actionlint; fi
+    check:
+      run: mise run check
 
 post-merge:
   commands:

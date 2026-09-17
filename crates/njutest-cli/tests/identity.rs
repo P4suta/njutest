@@ -19,6 +19,7 @@ use njutest_cli::report::{RunKind, UNAVAILABLE};
 
 fn asked(root: &str) -> Request {
     Request {
+        configuration: ".njutest.toml".to_owned(),
         root: PathBuf::from(root),
         config: Config::default(),
         packages: Vec::new(),
@@ -179,6 +180,7 @@ fn a_run_that_could_not_ask_git_says_so_before_it_compiles_anything() {
         vars: njutest_devkit::paths::environment_for_a_run(),
         working_directory: root.path().to_owned(),
         temp_directory: parent.path().to_owned(),
+        program: PathBuf::from("this test never runs it"),
         cache_directory: parent.path().to_owned(),
         cancel: cancel.clone(),
     };
@@ -256,6 +258,7 @@ fn every_limitation_a_report_states_before_it_runs_is_a_finished_sentence() {
         vars: Vec::new(),
         working_directory: root.path().to_owned(),
         temp_directory: parent.path().to_owned(),
+        program: PathBuf::from("this test never runs it"),
         cache_directory: parent.path().to_owned(),
         cancel: cancel.clone(),
     };

@@ -2,14 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What the engine left in the temporary directory, and what a sweep may take back.
-//!
-//! There are three answers rather than two. Saying what is there removes
-//! nothing. `--gc` removes the snapshots nothing owns and the build caches
-//! nothing can look up any more — a cache is keyed to a source tree, so one
-//! whose tree is gone is one no run will ever hit, and sparing it is how a
-//! temporary directory grows without bound. `--gc --all` removes every build
-//! cache no live run holds, which is what a person means when the disk is
-//! full and the next run being slow is the price.
 
 use std::fmt::Write as _;
 use std::io::Write;
@@ -68,7 +60,7 @@ pub(super) fn cache(
         return Ok(0);
     }
     let now = Timestamp::now();
-    let scratch = [snapshot::DIR_PREFIX];
+    let scratch = [snapshot::DIR_PREFIX, workspace::SCRATCH_DIR_PREFIX];
     let caches = [workspace::TARGET_DIR_PREFIX];
     let nothing = |_dir: &Path| Ok(());
     let (left, taken) = match (asked.gc, asked.all) {
@@ -92,7 +84,7 @@ pub(super) fn cache(
     let verb = if asked.gc { "removed" } else { "reclaimable" };
     let written = write!(
         text,
-        "temp        {}\ncaches      {} {}, {} bytes; {} still in use, {} kept for the next run\nsnapshots   {} {}, {} bytes; {} still in use, {} preserved on purpose\noutcomes    {} records, {} bytes, at {}\nmeasurements {}\nfailures    {}\n",
+        "temp         {}\ncaches       {} {}, {} bytes; {} still in use, {} kept for the next run\nsnapshots    {} {}, {} bytes; {} still in use, {} preserved on purpose\noutcomes     {} records, {} bytes, at {}\nmeasurements {}\nfailures     {}\n",
         parent.display(),
         taken.removed.len(),
         verb,
@@ -111,16 +103,35 @@ pub(super) fn cache(
         left.failures.len().saturating_add(taken.failures.len()),
     );
     debug_assert!(written.is_ok(), "writing to a String cannot fail");
+    for failure in left.failures.iter().chain(taken.failures.iter()) {
+        let written = writeln!(
+            text,
+            "             {}: {}",
+            failure.dir.display(),
+            failure.source
+        );
+        debug_assert!(written.is_ok(), "writing to a String cannot fail");
+    }
+    text.push_str(&unreached(left.unreached.saturating_add(taken.unreached)));
     write(stdout, &text);
     write(stdout, &preserved(asked, environment)?);
     Ok(0)
 }
 
+/// What a sweep that spent its budget says, which is what it did not look at rather than what it failed to remove.
+fn unreached(count: usize) -> String {
+    if count == 0 {
+        return String::new();
+    }
+    format!(
+        "unreached    {count} left for the next sweep; it spent its {} seconds on the ones \
+         before them\n             try: something is holding a directory open, and a sweep \
+         cannot take it back\n",
+        tempowner::SWEEP_BUDGET.as_secs()
+    )
+}
+
 /// What measuring trees established, which a run of an unchanged tree reads instead of measuring again.
-///
-/// A measurement is filed under everything it is a function of, so one that no
-/// longer answers is one no key names: they go stale by being unreachable
-/// rather than by being wrong, and a sweep never has to decide which.
 fn measurements(environment: &Environment) -> String {
     let directory = environment
         .cache_directory
@@ -141,18 +152,34 @@ fn measurements(environment: &Environment) -> String {
 /// The directories runs were asked to keep, listed or removed.
 fn preserved(asked: &Sweeping<'_>, environment: &Environment) -> Result<String, CliError> {
     let root = environment.rooted(asked.root);
-    let directory = root.join(crate::config::DEFAULT_REPORTS_DIRECTORY);
+    let directory = super::stored::Store::read(&root).root();
     if asked.kept {
-        let (removed, _empty) = crate::kept::Ledger::clear(&directory)
+        let (removed, left) = crate::kept::Ledger::clear(&directory)
             .map_err(|source| CliError::writing(&directory, source))?;
-        return Ok(format!("kept        {removed} removed\n"));
+        let mut text = format!("kept         {removed} removed\n");
+        for entry in &left.kept {
+            let written = writeln!(
+                text,
+                "             still there: {} ({})",
+                entry.path.display(),
+                entry.run_id
+            );
+            debug_assert!(written.is_ok(), "writing to a String cannot fail");
+        }
+        if !left.kept.is_empty() {
+            text.push_str(
+                "             try: something is holding these open, and a sweep cannot take \
+                 them back\n",
+            );
+        }
+        return Ok(text);
     }
     let ledger = crate::kept::Ledger::read(&directory);
-    let mut text = format!("kept        {}\n", ledger.kept.len());
+    let mut text = format!("kept         {}\n", ledger.kept.len());
     for entry in &ledger.kept {
         let written = writeln!(
             text,
-            "            {} ({})",
+            "             {} ({})",
             entry.path.display(),
             entry.run_id
         );

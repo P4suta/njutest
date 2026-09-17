@@ -23,7 +23,7 @@ pub fn run(
     let config = match Config::load(&root) {
         Ok(config) => config,
         Err(error) => {
-            super::diagnose(stderr, &error.to_string());
+            super::complain(stderr, &error, error.code());
             return EXIT_ERROR;
         }
     };
@@ -42,7 +42,7 @@ pub fn run(
         match store.collect(Timestamp::now()) {
             Ok(collected) => collected,
             Err(error) => {
-                super::diagnose(stderr, &error.to_string());
+                super::complain(stderr, &error, error.code());
                 return EXIT_ERROR;
             }
         }
@@ -52,7 +52,7 @@ pub fn run(
     let status = match store.status() {
         Ok(status) => status,
         Err(error) => {
-            super::diagnose(stderr, &error.to_string());
+            super::complain(stderr, &error, error.code());
             return EXIT_ERROR;
         }
     };
@@ -60,20 +60,30 @@ pub fn run(
     super::say(
         stdout,
         &format!(
-            "holds     {} answers, {} bytes of at most {}",
-            status.entries, status.bytes, config.cache.max_bytes
+            "holds     {} answers, {} bytes of {}",
+            status.entries,
+            status.bytes,
+            if config.cache.max_bytes == 0 {
+                String::from("no bound")
+            } else {
+                format!("at most {}", config.cache.max_bytes)
+            }
         ),
     );
     super::say(
         stdout,
-        &format!(
-            "collected {} expired, {} evicted, {} bytes",
-            collected.expired.len(),
-            collected.evicted.len(),
-            collected.bytes
-        ),
+        &if arguments.gc {
+            format!(
+                "collected {} expired, {} evicted, {} bytes",
+                collected.expired.len(),
+                collected.evicted.len(),
+                collected.bytes
+            )
+        } else {
+            String::from("collected nothing; --gc is what collects")
+        },
     );
-    temporary(environment, stdout);
+    temporary(environment, arguments.gc, stdout);
     preserved(&root, stdout);
     EXIT_ASSURED
 }
@@ -88,11 +98,6 @@ enum Direction {
 }
 
 /// Carries answers between this machine's store and a file, and says how many moved.
-///
-/// A command that carried nothing says so with the same line as one that
-/// carried a thousand, because "it worked" and "there was nothing to work on"
-/// are different facts and a job that silently exports an empty store is one
-/// whose matrix quietly builds everything twice.
 fn carry(
     store: &Store,
     path: &Path,
@@ -131,7 +136,7 @@ fn said(
             EXIT_ASSURED
         }
         Err(error) => {
-            super::diagnose(stderr, &error.to_string());
+            super::complain(stderr, &error, error.code());
             EXIT_ERROR
         }
     }
@@ -149,8 +154,15 @@ fn preserved(root: &Path, stdout: &mut dyn Write) {
     }
 }
 
-/// What earlier runs left in the operating system's temporary directory. The engine sweeps its own prefixes; this reports rather than duplicating it.
-fn temporary(environment: &Environment, stdout: &mut dyn Write) {
+/// What earlier runs left in the operating system's temporary directory, collected when asked.
+///
+/// Reporting an abandoned directory and leaving it there tells a reader they
+/// have rubbish and gives them nothing to sweep it with — and `--gc` is the
+/// flag they would reach for. It collects here too, and without it the line
+/// says what would go rather than what went.
+fn temporary(environment: &Environment, collect: bool, stdout: &mut dyn Write) {
+    let nothing = |_dir: &Path| Ok(());
+    let remove = |dir: &Path| std::fs::remove_dir_all(dir);
     let swept = rust_mutants::tempowner::sweep_with(
         &environment.temp_directory,
         &[
@@ -158,17 +170,28 @@ fn temporary(environment: &Environment, stdout: &mut dyn Write) {
             crate::scratch::DIR_PREFIX,
         ],
         Timestamp::now(),
-        &|_dir| Ok(()),
+        if collect { &remove } else { &nothing },
     )
     .unwrap_or_default();
     super::say(
         stdout,
         &format!(
-            "temp      {}: {} abandoned, {} in use, {} preserved on purpose",
+            "temp      {}: {} {}, {} in use, {} preserved on purpose",
             environment.temp_directory.display(),
             swept.removed.len(),
+            if collect { "removed" } else { "collectable" },
             swept.live,
             swept.kept
         ),
     );
+    if swept.unreached > 0 {
+        super::say(
+            stdout,
+            &format!(
+                "          {} left for the next sweep; something is holding a directory \
+                 open, and a sweep cannot take it back",
+                swept.unreached
+            ),
+        );
+    }
 }

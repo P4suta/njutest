@@ -35,6 +35,7 @@ fn against(fixture: &Fixture, args: &[&str]) -> Said {
     let environment = Environment {
         vars,
         temp_directory: fixture.temp().to_path_buf(),
+        program: std::path::PathBuf::from("this test never runs it"),
         cache_directory: fixture.cache().to_path_buf(),
         working_directory: fixture.root().to_path_buf(),
         no_color: true,
@@ -219,9 +220,8 @@ fn a_bundle_goes_where_it_was_asked_to_go_and_holds_the_same_thing_there() {
         gathered.out
     );
     assert!(
-        !fixture
+        !rust_mutants_cli::app::stored::Store::read(fixture.root())
             .root()
-            .join("reports/mutation")
             .join(
                 manifest(&elsewhere)["run_id"]
                     .as_str()

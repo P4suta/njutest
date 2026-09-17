@@ -2,11 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Running the suite under a sanitizer, when the configuration asks for one.
-//!
-//! A sanitizer is opt-in, so its absence never fails a run. What it does do
-//! is state a limitation and a finding: somebody asked for the suite to be
-//! run under it, and a run that could not do that has not established what
-//! was asked for.
 
 use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
@@ -114,9 +109,14 @@ fn one(done: &mut Sanitized, sanitizing: &Sanitizing<'_>, sanitizer: &str, watch
     if sanitizing.locked {
         argv.push(OsString::from("--locked"));
     }
-    let mut spec = Spec::new(argv);
+    let mut spec = Spec::new(
+        argv,
+        sanitizing.timeout.map_or(
+            rust_mutants::runner::Bound::Unbounded,
+            rust_mutants::runner::Bound::After,
+        ),
+    );
     spec.dir = Some(sanitizing.root.to_path_buf());
-    spec.timeout = sanitizing.timeout;
     spec.env = Some(instrumenting(&sanitizing.env, sanitizer));
 
     let ran = run(&spec, watch.cancel);
@@ -172,12 +172,6 @@ fn refuse(done: &mut Sanitized, sanitizer: &str, why: &str) {
 }
 
 /// The environment one sanitizer run adds: the flag, and nothing else the caller did not already have.
-///
-/// A map and not a list, because a process started with two bindings of one
-/// name reads whichever of them the operating system hands it first, and
-/// whether the suite is built with the sanitizer at all would then be decided
-/// by the order a list happened to be in. Saying it as a map is what makes
-/// "one name, one value" true rather than maintained.
 fn instrumenting(base: &[(OsString, OsString)], sanitizer: &str) -> Vec<(OsString, OsString)> {
     let mut env: BTreeMap<OsString, OsString> = base.iter().cloned().collect();
     let mut flags: Vec<String> = env

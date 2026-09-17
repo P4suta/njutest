@@ -2,17 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The findings as SARIF 2.1.0, which is what a code scanning view already reads.
-//!
-//! A result is a finding and nothing else. A killed mutant is not a result:
-//! SARIF describes what is wrong with the code, and a mutant the tests noticed
-//! is the tests working. The rules are the operators the run's findings came
-//! from, so a reader can group by what asked the question.
-//!
-//! Every finding is a result, including one that is not about a mutant the
-//! report still holds — a claim nothing answers to, a marker that hides
-//! nothing. Those carry no location rather than an invented one: SARIF allows
-//! a result with none, and a location a reader would go and look at had
-//! better be one.
 
 use std::collections::BTreeMap;
 
@@ -203,9 +192,22 @@ pub fn log(document: &RunDocument) -> Log {
     }
 }
 
+/// What makes two runs' findings the same finding, which has to survive the commit between them.
+///
+/// Code scanning carries alert state on this — a dismissal, a "won't fix", a
+/// reviewer's comment. An identity is a function of the whole file, so keying
+/// on it closes every alert in a file and opens them again as new on any
+/// commit that touches it, taking the dismissals with them. The place is what
+/// stays: one file, one item, one rule, one original text.
 fn reported(kind: &str, detail: &str, mutant: &RunMutantDocument) -> Reported {
     let mut fingerprints = BTreeMap::new();
-    fingerprints.insert("rustMutantsMutantId/v1".to_owned(), mutant.id.clone());
+    fingerprints.insert(
+        "rustMutantsMutation/v2".to_owned(),
+        format!(
+            "{}:{}:{}:{}",
+            mutant.path, mutant.item, mutant.rule, mutant.original
+        ),
+    );
     Reported {
         rule_id: Some(mutant.rule.clone()),
         level: level_of(kind).to_owned(),

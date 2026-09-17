@@ -86,19 +86,16 @@ fn environment(root: &Path, cache: &Path, named: &[(&str, &str)]) -> Environment
         cache_directory: cache.to_path_buf(),
         working_directory: root.to_path_buf(),
         temp_directory: njutest_devkit::paths::temp_beside(root).expect("a temporary directory"),
+        program: PathBuf::from("this test never runs it"),
         vars,
         cancel: Cancel::new(),
     }
 }
 
 fn document(fixture: &Fixture) -> serde_json::Value {
-    let index = fixture.root.join(njutest_cli::app::reports::LATEST_ANY);
-    let text = std::fs::read_to_string(&index).expect("the latest index");
-    let value: serde_json::Value = serde_json::from_str(&text).expect("JSON");
-    let directory = value["directory"].as_str().expect("a directory");
-    let path = fixture
-        .root
-        .join(directory)
+    let path = njutest_cli::app::reports::Store::read(&fixture.root)
+        .run_of(njutest_cli::app::reports::Index::Any)
+        .expect("the index names a run")
         .join(njutest_cli::app::reports::DOCUMENT_NAME);
     serde_json::from_str(&std::fs::read_to_string(&path).expect("the report")).expect("JSON")
 }

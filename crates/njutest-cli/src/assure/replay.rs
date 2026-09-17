@@ -2,17 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Putting one finding back to the tests, with nothing read back and nothing kept.
-//!
-//! A replay is an operation rather than an assurance about a project: it
-//! answers whether the one finding it was given is still there, and advances no
-//! index and stores no verdict. It reads no evidence and no cache, which is how
-//! a timeout — the one outcome a run never reuses as a proof — is deliberately
-//! run again.
-//!
-//! It also asks nothing of coverage. The finding says that nothing noticed a
-//! mutation, and the way to put that to the tests again is to offer the
-//! mutation to every test of its own package rather than to the ones a
-//! measurement once said could reach it.
 
 use std::path::Path;
 use std::time::Duration;
@@ -80,6 +69,8 @@ pub struct Replaying<'a> {
     pub skip_targets: Vec<String>,
     /// How long one execution may take.
     pub timeout: Option<Duration>,
+    /// Where this project keeps what its runs leave behind, which the tree under test is copied without.
+    pub reports: crate::app::reports::Store,
 }
 
 /// Offers `mutant` to the tests again and says whether `kind` is still observable.
@@ -106,7 +97,7 @@ pub fn replay(
                 .map(std::ffi::OsStr::to_owned),
             env: replaying.environment.vars.clone(),
             temp_directory: replaying.environment.temp_directory.clone(),
-            report_directory: Some("reports".to_owned()),
+            report_directory: Some(replaying.reports.relative()),
             exclude: Vec::new(),
             keep_temp: false,
             offline: replaying.cargo.offline,

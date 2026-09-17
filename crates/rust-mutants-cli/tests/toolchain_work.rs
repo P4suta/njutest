@@ -2,13 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What a run costs, counted in pairs, held to a ceiling that may fall and never rise.
-//!
-//! A pair is one mutant asked of one target: one test process started. A test
-//! is what that process is asked for, and the two fall separately — a route
-//! that puts a mutation to one test of a target rather than to all of its two
-//! hundred costs the same pair and a two-hundredth of the tests. Both are the
-//! same number on every machine, at every job count, under every load, which
-//! is what makes them things a gate can hold. A duration is not.
 
 #![expect(
     clippy::expect_used,
@@ -81,7 +74,9 @@ fn measured(name: &str) -> Work {
         output.status.code().is_some_and(|code| code <= 1),
         "{name}: {output:?}"
     );
-    let directory = njutest_devkit::fixture::newest_run(fixture.root());
+    let directory = njutest_devkit::fixture::newest_run(
+        &rust_mutants_cli::app::stored::Store::read(fixture.root()).root(),
+    );
     let text = std::fs::read_to_string(directory.join("run-report-v1.json")).expect("the report");
     let document: rust_mutants::report::run::RunDocument =
         serde_json::from_str(&text).expect("the report reads back");
@@ -155,11 +150,6 @@ fn every_removal_a_whole_run_still_answers_for_is_a_proof_a_reader_can_name() {
 }
 
 /// How many times a run may start cargo before somebody has to say why.
-///
-/// Every one of these is a compilation of the tree: the two `cargo metadata`
-/// calls, the check, the coverage build, the instrumented build, and the
-/// documented examples. A number that goes up is a whole compilation nobody
-/// asked for.
 const CARGO_CEILING: u64 = 6;
 
 /// How many times a run started each program, read back from its own recording.
@@ -187,12 +177,13 @@ fn programs(name: &str, extra: &[&str]) -> std::collections::BTreeMap<String, u6
         "{name}: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let directory = std::fs::read_dir(fixture.root().join("reports/mutation"))
-        .expect("the run stored a report")
-        .flatten()
-        .map(|entry| entry.path())
-        .find(|path| path.join("trace").is_dir())
-        .expect("a recording");
+    let directory =
+        std::fs::read_dir(rust_mutants_cli::app::stored::Store::read(fixture.root()).root())
+            .expect("the run stored a report")
+            .flatten()
+            .map(|entry| entry.path())
+            .find(|path| path.join("trace").is_dir())
+            .expect("a recording");
     let text = std::fs::read_to_string(directory.join("trace").join("trace.jsonl"))
         .expect("the recording");
     let events = rust_mutants::trace::read_events(text.as_bytes()).expect("it reads back");
@@ -254,13 +245,14 @@ fn a_second_run_of_a_tree_nothing_changed_measures_nothing_again() {
             "{}",
             String::from_utf8_lossy(&output.stderr)
         );
-        let directory = std::fs::read_dir(fixture.root().join("reports/mutation"))
-            .expect("the run stored a report")
-            .flatten()
-            .map(|entry| entry.path())
-            .filter(|path| path.join("trace").is_dir())
-            .max()
-            .expect("the newest recording");
+        let directory =
+            std::fs::read_dir(rust_mutants_cli::app::stored::Store::read(fixture.root()).root())
+                .expect("the run stored a report")
+                .flatten()
+                .map(|entry| entry.path())
+                .filter(|path| path.join("trace").is_dir())
+                .max()
+                .expect("the newest recording");
         let text = std::fs::read_to_string(directory.join("trace").join("trace.jsonl"))
             .expect("the recording");
         let events =
@@ -313,13 +305,14 @@ fn a_tree_that_changed_is_measured_again_rather_than_remembered() {
             "{}",
             String::from_utf8_lossy(&output.stderr)
         );
-        let directory = std::fs::read_dir(fixture.root().join("reports/mutation"))
-            .expect("the run stored a report")
-            .flatten()
-            .map(|entry| entry.path())
-            .filter(|path| path.join("trace").is_dir())
-            .max()
-            .expect("the newest recording");
+        let directory =
+            std::fs::read_dir(rust_mutants_cli::app::stored::Store::read(fixture.root()).root())
+                .expect("the run stored a report")
+                .flatten()
+                .map(|entry| entry.path())
+                .filter(|path| path.join("trace").is_dir())
+                .max()
+                .expect("the newest recording");
         let text = std::fs::read_to_string(directory.join("trace").join("trace.jsonl"))
             .expect("the recording");
         let events =
@@ -350,6 +343,7 @@ fn environment(fixture: &Fixture) -> Environment {
     Environment {
         vars: njutest_devkit::paths::environment_for_a_run(),
         temp_directory: fixture.temp().to_path_buf(),
+        program: std::path::PathBuf::from("this test never runs it"),
         cache_directory: fixture.cache().to_path_buf(),
         working_directory: fixture.root().to_path_buf(),
         no_color: true,

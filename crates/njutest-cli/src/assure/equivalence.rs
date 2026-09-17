@@ -2,20 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Which mutations nothing noticed are mutations nothing could have noticed.
-//!
-//! The engine answers one question and one only: does the compiler render this
-//! mutation identically to the program it mutates
-//! ([ADR 0013](../../../../docs/adr/0013-codegen-identity-is-the-equivalence-proof.md)).
-//! Identical artifacts are the same program, and the same program makes the
-//! same observations, so no test can tell the two apart.
-//!
-//! Turning that into `equivalent` needs premises the engine has no way to
-//! check, and one of them carries the whole layer. A mutation of a function no
-//! test calls is dropped by the linker, the artifacts come out identical, and
-//! the reason is the opposite of reassuring: the code is untested. So a
-//! mutation is `equivalent` only where the tests ran the position — where the
-//! route was decided by region and named at least one target — and a mutation
-//! nothing reached keeps its finding whatever the compiler did with it.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -67,10 +53,6 @@ pub struct Standing<'a> {
 }
 
 /// Whether this run may ask the compiler about the mutation at all, and why not when it may not.
-///
-/// Every premise is checked before the build rather than after it, because a
-/// build is the expensive part and a premise that fails makes the answer
-/// worthless either way.
 ///
 /// # Errors
 /// Returns the premise that failed, which is what a route record says.
@@ -216,10 +198,6 @@ fn refused(one: &Asked, unsafe_packages: &BTreeSet<String>, tree_written: bool) 
 }
 
 /// Every mutation nothing noticed, as this layer would ask about it.
-///
-/// Only a survival is asked about. A mutation a test noticed has been noticed,
-/// and asking the compiler whether it could have been is asking a question
-/// this run already answered.
 #[must_use]
 pub fn asked(
     session: &rust_mutants::session::Session,

@@ -2,11 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The soundness inventory: every place a crate steps outside what the compiler guarantees.
-//!
-//! Safe Rust has no data races for a test to find, so the fault class this
-//! phase is about is the unsoundness of `unsafe` (ADR 0009). `standard-v1`
-//! counts the places rather than executing them, and a non-empty inventory is
-//! a limitation the report states rather than a claim it makes.
 
 use std::path::{Path, PathBuf};
 

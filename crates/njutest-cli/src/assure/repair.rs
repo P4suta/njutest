@@ -2,11 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Putting a candidate to the compiler and the tests before anybody is offered it.
-//!
-//! A provider's word is not evidence. A candidate is believed only when the
-//! tree it patches still builds and passes without any mutant active, three
-//! times over, and fails twice with the mutant it claims to close — measured
-//! in a snapshot, so the tree a person is working in is never written to.
 
 use std::path::Path;
 use std::time::Duration;
@@ -43,6 +38,10 @@ pub struct Checking<'a> {
     pub skip_targets: Vec<String>,
     /// How long one execution may take.
     pub timeout: Duration,
+    /// How long the build may take, which is not how long a measurement may take. `None` is no bound.
+    pub build_timeout: Option<Duration>,
+    /// Where this project keeps what its runs leave behind, which the tree under test is copied without.
+    pub reports: crate::app::reports::Store,
 }
 
 /// What putting a candidate to the tests established.
@@ -94,7 +93,7 @@ pub fn check(
                 .map(std::ffi::OsStr::to_owned),
             env: checking.environment.vars.clone(),
             temp_directory: checking.environment.temp_directory.clone(),
-            report_directory: Some("reports".to_owned()),
+            report_directory: Some(checking.reports.relative()),
             exclude: Vec::new(),
             keep_temp: false,
             offline: checking.cargo.offline,
@@ -114,7 +113,7 @@ pub fn check(
             build: checking.build.clone(),
             harness_args: checking.harness_args.clone(),
             skip_targets: checking.skip_targets.clone(),
-            build_timeout: Some(checking.timeout),
+            build_timeout: checking.build_timeout,
             mutant_timeout: Timeout::Fixed(checking.timeout),
             ..PrepareOptions::default()
         },

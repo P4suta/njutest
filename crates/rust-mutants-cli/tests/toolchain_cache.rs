@@ -39,6 +39,7 @@ fn environment(fixture: &Fixture) -> Environment {
     Environment {
         vars: njutest_devkit::paths::environment_for_a_run(),
         temp_directory: fixture.temp().to_path_buf(),
+        program: std::path::PathBuf::from("this test never runs it"),
         cache_directory: fixture.cache().to_path_buf(),
         working_directory: fixture.root().to_path_buf(),
         no_color: true,
@@ -71,9 +72,9 @@ fn a_run_can_be_named_and_its_report_is_called_that() {
     );
     assert_eq!(output.status.code(), Some(1), "{output:?}");
     assert!(
-        fixture
+        rust_mutants_cli::app::stored::Store::read(fixture.root())
             .root()
-            .join("reports/mutation/monday/run-report-v1.json")
+            .join("monday/run-report-v1.json")
             .is_file(),
         "a run a person named is a run they can find again: {}",
         said(&output)
@@ -106,15 +107,15 @@ fn cache_says_what_the_store_holds_and_clear_outcomes_empties_it() {
         ],
     );
     let listed = said(&against(&fixture, &["cache"]));
-    assert!(listed.contains("outcomes    "), "{listed}");
-    assert!(listed.contains("kept        0"), "{listed}");
+    assert!(listed.contains("outcomes     "), "{listed}");
+    assert!(listed.contains("kept         0"), "{listed}");
     let cleared = said(&against(&fixture, &["cache", "--clear-outcomes"]));
     assert!(
-        cleared.contains("outcomes    ") && cleared.contains("removed"),
+        cleared.contains("outcomes") && cleared.contains("removed"),
         "a store emptied says how much was in it: {cleared}"
     );
     let after = said(&against(&fixture, &["cache"]));
-    assert!(after.contains("outcomes    0 records"), "{after}");
+    assert!(after.contains("outcomes     0 records"), "{after}");
 }
 
 #[test]
@@ -149,11 +150,12 @@ fn a_kept_snapshot_outlives_the_run_and_cache_names_the_run_that_kept_it() {
     );
     let removed = said(&against(&fixture, &["cache", "--gc", "--kept"]));
     assert!(
-        removed.contains("kept        2 removed"),
-        "the snapshot and the build cache are two directories one run kept: {removed}"
+        removed.contains("kept         3 removed"),
+        "the snapshot, the build cache and the scratch are the three directories one \
+         run kept: {removed}"
     );
     let after = said(&against(&fixture, &["cache"]));
-    assert!(after.contains("kept        0"), "{after}");
+    assert!(after.contains("kept         0"), "{after}");
 }
 
 #[test]
@@ -226,7 +228,9 @@ fn measured(fixture: &Fixture) -> Output {
 
 /// How many of the run's rows an earlier run answered for.
 fn reused(fixture: &Fixture) -> usize {
-    let directory = njutest_devkit::fixture::newest_run(fixture.root());
+    let directory = njutest_devkit::fixture::newest_run(
+        &rust_mutants_cli::app::stored::Store::read(fixture.root()).root(),
+    );
     let text = std::fs::read_to_string(directory.join("run-report-v1.json")).expect("the report");
     let document: serde_json::Value = serde_json::from_str(&text).expect("the report is JSON");
     document["mutants"]
@@ -287,9 +291,9 @@ fn an_edit_to_a_file_a_target_compiled_is_an_answer_that_stops_answering() {
 
 /// The stored report of the run a test named, as a document a test can rewrite.
 fn stored(fixture: &Fixture) -> (std::path::PathBuf, serde_json::Value) {
-    let path = fixture
+    let path = rust_mutants_cli::app::stored::Store::read(fixture.root())
         .root()
-        .join("reports/mutation/monday/run-report-v1.json");
+        .join("monday/run-report-v1.json");
     let text = std::fs::read_to_string(&path).expect("the run this test named");
     (path, serde_json::from_str(&text).expect("a report is JSON"))
 }
@@ -423,7 +427,14 @@ fn a_replay_told_to_read_a_run_that_is_not_there_says_so_rather_than_reading_not
         said(&output)
     );
     assert!(
-        message.contains("tuesday") && message.contains("reports/mutation"),
+        message.contains("tuesday")
+            && message.contains(&format!(
+                "{}",
+                rust_mutants_cli::config::Config::default()
+                    .reports
+                    .directory
+                    .display()
+            )),
         "and the refusal names what was asked for and where runs are kept: {message}"
     );
 

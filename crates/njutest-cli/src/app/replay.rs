@@ -32,7 +32,7 @@ pub fn run(
     let config = match Config::load(root) {
         Ok(config) => config,
         Err(error) => {
-            super::diagnose(stderr, &error.to_string());
+            super::complain(stderr, &error, error.code());
             return EXIT_ERROR;
         }
     };
@@ -52,6 +52,7 @@ pub fn run(
             harness_args: config.execution.test_binary_args,
             skip_targets: config.execution.skip_targets,
             timeout: None,
+            reports: crate::app::reports::Store::of(root, &config.reports.directory),
         },
         &found.subject,
         found.kind,
@@ -71,7 +72,7 @@ pub fn run(
             said(outcome)
         }
         Err(error) => {
-            super::diagnose(stderr, &error.to_string());
+            super::complain(stderr, &error, error.code());
             EXIT_ERROR
         }
     }
@@ -111,10 +112,15 @@ fn selected(arguments: &Arguments, environment: &Environment) -> Result<Selected
             arguments.finding
         )),
         several => Err(format!(
-            "{}: {} names {} findings",
+            "{}: {} names {} findings: {}",
             crate::error::RUN_NOT_FOUND.code,
             arguments.finding,
-            several.len()
+            several.len(),
+            several
+                .iter()
+                .map(|one| format!("{} ({})", one.subject, one.kind_name()))
+                .collect::<Vec<String>>()
+                .join(", ")
         )),
     }
 }

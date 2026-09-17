@@ -17,11 +17,24 @@ pub enum Kind {
     BoxedTraitObject,
     /// A comment that is not documentation.
     Comment,
+    /// A recursive removal outside the one place that bounds it and says what is left.
+    UnboundedRemoval,
+    /// A command or a configuration key built with an identity in it, which the next edit re-mints.
+    PerishableHandle,
+    /// An exported constant that spells a directory structure rather than one name.
+    LooseLayout,
 }
 
 impl Kind {
     /// Every kind, in the order a report lists them.
-    pub const ALL: [Self; 3] = [Self::AllowAttribute, Self::BoxedTraitObject, Self::Comment];
+    pub const ALL: [Self; 6] = [
+        Self::AllowAttribute,
+        Self::BoxedTraitObject,
+        Self::Comment,
+        Self::UnboundedRemoval,
+        Self::PerishableHandle,
+        Self::LooseLayout,
+    ];
 
     /// What to write in a report.
     #[must_use]
@@ -30,6 +43,9 @@ impl Kind {
             Self::AllowAttribute => "allow-attribute",
             Self::BoxedTraitObject => "boxed-trait-object",
             Self::Comment => "comment",
+            Self::UnboundedRemoval => "unbounded-removal",
+            Self::PerishableHandle => "perishable-handle",
+            Self::LooseLayout => "loose-layout",
         }
     }
 
@@ -50,9 +66,49 @@ impl Kind {
                  assertion prints; a comment beside code is a second account of it that \
                  nothing keeps true"
             }
+            Self::UnboundedRemoval => {
+                "use rust_mutants::reclaim, which stops at a budget and hands back what \
+                 refused and what it never reached; a directory something else is holding \
+                 takes minutes to refuse, and a loop over a few hundred of those runs for \
+                 a day while saying nothing"
+            }
+            Self::PerishableHandle => {
+                "build it from a locator — path, item, rule — which holds after the file \
+                 has changed; a mutant identity is a function of the whole file, so the \
+                 edit that closes a survivor re-mints it and the command or the record \
+                 that names it stops naming anything"
+            }
+            Self::LooseLayout => {
+                "a layout written down here freezes it: the configuration cannot name a \
+                 directory somebody else has already decided, which is how a report \
+                 directory stayed unconfigurable while four commands read the wrong \
+                 place. Ask the type that owns the layout for the path, the way the code \
+                 under test does, and let the default live in the configuration alone"
+            }
         }
     }
 }
+
+/// What a reader is told to type back at the tool, where an identity in it would not survive them typing it.
+const HANDED_OUT: [&str; 5] = [
+    "--mutant ",
+    "njutest accept ",
+    "njutest replay ",
+    "rust-mutants explain ",
+    "njutest explain ",
+];
+
+/// The names of the things that are an identity rather than a place.
+const PERISHABLE: [&str; 2] = ["display_id", ".id"];
+
+/// The call this repository does not write directly, because every place that did lost what it could not remove.
+const RAW_REMOVAL: &str = "remove_dir_all";
+
+/// The module that is allowed to make it in a loop, being the one that bounds it.
+///
+/// A test may make it too: what a test removes is what it made, and it is
+/// standing there watching.
+const RECLAIMER: &str = "crates/rust-mutants/src/reclaim.rs";
 
 /// One thing found in one file.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -87,11 +143,186 @@ pub fn scan_source(file: &str, source: &str) -> Result<Vec<Finding>, syn::Error>
     let mut scan = Scan {
         file: file.to_owned(),
         found: Vec::new(),
+        looping: 0,
+        reclaimer: file.ends_with(RECLAIMER) || file.contains("/tests/"),
     };
     scan.visit_file(&parsed);
     scan.found.extend(comments(file, source));
+    scan.found.extend(handles(file, source));
     scan.found.sort();
     Ok(scan.found)
+}
+
+/// Every exported `&str` constant of `source`, by name, with the line it is on.
+///
+/// The cross-file pass needs these because what makes a constant a layout is
+/// not how it is spelled — `"rust-mutants/explain"` is a document type and
+/// `"reports/runs"` is a structure, and they look the same — but that more
+/// than one module joins it onto a path.
+#[must_use]
+pub fn exported_strings(source: &str) -> Vec<(String, usize)> {
+    declared(source)
+        .filter(|(_at, _name, value)| value.contains('/'))
+        .map(|(at, name, _value)| (name.to_owned(), at.saturating_add(1)))
+        .collect()
+}
+
+/// Every `&str` constant a file declares, whatever its visibility, as line, name and value.
+fn declared(source: &str) -> impl Iterator<Item = (usize, &str, &str)> {
+    source.lines().enumerate().filter_map(|(at, line)| {
+        let rest = line.trim_start();
+        let rest = rest
+            .split_once("const ")
+            .filter(|(before, _rest)| before.is_empty() || before.starts_with("pub"))
+            .map(|(_before, rest)| rest)?;
+        let (name, value) = rest.split_once(": &str = ")?;
+        Some((
+            at,
+            name.trim(),
+            value.trim().trim_matches(|it| it == ';' || it == '"'),
+        ))
+    })
+}
+
+/// The first path segment of every directory the configuration is allowed to move.
+///
+/// A default a configuration field falls back to is a directory somebody can
+/// rename, so a test that writes it down decides it for them. Reading the
+/// defaults rather than a list here means a directory added later is gated
+/// the day its default is written.
+#[must_use]
+pub fn configured_directories(source: &str) -> Vec<String> {
+    declared(source)
+        .filter(|(_at, name, _value)| {
+            name.starts_with("DEFAULT_") && (name.ends_with("_DIRECTORY") || name.ends_with("_DIR"))
+        })
+        .filter_map(|(_at, _name, value)| value.split('/').next())
+        .filter(|head| !head.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+/// Every line of `source` that spells one of `directories` as the head of a path literal.
+///
+/// A directory the configuration can move is one no file may write down. The
+/// literal is what makes it immovable, whether it is joined onto a root, asked
+/// to exist, or handed to the engine as the place this tool writes.
+#[must_use]
+pub fn spelled(source: &str, directories: &[String]) -> Vec<usize> {
+    let mut found = Vec::new();
+    for (at, line) in source.lines().enumerate() {
+        let start = line.trim_start();
+        if start.starts_with("///") || start.starts_with("//!") || start.starts_with("//") {
+            continue;
+        }
+        for literal in literals(line) {
+            let structure = literal.contains('/')
+                && directories
+                    .iter()
+                    .any(|head| literal.split('/').next() == Some(head.as_str()));
+            let joined = directories.iter().any(|head| head == literal)
+                && line.contains(&format!(".join(\"{literal}\")"));
+            if structure || joined {
+                found.push(at.saturating_add(1));
+                break;
+            }
+        }
+    }
+    found
+}
+
+/// Every double-quoted literal on one line, which is close enough for a line of Rust that holds no escaped quote.
+fn literals(line: &str) -> Vec<&str> {
+    line.split('"')
+        .skip(1)
+        .step_by(2)
+        .filter(|it| !it.is_empty())
+        .collect()
+}
+
+/// Whether `source` joins `name` onto a path, which is what makes holding it a layout decision.
+#[must_use]
+pub fn joins(source: &str, name: &str) -> bool {
+    source.contains(&format!(".join({name})"))
+        || source.contains(&format!("{{{name}}}/"))
+        || source.contains(&format!(".join(&{name})"))
+}
+
+/// Which module `source` imports `name` from, when it imports it by name.
+///
+/// A bare `FILE_NAME` is four different constants in this tree, and only one
+/// of them spells a structure. Reading the import is what tells them apart,
+/// and a name nothing imports is one this cannot speak about.
+#[must_use]
+pub fn imported_from(source: &str, name: &str) -> Option<String> {
+    qualified(source, name).or_else(|| by_use(source, name))
+}
+
+/// The module of a name written out in full at the point it is used.
+fn qualified(source: &str, name: &str) -> Option<String> {
+    let (before, _rest) = source.split_once(&format!("::{name}"))?;
+    let module = before.rsplit("::").next()?;
+    module
+        .chars()
+        .all(|it| it.is_ascii_lowercase() || it.is_ascii_digit() || it == '_')
+        .then(|| module.to_owned())
+}
+
+fn by_use(source: &str, name: &str) -> Option<String> {
+    source
+        .lines()
+        .filter(|line| line.trim_start().starts_with("use "))
+        .find(|line| {
+            line.contains(&format!("::{name}"))
+                || line.contains(&format!("{{{name}")) && line.contains("::")
+                || line.contains(&format!(" {name},"))
+                || line.contains(&format!(", {name}"))
+        })
+        .and_then(|line| {
+            let path = line
+                .trim_start()
+                .strip_prefix("use ")?
+                .trim_end_matches(';');
+            let head = path.split_once('{').map_or(path, |(head, _rest)| head);
+            let head = head.trim().trim_end_matches("::");
+            let last = head.rsplit("::").next()?;
+            if last == name {
+                head.trim_end_matches(name)
+                    .trim_end_matches("::")
+                    .rsplit("::")
+                    .next()
+                    .map(str::to_owned)
+            } else {
+                Some(last.to_owned())
+            }
+        })
+}
+
+/// Every format string that hands a reader a command with an identity in it.
+///
+/// An identity is a function of the whole file, so the edit a reader makes
+/// next — the test that closes the survivor, in the file the survivor is in —
+/// re-mints it. A command printed with one in it stops working the moment it
+/// is followed, and a configuration record written with one stops naming
+/// anything. This finds them by the shape they have: a string that tells
+/// somebody what to type, built in the same expression as an identity.
+fn handles(file: &str, source: &str) -> Vec<Finding> {
+    if file.contains("/tests/") || file.contains("/testkit/") {
+        return Vec::new();
+    }
+    source
+        .lines()
+        .enumerate()
+        .filter(|(_at, line)| {
+            HANDED_OUT.iter().any(|said| line.contains(said))
+                && PERISHABLE.iter().any(|name| line.contains(name))
+        })
+        .map(|(at, _line)| Finding {
+            kind: Kind::PerishableHandle,
+            file: file.to_owned(),
+            line: at.saturating_add(1),
+        })
+        .collect()
 }
 
 /// The prefix of a comment that is an instruction to this engine rather than an account of the code beside it.
@@ -101,12 +332,6 @@ const ANNOTATION: &str = "rust-mutants:";
 const HEADER: &str = "SPDX-";
 
 /// Every comment in `source` that is neither documentation, the licence header, nor an annotation the engine reads.
-///
-/// `syn` throws non-documentation comments away, and so does a token stream,
-/// so this reads the text. What it has to get right is which slashes are a
-/// comment at all: not the ones inside a string, a raw string of any hash
-/// count, a byte string, or a character literal. A lifetime is not a
-/// character literal and is stepped over as itself.
 fn comments(file: &str, source: &str) -> Vec<Finding> {
     let bytes: Vec<char> = source.chars().collect();
     let mut found = Vec::new();
@@ -255,9 +480,20 @@ fn comment_at(rest: &[char]) -> Option<(usize, String, bool)> {
 struct Scan {
     file: String,
     found: Vec<Finding>,
+    /// How many loop bodies the walk is inside, which is what makes a removal unbounded.
+    looping: usize,
+    /// Whether this file is the one that bounds removals, and so may make the call.
+    reclaimer: bool,
 }
 
 impl Scan {
+    /// Walks a loop body, counting it, so a removal inside one is seen as inside one.
+    fn within_a_loop(&mut self, walk: impl FnOnce(&mut Self)) {
+        self.looping = self.looping.saturating_add(1);
+        walk(self);
+        self.looping = self.looping.saturating_sub(1);
+    }
+
     fn note(&mut self, kind: Kind, span: proc_macro2::Span) {
         self.found.push(Finding {
             kind,
@@ -268,6 +504,38 @@ impl Scan {
 }
 
 impl Visit<'_> for Scan {
+    fn visit_expr_for_loop(&mut self, loop_: &syn::ExprForLoop) {
+        self.within_a_loop(|scan| syn::visit::visit_expr_for_loop(scan, loop_));
+    }
+
+    fn visit_expr_while(&mut self, loop_: &syn::ExprWhile) {
+        self.within_a_loop(|scan| syn::visit::visit_expr_while(scan, loop_));
+    }
+
+    fn visit_expr_loop(&mut self, loop_: &syn::ExprLoop) {
+        self.within_a_loop(|scan| syn::visit::visit_expr_loop(scan, loop_));
+    }
+
+    fn visit_expr_call(&mut self, call: &syn::ExprCall) {
+        if self.looping > 0
+            && !self.reclaimer
+            && let syn::Expr::Path(path) = call.func.as_ref()
+            && path
+                .path
+                .segments
+                .last()
+                .is_some_and(|last| last.ident == RAW_REMOVAL)
+        {
+            let at = path
+                .path
+                .segments
+                .first()
+                .map_or_else(proc_macro2::Span::call_site, |one| one.ident.span());
+            self.note(Kind::UnboundedRemoval, at);
+        }
+        syn::visit::visit_expr_call(self, call);
+    }
+
     fn visit_attribute(&mut self, attribute: &syn::Attribute) {
         if attribute.path().is_ident("allow")
             && let Some(segment) = attribute.path().segments.first()

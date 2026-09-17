@@ -58,7 +58,7 @@ pub fn run(
     let cancel = environment.cancel.clone();
 
     let watch = Watch::new(&cancel, &trace);
-    let changed = match change_set(arguments, &root, environment, watch) {
+    let changed = match asked_about(arguments, (&root, &config), environment, watch) {
         Ok(changed) => changed,
         Err(message) => {
             super::diagnose(stderr, &message);
@@ -112,7 +112,14 @@ pub fn run(
     )
 }
 
-/// Everything one verification needs to establish its own answer.
+/// Everything one verification needs to establish its own answer. The configuration file this run read, or nothing when it read none.
+fn read_from(root: &Path) -> String {
+    if root.join(crate::config::FILE_NAME).is_file() {
+        return crate::config::FILE_NAME.to_owned();
+    }
+    String::new()
+}
+
 struct Establishing<'a> {
     arguments: &'a Verify,
     environment: &'a Environment,
@@ -128,10 +135,6 @@ struct Establishing<'a> {
 }
 
 /// Which part of the catalog the command line asked for, refused before anything is built.
-///
-/// A part that is not a part of anything is a mistake in a CI matrix, and the
-/// cheapest place to find out is before the first build rather than after the
-/// baseline.
 ///
 /// # Errors
 /// What is wrong with the text, as a reader would want it said.
@@ -171,6 +174,7 @@ fn establish(establishing: &Establishing<'_>, streams: Streams<'_>) -> u8 {
     };
     let request = Request {
         root: root.to_path_buf(),
+        configuration: read_from(root),
         config: establishing.config.clone(),
         packages: packages(arguments, &establishing.config),
         test_args: harness_args(arguments, &establishing.config),
@@ -196,7 +200,7 @@ fn establish(establishing: &Establishing<'_>, streams: Streams<'_>) -> u8 {
         Ok(outcome) => outcome,
         Err(error) => {
             trace.run_end("ERROR", None, Some(error.to_string()));
-            super::diagnose(stderr, &error.to_string());
+            super::complain(stderr, &error, error.code());
             return EXIT_ERROR;
         }
     };
@@ -207,7 +211,7 @@ fn establish(establishing: &Establishing<'_>, streams: Streams<'_>) -> u8 {
         Some(report.accounting),
         None,
     );
-    if let Some(code) = persist(
+    let document = match persist(
         &Persisting {
             root,
             report: &report,
@@ -221,23 +225,38 @@ fn establish(establishing: &Establishing<'_>, streams: Streams<'_>) -> u8 {
         arguments,
         stderr,
     ) {
-        return code;
-    }
+        Ok(document) => document,
+        Err(code) => return code,
+    };
 
-    let _written = stdout.write_all(lines::stream(&report).as_bytes());
+    let _written = stdout.write_all(lines::kept(&report, &document).as_bytes());
     report.verdict.exit_code()
 }
 
-/// The change set a run was asked to mutate within, or nothing when it was not asked.
-///
-/// A run that cannot see what changed cannot claim to have verified what
-/// changed, so a tree git cannot be asked about ends the command rather than
-/// reading as a run about nothing.
-fn change_set(
+/// The change set, asked for with the directories this project writes left out.
+fn asked_about(
     arguments: &Verify,
-    root: &Path,
+    about: (&Path, &Config),
     environment: &Environment,
     watch: Watch<'_>,
+) -> Result<Option<crate::git::Change>, String> {
+    let (root, config) = about;
+    let excluded = crate::evidence::tree::Excluded::beside(&config.reports.directory);
+    change_set(
+        arguments,
+        &crate::git::Asked {
+            root,
+            env: &environment.vars,
+            excluded: &excluded,
+            watch,
+        },
+    )
+}
+
+/// The change set a run was asked to mutate within, or nothing when it was not asked.
+fn change_set(
+    arguments: &Verify,
+    asked: &crate::git::Asked<'_>,
 ) -> Result<Option<crate::git::Change>, String> {
     if !arguments.changed && arguments.changed_from.is_none() {
         return Ok(None);
@@ -246,14 +265,12 @@ fn change_set(
         .changed_from
         .as_deref()
         .unwrap_or(crate::git::DEFAULT_BASE);
-    crate::git::changed(root, &environment.vars, base, watch)
-        .map(Some)
-        .ok_or_else(|| {
-            format!(
-                "git could not say what differs from {base:?}, and a run that cannot see what \
+    crate::git::changed(asked, base).map(Some).ok_or_else(|| {
+        format!(
+            "git could not say what differs from {base:?}, and a run that cannot see what \
                  changed cannot claim to have verified what changed"
-            )
-        })
+        )
+    })
 }
 
 /// What a run was asked to verify, before anything has been established about it.
@@ -388,12 +405,11 @@ struct Persisting<'a> {
 }
 
 /// Writes the report where a reader will look for it, retires what the configuration no longer keeps, and stores the answer for the next run of the same inputs. Returns the exit code only when the report could not be written, which is the one failure that stops the run from having answered at all.
-///
-/// A run that was asked to stop does not store its answer. It still writes it
-/// where a person can read it — what it got through is what it got through —
-/// but the next run of the same tree may not read it back as a whole one, and
-/// what it did establish is carried forward by the checkpoint instead.
-fn persist(persisting: &Persisting<'_>, arguments: &Verify, stderr: &mut dyn Write) -> Option<u8> {
+fn persist(
+    persisting: &Persisting<'_>,
+    arguments: &Verify,
+    stderr: &mut dyn Write,
+) -> Result<String, u8> {
     let Persisting {
         root,
         report,
@@ -405,8 +421,8 @@ fn persist(persisting: &Persisting<'_>, arguments: &Verify, stderr: &mut dyn Wri
     let written = match reports::keep(root, report) {
         Ok(written) => written,
         Err(error) => {
-            super::diagnose(stderr, &error.to_string());
-            return Some(EXIT_ERROR);
+            super::complain(stderr, &error, error.code());
+            return Err(EXIT_ERROR);
         }
     };
     let removed = reports::retain(root, request_keep(request));
@@ -430,7 +446,7 @@ fn persist(persisting: &Persisting<'_>, arguments: &Verify, stderr: &mut dyn Wri
     if let Some(error) = stored {
         notes.note("not-stored", &error.to_string());
     }
-    None
+    Ok(reports::Store::read(root).said(&written.document))
 }
 
 /// Whether an earlier run of the same inputs has already answered, and the claim this run holds while it establishes its own.
@@ -507,7 +523,7 @@ fn reuse(asking: &Asking<'_>, stdout: &mut dyn Write, stderr: &mut dyn Write) ->
         Ok(Some(stored)) => stored,
         Ok(None) => return Reuse::Establish,
         Err(error) => {
-            super::diagnose(stderr, &error.to_string());
+            super::complain(stderr, &error, error.code());
             return Reuse::Establish;
         }
     };
@@ -518,11 +534,16 @@ fn reuse(asking: &Asking<'_>, stdout: &mut dyn Write, stderr: &mut dyn Write) ->
     report.timing.started = started.to_string();
     report.timing.finished = Timestamp::now().to_string();
     report.timing.duration_ms = 0;
-    if let Err(error) = reports::keep(root, &report) {
-        super::diagnose(stderr, &error.to_string());
-        return Reuse::Establish;
-    }
-    let _written = stdout.write_all(lines::stream(&report).as_bytes());
+    let written = match reports::keep(root, &report) {
+        Ok(written) => written,
+        Err(error) => {
+            super::complain(stderr, &error, error.code());
+            return Reuse::Establish;
+        }
+    };
+    let _written = stdout.write_all(
+        lines::kept(&report, &reports::Store::read(root).said(&written.document)).as_bytes(),
+    );
     Reuse::Answered(report.verdict.exit_code())
 }
 
@@ -532,23 +553,11 @@ const fn request_keep(request: &Request) -> u32 {
 }
 
 /// The packages this run is about: the ones a reader named, or the ones the configuration names when they named none.
-///
-/// The command line takes the place of the configuration rather than adding
-/// to it, which is what `mode_of` has always done with the same two lists:
-/// the scope a run reports and the scope it measures are one thing, and a run
-/// that reported one and measured the other made a narrow claim about a wide
-/// tree.
 fn packages(arguments: &Verify, config: &Config) -> Vec<String> {
     run::asked_for(&arguments.packages, config)
 }
 
 /// The arguments every test binary of this run is started with.
-///
-/// The command line takes the place of the configuration rather than adding
-/// to it, which is the rule `[project] packages` already follows: two
-/// spellings of `--test-threads` on one command line is a contradiction
-/// nobody wrote on purpose, and a reader overriding a file means the file to
-/// stop applying.
 fn harness_args(arguments: &Verify, config: &Config) -> Vec<String> {
     if arguments.test_args.is_empty() {
         config.execution.test_binary_args.clone()

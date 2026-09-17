@@ -2,11 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What a run would find in this environment, asked before it is spent finding out.
-//!
-//! Every check answers about the tree as it is rather than about the tree as it
-//! would build: a doctor is for a workspace that may not compile, and one that
-//! could not answer until it did would be no use at all. A check that cannot
-//! look says so; nothing here reads silence as a pass.
 
 use std::path::{Path, PathBuf};
 
@@ -65,11 +60,11 @@ pub(super) fn doctor_document(
     checks.push(workspace_check(&root, &manifest));
 
     let config_path = root.join(crate::config::FILE_NAME);
-    let mut reports = root.join(crate::config::DEFAULT_REPORTS_DIRECTORY);
+    let mut reports = super::stored::Store::read(&root).root();
     if config_path.is_file() {
         match crate::config::Config::load(&root) {
             Ok(read) => {
-                reports = root.join(&read.reports.directory);
+                reports = super::stored::Store::of(&root, &read.reports.directory).root();
                 checks.push(noted("config", Well, &config_path.display().to_string()));
             }
             Err(error) => checks.push(doctor_report::Check::new(
@@ -84,8 +79,9 @@ pub(super) fn doctor_document(
             "config",
             Well,
             &format!(
-                "none; the defaults apply. `rust-mutants init` writes {}",
-                crate::config::FILE_NAME
+                "no {} under {}; the defaults apply, and `rust-mutants init` writes one",
+                crate::config::FILE_NAME,
+                root.display()
             ),
         ));
     }
@@ -95,24 +91,22 @@ pub(super) fn doctor_document(
         "temp",
         if temp.is_dir() { Well } else { Fail },
         &format!(
-            "{} (snapshots as {}*, target directories as {}*)",
+            "{} (snapshots as {}*, target directories as {}*, scratch as {}*)",
             temp.display(),
             snapshot::DIR_PREFIX,
-            workspace::TARGET_DIR_PREFIX
+            workspace::TARGET_DIR_PREFIX,
+            workspace::SCRATCH_DIR_PREFIX
         ),
         (!temp.is_dir()).then_some("set TMPDIR to a directory a run may write in"),
     ));
 
-    checks.push(git_check(environment));
+    checks.extend(machine(environment));
     checks.push(targets_check(
         toolchain.as_ref().ok(),
         &root,
         asked.packages,
         cancel,
     ));
-    checks.push(environment_check(environment));
-    checks.push(cache_check(environment));
-    checks.push(disk_check(&environment.temp_directory));
     checks.push(snapshots_check(&reports, environment));
     checks.push(llvm_tools_check(toolchain.as_ref().ok()));
     checks.push(guards_check(
@@ -122,6 +116,17 @@ pub(super) fn doctor_document(
             .map(rust_mutants::cargo::Toolchain::host),
     ));
     doctor_report::DoctorDocument::of(checks)
+}
+
+/// What this machine offers a run, as against what the workspace does.
+fn machine(environment: &Environment) -> Vec<doctor_report::Check> {
+    vec![
+        git_check(environment),
+        environment_check(environment),
+        cache_check(environment),
+        disk_check(&environment.temp_directory),
+        exec_check(&environment.temp_directory, &environment.program),
+    ]
 }
 
 /// Whether git is installed, which is what `--changed` asks.
@@ -232,6 +237,13 @@ fn tests_something(target: &rust_mutants::cargo::Target) -> bool {
 }
 
 /// Whether the temporary directory has room for the snapshots and target directories a run makes.
+/// Whether there is room, said in whole gigabytes.
+///
+/// The figure is rounded because it is read twice: a check that reported the
+/// exact free bytes disagreed with itself between two invocations a moment
+/// apart, which is the same thing that made the execution check unreadable
+/// before it was made to rest on a ratio. Whole gigabytes is the granularity a
+/// person decides at, and it does not move while they are looking.
 fn disk_check(temp: &Path) -> doctor_report::Check {
     use doctor_report::Standing::{Fail, Ok as Well, Warn};
     const GIB: u64 = 1024 * 1024 * 1024;
@@ -243,7 +255,11 @@ fn disk_check(temp: &Path) -> doctor_report::Check {
             None,
         );
     };
-    let detail = format!("{} free under {}", rendered_bytes(free), temp.display());
+    let detail = format!(
+        "{} GiB free under {}",
+        free.wrapping_div(GIB),
+        temp.display()
+    );
     let standing = if free < GIB / 4 {
         Fail
     } else if free < GIB {
@@ -257,6 +273,49 @@ fn disk_check(temp: &Path) -> doctor_report::Check {
         &detail,
         (standing != Well).then_some("free some room, or point TMPDIR at a filesystem that has it"),
     )
+}
+
+/// What it costs to run a file that has just been written, which a run does for every target it builds.
+fn exec_check(temp: &Path, program: &Path) -> doctor_report::Check {
+    use doctor_report::Standing::Ok as Well;
+    let (first, second) = match rust_mutants::execcost::exec_twice(temp, program) {
+        Ok(measured) => measured,
+        Err(why) => {
+            return doctor_report::Check::new("exec", Well, &format!("not measured: {why}"), None);
+        }
+    };
+
+    let (first, second) = (first.as_secs_f64(), second.as_secs_f64());
+    let detail = format!(
+        "a newly written file took {first:.2}s to run the first time and {second:.2}s the second"
+    );
+    let standing = standing_of(first, second);
+    doctor_report::Check::new(
+        "exec",
+        standing,
+        &detail,
+        (standing != Well).then_some(
+            "this machine is evaluating new executables; a run started now measures that \
+             and not your tests, so wait until the first number is under a second. A \
+             process waiting on it looks hung rather than slow, and a sample of one shows \
+             a single frame in the dynamic loader",
+        ),
+    )
+}
+
+/// What the pair says, which is not what either number says alone.
+const fn standing_of(first: f64, second: f64) -> doctor_report::Standing {
+    use doctor_report::Standing::{Fail, Ok as Well, Warn};
+    const SLOW: f64 = 5.0;
+    const LOPSIDED: f64 = 10.0;
+    if first < SLOW {
+        return Well;
+    }
+    if first >= second * LOPSIDED {
+        Fail
+    } else {
+        Warn
+    }
 }
 
 /// How many bytes the filesystem holding `path` will still take.
@@ -278,10 +337,6 @@ const fn free_space(_path: &Path) -> Option<u64> {
 }
 
 /// Bytes as a person reads them.
-///
-/// The value is truncated rather than rounded, in the unit and in the tenth:
-/// the number is read where a person is deciding whether a sweep gave back
-/// enough room, and one that overstated it would send them away satisfied.
 #[must_use]
 pub fn rendered_bytes(bytes: u64) -> String {
     const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
@@ -307,10 +362,6 @@ fn noted(name: &str, standing: doctor_report::Standing, detail: &str) -> doctor_
 }
 
 /// Whether the root is the workspace, which is what a run measures.
-///
-/// The check reads the manifests rather than asking cargo: a doctor answers
-/// about a tree that may not build, and `cargo metadata` on a tree that does
-/// not resolve says nothing about where the workspace is.
 fn workspace_check(root: &Path, manifest: &Path) -> doctor_report::Check {
     use doctor_report::Standing::{Fail, Ok as Well};
     if !manifest.is_file() {
@@ -352,7 +403,12 @@ fn environment_check(environment: &Environment) -> doctor_report::Check {
     use doctor_report::Standing::{Fail, Ok as Well};
     let set = super::reserved_names(environment);
     if set.is_empty() {
-        return doctor_report::Check::new("environment", Well, "no reserved variable is set", None);
+        return doctor_report::Check::new(
+            "environment",
+            Well,
+            &format!("none of {} is set", crate::app::RESERVED_ENV.join(", ")),
+            None,
+        );
     }
     doctor_report::Check::new(
         "environment",
@@ -389,10 +445,6 @@ fn cache_check(environment: &Environment) -> doctor_report::Check {
 }
 
 /// What earlier runs left in the temporary directory, and what a run kept on purpose.
-///
-/// The ledger of what was kept lives under the report directory the
-/// configuration names, not under the default one: a project that moved its
-/// reports would otherwise be told nothing was kept.
 fn snapshots_check(reports: &Path, environment: &Environment) -> doctor_report::Check {
     use doctor_report::Standing::{Ok as Well, Warn};
     let ledger = crate::kept::Ledger::read(reports);
@@ -404,12 +456,21 @@ fn snapshots_check(reports: &Path, environment: &Environment) -> doctor_report::
                     let name = entry.file_name().to_string_lossy().into_owned();
                     name.starts_with(snapshot::DIR_PREFIX)
                         || name.starts_with(workspace::TARGET_DIR_PREFIX)
+                        || name.starts_with(workspace::SCRATCH_DIR_PREFIX)
                 })
                 .count()
         })
         .unwrap_or_default();
     if abandoned == 0 && ledger.kept.is_empty() {
-        return doctor_report::Check::new("snapshots", Well, "nothing is left over", None);
+        return doctor_report::Check::new(
+            "snapshots",
+            Well,
+            &format!(
+                "nothing is left over under {}",
+                environment.temp_directory.display()
+            ),
+            None,
+        );
     }
     doctor_report::Check::new(
         "snapshots",
@@ -426,18 +487,6 @@ fn snapshots_check(reports: &Path, environment: &Environment) -> doctor_report::
 }
 
 /// Whether the LLVM tools the coverage layer needs are installed.
-///
-/// Coverage routing fails open — a measurement it cannot make routes every
-/// mutation everywhere — so a missing component is a warning about how much a
-/// run will cost, never a reason not to run.
-/// Whether the guards of an instrumented tree can say which test reached them, on the host a run compiles for.
-///
-/// The record is per test because libtest gives each test a thread of its own
-/// named after it, and it only does that where the platform has threads. On
-/// one that does not, every touch is recorded under a name no test answers
-/// for, so every mutation is put to every test of its target: sound, and none
-/// of the saving. Saying so before a run is better than a person reading a
-/// work ledger afterwards and wondering.
 fn guards_check(host: Option<&str>) -> doctor_report::Check {
     use doctor_report::Standing::{Ok as Well, Warn};
     let threadless = ["wasm", "emscripten", "zkvm"];

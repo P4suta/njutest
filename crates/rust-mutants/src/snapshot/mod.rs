@@ -32,9 +32,6 @@ pub const DIR_PREFIX: &str = "rust-mutants-snap-";
 /// The subdirectory of a snapshot directory that holds the copy.
 pub const TREE_NAME: &str = "tree";
 
-/// The conventional location of a run's reports, excluded from every snapshot whether or not it is the configured one.
-pub const DEFAULT_REPORT_DIR: &str = "reports/mutation";
-
 /// How much of the source root's digest [`stable_name`] spells out.
 pub const STABLE_NAME_HEX_LENGTH: usize = 16;
 
@@ -56,16 +53,11 @@ pub struct Options {
     /// Patterns matched against each entry's `/`-normalized path relative to the source root. A matching directory is skipped whole.
     pub exclude: Vec<Pattern>,
     /// Directories to copy beside the tree, each under its own name.
-    ///
-    /// A workspace that reads a path dependency from a sibling directory
-    /// reads it from beside the tree, and a copy that holds only the tree
-    /// cannot build. Copying the sibling under the same name makes the same
-    /// relative path resolve inside the copy. Their contents are not part of
-    /// the workspace digest: they are read and never mutated, and a run that
-    /// says what it measured must say the tree.
     pub beside: Vec<PathBuf>,
-    /// The configured report directory as a source-root-relative path. `None` means the default. It is excluded in addition to, never instead of, [`DEFAULT_REPORT_DIR`].
+    /// Where the caller writes its reports, as a source-root-relative path, excluded from the snapshot. `None` is a caller that writes none inside the tree.
     pub report_dir: Option<String>,
+    /// The directory cargo builds into, as a source-root-relative path, when it is inside the root.
+    pub build_dir: Option<String>,
     /// The absolute directory the snapshot is created in. The composition root decides where the temporary area is; this module never asks the process environment.
     pub dest_parent: PathBuf,
 }
@@ -77,6 +69,7 @@ impl Options {
             beside: Vec::new(),
             exclude: Vec::new(),
             report_dir: None,
+            build_dir: None,
             dest_parent: dest_parent.into(),
         }
     }
@@ -94,16 +87,6 @@ pub struct Entry {
 }
 
 /// One entry the snapshot did not copy because it is not a regular file.
-///
-/// A symbolic link, a Windows reparse point, and a device or socket are not
-/// files this engine copies: following one can leave the tree, and copying one
-/// is not copying what it stands for. Refusing to *run* over one is a
-/// different thing, and it refuses to measure trees the compiler is perfectly
-/// happy with — a `node_modules` beside the Rust, a `.git` hook directory, a
-/// convenience link to a sibling checkout. So the entry is recorded, its
-/// spelling goes into the workspace digest, and the build is left to say
-/// whether it mattered: a tree missing something it needs does not compile,
-/// and the pristine gate reports that before anything is measured.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PassedOver {
     /// The path relative to the tree, with forward slashes.
@@ -540,18 +523,21 @@ fn write_length_prefixed(hasher: &mut Sha256, s: &str) {
     hasher.update(s.as_bytes());
 }
 
-/// Builds the pattern list: the always-on defaults first, then the caller's.
+/// Builds the pattern list: what no snapshot of a git tree wants, then what the caller named.
+///
+/// The engine excludes the one directory it knows about whatever the caller
+/// is. Where the caller writes its own output is the caller's to say, and an
+/// engine that guessed it excluded a directory of somebody else's source.
 fn exclusions(options: &Options) -> Result<Vec<Pattern>, SnapshotError> {
     let mut patterns = Vec::with_capacity(options.exclude.len().saturating_add(3));
-    for builtin in ["**/.git", DEFAULT_REPORT_DIR] {
-        patterns.push(Pattern::compile(builtin).map_err(|error| {
-            SnapshotError::new(
-                SnapshotErrorKind::InvalidOptions,
-                builtin,
-                format!("built-in exclusion is not a usable pattern: {error}"),
-            )
-        })?);
-    }
+    let git = "**/.git";
+    patterns.push(Pattern::compile(git).map_err(|error| {
+        SnapshotError::new(
+            SnapshotErrorKind::InvalidOptions,
+            git,
+            format!("built-in exclusion is not a usable pattern: {error}"),
+        )
+    })?);
     if let Some(report_dir) = &options.report_dir {
         let normalized = normalize_path(report_dir).map_err(|error| {
             SnapshotError::new(
@@ -560,15 +546,29 @@ fn exclusions(options: &Options) -> Result<Vec<Pattern>, SnapshotError> {
                 format!("report directory is not a usable source-root-relative path: {error}"),
             )
         })?;
-        if normalized != DEFAULT_REPORT_DIR {
-            patterns.push(Pattern::compile(&normalized).map_err(|error| {
-                SnapshotError::new(
-                    SnapshotErrorKind::InvalidOptions,
-                    report_dir.clone(),
-                    format!("report directory is not a usable pattern: {error}"),
-                )
-            })?);
-        }
+        patterns.push(Pattern::compile(&normalized).map_err(|error| {
+            SnapshotError::new(
+                SnapshotErrorKind::InvalidOptions,
+                report_dir.clone(),
+                format!("report directory is not a usable pattern: {error}"),
+            )
+        })?);
+    }
+    if let Some(build_dir) = &options.build_dir {
+        let normalized = normalize_path(build_dir).map_err(|error| {
+            SnapshotError::new(
+                SnapshotErrorKind::InvalidOptions,
+                build_dir.clone(),
+                format!("build directory is not a usable source-root-relative path: {error}"),
+            )
+        })?;
+        patterns.push(Pattern::compile(&normalized).map_err(|error| {
+            SnapshotError::new(
+                SnapshotErrorKind::InvalidOptions,
+                build_dir.clone(),
+                format!("build directory is not a usable pattern: {error}"),
+            )
+        })?);
     }
     patterns.extend(options.exclude.iter().cloned());
     Ok(patterns)
@@ -591,12 +591,6 @@ struct Walker<'a> {
     rejected: Vec<SnapshotError>,
     passed_over: Vec<PassedOver>,
     /// Whether an entry that is not a regular file is recorded and walked past rather than refused.
-    ///
-    /// It is, in the tree being copied: what a user keeps beside their Rust is
-    /// their business, and the build says whether a link mattered. It is not,
-    /// in the snapshot being re-walked afterwards, where such an entry can only
-    /// have appeared while the tests were running, which is the drift the
-    /// re-walk is there to find.
     forgiving: bool,
 }
 
@@ -783,11 +777,6 @@ const CACHE_TAG: &[u8] = b"Signature: 8a477f597d28d172789f06886806bc55";
 const CACHE_TAG_NAME: &str = "CACHEDIR.TAG";
 
 /// Whether this directory is a cache somebody else owns.
-///
-/// `target/` carries the tag, and copying it would put gigabytes of build
-/// output into the snapshot — output another cargo may be rewriting while
-/// the copy reads it, which is a race with no upside: nothing under it is
-/// source, and the engine builds into a directory of its own.
 fn is_cache_directory(dir: &Path) -> bool {
     let Ok(bytes) = fs::read(dir.join(CACHE_TAG_NAME)) else {
         return false;
@@ -840,17 +829,6 @@ fn copy_file(src: &Path, dst: &Path, meta: &Metadata) -> io::Result<(u64, String
 }
 
 /// Gives the copy the time the original was written, and says nothing when it cannot.
-///
-/// Cargo decides whether to compile a file by comparing its modification time
-/// with the artifact built from it. A copy stamped with *now* is newer than
-/// every artifact any earlier run left behind, so the whole dependency graph
-/// is compiled again on every run however much of it is already there — which
-/// makes the build cache this engine keeps between runs worth nothing.
-///
-/// The time is metadata, not content: the manifest's digests are of the bytes,
-/// and nothing about drift, identity or instrumentation reads a timestamp. A
-/// copy that carries it is a more faithful copy, and a filesystem that will
-/// not set it costs a rebuild rather than a run.
 fn keep_times(output: &File, meta: &Metadata) {
     let Ok(modified) = meta.modified() else {
         return;

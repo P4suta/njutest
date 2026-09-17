@@ -19,7 +19,17 @@ fn seen(repo: &Repo, base: &str) -> Option<njutest_cli::git::Change> {
                 .any(|name| njutest_devkit::paths::same_name(key, std::ffi::OsStr::new(name)))
         })
         .collect();
-    changed(repo.root(), &env, base, Watch::new(&cancel, &trace))
+    changed(
+        &njutest_cli::git::Asked {
+            root: repo.root(),
+            env: &env,
+            excluded: &njutest_cli::evidence::tree::Excluded::beside(
+                &njutest_cli::config::Config::default().reports.directory,
+            ),
+            watch: Watch::new(&cancel, &trace),
+        },
+        base,
+    )
 }
 
 #[test]

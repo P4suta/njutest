@@ -2,18 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The witness tree: putting to the compiler the one question the syntax cannot answer about a branch proof.
-//!
-//! A claim rests on the whole condition being inert, and syntax can decide
-//! everything about that except the types: `a < b` is a call whenever `a` is
-//! not a primitive, and a call may do anything. So each comparison and each
-//! cast becomes a statement in front of the condition whose argument types the
-//! compiler must accept — a sealed trait implemented for the primitives and for
-//! references to them, and nothing else. A claim whose witness the compiler
-//! refuses is a claim this release does not make (ADR 0008).
-//!
-//! The witnesses are written into the pristine tree, checked, and taken out
-//! again before anything is instrumented. They add no line, so every position
-//! the catalog reports still points where it did.
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -43,13 +31,6 @@ pub struct Site {
 }
 
 /// What one rewrite in a witnessed file is.
-///
-/// A diagnostic in a condition's witnesses refuses the claim: the whole of it
-/// rests on the compiler accepting them. One in a body's marker refuses only
-/// the marker, and the claim stands with a coverage region as its premise —
-/// a body a call cannot go into is a body a `const` context holds, not a body
-/// the claim was wrong about. One in a probe's binding refuses only the probe:
-/// the mutant is still measured, by running it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Placed {
@@ -75,12 +56,6 @@ pub struct WitnessFile {
 }
 
 /// One thing to put to the compiler, and where the mutant that carries it sits.
-///
-/// Two questions share one rewrite. A branch proof needs the condition to be
-/// inert *and* names the body it gates; a guard that wants to compare its two
-/// branches needs only the condition to be inert. Both are the same witnesses
-/// written in front of the same condition, so a site with a body and one
-/// without are one entry here with the body optional.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Claimed {
     /// The mutant's dense catalog index.
@@ -108,13 +83,6 @@ impl Claimed {
 }
 
 /// What one file puts to the compiler.
-///
-/// Two questions of different shapes travel together because one `cargo check`
-/// answers both. A condition is asked whether it is inert; a returned value is
-/// asked whether its type is one a guard may compare against what a return
-/// replacement would write. Neither can overlap the other: a probeable
-/// expression holds no `if` and no `while`, so no condition of one sits inside
-/// a probe's own bytes.
 #[derive(Debug, Clone, Copy)]
 pub struct Asking<'a> {
     /// Every condition to witness, with the mutants resting on it.
@@ -351,11 +319,6 @@ fn plan(
 }
 
 /// Binds each probed value so that the compiler is asked what type it is, in the shape the guard will hold.
-///
-/// The value is kept verbatim and only what surrounds it is written, so a
-/// value spelled over four lines still occupies four. Nothing here can overlap
-/// a condition's rewrite: a value a probe is offered for holds no `if` and no
-/// `while`, so no condition of one sits inside its bytes.
 fn probed(
     file: &Reading<'_>,
     probes: &[Probing],
@@ -402,10 +365,6 @@ fn probed(
 }
 
 /// Where one rewrite ended up in the rewritten text.
-///
-/// An insertion leaves nothing of the source at its offset, so the offset maps
-/// to just past what was written rather than to the start of it; a
-/// replacement maps to where its own bytes begin.
 fn landed(map: &crate::splice::OffsetMap, splice: &Splice) -> Span {
     let written = u32::try_from(splice.replacement.len()).unwrap_or(u32::MAX);
     let at = map.to_output(splice.span.start).0;
@@ -459,26 +418,6 @@ fn runtime(module: &str) -> String {
 }
 
 /// The sealed traits and the two functions. `W` names the types whose comparison the standard library defines, and nothing else, which is exactly the question the syntax could not answer.
-///
-/// `str`, a slice, and the owned types beside them are in it for the same
-/// reason the primitives are: comparing two of them runs none of the program's
-/// code. The comparison is the library's, it cannot panic, it allocates
-/// nothing, and it terminates — which is the whole of what a claim needs. A
-/// container is in it only when what it holds is, because a `Vec<T>`
-/// comparison is `T`'s comparison in a loop.
-///
-/// The two operands are asked about **separately**, which is what lets a
-/// `String` be compared with a `&str`. It is no weaker for it: a comparison
-/// between two of these types can only be the standard library's, because
-/// coherence lets nobody add a `PartialEq` or `PartialOrd` impl between two
-/// types they own neither of. Bring a type of your own to either side and it
-/// is not in `W`, whichever side it is on.
-///
-/// `std` is linked under a name of this module's own, as [ADR 0011] has the
-/// runtime do. A crate the host cannot lend `std` to is one this engine skips
-/// whole, so no witness is ever written into one.
-///
-/// [ADR 0011]: ../../../../docs/adr/0011-the-runtime-lives-at-the-end-of-each-instrumented-file.md
 const IMPLS: &str = "\
     extern crate std as __rmw_std;
     pub(crate) trait W {}

@@ -52,13 +52,6 @@ pub struct Marker {
     #[serde(default)]
     pub role: Role,
     /// The tree a cache is keyed to, so a sweep can tell a cache a run will look up from one nothing can name again.
-    ///
-    /// A cache is spared however old it is, which is only safe while some
-    /// later run can still hit it. The key is derived from the source tree, so
-    /// a cache whose tree is gone is one no run will ever look up, and
-    /// sparing it is how a temporary directory grows without bound. Absent in
-    /// a marker written before caches said this, which says nothing either
-    /// way and is therefore spared as it always was.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub keyed_to: Option<String>,
 }
@@ -356,7 +349,12 @@ pub struct SweepResult {
     pub cached: usize,
     /// The directories that could not be judged or removed. A failure does not stop the sweep of the others.
     pub failures: Vec<SweepFailure>,
+    /// How many prefixed directories the sweep never reached, because it had spent its budget.
+    pub unreached: usize,
 }
+
+/// How long a sweep spends before it leaves the rest for the next one.
+pub const SWEEP_BUDGET: Duration = Duration::from_secs(10);
 
 /// Removes every abandoned directory directly under `parent` whose name begins with one of `prefixes`.
 ///
@@ -367,9 +365,6 @@ pub fn sweep(parent: &Path, prefixes: &[&str], now: Timestamp) -> io::Result<Swe
 }
 
 /// Removes every unlocked directory under `parent` whose name is prefixed, caches included.
-///
-/// This is what a person means by collecting the caches: [`sweep`] spares
-/// them so that the next run is fast, and this does not.
 ///
 /// # Errors
 /// Returns the failure to read `parent` itself.
@@ -420,6 +415,12 @@ pub fn sweep_with(
 }
 
 /// What one pass over the temporary directory looks for.
+///
+/// A failure about one directory is recorded against that directory and the
+/// pass goes on. Propagating it would throw away everything the pass had
+/// already established — every directory removed, every byte counted, every
+/// other failure — and answer with the temporary root's name, which is not
+/// the directory that refused.
 struct Pass<'a> {
     prefixes: &'a [&'a str],
     now: Timestamp,
@@ -441,6 +442,7 @@ fn collect(parent: &Path, pass: &Pass<'_>) -> io::Result<SweepResult> {
         Err(error) => return Err(error),
     };
     let mut result = SweepResult::default();
+    let started = std::time::Instant::now();
     for entry in entries {
         let entry = match entry {
             Ok(entry) => entry,
@@ -461,14 +463,19 @@ fn collect(parent: &Path, pass: &Pass<'_>) -> io::Result<SweepResult> {
         if !is_prefixed || !entry.file_type().is_ok_and(|kind| kind.is_dir()) {
             continue;
         }
+        if started.elapsed() >= SWEEP_BUDGET {
+            result.unreached = result.unreached.saturating_add(1);
+            continue;
+        }
         let dir = parent.join(&name);
         let verdict = match judge(&dir, &entry, now) {
-            Ok(Verdict::Cache) if caches_too => match acquire(&lock_path(&dir))? {
-                None => Ok(Verdict::Live),
-                Some(mut lock) => {
-                    lock.release()?;
-                    Ok(Verdict::Abandoned)
-                }
+            Ok(Verdict::Cache) if caches_too => match acquire(&lock_path(&dir)) {
+                Ok(None) => Ok(Verdict::Live),
+                Ok(Some(mut lock)) => match lock.release() {
+                    Ok(()) => Ok(Verdict::Abandoned),
+                    Err(source) => Err(source),
+                },
+                Err(source) => Err(source),
             },
             other => other,
         };
@@ -528,10 +535,6 @@ fn judge(dir: &Path, entry: &fs::DirEntry, now: Timestamp) -> io::Result<Verdict
 }
 
 /// Whether a cache is keyed to a tree that is no longer there.
-///
-/// A cache with no key says nothing either way: it was written before caches
-/// said what they are keyed to, and a sweep that guessed would remove one a
-/// run is about to use.
 fn orphaned(keyed_to: Option<&str>) -> bool {
     keyed_to.is_some_and(|tree| !Path::new(tree).exists())
 }
@@ -554,14 +557,6 @@ fn legacy(entry: &fs::DirEntry, now: Timestamp) -> io::Result<Verdict> {
 }
 
 /// Adds up the regular files under `dir`, best effort.
-///
-/// The number is for a person reading a line, and every failure to read one
-/// entry is passed over: a sweep must not fail to reclaim a directory because
-/// it could not measure one file inside it, and a cache must not fail to
-/// report its size because one layer of it went away while being counted.
-/// Both products ask this, so it is asked in one place; a directory that is
-/// not there at all is nothing rather than a failure, which is the same
-/// answer as a directory with nothing in it and is the right one for both.
 #[must_use]
 pub fn directory_size(dir: &Path) -> u64 {
     let mut total = 0u64;

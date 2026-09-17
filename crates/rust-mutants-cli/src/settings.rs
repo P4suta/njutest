@@ -28,13 +28,6 @@ pub struct Settings {
 impl Settings {
     /// Reads the configuration a scope names and folds the flags into it. A flag given on the command line wins over the file; a list given on the command line replaces the file's list rather than adding to it.
     ///
-    /// A `--root` that is not an absolute path is resolved against the working
-    /// directory the command was given rather than against the process's own.
-    /// The two are the same for the binary, which composes one from the other,
-    /// and they are not the same for anything else that calls this: a caller
-    /// that says where it is and then gets an answer about somewhere else has
-    /// been told about a tree it did not name.
-    ///
     /// # Errors
     /// Returns what is wrong with the configuration, or with a duration a flag spells.
     pub fn resolve(scope: &cli::Scope, environment: &Environment) -> Result<Self, CliError> {
@@ -46,6 +39,7 @@ impl Settings {
         replace(&mut config.mutation.operators, &scope.operators);
         replace(&mut config.project.include, &scope.include);
         replace(&mut config.project.exclude, &scope.exclude);
+        replace(&mut config.snapshot.omit, &scope.omit);
         replace(&mut config.project.packages, &scope.packages);
         config
             .execution
@@ -101,7 +95,7 @@ impl Settings {
             env: environment.vars.clone(),
             temp_directory: environment.temp_directory.clone(),
             report_directory: Some(self.config.reports.directory.to_string_lossy().into_owned()),
-            exclude: compile(&self.config.project.exclude)?,
+            exclude: compile(&self.config.snapshot.omit)?,
             allow_outside: self
                 .config
                 .project
@@ -128,6 +122,7 @@ impl Settings {
             include: compile(&self.config.project.include)?,
             exclude: compile(&self.config.project.exclude)?,
             harness_args: self.config.execution.test_binary_args.clone(),
+            scratch_working_directory: self.config.execution.scratch_working_directory,
             packages: self.config.project.packages.clone(),
             verify: self.config.mutation.verify,
             coverage: self.config.mutation.coverage,
@@ -152,7 +147,7 @@ impl Settings {
     /// Where run reports go.
     #[must_use]
     pub fn report_directory(&self) -> PathBuf {
-        self.root.join(&self.config.reports.directory)
+        crate::app::stored::Store::of(&self.root, &self.config.reports.directory).root()
     }
 }
 

@@ -83,16 +83,18 @@ run       <run>
 workspace <workspace digest>
 catalog   <catalog digest>
 
-MUTANTS   cataloged=8 refused=0 skipped=2 executed=7
-OUTCOMES  killed=7 survived=0 timed_out=0 inconclusive=0 errored=0 not_run=1 unreached=0 discharged=1 expected=0
+discharged-mutant      every target that could have noticed 16b0cd40508fc0785477 was removed by a proof, so no test could have: the mutation is in code the tests run and never observe
+
+MUTANTS   8 mutants were cataloged: 7 executed, 0 refused by the compiler, 2 places that produced no candidate.
+OUTCOMES  killed=7 survived=0 timed_out=0 inconclusive=0 errored=0 not_run=1
+OF THOSE  Those 6 add to the 8 cataloged. Within them, not run is 0 unreached, not run is 1 discharged, survived is 0 expected.
 SCORE     100.0%  (7 detected of 7 decided)
 WORK      started=7 of 24 pairs across 3 targets; 70.8% removed (unreached=16 never-infected=1)
           tests=7 of 24; 70.8% removed
-
-discharged-mutant      every target that could have noticed 16b0cd40508fc0785477 was removed by a proof, so no test could have: the mutation is in code the tests run and never observe
 REPORT    ./reports/mutation/<run>/run-report-v1.json
 
 $ rust-mutants explain 16b0
+NAME      src/lib.rs:max:gt-to-ge@11
 MUTANT    16b0cd40508fc0785477d495daa14695fcff4d61ada9eb35a8c2c995eb1f881f
 SHORT     16b0cd40508fc0785477
 RULE      gt-to-ge@1 (comparison)
@@ -103,7 +105,14 @@ OUTCOME   not_run
 TIMING    <duration>
 ROUTE     discharged reaching [] executed []
 PROVED    fixture-simple/lib/fixture_simple: never-infected
-REPRODUCE rust-mutants run --mutant 16b0cd40508fc0785477
+REPRODUCE rust-mutants run --mutant src/lib.rs:max:gt-to-ge@11
+ACCEPT    [[mutation.expect]]
+          path = "src/lib.rs"
+          item = "max"
+          rule = "gt-to-ge"
+          original = ">"
+          line = 11
+          reason = ""  # why this is not a gap in the tests
 
 --- a/src/lib.rs
 +++ b/src/lib.rs

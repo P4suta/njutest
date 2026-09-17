@@ -4,7 +4,7 @@
 //! `.njutest.toml`: optional, strict, and defaulted.
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -23,6 +23,9 @@ pub const DEFAULT_CACHE_MAX_BYTES: u64 = 5 * 1024 * 1024 * 1024;
 
 /// How long a cached outcome is kept when the file does not say.
 pub const DEFAULT_CACHE_TTL: Duration = Duration::from_hours(720);
+
+/// Where a run writes, unless the configuration says otherwise.
+pub const DEFAULT_REPORTS_DIRECTORY: &str = "reports";
 
 /// How many run directories are kept when the file does not say.
 pub const DEFAULT_REPORTS_KEEP: u32 = 20;
@@ -106,19 +109,23 @@ impl Default for Config {
 pub struct Project {
     /// The cargo packages to verify. Empty is every workspace member.
     pub packages: Vec<String>,
+    /// Workspace-relative globs a file must match for anything in it to be mutated. Empty is every file.
+    pub include: Vec<String>,
     /// Workspace-relative globs whose files are left out of the mutations, which the report carries as an explicit limitation.
     pub exclude: Vec<String>,
 }
 
 impl Project {
+    /// The inclusions, compiled.
+    #[must_use]
+    pub fn included(&self) -> Vec<rust_mutants::glob::Pattern> {
+        self.include
+            .iter()
+            .filter_map(|pattern| rust_mutants::glob::Pattern::compile(pattern).ok())
+            .collect()
+    }
+
     /// The exclusions, compiled.
-    ///
-    /// They say which files are mutated and nothing else: the tree is copied
-    /// whole, every package still builds, and every test still runs, so a file
-    /// left out of the mutations is still one the run is a function of. A
-    /// pattern that does not compile cannot reach here, because
-    /// [`Config::parse`] refuses it; one that somehow does is left out, which
-    /// mutates more rather than less.
     #[must_use]
     pub fn excluded(&self) -> Vec<rust_mutants::glob::Pattern> {
         self.exclude
@@ -142,9 +149,16 @@ pub struct Execution {
     pub test_binary_args: Vec<String>,
     /// Environment variable *names* a test process may see.
     pub environment: Vec<String>,
-    /// The upper bound on one executed command.
+    /// The upper bound on one measurement, which is one test binary run against one mutation.
     #[serde(deserialize_with = "duration", serialize_with = "as_millis")]
     pub timeout: Duration,
+    /// The upper bound on one build. `None` is no bound, which is the default: a build is not a measurement, and a project that tightened the one it waits for per mutation did not thereby say how long its own compiler may take.
+    #[serde(
+        default,
+        deserialize_with = "optional_duration",
+        serialize_with = "as_optional_millis"
+    )]
+    pub build_timeout: Option<Duration>,
     /// How many mutation workers. Zero means the logical CPUs, capped.
     pub jobs: u32,
     /// Test targets never to start, by the stable id a report names them with.
@@ -153,11 +167,6 @@ pub struct Execution {
 
 impl Execution {
     /// What a build of this project is, beyond the tree itself.
-    ///
-    /// Cargo compiles a different program for a different feature set, so a
-    /// run that measures the default build while the project ships another
-    /// measures a program nobody runs: the features a configuration names are
-    /// the features every command of the run compiles with.
     #[must_use]
     pub fn build(&self) -> rust_mutants::cargo::BuildConfig {
         rust_mutants::cargo::BuildConfig {
@@ -178,6 +187,7 @@ impl Default for Execution {
             test_binary_args: Vec::new(),
             environment: Vec::new(),
             timeout: DEFAULT_TIMEOUT,
+            build_timeout: None,
             jobs: 0,
             skip_targets: Vec::new(),
         }
@@ -213,17 +223,24 @@ impl Default for Cache {
 }
 
 /// What is kept under `reports/`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Reports {
     /// How many run directories are kept.
     pub keep: u32,
+    /// The workspace-relative directory every run writes under.
+    ///
+    /// A project that already means something by `reports/` says so here
+    /// rather than living with it. Runs go in `<directory>/runs`, one
+    /// directory each, and the indexes that name the newest sit beside them.
+    pub directory: PathBuf,
 }
 
 impl Default for Reports {
     fn default() -> Self {
         Self {
             keep: DEFAULT_REPORTS_KEEP,
+            directory: PathBuf::from(DEFAULT_REPORTS_DIRECTORY),
         }
     }
 }
@@ -308,7 +325,29 @@ pub struct Generation {
 #[serde(deny_unknown_fields)]
 pub struct Acceptance {
     /// The mutant, by identity or by a prefix that names exactly one.
+    ///
+    /// An identity is a function of the whole file, so it is re-minted by any
+    /// edit to that file — including the edit somebody makes next. An
+    /// acceptance is a durable record, so it is worth writing the locator
+    /// instead: `path`, `item`, `rule` and `original` name the same mutation
+    /// after the file has changed around it.
+    #[serde(default)]
     pub id: String,
+    /// The workspace-relative path the mutation is in, for a locator.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    /// The item the mutation is in, by a suffix of its path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub item: Option<String>,
+    /// The rule that produced it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rule: Option<String>,
+    /// The bytes the edit replaces, as text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original: Option<String>,
+    /// The line, as a hint that separates two mutations the rest would name together.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line: Option<u32>,
     /// Why it was accepted. Required: an acceptance without a reason is a suppression, and a report cannot audit one.
     pub reason: String,
     /// When the acceptance lapses, after which it answers for nothing.
@@ -323,12 +362,29 @@ pub struct Acceptance {
 }
 
 impl Acceptance {
+    /// The locator this acceptance writes, when it writes one rather than an identity.
+    #[must_use]
+    pub fn locator(&self) -> Option<rust_mutants::session::Locator> {
+        Some(rust_mutants::session::Locator {
+            path: self.path.clone()?,
+            item: self.item.clone()?,
+            rule: self.rule.clone()?,
+            original: self.original.clone().unwrap_or_default(),
+            line: self.line,
+            count: None,
+        })
+    }
+
+    /// What a reader wrote to name the mutation, for a message about it.
+    #[must_use]
+    pub fn named(&self) -> String {
+        self.locator().map_or_else(
+            || self.id.clone(),
+            |one| format!("{}:{}:{}", one.path, one.item, one.rule),
+        )
+    }
+
     /// Whether this acceptance still answers for anything at `now`.
-    ///
-    /// An acceptance is a person saying they looked, and the expiry is when
-    /// they said to look again. One that has passed answers for nothing, or
-    /// the date is a comment. One that names no date never lapses, which is
-    /// what a reviewer who wrote none asked for.
     #[must_use]
     pub fn holds(&self, now: jiff::Timestamp) -> bool {
         self.expires.is_none_or(|when| when > now)
@@ -447,6 +503,10 @@ impl Config {
                     self.version
                 ),
             ));
+        }
+        for pattern in &self.project.include {
+            rust_mutants::glob::Pattern::compile(pattern)
+                .map_err(|error| invalid(format!("include names an {error}")))?;
         }
         for pattern in &self.project.exclude {
             rust_mutants::glob::Pattern::compile(pattern)
@@ -571,6 +631,7 @@ contract = \"standard-v1\"        # \"standard-v1\" | \"deep-v1\"
 
 [project]
 # packages = []                  # cargo package names; empty = every member
+# include = []                   # workspace-relative globs a file must match to be mutated
 # exclude = []                   # workspace-relative globs; the files are not mutated
 
 [execution]
@@ -579,7 +640,8 @@ contract = \"standard-v1\"        # \"standard-v1\" | \"deep-v1\"
 # no_default_features = false
 # test_binary_args = []          # allowed: {allowed}
 # environment = []               # variable names only, never values
-# timeout = \"{timeout}m\"              # upper bound for one executed command
+# timeout = \"{timeout}m\"              # upper bound for one measurement
+# build_timeout = \"\"            # upper bound for one build; empty = no bound
 # jobs = 0                       # mutation workers; 0 = logical CPUs, capped
 # skip_targets = []              # target ids never to start; reported as a limitation
 
@@ -591,7 +653,10 @@ contract = \"standard-v1\"        # \"standard-v1\" | \"deep-v1\"
 # ttl = \"{ttl}h\"
 
 [reports]
-# keep = {keep}                       # run directories kept under reports/runs
+# keep = {keep}                       # run directories kept
+# directory = \"reports\"        # where every run writes: the JSON report, the record stream,
+#                             # and the HTML, SARIF and JUnit projections of the same run,
+#                             # one directory per run under <directory>/runs
 
 [fuzz]
 # run = false                    # drive the fuzz targets, not only find them
@@ -614,7 +679,11 @@ contract = \"standard-v1\"        # \"standard-v1\" | \"deep-v1\"
 # environment = [\"GENERATOR_TOKEN\"]
 
 # [[acceptance]]
-# id = \"0123456789abcdef\"
+# path = \"src/lib.rs\"      # a locator survives an edit to the file; an identity does not,
+# item = \"clamp\"           # because it is a function of the file's bytes and the edit
+# rule = \"le-to-lt\"        # that fixes a survivor is one to the same file
+# original = \"<=\"
+# line = 42                 # a hint, when the rest names more than one
 # reason = \"reviewed equivalent boundary\"
 # expires = \"2026-12-31T00:00:00Z\"
 # owner = \"quality-team\"
@@ -629,6 +698,34 @@ contract = \"standard-v1\"        # \"standard-v1\" | \"deep-v1\"
 /// A [`Duration`] as whole milliseconds, so the digest of a configuration does not depend on how a person spelled `10m`.
 fn as_millis<S: serde::Serializer>(value: &Duration, serializer: S) -> Result<S::Ok, S::Error> {
     serializer.serialize_u128(value.as_millis())
+}
+
+/// A bound a project may leave unsaid, where an empty string says it out loud.
+fn optional_duration<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<Duration>, D::Error> {
+    let text = Option::<String>::deserialize(deserializer)?;
+    match text.as_deref() {
+        None | Some("") => Ok(None),
+        Some(said) => parse_duration(said)
+            .map(Some)
+            .map_err(serde::de::Error::custom),
+    }
+}
+
+#[expect(
+    clippy::ref_option,
+    reason = "serde's serialize_with hands the field by reference, so the signature is its \
+              contract rather than a choice"
+)]
+fn as_optional_millis<S: serde::Serializer>(
+    value: &Option<Duration>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    match value {
+        Some(bound) => serializer.serialize_u128(bound.as_millis()),
+        None => serializer.serialize_none(),
+    }
 }
 
 impl Config {

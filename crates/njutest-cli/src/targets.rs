@@ -74,11 +74,6 @@ impl UnitKind {
     }
 
     /// The kind of an engine target, which reads the same cargo metadata.
-    ///
-    /// A kind this release does not name falls to [`Self::Bin`], which is the
-    /// shape that assumes least about what a target is: it is started and it
-    /// answers by exiting. A kind no unit of this run holds costs nothing by
-    /// being called one.
     #[must_use]
     pub const fn of(kind: rust_mutants::execute::TargetKind) -> Self {
         use rust_mutants::execute::TargetKind;
@@ -157,12 +152,6 @@ impl Target {
 }
 
 /// The stable identity of one test: the binary it is in, and its path inside that binary.
-///
-/// `unit_name` is what separates two binaries of one kind in one package. Two
-/// integration tests that each hold a test called `works` are two targets, and
-/// an identity that leaves the binary out makes them one — one report row, one
-/// evidence key, and a route that names either of them finding whichever the
-/// baseline listed first.
 #[must_use]
 pub fn target_id(package: &str, unit: UnitKind, unit_name: &str, path: &str) -> String {
     let mut hasher = Sha256::new();
@@ -278,12 +267,15 @@ impl TargetError {
 /// [`TargetErrorKind::ListFailed`] when the binary could not be started at
 /// all, which is not the same as a binary that answered differently.
 pub fn enumerate(unit: &Unit, watch: Watch<'_>) -> Result<Vec<Target>, TargetError> {
-    let mut spec = Spec::new([
-        unit.executable.as_os_str().to_owned(),
-        OsString::from("--list"),
-        OsString::from("--format"),
-        OsString::from("terse"),
-    ]);
+    let mut spec = Spec::new(
+        [
+            unit.executable.as_os_str().to_owned(),
+            OsString::from("--list"),
+            OsString::from("--format"),
+            OsString::from("terse"),
+        ],
+        rust_mutants::runner::Bound::After(rust_mutants::runner::PROBE),
+    );
     spec.dir = Some(unit.cwd.clone());
     spec.env = Some(unit.env.clone());
     spec.timeout = Some(LIST_TIMEOUT);
@@ -329,10 +321,6 @@ pub fn enumerate(unit: &Unit, watch: Watch<'_>) -> Result<Vec<Target>, TargetErr
 }
 
 /// The one target a binary with its own harness has.
-///
-/// A run and a plan must name it the same way or the plan is about a run
-/// nobody made, so the name is built here and asked for rather than written
-/// twice.
 #[must_use]
 pub fn whole_binary(unit: &Unit) -> Target {
     Target {
@@ -350,13 +338,16 @@ pub fn whole_binary(unit: &Unit) -> Target {
 
 /// Which of a binary's tests libtest will skip unless asked.
 fn ignored_paths(unit: &Unit, watch: Watch<'_>) -> std::collections::BTreeSet<String> {
-    let mut spec = Spec::new([
-        unit.executable.as_os_str().to_owned(),
-        OsString::from("--list"),
-        OsString::from("--ignored"),
-        OsString::from("--format"),
-        OsString::from("terse"),
-    ]);
+    let mut spec = Spec::new(
+        [
+            unit.executable.as_os_str().to_owned(),
+            OsString::from("--list"),
+            OsString::from("--ignored"),
+            OsString::from("--format"),
+            OsString::from("terse"),
+        ],
+        rust_mutants::runner::Bound::After(rust_mutants::runner::PROBE),
+    );
     spec.dir = Some(unit.cwd.clone());
     spec.env = Some(unit.env.clone());
     spec.timeout = Some(LIST_TIMEOUT);

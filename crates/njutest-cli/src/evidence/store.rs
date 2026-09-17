@@ -2,11 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What earlier runs established about individual mutants, and the conditions under which this run may believe it.
-//!
-//! A kill is an existential claim and a survival is the universal one, and the
-//! two are reused under conditions of the same shape — over one target and over
-//! every target respectively (ADR 0007). Nothing expires a record; a stale
-//! record is removed by being contradicted.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -53,14 +48,6 @@ pub enum Outcome {
 }
 
 /// Why a record could not be believed. A run says which so a reader can tell "nothing was recorded" from "what was recorded no longer describes this tree".
-///
-/// Reuse is a layer: a believed record is an execution the run did not perform,
-/// and [ADR 0004](../../../../docs/adr/0004-proof-layers-not-budgets.md)
-/// decision 4 asks that a layer be visible. A reader who sees a run go faster
-/// asks which record answered; a reader who sees it do the work again asks what
-/// was wrong with the one that was there. A layer that speaks only when it
-/// applies leaves the second reader with nothing, and the second reader is the
-/// one looking at a store that stopped working.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Refusal {

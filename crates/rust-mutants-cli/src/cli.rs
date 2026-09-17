@@ -41,7 +41,7 @@ pub struct Cli {
               heap indirection between the parser and the flags a person typed"
 )]
 pub enum Command {
-    /// List the candidates the rules propose, before the compiler has ruled.
+    /// List the candidates that will be cataloged, before the compiler has ruled. What a configuration or an annotation removed is `why-skipped`.
     List {
         /// Which workspace to read.
         #[command(flatten)]
@@ -49,6 +49,9 @@ pub enum Command {
         /// Only the candidates in this file, as a workspace-relative path.
         #[arg(long, value_name = "PATH")]
         file: Option<String>,
+        /// Write the candidates as one JSON document instead of as lines.
+        #[arg(long)]
+        json: bool,
     },
     /// Ask the compiler, for every mutant, whether it renders it identically to the code it mutates.
     Equivalence {
@@ -340,9 +343,12 @@ pub struct Scope {
     /// Only mutate files matching this pattern. Repeatable.
     #[arg(long = "include", value_name = "GLOB")]
     pub include: Vec<String>,
-    /// Keep files matching this pattern out of the run entirely: the snapshot does not carry them and nothing in them is mutated. Repeatable.
+    /// Mutate nothing in the files matching this pattern; they are still compiled. The other half of `--include`. Repeatable.
     #[arg(long = "exclude", value_name = "GLOB")]
     pub exclude: Vec<String>,
+    /// Leave files matching this pattern out of the copy the run works in. A file a crate declares as a module leaves a tree that does not compile. Repeatable.
+    #[arg(long = "omit", value_name = "GLOB")]
+    pub omit: Vec<String>,
     /// Mutate only the files that differ from `HEAD`, committed and not. Narrows `--include` rather than widening it.
     #[arg(long, conflicts_with = "changed_from")]
     pub changed: bool,
@@ -376,8 +382,14 @@ pub struct Scope {
     /// How long one mutant execution may take before it is retried serially, as in `90s` or `5m`.
     #[arg(long, value_name = "DURATION")]
     pub timeout: Option<String>,
-    /// Record what the run does, as JSON Lines. Without a directory a run writes beside its report and every other command under `<reports>/traces/`.
-    #[arg(long, value_name = "DIR", num_args = 0..=1, default_missing_value = "")]
+    /// Record what the run does, as JSON Lines. Written with `--trace=DIR`; bare `--trace` writes beside the report, and every other command under `<reports>/traces/`.
+    #[arg(
+        long,
+        value_name = "DIR",
+        num_args = 0..=1,
+        require_equals = true,
+        default_missing_value = ""
+    )]
     pub trace: Option<String>,
     /// How the workspace is treated.
     #[command(flatten)]
@@ -503,11 +515,6 @@ pub struct Usage {
 }
 
 /// The same arguments, less the word cargo repeats when it calls a subcommand.
-///
-/// `cargo rust-mutants run` runs `cargo-rust-mutants rust-mutants run`, so the
-/// subcommand's own name arrives twice. Dropping it is cargo's convention and
-/// not this program's: called directly, `rust-mutants rust-mutants run` is a
-/// mistake, and saying so is more use than guessing what was meant.
 fn subcommand(mut args: Vec<OsString>) -> Vec<OsString> {
     let called_by_cargo = args
         .first()

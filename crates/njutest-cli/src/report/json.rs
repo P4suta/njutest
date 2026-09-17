@@ -74,10 +74,6 @@ pub fn render(report: &Report) -> Result<String, ReportError> {
 
 /// The same document with its whitespace taken out, for a stream where one line is one report.
 ///
-/// What may be written is decided by the same `Serialize` this crate derives,
-/// so this and [`render`] cannot come to say different things: the only
-/// difference between them is where a reader's eye goes.
-///
 /// # Errors
 /// [`ReportError::Unserializable`], which is an invariant failure rather than
 /// anything about the run.

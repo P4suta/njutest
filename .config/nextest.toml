@@ -1,0 +1,21 @@
+# SPDX-FileCopyrightText: 2026 njutest contributors
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# A test that stops answering is not a slow test, and waiting for the job's own
+# timeout to say so costs the whole suite's worth of time to learn one thing.
+# One of these held a Windows runner for forty minutes: it was reported as a
+# cancelled job at forty-five, with no test named, rather than as one test that
+# never returned.
+#
+# The period is what a test may take before it is called slow, and the count is
+# how many of them it may take before it is stopped. The suites here that drive
+# a real cargo are minutes long on a cold cache, so the product is generous;
+# what it refuses is the test that is not going to finish at all.
+[profile.default]
+slow-timeout = { period = "60s", terminate-after = 10 }
+
+# The inner loop starts no toolchain, so a test there taking a minute is
+# already a test that has stopped answering.
+[[profile.default.overrides]]
+filter = 'not binary(/^toolchain_/)'
+slow-timeout = { period = "30s", terminate-after = 2 }

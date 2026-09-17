@@ -2,19 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Whether the compiler renders a mutation identically to the program it mutates.
-//!
-//! The lemma is one sentence: build the program, build it again with one
-//! mutation spliced in, and if every executable is byte for byte the same file,
-//! the two are the same program and no test can tell them apart. It asks
-//! nothing of the compiler — not that it be deterministic, and not that it be
-//! correct — only that the same bytes behave the same way.
-//!
-//! What this module never says is *equivalent*. Absence and equivalence look
-//! alike from here: a mutation of a function nothing calls is dropped by the
-//! linker, and the artifacts come out identical for a reason that is the
-//! opposite of reassuring. Saying `Identical` is the engine's whole claim, and
-//! the premises that turn it into a verdict live where the evidence does
-//! ([ADR 0013](../../../../docs/adr/0013-codegen-identity-is-the-equivalence-proof.md)).
 
 pub mod artifacts;
 
@@ -47,15 +34,6 @@ pub const DOES_NOT_BUILD: &str =
 pub const CONTROL_DRIFTED: &str = "the original tree stopped building to the bytes it built to, so nothing here compares two programs";
 
 /// The variable that takes the build history out of what a build emits.
-///
-/// The lemma here is byte identity, and incremental compilation is the one
-/// feature that makes what a compiler emits depend on what it emitted before
-/// rather than only on the source it was given. A tree built once from nothing
-/// and once from a cache comes out as two byte sequences for one program, so
-/// every mutation would read as one the compiler renders and the layer would
-/// establish nothing while saying something. The tree is this layer's own and
-/// is built from nothing to begin with, so asking for the whole of it each
-/// time costs the run nothing it was keeping.
 const WHOLE_BUILDS: (&str, &str) = ("CARGO_INCREMENTAL", "0");
 
 /// What to prove equivalence with: how to open a tree of this layer's own, and how long one build may take.
@@ -70,14 +48,6 @@ pub struct ProveOptions {
 }
 
 /// A tree of its own, built once, and asked one mutation at a time whether the compiler renders it identically.
-///
-/// The tree is the program the user wrote: nothing is instrumented in it, no
-/// guard is spliced into it, and no runtime module is appended to it. What is
-/// compared is what the project's own `cargo test --no-run` produces, under the
-/// project's own test profile, because the profile is a parameter of the
-/// question rather than of the answer: `x + 0` and `x - 0` are the same
-/// instructions at `opt-level = 1` and different ones at `opt-level = 0`, and
-/// the one the tests run is the one that decides.
 #[derive(Debug)]
 pub struct Prover {
     workspace: Workspace,
@@ -119,17 +89,6 @@ impl Prover {
     }
 
     /// Whether the compiler renders `candidate` identically to what it mutates.
-    ///
-    /// Both answers rest on one premise: that a difference between two builds
-    /// of this tree is the mutation's doing. So the original is built again and
-    /// has to still build to the bytes it built to — every time the answer is
-    /// [`Identity::Identical`], which is the stronger claim, and once before
-    /// the first [`Identity::Differs`], which is the same premise read the
-    /// other way. A machine whose linker stamps what it writes renders one
-    /// unchanged tree two ways, and a layer that reported that as the
-    /// mutation's doing would be reporting the machine. One failed check
-    /// withdraws every answer this prover would give afterwards: a layer that
-    /// cannot establish its premise keeps the execution.
     ///
     /// # Errors
     /// Whatever stopped a build or a write.
@@ -200,11 +159,6 @@ impl Prover {
     }
 
     /// What one build of the tree produced, or nothing when the tree did not build.
-    ///
-    /// A mutation the compiler refuses is not one it renders identically: the
-    /// question is about two programs, and there is only one. Saying so is
-    /// what keeps a build failure from reading as an empty set of artifacts
-    /// equal to another empty set.
     fn build(&self, cancel: &Cancel) -> Result<Option<Artifacts>, EngineError> {
         let built = compile(
             &self.workspace.driver(cancel),

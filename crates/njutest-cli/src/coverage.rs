@@ -2,9 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Which regions of which files one test reached, in this product's error ledger.
-//!
-//! The reading itself is the engine's, so both products measure coverage the
-//! same way. Only the codes differ: a `njutest` report answers in `NJ`.
 
 use crate::error::{self, ErrorCode};
 

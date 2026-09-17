@@ -20,6 +20,7 @@ fn mutant(index: u32, outcome: &str, expected: bool) -> RunMutantDocument {
         package: "demo".to_owned(),
         family: "comparison".to_owned(),
         rule: "gt-to-ge".to_owned(),
+        item: "demo".to_owned(),
         rule_version: 1,
         line: 11,
         column: 8,
@@ -82,18 +83,18 @@ fn document() -> RunDocument {
         established_tests: 0,
         accounting: Accounting {
             cataloged: 5,
-            refused: 2,
-            skipped: 7,
-            executed: 5,
-            killed: 3,
-            survived: 2,
-            timed_out: 0,
-            inconclusive: 0,
-            errored: 0,
-            unreached: 0,
-            discharged: 0,
-            not_run: 0,
-            expected: 1,
+            refused: 2_u32.into(),
+            skipped: 7_u32.into(),
+            executed: 5_u32.into(),
+            killed: 3_u32.into(),
+            survived: 2_u32.into(),
+            timed_out: 0_u32.into(),
+            inconclusive: 0_u32.into(),
+            errored: 0_u32.into(),
+            unreached: 0_u32.into(),
+            discharged: 0_u32.into(),
+            not_run: 0_u32.into(),
+            expected: 1_u32.into(),
         },
         score: Some(ScoreDocument {
             detected: 3,
@@ -352,13 +353,19 @@ fn a_whole_run_is_what_its_parts_come_to_and_not_what_the_first_of_them_said() {
         whole.accounting
     );
     assert_eq!(
-        (whole.accounting.unreached, whole.accounting.discharged),
+        (
+            whole.accounting.unreached.count(),
+            whole.accounting.discharged.count()
+        ),
         (1, 1),
         "including the column each reason is counted in: {:?}",
         whole.accounting
     );
     assert_eq!(
-        (whole.accounting.not_run, whole.accounting.executed),
+        (
+            whole.accounting.not_run.count(),
+            whole.accounting.executed.count()
+        ),
         (2, 2),
         "and what it did not run is not what it ran: {:?}",
         whole.accounting
@@ -368,8 +375,8 @@ fn a_whole_run_is_what_its_parts_come_to_and_not_what_the_first_of_them_said() {
         2,
         "and holds what every reviewer of every part claimed"
     );
-    assert_eq!(whole.accounting.killed, 1);
-    assert_eq!(whole.accounting.survived, 1);
+    assert_eq!(whole.accounting.killed.count(), 1);
+    assert_eq!(whole.accounting.survived.count(), 1);
     assert_eq!(
         whole.run.duration_ms, 1_250,
         "a whole took as long as its parts together"
@@ -385,5 +392,45 @@ fn a_whole_run_is_what_its_parts_come_to_and_not_what_the_first_of_them_said() {
             .is_some_and(|score| score.decided == 2 && score.detected == 1),
         "and scores the whole: {:?}",
         whole.score
+    );
+}
+
+/// One surviving mutation of `rule` in `path`, for the grouping the tally does.
+fn survivor(path: &str, rule: &str, line: u32) -> RunMutantDocument {
+    RunMutantDocument {
+        path: path.to_owned(),
+        rule: rule.to_owned(),
+        item: "demo".to_owned(),
+        line,
+        ..mutant(line, "survived", false)
+    }
+}
+
+/// Survivors of a rule that names an unexecuted path are one gap said once, and everything else is its own.
+#[test]
+fn survivors_of_one_unexercised_path_are_counted_as_one_and_the_rest_are_not() {
+    let mut document = document();
+    document.mutants = vec![
+        survivor("src/scan.rs", "question-to-unwrap", 531),
+        survivor("src/scan.rs", "question-to-unwrap", 563),
+        survivor("src/scan.rs", "question-to-unwrap", 574),
+        survivor("src/scan.rs", "le-to-lt", 335),
+        survivor("src/scan.rs", "le-to-lt", 436),
+    ];
+    let said = rust_mutants_cli::report::lines(&document);
+    let line = said
+        .lines()
+        .find(|line| line.starts_with("SURVIVORS"))
+        .unwrap_or_else(|| panic!("a survivors line in:\n{said}"));
+    assert!(
+        line.contains("3 that are 1 unexercised paths"),
+        "three question-to-unwrap survivors in one file are three instances of one \
+         proposition, and a reader who works through them one at a time reads the same \
+         sentence three times: {said}"
+    );
+    assert!(
+        line.contains("2 each its own finding"),
+        "two comparisons are two boundaries, and saying they are one would hide one of \
+         them: {said}"
     );
 }

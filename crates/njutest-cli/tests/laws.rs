@@ -2,12 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What holds for every run rather than for the ones somebody thought to write down.
-//!
-//! A table of cases is as thorough as whoever wrote it was, and the rows that
-//! matter most are the ones nobody imagined. Each law here is one a reader of
-//! a report relies on: the counts add up, the identity is a function of the
-//! inputs and of nothing else, and what a run wrote is what the next one
-//! reads.
 
 #![expect(
     clippy::arithmetic_side_effects,
@@ -67,6 +61,8 @@ fn judged_from(dispositions: Vec<Disposition>) -> Mutation {
                 display_id: format!("{at:020x}"),
                 path: "src/lib.rs".to_owned(),
                 rule: "add-to-sub@1".to_owned(),
+                item: "demo".to_owned(),
+                original: ">".to_owned(),
                 position: None,
                 disposition,
                 source_run_id: None,
@@ -213,10 +209,6 @@ proptest! {
 }
 
 /// What a test can print and a page must not become.
-///
-/// Every generated detail carries it, because a law about escaping is only
-/// exercised by data that would do damage unescaped: a random string of angle
-/// brackets almost never spells a tag.
 const MARKUP: &str = "<script>alert('x')</script>";
 
 /// One finding of any kind, about a place a run may or may not know.
@@ -271,6 +263,8 @@ fn reported(findings: Vec<njutest_cli::report::Finding>) -> njutest_cli::report:
             path,
             position,
             rule: "add-to-sub@1".to_owned(),
+            item: "demo".to_owned(),
+            original: ">".to_owned(),
             outcome: "survived".to_owned(),
             killed_by: None,
             reused: false,

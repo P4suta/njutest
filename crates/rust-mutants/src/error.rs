@@ -10,12 +10,7 @@ pub struct ErrorCode {
     pub code: &'static str,
     /// One line saying what the code means.
     pub summary: &'static str,
-    /// What to do about it, when there is one thing to do rather than a hundred.
-    ///
-    /// A remedy is the next step, not an explanation: a flag to pass, a
-    /// component to install, a variable to unset. Where the message already
-    /// names the file and the line, there is nothing a remedy could add and it
-    /// is `None`.
+    /// What to do about it. Every code carries one.
     pub remedy: Option<&'static str>,
 }
 
@@ -30,7 +25,9 @@ const RULE_UNKNOWN: ErrorCode = ErrorCode {
 const GLOB_INVALID: ErrorCode = ErrorCode {
     code: "RM9002",
     summary: "a pattern the caller gave is not a pattern",
-    remedy: None,
+    remedy: Some(
+        "a pattern is workspace-relative with forward slashes: `src/**/*.rs`, never a leading or trailing slash",
+    ),
 };
 
 /// A duration that is not a duration.
@@ -44,35 +41,39 @@ const DURATION_INVALID: ErrorCode = ErrorCode {
 pub const INTERRUPTED: ErrorCode = ErrorCode {
     code: "RM0001",
     summary: "the caller cancelled the operation before it completed",
-    remedy: None,
+    remedy: Some("nothing was left half-done; run it again when you are ready"),
 };
 
 /// A configuration file that could not be read. The command line reports it; the ledger of `RM` codes is one, so it lives here.
 pub const CONFIG_UNREADABLE: ErrorCode = ErrorCode {
     code: "RM0002",
     summary: "a configuration file that could not be read",
-    remedy: None,
+    remedy: Some("check the file is readable by this user; the path names it"),
 };
 
 /// A configuration file that is not the document this version understands.
 pub const CONFIG_UNPARSABLE: ErrorCode = ErrorCode {
     code: "RM0003",
     summary: "a configuration file that is not the document this version understands",
-    remedy: None,
+    remedy: Some(
+        "`rust-mutants init` writes a file this release understands, with every key commented",
+    ),
 };
 
 /// A configuration that parses but says something a run cannot honour.
 pub const CONFIG_INVALID: ErrorCode = ErrorCode {
     code: "RM0004",
     summary: "a configuration that parses but says something a run cannot honour",
-    remedy: None,
+    remedy: Some(
+        "the message says which key and why; `rust-mutants init` writes one that is valid",
+    ),
 };
 
 /// A configuration whose `version` is not one this release understands.
 pub const CONFIG_UNSUPPORTED_VERSION: ErrorCode = ErrorCode {
     code: "RM0005",
     summary: "a configuration whose version is not one this release understands",
-    remedy: None,
+    remedy: Some("this release reads version 1; a newer file needs a newer release"),
 };
 
 /// A process environment that already selects a mutant.
@@ -86,28 +87,34 @@ pub const ENVIRONMENT_RESERVED: ErrorCode = ErrorCode {
 pub const REPORT_MISSING: ErrorCode = ErrorCode {
     code: "RM0007",
     summary: "a stored run report that is not there or cannot be read",
-    remedy: None,
+    remedy: Some("`rust-mutants report --list` names the runs that are stored under this root"),
 };
 
 /// A file a command would write that is already there.
 pub const FILE_EXISTS: ErrorCode = ErrorCode {
     code: "RM0008",
     summary: "a file a command would write that is already there",
-    remedy: None,
+    remedy: Some(
+        "remove the file, or name another path: a command here never writes over what it did not write",
+    ),
 };
 
 /// A directory a command has to write to and could not.
 pub const WRITE_FAILED: ErrorCode = ErrorCode {
     code: "RM0009",
     summary: "a report or configuration file that could not be written",
-    remedy: None,
+    remedy: Some(
+        "check the directory exists and this user may write in it; the path names the file",
+    ),
 };
 
 /// A coverage export that could not be read.
 pub const COVERAGE_UNREADABLE: ErrorCode = ErrorCode {
     code: "RM6001",
     summary: "a coverage export that could not be read",
-    remedy: None,
+    remedy: Some(
+        "run again without --coverage to measure without it, or check llvm-tools-preview is installed",
+    ),
 };
 
 /// The LLVM tools the toolchain ships, not installed.
@@ -121,14 +128,18 @@ pub const COVERAGE_TOOLS_MISSING: ErrorCode = ErrorCode {
 pub const COVERAGE_TOOL_FAILED: ErrorCode = ErrorCode {
     code: "RM6003",
     summary: "llvm-profdata or llvm-cov failed",
-    remedy: None,
+    remedy: Some(
+        "`rustup component add llvm-tools-preview`, and check the versions match the toolchain in use",
+    ),
 };
 
 /// A test process wrote no coverage profile at all.
 pub const COVERAGE_NOTHING_WRITTEN: ErrorCode = ErrorCode {
     code: "RM6004",
     summary: "a test process wrote no coverage profile at all",
-    remedy: None,
+    remedy: Some(
+        "the test process wrote no profile: check nothing in the suite sets LLVM_PROFILE_FILE for itself",
+    ),
 };
 
 /// A change set that git could not be asked for.
@@ -154,14 +165,8 @@ pub const SOURCE_UNREADABLE: ErrorCode = ErrorCode {
     remedy: Some("pass --root at the tree the run measured, or check the file out again"),
 };
 
+/// Declares one error code. There is no form without a remedy, on purpose.
 macro_rules! snapshot_code {
-    ($name:ident, $code:literal, $summary:literal) => {
-        pub(crate) const $name: ErrorCode = ErrorCode {
-            code: $code,
-            summary: $summary,
-            remedy: None,
-        };
-    };
     ($name:ident, $code:literal, $summary:literal, $remedy:literal) => {
         pub(crate) const $name: ErrorCode = ErrorCode {
             code: $code,
@@ -174,82 +179,98 @@ macro_rules! snapshot_code {
 snapshot_code!(
     SNAPSHOT_INVALID_OPTIONS,
     "RM1001",
-    "snapshot options that cannot be honoured, such as an escaping report directory"
+    "snapshot options that cannot be honoured, such as an escaping report directory",
+    "name a report directory inside the workspace; one that climbs out of it would have the run write where nothing sweeps"
 );
 snapshot_code!(
     SNAPSHOT_SOURCE_ROOT,
     "RM1002",
-    "a source root that is relative, cannot be read, or is not a directory"
+    "a source root that is relative, cannot be read, or is not a directory",
+    "pass --root at a directory that exists and holds the workspace manifest"
 );
 snapshot_code!(
     SNAPSHOT_WALK,
     "RM1003",
-    "an operating system failure while reading a tree"
+    "an operating system failure while reading a tree",
+    "this is what the operating system said; the path it names is the one to look at"
 );
 snapshot_code!(
     SNAPSHOT_SYMLINK,
     "RM1004",
-    "a symbolic link inside the source tree, which is refused rather than followed or skipped"
+    "a symbolic link inside the source tree, which is refused rather than followed or skipped",
+    "a copy cannot follow a link out of the tree and cannot leave it dangling, so remove it or name its directory in [snapshot] omit"
 );
 snapshot_code!(
     SNAPSHOT_REPARSE_POINT,
     "RM1005",
-    "a Windows reparse point (junction or mount point) inside the source tree"
+    "a Windows reparse point (junction or mount point) inside the source tree",
+    "a copy cannot reproduce a junction, so remove it or name its directory in [snapshot] omit"
 );
 snapshot_code!(
     SNAPSHOT_IRREGULAR,
     "RM1006",
-    "a file that is neither a directory nor a regular file: a device, a socket, a named pipe"
+    "a file that is neither a directory nor a regular file: a device, a socket, a named pipe",
+    "a device, socket, or pipe is not a file a copy can hold; name its directory in [snapshot] omit"
 );
 snapshot_code!(
     SNAPSHOT_UNSUPPORTED_NAME,
     "RM1007",
-    "a file name that cannot round-trip through a slash-separated relative path"
+    "a file name that cannot round-trip through a slash-separated relative path",
+    "rename the file: a run says the same thing on every platform, and this name cannot"
 );
 snapshot_code!(
     SNAPSHOT_DESTINATION,
     "RM1008",
-    "the snapshot directory could not be created or claimed"
+    "the snapshot directory could not be created or claimed",
+    "check TMPDIR is a directory this user may write in, and that there is room under it"
 );
 snapshot_code!(
     SNAPSHOT_COPY,
     "RM1009",
-    "a failure while copying the tree into the snapshot"
+    "a failure while copying the tree into the snapshot",
+    "check there is room under TMPDIR, and that nothing is writing the tree while it is copied"
 );
 snapshot_code!(
     SNAPSHOT_CLEANUP_REFUSED,
     "RM1010",
-    "a cleanup refused because the recorded directory does not look like a snapshot directory"
+    "a cleanup refused because the recorded directory does not look like a snapshot directory",
+    "the recorded path is not one this tool made; remove it yourself rather than having a tool remove a directory it cannot identify"
 );
 snapshot_code!(
     SNAPSHOT_CLEANUP_FAILED,
     "RM1011",
-    "a snapshot directory that survived every removal attempt"
+    "a snapshot directory that survived every removal attempt",
+    "something is holding it open, and a sweep cannot take it back; `rust-mutants cache` says where it is"
 );
 snapshot_code!(
     CARGO_TOOLCHAIN_NOT_FOUND,
     "RM1012",
-    "the cargo or rustc executable could not be found"
+    "the cargo or rustc executable could not be found",
+    "install the toolchain, or name cargo with --cargo, or put it on the PATH this process was given"
 );
 snapshot_code!(
     CARGO_VERSION_UNREADABLE,
     "RM1013",
-    "a -vV banner lacks its release or host line"
+    "a -vV banner lacks its release or host line",
+    "the toolchain answered something this release cannot read; `rustup update` and try again"
 );
 snapshot_code!(
     CARGO_COMMAND_FAILED,
     "RM1014",
-    "a cargo command could not start or exited unsuccessfully"
+    "a cargo command could not start or exited unsuccessfully",
+    "run the same cargo command yourself: what it says there is what it said here"
 );
 snapshot_code!(
     CARGO_METADATA_UNPARSABLE,
     "RM1015",
-    "cargo metadata printed something that is not its document"
+    "cargo metadata printed something that is not its document",
+    "run `cargo metadata` yourself on this tree; what it prints is what could not be read"
 );
 snapshot_code!(
     CARGO_MESSAGE_UNPARSABLE,
     "RM1016",
-    "a --message-format=json line is not a message"
+    "a --message-format=json line is not a message",
+    "run the same cargo command with --message-format=json yourself; what it prints is what could not be read"
 );
 snapshot_code!(
     WORKSPACE_REACHES_OUTSIDE,
@@ -266,37 +287,44 @@ snapshot_code!(
 snapshot_code!(
     DEP_INFO_UNREADABLE,
     "RM2001",
-    "a dep-info file has no rule to read"
+    "a dep-info file has no rule to read",
+    "run `cargo test --no-run` yourself, then try again: a build that did not finish leaves this behind"
 );
 snapshot_code!(
     DEP_INFO_MISSING,
     "RM2002",
-    "an artifact's dep-info file could not be read"
+    "an artifact's dep-info file could not be read",
+    "run `cargo clean` and try again; a dep-info file from an interrupted build cannot be read"
 );
 snapshot_code!(
     DISCOVER_FILE_UNREADABLE,
     "RM2003",
-    "a source file a unit compiled could not be read"
+    "a source file a unit compiled could not be read",
+    "the file a unit compiled is not readable from the copy; check it is not written while the run reads it"
 );
 snapshot_code!(
     DISCOVER_PARSE_FAILED,
     "RM2004",
-    "a source file the compiler accepted does not parse as Rust for the engine"
+    "a source file the compiler accepted does not parse as Rust for the engine",
+    "this release parses the edition the manifest declares; a file the compiler accepts and this does not is a defect in this tool, and the path names it"
 );
 snapshot_code!(
     DISCOVER_OUTSIDE_ROOT,
     "RM2005",
-    "a unit compiled a file outside the workspace root"
+    "a unit compiled a file outside the workspace root",
+    "name the directory in allow_outside, or move the file into the workspace: a run measures a copy, and what is outside it is not in the copy"
 );
 snapshot_code!(
     DISCOVER_CATALOG_FAILED,
     "RM2006",
-    "the candidates could not be assembled into a catalog"
+    "the candidates could not be assembled into a catalog",
+    "this is a defect in this tool: no candidate the walk produces should be one the catalog refuses"
 );
 snapshot_code!(
     DISCOVER_UNKNOWN_PACKAGE,
     "RM2007",
-    "a selected package is not a workspace member"
+    "a selected package is not a workspace member",
+    "name a package `cargo metadata` lists for this workspace; a name no member has narrows nothing"
 );
 snapshot_code!(
     DISCOVER_ANNOTATION_WITHOUT_REASON,
@@ -313,37 +341,44 @@ snapshot_code!(
 snapshot_code!(
     INSTRUMENT_UNKNOWN_MUTANT,
     "RM3001",
-    "a candidate is not in the catalog being instrumented"
+    "a candidate is not in the catalog being instrumented",
+    "this is a defect in this tool: the catalog and the instrumentation disagree about which mutants exist"
 );
 snapshot_code!(
     INSTRUMENT_SOURCE_MISMATCH,
     "RM3002",
-    "the source is not the one the candidates were discovered from"
+    "the source is not the one the candidates were discovered from",
+    "the file changed between being read and being instrumented; make sure nothing writes the tree while a run is preparing"
 );
 snapshot_code!(
     INSTRUMENT_SITE_CONFLICT,
     "RM3003",
-    "two rewrite sites partially overlap, which a syntax tree cannot produce"
+    "two rewrite sites partially overlap, which a syntax tree cannot produce",
+    "this is a defect in this tool: two rules claimed overlapping bytes, which a syntax tree cannot produce"
 );
 snapshot_code!(
     INSTRUMENT_FLATTEN_FAILED,
     "RM3004",
-    "an alternative could not be folded onto one line"
+    "an alternative could not be folded onto one line",
+    "this is a defect in this tool: a guard has to fit on the line it replaces, and this one did not"
 );
 snapshot_code!(
     INSTRUMENT_SPLICE_FAILED,
     "RM3005",
-    "the guards could not be applied to the file"
+    "the guards could not be applied to the file",
+    "this is a defect in this tool: the guards could not be written back over the file they were cut from"
 );
 snapshot_code!(
     INSTRUMENT_LINES_MOVED,
     "RM3006",
-    "a guard would have moved a line"
+    "a guard would have moved a line",
+    "this is a defect in this tool: a guard moved a line, and every position a run reports is relative to lines that did not move"
 );
 snapshot_code!(
     INSTRUMENT_INDEX_RESERVED,
     "RM3007",
-    "a mutant index collides with the runtime's sentinel values"
+    "a mutant index collides with the runtime's sentinel values",
+    "this is a defect in this tool: the catalog outgrew the range the generated runtime reserves for real mutants"
 );
 snapshot_code!(
     VALIDATE_NOT_MUTANT_INDUCED,
@@ -354,12 +389,14 @@ snapshot_code!(
 snapshot_code!(
     VALIDATE_NOT_ISOLATED,
     "RM4002",
-    "the mutants a compilation failure came from could not be isolated"
+    "the mutants a compilation failure came from could not be isolated",
+    "run `cargo test --no-run` on the tree yourself; the compilation failed for a reason this tool could not attribute to one mutant"
 );
 snapshot_code!(
     VALIDATE_ATTEMPT_FAILED,
     "RM4003",
-    "an instrumented compilation could not be attempted at all"
+    "an instrumented compilation could not be attempted at all",
+    "the compilation could not be started at all: check cargo runs on this tree and that there is room under TMPDIR"
 );
 snapshot_code!(
     SESSION_PRISTINE_BROKEN,
@@ -376,22 +413,26 @@ snapshot_code!(
 snapshot_code!(
     SESSION_UNKNOWN_MUTANT,
     "RM5003",
-    "no mutant of the catalog answers to the identity or prefix given"
+    "no mutant of the catalog answers to the identity or prefix given",
+    "`rust-mutants catalog` lists what this run holds; an identity is re-minted whenever its file changes, so name the mutation by `path:item:rule` instead"
 );
 snapshot_code!(
     SESSION_UNKNOWN_TARGET,
     "RM5004",
-    "no test target of the session answers to the name given"
+    "no test target of the session answers to the name given",
+    "`rust-mutants catalog` names every target this session built; a name no target has starts nothing"
 );
 snapshot_code!(
     SESSION_NO_TARGETS,
     "RM5005",
-    "the workspace builds no test target, so no mutant can be measured"
+    "the workspace builds no test target, so no mutant can be measured",
+    "the workspace has nothing that tests, so there is nothing a mutation could be put to; write a test, or point --root at the workspace that has them"
 );
 snapshot_code!(
     SESSION_WRITE_FAILED,
     "RM5006",
-    "the instrumented tree could not be written"
+    "the instrumented tree could not be written",
+    "check there is room under TMPDIR and that nothing is removing the run's directory while it writes"
 );
 
 /// Every failure the engine reports.

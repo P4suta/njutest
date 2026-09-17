@@ -26,6 +26,11 @@ reports/runs/<run-id>/
   njutest-assurance-report-v1.schema.json
 ```
 
+The directory is `[reports] directory`, `reports` unless the configuration
+says otherwise, and an index names a run the way somebody standing in the
+project would: `jq -r .directory reports/latest-any.json` is a path to follow
+from the project's own root.
+
 `reports/latest-any.json` and `.njutest/latest-any.json` track the latest
 completed run of any scope. `latest-full.json` exists in both locations and
 advances only when `run_kind` is `full`. The history is bounded by
@@ -164,6 +169,11 @@ spelled out rather than emitted. Without that, output from the code under
 test could forge a `FINDING`, `REPAIR`, `ACCEPTANCE`, or `LIMITATION`
 record, and a reader filtering for one would read a claim the run never
 made.
+
+A run that kept a report writes a `REPORT` record naming the document it
+wrote, so a script that took the verdict from the tail reads the rest beside
+it without knowing where `[reports] directory` points. The composite action
+does exactly that.
 
 ## Parts of one catalog
 

@@ -19,11 +19,6 @@ use rust_mutants::runner::Cancel;
 use rust_mutants_cli::{Environment, Streams};
 
 /// A copy of `fixture-simple` with every source line ending the other way.
-///
-/// The tree is derived rather than committed. A committed copy is a second
-/// spelling of the same program that a checkout, an editor, or a careless
-/// rewrite can quietly change, and then the test proves the two agree rather
-/// than that the engine handles both endings.
 fn crlf_copy() -> Fixture {
     let fixture = Fixture::copy("fixture-simple");
     for relative in rust_sources(fixture.root()) {
@@ -87,7 +82,7 @@ fn run(fixture: &Fixture) -> (Vec<Fate>, Vec<String>) {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let directory = fixture.root().join("reports/mutation");
+    let directory = rust_mutants_cli::app::stored::Store::read(fixture.root()).root();
     let mut runs: Vec<PathBuf> = std::fs::read_dir(&directory)
         .unwrap_or_else(|error| panic!("{}: {error}", directory.display()))
         .flatten()
@@ -161,6 +156,7 @@ fn environment(fixture: &Fixture) -> Environment {
     Environment {
         vars: njutest_devkit::paths::environment_for_a_run(),
         temp_directory: fixture.temp().to_path_buf(),
+        program: PathBuf::from("this test never runs it"),
         cache_directory: fixture.cache().to_path_buf(),
         working_directory: fixture.root().to_path_buf(),
         no_color: true,

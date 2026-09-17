@@ -2,17 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Which test targets could have observed a mutant at all.
-//!
-//! A target whose run never executed the line a mutant sits on cannot have
-//! noticed it, so running it proves nothing and costs a process. This layer
-//! measures that once, on the pristine tree, and every later execution is
-//! routed by it.
-//!
-//! Everything here fails open into *more* work, never less: a build that will
-//! not instrument, tools that are not installed, a project that configures its
-//! own compiler flags — each leaves the measurement empty, and an empty
-//! measurement routes every mutant to every target, exactly as if this layer
-//! did not exist.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
@@ -60,11 +49,6 @@ impl Reached {
     }
 
     /// Whether it reached every target it set out to, which is what makes it worth remembering.
-    ///
-    /// A measurement names the targets it could not read. One that names any
-    /// is a measurement of some of them: sound to route by, because what it
-    /// could not read stays in every route, and wrong to keep, because a later
-    /// run would have nothing to tell it from a whole one.
     #[must_use]
     pub fn whole(&self) -> bool {
         self.limitations
@@ -122,19 +106,6 @@ pub fn establish(
 }
 
 /// The limitation a cargo configuration refuses a coverage measurement with, before a build is attempted.
-///
-/// A coverage build has to compile the tree with flags of its own, and it can
-/// only do that by putting back the flags the project configured. A file this
-/// release could not read faithfully says nothing about what those are, and a
-/// `target.*` table says flags whose application is cargo's decision about the
-/// target being built rather than this one's. Measuring under flags that are
-/// not the project's would route mutations by a coverage profile of a
-/// different program, so the measurement is refused and every mutation is
-/// routed by its file instead: sound, and none of the saving.
-///
-/// The unreadable file is answered first. A file nobody could read may also
-/// hold a `target.*` table, and the more serious fact about it is that nothing
-/// in it is known.
 #[must_use]
 pub const fn refusal(flags: &Configured) -> Option<&'static str> {
     if flags.unreadable {
@@ -223,11 +194,6 @@ fn measure(
 }
 
 /// Runs every target once with nothing active and reads back what each covered.
-///
-/// A measurement that stops early says which targets it never reached. A
-/// partial measurement that does not is one a route reads as "these targets
-/// ran and covered nothing", which is the difference between a mutant nobody
-/// could notice and a mutant nobody looked at.
 fn run_targets(
     reading: &Reading<'_>,
     targets: &[execute::TestTarget],
@@ -374,21 +340,6 @@ pub fn directory(target_dir: &Path) -> PathBuf {
 }
 
 /// A measurement an earlier run of the same tree already made.
-///
-/// What a coverage measurement establishes is a function of three things and
-/// nothing else: the sources every unit compiled, the flags and dependencies
-/// the manifests chose, and the toolchain that compiled it. None of them
-/// changes because a mutation was written, so a tree measured yesterday and
-/// unchanged today has already been measured — and the measurement is the most
-/// expensive thing a run does, because instrumenting for coverage changes the
-/// fingerprint of every crate and rebuilds the whole graph.
-///
-/// Remembering it is therefore the largest single piece of work a run can
-/// remove, and the claim it rests on is the one the outcome store already
-/// rests on: nothing that could change the answer changed.
-///
-/// Nothing here ever fails a run. A measurement that cannot be read is one the
-/// run makes again, which is what it would have done anyway.
 pub mod remembered {
     use std::path::{Path, PathBuf};
 
@@ -398,9 +349,6 @@ pub mod remembered {
     pub const LAYOUT: &str = "rust-mutants/measurements-v1";
 
     /// Bumped when what a measurement holds changes, or when a release finds a reason not to trust one written before it.
-    ///
-    /// Two: a measurement cut short used to be remembered as if it were whole,
-    /// and a run that read one back routed away targets nobody had measured.
     pub const ABI: u32 = 2;
 
     /// Everything a measurement is a function of.

@@ -41,11 +41,6 @@ use std::io::Write;
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// A cancellation flag the process raises on `SIGINT` and `SIGTERM`, and the number of the signal that raised it.
-///
-/// Both binaries of this crate are composition roots and both want this, and
-/// neither of them is where the duplication should live: registering a handler
-/// reads nothing of the process, so it belongs beside the code it cancels
-/// rather than beside the code that reads `argv`.
 #[must_use]
 pub fn interruptible() -> (
     rust_mutants::runner::Cancel,

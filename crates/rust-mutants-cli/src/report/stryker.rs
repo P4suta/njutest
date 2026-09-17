@@ -2,12 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The run as a mutation testing report every Stryker reader understands.
-//!
-//! The projection is lossy on purpose: it says what the schema can say and
-//! nothing more. A candidate the compiler refused has no position, so it is
-//! not in the document at all rather than placed at a guess, and the
-//! `unreached` a coverage-routed run establishes becomes `NoCoverage`, which
-//! is the same claim in the other vocabulary.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -66,7 +60,7 @@ pub struct FileResult {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MutantResult {
-    /// The mutant's own identity, which is stable across runs.
+    /// What names this mutation across runs: the place it is in, not the file's bytes, which any edit re-mints.
     pub id: String,
     /// The rule that proposed it.
     pub mutator_name: String,
@@ -107,11 +101,6 @@ pub struct Position {
 
 /// Projects one run report from the sources it names, with the thresholds a reader colours by.
 ///
-/// Every file the report names is here. A file this tree does not hold is
-/// [`crate::error::CliError::SourceUnreadable`] rather than a file quietly left out: a
-/// projection that lost every mutant of a file without saying so would be read
-/// as a run that had nothing to say about it.
-///
 /// # Errors
 /// [`crate::error::CliError::SourceUnreadable`] when a file the report names is not under
 /// `root`.
@@ -145,7 +134,10 @@ pub fn project(
         };
         let location = located(&file.source, mutant.line, mutant.column, &mutant.original);
         file.mutants.push(MutantResult {
-            id: mutant.id.clone(),
+            id: format!(
+                "{}:{}:{}:{}",
+                mutant.path, mutant.item, mutant.rule, mutant.original
+            ),
             mutator_name: mutant.rule.clone(),
             replacement: (!mutant.replacement.is_empty()).then(|| mutant.replacement.clone()),
             location,

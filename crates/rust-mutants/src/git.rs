@@ -2,16 +2,12 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What git says about the tree, and what it is never allowed to say by silence.
-//!
-//! Every answer here is optional, and nothing turns a question git could not be
-//! asked into an empty answer: a run that could not see what changed must never
-//! look like a run that saw nothing change.
 
 use std::ffi::OsString;
 use std::path::Path;
 
 use crate::glob::Pattern;
-use crate::runner::{Spec, Watch, run};
+use crate::runner::{Bound, Spec, Watch, run};
 
 /// The revision a change set is computed against when the caller names none.
 pub const DEFAULT_BASE: &str = "HEAD";
@@ -83,8 +79,6 @@ pub fn facts<W: Watch>(asking: &Asking<'_, W>) -> Option<Facts> {
 }
 
 /// Every file that differs from `base`, committed and not, leaving out anything under an excluded directory.
-///
-/// Returns nothing when git could not be asked or does not know `base`.
 #[must_use]
 pub fn changed<W: Watch>(asking: &Asking<'_, W>, base: &str) -> Option<Change> {
     let merge_base = ask(
@@ -124,10 +118,6 @@ pub fn changed<W: Watch>(asking: &Asking<'_, W>, base: &str) -> Option<Change> {
 }
 
 /// The Rust files a change set names, as the patterns a run mutates within, keeping only what `include` already admits when it admits anything.
-///
-/// An empty list of patterns is every file, so a change set naming no Rust
-/// file at all becomes the one pattern nothing matches: a run about nothing
-/// changing must mutate nothing, not everything.
 #[must_use]
 pub fn within(change: &Change, include: &[Pattern]) -> Vec<Pattern> {
     let sources: Vec<&String> = change
@@ -187,7 +177,7 @@ fn ask<W: Watch>(
 ) -> Option<String> {
     let mut argv: Vec<OsString> = vec![OsString::from("git")];
     argv.extend(arguments.iter().map(OsString::from));
-    let mut spec = Spec::new(argv);
+    let mut spec = Spec::new(argv, Bound::After(crate::runner::PROBE));
     spec.dir = Some(asking.root.to_path_buf());
     spec.env = Some(asking.env.to_vec());
     spec.structured_stdout = Some(1 << 20);

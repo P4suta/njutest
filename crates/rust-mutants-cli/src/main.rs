@@ -15,6 +15,7 @@ fn main() -> ExitCode {
     let (cancel, signalled) = rust_mutants_cli::interruptible();
     let environment = Environment {
         temp_directory: std::env::temp_dir(),
+        program: std::env::current_exe().unwrap_or_else(|_error| PathBuf::from("rust-mutants")),
         cache_directory: Environment::cache_directory_of(&vars),
         working_directory: std::env::current_dir().unwrap_or_else(|_error| PathBuf::from(".")),
         no_color: Environment::no_color_of(&vars),

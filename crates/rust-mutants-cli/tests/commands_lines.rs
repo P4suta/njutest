@@ -2,11 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The literal text the commands that measure nothing answer with.
-//!
-//! What a person reads before they trust a score is the operator table, and
-//! what they read when a flag is wrong is the refusal. Both are text, so both
-//! are held as text: a golden's diff is the review, and a refusal that stopped
-//! naming what it expected is a refusal nobody can act on.
 
 use std::ffi::OsString;
 
@@ -25,6 +20,7 @@ fn environment(fixture: &Fixture) -> Environment {
     Environment {
         vars: njutest_devkit::paths::environment_for_a_run(),
         temp_directory: fixture.temp().to_path_buf(),
+        program: std::path::PathBuf::from("this test never runs it"),
         cache_directory: fixture.cache().to_path_buf(),
         working_directory: fixture.root().to_path_buf(),
         no_color: true,

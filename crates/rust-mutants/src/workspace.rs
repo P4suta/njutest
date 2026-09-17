@@ -22,6 +22,56 @@ pub const TARGET_DIR_PREFIX: &str = "rust-mutants-target-";
 /// The schema a target directory's owner marker names, so a reader can tell a build cache from a run's scratch tree.
 pub const TARGET_OWNER_SCHEMA: &str = "rust-mutants-target-owner-v1";
 
+/// Where a run's test processes work, under the temporary root: one per run, beside the target directory rather than inside it.
+pub const SCRATCH_DIR_PREFIX: &str = "rm-scratch-";
+
+/// How many scratch directories the engine will look at before naming one after the process instead.
+const SCRATCH_ATTEMPTS: u32 = 1024;
+
+/// The schema a scratch directory's owner marker names, so a reader can tell a run's working area from a build cache.
+pub const SCRATCH_OWNER_SCHEMA: &str = "rust-mutants-scratch-owner-v1";
+
+/// Every prefix the engine names a temporary directory with, which is what a sweep collects.
+pub const SWEPT_PREFIXES: [&str; 3] = [DIR_PREFIX, TARGET_DIR_PREFIX, SCRATCH_DIR_PREFIX];
+
+/// The part of a stable name that identifies the source root.
+fn keyed(root: &Path) -> String {
+    snapshot::stable_name(root)
+        .strip_prefix(DIR_PREFIX)
+        .unwrap_or_default()
+        .to_owned()
+}
+
+/// Where cargo builds a run against `root`, under `parent`.
+#[must_use]
+pub fn target_of(parent: &Path, root: &Path) -> PathBuf {
+    parent.join(format!("{TARGET_DIR_PREFIX}{}", keyed(root)))
+}
+
+/// The `at`th scratch directory under `parent`, where a run's test processes work.
+#[must_use]
+pub fn scratch_of(parent: &Path, at: u32) -> PathBuf {
+    parent.join(format!("{SCRATCH_DIR_PREFIX}{at}"))
+}
+
+/// Takes the lowest-numbered scratch directory no other run holds, so the name stays short however many runs share a temporary root.
+fn claim_scratch(parent: &Path, now: jiff::Timestamp) -> (PathBuf, Option<tempowner::Owner>) {
+    for at in 0..SCRATCH_ATTEMPTS {
+        let dir = scratch_of(parent, at);
+        if std::fs::create_dir_all(&dir).is_err() {
+            continue;
+        }
+        if let Ok(owner) = tempowner::claim_as(&dir, now, SCRATCH_OWNER_SCHEMA) {
+            return (dir, Some(owner));
+        }
+    }
+    let dir = parent.join(format!("{SCRATCH_DIR_PREFIX}p{}", std::process::id()));
+    let owner = std::fs::create_dir_all(&dir)
+        .ok()
+        .and_then(|()| tempowner::claim_as(&dir, now, SCRATCH_OWNER_SCHEMA).ok());
+    (dir, owner)
+}
+
 /// Configures [`Workspace::open`].
 #[derive(Debug, Clone, Default)]
 pub struct OpenOptions {
@@ -44,14 +94,17 @@ pub struct OpenOptions {
     /// Pass `--locked` to every cargo command.
     pub locked: bool,
     /// Directories outside the root the workspace may read code from, each copied beside the tree.
-    ///
-    /// A run measures a copy, so a path dependency outside the root is not in
-    /// it. Naming one here says the run may copy it too, which makes the
-    /// measurement about a tree that is not the one on disk: it is a decision
-    /// for a person to make rather than one a run takes silently.
     pub allow_outside: Vec<PathBuf>,
     /// Where the run records what it did. [`Recorder::disabled`] by default.
     pub trace: Recorder,
+}
+
+/// `path` as a `/`-separated path under `root`, or nothing when it is not under it.
+fn within(root: &Path, path: &Path) -> Option<String> {
+    let resolved = crate::canonical::canonical(path).unwrap_or_else(|_error| path.to_path_buf());
+    let relative = resolved.strip_prefix(root).ok()?;
+    let named = crate::id::slashed(relative);
+    (!named.is_empty()).then_some(named)
 }
 
 /// Claims the build cache for the life of this workspace, so a sweep elsewhere leaves it alone while cargo is writing into it. A cache that cannot be claimed is one another run is already using, which is not this run's business and not a reason to fail: cargo takes its own lock.
@@ -69,6 +122,10 @@ pub struct Workspace {
     pub(crate) target_dir: PathBuf,
     /// The claim on that directory: held for the life of the workspace so a concurrent sweep leaves it alone, and released without removing anything.
     pub(crate) target_owner: Option<tempowner::Owner>,
+    /// Where this run's test processes work: a sibling of the target directory, not a child, because its name has to stay inside `sun_path`.
+    pub(crate) scratch_dir: PathBuf,
+    /// The claim on that directory, held and released exactly as [`Workspace::target_owner`] is.
+    pub(crate) scratch_owner: Option<tempowner::Owner>,
     pub(crate) base_env: Vec<(OsString, OsString)>,
     pub(crate) swept: SweepResult,
     pub(crate) keep_temp: bool,
@@ -136,10 +193,6 @@ pub enum SessionError {
     )]
     VerifyFailed {
         /// Every target that failed, in identity order.
-        ///
-        /// A run does not stop at the first: somebody reading this is about to
-        /// fix what it names, and a refusal that names one of five sends them
-        /// round the loop five times.
         targets: Vec<String>,
         /// The tail of what the first of them said.
         output: String,
@@ -218,17 +271,12 @@ impl SessionError {
 
 impl Workspace {
     /// Refuses a tree a copy of which would not build: one that is a member of a workspace, and one that reads code from outside itself.
-    ///
-    /// Both are asked of the tree on disk, before it is copied. Asked of the
-    /// copy they would be asked of a tree that already cannot resolve, and
-    /// cargo's answer would be about a manifest that is missing rather than
-    /// about what a run could have done instead.
     fn reachable(
         root: &Path,
         toolchain: &Toolchain,
         options: &OpenOptions,
         cancel: &Cancel,
-    ) -> Result<(), crate::EngineError> {
+    ) -> Result<Option<String>, crate::EngineError> {
         let metadata = Metadata::load_no_deps(
             &Driver {
                 toolchain,
@@ -268,7 +316,7 @@ impl Workspace {
             }
             .into());
         }
-        Ok(())
+        Ok(within(root, &metadata.target_directory))
     }
 
     /// Sweeps the temporary area, copies `root` into a snapshot, and locates the toolchain inside the copy.
@@ -285,8 +333,7 @@ impl Workspace {
         let root = crate::canonical::canonical(root).unwrap_or_else(|_error| root.to_path_buf());
         let parent = options.temp_directory.clone();
         let now = jiff::Timestamp::now();
-        let swept =
-            tempowner::sweep(&parent, &[DIR_PREFIX, TARGET_DIR_PREFIX], now).unwrap_or_default();
+        let swept = tempowner::sweep(&parent, &SWEPT_PREFIXES, now).unwrap_or_default();
 
         let toolchain = Toolchain::locate(
             &LocateOptions {
@@ -297,9 +344,9 @@ impl Workspace {
             &root,
             cancel,
         )?;
-        Self::reachable(&root, &toolchain, &options, cancel)?;
+        let build_dir = Self::reachable(&root, &toolchain, &options, cancel)?;
 
-        let snapshot = Self::copy(&root, &parent, &options, now)?;
+        let snapshot = Self::copy(&root, (&parent, build_dir), &options, now)?;
         options.trace.open(OpenRecord {
             root: root.display().to_string(),
             snapshot_dir: snapshot.dir().display().to_string(),
@@ -326,13 +373,9 @@ impl Workspace {
                 offline: options.offline,
             },
         )?;
-        let target_dir = parent.join(format!(
-            "{TARGET_DIR_PREFIX}{}",
-            snapshot::stable_name(&root)
-                .strip_prefix(DIR_PREFIX)
-                .unwrap_or_default()
-        ));
+        let target_dir = target_of(&parent, &root);
         let target_owner = claim_target(&target_dir, now, &root);
+        let (scratch_dir, scratch_owner) = claim_scratch(&parent, now);
         phase.end();
         Ok(Self {
             snapshot,
@@ -340,6 +383,8 @@ impl Workspace {
             metadata,
             target_dir,
             target_owner,
+            scratch_dir,
+            scratch_owner,
             base_env,
             swept,
             keep_temp: options.keep_temp,
@@ -352,7 +397,7 @@ impl Workspace {
     /// Copies the tree and records what that produced.
     fn copy(
         root: &Path,
-        parent: &Path,
+        (parent, build_dir): (&Path, Option<String>),
         options: &OpenOptions,
         now: jiff::Timestamp,
     ) -> Result<Snapshot, crate::EngineError> {
@@ -363,6 +408,7 @@ impl Workspace {
                 exclude: options.exclude.clone(),
                 beside: options.allow_outside.clone(),
                 report_dir: options.report_directory.clone(),
+                build_dir,
                 dest_parent: parent.to_path_buf(),
             },
             now,
@@ -433,6 +479,12 @@ impl Workspace {
         &self.target_dir
     }
 
+    /// The directory this run's test processes work in: beside the target directory, and removed when the run closes.
+    #[must_use]
+    pub fn scratch_dir(&self) -> &Path {
+        &self.scratch_dir
+    }
+
     /// Discovers, instruments, validates, and builds; see [`prepare()`].
     ///
     /// # Errors
@@ -455,9 +507,16 @@ impl Workspace {
         }
         if self.keep_temp {
             let dir = self.snapshot.dir().to_path_buf();
+            if let Some(mut owner) = self.scratch_owner.take() {
+                drop(owner.keep());
+            }
             self.snapshot.keep()?;
-            return Ok(vec![dir, self.target_dir]);
+            return Ok(vec![dir, self.target_dir, self.scratch_dir]);
         }
+        if let Some(mut owner) = self.scratch_owner.take() {
+            drop(owner.release());
+        }
+        drop(std::fs::remove_dir_all(&self.scratch_dir));
         self.snapshot.cleanup()?;
         Ok(Vec::new())
     }

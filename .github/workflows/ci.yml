@@ -33,7 +33,12 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     strategy:
-      fail-fast: false
+      # One platform failing means the commit is red whatever the other two
+      # say, and a person who has to wait for the slowest of three to be told
+      # so waits for the wrong reason. `mise run check` already answered for
+      # this machine before the push; what these add is the other two, and the
+      # first of them to say no is the answer.
+      fail-fast: true
       matrix:
         os: [ubuntu-24.04, macos-15, windows-2025]
     steps:
@@ -47,13 +52,22 @@ jobs:
       - name: Fetch the locked dependency graph
         env:
           CARGO_NET_OFFLINE: "false"
+        shell: bash
         run: cargo fetch --locked
       # `cargo test --all-targets` builds an example as a test harness, not as
       # the program it is, and part of this suite drives a scripted `cargo`
       # that is one. Building it plainly is what makes those tests able to run.
       - name: Build the scripted toolchain the suite drives
+        shell: bash
         run: cargo build --locked --examples -p rust-mutants
+      # `shell: bash` rather than the default, which is PowerShell on Windows:
+      # a native command that fails there does not stop the script, so the
+      # suite below ran on after the first half had already failed and the
+      # step's status became the second half's. A failing test took the job's
+      # forty-five minute timeout to be reported, and would have been reported
+      # as a pass had the second half succeeded.
       - name: Test every target
+        shell: bash
         run: |
           cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast --status-level fail -E 'not binary(/^toolchain_/)'
           # Each test in these binaries drives its own Cargo. Two outer tests
@@ -61,6 +75,7 @@ jobs:
           # resource exhaustion; the ordinary suite above remains fully parallel.
           cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast --status-level fail --test-threads 2 -E 'binary(/^toolchain_/)'
       - name: Doctests
+        shell: bash
         run: cargo test --locked --workspace --doc
 
   lint:
@@ -178,6 +193,19 @@ jobs:
       - name: Collect coverage (run the suite once)
         run: |
           set -euo pipefail
+          # The instrumented build lands in the ordinary `target/`, which the
+          # cache restored, and `report` reads the coverage mapping of every
+          # object file it finds there — including the ones built from a source
+          # version this commit no longer has. A file this branch changed then
+          # appears twice: once as the copy the tests ran, once as a copy
+          # nothing ran, and the floor is measured against a crate that is half
+          # phantom. On one pull request `snapshot/mod.rs` read 2604 regions and
+          # 42% where the same file on `main` read 1291 and 84%.
+          #
+          # `llvm-cov clean` removes the profiles and this run's own artifacts;
+          # what has to go is everything the cache brought. A measurement that
+          # gates a merge is worth the rebuild.
+          cargo clean
           cargo llvm-cov clean --workspace
           cargo llvm-cov show-env --export-prefix > "$RUNNER_TEMP/coverage-env.sh"
           . "$RUNNER_TEMP/coverage-env.sh"
@@ -294,11 +322,15 @@ jobs:
           printf 'version = 1\ncontract = "deep-v1"\n' > "$RUNNER_TEMP/interpreted/.njutest.toml"
           ./target/release/njutest verify \
             --directory "$RUNNER_TEMP/interpreted" --offline --locked --no-cache --ui=plain \
-            || test $? -eq 1
+            | tee "$RUNNER_TEMP/interpreted.out" \
+            || test "${PIPESTATUS[0]}" -eq 1
+      # The run says where it wrote, so this never has to know the layout.
       - name: The run says it interpreted the suite
         run: |
-          report="$RUNNER_TEMP/interpreted/$(jq -r .directory "$RUNNER_TEMP/interpreted/reports/latest-any.json")/njutest-assurance-report-v1.json"
-          jq --exit-status '.contract == "deep-v1" and .accounting.soundness.executed == true' "$report"
+          written=$(awk -F'\t' '$1 == "REPORT" { print $2 }' "$RUNNER_TEMP/interpreted.out")
+          test -n "$written" || { echo "the run said nothing about where it wrote"; exit 1; }
+          jq --exit-status '.contract == "deep-v1" and .accounting.soundness.executed == true' \
+            "$RUNNER_TEMP/interpreted/$written"
 
   action-smoke:
     name: action-smoke

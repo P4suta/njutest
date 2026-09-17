@@ -2,12 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! `njutest fix`: what repairs a run was offered, and writing the ones that still hold up.
-//!
-//! Nothing is written on the strength of what a run recorded. `--apply` puts
-//! every test a provider wrote to the compiler and the tests again, in a
-//! snapshot, and checks that the file it patches is still the file the
-//! provider saw. A corpus entry is an input rather than a claim, so what is
-//! checked of it is that the file it would create is still not there.
 
 use std::io::Write;
 use std::path::Path;
@@ -34,14 +28,14 @@ pub fn run(
     let run = match runs::resolve(root, arguments.run.as_deref()) {
         Ok(run) => run,
         Err(error) => {
-            super::diagnose(stderr, &error.to_string());
+            super::complain(stderr, &error, error.code());
             return EXIT_ERROR;
         }
     };
     let report = match runs::report(root, &run) {
         Ok(report) => report,
         Err(error) => {
-            super::diagnose(stderr, &error.to_string());
+            super::complain(stderr, &error, error.code());
             return EXIT_ERROR;
         }
     };
@@ -136,7 +130,7 @@ fn apply(
     let config = match crate::config::Config::load(root) {
         Ok(config) => config,
         Err(error) => {
-            super::diagnose(stderr, &error.to_string());
+            super::complain(stderr, &error, error.code());
             return EXIT_ERROR;
         }
     };
@@ -152,6 +146,8 @@ fn apply(
         harness_args: config.execution.test_binary_args,
         skip_targets: config.execution.skip_targets,
         timeout: RECHECK_TIMEOUT,
+        build_timeout: config.execution.build_timeout,
+        reports: crate::app::reports::Store::of(root, &config.reports.directory),
     };
     let mut written = 0u32;
     let mut already = 0u32;

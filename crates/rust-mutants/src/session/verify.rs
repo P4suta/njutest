@@ -2,12 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The one run of every target with nothing active: the baseline check, and the measurement that rides on it.
-//!
-//! Every guard of the instrumented tree runs on it, and libtest names each
-//! test's thread after the test, so asking the guards what they reached costs
-//! the run nothing it was not already spending. What they say is read here,
-//! and a target this run cannot ask is named rather than read as having
-//! reached nothing.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
@@ -106,7 +100,9 @@ fn verify_targets(
     for target in targets {
         let (baseline, observed) = verify_target(target, scratch, building, &mut verified.touched);
         let _old = tests_run.insert(target.id.clone(), observed);
-        let _kept = verified.targets.insert(target.id.clone(), baseline);
+        let _kept = verified
+            .targets
+            .insert(target.id.clone(), Measured::of(baseline));
     }
     (verified, tests_run)
 }
@@ -123,6 +119,7 @@ fn verify_target(
             .join(format!("{}.log", slug(&target.id)))
     });
     let mut result = ran(target, scratch, recording.as_deref(), building);
+    let mut retried = false;
     let recording = if result.exit_code == crate::instrument::TOUCH_UNAVAILABLE_EXIT {
         building.trace.note(
             crate::touch::UNRECORDED,
@@ -137,12 +134,17 @@ fn verify_target(
     } else {
         recording
     };
+    if let Some(again) = again(&result, target, (scratch, recording.as_deref()), building) {
+        result = again;
+        retried = true;
+    }
     building.trace.verify(crate::trace::VerifyRecord {
         target: target.id.clone(),
         outcome: result.outcome.name().to_owned(),
         tests_run: result.tests_run,
         duration_ms: u64::try_from(result.duration.as_millis()).unwrap_or(u64::MAX),
         remembered: false,
+        retried,
     });
     let baseline = Baseline {
         outcome: result.outcome,
@@ -165,6 +167,9 @@ fn verify_target(
             .limitations
             .push(crate::limitation::DOCTESTS_NONE.to_owned());
     }
+    if baseline.passed() && retried {
+        touched.limited(crate::limitation::BASELINE_PASSED_ON_RETRY, &target.id);
+    }
     if baseline.passed() {
         gather(
             touched,
@@ -185,11 +190,35 @@ fn verify_target(
 /// The trace note proving why no baseline process follows it.
 const BASELINE_REMEMBERED: &str = "baseline-remembered";
 
+/// The trace note saying a target was run a second time, and why.
+const BASELINE_RETRIED: &str = "baseline-retried";
+
+/// One more run of a target that did not pass, or nothing when the first answer stands.
+fn again(
+    result: &MutantResult,
+    target: &TestTarget,
+    (scratch, recording): (&Path, Option<&Path>),
+    building: &Building<'_>,
+) -> Option<MutantResult> {
+    if passing(result.outcome) || building.cancel.is_cancelled() {
+        return None;
+    }
+    building.trace.note(
+        BASELINE_RETRIED,
+        &format!(
+            "{}: the target did not pass with nothing active, so it is run once more before \
+             the session refuses: a first answer something outside the code decided is not \
+             one to end a run on",
+            target.id
+        ),
+    );
+    Some(ran(target, scratch, recording, building))
+}
+
 /// Why a passing baseline could not safely become an answer for another run.
 const BASELINE_NOT_REMEMBERED: &str = "baseline-not-remembered";
 
-/// The recipe of a remembered baseline. The engine version is also in every
-/// key; this number makes a semantic invalidation explicit within one build.
+/// The recipe of a remembered baseline. The engine version is also in every key; this number makes a semantic invalidation explicit within one build.
 const BASELINE_ABI: u32 = 1;
 
 /// The on-disk shape of one passing baseline.
@@ -223,18 +252,14 @@ struct Remembering {
     artifacts: BTreeMap<String, String>,
 }
 
-/// A remembered verification and the optional summary count needed to replay
-/// its trace without turning harness silence into a reported zero.
+/// A remembered verification and the optional summary count needed to replay its trace without turning harness silence into a reported zero.
 struct Recalled {
     verified: Verified,
     tests_run: BTreeMap<String, Option<u32>>,
 }
 
 impl Remembering {
-    /// Names a baseline by every input visible to its processes or to the
-    /// engine interpreting their answers. The actual executable bytes are
-    /// checked on read as well: source equality never stands in for program
-    /// equality.
+    /// Names a baseline by every input visible to its processes or to the engine interpreting their answers. The actual executable bytes are checked on read as well: source equality never stands in for program equality.
     fn of(
         targets: &[TestTarget],
         scratch: &Path,
@@ -310,9 +335,7 @@ impl Remembering {
         self.directory.join(format!("baseline-{}.json", self.key))
     }
 
-    /// Reads only a whole, passing document for the exact binaries that are
-    /// about to be run. Any malformed or stale part turns the whole document
-    /// into a miss.
+    /// Reads only a whole, passing document for the exact binaries that are about to be run. Any malformed or stale part turns the whole document into a miss.
     fn read(&self, targets: &[TestTarget], catalog: &Catalog) -> Option<Recalled> {
         let bytes = std::fs::read(self.path()).ok()?;
         let remembered: Remembered = serde_json::from_slice(&bytes).ok()?;
@@ -363,7 +386,7 @@ impl Remembering {
                 return None;
             }
             let _old = tests_run.insert(target.clone(), baseline.tests_run);
-            let _old = verified.targets.insert(target, value);
+            let _old = verified.targets.insert(target, Measured::of(value));
         }
         Some(Recalled {
             verified,
@@ -371,8 +394,7 @@ impl Remembering {
         })
     }
 
-    /// Writes only a passing answer and the byte identity of every executable.
-    /// A write failure merely makes the next run measure again.
+    /// Writes only a passing answer and the byte identity of every executable. A write failure merely makes the next run measure again.
     fn write(
         &self,
         verified: &Verified,
@@ -381,7 +403,12 @@ impl Remembering {
     ) -> Result<(), String> {
         let mut remembered_targets = BTreeMap::new();
         for target in targets {
-            let Some(baseline) = verified.targets.get(&target.id).filter(|one| one.passed()) else {
+            let Some(baseline) = verified
+                .targets
+                .get(&target.id)
+                .and_then(Measured::judgeable)
+                .map(Passing::baseline)
+            else {
                 return Err(format!("{} has no passing baseline to remember", target.id));
             };
             let Some(observed_tests_run) = tests_run.get(&target.id) else {
@@ -423,9 +450,7 @@ impl Remembering {
     }
 }
 
-/// Integrity of the remembered answer itself. The input key prevents a stale
-/// answer being selected; this prevents a parseable partial edit from being
-/// mistaken for the whole answer that was written.
+/// Integrity of the remembered answer itself. The input key prevents a stale answer being selected; this prevents a parseable partial edit from being mistaken for the whole answer that was written.
 fn answer_digest(
     artifacts: &BTreeMap<String, String>,
     targets: &BTreeMap<String, RememberedBaseline>,
@@ -444,7 +469,7 @@ fn replay(
     trace: &crate::trace::Recorder,
 ) {
     for target in targets {
-        let Some(baseline) = verified.targets.get(&target.id) else {
+        let Some(baseline) = verified.targets.get(&target.id).map(Measured::baseline) else {
             continue;
         };
         trace.verify(crate::trace::VerifyRecord {
@@ -453,6 +478,7 @@ fn replay(
             tests_run: tests_run.get(&target.id).copied().flatten(),
             duration_ms: u64::try_from(baseline.duration.as_millis()).unwrap_or(u64::MAX),
             remembered: true,
+            retried: false,
         });
         if target.kind == TargetKind::Doc && tests_run.get(&target.id).copied().flatten() == Some(0)
         {
@@ -466,8 +492,7 @@ fn replay(
     }
 }
 
-/// The aggregate record [`gather`] emits for one target, reconstructed from a
-/// remembered log without pretending that the log was run again.
+/// The aggregate record [`gather`] emits for one target, reconstructed from a remembered log without pretending that the log was run again.
 fn trace_touch(
     target: &str,
     gathered: &crate::touch::TargetTouches,
@@ -500,8 +525,7 @@ fn trace_touch(
     });
 }
 
-/// The actual programs built now, keyed by target. Repeated paths (notably
-/// Cargo for doctest targets) are hashed once.
+/// The actual programs built now, keyed by target. Repeated paths (notably Cargo for doctest targets) are hashed once.
 fn artifacts(targets: &[TestTarget]) -> Result<BTreeMap<String, String>, String> {
     let mut files: BTreeMap<PathBuf, String> = BTreeMap::new();
     let mut found = BTreeMap::new();
@@ -539,8 +563,7 @@ fn file_digest(path: &Path) -> Result<String, String> {
     Ok(hex::encode(hasher.finalize()))
 }
 
-/// Rejects a syntactically valid cache that names a target or catalog site the
-/// current build does not have.
+/// Rejects a syntactically valid cache that names a target or catalog site the current build does not have.
 fn valid_touches(
     touched: &crate::touch::Touched,
     targets: &BTreeSet<&str>,
@@ -666,7 +689,8 @@ fn target_key(key: &mut Key, target: &TestTarget, scratch: &Path, building: &Bui
     };
     let request = ExecRequest::new(target)
         .with_args(building.options.harness_args.clone())
-        .with_scratch(scratch);
+        .with_scratch(scratch)
+        .in_scratch(building.options.scratch_working_directory);
     let argv = request.argv();
     key.u64("argv-count", u64::try_from(argv.len()).unwrap_or(u64::MAX));
     for argument in argv {
@@ -701,11 +725,6 @@ fn os_bytes(value: &OsStr) -> Vec<u8> {
 }
 
 /// Refuses a tree whose instrumented baseline does not pass, once every target has been asked.
-///
-/// The refusal comes after the loop rather than inside it because a person
-/// reading it is about to fix what it names, and a message that names the
-/// first of five failing targets sends them round the loop five times. Running
-/// the rest costs a passing tree nothing: there is nothing to run past.
 fn refused(verified: &Verified, failing: Failing) -> Result<(), EngineError> {
     if verified.failing().is_empty() || failing == Failing::Exclude {
         return Ok(());
@@ -718,17 +737,31 @@ pub(super) fn refusal(verified: &Verified) -> EngineError {
     let failed = verified.failing();
     EngineError::from(SessionError::VerifyFailed {
         targets: failed.iter().map(|target| (*target).to_owned()).collect(),
-        output: failed
-            .first()
-            .and_then(|target| verified.targets.get(*target))
-            .map_or_else(String::new, |baseline| baseline.output.clone()),
+        output: said(verified, &failed),
     })
 }
 
+/// What every failing target printed, each under its own name.
+fn said(verified: &Verified, failed: &[&str]) -> String {
+    let mut text = String::new();
+    for target in failed {
+        let Some(baseline) = verified.targets.get(*target).map(Measured::baseline) else {
+            continue;
+        };
+        if baseline.output.trim().is_empty() {
+            continue;
+        }
+        if !text.is_empty() {
+            text.push('\n');
+        }
+        text.push_str(target);
+        text.push('\n');
+        text.push_str(&baseline.output);
+    }
+    text
+}
+
 /// One target run with nothing active, recording into `log` when it was asked to.
-///
-/// The log is removed first: the directory outlives a run, and a record two
-/// runs both appended to would say the older one's touches were this one's.
 fn ran(
     target: &TestTarget,
     scratch: &Path,
@@ -757,7 +790,8 @@ fn ran(
     };
     let request = ExecRequest::new(target)
         .with_args(building.options.harness_args.clone())
-        .with_scratch(scratch);
+        .with_scratch(scratch)
+        .in_scratch(building.options.scratch_working_directory);
     execute::exec(&request, &context, cancel, &workspace.trace)
 }
 
@@ -772,31 +806,24 @@ pub struct Baseline {
     /// How many tests it ran, which is what asking the whole of it about one mutation costs.
     pub tests: u32,
     /// How many tests the harness was told to skip, which is what tells a target that ran nothing from one that said nothing.
-    ///
-    /// `tests` counts what passed and what failed and nothing else, so a
-    /// target whose every test carries `#[ignore]` runs none and reports
-    /// none. Without this it is indistinguishable from a harness that printed
-    /// no summary at all, and the two are opposite things: one is a target
-    /// with nothing to say, the other is a target nothing was learned about.
     pub ignored: u32,
     /// What it printed, kept only where it did not pass, because that is the only time anybody reads it.
     pub output: String,
 }
 
+/// Whether an outcome with nothing active is one a mutation can be put to.
+const fn passing(outcome: crate::outcome::Outcome) -> bool {
+    matches!(
+        outcome,
+        crate::outcome::Outcome::Survived | crate::outcome::Outcome::Inconclusive
+    )
+}
+
 impl Baseline {
     /// Whether this target can be judged against.
-    ///
-    /// A suite that already fails cannot tell a mutation from what was
-    /// failing before it: every mutant put to it comes back killed, and none
-    /// of those kills is about the mutation. `Inconclusive` passes because it
-    /// is a target that ran nothing, which is a target with nothing to say
-    /// rather than one that said no.
     #[must_use]
     pub const fn passed(&self) -> bool {
-        matches!(
-            self.outcome,
-            crate::outcome::Outcome::Survived | crate::outcome::Outcome::Inconclusive
-        )
+        passing(self.outcome)
     }
 }
 
@@ -805,24 +832,93 @@ impl Baseline {
 #[non_exhaustive]
 pub struct Verified {
     /// What each target's own baseline came to, by target identity.
-    pub targets: BTreeMap<String, Baseline>,
+    pub targets: BTreeMap<String, Measured>,
     /// What the guards recorded on that same run.
     pub touched: crate::touch::Touched,
 }
 
+/// What one target's baseline came to, in the two cases that mean different things.
+///
+/// The distinction used to be a method somebody had to remember to call. A
+/// target whose own tests do not pass answers every mutation with the same
+/// failure, so a run that judged against one would report a kill for every
+/// mutation it put to it and not one of those kills would be about a mutation.
+/// Taking a baseline out of here now makes the caller say which case they are
+/// in, and only one of the two hands back something a mutation can be judged
+/// against.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Measured {
+    /// A baseline a mutation may be put to.
+    Passing(Passing),
+    /// One it may not, kept because a reader has to be told which target it was.
+    Failing(Baseline),
+}
+
+impl Measured {
+    /// What the target came to, whichever case it is in, for an account that covers all of them.
+    #[must_use]
+    pub const fn baseline(&self) -> &Baseline {
+        match self {
+            Self::Passing(passing) => passing.baseline(),
+            Self::Failing(baseline) => baseline,
+        }
+    }
+
+    /// The baseline where a mutation may be judged against it, and nothing where it may not.
+    #[must_use]
+    pub const fn judgeable(&self) -> Option<&Passing> {
+        match self {
+            Self::Passing(passing) => Some(passing),
+            Self::Failing(_) => None,
+        }
+    }
+
+    /// Which case `baseline` is in, decided once here rather than at every use.
+    #[must_use]
+    pub const fn of(baseline: Baseline) -> Self {
+        if baseline.passed() {
+            Self::Passing(Passing(baseline))
+        } else {
+            Self::Failing(baseline)
+        }
+    }
+}
+
+/// A baseline that passed, which is the only kind a mutation may be judged against.
+///
+/// There is no way to make one from a baseline that did not, so a function
+/// that takes this has been given the check rather than asked to remember it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Passing(Baseline);
+
+impl Passing {
+    /// What the target came to.
+    #[must_use]
+    pub const fn baseline(&self) -> &Baseline {
+        &self.0
+    }
+}
+
 impl Verified {
     /// Every target whose baseline did not pass, in identity order.
-    ///
-    /// A run that judges against one of these reports a kill for every
-    /// mutation it puts to it, and not one of those kills is about a
-    /// mutation.
     #[must_use]
     pub fn failing(&self) -> Vec<&str> {
         self.targets
             .iter()
-            .filter(|(_, baseline)| !baseline.passed())
+            .filter(|(_, measured)| measured.judgeable().is_none())
             .map(|(target, _)| target.as_str())
             .collect()
+    }
+
+    /// The baseline a mutation may be judged against for `target`, and nothing where there is none.
+    ///
+    /// The only way to a baseline a result may rest on. Everything else hands
+    /// back what the target came to for an account of it, which is a different
+    /// question and reads differently at the call site.
+    #[must_use]
+    pub fn judgeable(&self, target: &str) -> Option<&Passing> {
+        self.targets.get(target).and_then(Measured::judgeable)
     }
 }
 
@@ -839,25 +935,11 @@ struct Recording<'a> {
 }
 
 /// Whether a target's guards can be asked what they reached.
-///
-/// A target the engine starts itself gets the variable and the process that
-/// reads it. One started through something else — a documented example, which
-/// rustdoc compiles and runs, or a runner the project configured — is one this
-/// engine cannot promise the variable reaches, so it is not asked rather than
-/// read as having reached nothing.
 fn recordable(target: &TestTarget) -> bool {
     target.kind != TargetKind::Doc && target.through.is_empty()
 }
 
 /// Reads one target's record into `touched`, or says why there is nothing of it to read.
-///
-/// A target that was asked and wrote nothing reached nothing: the runtime
-/// appends the first time any guard of the process runs, so a file that is not
-/// there is a process whose guards never ran rather than a process that was
-/// never asked. A file that is there and cannot be read is neither, and is
-/// read as neither. A record naming a thread the run does not know as one of
-/// its tests is a touch nothing can be attributed to, and reaches every test
-/// of the target.
 fn gather(
     touched: &mut crate::touch::Touched,
     recording: &Recording<'_>,
@@ -933,12 +1015,6 @@ fn counted(many: usize) -> u32 {
 }
 
 /// What each test of the target reached, with everything else folded into `loose`.
-///
-/// A record names the thread that made it, and libtest names a test's thread
-/// after the test — but a thread the run does not know as one of its tests is
-/// a thread nothing can be attributed to, whatever it called itself. What it
-/// reached goes where the unattributable goes, and reaches every test of the
-/// target.
 fn attributed(recorded: crate::touch::Seen, ran: &[String]) -> crate::touch::Seen {
     let mut held = crate::touch::Seen {
         loose: recorded.loose,
@@ -955,11 +1031,6 @@ fn attributed(recorded: crate::touch::Seen, ran: &[String]) -> crate::touch::See
 }
 
 /// A target identity as one path segment, so two targets cannot name one file.
-///
-/// The readable part is for a person looking in the directory; the digest is
-/// what makes it an identity, because two targets whose names differ only
-/// where the readable part folds would otherwise share a log and each be read
-/// as having reached what the other did.
 fn slug(target: &str) -> String {
     let readable: String = target
         .chars()

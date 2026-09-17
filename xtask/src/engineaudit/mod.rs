@@ -2,14 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! An independent re-decision of what a completed engine run reported.
-//!
-//! [ADR 0004](../../../docs/adr/0004-proof-layers-not-budgets.md) ships a
-//! layer only against a re-implementation that never calls the engine's, so
-//! nothing here reads `rust_mutants`: every identity is re-minted from the
-//! row's own fields, every column re-tallied from the rows, and every claim
-//! that rests on a recording is held to that recording. Wherever a document
-//! does not carry enough to re-derive a verdict, that is said plainly rather
-//! than read as agreement.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;

@@ -44,11 +44,20 @@ That is not the order CI runs them in, because CI runs the jobs at once and
 waits for all of them while a person waits for each in turn: formatting answers
 in seconds, `lint` — clippy, rustdoc, the repository gates, the fuzz crate's
 own type check, spelling, TOML, workflows — in tens of them, and the suite in
-minutes. Among them, `cargo xtask all` is this repository's own:
+minutes.
+
+It is also what the pre-push hook runs, so a push that goes out has already
+answered everything CI asks but four things this machine cannot answer: the
+suite on Linux and Windows, the coverage ratchets, the suite under Miri, and
+the composite action driven the way another repository drives it.
+`xtask/tests/tasks.rs` holds the correspondence — a job added to `ci-success`
+has to name the local task that answers it first, or say why none can.
+
+Among them, `cargo xtask all` is this repository's own:
 
 | Gate | Refuses |
 | --- | --- |
-| `lints` | `allow-attribute`: an `#[allow]` anywhere in the repository, tests included. `boxed-trait-object`: a `Box<dyn Trait>`. `comment`: a comment that is not documentation, the licence header, or a `rust-mutants:` annotation the engine reads |
+| `lints` | `allow-attribute`: an `#[allow]` anywhere in the repository, tests included. `boxed-trait-object`: a `Box<dyn Trait>`. `comment`: a comment that is not documentation, the licence header, or a `rust-mutants:` annotation the engine reads. `unbounded-removal`: a recursive removal inside a loop, which `rust_mutants::reclaim` does with a budget and an account of what is still there. `perishable-handle`: a command or a record built with a mutant identity in it, which the edit that closes a survivor re-mints. `loose-layout`: a layout decided anywhere but in the configuration — a test joining an exported constant that spells a directory structure, or any file spelling a path under a directory a `DEFAULT_*_DIRECTORY` names. The default lives in its own `config.rs`; everybody else asks the type that owns the layout |
 | `devgates` | a seam the ledger `xtask/seam_allowlist.txt` does not name, and a ledger line the tree no longer has: `static mut`, a `static` with interior mutability, `thread_local!`, `#[cfg(test)]` outside a `mod tests`, a read of the process environment or an exit outside `main.rs`, an import of test support from production code ([ADR 0001](adr/0001-seam-policy.md)) |
 | `deps` | an internal dependency in the wrong direction ([ADR 0012](adr/0012-one-workspace-two-products.md)) |
 | `fixtures` | a fixture project without a `[workspace]` table, a committed `Cargo.lock`, the SPDX header, or with a dependency that is not a path inside itself |
@@ -270,9 +279,12 @@ expected outcome. See [fixtures/README.md](../fixtures/README.md).
 `fuzz/` is a standalone cargo-fuzz crate (nightly, sanitizer) with one target
 per fail-closed parser or byte transformation of the engine; each target
 states one property in its doc comment and `fuzz/README.md` lists them.
-`mise run fuzz:smoke` runs every target briefly; the `fuzz` workflow does the
-same on a pull request that touches the engine and spends real time weekly.
-A crash reproducer worth keeping becomes a regular test.
+`mise run fuzz:smoke` runs every target briefly, which is what somebody
+changing a parser does before pushing; the `fuzz` workflow spends twenty-five
+minutes a target, weekly and on request, and never on a pull request. Five
+thousand executions searches nothing a parser is afraid of, and the workflow
+does not gate `ci-success`, so a crash found there could not have stopped a
+merge in any case. A crash reproducer worth keeping becomes a regular test.
 `xtask/tests/fuzz_ledger.rs` keeps the four places that name the targets in
 step: the source files, the manifest stanzas (each with `bench = false`, so
 `cargo bench` never builds a sanitizer target), the README rows, and the
@@ -376,7 +388,7 @@ The developer-facing infrastructure, and the milestone it arrives in:
 
 | Means | For | Arrives |
 | --- | --- | --- |
-| devkit (golden, paths), error-code ledger, `cargo xtask` gates, `bacon`, `mise run doctor`, `CLAUDE.md` | the inner loop and the ratchets | M0 |
+| devkit (golden, paths), error-code ledger, `cargo xtask` gates, `bacon`, `mise run doctor`, `CONTRIBUTING.md` | the inner loop and the ratchets | M0 |
 | engine trace (every discovery decision, every validation round), goldens with CRLF variants, property tests, fuzz targets for every fail-closed parser, fixtures with fate tables, `rust-mutants explain` / `instrument --file` / `why-skipped`, runner contract tests, external-consumer contract test | seeing why the engine did what it did | M1 |
 | runner trace v1 with `trace summary` and `trace diff`, diagnostics bundle, `--keep-temp` ledger, testkit (fixture repository builder, scripted workspace, `normalize_report`, helper subprocesses), report and help goldens, `xtask report-diff`, `njutest plan --why` | seeing why a run routed what it routed | M2 |
 | scripted session, route events, `njutest explain`, accounting property tests, `mise run dogfood` | the runner on itself | M3 |

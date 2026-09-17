@@ -2,13 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The behaviour key of one test target: everything that could change what that target does, and nothing else.
-//!
-//! A key is an allowlist over what the run already digested for its own
-//! identity. Two runs may reuse a verdict about a mutant only where the key of
-//! the target that established it is the same, so the key must cover every
-//! input to that target's behaviour and must not cover anything else —
-//! diagnostics, parallelism, and how long the run took are outside every key
-//! (ADR 0007).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -22,20 +15,6 @@ use super::tree::Scan;
 pub const KEY_DOMAIN: &str = "njutest-mutation-evidence-key-v2";
 
 /// APIs whose result depends on what is in a directory rather than on what a file says.
-///
-/// A package that uses one keys the whole tree: Rust offers no portable,
-/// unprivileged observation of what a test actually read, so the selection is
-/// static and widens rather than trusts.
-///
-/// Two of them name the path a crate is reached through rather than the
-/// crate's bare name, because the bare names are ordinary English. `ignore`
-/// is how every `#[ignore]` in every Rust test suite spells itself and `glob`
-/// is inside `global`, so as bare words they matched almost every package
-/// that exists and keyed all of them on the whole tree — which is not a
-/// widening that costs a little, it is one that throws away every stored
-/// answer the moment anybody edits a README. A crate is reached as
-/// `ignore::Walk` or through `use ignore::…`, and both of those are
-/// `ignore::`.
 pub const DIRECTORY_READERS: [&str; 7] = [
     "read_dir",
     "walkdir",
@@ -190,12 +169,6 @@ pub fn linked_by(reading: &Reading<'_>, package_id: &str) -> Linked {
 }
 
 /// What is in a package that could change what its code does.
-///
-/// The key is an allowlist: a package's own Rust files and its manifest. A
-/// README beside them is not something a test can read without saying so, and
-/// a package that does say so — one whose sources name `include_str!`,
-/// `include_bytes!`, or that carries a build script whose `rerun-if-changed`
-/// this release does not read — is keyed on everything beside it instead.
 fn package_digest(root: &Path, scan: &Scan, prefix: &str) -> String {
     if names_its_own_data(root, scan, prefix) {
         return scan.under(prefix);
@@ -243,11 +216,6 @@ fn inside(root: &Path, directory: &Path) -> Option<String> {
 }
 
 /// Whether any Rust file under `prefix` names an API whose result depends on what is in a directory rather than on what a file says.
-///
-/// The search is over the source text, so a mention in a comment counts. That
-/// widens the key, which is the direction a key may be wrong in: a key that
-/// covers too much makes a run do work it need not, and a key that covers too
-/// little makes it claim what it did not establish.
 #[must_use]
 pub fn reads_directories_under(root: &Path, scan: &Scan, prefix: &str) -> bool {
     let inside = format!("{}/", prefix.trim_end_matches('/'));

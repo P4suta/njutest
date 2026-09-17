@@ -42,6 +42,8 @@ fn reported() -> Report {
             character_column: 5,
         },
         rule: "gt-to-ge@1".to_owned(),
+        item: "demo".to_owned(),
+        original: ">".to_owned(),
         outcome: "survived".to_owned(),
         killed_by: None,
         reused: false,
@@ -293,18 +295,21 @@ fn served(messages: &[Value], root: &std::path::Path) -> Recording {
 
 /// A workspace whose last run found the one mutation `reported` describes.
 fn ran(root: &std::path::Path) {
-    std::fs::create_dir_all(root.join("reports/runs/one")).expect("mkdir");
+    let store = njutest_cli::app::reports::Store::read(root);
+    std::fs::create_dir_all(store.run("one")).expect("mkdir");
     std::fs::create_dir_all(root.join("src")).expect("mkdir");
     std::fs::write(root.join("src/lib.rs"), "\n\n\n\n\n\n\u{1D11E}x = 1;\n")
         .expect("the file a finding is in");
     std::fs::write(
-        root.join("reports/runs/one/njutest-assurance-report-v1.json"),
+        store
+            .run("one")
+            .join(njutest_cli::app::reports::DOCUMENT_NAME),
         serde_json::to_string(&reported()).expect("a report"),
     )
     .expect("the report");
     std::fs::write(
-        root.join("reports/latest-any.json"),
-        json!({ "directory": "reports/runs/one", "run_id": "one" }).to_string(),
+        store.index(njutest_cli::app::reports::Index::Any),
+        json!({ "directory": store.named("one"), "run_id": "one" }).to_string(),
     )
     .expect("the pointer a reader follows");
 }
@@ -535,17 +540,21 @@ fn a_run_that_has_not_happened_is_not_a_file_with_nothing_wrong_in_it() {
         root.path(),
     );
 
-    std::fs::create_dir_all(root.path().join("reports")).expect("mkdir");
-    std::fs::write(root.path().join("reports/latest-any.json"), "{ not json")
-        .expect("a pointer nobody can follow");
+    let store = njutest_cli::app::reports::Store::read(root.path());
+    std::fs::create_dir_all(store.runs()).expect("mkdir");
+    std::fs::write(
+        store.index(njutest_cli::app::reports::Index::Any),
+        "{ not json",
+    )
+    .expect("a pointer nobody can follow");
     let unreadable = served(
         &[json!({ "jsonrpc": "2.0", "method": "textDocument/didOpen" })],
         root.path(),
     );
 
     std::fs::write(
-        root.path().join("reports/latest-any.json"),
-        json!({ "directory": "reports/runs/gone" }).to_string(),
+        store.index(njutest_cli::app::reports::Index::Any),
+        json!({ "directory": store.named("gone") }).to_string(),
     )
     .expect("a pointer to a run whose report is not there");
     let missing = served(
@@ -675,7 +684,8 @@ fn a_pointer_that_names_no_run_is_not_a_run() {
     let root = tempfile::tempdir().expect("a directory");
     ran(root.path());
     std::fs::write(
-        root.path().join("reports/latest-any.json"),
+        njutest_cli::app::reports::Store::read(root.path())
+            .index(njutest_cli::app::reports::Index::Any),
         json!({ "run_id": "one" }).to_string(),
     )
     .expect("a pointer that says which run and not where it is");

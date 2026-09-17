@@ -2,12 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Talking to a provider: one process, newline-delimited strict JSON.
-//!
-//! Both protocols of `docs/protocols.md` are local subprocess contracts. A
-//! provider that says something this version does not understand is refused
-//! rather than guessed at, and a provider that says nothing in time is ended
-//! rather than waited on: a run that cannot say what its resources were is
-//! not a run that had none.
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -296,9 +290,6 @@ impl Process {
     }
 
     /// Closes the conversation, waits for the process, and ends its whole tree if it stays.
-    ///
-    /// A provider that will not end is killed, which is the only thing a
-    /// caller could do about it anyway.
     pub fn end(mut self, timeout: Duration) {
         drop(self.stdin.take());
         let deadline = std::time::Instant::now().checked_add(timeout);
@@ -388,9 +379,6 @@ pub struct Once<'a> {
 }
 
 /// Asks one provider one question and reads everything it says back, once.
-///
-/// Generation is one process per finding: the question goes in, stdin is
-/// closed, and the answer is whatever the process writes before it ends.
 ///
 /// # Errors
 /// [`ProviderErrorKind::Unstartable`] when the command cannot be run,

@@ -2,11 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What a generation provider may offer, and what a run will take from it.
-//!
-//! A candidate is a proposal, never a change. Nothing here writes into the
-//! tree: a provider says what it would write, the run says whether that would
-//! be admissible and whether the file it claims to be patching is still the
-//! file it saw, and only an explicit `fix --apply` puts anything on disk.
 
 use std::collections::BTreeSet;
 use std::path::{Component, Path, PathBuf};
@@ -407,11 +402,6 @@ pub fn load(root: &Path, digest: &str) -> Option<Vec<u8>> {
 }
 
 /// The bytes a strict base64 text stands for.
-///
-/// Padding is required, whitespace is not accepted, and neither is any
-/// character outside the standard alphabet: a provider's output is data this
-/// run will write to disk, and a decoder that guesses is a decoder that writes
-/// something nobody offered.
 fn decode(text: &str) -> Result<Vec<u8>, String> {
     const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 

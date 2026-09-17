@@ -2,20 +2,18 @@
 
 **94.7%** — 18 detected of 19 decided
 
-| what | how many |
+22 mutants were cataloged: 19 executed, 0 refused by the compiler, 4 places that produced no candidate.
+
+| outcome | how many |
 | --- | --- |
-| cataloged | 22 |
 | killed | 18 |
 | survived | 1 |
 | timed out | 0 |
 | inconclusive | 0 |
 | errored | 0 |
 | not run | 3 |
-| unreached | 0 |
-| discharged | 3 |
-| expected | 0 |
-| refused | 0 |
-| skipped | 4 |
+
+Those 6 add to the 22 cataloged. Within them, not run is 0 unreached, not run is 3 discharged, survived is 0 expected.
 
 ## Findings
 

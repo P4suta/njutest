@@ -8,9 +8,6 @@ use std::fmt::Write as _;
 use crate::syntax::Form;
 
 /// The path one of the runtime's functions is called by from a site `super_depth` inline modules down.
-///
-/// The runtime lives at the file's top level, so a site inside an inline
-/// module reaches it through one `super::` per module between them.
 #[must_use]
 pub(super) fn named(module: &str, super_depth: u32, function: &str) -> String {
     let mut path = String::new();
@@ -75,14 +72,6 @@ pub(super) fn compose(
 }
 
 /// What a value-position guard is wrapped in, which is a block wherever the site already was one.
-///
-/// Parentheses are what makes a guard one expression wherever the site was
-/// one. They are the wrong wrapper for a site that is already a block: a match
-/// arm whose body is a block needs no comma after it, and one whose body is a
-/// parenthesised expression does — so wrapping a block-bodied arm in
-/// parentheses turns a file that parsed into one that does not, at the arm
-/// *after* it. A block wrapped in a block is still a block, and is an
-/// expression everywhere the original block was one.
 fn wrapping(original: &str) -> (char, char) {
     let trimmed = original.trim();
     if trimmed.starts_with('{') && trimmed.ends_with('}') {
@@ -93,12 +82,6 @@ fn wrapping(original: &str) -> (char, char) {
 }
 
 /// Form M: the guard an arm did not have, written after the pattern that did not need one.
-///
-/// Every other form replaces bytes with bytes that say something else. This
-/// one keeps the site — the arm's pattern — exactly as it is and writes a
-/// guard after it, because there is nothing at an unguarded arm to replace.
-/// The branch that keeps the arm as it was is the guard it did without:
-/// `true`.
 fn arm(paths: &Paths<'_>, alternatives: &[Alternative], original: &str) -> Composed {
     const KEPT: &str = "true";
     let mut composed = selector(paths, alternatives, KEPT);
@@ -140,11 +123,6 @@ impl Paths<'_> {
 }
 
 /// Form C: a boolean selector with no block, so the site introduces no temporary scope of its own. The outer parentheses are load bearing: a nested Form C site sits inside its parent's `&&` chain, where `&&` binds tighter than the `||` this composes.
-///
-/// A comparable alternative wraps the original branch in a call that answers
-/// what the original answers and records the mutant when the two differ. It is
-/// a call and not a block for the same reason the rest of this form is an
-/// expression: a block here would be a temporary scope the site did not have.
 fn selector(paths: &Paths<'_>, alternatives: &[Alternative], original: &str) -> Composed {
     let path = paths.active();
     let path = path.as_str();
@@ -185,11 +163,6 @@ fn selector(paths: &Paths<'_>, alternatives: &[Alternative], original: &str) -> 
 }
 
 /// Whether a form can hold the call that asks what the value it replaces already held.
-///
-/// The call takes the original branch's value and answers with it, so it fits
-/// wherever the branch is an expression and nowhere else. A statement is not,
-/// so Form S reports no probe however many it was offered, and no proof rests
-/// on a comparison no guard makes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Probing {
     /// The form holds the call, so every vouched probe is written.

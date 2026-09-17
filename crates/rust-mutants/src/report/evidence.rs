@@ -2,18 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What a run kept so somebody else can re-derive what it decided.
-//!
-//! A proof layer removes executions, and a report that says so without the
-//! evidence is a claim rather than a proof. These files are the premises: the
-//! measurement each target left behind, what its guards recorded about which of
-//! its tests reached and infected them, and the catalog with the branch bodies
-//! the compiler vouched for. An audit reads them, re-decides every route, and
-//! says whether the run's own answers follow — with no access to the engine
-//! that produced them.
-//!
-//! Writing them never fails a run. What could not be written is one file a
-//! reader does not have, and a run that ended because it could not write a
-//! copy of what it already knows would be a run that failed for nothing.
 
 use std::path::{Path, PathBuf};
 
@@ -40,10 +28,6 @@ pub struct Written {
 }
 
 /// Writes everything an audit re-derives a run's proofs from, and reports what it wrote.
-///
-/// Nothing here is an error a run ends on: a file that could not be written
-/// is one an audit will call unaudited, which is the honest answer, and is
-/// better than a run that failed because it could not copy what it knows.
 pub fn write(
     session: &Session,
     directory: &Path,

@@ -8,16 +8,30 @@ use std::path::Path;
 
 use rust_mutants::git::{Asking, Facts};
 
-use crate::evidence::tree::EXCLUDED_DIRECTORIES;
+use crate::evidence::tree::Excluded;
 use crate::report::{Git, UNAVAILABLE};
 use crate::watch::Watch;
 
 pub use rust_mutants::git::{Change, DEFAULT_BASE};
 
-/// Asks git about the tree at `root`.
+/// Where a run asks git, and what it leaves out.
+#[derive(Debug)]
+pub struct Asked<'a> {
+    /// The tree the question is about.
+    pub root: &'a Path,
+    /// The environment git is run with.
+    pub env: &'a [(OsString, OsString)],
+    /// Directories this project writes rather than verifies.
+    pub excluded: &'a Excluded,
+    /// What stops the commands, and who hears that they ran.
+    pub watch: Watch<'a>,
+}
+
+/// Asks git about the tree.
 #[must_use]
-pub fn describe(root: &Path, env: &[(OsString, OsString)], watch: Watch<'_>) -> Git {
-    let Some(facts) = rust_mutants::git::facts(&asking(root, env, &watch)) else {
+pub fn describe(asked: &Asked<'_>) -> Git {
+    let names = asked.excluded.names();
+    let Some(facts) = rust_mutants::git::facts(&asking(asked, &names)) else {
         return Git::unavailable();
     };
     let Facts {
@@ -39,31 +53,18 @@ pub fn describe(root: &Path, env: &[(OsString, OsString)], watch: Watch<'_>) -> 
 }
 
 /// Every file that differs from `base`, committed and not.
-///
-/// Returns nothing when git could not be asked or does not know `base`,
-/// which the caller states as a limitation rather than reading as an empty
-/// change set: a run that verified nothing because it could not see what
-/// changed must never look like a run that verified everything that did.
 #[must_use]
-pub fn changed(
-    root: &Path,
-    env: &[(OsString, OsString)],
-    base: &str,
-    watch: Watch<'_>,
-) -> Option<Change> {
-    rust_mutants::git::changed(&asking(root, env, &watch), base)
+pub fn changed(asked: &Asked<'_>, base: &str) -> Option<Change> {
+    let names = asked.excluded.names();
+    rust_mutants::git::changed(&asking(asked, &names), base)
 }
 
 /// Where a run asks git, leaving out the directories a run writes rather than verifies.
-const fn asking<'a>(
-    root: &'a Path,
-    env: &'a [(OsString, OsString)],
-    watch: &'a Watch<'a>,
-) -> Asking<'a, Watch<'a>> {
+const fn asking<'a>(asked: &'a Asked<'a>, excluded: &'a [&'a str]) -> Asking<'a, Watch<'a>> {
     Asking {
-        root,
-        env,
-        excluded: &EXCLUDED_DIRECTORIES,
-        watch,
+        root: asked.root,
+        env: asked.env,
+        excluded,
+        watch: &asked.watch,
     }
 }

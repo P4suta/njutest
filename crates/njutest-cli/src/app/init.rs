@@ -31,6 +31,16 @@ pub fn run(
     match std::fs::write(&path, config::skeleton()) {
         Ok(()) => {
             super::say(stdout, &format!("wrote {}", config::FILE_NAME));
+            super::say(
+                stdout,
+                "every key in it is commented out, because every one has a default: the \
+                 file is a place to disagree rather than a thing a run needs",
+            );
+            super::say(
+                stdout,
+                "next: `njutest doctor` says whether a run can go ahead here, and \
+                 `njutest verify` is the run. It writes under reports/runs",
+            );
             EXIT_ASSURED
         }
         Err(source) => {

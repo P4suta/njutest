@@ -2,12 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The `deep-v1` soundness phase: interpreting the tests rather than counting the `unsafe`.
-//!
-//! Safe Rust has no data races for a race detector to find, so the fault
-//! class this phase is about is unsoundness in `unsafe`. Miri executes the
-//! suite under an interpreter that notices it. What Miri cannot interpret is
-//! stated as a limitation, never as a pass: a suite that was not interpreted
-//! is not a suite that was interpreted and found sound.
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -32,13 +26,6 @@ const UNSUPPORTED: [&str; 3] = [
 const UNDEFINED: &str = "Undefined Behavior";
 
 /// What a toolchain says when there is nothing to interpret with.
-///
-/// Two things can be missing and they read differently: the component, which
-/// rustup reports as not installed *for* a toolchain, and the toolchain
-/// itself, which it reports as not installed at all. Both are the same thing
-/// to a run — there is no interpreter — and reading only the first leaves a
-/// machine with no nightly looking like a suite whose tests failed under an
-/// interpreter that never ran.
 const ABSENT: [&str; 3] = ["no such command", "no such subcommand", "is not installed"];
 
 /// What the phase is asked to interpret, and how it is bounded.
@@ -103,9 +90,14 @@ pub fn interpret(
     if interpreting.locked {
         argv.push(OsString::from("--locked"));
     }
-    let mut spec = Spec::new(argv);
+    let mut spec = Spec::new(
+        argv,
+        interpreting.timeout.map_or(
+            rust_mutants::runner::Bound::Unbounded,
+            rust_mutants::runner::Bound::After,
+        ),
+    );
     spec.dir = Some(interpreting.root.to_path_buf());
-    spec.timeout = interpreting.timeout;
     spec.env = Some(environment(interpreting));
 
     let ran = run(&spec, watch.cancel);
@@ -133,23 +125,16 @@ pub fn interpret(
 }
 
 /// What the toolchain says when it has no interpreter, asked once the run it was given has failed.
-///
-/// A failed `miri test` is two different things wearing one exit code: a suite
-/// the interpreter found fault with, and no interpreter at all. Telling them
-/// apart by reading the message means trusting a wording — a toolchain that is
-/// not installed and a component that is not installed for one are worded
-/// differently, and a wording this does not know leaves a run that interpreted
-/// nothing reporting that a test failed under an interpreter which never ran.
-/// So the question is put plainly instead, and only when there is something to
-/// tell apart: a run whose suite passed under the interpreter asks nothing
-/// extra.
 fn missing(interpreting: &Interpreting<'_>, watch: Watch<'_>) -> Option<String> {
-    let mut spec = Spec::new([
-        interpreting.cargo.as_os_str().to_owned(),
-        OsString::from("+nightly"),
-        OsString::from("miri"),
-        OsString::from("--version"),
-    ]);
+    let mut spec = Spec::new(
+        [
+            interpreting.cargo.as_os_str().to_owned(),
+            OsString::from("+nightly"),
+            OsString::from("miri"),
+            OsString::from("--version"),
+        ],
+        rust_mutants::runner::Bound::After(rust_mutants::runner::PROBE),
+    );
     spec.dir = Some(interpreting.root.to_path_buf());
     spec.env = Some(environment(interpreting));
     let asked = run(&spec, watch.cancel);
@@ -162,12 +147,6 @@ fn missing(interpreting: &Interpreting<'_>, watch: Watch<'_>) -> Option<String> 
 }
 
 /// What Miri's own environment is: the run's, plus what the configuration passes to the interpreter.
-///
-/// A map and not a list, because a process started with two bindings of one
-/// name reads whichever of them the operating system hands it first, and a
-/// phase that decided what the interpreter checks that way would be deciding
-/// it by the order a list happened to be in. Saying it as a map is what makes
-/// "one name, one value" true rather than maintained.
 fn environment(interpreting: &Interpreting<'_>) -> Vec<(OsString, OsString)> {
     let mut env: BTreeMap<OsString, OsString> = interpreting.env.iter().cloned().collect();
     if !interpreting.flags.is_empty() {

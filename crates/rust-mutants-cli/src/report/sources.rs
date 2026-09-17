@@ -2,13 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The files a stored run named, read back from a tree so a projection can show the mutation in place.
-//!
-//! A projection that shows source has to answer one question first: is this
-//! the file the run measured? The report carries the digest of the bytes each
-//! mutation was cut from, so the answer is a fact rather than a guess. A file
-//! that changed is shown as changed and never as the source; a file that is
-//! not there at all is `RM0012`, because a projection that quietly left it out
-//! would lose every mutant of it without saying so.
 
 use std::collections::BTreeMap;
 use std::path::Path;

@@ -33,6 +33,8 @@ fn part(shard: &str, mutants: &[(&str, &str)]) -> Report {
             display_id: id.get(..8).unwrap_or(id).to_owned(),
             path: "src/lib.rs".to_owned(),
             rule: "gt-to-ge@1".to_owned(),
+            item: "demo".to_owned(),
+            original: ">".to_owned(),
             position: Position {
                 line: 1,
                 column: 1,
@@ -228,6 +230,8 @@ fn disposed(id: &str, outcome: &str, reused: bool) -> MutantRecord {
         display_id: id.get(..8).unwrap_or(id).to_owned(),
         path: "src/lib.rs".to_owned(),
         rule: "gt-to-ge@1".to_owned(),
+        item: "demo".to_owned(),
+        original: ">".to_owned(),
         position: Position {
             line: 1,
             column: 1,

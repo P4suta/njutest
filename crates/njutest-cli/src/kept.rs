@@ -2,12 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The ledger of what runs left behind on purpose.
-//!
-//! A keep is recorded where it outlives the run, so a successful untraced run
-//! still accounts for what it preserved (ADR 0006, decision 7). The ledger
-//! names a directory; the directory's own marker says whether it may be
-//! removed, because a path in an editable file may not authorize a recursive
-//! delete (decision 8).
 
 use std::path::{Path, PathBuf};
 
@@ -18,7 +12,18 @@ use serde::{Deserialize, Serialize};
 pub const SCHEMA: &str = "njutest-kept-temp-v1";
 
 /// Where the ledger lives, relative to the workspace root.
-pub const FILE_NAME: &str = ".njutest/kept-temp-v1.json";
+const FILE_NAME: &str = ".njutest/kept-temp-v1.json";
+
+/// Where the ledger of kept directories lives under `root`.
+///
+/// The path is composed here rather than exported as a constant others join:
+/// a constant spelling a structure is a layout every holder decides for
+/// itself, including the tests, and a layout the tests have decided is one no
+/// configuration can move.
+#[must_use]
+pub fn path(root: &Path) -> PathBuf {
+    root.join(FILE_NAME)
+}
 
 /// What runs have left behind on purpose.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -54,7 +59,7 @@ pub struct Kept {
 /// The ledger at `root`, or an empty one when there is none or it cannot be read. A ledger this release cannot read is replaced rather than obeyed: it authorizes nothing on its own.
 #[must_use]
 pub fn read(root: &Path) -> Ledger {
-    std::fs::read_to_string(root.join(FILE_NAME))
+    std::fs::read_to_string(path(root))
         .ok()
         .and_then(|text| serde_json::from_str(&text).ok())
         .unwrap_or_default()
@@ -81,7 +86,7 @@ pub fn record(
         ledger.kept.retain(|kept| kept.path != entry.path);
         ledger.kept.push(entry);
     }
-    let path = root.join(FILE_NAME);
+    let path = path(root);
     let text = serde_json::to_string_pretty(&ledger).map_err(std::io::Error::other)?;
     rust_mutants::replace::file(&path, format!("{text}\n").as_bytes())
         .map_err(|failure| failure.source)?;

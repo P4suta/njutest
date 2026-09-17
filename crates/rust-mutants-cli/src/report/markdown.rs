@@ -2,11 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The run as the paragraph a person puts in a pull request or a job summary.
-//!
-//! Nothing here is volatile except the run's own identity: no duration, no
-//! path outside the workspace, no timestamp. Two runs of the same tree that
-//! established the same thing write the same summary, so the diff between two
-//! of them is what changed rather than when they ran.
 
 use std::fmt::Write as _;
 
@@ -44,25 +39,13 @@ fn score(out: &mut String, document: &RunDocument) {
 }
 
 fn accounting(out: &mut String, document: &RunDocument) {
-    let counted = &document.accounting;
-    out.push_str("| what | how many |\n| --- | --- |\n");
-    for (name, count) in [
-        ("cataloged", counted.cataloged),
-        ("killed", counted.killed),
-        ("survived", counted.survived),
-        ("timed out", counted.timed_out),
-        ("inconclusive", counted.inconclusive),
-        ("errored", counted.errored),
-        ("not run", counted.not_run),
-        ("unreached", counted.unreached),
-        ("discharged", counted.discharged),
-        ("expected", counted.expected),
-        ("refused", counted.refused),
-        ("skipped", counted.skipped),
-    ] {
+    let tally = super::tally::Tally::of(document);
+    let _written = writeln!(out, "{}\n", tally.said());
+    out.push_str("| outcome | how many |\n| --- | --- |\n");
+    for (name, count) in &tally.parts {
         let _written = writeln!(out, "| {name} | {count} |");
     }
-    out.push('\n');
+    let _written = writeln!(out, "\n{}\n", tally.within_said());
 }
 
 fn findings(out: &mut String, document: &RunDocument) {

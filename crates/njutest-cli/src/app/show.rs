@@ -20,14 +20,18 @@ pub fn run(
     let run = match runs::resolve(root, arguments.run.as_deref()) {
         Ok(run) => run,
         Err(error) => {
-            super::diagnose(stderr, &error.to_string());
+            super::complain(stderr, &error, error.code());
             return EXIT_ERROR;
         }
     };
     let text = match arguments.format {
         Format::Json => runs::document(root, &run).map_err(|error| error.to_string()),
         Format::Lines => runs::report(root, &run)
-            .map(|report| lines::stream(&report))
+            .map(|report| {
+                let store = crate::app::reports::Store::read(root);
+                let document = store.run(&run).join(crate::app::reports::DOCUMENT_NAME);
+                lines::kept(&report, &store.said(&document))
+            })
             .map_err(|error| error.to_string()),
     };
     match text {

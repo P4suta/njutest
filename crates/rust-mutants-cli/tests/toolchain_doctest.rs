@@ -40,6 +40,7 @@ fn environment(fixture: &Fixture) -> Environment {
     Environment {
         vars: njutest_devkit::paths::environment_for_a_run(),
         temp_directory: fixture.temp().to_path_buf(),
+        program: std::path::PathBuf::from("this test never runs it"),
         cache_directory: fixture.cache().to_path_buf(),
         working_directory: fixture.root().to_path_buf(),
         no_color: true,
@@ -49,8 +50,10 @@ fn environment(fixture: &Fixture) -> Environment {
 }
 
 fn report(fixture: &Fixture) -> serde_json::Value {
-    serde_json::from_str(&njutest_devkit::fixture::stored_report(fixture.root()))
-        .expect("the report is a document")
+    serde_json::from_str(&njutest_devkit::fixture::stored_report(
+        &rust_mutants_cli::app::stored::Store::read(fixture.root()).root(),
+    ))
+    .expect("the report is a document")
 }
 
 #[test]
@@ -59,7 +62,7 @@ fn doctests_can_be_switched_off() {
     let directory = fixture.temp().join("recording");
     let output = against(
         &fixture,
-        &["--no-doctests", "--trace", &directory.to_string_lossy()],
+        &["--no-doctests", &format!("--trace={}", directory.display())],
     );
     assert!(
         output.status.code().is_some_and(|code| code < 2),
@@ -91,7 +94,7 @@ fn a_documentation_target_reaches_every_mutation_of_its_own_library_under_covera
     let directory = fixture.temp().join("recording");
     let output = against(
         &fixture,
-        &["--coverage", "--trace", &directory.to_string_lossy()],
+        &["--coverage", &format!("--trace={}", directory.display())],
     );
     assert!(
         output.status.code().is_some_and(|code| code < 2),
@@ -125,7 +128,7 @@ fn a_documentation_target_reaches_every_mutation_of_its_own_library_under_covera
 fn a_library_without_examples_costs_no_run() {
     let fixture = Fixture::copy("fixture-custom-harness");
     let directory = fixture.temp().join("recording");
-    let output = against(&fixture, &["--trace", &directory.to_string_lossy()]);
+    let output = against(&fixture, &[&format!("--trace={}", directory.display())]);
     assert!(
         output.status.code().is_some_and(|code| code < 2),
         "{}",

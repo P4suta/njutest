@@ -399,10 +399,6 @@ fn rule_at(names: &[&'static str], which: usize) -> &'static str {
 
 proptest::proptest! {
     /// A catalog is what it holds, not the order somebody added it in.
-    ///
-    /// Two runs of the same tree must produce the same catalog digest, and a
-    /// digest that moved with the insertion order would make every reused
-    /// outcome a lie about a different catalog.
     #[test]
     fn a_catalog_is_the_same_whatever_order_its_candidates_arrived_in(
         picks in proptest::collection::vec((0usize..40, 0usize..24), 1..24),

@@ -185,7 +185,9 @@
       "required": [
         "requested_packages",
         "resolved_packages",
+        "included",
         "excluded",
+        "configuration",
         "shard"
       ],
       "properties": {
@@ -206,6 +208,15 @@
           "items": {
             "type": "string"
           }
+        },
+        "included": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "configuration": {
+          "type": "string"
         },
         "shard": {
           "oneOf": [
@@ -613,6 +624,8 @@
         "path",
         "position",
         "rule",
+        "item",
+        "original",
         "outcome",
         "killed_by",
         "reused",
@@ -637,6 +650,12 @@
         "rule": {
           "type": "string",
           "minLength": 1
+        },
+        "item": {
+          "type": "string"
+        },
+        "original": {
+          "type": "string"
         },
         "outcome": {
           "type": "string",

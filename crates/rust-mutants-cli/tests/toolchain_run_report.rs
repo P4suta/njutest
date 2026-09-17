@@ -62,8 +62,10 @@ fn count(value: usize) -> u64 {
 
 /// The report the newest run stored, as a document.
 fn stored(fixture: &Fixture) -> serde_json::Value {
-    serde_json::from_str(&njutest_devkit::fixture::stored_report(fixture.root()))
-        .expect("the report is a document")
+    serde_json::from_str(&njutest_devkit::fixture::stored_report(
+        &rust_mutants_cli::app::stored::Store::read(fixture.root()).root(),
+    ))
+    .expect("the report is a document")
 }
 
 #[test]
@@ -78,7 +80,7 @@ fn a_whole_run_judges_every_mutant_scores_the_workspace_and_writes_the_report() 
          removes that mutation and one test has to notice it: {text}{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(text.contains("MUTANTS   cataloged="), "{text}");
+    assert!(text.contains("mutants were cataloged"), "{text}");
     assert!(text.contains("SCORE     "), "{text}");
     assert!(text.contains("surviving-mutant"), "{text}");
 
@@ -189,7 +191,7 @@ fn the_stored_report_is_read_back_by_the_report_command() {
         "reading a report back reports what the run reported"
     );
     let text = stdout(&read_back);
-    assert!(text.contains("MUTANTS   cataloged="), "{text}");
+    assert!(text.contains("mutants were cataloged"), "{text}");
 
     let as_json = against(&fixture, &["report", "--format", "json"]);
     assert_eq!(as_json.status.code(), Some(0));
@@ -268,11 +270,6 @@ fn an_expectation_the_run_confirms_stops_being_a_finding_and_a_stale_one_starts(
 }
 
 /// An incomplete mutation mode is about the environment a process inherits, so this one starts a process.
-///
-/// An instrumented child legitimately inherits the outer measurement's
-/// activation and catalog. Removing that complete pair and adding an
-/// incomplete touch mode leaves the generated runtime inert and puts the
-/// invalid tuple to the composition root itself.
 #[test]
 fn a_process_with_an_incomplete_touch_mode_is_refused_before_anything_runs() {
     let fixture = Fixture::copy("fixture-simple");
@@ -362,23 +359,23 @@ fn cache_says_what_a_run_left_in_the_temporary_directory_and_gc_reclaims_it() {
     let listed = asked(&at, &["cache"]);
     let text = String::from_utf8_lossy(&listed.stdout).into_owned();
     assert_eq!(listed.status.code(), Some(0), "{text}");
-    assert!(text.contains("caches      1 reclaimable"), "{text}");
+    assert!(text.contains("caches       1 reclaimable"), "{text}");
     assert!(
-        text.contains("snapshots   0 reclaimable"),
+        text.contains("snapshots    0 reclaimable"),
         "a finished run removes its snapshot and keeps its cache: {text}"
     );
 
     let swept = asked(&at, &["cache", "--gc"]);
     let text = String::from_utf8_lossy(&swept.stdout).into_owned();
     assert!(
-        text.contains("caches      0 removed") && text.contains("1 kept for the next run"),
+        text.contains("caches       0 removed") && text.contains("1 kept for the next run"),
         "a sweep keeps the build caches a later run can still look up, so the next run \
          is still fast: {text}"
     );
 
     let collected = asked(&at, &["cache", "--gc", "--all"]);
     let text = String::from_utf8_lossy(&collected.stdout).into_owned();
-    assert!(text.contains("caches      1 removed"), "{text}");
+    assert!(text.contains("caches       1 removed"), "{text}");
     let left: Vec<PathBuf> = std::fs::read_dir(&temp)
         .expect("the temporary directory")
         .filter_map(Result::ok)
@@ -751,7 +748,7 @@ fn an_older_reader_accepts_a_newer_report() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let directory = fixture.root().join("reports/mutation");
+    let directory = rust_mutants_cli::app::stored::Store::read(fixture.root()).root();
     let pointer: serde_json::Value = serde_json::from_str(
         &std::fs::read_to_string(directory.join("latest.json")).expect("a pointer"),
     )
@@ -884,7 +881,9 @@ fn evidence_of(extra: &[&str]) -> (PathBuf, Fixture) {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let directory = njutest_devkit::fixture::newest_run(fixture.root());
+    let directory = njutest_devkit::fixture::newest_run(
+        &rust_mutants_cli::app::stored::Store::read(fixture.root()).root(),
+    );
     (directory, fixture)
 }
 
@@ -993,11 +992,6 @@ fn a_claim_written_for_several_mutations_says_how_many_it_was_resolved_against()
 }
 
 /// The document with everything a second run of one catalog is allowed to say differently taken out.
-///
-/// What is taken out is what a run costs rather than what it establishes: when
-/// it started, how long it took, what it called itself, and how many tests it
-/// had to start to find out. Everything left is an answer about the catalog,
-/// and two runs of one catalog answer the same.
 fn timeless(mut document: serde_json::Value) -> serde_json::Value {
     fn strip(value: &mut serde_json::Value) {
         match value {
@@ -1167,6 +1161,7 @@ fn environment(fixture: &Fixture) -> Environment {
     Environment {
         vars: njutest_devkit::paths::environment_for_a_run(),
         temp_directory: fixture.temp().to_path_buf(),
+        program: PathBuf::from("this test never runs it"),
         cache_directory: fixture.cache().to_path_buf(),
         working_directory: fixture.root().to_path_buf(),
         no_color: true,
@@ -1197,6 +1192,7 @@ fn environment_at(root: &Path, temp: &Path, cache: &Path) -> Environment {
     Environment {
         vars: njutest_devkit::paths::environment_for_a_run(),
         temp_directory: temp.to_path_buf(),
+        program: PathBuf::from("this test never runs it"),
         cache_directory: cache.to_path_buf(),
         working_directory: root.to_path_buf(),
         no_color: true,
@@ -1214,7 +1210,7 @@ fn the_parts_of_a_catalog_can_be_named_by_a_glob_against_the_report_directory() 
         "{}",
         String::from_utf8_lossy(&ran.stderr)
     );
-    let reports = fixture.root().join("reports/mutation");
+    let reports = rust_mutants_cli::app::stored::Store::read(fixture.root()).root();
     let stored_id = std::fs::read_dir(&reports)
         .expect("the report directory")
         .flatten()
@@ -1247,7 +1243,14 @@ fn the_parts_of_a_catalog_can_be_named_by_a_glob_against_the_report_directory() 
     );
     let said = String::from_utf8_lossy(&nothing.stderr).into_owned();
     assert!(
-        said.contains("20240101*") && said.contains("reports"),
+        said.contains("20240101*")
+            && said.contains(&format!(
+                "{}",
+                rust_mutants_cli::config::Config::default()
+                    .reports
+                    .directory
+                    .display()
+            )),
         "and the refusal says which pattern found nothing and where it looked, because \
          the usual cause is a report directory somewhere else: {said}"
     );
@@ -1275,7 +1278,7 @@ fn a_glob_that_names_the_same_part_twice_is_still_the_same_part_twice() {
         "{}",
         String::from_utf8_lossy(&ran.stderr)
     );
-    let reports = fixture.root().join("reports/mutation");
+    let reports = rust_mutants_cli::app::stored::Store::read(fixture.root()).root();
     let document = serde_json::to_string(&stored(&fixture)).expect("renders");
     for name in ["20260101T000000000Z", "20260102T000000000Z"] {
         let directory = reports.join(name);

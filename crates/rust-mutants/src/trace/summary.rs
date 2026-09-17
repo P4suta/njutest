@@ -2,11 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Reading a recording as numbers: where a run went, and what moved between two of them.
-//!
-//! A trace is diagnostic exhaust and never evidence
-//! ([ADR 0002](../../../../docs/adr/0002-trace-is-not-evidence.md)), so nothing
-//! here is a claim about a program. What it is for is the question a person
-//! asks of a run that took eleven minutes: which part of it did.
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -239,11 +234,6 @@ fn path_of(open: &[String], name: &str) -> String {
 }
 
 /// The program a command line starts with, by file name, without the suffix a platform puts on an executable.
-///
-/// What a run cost is the same question on every machine, and a summary that
-/// counted `cargo` on one and `cargo.exe` on another would answer it twice.
-/// Only the platform's own suffix goes: a program genuinely named `build.sh`
-/// keeps its name, because that is its name rather than a spelling of one.
 fn program_of(argv: &[String]) -> String {
     argv.first().map_or_else(String::new, |first| {
         let name = std::path::Path::new(first)

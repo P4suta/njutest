@@ -102,10 +102,6 @@ fn rendering_a_duration_produces_text_that_parses_back_to_it() {
 
 proptest::proptest! {
     /// Every bound a person can write is one the parser reads back as itself.
-    ///
-    /// A duration that renders as something the parser reads differently is a
-    /// bound the run applies and the report describes wrongly, which is worse
-    /// than a bound nobody could write.
     #[test]
     fn what_the_parser_renders_it_reads_back_as_the_same_duration(
         millis in 0u64..=(1000 * 60 * 60 * 24 * 400)

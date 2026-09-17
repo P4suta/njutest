@@ -107,10 +107,6 @@ impl Repo {
 
 /// Makes `root` a git repository with one commit holding everything in it.
 ///
-/// The commit is built from plumbing rather than `git commit`, so a signing
-/// configuration a developer has set for themselves cannot make a test that
-/// needs a repository fail or hang.
-///
 /// # Panics
 /// When git is not there or refuses, which a test asking for a repository
 /// cannot continue without.

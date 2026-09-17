@@ -12,12 +12,6 @@ use super::run::{Accounting, FindingDocument, ScoreDocument};
 pub const SCHEMA: &str = "rust-mutants-run-stream-v1";
 
 /// One line of a run stream.
-///
-/// A stream is written as a run happens and read a line at a time, so a
-/// consumer sees a mutant the moment it is judged rather than a report when
-/// everything is over. The lines are additive: a reader from this release
-/// ignores a kind it does not know, which is what lets a later release say
-/// more without breaking one that already works.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 #[non_exhaustive]
@@ -89,11 +83,6 @@ pub enum Line {
 }
 
 /// One judged mutant, as a stream says it.
-///
-/// It is what a consumer needs to act the moment a mutant is judged: what was
-/// mutated, where, and what the tests made of it. The report holds more —
-/// the bytes of the edit, the route, the catalog's own columns — because a
-/// report is read afterwards and a stream is read as it arrives.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MutantLine {
     /// The dense catalog index the guards name.

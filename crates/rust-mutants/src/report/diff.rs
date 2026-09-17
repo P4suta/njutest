@@ -9,10 +9,6 @@ use std::fmt::Write as _;
 pub const CONTEXT: usize = 3;
 
 /// The unified diff between two texts, with `CONTEXT` lines either side of what differs.
-///
-/// One mutation is one contiguous edit, so the diff is one hunk: what the
-/// engine has to show is the lines the edit is on, in the place a reader would
-/// open the file to. It compares whole lines, which is what a reviewer reads.
 #[must_use]
 pub fn unified(path: &str, before: &str, after: &str) -> String {
     let old: Vec<&str> = before.lines().collect();

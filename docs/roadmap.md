@@ -5,7 +5,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # Roadmap
 
-**Status: M0 to M11 and M13, and E2 to E12, are done.** What remains of
+**Status: M0 to M11, M13, M14, and E2 to E12, are done.** What remains of
 M8 is the tag itself, which is a decision rather than a change: see
 `docs/release.md`. The user's decisions: one workspace, the engine first,
 the engine a standalone product too, every milestone completed, test-driven
@@ -16,7 +16,7 @@ that lets it be seen, tested, and audited — and both are completion criteria.
 
 | # | Milestone | Feature | Developer infrastructure | Done when |
 | --- | --- | --- | --- | --- |
-| M0 ✓ | Scaffold | workspace, lints, gates, CI, contracts, both command-line skeletons, the public API crate | devkit, error-code ledger, `xtask` gates from tests, `bacon`, `doctor`, `CLAUDE.md` | `mise run check` green |
+| M0 ✓ | Scaffold | workspace, lints, gates, CI, contracts, both command-line skeletons, the public API crate | devkit, error-code ledger, `xtask` gates from tests, `bacon`, `doctor`, `CONTRIBUTING.md` | `mise run check` green |
 | M1 ✓ | rust-mutants engine | stable IDs, byte splicing, snapshot and owners, process supervision, syntactic discovery, guards and runtime, compiler-validated acceptance, execution, the library API, `list`/`catalog`/`run` | engine trace, goldens, property tests, fuzz targets, fixtures, explain commands, contract tests | every fixture's fates are fixed by tests |
 | M2 ✓ | `njutest verify` baseline | configuration, targets, per-target baseline under coverage, regions, report v1, verdicts, `plan`/`doctor`/`init` | trace v1, diagnostics, testkit, `report-diff`, `trace summary`/`diff`, fuzz targets, benchmarks | a fixture yields a report with regions and a trace |
 | M3 ✓ | Mutation phase | routing, paired confirmation, accounting, acceptances, `explain`/`replay`/`accept`, HTML/SARIF/JUnit | scripted session, route events, dogfood | njutest reaches a verdict on itself |

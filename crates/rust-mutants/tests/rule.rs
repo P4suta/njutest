@@ -58,9 +58,9 @@ fn the_canonical_table_has_the_documented_shape() {
         .validate()
         .expect("the canonical table satisfies every registry invariant");
     assert_eq!(registry.len(), CANONICAL_RULE_COUNT);
-    assert_eq!(CANONICAL_RULE_COUNT, 69);
+    assert_eq!(CANONICAL_RULE_COUNT, 72);
     assert_eq!(registry.families().len(), CANONICAL_FAMILY_COUNT);
-    assert_eq!(CANONICAL_FAMILY_COUNT, 15);
+    assert_eq!(CANONICAL_FAMILY_COUNT, 16);
     let expected: Vec<(Family, Tier, Vec<&str>)> = vec![
         (
             Family::BooleanLiteral,
@@ -199,6 +199,15 @@ fn the_canonical_table_has_the_documented_shape() {
             Tier::All,
             vec!["int-increment", "int-decrement", "string-to-empty"],
         ),
+        (
+            Family::SaturatingArithmetic,
+            Tier::All,
+            vec![
+                "saturating-add-to-wrapping-add",
+                "saturating-sub-to-wrapping-sub",
+                "saturating-mul-to-wrapping-mul",
+            ],
+        ),
     ];
     let mut position = 0;
     for (index, (family, tier, names)) in expected.iter().enumerate() {
@@ -254,7 +263,7 @@ fn select_tier_returns_every_rule_at_or_below_the_tier_in_table_order() {
     let all = registry.select_tier(Tier::All);
     assert_eq!(balanced.len(), 33);
     assert_eq!(strong.len(), 62);
-    assert_eq!(all.len(), 69);
+    assert_eq!(all.len(), 72);
     assert!(balanced.iter().all(|r| r.tier == Tier::Balanced));
     assert_eq!(
         &strong[..balanced.len()],
@@ -380,16 +389,6 @@ fn a_registry_refuses_a_table_that_breaks_an_invariant() {
 }
 
 /// The relative order of the rules that were in the v1 table when it had 36 of them.
-///
-/// A mutant's identity is the rule that produced it, and two rules that can
-/// produce the same replacement at the same span are separated by which comes
-/// first in this table. Reordering them therefore renames mutants, which
-/// silently invalidates every stored acceptance and every reused verdict about
-/// them. Adding a rule does not: a new family goes at the end of the table and
-/// a new rule at the end of its family's block, which leaves every existing
-/// pair in the order it was in. The end of the table is the end of the tier's
-/// run rather than the end of the file: the table is non-decreasing in tier so
-/// that each profile's rules are a prefix of the next one's.
 const THIRTY_SIX: [&str; 36] = [
     "true-to-false",
     "false-to-true",

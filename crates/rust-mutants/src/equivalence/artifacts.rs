@@ -62,13 +62,6 @@ where
 }
 
 /// What one build's artifacts say about another's.
-///
-/// The lemma is the whole of the layer: the same bytes, run with the same
-/// arguments in the same environment, are the same program and make the same
-/// observations. It needs neither a deterministic compiler nor a correct one.
-/// What it does need is something to compare — an empty set of executables is
-/// not a pair of equal programs, and neither is a pair of builds that produced
-/// different targets.
 #[must_use]
 pub fn compare(original: &Artifacts, mutated: &Artifacts) -> Identity {
     if original.is_empty() || mutated.is_empty() {

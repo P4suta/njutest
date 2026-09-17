@@ -12,7 +12,7 @@
 use std::path::PathBuf;
 
 use jiff::Timestamp;
-use njutest_cli::kept::{FILE_NAME, Ledger, SCHEMA, forget_gone, read, record};
+use njutest_cli::kept::{Ledger, SCHEMA, forget_gone, path, read, record};
 
 fn when() -> Timestamp {
     Timestamp::from_second(1_700_000_000).expect("a timestamp")
@@ -34,7 +34,7 @@ fn what_a_run_preserved_outlives_the_run() {
 
     let written =
         record(dir.path(), "run-1", when(), std::slice::from_ref(&kept)).expect("recorded");
-    assert_eq!(written, dir.path().join(FILE_NAME));
+    assert_eq!(written, path(dir.path()));
     let ledger = read(dir.path());
     assert_eq!(ledger.kept.len(), 1);
     assert_eq!(ledger.kept[0].run_id, "run-1");
@@ -62,7 +62,7 @@ fn the_same_directory_recorded_twice_is_named_once() {
 #[test]
 fn a_ledger_this_release_cannot_read_authorizes_nothing() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let path = dir.path().join(FILE_NAME);
+    let path = path(dir.path());
     std::fs::create_dir_all(path.parent().expect("a directory")).expect("mkdir");
     std::fs::write(&path, "{ not a ledger").expect("write");
     assert_eq!(

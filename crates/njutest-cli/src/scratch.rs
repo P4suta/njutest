@@ -135,12 +135,22 @@ impl Scratch {
         &self.swept
     }
 
-    /// Releases the lock and removes everything the run wrote, answering with what was preserved: nothing.
+    /// Releases the lock and removes everything the run wrote, answering with whatever would not go.
+    ///
+    /// Answering "nothing was preserved" without looking leaves a directory on
+    /// the disk that nothing names: not the ledger, which was given an empty
+    /// list, and not the person, who was told the run cleaned up after itself.
+    /// A tree something else is holding — a mount, an open handle — refuses,
+    /// and that is the one case worth reporting.
     #[must_use]
     pub fn close(mut self) -> Vec<PathBuf> {
         self.disarmed = true;
         self.remove();
-        Vec::new()
+        if self.dir.exists() {
+            vec![self.dir.clone()]
+        } else {
+            Vec::new()
+        }
     }
 
     /// Records the keep in the marker, releases the lock, and leaves everything where it is, answering with what was preserved.

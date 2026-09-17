@@ -14,23 +14,13 @@ use crate::cargo::{
 };
 use crate::instrument::{ACTIVE_ENV, CATALOG_ENV, STALE_CATALOG_EXIT, TOUCH_ENV};
 use crate::outcome::Outcome;
-use crate::runner::{Cancel, EXIT_CODE_UNAVAILABLE, RunResult, Spec, run};
+use crate::runner::{Bound, Cancel, EXIT_CODE_UNAVAILABLE, RunResult, Spec, run};
 use crate::trace::{ExecRecord, Recorder};
 
 /// Every variable the engine owns. A test process sees exactly the ones this run set, never one an outer run left behind.
 pub const RESERVED_ENV: [&str; 3] = [ACTIVE_ENV, CATALOG_ENV, TOUCH_ENV];
 
 /// The variables a run composes for every test process it starts, which it therefore never lets one inherit.
-///
-/// The three reserved ones say which mutation is active and what the guards are
-/// to record, and an inherited one would decide what somebody else's run
-/// measured — or append this run's touches to a file another run is reading.
-/// `LLVM_PROFILE_FILE` is the fourth for a different reason: a measurement of
-/// this engine sets it, and an instrumented test process that inherited it
-/// would write over the very measurement that started the run. Removing it is
-/// not enough on its own — an instrumented binary with no path writes
-/// `default_*.profraw` into its working directory, which is the tree being
-/// measured — so a run puts a path of its own in its place.
 pub const COMPOSED_ENV: [&str; 4] = [
     ACTIVE_ENV,
     CATALOG_ENV,
@@ -39,9 +29,6 @@ pub const COMPOSED_ENV: [&str; 4] = [
 ];
 
 /// The name a test process writes its coverage profile under, when the run is not the one measuring.
-///
-/// `%p` is the process and `%m` the binary, which is what keeps two test
-/// processes of one run from writing one file.
 pub const SPILLED_PROFILE: &str = "spilled-coverage-%p-%m.profraw";
 
 /// The kinds of target that carry tests the engine runs.
@@ -93,11 +80,6 @@ impl TargetKind {
     }
 
     /// The kind of a cargo target, or `None` for one that carries no tests the engine runs (a build script, a bench).
-    ///
-    /// A proc-macro crate's `--test` build is an ordinary executable that links
-    /// the crate as a library and runs its unit tests in a process of its own,
-    /// so what those tests reach is measurable exactly like anything else. What
-    /// is not is the expansion, which runs inside the compiler during the build.
     #[must_use]
     pub fn of(target: &Target) -> Option<Self> {
         if target.is_custom_build() || target.is_bench() {
@@ -125,9 +107,6 @@ pub fn target_id(package: &str, kind: TargetKind, name: &str) -> String {
 }
 
 /// One built test binary.
-///
-/// Built rather than spelled as a literal, so that a field added later is a
-/// method a caller may ignore instead of a compile error in every caller.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct TestTarget {
@@ -146,23 +125,10 @@ pub struct TestTarget {
     /// What cargo sets for this target that the parent environment does not have: `CARGO_MANIFEST_DIR`, `CARGO_PKG_*`, `CARGO_BIN_EXE_*`.
     pub cargo_env: Vec<(OsString, OsString)>,
     /// Whether the target is built with the libtest harness.
-    ///
-    /// A target with `harness = false` is a program that prints what it likes
-    /// and says what it found by exiting, so its exit status is the whole
-    /// answer and there is no summary line to read. Reading one anyway leaves
-    /// every mutation of such a target undecided.
     pub harness: bool,
     /// What a run could not establish about this target, each named.
     pub limitations: Vec<String>,
     /// The arguments before the harness's own, for a target cargo runs rather than one the engine starts itself. Empty for a binary, and then `executable` is the binary.
-    ///
-    /// A library's documentation examples are compiled by rustdoc while cargo
-    /// runs them, so there is no binary to start: the target is `cargo test
-    /// --doc …`, and what the harness is told goes after a `--`. Such a
-    /// harness is also asked for one example by name without `--exact`, which
-    /// it does not honour: a documented example is named
-    /// `src/lib.rs - f (line 7)`, and a name ending in the line it is on
-    /// cannot be the beginning of another one.
     pub through: Vec<OsString>,
 }
 
@@ -258,10 +224,6 @@ impl Summary {
 }
 
 /// What each test of one run said, by name.
-///
-/// The summary line says how many, and a person reading a survivor needs to
-/// know which: the test that killed a mutant is the sentence a report can
-/// hand somebody, and the tests that passed are the ones that could have.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Lines {
     /// Every test that passed, in the order the harness printed them.
@@ -281,10 +243,6 @@ impl Lines {
 }
 
 /// Reads every `test <name> ... <verdict>` line of a captured output.
-///
-/// The failures block at the end names each failed test a second time, and a
-/// name is one test however often the harness prints it, so only the verdict
-/// lines are read.
 #[must_use]
 pub fn parse_lines(output: &[u8]) -> Lines {
     let text = String::from_utf8_lossy(output);
@@ -412,12 +370,6 @@ pub const fn outcome_of(observed: Observation, summary: Option<Summary>, harness
 }
 
 /// Where the build put each binary, by package and by target name.
-///
-/// An integration test finds a binary of its own package through
-/// `CARGO_BIN_EXE_<name>`, and cargo points it at the file it actually built:
-/// under the profile the build used, with whatever extension this platform
-/// puts on an executable. Composing the path from a profile name and a target
-/// name guesses at both, and on Windows guesses wrong.
 fn binaries_built(messages: &[Message]) -> BTreeMap<String, BTreeMap<String, PathBuf>> {
     let mut found: BTreeMap<String, BTreeMap<String, PathBuf>> = BTreeMap::new();
     for message in messages {
@@ -439,12 +391,6 @@ fn binaries_built(messages: &[Message]) -> BTreeMap<String, BTreeMap<String, Pat
 }
 
 /// What a package's own build script left for every unit of that package: where it wrote, and what it put in the environment.
-///
-/// Cargo tells a unit that reads a build script where the script wrote, and
-/// the unit reads it back at run time through `OUT_DIR`. A test process the
-/// engine starts itself is told nothing unless the engine says it, and a test
-/// that reads a file its build script generated then fails for a reason that
-/// is not the mutation.
 fn built_by_a_script(messages: &[Message], package_id: &str) -> Vec<(OsString, OsString)> {
     let mut found = Vec::new();
     for message in messages {
@@ -521,13 +467,6 @@ pub fn environment(
 }
 
 /// The variable a dynamically linked test binary is found through, and what it should hold.
-///
-/// A test binary is started directly rather than through `cargo test`, and one
-/// cargo built with `prefer-dynamic` — every proc-macro crate's own tests, and
-/// anything else a project asks it for — then cannot find `libstd`. Cargo sets
-/// this for the test binaries it runs; so does the engine, from the toolchain
-/// rustc named as its own, keeping whatever the environment already had after
-/// it.
 fn library_path(sysroot: &Path, base: &[(OsString, OsString)]) -> (OsString, OsString) {
     let name = if cfg!(target_os = "macos") {
         "DYLD_FALLBACK_LIBRARY_PATH"
@@ -571,6 +510,8 @@ pub struct ExecRequest<'a> {
     args: Vec<String>,
     timeout: Option<Duration>,
     scratch: Option<PathBuf>,
+    /// Whether the process starts in its scratch directory rather than in the one cargo would give it.
+    scratch_cwd: bool,
 }
 
 impl<'a> ExecRequest<'a> {
@@ -583,6 +524,7 @@ impl<'a> ExecRequest<'a> {
             args: Vec::new(),
             timeout: None,
             scratch: None,
+            scratch_cwd: false,
         }
     }
 
@@ -594,10 +536,6 @@ impl<'a> ExecRequest<'a> {
     }
 
     /// Runs exactly the named tests, which one process does in one go.
-    ///
-    /// Every free argument a libtest binary is given is a filter, and
-    /// `--exact` applies to all of them, so the tests a measurement named are
-    /// one process rather than one each.
     #[must_use]
     pub fn with_tests(mut self, tests: impl IntoIterator<Item = String>) -> Self {
         self.tests = tests.into_iter().collect();
@@ -628,6 +566,13 @@ impl<'a> ExecRequest<'a> {
     #[must_use]
     pub fn with_scratch(mut self, scratch: impl Into<PathBuf>) -> Self {
         self.scratch = Some(scratch.into());
+        self
+    }
+
+    /// Starts the process in its scratch directory rather than where cargo would.
+    #[must_use]
+    pub const fn in_scratch(mut self, within: bool) -> Self {
+        self.scratch_cwd = within;
         self
     }
 
@@ -672,11 +617,6 @@ pub struct Context<'a> {
 }
 
 /// Where the guards of one process append what they reached, and the catalog the record is about.
-///
-/// The catalog travels with the path because a record is about one catalog. A
-/// process built from another — a project whose own tests build and run
-/// instrumented trees, as this engine's do — records nothing rather than
-/// appending to somebody else's record and making the whole of it unreadable.
 #[derive(Debug, Clone, Copy)]
 pub struct Touching<'a> {
     /// The file to append to.
@@ -714,13 +654,6 @@ pub struct MutantResult {
 }
 
 /// Whether the target said anything about the mutation, which is what decides whether the next target is asked.
-///
-/// A run walks the targets a route holds and stops at the first that answers.
-/// `Inconclusive` is the outcome of a libtest target that ran no test or
-/// printed no summary: it said nothing, so the next target is asked. A target
-/// with no libtest harness answers by exiting and is never inconclusive, and
-/// a documentation target with no examples is inconclusive exactly like a
-/// libtest one that ran nothing.
 #[must_use]
 pub const fn answered(outcome: Outcome) -> bool {
     !matches!(outcome, Outcome::Inconclusive)
@@ -735,10 +668,15 @@ pub fn exec(
     trace: &Recorder,
 ) -> MutantResult {
     let target = request.target;
-    let mut spec = Spec::new(request.argv());
-    spec.dir = Some(target.cwd.clone());
+    let mut spec = Spec::new(
+        request.argv(),
+        request.timeout.map_or(Bound::Unbounded, Bound::After),
+    );
+    spec.dir = Some(match (&request.scratch, request.scratch_cwd) {
+        (Some(scratch), true) => scratch.clone(),
+        _ => target.cwd.clone(),
+    });
     spec.env = Some(environment(context, target, request.scratch.as_deref()));
-    spec.timeout = request.timeout;
     let result = run(&spec, cancel);
     trace.exec(ExecRecord::of(&spec, &result));
     let summary = parse_summary(&result.output);
@@ -877,11 +815,6 @@ pub fn targets_of(
 }
 
 /// Every test target the members declare, as ids, without building one of them.
-///
-/// What a run builds is narrowed by the packages it was asked for; what the
-/// workspace declares is not. A name that is in neither is a name that is not
-/// a target's, which is the only thing a run can tell a reader about a name
-/// they typed.
 #[must_use]
 pub fn declared_targets(members: &[&Package]) -> std::collections::BTreeSet<String> {
     let mut ids = std::collections::BTreeSet::new();
@@ -899,16 +832,6 @@ pub fn declared_targets(members: &[&Package]) -> std::collections::BTreeSet<Stri
 }
 
 /// One target for each library whose documentation cargo would run, which is a target this engine does not start itself.
-///
-/// A documentation example is compiled by rustdoc while cargo runs it, so
-/// there is no binary in the build's messages to find: what there is, is a
-/// command. `doctest = false` on the library is cargo's own way of saying
-/// there is nothing to run, and it is honoured.
-///
-/// `packages` is the workspace's own members and never the whole resolved
-/// graph. A dependency's documentation is not this run's to measure, and
-/// asking cargo to run it asks cargo to resolve that dependency's own
-/// dev-dependencies, which a lock file for this workspace never pinned.
 #[must_use]
 pub fn documentation_targets(
     members: &[&Package],
@@ -975,13 +898,6 @@ fn cargo_environment(
 }
 
 /// What cargo tells every unit of a package about the package.
-///
-/// Cargo sets each of these for every compilation and every test process, and
-/// sets the empty string where the manifest says nothing rather than leaving
-/// the variable out. A run that starts the test process itself has to do the
-/// same, because `env!("CARGO_PKG_DESCRIPTION")` compiles either way and a
-/// test that reads one back would otherwise see something the project never
-/// wrote.
 #[must_use]
 pub fn package_environment(package: &Package) -> Vec<(OsString, OsString)> {
     let (major, minor, patch, pre) = version_parts(&package.version);

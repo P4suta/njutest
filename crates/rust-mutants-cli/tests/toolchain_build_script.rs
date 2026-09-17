@@ -37,8 +37,10 @@ fn against(fixture: &Fixture, args: &[&str]) -> std::process::Output {
 }
 
 fn report(fixture: &Fixture) -> serde_json::Value {
-    serde_json::from_str(&njutest_devkit::fixture::stored_report(fixture.root()))
-        .expect("the report is a document")
+    serde_json::from_str(&njutest_devkit::fixture::stored_report(
+        &rust_mutants_cli::app::stored::Store::read(fixture.root()).root(),
+    ))
+    .expect("the report is a document")
 }
 
 #[test]
@@ -106,6 +108,7 @@ fn environment(fixture: &Fixture) -> Environment {
     Environment {
         vars: njutest_devkit::paths::environment_for_a_run(),
         temp_directory: fixture.temp().to_path_buf(),
+        program: std::path::PathBuf::from("this test never runs it"),
         cache_directory: fixture.cache().to_path_buf(),
         working_directory: fixture.root().to_path_buf(),
         no_color: true,

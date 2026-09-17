@@ -97,14 +97,6 @@ fn a_sysroot_without_llvm_profdata_is_a_warning_that_names_the_component() {
 }
 
 /// The doctor reports a reserved variable rather than stopping on it.
-///
-/// The variable it is given here is the one that says where the guards write,
-/// and not the one that says which mutation is active. Under a measurement of
-/// this program the binary a test starts is itself instrumented, and an
-/// activation handed to it activates a mutation in the thing under test: the
-/// process exits on a stale catalog with nothing on its output, and the test
-/// asserts about an empty string. All three are the same check to the doctor,
-/// and only one of them turns the test into a measurement of itself.
 #[test]
 fn a_reserved_variable_is_what_the_doctor_reports_rather_than_what_stops_it() {
     let fixture = Fixture::copy("fixture-simple");
@@ -128,7 +120,7 @@ fn every_check_the_lines_show_is_a_check_the_document_holds() {
     let fixture = Fixture::copy("fixture-simple");
     let empty = fixture.temp().join("nothing");
     std::fs::create_dir_all(&empty).expect("an empty directory");
-    let lines = asked(&fixture, &empty, &[]);
+
     let mut command = njutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")));
     let document = command
         .env_clear()
@@ -145,7 +137,9 @@ fn every_check_the_lines_show_is_a_check_the_document_holds() {
         .output()
         .expect("rust-mutants runs");
     let value: serde_json::Value = checks(&document);
-    let text = String::from_utf8_lossy(&lines.stdout).into_owned();
+    let held: rust_mutants_cli::report::doctor::DoctorDocument =
+        serde_json::from_value(value.clone()).expect("the document this release writes");
+    let text = rust_mutants_cli::report::doctor::lines(&held);
     for check in value["checks"].as_array().expect("the checks") {
         let name = check["name"].as_str().expect("a name");
         let status = check["status"].as_str().expect("a standing");
@@ -168,4 +162,72 @@ fn every_check_the_lines_show_is_a_check_the_document_holds() {
             );
         }
     }
+}
+
+/// Whether a detail names a thing rather than only asserting a state.
+///
+/// A number, a path, a variable or a quoted name is something a reader can go
+/// and look at. "Nothing is left over" is a claim about somewhere nobody
+/// identified, and a reader whose `TMPDIR` is not what they think has been
+/// given a clean bill for the wrong place.
+fn names_something(detail: &str) -> bool {
+    detail.chars().any(|one| one.is_ascii_digit())
+        || detail.contains('/')
+        || detail.contains('\\')
+        || detail.contains('`')
+        || detail
+            .split_whitespace()
+            .any(|word| word.chars().filter(char::is_ascii_uppercase).count() >= 3)
+}
+
+/// A check that passed says what it looked at, not only that it was well.
+///
+/// Two of them said "nothing is left over" and "no reserved variable is set"
+/// and named neither the directory nor the variables, so a reader whose
+/// `TMPDIR` was not what they thought got a clean bill for somewhere nobody
+/// had identified. A pass a reader cannot check is a pass they learn to skip,
+/// and the failing branch of each of those checks already named the thing.
+#[test]
+fn every_check_that_passed_names_what_it_looked_at() {
+    let fixture = Fixture::copy("fixture-simple");
+    let empty = fixture.temp().join("nothing");
+    std::fs::create_dir_all(&empty).expect("an empty directory");
+    let mut command = njutest_devkit::paths::command(Path::new(env!("CARGO_BIN_EXE_rust-mutants")));
+    let document = command
+        .env_clear()
+        .env("NO_COLOR", "1")
+        .env("PATH", &empty)
+        .env("TMPDIR", fixture.temp())
+        .env("XDG_CACHE_HOME", fixture.cache())
+        .args([
+            "doctor",
+            "--json",
+            "--root",
+            &fixture.root().to_string_lossy(),
+        ])
+        .output()
+        .expect("rust-mutants runs");
+    let document: serde_json::Value = checks(&document);
+
+    let silent: Vec<String> = document["checks"]
+        .as_array()
+        .expect("the checks")
+        .iter()
+        .filter(|check| check["status"].as_str() == Some("ok"))
+        .filter(|check| !names_something(check["detail"].as_str().unwrap_or_default()))
+        .map(|check| {
+            format!(
+                "{}: {}",
+                check["name"].as_str().unwrap_or_default(),
+                check["detail"].as_str().unwrap_or_default()
+            )
+        })
+        .collect();
+
+    assert!(
+        silent.is_empty(),
+        "these say a run is well and do not say about what: a path, a count or a version \
+         is what makes a pass one a reader can check rather than one they take on trust. \
+         {silent:?}"
+    );
 }

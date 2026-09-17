@@ -45,11 +45,6 @@ impl Default for Ledger {
 
 impl Ledger {
     /// The ledger under `directory`, or an empty one when there is none this release reads.
-    ///
-    /// A ledger this release cannot read authorises nothing: it is read as
-    /// empty rather than guessed at, so a sweep never removes a directory on
-    /// the strength of a document it did not understand, and never keeps one
-    /// on the strength of one either.
     #[must_use]
     pub fn read(directory: &Path) -> Self {
         std::fs::read_to_string(directory.join(FILE_NAME))
@@ -86,23 +81,42 @@ impl Ledger {
         Ok(ledger)
     }
 
-    /// Removes every directory the ledger names, and writes an empty ledger back.
+    /// Removes the directories the ledger names, and writes back the ones that are still there.
     ///
     /// # Errors
     /// The ledger that could not be written.
     pub fn clear(directory: &Path) -> Result<(usize, Self), std::io::Error> {
+        Self::clear_with(directory, &|path: &Path| std::fs::remove_dir_all(path))
+    }
+
+    /// [`Ledger::clear`] with its removal as an argument, so the directory that refuses to go can be tested without a filesystem persuaded into refusing.
+    ///
+    /// # Errors
+    /// The ledger that could not be written.
+    pub fn clear_with(
+        directory: &Path,
+        remove: &dyn Fn(&Path) -> std::io::Result<()>,
+    ) -> Result<(usize, Self), std::io::Error> {
         let ledger = Self::read(directory);
+        let started = std::time::Instant::now();
         let mut removed = 0usize;
-        for entry in &ledger.kept {
-            if std::fs::remove_dir_all(&entry.path).is_ok() {
-                removed = removed.saturating_add(1);
+        let mut left = Self::default();
+        for entry in ledger.kept {
+            if !entry.path.exists() {
+                continue;
             }
+            if started.elapsed() >= rust_mutants::tempowner::SWEEP_BUDGET
+                || remove(&entry.path).is_err()
+            {
+                left.kept.push(entry);
+                continue;
+            }
+            removed = removed.saturating_add(1);
         }
-        let empty = Self::default();
-        let text = serde_json::to_string_pretty(&empty)
+        let text = serde_json::to_string_pretty(&left)
             .map_err(|error| std::io::Error::other(error.to_string()))?;
         rust_mutants::replace::file(&directory.join(FILE_NAME), format!("{text}\n").as_bytes())
             .map_err(|failure| failure.source)?;
-        Ok((removed, empty))
+        Ok((removed, left))
     }
 }

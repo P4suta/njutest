@@ -77,7 +77,7 @@ fn a_quiet_run_says_nothing_until_the_summary() {
         "nothing about one mutant: {text}"
     );
     assert!(
-        text.contains("MUTANTS   cataloged="),
+        text.contains("mutants were cataloged"),
         "and the summary all the same: {text}"
     );
 }
@@ -103,6 +103,7 @@ fn environment(fixture: &Fixture) -> Environment {
     Environment {
         vars: njutest_devkit::paths::environment_for_a_run(),
         temp_directory: fixture.temp().to_path_buf(),
+        program: std::path::PathBuf::from("this test never runs it"),
         cache_directory: fixture.cache().to_path_buf(),
         working_directory: fixture.root().to_path_buf(),
         no_color: true,

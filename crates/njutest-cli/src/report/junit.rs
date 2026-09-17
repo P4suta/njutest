@@ -16,8 +16,13 @@ pub fn document(report: &Report) -> String {
         out,
         "<testsuites name=\"{}\" tests=\"{}\" failures=\"{}\" skipped=\"{}\" time=\"{:.3}\">",
         escape(&report.repository.root_name),
-        targets.selected,
-        targets.failed.saturating_add(targets.missing),
+        targets
+            .selected
+            .saturating_add(u32::try_from(report.findings.len()).unwrap_or(u32::MAX)),
+        targets
+            .failed
+            .saturating_add(targets.missing)
+            .saturating_add(u32::try_from(report.findings.len()).unwrap_or(u32::MAX)),
         targets.skipped,
         seconds(report.timing.duration_ms)
     );

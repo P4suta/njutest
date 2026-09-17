@@ -2,13 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Which of the two measurements a prepared session makes, as one value a test can name.
-//!
-//! There are two independent answers to "could this target have noticed this
-//! mutation": the guards, which record on the run that verifies the baseline
-//! which of a target's tests reached them, and the LLVM coverage build, which
-//! is kept as a second opinion. A test about a proof layer is nearly always a
-//! test about one of the four combinations, and naming the combination is
-//! clearer than two `bool` arguments a reader has to count.
 
 use crate::rule::Tier;
 use crate::session::PrepareOptions;

@@ -54,6 +54,7 @@ fn environment(directory: &Path, named: &[(&str, &str)]) -> Environment {
         cache_directory: directory.join("njutest-cache"),
         working_directory: directory.to_path_buf(),
         temp_directory: directory.join("njutest-temp"),
+        program: std::path::PathBuf::from("this test never runs it"),
         vars,
         cancel: Cancel::new(),
     }
@@ -115,11 +116,6 @@ fn an_unknown_flag_is_invalid_input_and_exits_3() {
 }
 
 /// Every command the top-level help lists, which is every command there is.
-///
-/// Read from the help rather than written down here, because a list somebody
-/// maintains beside the one the program prints is a list that falls behind:
-/// half of these had no recorded help at all until it was read from the
-/// program instead.
 fn subcommands() -> Vec<String> {
     let help = String::from_utf8_lossy(&njutest(&["--help"]).stdout).into_owned();
     let listing = help
@@ -230,10 +226,6 @@ fn doctor_reads_the_configuration_a_run_would_read() {
 }
 
 /// A directory holding only what a run requires, so every optional tool is out of reach.
-///
-/// The two required programs are placed from wherever this machine keeps them,
-/// which the doctor has just said; `llvm-profdata` and `llvm-cov` come from the
-/// toolchain's own sysroot and are found whatever `PATH` says.
 fn only_what_is_required(dir: &Path, said: &str) -> std::path::PathBuf {
     let bin = dir.join("bin");
     std::fs::create_dir_all(&bin).expect("a directory");
@@ -276,7 +268,8 @@ fn doctor_says_a_run_can_go_ahead_when_only_the_optional_tools_are_missing() {
         "an optional tool is one a run says a limitation about rather than one it needs,          so a machine with every required tool and no optional one can still verify:          {stdout}"
     );
     assert!(
-        stdout.ends_with("\n\na standard-v1 run can go ahead on this machine\n"),
+        stdout.contains("\n\na standard-v1 run can go ahead:")
+            && stdout.ends_with("every required one answered\n"),
         "and the doctor says so in the last line, set off from the table by a blank one: \
          {stdout:?}"
     );

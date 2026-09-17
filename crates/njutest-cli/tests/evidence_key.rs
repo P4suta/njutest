@@ -145,14 +145,14 @@ fn a_package_that_reads_a_directory_keys_on_the_whole_tree() {
 fn what_reads_a_directory_is_found_in_the_source_rather_than_guessed_at() {
     let repo = Repo::new();
     repo.package("demo").lib("pub fn f() {}\n");
-    let scanned = scan(repo.root(), &[], &[]).expect("the tree reads");
+    let scanned = scan(repo.root(), &within()).expect("the tree reads");
     assert!(!reads_directories_under(repo.root(), &scanned, ""));
 
     repo.write(
         "src/listing.rs",
         "pub fn all() -> usize { std::fs::read_dir(\".\").into_iter().count() }\n",
     );
-    let scanned = scan(repo.root(), &[], &[]).expect("the tree reads");
+    let scanned = scan(repo.root(), &within()).expect("the tree reads");
     assert!(
         reads_directories_under(repo.root(), &scanned, ""),
         "a package whose result depends on what is in a directory keys the whole tree"
@@ -167,7 +167,7 @@ fn what_reads_a_directory_is_found_in_the_source_rather_than_guessed_at() {
 fn what_a_target_links_is_read_from_the_resolved_graph() {
     let repo = Repo::new();
     repo.package("demo").lib("pub fn f() {}\n");
-    let scanned = scan(repo.root(), &[], &[]).expect("the tree reads");
+    let scanned = scan(repo.root(), &within()).expect("the tree reads");
     let document = format!(
         r#"{{
           "version": 1,
@@ -256,9 +256,24 @@ fn the_behaviour_key_of_a_known_target_is_the_one_it_has_always_been() {
     njutest_devkit::golden::golden(&golden, recorded.as_bytes()).expect("the recorded key");
 }
 
+/// What one walk of a tree this test wrote leaves out, for a project that has said nothing about where it writes.
+fn within() -> njutest_cli::evidence::tree::Bounds<'static> {
+    static EXCLUDED: std::sync::LazyLock<njutest_cli::evidence::tree::Excluded> =
+        std::sync::LazyLock::new(|| {
+            njutest_cli::evidence::tree::Excluded::beside(
+                &njutest_cli::config::Config::default().reports.directory,
+            )
+        });
+    njutest_cli::evidence::tree::Bounds {
+        exclude: &[],
+        elsewhere: &[],
+        excluded: &EXCLUDED,
+    }
+}
+
 /// The digest one package is keyed on, in a tree this test writes.
 fn keyed(repo: &Repo) -> String {
-    let scanned = scan(repo.root(), &[], &[]).expect("the tree reads");
+    let scanned = scan(repo.root(), &within()).expect("the tree reads");
     let document = format!(
         r#"{{
           "version": 1,
@@ -421,7 +436,7 @@ fn four_kinds(repo: &Repo) -> Metadata {
 fn every_package_of_a_closure_is_reached_whatever_the_ones_before_it_were() {
     let repo = Repo::new();
     let metadata = four_kinds(&repo);
-    let scanned = scan(repo.root(), &[], &[]).expect("the tree reads");
+    let scanned = scan(repo.root(), &within()).expect("the tree reads");
     let dependencies = "b".repeat(64);
     let linked = linked_by(
         &Reading {
@@ -487,7 +502,7 @@ fn a_word_that_is_ordinary_english_does_not_key_a_package_on_the_whole_tree() {
              fn global_counter_starts_at_one() { assert_eq!(super::f(), 1); }\n\
          }\n",
     );
-    let scanned = scan(repo.root(), &[], &[]).expect("the tree reads");
+    let scanned = scan(repo.root(), &within()).expect("the tree reads");
     assert!(
         !reads_directories_under(repo.root(), &scanned, ""),
         "a suite that marks a test ignored, or names something global, has not said it \
@@ -500,7 +515,7 @@ fn a_word_that_is_ordinary_english_does_not_key_a_package_on_the_whole_tree() {
         "src/listing.rs",
         "use ignore::WalkBuilder;\npub fn all() -> usize { WalkBuilder::new(\".\").build().count() }\n",
     );
-    let scanned = scan(repo.root(), &[], &[]).expect("the tree reads");
+    let scanned = scan(repo.root(), &within()).expect("the tree reads");
     assert!(
         reads_directories_under(repo.root(), &scanned, ""),
         "while a package that reaches the crate does say so, and the path it is reached \

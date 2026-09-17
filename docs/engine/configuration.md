@@ -21,7 +21,7 @@ version = 1
 [project]
 packages = []                  # cargo package names; empty = every member
 include = []                   # workspace-relative globs a file must match
-exclude = []                   # globs removing a file from the snapshot and from mutation
+exclude = []                   # globs naming files nothing is mutated in
 allow_outside = []             # directories outside the root the build may read
 
 [build]
@@ -49,6 +49,7 @@ doctests = true                # run a library's documented examples as a target
 skip_targets = []              # target ids never to start, as pkg/kind/name; a name no target has is refused
 jobs = 0                       # mutants measured at once; 0 = the machine, capped at 4
 test_binary_args = []          # --test-threads, --include-ignored, --nocapture, --show-output
+scratch_working_directory = false # start each test process in a directory of its own
 
 [reports]
 directory = "reports/mutation" # workspace-relative
@@ -57,6 +58,9 @@ keep = 20                      # run directories kept
 [reports.stryker]
 high = 80                      # at or above this, a Stryker reader shows green
 low = 60                       # below this, it shows red
+
+[snapshot]
+omit = []                      # globs the copy does not carry at all
 ```
 
 `[reports.stryker]` is read by nobody but a Stryker reader. **Nothing in this

@@ -71,12 +71,6 @@ fn summary(root: &Path, named: Option<&str>, streams: &mut Streams<'_>) -> u8 {
 }
 
 /// How many executions each proof removed, most first.
-///
-/// This is the answer to the question
-/// [ADR 0004](../../../../docs/adr/0004-proof-layers-not-budgets.md) says a
-/// reader will ask when a run goes faster: which proof did it. It is a count of
-/// discharges, never of seconds, because a layer that removes an execution is
-/// the only thing in this program allowed to make a run shorter.
 #[must_use]
 pub fn proofs(events: &[Event]) -> Vec<(String, u64)> {
     let mut counted: BTreeMap<String, u64> = BTreeMap::new();
@@ -98,10 +92,6 @@ pub fn proofs(events: &[Event]) -> Vec<(String, u64)> {
 pub const ENGINE_DIRECTORY: &str = "engine";
 
 /// The commands that took the longest, most first.
-///
-/// A run is mostly the time its subprocesses take, and the question a person
-/// asks of a slow run is which of them it was. Answering it used to mean
-/// writing a script over the recording.
 #[must_use]
 pub fn slowest(events: &[Event]) -> Vec<(u64, String)> {
     let mut timed: Vec<(u64, String)> = events
@@ -123,10 +113,6 @@ pub const SLOWEST_KEPT: usize = 5;
 pub const COMMAND_WIDTH: usize = 72;
 
 /// One command, short enough to read in a line: the program by its file name, then as much of its arguments as fits.
-///
-/// A line that was cut says so. Cutting one and leaving it looking whole hands
-/// a reader a command they can neither run nor recognise, and the ones they
-/// could run look exactly the same.
 #[must_use]
 pub fn said(argv: &[String]) -> String {
     let mut line = argv
@@ -149,11 +135,6 @@ pub fn said(argv: &[String]) -> String {
 }
 
 /// What the engine recorded beside this run, when it recorded anything.
-///
-/// The engine does most of a run — the snapshot, the instrumentation, the
-/// validation rounds, the builds — and keeps its own recording in a directory
-/// of its own. A summary that read only the runner's would leave the larger
-/// part of every run unaccounted for.
 fn engine(root: &Path, run: &str, out: &mut dyn Write) {
     let stream = runs::recording(root, run)
         .join(ENGINE_DIRECTORY)
@@ -213,7 +194,7 @@ fn load(root: &Path, named: Option<&str>, stderr: &mut dyn Write) -> Option<(Str
         None => match runs::resolve(root, None) {
             Ok(run) => run,
             Err(error) => {
-                super::diagnose(stderr, &error.to_string());
+                super::complain(stderr, &error, error.code());
                 return None;
             }
         },

@@ -103,11 +103,14 @@ fn measure(fixture: &str, test: &str) -> Measured {
         })
         .expect("a test binary");
 
-    let mut spec = Spec::new([
-        executable.as_os_str().to_owned(),
-        OsString::from(test),
-        OsString::from("--exact"),
-    ]);
+    let mut spec = Spec::new(
+        [
+            executable.as_os_str().to_owned(),
+            OsString::from(test),
+            OsString::from("--exact"),
+        ],
+        rust_mutants::runner::Bound::Unbounded,
+    );
     spec.dir = Some(root.clone());
     let mut run_env = env;
     run_env.push((

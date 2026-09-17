@@ -2,11 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Where a run's report is stored, which of them are kept, and which one is the newest.
-//!
-//! Every rule here decides what a person reading `report` with no `--run` is
-//! shown, and what is still on the disk a month later. Both are only ever
-//! reached through a whole run otherwise, so they are put here to the
-//! directories they are about.
 
 #![expect(
     clippy::expect_used,

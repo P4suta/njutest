@@ -178,14 +178,7 @@ fn kept_command(
     }
 }
 
-/// A run composes its own activation. An inherited one would silently decide what every test process measures.
-/// Whether the command is one whose whole job is to say what is wrong here.
-///
-/// Every other command refuses an unrelated reserved variable, because what a
-/// test process said under one is about something else. A binary compiled from
-/// the matching instrumented catalog may retain its one outer measurement.
-/// These two report the environment instead: a person whose environment is
-/// broken runs them to find that out.
+/// A run composes its own activation. An inherited one would silently decide what every test process measures. Whether the command is one whose whole job is to say what is wrong here.
 const fn diagnoses(command: &cli::Command) -> bool {
     matches!(
         command,
@@ -194,13 +187,6 @@ const fn diagnoses(command: &cli::Command) -> bool {
 }
 
 /// The reserved variables this environment already names, in the order they are set.
-///
-/// A variable exported with no value activates nothing, and a shell that
-/// exports a name it never assigned is a shell everybody has, so the rule is
-/// about the value and never about the name alone. It is written once because
-/// the doctor answers about the same rule the run refuses on: one that said
-/// `fail` where a run says nothing sends a person to unset a variable that was
-/// never in the way.
 #[must_use]
 pub fn reserved_names(environment: &Environment) -> Vec<String> {
     environment
@@ -295,12 +281,6 @@ fn workspace_command(
 }
 
 /// Where a run may remember what measuring this tree established.
-///
-/// The measurement is a function of the tree and not of any mutation, and
-/// making it rebuilds every crate in the graph, so a tree nothing has touched
-/// since the last run is a whole build a run does not have to do. `--no-cache`
-/// asks for the work to be done again, and asking for that has to mean this
-/// too, or the flag would only half do what it says.
 fn remembered_measurements(command: &cli::Command, environment: &Environment) -> Option<PathBuf> {
     if matches!(command, cli::Command::Run { no_cache: true, .. }) {
         return None;
@@ -337,14 +317,6 @@ impl Displayed {
 }
 
 /// Prepares the tree, saying what it is doing while it does it.
-///
-/// Preparing is most of a long run and a reader who is shown none of it until
-/// it is over cannot tell a slow run from a hung one. The work runs on a
-/// thread of its own so the display can write each phase as the recorder
-/// reaches it; the display is what the calling thread does while it waits, so
-/// nothing about who owns the output stream changes.
-///
-/// A command with no display prepares on the calling thread exactly as before.
 fn preparing(
     workspace: Workspace,
     options: &session::PrepareOptions,
@@ -402,10 +374,6 @@ const fn watching(command: &cli::Command) -> bool {
 }
 
 /// What every test binary of this run is started with: what a person typed after `--`, or what the file holds when they typed nothing.
-///
-/// They are the same run either way, so one takes the place of the other
-/// rather than adding to it: two spellings of `--test-threads` on one command
-/// line is a contradiction nobody wrote on purpose.
 fn harness(command: &cli::Command, options: &mut session::PrepareOptions) {
     if let cli::Command::Run { args, .. } = command
         && !args.is_empty()
@@ -415,9 +383,6 @@ fn harness(command: &cli::Command, options: &mut session::PrepareOptions) {
 }
 
 /// Everything a workspace command needs beyond what it prints.
-///
-/// The run is named before the workspace is opened, so a recording of the
-/// opening itself has somewhere to go.
 struct Running<'a> {
     scope: &'a cli::Scope,
     settings: &'a Settings,
@@ -469,19 +434,18 @@ fn measured(
             let root = settings.root.clone();
             let open = settings.open_options(scope, environment, recorder.clone())?;
             workspace.close()?;
-            write(
-                stdout,
-                &rendered(&equivalence(
-                    &Asking {
-                        root: &root,
-                        open,
-                        discovery: &discovery,
-                        limit: *limit,
-                        trace: recorder,
-                    },
-                    cancel,
-                )?),
-            );
+            let cataloged = discovery.catalog.mutants().len();
+            let said = equivalence(
+                &Asking {
+                    root: &root,
+                    open,
+                    discovery: &discovery,
+                    limit: *limit,
+                    trace: recorder,
+                },
+                cancel,
+            )?;
+            write(stdout, &rendered(&said, cataloged));
             Ok(0)
         }
         cli::Command::List { .. }
@@ -530,9 +494,6 @@ fn measured(
 }
 
 /// Writes down what a run kept, so a later command can find it and a later sweep can leave it alone.
-///
-/// A recording never fails a run and neither does this: a ledger that could
-/// not be written costs the next `cache` its list, and nothing else.
 fn remember(
     settings: &Settings,
     run_id: &str,
@@ -560,9 +521,6 @@ fn base_of(scope: &cli::Scope) -> Option<&str> {
 }
 
 /// The patterns a change set selects, narrowing what the configuration already selected.
-///
-/// A tree git cannot be asked about ends the command: a run that could not see
-/// what changed must never look like a run that saw nothing change.
 fn selected(
     running: &Running<'_>,
     base: &str,
@@ -600,36 +558,68 @@ fn selected(
     ))
 }
 
-/// What a command that only needs discovery prints.
-/// Refuses a `--file` that names no file the walk considered.
-///
-/// A path nobody wrote is not a file with nothing in it. A run narrowed to a
-/// misspelled name measures nothing and reports that nothing was missed, which
-/// is the one answer a person cannot tell from a clean one, and a listing of it
-/// is silence that reads as a file the rules found nothing in.
-///
-/// A file that is there and yields no candidate is not refused: the walk
-/// considered it, and "no candidate here" is a true answer about it.
+/// What a command that only needs discovery prints. Refuses a `--file` that names no file the walk considered.
 ///
 /// # Errors
 /// [`CliError::InvalidValue`] naming the path and how many files there are.
 fn narrowed(considered: &[String], named: &[String]) -> Result<(), CliError> {
-    for one in named {
-        let path = one
-            .rsplit_once(':')
-            .map_or(one.as_str(), |(head, _lines)| head);
-        if !considered.iter().any(|held| held == path) {
-            return Err(CliError::InvalidValue {
-                flag: "--file".to_owned(),
-                value: one.clone(),
-                expected: format!(
-                    "a workspace-relative path of one of the {} files this run reads",
-                    considered.len()
-                ),
-            });
-        }
-    }
-    Ok(())
+    let missing: Vec<&String> = named
+        .iter()
+        .filter(|one| {
+            let path = one
+                .rsplit_once(':')
+                .map_or(one.as_str(), |(head, _lines)| head);
+            !considered.iter().any(|held| held == path)
+        })
+        .collect();
+    let Some(first) = missing.first() else {
+        return Ok(());
+    };
+    Err(CliError::InvalidValue {
+        flag: "--file".to_owned(),
+        value: missing
+            .iter()
+            .map(|one| one.as_str())
+            .collect::<Vec<&str>>()
+            .join(", "),
+        expected: format!(
+            "a workspace-relative path of one of the {} files this run reads. Nearest to \
+             {first:?}: {}",
+            considered.len(),
+            nearest(first, considered)
+        ),
+    })
+}
+
+/// The three names most like `named`, so a typo is answered with what was meant.
+///
+/// A refusal that says "not one of the four hundred files this run reads" and
+/// stops has told somebody they are wrong and left them to find out how. The
+/// names are in hand.
+fn nearest(named: &str, considered: &[String]) -> String {
+    let mut ranked: Vec<(usize, &String)> = considered
+        .iter()
+        .map(|held| (distance(named, held), held))
+        .collect();
+    ranked.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(b.1)));
+    ranked
+        .into_iter()
+        .take(3)
+        .map(|(_at, held)| held.as_str())
+        .collect::<Vec<&str>>()
+        .join(", ")
+}
+
+/// How far apart two names are, counting the characters they do not share.
+fn distance(left: &str, right: &str) -> usize {
+    let shared = left
+        .chars()
+        .zip(right.chars())
+        .take_while(|(a, b)| a == b)
+        .count();
+    left.len()
+        .saturating_add(right.len())
+        .saturating_sub(shared.saturating_mul(2))
 }
 
 fn previewed(
@@ -643,13 +633,17 @@ fn previewed(
         .map(|file| file.path.clone())
         .collect();
     match command {
-        cli::Command::List { file, .. } => {
+        cli::Command::List { file, json, .. } => {
             narrowed(&considered, file.as_slice())?;
-            Ok(report::list(
-                discovery,
-                &read_sources(workspace.snapshot_root(), discovery),
-                file.as_deref(),
-            ))
+            let sources = read_sources(workspace.snapshot_root(), discovery);
+            if *json {
+                return Ok(json_line(&report::candidates(
+                    discovery,
+                    &sources,
+                    file.as_deref(),
+                )));
+            }
+            Ok(report::list(discovery, &sources, file.as_deref()))
         }
         cli::Command::WhySkipped { file, line, .. } => {
             narrowed(&considered, file.as_slice())?;
@@ -677,8 +671,7 @@ struct Prepared<'a> {
     started: Timestamp,
     /// What the recorder has said about the phases it has finished, for a display to write.
     phases: &'a std::sync::mpsc::Receiver<rust_mutants::trace::Event>,
-    /// The run selection compiled into the instrumented tree, evaluated once
-    /// before preparation so `--from-report` cannot move underneath it.
+    /// The run selection compiled into the instrumented tree, evaluated once before preparation so `--from-report` cannot move underneath it.
     filter: Option<&'a run::Filter>,
 }
 
@@ -797,8 +790,7 @@ fn one(
     Ok(report::exit_code(result.outcome))
 }
 
-/// Every accepted mutant, with the expectations verified and a report written.
-/// Everything a whole run needs beyond the session.
+/// Every accepted mutant, with the expectations verified and a report written. Everything a whole run needs beyond the session.
 struct Whole<'a> {
     settings: &'a Settings,
     /// How the workspace was opened, so the equivalence layer can open a tree of its own the same way.
@@ -944,6 +936,28 @@ fn concluded(
         debug_assert!(ok.is_ok(), "writing to a String cannot fail");
         write(stdout, &line);
     }
+    write(stdout, &onward(document));
+}
+
+/// Where a reader goes from a wall of findings, which is the next thing they want and the one thing the run does not say.
+///
+/// A survivor is a decision to make, not a fact to file: either the tests have
+/// a gap or the code has a claim in it somebody should write down. `explain`
+/// is where both are answered — it prints what reached the mutation, and the
+/// block that records a reason — and nothing on the way there named it.
+fn onward(document: &run_report::RunDocument) -> String {
+    let Some(first) = document
+        .mutants
+        .iter()
+        .find(|one| one.outcome == "survived" && !one.expected)
+    else {
+        return String::new();
+    };
+    format!(
+        "NEXT      rust-mutants explain {}:{}:{}@{}\n          says which tests reached one \
+         of these, and writes the block that records a reason for it\n",
+        first.path, first.item, first.rule, first.line
+    )
 }
 
 /// Everything the run itself needs beyond the session, so a caller chooses one display and hands it over.
@@ -983,10 +997,6 @@ fn measured_run(
 }
 
 /// Everything beyond a mutant's own identity that a stored outcome is keyed on.
-///
-/// A record answers for a mutant only when the tree, the catalog, the harness
-/// arguments, the budget and the build are the ones it was established under:
-/// anything else is an answer to a different question.
 fn keyed(session: &Session, settings: &Settings, args: &[String]) -> crate::outcomes::Keyed {
     crate::outcomes::Keyed {
         closure: session.closure().to_owned(),
@@ -1096,10 +1106,7 @@ fn filter(
     Ok(filter)
 }
 
-/// Compiles the run's syntactic selection before the expensive compiler
-/// validation begins. Existence checks still happen against the complete
-/// session catalog afterwards; this step only gives preparation the same
-/// predicate the run will use.
+/// Compiles the run's syntactic selection before the expensive compiler validation begins. Existence checks still happen against the complete session catalog afterwards; this step only gives preparation the same predicate the run will use.
 fn filter_before_preparation(
     command: &cli::Command,
     settings: &Settings,
@@ -1141,11 +1148,7 @@ fn filter_before_preparation(
     })
 }
 
-/// Which candidates a run already knows it can leave out before it compiles
-/// the instrumented tree. Shards deliberately stay out of this predicate:
-/// each shard report currently carries the shared validation result, so that
-/// result must remain identical across all parts until merge records a
-/// partitioned validation proof of its own.
+/// Which candidates a run already knows it can leave out before it compiles the instrumented tree. Shards deliberately stay out of this predicate: each shard report currently carries the shared validation result, so that result must remain identical across all parts until merge records a partitioned validation proof of its own.
 fn validation_filter(
     command: &cli::Command,
     settings: &Settings,
@@ -1166,11 +1169,6 @@ fn validation_filter(
 }
 
 /// The mutants a stored run left with `outcome`, by identity.
-///
-/// A run named by nothing is the newest one under the report directory. What
-/// a report names and this catalog no longer holds selects nothing, which is
-/// what an identity minted from a file's digest does when the file changes;
-/// the run reports the rest as unselected rather than pretending otherwise.
 ///
 /// # Errors
 /// [`CliError::ReportMissing`] when there is no such run to read.
@@ -1202,10 +1200,6 @@ fn stored_outcomes(
 
 /// One `--file` value: a path, and the lines of it the run is about.
 ///
-/// A path with no line after the colon addresses no line rather than the whole
-/// file: a person who wrote one meant to narrow, and measuring everything
-/// while they believe one line was selected is the answer they cannot check.
-///
 /// # Errors
 /// [`CliError::InvalidValue`] for lines that are not a range.
 pub fn addressed(text: &str) -> Result<(String, Option<(u32, u32)>), CliError> {
@@ -1227,11 +1221,6 @@ pub fn addressed(text: &str) -> Result<(String, Option<(u32, u32)>), CliError> {
 }
 
 /// One finding, put back to the tests exactly as the run that found it did.
-///
-/// What a replay adds over `run --mutant` is the run's own answer: the target
-/// and the test that noticed it, read out of the stored report rather than
-/// guessed at, so a replay asks the question the run asked rather than a
-/// wider one. What it establishes is whether the answer is still the same.
 fn replay(
     prepared: &Prepared<'_>,
     asked: (&str, Option<&str>),
@@ -1241,7 +1230,7 @@ fn replay(
     let (prefix, run) = asked;
     let session = prepared.session;
     let found = session.resolve(prefix)?.clone();
-    let stored = recorded(prepared.settings, run, &found.id)?;
+    let stored = recorded(prepared.settings, run, &found)?;
     let mut request = Request::new(found.display_id.clone());
     if let Some(row) = &stored {
         if !row.target.is_empty() {
@@ -1265,13 +1254,6 @@ fn replay(
 }
 
 /// What the replay establishes about the stored answer.
-///
-/// A mutant a proof discharged has no measured outcome to be the same as: the
-/// run said running it would establish what it already knew, and the replay is
-/// what puts that to the tests. Surviving is the proof holding, and a replay
-/// says so rather than reporting the answer as changed. Anything else is the
-/// proof contradicted, which is a fact about this engine rather than about the
-/// project's tests, and it is said in those words.
 fn verdict(stored: Option<&run_report::RunMutantDocument>, now: &str) -> String {
     let Some(row) = stored else {
         return format!("was nothing, now {now}");
@@ -1294,20 +1276,13 @@ fn verdict(stored: Option<&run_report::RunMutantDocument>, now: &str) -> String 
 
 /// What a stored run said about one mutant, when a stored run said anything.
 ///
-/// Nothing is what a tree with no run stored under it says, and it is the only
-/// thing that may read as nothing here. A run a caller named and no directory
-/// holds, and a report that is there and cannot be read, are refusals: a
-/// replay that answered "was nothing" to either would put a claim in the mouth
-/// of a run nobody read, and the reader who mistyped `--run` would be told the
-/// stored answer had changed.
-///
 /// # Errors
 /// [`CliError::ReportMissing`] when `run` names no stored run, or when the
 /// report a name resolves to cannot be read as one.
 fn recorded(
     settings: &Settings,
     run: Option<&str>,
-    id: &str,
+    found: &rust_mutants::catalog::Mutant,
 ) -> Result<Option<run_report::RunMutantDocument>, CliError> {
     let directory = settings.report_directory();
     let path = match stored::report_of(&directory, run) {
@@ -1321,7 +1296,40 @@ fn recorded(
     let text = std::fs::read_to_string(&path).map_err(|error| unreadable(&error.to_string()))?;
     let document: run_report::RunDocument =
         serde_json::from_str(&text).map_err(|error| unreadable(&error.to_string()))?;
-    Ok(document.mutants.into_iter().find(|one| one.id == id))
+    Ok(document
+        .mutants
+        .into_iter()
+        .find(|one| one.id == found.id)
+        .or_else(|| same_place(document_mutants(&text), found)))
+}
+
+/// The stored row for the same mutation, when the identity no longer matches.
+///
+/// An identity is a function of the file's bytes, so the edit a reader makes
+/// before replaying — adding the test that kills the survivor — re-mints it.
+/// Matching on the identity alone then finds nothing, and the replay says "was
+/// nothing, now killed" about a mutation the run had measured and called
+/// survived. Where the identity has moved, the place has not: one file, one
+/// rule, one original text and one replacement is the same mutation.
+fn same_place(
+    stored: Vec<run_report::RunMutantDocument>,
+    found: &rust_mutants::catalog::Mutant,
+) -> Option<run_report::RunMutantDocument> {
+    let mut matching = stored.into_iter().filter(|one| {
+        one.path == found.candidate.path
+            && one.rule == found.candidate.rule.name
+            && one.original.as_bytes() == found.candidate.original.as_slice()
+            && one.replacement.as_bytes() == found.candidate.replacement.as_slice()
+    });
+    let first = matching.next()?;
+    matching.next().is_none().then_some(first)
+}
+
+/// Every mutant row of a stored report, for a second look by place.
+fn document_mutants(text: &str) -> Vec<run_report::RunMutantDocument> {
+    serde_json::from_str::<run_report::RunDocument>(text)
+        .map(|document| document.mutants)
+        .unwrap_or_default()
 }
 
 /// One mutant, explained from a tree prepared for the purpose.
@@ -1353,11 +1361,6 @@ fn fresh_explain(
 }
 
 /// One mutant, explained from what the last run stored rather than from a tree prepared again.
-///
-/// An explanation costs two documents to read: the catalog the run kept and
-/// the report it wrote. Nothing is copied, nothing is compiled, and nothing is
-/// instrumented, which is what makes it a thing a person runs while reading a
-/// report rather than a thing they wait for.
 fn stored_explain(
     asked: (&cli::Scope, &str, Option<&str>, bool),
     environment: &Environment,
@@ -1489,7 +1492,14 @@ fn init(
     std::fs::write(&path, crate::config::skeleton())
         .map_err(|source| CliError::writing(&path, source))?;
     let mut line = String::new();
-    let written = writeln!(line, "wrote {}", path.display());
+    let written = writeln!(
+        line,
+        "wrote {}\nevery key in it is commented out, because every one has a default: the \
+         file is a place to disagree rather than a thing a run needs\nnext: `rust-mutants \
+         doctor` says whether a run can go ahead here, and `rust-mutants run --dry-run` \
+         says what one would cost before spending it",
+        path.display()
+    );
     debug_assert!(written.is_ok(), "writing to a String cannot fail");
     write(stdout, &line);
     Ok(0)
@@ -1540,7 +1550,7 @@ fn rules(tier: Option<&str>, json: bool, stdout: &mut dyn Write) -> Result<u8, C
 /// The rules as the lines a person reads, in canonical table order.
 fn listed(selected: &[rust_mutants::rule::Rule]) -> String {
     let mut text = format!(
-        "{:<20} {:<26} {:<9} {}\n",
+        "{:<20} {:<30} {:<9} {}\n",
         "FAMILY", "RULE", "TIER", "VERSION"
     );
     let mut families: usize = 0;
@@ -1552,7 +1562,7 @@ fn listed(selected: &[rust_mutants::rule::Rule]) -> String {
         }
         let written = writeln!(
             text,
-            "{:<20} {:<26} {:<9} {}",
+            "{:<20} {:<30} {:<9} {}",
             rule.family.name(),
             rule.name,
             rule.tier.name(),
@@ -1603,7 +1613,7 @@ fn report_back(
     } = wanted;
     let root = environment.rooted(root);
     let config = crate::config::Config::load(&root)?;
-    let directory = root.join(&config.reports.directory);
+    let directory = stored::Store::of(&root, &config.reports.directory).root();
     let path = match run {
         Some(id) => directory.join(id).join(run_report::FILE_NAME),
         None => newest(&directory)?,
@@ -1715,13 +1725,6 @@ fn instrumented(
 }
 
 /// The whole line of `text` that `offset` sits on, which is what a reader of one guard wants.
-///
-/// The line is what a person reads, so the ending is not part of it: a `\r`
-/// carried into a terminal sends the cursor back to the start of the line and
-/// the next thing written takes its place, which is a reader of a CRLF tree
-/// losing the one line the command was asked about. An offset that is not a
-/// character boundary, or is past the end, has no line rather than a guessed
-/// one.
 #[must_use]
 pub fn line_around(text: &str, offset: u32) -> Option<String> {
     let at = usize::try_from(offset).ok()?;
@@ -1742,8 +1745,7 @@ fn json_line<T: serde::Serialize>(value: &T) -> String {
     text
 }
 
-/// Puts the reports of the parts of one catalog back together.
-/// The reports of the parts of one catalog, named directly or found under a report directory.
+/// Puts the reports of the parts of one catalog back together. The reports of the parts of one catalog, named directly or found under a report directory.
 ///
 /// # Errors
 /// [`CliError::ReportMissing`] when a name or a glob matches no stored run.
@@ -1757,7 +1759,7 @@ fn parts(
         return Ok(reports.to_vec());
     }
     let root = environment.rooted(root);
-    let directory = root.join(crate::config::DEFAULT_REPORTS_DIRECTORY);
+    let directory = stored::Store::read(&root).root();
     let mut found: Vec<PathBuf> = reports.to_vec();
     for named in runs {
         let pattern = rust_mutants::glob::Pattern::compile(named).map_err(|error| {
@@ -1826,8 +1828,7 @@ fn merge(
     Ok(merged.run.exit_code)
 }
 
-/// A closed stream is the reader's choice, not a failure of ours.
-/// The claims the file wrote, as the engine reads them.
+/// A closed stream is the reader's choice, not a failure of ours. The claims the file wrote, as the engine reads them.
 fn expectations(settings: &Settings) -> Vec<Expectation> {
     settings
         .config
@@ -1884,12 +1885,6 @@ struct Rendered {
 }
 
 /// Asks the compiler about every mutant of the catalog, or the first `limit` of them.
-///
-/// This says `identical` and never `equivalent`: a mutation of a function
-/// nothing calls is dropped by the linker and comes out identical for the
-/// opposite of a reassuring reason, and only a run that knows which tests
-/// executed the position can tell the two apart
-/// ([ADR 0013](../../../../docs/adr/0013-codegen-identity-is-the-equivalence-proof.md)).
 fn equivalence(asking: &Asking<'_>, cancel: &Cancel) -> Result<Vec<Rendered>, CliError> {
     let mut prover = rust_mutants::equivalence::Prover::open(
         asking.root,
@@ -1921,12 +1916,8 @@ fn equivalence(asking: &Asking<'_>, cancel: &Cancel) -> Result<Vec<Rendered>, Cl
     Ok(said)
 }
 
-/// One line per mutant, and a count of each answer.
-///
-/// The tally reads the answer's name from the engine rather than spelling it
-/// again: a word that stopped matching would count nothing, and a tally of
-/// none is what an honest run of a tree with no identical mutation says too.
-fn rendered(said: &[Rendered]) -> String {
+/// One line per mutant, and a count of each answer against the catalog it was taken from.
+fn rendered(said: &[Rendered], cataloged: usize) -> String {
     let mut text = String::new();
     let mut identical = 0usize;
     for one in said {
@@ -1942,21 +1933,25 @@ fn rendered(said: &[Rendered]) -> String {
     }
     let written = writeln!(
         text,
-        "EQUIVALENCE\tasked={}\tidentical={}\tidentical is not equivalent: code nothing links \
-         comes out identical because the linker dropped it",
+        "EQUIVALENCE\tasked={} of {cataloged}\tidentical={}\tidentical is not equivalent: \
+         code nothing links comes out identical because the linker dropped it",
         said.len(),
         identical
     );
+    if said.len() < cataloged {
+        let written = writeln!(
+            text,
+            "             the other {} were never asked, so nothing here is a rate over the \
+             catalog",
+            cataloged.saturating_sub(said.len())
+        );
+        debug_assert!(written.is_ok(), "writing to a String cannot fail");
+    }
     debug_assert!(written.is_ok(), "writing to a String cannot fail");
     text
 }
 
 /// What `--ui auto` means in this environment.
-///
-/// A terminal and a log want the same lines in the same order; what a terminal
-/// gets on top is the tally rewritten in place, which a log cannot use. Both
-/// are `plain` until there is a renderer that overwrites, and `auto` is where
-/// that choice will be made.
 const fn resolved(ui: crate::ui::Ui) -> crate::ui::Ui {
     match ui {
         crate::ui::Ui::Auto => crate::ui::Ui::Plain,

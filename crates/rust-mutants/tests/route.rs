@@ -2,10 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What a route says about a mutation, read as a pure function of the record.
-//!
-//! The route is where a proof layer stops being an argument and becomes a
-//! decision, so what it says about the targets it removed is as much part of
-//! the answer as which ones it kept.
 
 /// What one target's tests reached, as a table a case reads at a glance.
 type Reached<'a> = &'a [(&'a str, &'a [u32])];

@@ -2,17 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The run as the JUnit XML every continuous integration server already reads.
-//!
-//! One test case per cataloged mutant, grouped into one suite per file. A
-//! mutant the tests noticed passed; a survivor is a failure, because a
-//! survivor is a gap in the tests and that is exactly what a failing case
-//! means to a reader of this format. A mutant the run could not decide is an
-//! error, and one nothing ran is skipped with the reason it was not run.
-//!
-//! A finding that is not about a mutant the report still holds — a claim
-//! nothing answers to, a marker that hides nothing — has no row to sit on, so
-//! it gets a suite of its own. A finding nobody can see in the view they
-//! actually read is a finding that does not exist.
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -33,9 +22,15 @@ pub fn document(document: &RunDocument) -> String {
         "<testsuites name=\"rust-mutants\" tests=\"{tests}\" failures=\"{failures}\" \
          errors=\"{errors}\" skipped=\"{skipped}\" time=\"{time}\">",
         tests = counted.cataloged,
-        failures = counted.survived,
-        errors = counted.inconclusive.saturating_add(counted.errored),
-        skipped = counted.not_run,
+        failures = counted
+            .survived
+            .count()
+            .saturating_sub(counted.expected.count()),
+        errors = counted
+            .inconclusive
+            .count()
+            .saturating_add(counted.errored.count()),
+        skipped = counted.not_run.count(),
         time = seconds(document.run.duration_ms),
     );
     for (path, mutants) in files {
@@ -101,7 +96,10 @@ fn suite(out: &mut String, path: &str, mutants: &[&RunMutantDocument]) {
          errors=\"{errors}\" skipped=\"{skipped}\" time=\"{time}\">",
         name = escape(path),
         tests = mutants.len(),
-        failures = counted(&["survived"]),
+        failures = mutants
+            .iter()
+            .filter(|mutant| mutant.outcome == "survived" && !mutant.expected)
+            .count(),
         errors = counted(&["inconclusive", "errored"]),
         skipped = counted(&["not_run"]),
         time = seconds(elapsed),
@@ -132,6 +130,13 @@ fn case(out: &mut String, path: &str, mutant: &RunMutantDocument) {
         rendered(&mutant.replacement)
     );
     let body = match mutant.outcome.as_str() {
+        "survived" if mutant.expected => Some(format!(
+            "      <skipped message=\"{}\"/>\n",
+            escape(&format!(
+                "{change} at {path}:{}:{} survived, which a reviewer wrote down in advance",
+                mutant.line, mutant.column
+            ))
+        )),
         "survived" => Some(format!(
             "      <failure message=\"survived\" type=\"surviving-mutant\">{}</failure>\n",
             escape(&format!(

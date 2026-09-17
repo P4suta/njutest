@@ -29,7 +29,7 @@ fn rows(fixture: &Fixture) -> serde_json::Value {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let directory = fixture.root().join("reports/mutation");
+    let directory = rust_mutants_cli::app::stored::Store::read(fixture.root()).root();
     let mut runs: Vec<std::path::PathBuf> = std::fs::read_dir(&directory)
         .unwrap_or_else(|error| panic!("{}: {error}", directory.display()))
         .flatten()

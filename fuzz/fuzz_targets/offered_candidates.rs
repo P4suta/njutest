@@ -2,14 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What somebody else's program offers to write into your tree.
-//!
-//! A generation provider is a command the configuration names, so its output
-//! is the least trusted thing this program reads, and what the reader decides
-//! is where bytes land on somebody's disk. Two things must hold for every
-//! string there is: it does not panic, and no candidate that comes back out
-//! of it names a place outside what the configuration allowed. A reader that
-//! accepted `../../.ssh/authorized_keys` would be a program that writes there
-//! the moment somebody runs `fix --apply`.
 
 #![no_main]
 

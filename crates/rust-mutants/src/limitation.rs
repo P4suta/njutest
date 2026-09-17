@@ -2,12 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Every limitation the engine can state, in one place.
-//!
-//! A limitation is what a run says when a proof layer could not do its work:
-//! never a failure, and never silence. Keeping the names here rather than
-//! beside the code that emits them is what lets one test hold the set to
-//! [`docs/limitations.md`](../../../docs/limitations.md), so a name that
-//! reaches a report is a name a reader can look up.
 
 /// The tree could not be built with coverage instrumentation, so nothing was measured.
 pub const COVERAGE_BUILD_FAILED: &str = "coverage-build-failed";
@@ -39,6 +33,9 @@ pub const DOCTESTS_NONE: &str = "doctests-none";
 /// The target's own tests do not pass with nothing active, so no outcome against it would be about a mutation.
 pub const BASELINE_NOT_PASSING: &str = "baseline-not-passing";
 
+/// The target's own tests did not pass the first time they were run with nothing active, and passed when they were run again.
+pub const BASELINE_PASSED_ON_RETRY: &str = "baseline-passed-on-retry";
+
 /// The target's guards were not asked what they reached, or were asked and said nothing, so every test of it reaches every mutation in it.
 pub const TOUCH_NOT_RECORDED: &str = "touch-not-recorded";
 
@@ -46,12 +43,13 @@ pub const TOUCH_NOT_RECORDED: &str = "touch-not-recorded";
 pub const TOUCH_LOG_UNREADABLE: &str = "touch-log-unreadable";
 
 /// Every limitation, in the order a reader meets them.
-pub const ALL: [&str; 12] = [
+pub const ALL: [&str; 13] = [
     CUSTOM_HARNESS,
     TARGET_SKIPPED_BY_CONFIGURATION,
     DOCTESTS_ROUTED_BY_FILE,
     DOCTESTS_NONE,
     BASELINE_NOT_PASSING,
+    BASELINE_PASSED_ON_RETRY,
     TOUCH_NOT_RECORDED,
     TOUCH_LOG_UNREADABLE,
     COVERAGE_BUILD_FAILED,
@@ -62,14 +60,6 @@ pub const ALL: [&str; 12] = [
 ];
 
 /// What a log a runtime appends to says, keeping the failure where the file is there and this run could not read it.
-///
-/// The log the engine reads back — the guards' record — is
-/// written by a process that creates the file the first time it has something
-/// to say. A file that is not there is therefore a process that had nothing to
-/// say, and reads as the empty record. Any other failure is a file that exists
-/// and did not come back, and a record a run cannot read is not a record of
-/// nothing: reading the two as one turns every mutant of that target into one
-/// the tests could not have noticed.
 ///
 /// # Errors
 /// Whatever the filesystem said, less the one answer that means the process

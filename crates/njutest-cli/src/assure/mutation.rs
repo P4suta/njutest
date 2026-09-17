@@ -149,6 +149,10 @@ pub struct Judged {
     pub path: String,
     /// The rule that proposed it.
     pub rule: String,
+    /// The item it sits in, which is how a reader names it after editing the file.
+    pub item: String,
+    /// The bytes the edit replaces.
+    pub original: String,
     /// Where it is, when the catalog could say.
     pub position: Option<crate::report::Position>,
     /// What was established.
@@ -232,12 +236,6 @@ impl Mutation {
 }
 
 /// Whether a reviewer's acceptance answers for this mutation.
-///
-/// It answers for a mutation nothing noticed and for nothing else. An outcome
-/// that established nothing either way — a pair that did not agree, a harness
-/// that could not run, a budget that expired — is not a decision anybody can
-/// sign off, and letting an acceptance remove its finding would turn "I could
-/// not tell" into "I looked and it is fine".
 fn answered_by(judged: &Judged, accepted: &BTreeSet<String>) -> bool {
     matches!(
         judged.disposition,
@@ -245,14 +243,7 @@ fn answered_by(judged: &Judged, accepted: &BTreeSet<String>) -> bool {
     ) && accepted.contains(&judged.id)
 }
 
-/// The finding one disposition raises, if it raises one.
-/// What a survivor's finding says, which is not the same sentence when nothing ran.
-///
-/// A mutation every reaching target was discharged for survived without a
-/// single execution, and "no target noticed it" would read as a suite that
-/// looked and shrugged. What happened is that a proof said none of them could
-/// have looked, and that is the gap: the finding names the proof, because a
-/// reader who cannot tell a discharge from an oversight can act on neither.
+/// The finding one disposition raises, if it raises one. What a survivor's finding says, which is not the same sentence when nothing ran.
 fn survived(judged: &Judged, route: &Route) -> String {
     let at = format!(
         "{} at {}:{}",
@@ -319,8 +310,7 @@ fn finding_of(judged: &Judged) -> Option<Finding> {
     Some(finding)
 }
 
-/// What is being measured: the prepared engine session and what the
-/// baseline saw.
+/// What is being measured: the prepared engine session and what the baseline saw.
 #[derive(Debug, Clone, Copy)]
 pub struct Subject<'a> {
     /// The prepared session.
@@ -371,11 +361,6 @@ impl Evidence {
 
     /// The identities of the targets a route names, or which of them is not a target this run's baseline saw pass.
     ///
-    /// A route names targets the way the engine does and a record names them
-    /// by identity, and reuse is a claim about a set: a set this run can only
-    /// half resolve is one it may neither believe nor record, because the half
-    /// it resolved is a smaller claim wearing the same name.
-    ///
     /// # Errors
     /// Names the first target it could not resolve.
     pub fn identities(&self, names: &[&str]) -> Result<Vec<String>, store::Refusal> {
@@ -405,10 +390,6 @@ pub struct Resume<'a> {
 }
 
 /// Runs every accepted mutant against the tests that could notice it, continuing from what an interrupted run had already judged.
-///
-/// Only a kill and a confirmed timeout are inherited: both are existential
-/// claims about this exact tree, and a named test noticing a mutant stays true
-/// however the next run routes. Everything else is re-derived.
 ///
 /// # Errors
 /// The engine's refusals. A mutant that survives is not an error: it is the
@@ -472,11 +453,6 @@ pub fn run_resuming(
 }
 
 /// What one mutant comes to, without committing anything a report will carry.
-///
-/// Workers call this at the same time as one another, so it reads what the run
-/// already holds and writes nothing but the evidence store and the trace, both
-/// of which take their own locks. The caller commits the answers in catalog
-/// order.
 fn establish(
     mutant: &Mutant,
     judging: &Judging<'_>,
@@ -520,7 +496,14 @@ fn establish(
         id: mutant.id.clone(),
         display_id: mutant.display_id.clone(),
         path: mutant.candidate.path.clone(),
-        rule: mutant.candidate.rule.to_string(),
+        rule: mutant.candidate.rule.name.to_owned(),
+        item: judging
+            .subject
+            .session
+            .item_of(mutant.index)
+            .unwrap_or_default()
+            .to_owned(),
+        original: String::from_utf8_lossy(&mutant.candidate.original).into_owned(),
         position,
         disposition,
         source_run_id: source,
@@ -528,18 +511,6 @@ fn establish(
 }
 
 /// Records what the infection layer measured for each target the baseline ran.
-///
-/// A target the layer did not measure carries no facts at all, and none is not
-/// zero: a reader who cannot tell "infected nothing" from "was never asked"
-/// cannot tell a discharge that rests on evidence from one that rests on
-/// silence. `None` is the first and `Some(0)` the second, and the difference
-/// is the whole reason this event exists — the layer removes executions, and
-/// [ADR 0004](../../../../docs/adr/0004-proof-layers-not-budgets.md) decision 4
-/// ships no layer a reader cannot see.
-///
-/// The measurement rides on the run that establishes the baseline: the guards
-/// that record which test reached a site also record where its two branches
-/// differed. Nothing is asked twice, so nothing here is a second opinion.
 fn record_probe(watch: Watch<'_>, session: &Session, baseline: &[Measured]) {
     let touched = &session.verified().touched;
     if touched.narrowing.compared.is_empty() {
@@ -622,12 +593,6 @@ pub enum Consulted {
 }
 
 /// What an earlier run established about this mutant, or why this run may not believe it.
-///
-/// Every path out of here that is not a belief names its reason, because the
-/// reason is the only thing that parts a cold store from one that stopped
-/// answering. A run whose store refuses everything and a run with no store at
-/// all do exactly the same work, and told only how long they took, nobody can
-/// tell them apart.
 #[must_use]
 pub fn reuse(options: &MutationOptions, route: &Route, mutant: &str) -> Consulted {
     let Some(evidence) = options.evidence.as_ref() else {
@@ -711,12 +676,6 @@ pub fn keep(options: &MutationOptions, mutant: &str, route: &Route, disposition:
 
 /// The targets a route's answer is about: the ones it named, or every target this run saw pass when the package suite is what answered.
 ///
-/// A survival is the universal claim, and reusing one asks that this run route
-/// nothing the recorded run did not run. A suite route runs every prepared
-/// target, so naming each of them with its own behaviour key says exactly that,
-/// and a target that enters or leaves the suite is then visible where one key
-/// over the package would have hidden it.
-///
 /// # Errors
 /// Names the first target this run's baseline has no identity for.
 pub fn answered(route: &Route, evidence: &Evidence) -> Result<Vec<String>, store::Refusal> {
@@ -724,13 +683,6 @@ pub fn answered(route: &Route, evidence: &Evidence) -> Result<Vec<String>, store
 }
 
 /// The disposition a checkpoint's record stands for, or nothing when this release does not inherit it.
-///
-/// A kill and a timeout are facts about this tree that stay true however the
-/// next run routes, and both name the target they happened on: a kill nobody
-/// can attribute is not one a resumed run may carry, because the report it
-/// ends in has to say which test noticed. Every other disposition depends on
-/// how the run routed and is re-derived. [`crate::checkpoint`] refuses to
-/// write or read one; this refuses to read it as anything.
 #[must_use]
 pub fn inherited(saved: &crate::checkpoint::SavedMutant) -> Option<Disposition> {
     let by = saved.killed_by.clone()?;
@@ -869,11 +821,6 @@ fn confirm(
 #[derive(Debug, Default)]
 struct Controls {
     /// The failure each test showed on the original, or nothing when it passed. Absent means it has not been asked yet.
-    ///
-    /// Workers share this, so it answers behind a lock the run never holds
-    /// across a process: two of them asking the same question at once ask it
-    /// twice and write the same answer, which costs a control and never a
-    /// wrong one.
     asked: Mutex<BTreeMap<String, Option<String>>>,
 }
 
@@ -934,25 +881,12 @@ fn record_exec(watch: Watch<'_>, ran: &Ran<'_>) {
 }
 
 /// Whether an expired budget has a quiet measurement coming to it.
-///
-/// Only an expired budget does, and only once: a mutation the tests answered
-/// has been answered, and a run that has been asked to stop starts nothing
-/// else.
 #[must_use]
 pub const fn quiet_measurement_due(outcome: Outcome, cancelled: bool) -> bool {
     matches!(outcome, Outcome::TimedOut) && !cancelled
 }
 
 /// The request the pair confirmation is made with: the one that ran, or the target the package suite found the answer in.
-///
-/// A kill is confirmed against the test that found it — the original has to
-/// pass right now, and the kill has to reproduce — so a request that named no
-/// target is narrowed to the one that answered. Asking the whole suite again
-/// would put both questions to every other target as well.
-///
-/// `answered` is the target the execution says found it, which is empty when
-/// the execution did not say. This takes that rather than the whole result,
-/// because it is the whole of what the decision reads.
 #[must_use]
 pub fn narrowed(request: Request, measured: Option<&Measured>, answered: &str) -> Request {
     if measured.is_some() || answered.is_empty() {
@@ -975,12 +909,6 @@ pub fn request_for(mutant: &str, measured: Option<&Measured>, args: &[String]) -
 }
 
 /// The last line worth quoting from a capture.
-///
-/// The last line is where a test harness says what it found; everything above
-/// it is how it got there. A capture that said nothing at all is quoted as
-/// having said nothing, because an empty quotation reads as a line somebody
-/// forgot to copy rather than as silence. The length is bounded so that one
-/// enormous line cannot become the whole of a report a person has to read.
 #[must_use]
 pub fn tail(output: &[u8]) -> String {
     let text = String::from_utf8_lossy(output);

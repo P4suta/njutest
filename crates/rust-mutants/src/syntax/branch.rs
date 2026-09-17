@@ -2,29 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What a branch proof needs from the syntax alone, before the compiler has vouched for the operands.
-//!
-//! rust-mutants states a proof for an edit that can only make the condition of
-//! an `if` or a `while` less often true. Write C for the original condition and
-//! C′ for the mutated one: C′ implies C, and the whole condition is inert — no
-//! effects, no possible panic, guaranteed to terminate. A test during which no
-//! statement of the gated body ran evaluated C to false every time, evaluated
-//! C′ to false there too, and ran identically on the two programs. It cannot
-//! have observed the mutation.
-//!
-//! Inertness is decided here as far as syntax can decide it: identifiers,
-//! literals, `!`, `&&`, `||`, parentheses, comparisons, and casts. What syntax
-//! cannot decide is whether a comparison's operands are primitives — `a < b`
-//! on a user type is a call, which may do anything — so each comparison and
-//! each cast leaves a [`Witness`] for the compiler to accept or refuse
-//! (ADR 0008).
-//!
-//! The same inertness answers a second question. A guard holds both branches
-//! of its site, and where the whole condition is inert an edit on one of the
-//! operator tokens the connectives reach leaves it inert — the same operands
-//! under another operator of the same class — so a run may evaluate both and
-//! record whether they ever parted. That is the infection question asked
-//! without a second tree and without a second run:
-//! [ADR 0015](../../../../docs/adr/0015-the-guard-is-the-infection-probe.md).
 
 use syn::{BinOp, Expr, UnOp};
 
@@ -40,13 +17,6 @@ pub fn is_decreasing(rule: &str) -> bool {
 }
 
 /// The rules whose edit is the negation of what it replaces, so the two can never answer the same.
-///
-/// `==` and `!=` are each other's negation. A guard between them parts on
-/// every evaluation of it, so a run that recorded whether they ever parted
-/// could only ever record that they did, and the call that recorded it would
-/// be a cost with no answer in it. Every other swap on a reachable operator
-/// agrees somewhere — `<` and `<=` everywhere but equality, `&&` and `||`
-/// wherever the two sides agree — and there the record says something.
 pub const NEGATING: [&str; 2] = ["eq-to-neq", "neq-to-eq"];
 
 /// Whether `rule` is one of [`NEGATING`].
@@ -86,10 +56,6 @@ pub struct Witness {
 }
 
 /// A branch proof the compiler has vouched for: the span of the body the narrowed condition gates.
-///
-/// A target during which no statement of this body ran cannot have observed
-/// the mutation, and may be discharged from its reaching set without being
-/// executed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Proof {
     /// Where the body's opening brace is.
@@ -97,22 +63,10 @@ pub struct Proof {
     /// Where its closing brace is.
     pub body_end: crate::syntax::Position,
     /// The marker the instrumenter writes at the body's first statement, when the compiler took one there.
-    ///
-    /// The premise this proof needs is that the body did not run, and the two
-    /// ways of establishing it are a coverage region beginning inside the body
-    /// and a marker the body's own first statement calls. The marker is exact
-    /// where a region is inferred, and it needs no coverage build; a body no
-    /// marker could go into — a `const` block, a body the compiler refused the
-    /// call in — keeps the region as its only premise.
     pub marker: Option<Marker>,
 }
 
 /// The call the instrumenter writes at a body's first statement, so entering the body is a thing the guards record.
-///
-/// It is written at the byte just past the opening brace, on that line, and
-/// names the lowest of the mutants whose claim this body carries — one index
-/// out of the catalog's own numbering, so the log that carries it needs no
-/// second one to bound.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Marker {
     /// The byte offset the call is written at, which is just past the body's opening brace.
@@ -124,11 +78,6 @@ pub struct Marker {
 }
 
 /// What a guard needs before it may evaluate both of its branches, pending the compiler's word on the witnesses.
-///
-/// It carries the whole condition rather than the edit's own site because the
-/// witnesses are written in front of the condition, which is the one place
-/// every operand of them is in scope; a claim about the same condition is
-/// written in front of the same bytes, so the two questions are one rewrite.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Comparable {
     /// The whole condition, which is what makes evaluating either branch run none of the program's code.
@@ -191,21 +140,6 @@ pub struct Prepared {
 
 impl Prepared {
     /// What the compiler must vouch for before the two branches of the guard at `edit` may be compared, or nothing where the syntax does not allow comparing them.
-    ///
-    /// A guard has both branches in it: the mutation and what it replaces. If
-    /// the whole condition is inert and the edit is one of the operator tokens
-    /// the connectives reach, then the mutated condition is inert too — the
-    /// same operands, another operator of the same class — and evaluating it
-    /// beside the original runs none of the program's code. A run can then
-    /// record whether the two ever differed, which is the infection question
-    /// asked without a second tree and without a second run of anything.
-    ///
-    /// The witnesses are the condition's own: what makes it inert is what
-    /// makes evaluating it twice inert.
-    ///
-    /// A rule that negates what it replaces is offered nothing, because the
-    /// two branches of such a guard part every time it runs and a record of
-    /// that answers no question ([`NEGATING`]).
     #[must_use]
     pub fn comparable(&self, rule: &str, edit: Span) -> Option<Comparable> {
         (!is_negating(rule) && self.reachable.contains(&edit)).then(|| Comparable {
@@ -228,13 +162,6 @@ impl Prepared {
 }
 
 /// What `gate` offers, or nothing when the syntax supports nothing there at all.
-///
-/// Nothing is offered unless the whole condition is inert as far as syntax can
-/// say and an edit can sit on one of the operator tokens its connectives
-/// reach. Whether the body it gates holds a statement is a question only
-/// [`Prepared::claim`] asks: a body that runs nothing says nothing by not
-/// running, while [`Prepared::comparable`] is about the condition alone and
-/// does not care what the body is.
 #[must_use]
 pub fn prepare(gate: Gate<'_>, spans: &Spans<'_>) -> Option<Prepared> {
     let mut witnesses = Vec::new();

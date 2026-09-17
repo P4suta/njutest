@@ -2,12 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Every place a workspace reads code from that a copy of it would not hold.
-//!
-//! A run measures a copy of the tree. Anything the build reads from outside
-//! the tree is not in the copy, so the build inside the copy fails — with
-//! cargo's words about a missing manifest, which say nothing about what a run
-//! could have done instead. Finding them first is what lets the refusal name
-//! the dependency, the manifest that declares it, and the flag that allows it.
 
 use std::path::{Path, PathBuf};
 
@@ -26,10 +20,6 @@ pub struct Outside {
 }
 
 /// Every dependency and patch of `metadata` that reads from outside `root`, in name order.
-///
-/// A path is outside when it is not `root` and does not descend from it, both
-/// resolved as far as the filesystem allows: a symbolic link that leaves the
-/// tree leaves it, whatever the spelling says.
 #[must_use]
 pub fn reaching_outside(metadata: &Metadata, root: &Path, patches: &[Patch]) -> Vec<Outside> {
     let root = resolved(root);

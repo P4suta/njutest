@@ -93,8 +93,9 @@ the directory beside `tree` carries the `tempowner` lock and marker, so
 every byte under `tree` came from the source. A directory found under the
 stable name is swept and copied into again, never adopted; a live, kept, or
 young unowned one makes the run fall back to a fresh name (reported through
-`Snapshot::stable_dir`). `.git` at any depth and `reports/mutation` are
-always excluded, and so is everything `[project] exclude` names — which is why
+`Snapshot::stable_dir`). `.git` at any depth is always excluded, the caller's
+own report directory is excluded when it names one, and so is everything
+`[project] exclude` names — which is why
 excluding a file the crate declares as a module leaves a tree that does not
 compile, and why a pattern that is meant to keep code out of the mutations
 rather than out of the tree belongs in `include`; a symbolic link, reparse point, device, or backslash-named
@@ -503,6 +504,23 @@ start failure → `errored`; timed out → `timed_out`; killed by us → `not_ru
 97 → `errored` (stale catalog, never a kill); non-zero → `killed`; zero →
 `survived`. A libtest run that matched no test is green and says so:
 `tests_run` carries the count the summary line reported.
+
+### The scratch a test process is given
+
+`TMPDIR`, `TMP` and `TEMP` all name a directory of that execution's own, so
+two test processes running at once cannot meet in one another's files. The
+name is short on purpose: a Unix socket bound under `TMPDIR` has to fit in
+`sun_path`, which is 104 bytes on macOS and 108 on Linux, and the temporary
+root alone spends about forty of them. A test that binds one would otherwise
+pass on its own and fail under a run, which is a finding about this engine and
+not about the suite.
+
+So the directory is `rm-scratch-<n>/<execution>` beside the run's target
+directory rather than inside it, where `<n>` is the lowest number no other run
+holds. The long descriptive name stays on the target directory, which is a
+build cache somebody may find in a temporary root and has to be able to
+identify; a scratch directory is worth nothing once its run is over, so it is
+claimed like a run's own directory and the next sweep collects it.
 
 ### What cargo tells a test process
 

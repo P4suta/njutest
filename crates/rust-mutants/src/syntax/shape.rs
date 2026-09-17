@@ -2,13 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What the syntax alone says about a signature, a type, a pattern, or a block.
-//!
-//! The walk asks these before it proposes anything: what a function says it
-//! returns, whether a type spells a default, whether an arm can be deleted,
-//! which attributes are on the thing in hand. None of them looks at more than
-//! the node it is given, and none of them decides anything — the walk does
-//! that, and keeping the questions apart from the decisions is what keeps
-//! either readable.
 
 use std::collections::BTreeSet;
 
@@ -24,12 +17,6 @@ pub(super) fn return_kind(output: &ReturnType) -> ReturnKind {
 }
 
 /// What a return type says about the replacements a rule can offer for it.
-///
-/// `generic` is the type parameters the signature introduces and `defaultable`
-/// the ones something bound to `Default`. A parameter nothing bound is a type
-/// the syntax cannot say has a default, and offering one is a candidate the
-/// compiler refuses: predicting the refusal and stating it is what keeps a
-/// reader from reading a refusal as a fact about the program.
 pub(super) fn return_kind_within(
     output: &ReturnType,
     generic: &BTreeSet<String>,
@@ -93,10 +80,6 @@ pub(super) fn return_kind_of(
 }
 
 /// Whether the `nth` type argument of a segment is one the syntax can say has a default.
-///
-/// `Option<T>` and `Result<T, E>` have a default whatever `T` is — `None` and
-/// nothing — but `Some(Default::default())` and `Ok(Default::default())` need
-/// one for `T`, so the inner type is asked about separately.
 pub(super) fn argument_defaults(
     segment: Option<&syn::PathSegment>,
     nth: usize,
@@ -120,14 +103,6 @@ pub(super) fn argument_defaults(
 }
 
 /// Whether the `nth` type argument of `segment` is one the syntax names a default for.
-///
-/// The `Err` position is read more strictly than the others. A crate's error
-/// type is by convention the crate's own and by convention does not implement
-/// `Default`, so offering `Err(Default::default())` for every named type would
-/// spend a compiler refusal at nearly every `Result` in a program and say
-/// nothing about the tests. The other direction of the same question —
-/// success where the code says failure — is `return-ok-default`, which is
-/// offered wherever the `Ok` type has a default, so nothing is lost.
 pub(super) fn argument_names_a_default(
     segment: Option<&syn::PathSegment>,
     nth: usize,
@@ -216,11 +191,6 @@ pub(super) fn is_bare_wildcard(pat: &Pat) -> bool {
 }
 
 /// Whether an arm can be taken out of the match without the match ceasing to be exhaustive.
-///
-/// The syntax can say so for one shape only: an arm that is not itself a bare
-/// `_`, with a bare `_` somewhere below it. Every other arm may be the one
-/// carrying exhaustiveness, and a mutation the compiler refuses says nothing
-/// about the tests.
 pub(super) fn deletable_arm(arms: &[syn::Arm], position: usize) -> bool {
     let Some(arm) = arms.get(position) else {
         return false;

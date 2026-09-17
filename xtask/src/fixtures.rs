@@ -158,10 +158,6 @@ fn is_local_path_dependency(value: &toml::Value) -> bool {
 }
 
 /// Whether the path is `../fixture-…` and nothing more: the one shape allowed to climb.
-///
-/// A fixture that exists to have a dependency outside itself needs one, and
-/// the thing outside has to be a fixture too, so that the suite still builds
-/// from what this repository holds and still builds offline.
 fn is_sibling_fixture(parts: &[&str]) -> bool {
     matches!(parts, [first, second]
         if *first == ".." && second.starts_with("fixture-"))

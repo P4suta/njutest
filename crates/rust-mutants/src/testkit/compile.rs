@@ -23,10 +23,6 @@ use crate::validate::{Attempt, Compile, ValidateError};
 static REGISTRY: Registry = Registry::canonical();
 
 /// A [`Compile`] that instruments one file for real and answers from a script: which mutants the compiler refuses, and whether the diagnostic that refuses each one lands inside its branch.
-///
-/// Validation is a loop over what a compiler says, and the loop is what a test
-/// about validation is about. Driving it with a real toolchain measures cargo;
-/// driving it with this measures the loop.
 #[derive(Debug)]
 pub struct ScriptedCompile {
     path: String,
@@ -76,10 +72,6 @@ impl ScriptedCompile {
     }
 
     /// Refuses the tree only while every mutant of `together` is live, with a diagnostic inside no branch.
-    ///
-    /// Each of them compiles on its own, so bisection halves the suspects,
-    /// finds no half that fails, and comes back with the whole set: what the
-    /// compiler refused is the combination and not any one of them.
     #[must_use]
     pub fn interacting(mut self, together: &[u32]) -> Self {
         self.interacting = together.iter().copied().collect();
@@ -87,10 +79,6 @@ impl ScriptedCompile {
     }
 
     /// Cancels `cancel` during the `nth` attempt, in the middle of the compilation rather than between two of them.
-    ///
-    /// A cancelled build prints whatever it had got to and stops. Reading that
-    /// as a failed build condemns mutants nothing refused, so a test of the
-    /// loop has to be able to stop one the way a person does.
     #[must_use]
     pub fn cancelling_at(mut self, nth: usize, cancel: &Cancel) -> Self {
         self.cancelling = Some((nth, cancel.clone()));
@@ -192,10 +180,6 @@ impl Compile for ScriptedCompile {
 }
 
 /// A `compiler-message` whose primary span is somewhere nothing owns and whose secondary span covers `[start, end)` of `path`.
-///
-/// The compiler points at the place it decided, which for a type error is
-/// often the definition rather than the edit. A run that reads only the
-/// primary span attributes such an error to nobody and bisects for it.
 ///
 /// # Panics
 /// When the message this composes does not parse, which is a broken testkit.

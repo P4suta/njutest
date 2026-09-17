@@ -263,6 +263,14 @@ add-assign-to-sub-assign@173:11 "+="=>"-=" S["n += 1;"]
 int-increment@173:14 "1"=>"2" E["1"]
 int-decrement@173:14 "1"=>"0" E["1"]
 return-default@175:5 "n"=>"Default::default()" E["n"]
+return-default@179:5 "a.saturating_add(b).saturating_sub(1).saturating_mul(2)"=>"Default::default()" E["a.saturating_add(b).saturating_sub(1).saturating_mul(2)"]
+saturating-add-to-wrapping-add@179:7 "saturating_add"=>"wrapping_add" E["a.saturating_add(b).saturating_sub(1).saturating_mul(2)"]
+saturating-sub-to-wrapping-sub@179:25 "saturating_sub"=>"wrapping_sub" E["a.saturating_add(b).saturating_sub(1).saturating_mul(2)"]
+int-increment@179:40 "1"=>"2" E["1"]
+int-decrement@179:40 "1"=>"0" E["1"]
+saturating-mul-to-wrapping-mul@179:43 "saturating_mul"=>"wrapping_mul" E["a.saturating_add(b).saturating_sub(1).saturating_mul(2)"]
+int-increment@179:58 "2"=>"3" E["2"]
+int-decrement@179:58 "2"=>"1" E["2"]
 skip test-code 1
 skip open-range 2
 skip unstated-return-type 2

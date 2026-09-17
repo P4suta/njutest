@@ -2,19 +2,23 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Which regions of which files one test reached.
-//!
-//! The columns `llvm-cov` reports are 1-based byte columns, the same unit the
-//! engine's positions use, so a region and a mutant can be compared directly.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
-use crate::runner::{Spec, run};
+use crate::runner::{Bound, Spec, run};
 
 use crate::error::{self, ErrorCode};
 use crate::runner::Watch;
+
+/// How long one of the LLVM tools may spend on the profiles of one run.
+///
+/// These do work rather than answer a question, and the work is proportional
+/// to a project's own size, so the bound is generous. What it refuses is the
+/// tool that never returns, which is a run nobody can stop by waiting.
+const TOOL_WORK: std::time::Duration = std::time::Duration::from_mins(15);
 
 /// What the tree is built with so that every region is instrumented.
 pub const INSTRUMENT_FLAG: &str = "-C instrument-coverage";
@@ -299,11 +303,14 @@ impl Tools {
             kind: CoverageErrorKind::ToolsMissing,
             message,
         };
-        let mut spec = Spec::new([
-            toolchain.rustc().as_os_str().to_owned(),
-            std::ffi::OsString::from("--print"),
-            std::ffi::OsString::from("target-libdir"),
-        ]);
+        let mut spec = Spec::new(
+            [
+                toolchain.rustc().as_os_str().to_owned(),
+                std::ffi::OsString::from("--print"),
+                std::ffi::OsString::from("target-libdir"),
+            ],
+            Bound::After(crate::runner::PROBE),
+        );
         spec.dir = Some(dir.to_path_buf());
         spec.env = toolchain
             .env()
@@ -362,7 +369,7 @@ impl Tools {
             into.as_os_str().to_owned(),
         ];
         argv.extend(raw.iter().map(|path| path.as_os_str().to_owned()));
-        let spec = Spec::new(argv);
+        let spec = Spec::new(argv, Bound::After(TOOL_WORK));
         let merged = run(&spec, watch.cancel());
         watch.exec(&spec, &merged);
         if merged.ok() {
@@ -379,11 +386,6 @@ impl Tools {
     }
 
     /// Turns a merged profile and the binaries it may name into regions.
-    ///
-    /// Every binary a test process may have run belongs here: a test that
-    /// spawns another of the workspace's binaries writes that binary's
-    /// counters into the same profile, and a reader given only the test
-    /// binary would report the spawned code as never executed.
     ///
     /// # Errors
     /// [`CoverageErrorKind::ToolFailed`] and the refusals of
@@ -412,7 +414,7 @@ impl Tools {
             argv.push(std::ffi::OsString::from("-object"));
             argv.push(other.as_os_str().to_owned());
         }
-        let mut spec = Spec::new(argv);
+        let mut spec = Spec::new(argv, Bound::After(TOOL_WORK));
         spec.structured_stdout = Some(1 << 30);
         let exported = run(&spec, watch.cancel());
         watch.exec(&spec, &exported);

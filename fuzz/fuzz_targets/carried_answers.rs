@@ -2,13 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What one machine hands another.
-//!
-//! `njutest cache --import` reads a stream nobody in this repository wrote: it
-//! arrives over a network, out of a CI cache, from a machine on a different
-//! release. A reader of that has one job — refuse everything that is not an
-//! answer this machine may keep — and it must do it without panicking, because
-//! a panic here is a job that fails on the shape of a file rather than on
-//! anything about the code under test.
 
 #![no_main]
 

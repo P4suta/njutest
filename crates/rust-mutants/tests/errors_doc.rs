@@ -133,3 +133,19 @@ fn every_code_documents_the_remedy_it_carries() {
         "the remedy a reader is told is the remedy the code carries: {wrong:?}"
     );
 }
+
+/// A diagnostic that names what went wrong and stops has left a reader to find the way out.
+#[test]
+fn every_code_says_what_to_do_about_it() {
+    let silent: Vec<&str> = error_codes()
+        .iter()
+        .filter(|code| code.remedy.is_none_or(str::is_empty))
+        .map(|code| code.code)
+        .collect();
+    assert!(
+        silent.is_empty(),
+        "these say what went wrong and nothing a reader can act on. Where the answer is \
+         that the fault is this tool's, that is worth saying too: somebody reading it \
+         would otherwise spend an afternoon looking for the mistake they made. {silent:?}"
+    );
+}

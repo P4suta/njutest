@@ -2,11 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Reading a recording back: which one is read, and what is said about one that is not whole.
-//!
-//! A recording is what a person goes to when a run did something they did not
-//! expect, so the two things that must never happen are reading a different
-//! run's and being told a broken one is fine. Every recording here is written
-//! by hand, because what is being put to the test is the reading.
 
 #![expect(
     clippy::expect_used,
@@ -32,6 +27,7 @@ fn environment(fixture: &Fixture) -> Environment {
     Environment {
         vars: njutest_devkit::paths::environment_for_a_run(),
         temp_directory: fixture.temp().to_path_buf(),
+        program: PathBuf::from("this test never runs it"),
         cache_directory: fixture.cache().to_path_buf(),
         working_directory: fixture.root().to_path_buf(),
         no_color: true,
@@ -115,9 +111,8 @@ fn whole(phase_ms: u64, dropped: u64) -> Vec<String> {
 
 /// Writes `lines` as the recording of `name` beside its run, and answers where it went.
 fn recorded(fixture: &Fixture, name: &str, lines: &[String]) -> PathBuf {
-    let directory = fixture
+    let directory = rust_mutants_cli::app::stored::Store::read(fixture.root())
         .root()
-        .join(rust_mutants_cli::config::DEFAULT_REPORTS_DIRECTORY)
         .join(name)
         .join("trace");
     write_at(&directory, lines);
@@ -126,9 +121,8 @@ fn recorded(fixture: &Fixture, name: &str, lines: &[String]) -> PathBuf {
 
 /// The same, under `traces/`, which is where a command that wrote no report keeps one.
 fn beside(fixture: &Fixture, name: &str, lines: &[String]) -> PathBuf {
-    let directory = fixture
+    let directory = rust_mutants_cli::app::stored::Store::read(fixture.root())
         .root()
-        .join(rust_mutants_cli::config::DEFAULT_REPORTS_DIRECTORY)
         .join("traces")
         .join(name);
     write_at(&directory, lines);
@@ -346,9 +340,7 @@ fn a_recording_nobody_can_read_is_refused_by_naming_the_file() {
 #[test]
 fn a_directory_beside_the_runs_with_no_recording_in_it_is_not_one() {
     let fixture = Fixture::copy("fixture-simple");
-    let reports = fixture
-        .root()
-        .join(rust_mutants_cli::config::DEFAULT_REPORTS_DIRECTORY);
+    let reports = rust_mutants_cli::app::stored::Store::read(fixture.root()).root();
     std::fs::create_dir_all(reports.join("20260109T000000000Z").join("trace"))
         .expect("a run whose recording was removed");
     let _at = recorded(&fixture, "20260101T000000000Z", &whole(5, 0));

@@ -137,12 +137,6 @@ pub struct Package {
     #[serde(default)]
     pub readme: Option<PathBuf>,
     /// What its manifest says it depends on, before anything is resolved.
-    ///
-    /// This is what says a dependency is a path outside the tree, which is a
-    /// question about the manifest rather than about the graph: `cargo
-    /// metadata --no-deps` answers it without resolving anything, and a
-    /// resolve is exactly what a tree reaching outside cannot do inside a
-    /// snapshot.
     #[serde(default)]
     pub dependencies: Vec<Dependency>,
 }
@@ -260,10 +254,6 @@ impl Target {
 }
 
 /// What one `cargo metadata` is asked, with the promises a run made about the network and the lock file kept.
-///
-/// A run told not to touch the network is told that about every command it
-/// starts, and this is one of them: a resolve that reached out anyway would
-/// have kept the promise for the builds and broken it before the first one.
 #[must_use]
 pub fn metadata_arguments(options: MetadataOptions, no_deps: bool) -> Vec<&'static str> {
     let mut args = vec!["metadata", "--format-version", "1"];
@@ -295,10 +285,6 @@ impl Metadata {
     }
 
     /// Runs `cargo metadata --format-version 1 --no-deps` in the driver's directory and parses it.
-    ///
-    /// Nothing is resolved, which is the point: a tree with a path dependency
-    /// outside itself cannot be resolved once it is copied, and this is what
-    /// finds out before it is copied.
     ///
     /// # Errors
     /// The failure of the command, and a document that is not one.
@@ -340,11 +326,6 @@ impl Metadata {
     }
 
     /// Every package whose code goes into `id`'s test binary: `id` itself, everything it depends on through normal and build edges transitively, and its own development dependencies.
-    ///
-    /// A development dependency of something else is not in the closure: its
-    /// code is not linked into this binary, and a change to it cannot change
-    /// what this binary does. The closure is sorted, so two runs of the same
-    /// graph produce the same list.
     #[must_use]
     pub fn closure(&self, id: &str) -> Vec<String> {
         let Some(resolve) = &self.resolve else {

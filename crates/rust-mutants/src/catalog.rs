@@ -17,12 +17,6 @@ use crate::rule::{Registry, Rule, RuleError};
 use crate::span::Span;
 
 /// A rule on the wire: the name it answers to and the version that entered every identity.
-///
-/// A rule is metadata this release defines, not data a document carries, so a
-/// stored catalog names one and this reads it back out of the registry. A
-/// name this release does not know, or a version it does not agree with, is a
-/// catalog it cannot read — which is the honest answer, because every
-/// identity in it was minted from the version it names.
 mod named_rule {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
 

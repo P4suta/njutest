@@ -2,18 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What earlier runs established about individual mutants of this exact tree.
-//!
-//! A mutant's identity already covers the file it edits and the edit itself. A
-//! record is keyed on more than that: on the tree the run was about, on the
-//! catalog that tree produced, and on everything the command line told the
-//! harness. Two runs share a key exactly when nothing that could change what
-//! the tests say about that mutant has changed, so a warm cache executes
-//! nothing rather than executing everything again to reach the same answer.
-//!
-//! The recipe carries three version numbers of its own. A release that changes
-//! how a rule writes its replacement, how a guard is composed, or what a record
-//! holds bumps the one it changed, and every record written before it stops
-//! answering — silently, because a stale record is one no key names.
 
 use std::path::{Path, PathBuf};
 
@@ -58,14 +46,6 @@ pub struct Record {
 }
 
 /// Everything a key is computed from beyond the mutant's own identity.
-///
-/// The set is the smallest one that decides the answer, not the largest one
-/// that is easy to name. A tree's digest is easy and wrong: a note beside the
-/// code, a workflow file, a crate this run never compiled all change it, and
-/// every remembered answer stops answering for a reason that could not have
-/// changed one of them. What decides is the sources the compilation actually
-/// read, the manifests that chose its dependencies and flags, the toolchain
-/// that compiled it, and what the command line told the harness.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Keyed {
     /// The digest of the pristine sources every unit of the build compiled.
@@ -84,11 +64,6 @@ pub struct Keyed {
 
 impl Keyed {
     /// Whether this names enough to remember anything by.
-    ///
-    /// A build whose dep-info could not be read leaves no closure, and a key
-    /// over nothing would file every mutant of every tree under one name. A
-    /// caller with nothing to key on remembers nothing, which is the honest
-    /// answer and costs only the executions it would have saved.
     #[must_use]
     pub const fn usable(&self) -> bool {
         !self.closure.is_empty()
@@ -149,11 +124,6 @@ impl Store {
     }
 
     /// What an earlier run established for `key`, when a record is there and is the record it claims to be.
-    ///
-    /// A record that does not parse, is about another mutant, or names an
-    /// outcome this release does not know answers nothing. Nothing is not the
-    /// same as a wrong answer, and a cache is the one place where it must not
-    /// become one.
     #[must_use]
     pub fn get(&self, key: &str, mutant: &str) -> Option<(Outcome, Record)> {
         let text = std::fs::read_to_string(self.entry(key)).ok()?;
@@ -191,12 +161,13 @@ impl Store {
         (count, bytes)
     }
 
-    /// Removes every record. What a cache holds is always re-derivable, so emptying one costs time and never correctness.
+    /// Removes every record, and says what is still there afterwards.
     #[must_use]
     pub fn clear(&self) -> (u32, u64) {
-        let held = self.size();
+        let (held, bytes) = self.size();
         drop(std::fs::remove_dir_all(&self.root));
-        held
+        let (left, left_bytes) = self.size();
+        (held.saturating_sub(left), bytes.saturating_sub(left_bytes))
     }
 
     fn entry(&self, key: &str) -> PathBuf {

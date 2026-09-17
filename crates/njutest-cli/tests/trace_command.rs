@@ -2,11 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What `njutest trace` reads out of a recording: which proof made a run shorter, which command made it long, and what moved between two runs.
-//!
-//! Every one of these is a pure function over events, and each is reached
-//! here directly. Driving the command instead means starting a process, and a
-//! measurement of what a run's own tests reach does not follow a guard across
-//! that boundary: the rules below were 98 mutations nothing was ever routed to.
 
 #![expect(
     clippy::expect_used,
@@ -358,6 +353,7 @@ fn asked(root: &std::path::Path, args: &[&str]) -> (u8, String, String) {
         cache_directory: root.join("cache"),
         working_directory: root.to_path_buf(),
         temp_directory: scratch,
+        program: std::path::PathBuf::from("this test never runs it"),
         vars: Vec::new(),
         cancel: rust_mutants::runner::Cancel::new(),
     };

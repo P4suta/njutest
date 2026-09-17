@@ -44,7 +44,7 @@
             }
           ],
           "partialFingerprints": {
-            "rustMutantsMutantId/v1": "d8a9939330496216a17d27bab570a74d23823587e4ab6d7ef2fc6763645d45fe"
+            "rustMutantsMutation/v2": "src/lib.rs:clamp:le-to-lt:<="
           }
         },
         {
@@ -71,7 +71,7 @@
             }
           ],
           "partialFingerprints": {
-            "rustMutantsMutantId/v1": "27e9c3f2d6bb568e5ef3e92a982827a60c58c8d1775fb26e8ed863c00ff7681e"
+            "rustMutantsMutation/v2": "src/lib.rs:earlier:le-to-lt:<="
           }
         },
         {
@@ -98,7 +98,7 @@
             }
           ],
           "partialFingerprints": {
-            "rustMutantsMutantId/v1": "7cfdea86ac571b743bd04a4bc0cf3d49466e64fd5910421f03389d50d6d1b260"
+            "rustMutantsMutation/v2": "src/lib.rs:named:le-to-lt:<="
           }
         },
         {
@@ -125,7 +125,7 @@
             }
           ],
           "partialFingerprints": {
-            "rustMutantsMutantId/v1": "0a8ab9771954a24f9d25c1a5e4a83ee27f3994e896fac072c546be017f2173c2"
+            "rustMutantsMutation/v2": "src/lib.rs:labelled:le-to-lt:<="
           }
         }
       ]

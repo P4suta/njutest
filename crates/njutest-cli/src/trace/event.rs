@@ -252,12 +252,6 @@ pub struct DischargeRecord {
 }
 
 /// How one mutant's tests were chosen, and what narrowed the choice.
-///
-/// [ADR 0004](../../../../docs/adr/0004-proof-layers-not-budgets.md) decision 4
-/// asks that every layer be visible: the granularity a route was decided at,
-/// the fallback that widened it, and every target a proof discharged with the
-/// proof's name. A reader who sees a run go faster asks which proof did it, and
-/// the answer is here rather than in a configuration file.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct RouteRecord {
     /// The mutant a person types.
@@ -273,21 +267,10 @@ pub struct RouteRecord {
     /// The targets a proof removed, each beside the proof that removed it.
     pub discharged: Vec<DischargeRecord>,
     /// The measured targets that were asked and did not reach the mutation.
-    ///
-    /// A layer that removes an execution names who was in a position to notice
-    /// and did not. A count cannot be checked against anything; a list can be
-    /// held to the targets the run says it measured, which is what
-    /// `xtask proofaudit` does with it.
     pub considered: Vec<String>,
     /// The run this disposition was read back from, when it was not established here.
     pub reused: Option<String>,
     /// Why the answer an earlier run left was not the one this run used, when there was a store to ask.
-    ///
-    /// A believed record is an execution that did not happen, so reuse is a
-    /// layer like any other and decision 4 asks the same of it. Saying only
-    /// when it applied leaves a run that reuses nothing looking exactly like a
-    /// run with nothing to reuse, and a store that has quietly stopped
-    /// answering is the failure this field is here to make visible.
     #[serde(default)]
     pub refused: Option<String>,
 }

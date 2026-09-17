@@ -32,11 +32,6 @@ pub struct DiscoverOptions<'r> {
 }
 
 /// One `[[mutation.skip]]` entry: where to pass over, and why.
-///
-/// A configured skip is the decision a `rust-mutants: skip` marker makes,
-/// written where the code cannot be edited or where one entry covers what a
-/// hundred markers would. Like a marker it names a reason, and one that hides
-/// nothing is reported rather than left to rot.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SkipRule {
     /// The paths it speaks about, as a glob against the workspace-relative path.
@@ -368,11 +363,6 @@ fn configured_claims(
 }
 
 /// Takes out of one file's walk what a `[[mutation.skip]]` entry speaks about.
-///
-/// A configured skip is applied where the walk's own decisions are, so every
-/// tally, every decision and every report row says the same thing about the
-/// file. Which entries hid something is what the run reports back: an entry
-/// that hides nothing is a claim about code that has moved or gone.
 fn configure(discovery: &mut FileDiscovery, rules: &[SkipRule], matched: &mut [bool]) {
     if rules.is_empty() {
         return;
@@ -440,11 +430,6 @@ fn claimed(
 }
 
 /// Every file another file pastes in where an expression goes.
-///
-/// Such a file is a fragment of one program rather than a program, so nothing
-/// parses it on its own and nothing can append a runtime module to it. Reading
-/// its unparsability as a defect in the tree would refuse to measure a project
-/// the compiler is perfectly happy with.
 fn pasted_in(read: &[(&String, Result<FileDiscovery, DiscoverError>)]) -> BTreeSet<String> {
     read.iter()
         .filter_map(|(_, discovery)| discovery.as_ref().ok())
@@ -475,12 +460,6 @@ fn whole_file(path: &str, package: &str, reason: SkipReason) -> FileReport {
 }
 
 /// The name a report calls a file a build script wrote outside the tree.
-///
-/// The path it was written to is a build directory that is different on every
-/// machine and every run, and a report that named it would say where this run
-/// put its temporary files rather than which file was passed over. The file's
-/// own name is what a reader recognises, under a directory nobody can mistake
-/// for one in the tree.
 fn generated_name(source: &Path) -> String {
     let name = source.file_name().map_or_else(
         || "unnamed".to_owned(),
@@ -513,8 +492,7 @@ fn selected_members<'m>(
 /// Gives every file of every target its role, from the units that compiled the target, keeping the higher-priority role when targets disagree.
 struct Assigner<'a> {
     root: &'a Path,
-    /// The filesystem's spelling of `root`, for platforms that report a
-    /// compiler source through a physical alias of the snapshot path.
+    /// The filesystem's spelling of `root`, for platforms that report a compiler source through a physical alias of the snapshot path.
     physical_root: PathBuf,
     units: &'a [Unit],
     /// The workspace manifest, which a member's `[lints] workspace = true` inherits from.
@@ -605,14 +583,6 @@ fn crate_root_forbids_guard_noise(root: &Path, rel: &str, forbidden: &[String]) 
 }
 
 /// Whether a crate compiled this way forbids a lint the guards' own attribute turns off.
-///
-/// `forbid` is the one level an `allow` cannot override, so a guard placed in
-/// such a crate is a compile error whatever it edits, and every mutant of the
-/// crate would be refused with nothing in the report saying why. Only the
-/// crate root's own inner attributes count — an attribute inside an item is
-/// about that item — and only the lints the guards can fire: a crate is free
-/// to forbid anything else. `forbidden` is what the manifest says, which
-/// cargo passes on the command line where no attribute overrides it.
 #[must_use]
 pub fn forbids_guard_noise(source: &str, forbidden: &[String]) -> bool {
     if forbidden
@@ -645,26 +615,11 @@ pub fn forbids_guard_noise(source: &str, forbidden: &[String]) -> bool {
 }
 
 /// Whether the crate at `rel` is one this host cannot lend `std` to. A root that does not parse is answered `false` here; the walk reports the parse failure.
-///
-/// `#![no_std]` on its own is not that crate. It withholds the implicit link
-/// to `std` and its prelude, and forbids neither an explicit link nor an
-/// explicit path, so the runtime module borrows `std` under a name of its own
-/// and the crate is measured like any other. What cannot be measured is a
-/// crate that would then have two of something only one of which may exist: a
-/// `#[panic_handler]` or a `#[global_allocator]` of its own, which `std`
-/// brings too, or a `#![no_main]` crate, whose entry point `std` also
-/// supplies. Edition 2015 is left out because `extern crate` resolves
-/// differently there and the engine does not test what it does not run.
 fn crate_root_is_freestanding(root: &Path, rel: &str, edition: &str) -> bool {
     std::fs::read_to_string(root.join(rel)).is_ok_and(|text| freestanding(&text, edition))
 }
 
 /// Whether a crate root's own text says the host cannot lend it `std`.
-///
-/// A root that does not parse is answered `false` here; the walk reports the
-/// parse failure. `#![cfg_attr(not(test), no_std)]` is not `#![no_std]`: under
-/// `cfg(test)` — which is how every test of the crate is built — the crate has
-/// `std`, and this answers about the crate as its tests will see it.
 #[must_use]
 pub fn freestanding(source: &str, edition: &str) -> bool {
     let Ok(file) = syn::parse_file(source) else {

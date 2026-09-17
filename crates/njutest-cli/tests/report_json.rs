@@ -76,7 +76,9 @@ fn populated() -> Report {
         scope: Scope {
             requested_packages: vec!["core".to_owned()],
             resolved_packages: vec!["core".to_owned()],
+            included: Vec::new(),
             excluded: vec!["**/generated/**".to_owned()],
+            configuration: ".njutest.toml".to_owned(),
             shard: None,
         },
         timing: Timing {
@@ -139,6 +141,8 @@ fn populated() -> Report {
                 character_column: 9,
             },
             rule: "lt-to-le@1".to_owned(),
+            item: "demo".to_owned(),
+            original: ">".to_owned(),
             outcome: "killed".to_owned(),
             killed_by: Some("0123456789abcdef".to_owned()),
             reused: true,

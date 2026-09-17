@@ -2,11 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What a remembered outcome is filed under, and what makes it stop answering.
-//!
-//! A key names the question, not the tree. Everything it is computed from is
-//! something that could change what the tests say about the mutant; everything
-//! else is left out, because a key over more than that throws away answers for
-//! reasons that could not have changed them.
 
 #[test]
 fn a_key_over_nothing_is_not_a_key_and_remembers_nothing() {

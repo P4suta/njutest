@@ -2,8 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Test support this crate's own suite and a sibling's may reach for.
-//!
-//! Nothing in production imports this: `cargo xtask devgates` refuses it.
 
 #![expect(
     clippy::unreachable,
@@ -15,10 +13,6 @@ use std::path::Path;
 use crate::error::RunnerError;
 
 /// Drives the watch loop with a caller-controlled wait.
-///
-/// Production always waits with [`std::thread::sleep`]. Tests supply an
-/// observable wait instead, so they prove exactly where the loop waits without
-/// depending on how promptly a hosted operating system schedules the thread.
 pub fn watch_until_with_wait<L, R, W>(
     cancel: &rust_mutants::runner::Cancel,
     look: L,
@@ -34,13 +28,6 @@ where
 }
 
 /// One failure of every shape this runner reports.
-///
-/// The list is held to the enum by the `match` below, which names every
-/// variant and has no catch-all: a failure added without a sample here does
-/// not compile. That is the point. What this is for — checking that every
-/// code a run can print is one `docs/errors.md` explains — is only as good as
-/// the list being every one, and a list somebody maintains by hand is a list
-/// that is one behind.
 #[must_use]
 pub fn every_failure() -> Vec<RunnerError> {
     let nowhere = Path::new("nowhere");
@@ -115,11 +102,6 @@ pub fn every_failure() -> Vec<RunnerError> {
 }
 
 /// One refusal of every shape the evidence layer can record.
-///
-/// Held to the enum by the `match` below, which names every variant and has
-/// no catch-all. What this is for — checking that every word a route can
-/// carry is one [`docs/trace-v1.md`](../../../docs/trace-v1.md) lists — is
-/// only as good as the list being every one.
 #[must_use]
 pub fn every_refusal() -> Vec<crate::evidence::store::Refusal> {
     use crate::evidence::store::Refusal;
@@ -161,10 +143,6 @@ pub fn every_refusal() -> Vec<crate::evidence::store::Refusal> {
 }
 
 /// One event of every shape a recording can hold.
-///
-/// Held to the enum the same way. A recording is what an audit re-derives a
-/// run's proofs from, and a shape the page does not list is one a reader
-/// meets with nothing to look it up by.
 #[must_use]
 pub fn every_payload() -> Vec<crate::trace::Payload> {
     use crate::trace::{

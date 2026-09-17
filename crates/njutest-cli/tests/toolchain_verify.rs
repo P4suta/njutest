@@ -67,6 +67,7 @@ fn environment(root: &Path, cache: &Path, named: &[(&str, &str)]) -> Environment
         cache_directory: cache.to_path_buf(),
         working_directory: root.to_path_buf(),
         temp_directory: njutest_devkit::paths::temp_beside(root).expect("a temporary directory"),
+        program: PathBuf::from("this test never runs it"),
         vars,
         cancel: Cancel::new(),
     }
@@ -78,27 +79,45 @@ fn of(root: &Path, named: &[(&str, &str)]) -> Environment {
     environment(root, &cache, named)
 }
 
+#[test]
+fn a_run_says_where_it_wrote_as_a_path_from_the_project_it_is_about() {
+    let fixture = fixture("fixture-assured");
+    let output = asked(
+        &of(&fixture.root, &[]),
+        &[
+            "verify",
+            "--offline",
+            "--locked",
+            "--directory",
+            &fixture.root.display().to_string(),
+        ],
+    );
+    let said = String::from_utf8_lossy(&output.stdout);
+    let written = said
+        .lines()
+        .find_map(|line| line.strip_prefix("REPORT\t"))
+        .expect("a run that kept a report says where it kept it");
+    assert!(
+        !Path::new(written).is_absolute(),
+        "a run told where to work says where it wrote from there, because a reader \
+         joining it onto the project would otherwise get the path twice: {written}"
+    );
+    assert!(
+        fixture.root.join(written).is_file(),
+        "and the path it says is one the project's own root reaches: {written}"
+    );
+}
+
 /// Where the latest run wrote its report.
 fn latest(fixture: &Fixture) -> PathBuf {
-    let index = fixture.root.join(njutest_cli::app::reports::LATEST_ANY);
-    let text = std::fs::read_to_string(&index).expect("the latest index");
-    let value: serde_json::Value = serde_json::from_str(&text).expect("JSON");
-    let directory = value["directory"].as_str().expect("a directory").to_owned();
-    fixture
-        .root
-        .join(directory)
+    njutest_cli::app::reports::Store::read(&fixture.root)
+        .run_of(njutest_cli::app::reports::Index::Any)
+        .expect("the index names a run")
         .join(njutest_cli::app::reports::DOCUMENT_NAME)
 }
 
 fn document(fixture: &Fixture) -> serde_json::Value {
-    let index = fixture.root.join(njutest_cli::app::reports::LATEST_ANY);
-    let text = std::fs::read_to_string(&index).expect("the latest index");
-    let value: serde_json::Value = serde_json::from_str(&text).expect("JSON");
-    let directory = value["directory"].as_str().expect("a directory");
-    let path = fixture
-        .root
-        .join(directory)
-        .join(njutest_cli::app::reports::DOCUMENT_NAME);
+    let path = latest(fixture);
     let text = std::fs::read_to_string(&path)
         .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
     serde_json::from_str(&text).expect("the report is JSON")
@@ -480,7 +499,15 @@ fn a_run_leaves_nothing_in_the_tree_it_verified_but_its_own_reports() {
         .filter(|path| !before.contains(*path))
         .collect();
     assert!(
-        added.iter().all(|path| path.starts_with("reports/")),
+        added.iter().all(|path| {
+            path.starts_with(&format!(
+                "{}/",
+                njutest_cli::config::Config::default()
+                    .reports
+                    .directory
+                    .display()
+            ))
+        }),
         "an instrumented build writes its own coverage profiles, and they belong in the \
          directory the run works in rather than in the tree it is about: {added:?}"
     );
@@ -789,7 +816,7 @@ fn a_mutation_only_a_documented_example_can_notice_is_noticed_by_it() {
             .as_array()
             .expect("mutants")
             .iter()
-            .find(|mutant| mutant["position"]["line"] == line && mutant["rule"] == "div-to-mul@1")
+            .find(|mutant| mutant["position"]["line"] == line && mutant["rule"] == "div-to-mul")
             .and_then(|mutant| mutant["killed_by"].as_str())
             .unwrap_or("nothing")
             .to_owned()
@@ -945,7 +972,7 @@ fn a_mutation_the_compiler_renders_identically_is_not_a_gap_in_the_tests() {
             .to_owned()
     };
     assert_eq!(
-        by_rule("mul-to-div@1"),
+        by_rule("mul-to-div"),
         "killed",
         "`n * 2` and `n / 2` are not the same instructions"
     );
@@ -960,7 +987,7 @@ fn a_mutation_the_compiler_renders_identically_is_not_a_gap_in_the_tests() {
         return;
     }
     assert_eq!(
-        by_rule("add-to-sub@1"),
+        by_rule("add-to-sub"),
         "equivalent",
         "`n + 0` and `n - 0` are the same instructions at opt-level 2, and the tests ran \
          the position: {}",
@@ -1062,7 +1089,9 @@ fn a_part_that_is_not_a_part_of_anything_is_refused_before_anything_is_built() {
     let said = String::from_utf8_lossy(&output.stderr);
     assert!(said.contains("K runs from 1 to N"), "{said}");
     assert!(
-        !fixture.root.join("reports").exists(),
+        !njutest_cli::app::reports::Store::read(&fixture.root)
+            .runs()
+            .exists(),
         "a refusal before the first build writes no report"
     );
 }

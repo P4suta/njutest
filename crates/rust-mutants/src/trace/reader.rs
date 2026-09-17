@@ -117,10 +117,6 @@ pub fn check(events: &[Event]) -> Vec<Problem> {
 }
 
 /// Every phase whose beginning and end do not pair up, in the order they began.
-///
-/// A phase is a stack: the end that closes one is the last beginning still
-/// open. What is left on the stack when the recording ends never ended, and an
-/// end with nothing under it never began.
 fn unbalanced_phases(events: &[Event]) -> Vec<Problem> {
     let mut open: Vec<&str> = Vec::new();
     let mut problems = Vec::new();

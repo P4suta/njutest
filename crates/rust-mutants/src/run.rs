@@ -15,14 +15,6 @@ use crate::session::{Locator, Request, Session};
 use crate::workspace::SessionError;
 
 /// The machine: shared while a run measures several mutations at once, and given to one of them when a budget expires.
-///
-/// A mutation's budget is a multiple of a duration the baseline measured, and
-/// a duration measured while three other test processes were running is a
-/// fact about the load rather than about the mutation. A run that has to
-/// decide whether a budget really expired takes the machine to itself first,
-/// so the measurement the decision rests on is the one the budget was
-/// calibrated for. It is not a retry policy: one expired budget buys one
-/// quiet measurement, and what that measurement observes is what stands.
 #[derive(Debug, Default)]
 pub struct Quiet(RwLock<()>);
 
@@ -45,11 +37,6 @@ impl Quiet {
 }
 
 /// One mutant a reviewer declared, with the outcome the run must confirm.
-///
-/// A claim names its mutant either by identity, which is exact and moves when
-/// anything in the file does, or by a locator, which says where the mutation
-/// is and what it edits and survives an edit elsewhere. Never both: two ways
-/// of naming one thing are two chances to name different things.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Expectation {
     /// The mutant by identity or by a prefix that names exactly one.
@@ -254,9 +241,6 @@ pub struct Finding {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Tally {
     /// How many candidate rows the run accounts for, excluding compiler refusals.
-    ///
-    /// An `unselected` row makes no compiler-acceptance claim: a scoped run
-    /// deliberately leaves such a candidate unvalidated.
     pub cataloged: u32,
     /// How many candidates the compiler refused.
     pub refused: u32,
@@ -515,8 +499,7 @@ pub fn count(value: usize) -> u32 {
 /// What a run needs beyond the session itself.
 #[derive(Debug, Clone, Copy)]
 pub struct Options<'a> {
-    /// How long one execution may take before it is retried serially.
-    /// The claims to verify.
+    /// How long one execution may take before it is retried serially. The claims to verify.
     pub expectations: &'a [Expectation],
     /// The machine, which a confirming retry takes to itself.
     pub quiet: &'a Quiet,
@@ -537,12 +520,6 @@ pub struct Options<'a> {
 }
 
 /// Which of a catalog's mutants a run is about.
-///
-/// A filter narrows what a run measures and changes nothing about the
-/// catalog: the digest is the catalog's, a stored outcome is still the same
-/// tree's, and what a filter took out is reported as a mutant nobody selected
-/// rather than left out of the accounting. A run that measured half a catalog
-/// says so.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Filter {
     /// Rules by name. Empty selects every rule.
@@ -617,12 +594,6 @@ pub struct Reusing<'a> {
 }
 
 /// One part of a catalog, for a run that shares the work with others.
-///
-/// The parts are cut by catalog index, which is dense and in the catalog's own
-/// order, so every run of the same tree cuts them the same way without any run
-/// having to know what the others chose. They balance by count rather than by
-/// cost: a shard holding the slow mutants is a shard that takes longer, and
-/// that is a thing to measure before it is a thing to solve.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Shard {
     /// Which part, from one.
@@ -686,8 +657,6 @@ impl std::fmt::Display for Shard {
 }
 
 /// Runs every accepted mutant of `session` once, retrying a timeout serially before believing it, and reports what the run established.
-///
-/// `progress` is told about each mutant as it finishes, so a command line can say where it is without this module knowing what a stream is.
 ///
 /// # Errors
 /// Returns what the engine could not do. A mutant the engine refuses to execute is recorded as errored rather than ending the run.
@@ -759,11 +728,6 @@ pub fn run<O: Observer>(
 }
 
 /// The mutants a claim names, and where the first has moved to since the claim was written.
-///
-/// An identity names one. A locator names one unless it states a count, and
-/// then it names that many: a reason written for a set of mutations is checked
-/// against every one of them, so what comes back is the set rather than a
-/// representative of it.
 fn addressed<'s>(
     session: &'s Session,
     expectation: &Expectation,
@@ -788,12 +752,6 @@ fn addressed<'s>(
 }
 
 /// What the run says about every mutant one claim names, and which of them decided it.
-///
-/// The claim holds only when each of them came to the declared outcome. One
-/// that did not is what the standing reports, because a reason written for
-/// three mutations stops being a reason for any of them the moment one of the
-/// three is killed: what covered it then is a test, and the claim would be
-/// exempting the other two on the strength of that.
 fn standing_of(judged: &[Judged], expected: Outcome, ids: &[String]) -> (Option<String>, Standing) {
     for id in ids {
         let Some(one) = judged.iter().find(|one| one.id == *id) else {
@@ -817,13 +775,6 @@ fn standing_of(judged: &[Judged], expected: Outcome, ids: &[String]) -> (Option<
 }
 
 /// Asks the compiler whether each survivor's mutation is one it renders at all.
-///
-/// Only a survivor is asked: a mutation a test noticed is one the compiler
-/// plainly rendered, and asking about it would pay a build for an answer the
-/// run already has. What the layer says is `identical`, `differs`, or nothing
-/// at all — never `equivalent`, which is a claim about behaviour that a
-/// comparison of two binaries cannot make. Whatever it fails at leaves the
-/// survivor a survivor.
 fn equivalence(
     session: &Session,
     asking: &Equivalence<'_>,
@@ -882,10 +833,6 @@ fn equivalence(
 }
 
 /// What the equivalence layer needs: the tree the user wrote, and how it is built.
-///
-/// It is the project's own tree rather than the snapshot, because what is
-/// compared is what the project's own `cargo test --no-run` produces, with
-/// nothing instrumented in it.
 #[derive(Debug)]
 pub struct Equivalence<'a> {
     /// The source root, which is what a person would build.
@@ -895,21 +842,6 @@ pub struct Equivalence<'a> {
 }
 
 /// How many mutants a run measures at once. Zero is the default: as many as the machine has, capped at four.
-///
-/// Each test binary runs its own tests on as many threads as the machine has,
-/// so a run that started one process per core would have every process
-/// contending with every other and would measure the contention. Four is the
-/// number that keeps a machine busy without making a duration a fact about
-/// the load.
-///
-/// The guards narrow most executions to the tests that reached the mutation,
-/// and a process running one test does not use the machine the way one running
-/// a whole suite does. The cap stays anyway, because the ones that fall back —
-/// a target the record could not attribute, a set of tests that does not answer
-/// on its own — still run everything, and a budget is five times a baseline
-/// measured with the machine to itself. A person who knows their suite says
-/// `--jobs`, and a run that says nothing keeps the answer that is right when
-/// the fallback fires.
 #[must_use]
 pub fn jobs(configured: usize) -> usize {
     if configured > 0 {
@@ -967,12 +899,6 @@ fn one_mutant(
 }
 
 /// Measuring several mutants at once, and delivering each as it finishes.
-///
-/// Delivery is in completion order and never in catalog order: one mutant
-/// that hangs for its whole budget would otherwise hold back every result
-/// behind it, and a progress line, a stream, and a stop-at-the-first-finding
-/// would all wait on it. The report is put back into catalog order when it is
-/// written, because that is the order a reader compares two runs in.
 mod pool {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::mpsc;
@@ -1086,12 +1012,6 @@ mod pool {
 }
 
 /// Records which targets could have noticed this mutation and which of them ran.
-///
-/// One record per judged mutant, whatever became of it: a mutant nothing
-/// reached leaves a route and no execution, and one an earlier run answered
-/// for names that run rather than a target. The record is the only place a
-/// reader can see a proof layer remove work, so it is written even when the
-/// mutant was never started.
 fn route(session: &Session, mutant: &Mutant, judged: &mut Judged) {
     if let Some(reason) = judged.not_run_reason
         && session.trace().is_enabled()
@@ -1120,11 +1040,6 @@ fn route(session: &Session, mutant: &Mutant, judged: &mut Judged) {
 }
 
 /// What a caller hears while a run happens.
-///
-/// Every method is called on the thread that called [`run`], so an
-/// implementation needs no synchronisation of its own and may borrow whatever
-/// it likes. Each has a default that does nothing, so an observer implements
-/// only what it draws.
 pub trait Observer {
     /// The run is about to judge `total` mutants.
     fn starting(&mut self, _total: u32) {}
@@ -1223,12 +1138,6 @@ fn execute(
 }
 
 /// Why a mutant that was never executed was not, when it was not.
-///
-/// A mutation no measured target reaches is one nothing needs to run to find
-/// out again. Anything else that ends without a result ended because the run
-/// did: a process the runner never got a status from is a run somebody
-/// stopped, and reading it as a mutation no test can notice would report a
-/// finding nobody measured.
 fn not_run_because(outcome: Outcome, route: &crate::session::Route) -> Option<NotRunReason> {
     if outcome != Outcome::NotRun {
         return None;
@@ -1241,10 +1150,6 @@ fn not_run_because(outcome: Outcome, route: &crate::session::Route) -> Option<No
 }
 
 /// Whether this outcome is the one a run asked to stop at the first finding stops at.
-///
-/// A run stops at the first thing a reader has to act on, which is what a
-/// finding is: a mutation nothing noticed, one nothing could decide, one
-/// nothing reached. It does not stop at a kill, which is the run working.
 const fn stops(one: &Judged) -> bool {
     match one.outcome {
         Outcome::Killed | Outcome::TimedOut => false,
@@ -1258,10 +1163,6 @@ const fn stops(one: &Judged) -> bool {
 }
 
 /// What a filter leaves of a catalog, and what it took out.
-///
-/// What a filter took out is a mutant nobody selected, not a mutant nobody
-/// cataloged: it keeps its row and its reason, so a report of a narrowed run
-/// still accounts for the whole of the catalog it was cut from.
 fn narrowed<'m>(
     session: &Session,
     places: Vec<&'m Mutant>,

@@ -2,12 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What a run did, counted rather than timed.
-//!
-//! Every number here is a count of work: pairs of one mutant and one target
-//! that a process was started for, and pairs something removed before one was.
-//! Nothing on this page depends on how fast the machine is, so two runs of the
-//! same tree on two machines are the same numbers, and a change that makes the
-//! engine do less is a change a test can see.
 
 #![expect(
     clippy::expect_used,

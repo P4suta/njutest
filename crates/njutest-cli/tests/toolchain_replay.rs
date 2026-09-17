@@ -62,6 +62,7 @@ fn environment(root: &Path, cache: &Path, named: &[(&str, &str)]) -> Environment
         cache_directory: cache.to_path_buf(),
         working_directory: root.to_path_buf(),
         temp_directory: njutest_devkit::paths::temp_beside(root).expect("a temporary directory"),
+        program: PathBuf::from("this test never runs it"),
         vars,
         cancel: Cancel::new(),
     }
@@ -72,14 +73,11 @@ fn stdout(output: &Output) -> String {
 }
 
 fn survivor(fixture: &Fixture) -> String {
-    let index = fixture.root.join(njutest_cli::app::reports::LATEST_ANY);
-    let value: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(index).expect("the index")).expect("JSON");
     let report: serde_json::Value = serde_json::from_str(
         &std::fs::read_to_string(
-            fixture
-                .root
-                .join(value["directory"].as_str().expect("a directory"))
+            njutest_cli::app::reports::Store::read(&fixture.root)
+                .run_of(njutest_cli::app::reports::Index::Any)
+                .expect("the index names a run")
                 .join(njutest_cli::app::reports::DOCUMENT_NAME),
         )
         .expect("the document"),

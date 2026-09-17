@@ -115,12 +115,6 @@ fn every_configuration_key_a_reader_may_write_is_on_the_configuration_page() {
 }
 
 /// Whether the page shows `key`, which for a section of named tables is a table with a name in it.
-///
-/// A map of tables serialises with its own header and no members — the
-/// defaults have no resources in them — while what a reader writes and what
-/// the page has to show is one of the named ones. `[resources]` is documented
-/// by `[resources.postgres]`, and looking only for the bare header would ask
-/// the page to show a section nobody would ever write.
 fn documented(text: &str, key: &str) -> bool {
     text.contains(key)
         || key

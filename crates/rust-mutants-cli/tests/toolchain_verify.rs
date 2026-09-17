@@ -59,7 +59,9 @@ fn a_baseline_that_fails_its_own_test_refuses_the_session_with_rm5002() {
         "the refusal says what to do about it: {said}"
     );
     assert!(
-        !fixture.root().join("reports/mutation").exists(),
+        !rust_mutants_cli::app::stored::Store::read(fixture.root())
+            .root()
+            .exists(),
         "a run that established nothing writes no report"
     );
 }
@@ -107,6 +109,7 @@ fn environment(fixture: &Fixture) -> Environment {
     Environment {
         vars: njutest_devkit::paths::environment_for_a_run(),
         temp_directory: fixture.temp().to_path_buf(),
+        program: std::path::PathBuf::from("this test never runs it"),
         cache_directory: fixture.cache().to_path_buf(),
         working_directory: fixture.root().to_path_buf(),
         no_color: true,

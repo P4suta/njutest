@@ -8,12 +8,26 @@ use super::{Report, TargetStatus};
 /// The record stream inside a run directory.
 pub const FILE_NAME: &str = "njutest-assurance-report-v1.lines";
 
+/// The whole report as records, each line terminated, and where the run's document is from the project's own root.
+///
+/// A reader who has the stream should not have to know the layout to find the
+/// document beside it: a `REPORT` record is how a script that read the verdict
+/// reads the rest, and guessing a path is how one stops working the day a
+/// project moves its report directory.
+#[must_use]
+pub fn kept(report: &Report, document: &str) -> String {
+    written(report, Some(document))
+}
+
 /// The whole report as records, each line terminated.
 #[must_use]
 pub fn stream(report: &Report) -> String {
+    written(report, None)
+}
+
+fn written(report: &Report, document: Option<&str>) -> String {
     let mut out = String::new();
     identity(report, &mut out);
-    accounting(report, &mut out);
     for target in &report.targets {
         record(
             &mut out,
@@ -63,9 +77,49 @@ pub fn stream(report: &Report) -> String {
         append(&mut out, &limitation.detail);
         out.push('\n');
     }
+    onward(report, &mut out);
+    accounting(report, &mut out);
+    if let Some(document) = document {
+        record(&mut out, "REPORT", &[document]);
+        out.push('\n');
+    }
     record(&mut out, "VERDICT", &[&verdict_name(report)]);
     out.push('\n');
     out
+}
+
+/// Where a reader goes from a wall of findings, which is the next thing they want.
+///
+/// A survivor is a decision to make, not a fact to file: either the tests have
+/// a gap or the code has a claim in it somebody should write down. `explain`
+/// answers the first and `accept` records the second, and nothing on the way
+/// here named either.
+/// How a reader names this mutation again, which has to hold after they have changed the file.
+fn locating(mutant: &crate::report::MutantRecord) -> String {
+    if mutant.item.is_empty() || mutant.path.is_empty() {
+        return mutant.display_id.clone();
+    }
+    format!(
+        "{}:{}:{}@{}",
+        mutant.path, mutant.item, mutant.rule, mutant.position.line
+    )
+}
+
+fn onward(report: &Report, out: &mut String) {
+    let Some(first) = report.mutants.iter().find(|one| one.outcome == "survived") else {
+        return;
+    };
+    record(
+        out,
+        "NEXT",
+        &[
+            &format!("njutest explain {}", locating(first)),
+            "says which tests reached it",
+            &format!("njutest accept {} --reason \"...\"", locating(first)),
+            "records why it is not a gap",
+        ],
+    );
+    out.push('\n');
 }
 
 /// What the run was and what it ran on.
@@ -109,9 +163,18 @@ fn identity(report: &Report, out: &mut String) {
         out,
         "SCOPE",
         &[
-            &format!("requested={}", report.scope.requested_packages.join(",")),
-            &format!("resolved={}", report.scope.resolved_packages.join(",")),
-            &format!("excluded={}", report.scope.excluded.join(",")),
+            &format!("requested={}", named(&report.scope.requested_packages)),
+            &format!("resolved={}", named(&report.scope.resolved_packages)),
+            &format!("included={}", named(&report.scope.included)),
+            &format!("excluded={}", named(&report.scope.excluded)),
+            &format!(
+                "from={}",
+                if report.scope.configuration.is_empty() {
+                    "(defaults)"
+                } else {
+                    &report.scope.configuration
+                }
+            ),
         ],
     );
     out.push('\n');
@@ -125,6 +188,14 @@ fn identity(report: &Report, out: &mut String) {
         ],
     );
     out.push('\n');
+}
+
+/// A list as a reader sees it, saying that it is empty rather than being empty.
+fn named(values: &[String]) -> String {
+    if values.is_empty() {
+        return String::from("(nothing named)");
+    }
+    values.join(",")
 }
 
 /// What the run counted.
@@ -150,13 +221,28 @@ fn accounting(report: &Report, out: &mut String) {
             &format!("cataloged={}", mutants.cataloged),
             &format!("rejected={}", mutants.rejected),
             &format!("executed={}", mutants.executed),
+            &format!("unreached={}", mutants.unreached),
+        ],
+    );
+    out.push('\n');
+    record(
+        out,
+        "OUTCOMES",
+        &[
             &format!("killed={}", mutants.killed),
             &format!("survived={}", mutants.survived),
             &format!("timed_out={}", mutants.timed_out),
-            &format!("unreached={}", mutants.unreached),
-            &format!("accepted={}", mutants.accepted),
-            &format!("reused_killed={}", mutants.reused_killed),
-            &format!("reused_survived={}", mutants.reused_survived),
+            &format!("equivalent={}", mutants.equivalent),
+        ],
+    );
+    out.push('\n');
+    record(
+        out,
+        "WITHIN_OUTCOMES",
+        &[
+            &format!("accepted_of_survived={}", mutants.accepted),
+            &format!("reused_of_killed={}", mutants.reused_killed),
+            &format!("reused_of_survived={}", mutants.reused_survived),
         ],
     );
     out.push('\n');
@@ -166,8 +252,8 @@ fn accounting(report: &Report, out: &mut String) {
         "SOUNDNESS",
         &[
             &format!("unsafe_items={}", soundness.unsafe_items),
-            &format!("packages={}", soundness.packages_with_unsafe),
-            &format!("executed={}", soundness.executed),
+            &format!("packages_with_unsafe={}", soundness.packages_with_unsafe),
+            &format!("was_executed={}", soundness.executed),
         ],
     );
     out.push('\n');

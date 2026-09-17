@@ -44,7 +44,7 @@
             }
           ],
           "partialFingerprints": {
-            "rustMutantsMutantId/v1": "0000000000000000000000000000000000000000000000000000000000000001"
+            "rustMutantsMutation/v2": "src/lib.rs:demo:gt-to-ge:>"
           }
         }
       ]

@@ -2,11 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What a release is made of, as a bill of materials a reader's own tools understand.
-//!
-//! The document is built from `cargo metadata` alone, which is the same
-//! resolution the build used. Nothing here reaches the network: a bill of
-//! materials that had to ask somebody else what it contains would be a
-//! statement about that answer rather than about this build.
 
 use std::collections::BTreeSet;
 

@@ -80,7 +80,7 @@ fn recorded(fixture: &Fixture, args: &[String]) -> Vec<Fate> {
     let output = njutest_devkit::process::answered(code, out, err);
     let code = output.status.code();
     let said = String::from_utf8_lossy(&output.stderr);
-    let directory = fixture.root().join("reports/mutation");
+    let directory = rust_mutants_cli::app::stored::Store::read(fixture.root()).root();
     if !directory.is_dir() {
         assert_eq!(
             code,
@@ -260,6 +260,7 @@ fn environment(fixture: &Fixture) -> Environment {
     Environment {
         vars: njutest_devkit::paths::environment_for_a_run(),
         temp_directory: fixture.temp().to_path_buf(),
+        program: PathBuf::from("this test never runs it"),
         cache_directory: fixture.cache().to_path_buf(),
         working_directory: fixture.root().to_path_buf(),
         no_color: true,

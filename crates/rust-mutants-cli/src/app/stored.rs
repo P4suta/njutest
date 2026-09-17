@@ -12,12 +12,50 @@ use crate::cli;
 use crate::error::CliError;
 use crate::report::run as run_report;
 
-/// The name this run goes by, which is what its report directory is called.
+/// Where this project keeps what its runs leave behind, and the only thing that knows it.
 ///
-/// The name becomes a path under the report directory, so `.` and `..` are
-/// refused along with everything a separator could hide in: a run named `..`
-/// writes its report over the directory that holds every other run, and reads
-/// back as this run's when the next person asks about it.
+/// The directory is configuration, so every command has to ask the same
+/// question the same way. Three of them used to join the default instead, and
+/// a project that had moved the directory got two commands reading a place
+/// nothing was written to.
+#[derive(Debug, Clone)]
+pub struct Store {
+    root: PathBuf,
+}
+
+impl Store {
+    /// The store `configured` names under `root`.
+    #[must_use]
+    pub fn of(root: &Path, configured: &Path) -> Self {
+        Self {
+            root: root.join(configured),
+        }
+    }
+
+    /// The store this project is configured for, defaulting when the configuration cannot be read.
+    #[must_use]
+    pub fn read(root: &Path) -> Self {
+        let configured = crate::config::Config::load(root).map_or_else(
+            |_error| PathBuf::from(crate::config::DEFAULT_REPORTS_DIRECTORY),
+            |config| config.reports.directory,
+        );
+        Self::of(root, &configured)
+    }
+
+    /// The directory every run writes its own directory under.
+    #[must_use]
+    pub fn root(&self) -> PathBuf {
+        self.root.clone()
+    }
+
+    /// Where one run writes.
+    #[must_use]
+    pub fn run(&self, id: &str) -> PathBuf {
+        self.root.join(id)
+    }
+}
+
+/// The name this run goes by, which is what its report directory is called.
 ///
 /// # Errors
 /// [`CliError::InvalidValue`] for a name that is not one a directory can be.
@@ -70,6 +108,7 @@ pub fn store(
     let path = directory.join(id).join(run_report::FILE_NAME);
     rust_mutants::replace::file(&path, json_line(document).as_bytes())
         .map_err(|failure| CliError::writing(&failure.path, failure.source))?;
+    disowned(directory);
     let latest = directory.join(run_report::LATEST_FILE_NAME);
     let pointer = serde_json::json!({
         "document_type": "rust-mutants/latest-run",
@@ -82,11 +121,16 @@ pub fn store(
     Ok(path)
 }
 
+/// Says, inside the directory this tool writes, that git has no business with what is in it.
+fn disowned(directory: &Path) {
+    let path = directory.join(".gitignore");
+    if path.exists() {
+        return;
+    }
+    drop(std::fs::write(&path, b"*\n"));
+}
+
 /// Keeps the newest `keep` stored runs and the newest `keep` recordings of the other commands. Both sort chronologically by name, so the oldest are the first.
-///
-/// A directory that holds no run report is not a run and never costs a run its
-/// place: `traces/` sorts after every run name, and counting it would leave
-/// `keep - 1` runs stored.
 pub fn prune(directory: &Path, keep: u32) {
     if keep == 0 {
         return;
@@ -102,10 +146,6 @@ pub fn prune(directory: &Path, keep: u32) {
 
 #[must_use]
 /// The stored runs and, apart from them, the directories a run that wrote no report left a recording in.
-///
-/// A run asked to record and not to report still names itself and still keeps
-/// what it recorded, so those directories are bounded by `keep` of their own
-/// rather than either counting against the stored runs or growing forever.
 pub fn kept(directory: &Path) -> (Vec<PathBuf>, Vec<PathBuf>) {
     let mut runs = Vec::new();
     let mut recordings = Vec::new();
@@ -125,14 +165,18 @@ pub fn kept(directory: &Path) -> (Vec<PathBuf>, Vec<PathBuf>) {
     (runs, recordings)
 }
 
-/// Removes everything but the newest `keep` of `directories`.
+/// Removes everything but the newest `keep` of `directories`, within a budget.
+///
+/// This runs on every run that stores a report, so it is the one thing here
+/// that must be faster than what it is cleaning up after: a directory on a
+/// wedged mount takes minutes to refuse, and the run cannot exit until it
+/// does. What is not reached stays, is still the oldest, and is what the next
+/// run starts with.
 pub fn oldest(directories: &[PathBuf], keep: u32) {
     let excess = directories
         .len()
         .saturating_sub(usize::try_from(keep).unwrap_or(usize::MAX));
-    for old in directories.iter().take(excess) {
-        drop(std::fs::remove_dir_all(old));
-    }
+    let _left = rust_mutants::reclaim::all(directories.iter().take(excess).map(PathBuf::as_path));
 }
 
 /// Every directory directly under `directory`, in name order.
@@ -150,11 +194,6 @@ pub fn subdirectories(directory: &Path) -> Vec<PathBuf> {
 }
 
 /// The report of the run a command was told to read, or of the newest when it was told nothing.
-///
-/// A name is a name a person typed, so one no directory answers to is a
-/// refusal rather than a fall back to the newest: a command that read another
-/// run than the one it was asked for would answer confidently about the wrong
-/// one.
 ///
 /// # Errors
 /// [`CliError::ReportMissing`] when `named` is not a stored run under

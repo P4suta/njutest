@@ -2,19 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! A resource provider and a generation provider that answer what a test told them to answer.
-//!
-//! Both were shell scripts run as `/bin/sh <path>`, which names a program only
-//! on a platform that has one there. A suite that spelled it that way was
-//! asking a unix question of every machine, and the answer on the others is a
-//! run that never started the provider it is a test of.
-//!
-//! It is an example for the same reason `fake_cargo` is: only an example is
-//! built beside the test binaries by `cargo test`, `cargo nextest run`, and
-//! `cargo llvm-cov` alike, on every platform the product is tested on.
-//!
-//! The first argument is the role. What each role says is what the environment
-//! told it to say, so a test writes the answer and reads back what the run
-//! made of it.
 
 #![expect(
     clippy::print_stdout,

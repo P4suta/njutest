@@ -83,12 +83,6 @@ pub struct Machine<'a> {
 
 /// Everything the identity is computed from, read from the tree and the process.
 ///
-/// The whole tree counts, `[project] exclude` included. That configuration
-/// says which files are mutated; every one of them is still compiled and still
-/// run, so a run is a function of its bytes whether or not a mutation was put
-/// to it, and an identity that passed over it would hand the next run an
-/// answer measured against bytes that are no longer there.
-///
 /// # Errors
 /// Returns what could not be read about the tree.
 pub fn inputs(
@@ -104,7 +98,14 @@ pub fn inputs(
         vars,
         elsewhere,
     } = *asked;
-    let scanned = scan(root, &[], elsewhere)?;
+    let scanned = scan(
+        root,
+        &crate::evidence::tree::Bounds {
+            exclude: &[],
+            elsewhere,
+            excluded: &crate::evidence::tree::Excluded::beside(&config.reports.directory),
+        },
+    )?;
     Ok(Inputs {
         tree: scanned.tree,
         corpus: scanned.corpus,
@@ -130,7 +131,14 @@ pub fn of(
     common: Common,
     shard: Option<String>,
 ) -> Result<Evidence, ScanError> {
-    let scanned = scan(asked.root, &[], asked.elsewhere)?;
+    let scanned = scan(
+        asked.root,
+        &crate::evidence::tree::Bounds {
+            exclude: &[],
+            elsewhere: asked.elsewhere,
+            excluded: &crate::evidence::tree::Excluded::beside(&asked.config.reports.directory),
+        },
+    )?;
     let dependencies = dependencies_of(asked.root)?;
     let read = Inputs {
         tree: scanned.tree.clone(),

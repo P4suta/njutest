@@ -276,15 +276,6 @@ impl Store {
 
     /// Writes every answer this store holds, one to a line, and says how many.
     ///
-    /// A matrix of jobs that each establish what one of them has established
-    /// already pays for the same work as many times as it has jobs. What
-    /// crosses between them is answers, and an answer is a report, so what is
-    /// written here is the report format and there is nothing else to read.
-    ///
-    /// An entry this machine cannot read back stops the export and names it.
-    /// Copying an answer nobody can check turns one broken answer into two,
-    /// and the machine it lands on has no way left to tell where it came from.
-    ///
     /// # Errors
     /// [`CacheError::Corrupt`] for an entry that is not the answer it claims
     /// to be, [`CacheError::Unusable`] for a store that cannot be listed, and
@@ -312,12 +303,6 @@ impl Store {
     }
 
     /// Reads answers another machine wrote, and says how many this one now holds.
-    ///
-    /// There is no check here that storing does not already make. What a
-    /// machine may keep is what a run may keep, and that rule lives in
-    /// [`Store::put`]: an answer that arrived from somewhere else is held to
-    /// it exactly as one this machine established, because a second copy of
-    /// the rule is a second chance to write it more loosely.
     ///
     /// # Errors
     /// [`CacheError::Arriving`] for a line that is not a report, naming the

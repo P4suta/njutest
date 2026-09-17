@@ -2,16 +2,11 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The integration resources a run starts, and what they may tell a test.
-//!
-//! A resource is a fact about the world the tests ran in. A run that could
-//! not start one it was told to start does not run the tests without it: the
-//! report would say the suite passed, and it would be about a different world
-//! than the one the configuration describes.
 
 use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::config::Resource;
 use crate::error::{self, ErrorCode};
@@ -95,6 +90,29 @@ pub struct Manager {
     live: Vec<Live>,
     sequence: u32,
     place: Where,
+}
+
+/// How long a release spends stopping providers before it kills what is left.
+///
+/// Stopping asks each provider politely and then kills it, both bounded by
+/// that resource's own timeout. A run holding several wedged providers would
+/// spend that twice per provider before it could exit, so the whole release
+/// is bounded too: what it does not reach politely is killed at once and
+/// reported, rather than making the run wait for something it is leaving
+/// anyway.
+const RELEASE_BUDGET: Duration = Duration::from_secs(30);
+
+impl Drop for Manager {
+    /// Stops whatever is still running, because nothing outside this process will.
+    ///
+    /// A provider is a child process holding something the operating system
+    /// owns — a database, a container, a port. Every early exit between
+    /// starting one and releasing it would otherwise leave it running with
+    /// nothing naming it, and a build that fails leaves one behind per
+    /// attempt.
+    fn drop(&mut self) {
+        let _refusals = self.release();
+    }
 }
 
 impl Manager {
@@ -197,7 +215,21 @@ impl Manager {
     /// Stops everything, in the reverse of the order it was started, and says what would not stop.
     pub fn release(&mut self) -> Vec<ResourceError> {
         let mut refusals = Vec::new();
+        let started = Instant::now();
         while let Some(live) = self.live.pop() {
+            if started.elapsed() >= RELEASE_BUDGET {
+                refusals.push(ResourceError::from(ProviderError::new(
+                    crate::provider::ProviderErrorKind::Timeout,
+                    format!(
+                        "{:?} was killed rather than asked to stop: the release ran out of \
+                         the time it was given before reaching it",
+                        live.lease.capability
+                    ),
+                )));
+                let Live { process, .. } = live;
+                process.end(Duration::ZERO);
+                continue;
+            }
             let Live {
                 mut process,
                 lease,

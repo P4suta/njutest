@@ -3,6 +3,7 @@
 
 //! `njutest doctor`: what this machine can and cannot do.
 
+use std::fmt::Write as _;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -75,13 +76,49 @@ struct Finding {
 
 impl Finding {
     fn line(&self) -> String {
-        format!(
+        let mut text = format!(
             "{:<8} {:<14} {}{}",
             self.need.name(),
             self.named,
             self.detail.word(),
             self.detail.detail()
-        )
+        );
+        if !self.detail.held()
+            && let Some(remedy) = self.remedy()
+        {
+            let written = write!(text, "\n         try: {remedy}");
+            debug_assert!(written.is_ok(), "writing to a String cannot fail");
+        }
+        text
+    }
+
+    /// What to do about this one, which is the half a reader acts on.
+    fn remedy(&self) -> Option<&'static str> {
+        Some(match self.named {
+            "cargo" | "rustc" => {
+                "install the toolchain this project pins, or put it on the PATH this \
+                 process was given"
+            }
+            "llvm-profdata" | "llvm-cov" => "rustup component add llvm-tools-preview",
+            "nightly" => "rustup toolchain install nightly",
+            "miri" => {
+                "rustup +nightly component add miri; without it a deep-v1 contract cannot \
+                 interpret, and a standard-v1 run does not need it"
+            }
+            "cargo-fuzz" => {
+                "cargo install cargo-fuzz; without it [fuzz] run = true finds targets and \
+                 drives none of them"
+            }
+            "git" => {
+                "install git; without it --changed cannot say what changed and the report \
+                 records the repository as unavailable"
+            }
+            "exec" => {
+                "this machine is evaluating new executables; a run started now measures \
+                 that and not your tests, so wait until the first number is under a second"
+            }
+            _ => return None,
+        })
     }
 }
 
@@ -103,7 +140,14 @@ pub(super) fn run(
         .collect();
     super::say(stdout, "");
     if wanting.is_empty() {
-        super::say(stdout, "a standard-v1 run can go ahead on this machine");
+        super::say(
+            stdout,
+            &format!(
+                "a standard-v1 run can go ahead: {} were examined and every required one \
+                 answered",
+                findings.len()
+            ),
+        );
         Completion::Assured
     } else {
         super::say(
@@ -143,10 +187,10 @@ fn examine(environment: &Environment) -> Vec<Finding> {
         need: Need::Required,
         detail: detail.map_or(State::Missing, State::Found),
     };
-    let optional = |named, detail: Option<String>| Finding {
+    let optional = |named, detail: State| Finding {
         named,
         need: Need::Optional,
-        detail: detail.map_or(State::Missing, State::Found),
+        detail,
     };
     vec![
         Finding {
@@ -189,14 +233,41 @@ fn examine(environment: &Environment) -> Vec<Finding> {
             "cargo-fuzz",
             probe.version_of("cargo", &["fuzz", "--version"]),
         ),
+        Finding {
+            named: "exec",
+            need: Need::Required,
+            detail: exec_cost(&environment.temp_directory, &environment.program),
+        },
     ]
 }
 
-/// What a run in this directory would make of the configuration beside it.
+/// What it costs to run a file that has just been written, which a run does per target it builds.
 ///
-/// A doctor says whether a run can go ahead here, and a run reads this file
-/// before it does anything else. One that answered about the tools alone would
-/// say a run can go ahead and be contradicted by the next command.
+/// A system that evaluates an executable before it may run pays that cost once
+/// per file, and where the evaluation has a backlog it is seconds or minutes.
+/// A run builds a binary per target and runs each once, so it pays that per
+/// target and measures the evaluation instead of the tests. Nothing else a
+/// caller can see reports it: not load, not free processors, not free memory.
+/// The pair is the evidence — one slow run could be a slow disk, and a slow one
+/// beside a fast one of the same file cannot be anything else.
+fn exec_cost(temp: &Path, program: &Path) -> State {
+    let (first, second) = match rust_mutants::execcost::exec_twice(temp, program) {
+        Ok(measured) => measured,
+        Err(why) => return State::Found(format!("not measured: {why}")),
+    };
+
+    let (first, second) = (first.as_secs_f64(), second.as_secs_f64());
+    let said = format!(
+        "a newly written file took {first:.2}s to run the first time and {second:.2}s the \
+         second"
+    );
+    if first >= 5.0 && first >= second * 10.0 {
+        return State::Refused(said);
+    }
+    State::Found(said)
+}
+
+/// What a run in this directory would make of the configuration beside it.
 fn configuration(root: &Path) -> State {
     let path = root.join(crate::config::FILE_NAME);
     match crate::config::Config::load(root) {
@@ -217,26 +288,61 @@ struct Probe<'a> {
 }
 
 impl Probe<'_> {
-    /// The first line the tool prints, or nothing when it is not there. A tool that is absent is not an error here: that is the answer.
-    fn version_of(&self, program: &str, arguments: &[&str]) -> Option<String> {
-        let program = self.resolve(program)?;
+    /// The first line the tool prints, or why it did not print one.
+    ///
+    /// A tool that is not installed and a tool that is installed and answered
+    /// badly are different things to be told: the second sends somebody to
+    /// install what they already have. The exit status and what it printed are
+    /// in hand, so they are what is said.
+    fn version_of(&self, program: &str, arguments: &[&str]) -> State {
+        let Some(program) = self.resolve(program) else {
+            return State::Missing;
+        };
         let mut spec = Spec::new(
             std::iter::once(program.into_os_string())
                 .chain(arguments.iter().map(std::ffi::OsString::from)),
+            rust_mutants::runner::Bound::After(rust_mutants::runner::PROBE),
         );
         spec.dir = Some(self.dir.to_path_buf());
         spec.env = Some(self.environment.vars.clone());
         spec.structured_stdout = Some(PROBE_OUTPUT_LIMIT);
         let result = run_process(&spec, self.cancel);
-        if result.error.is_some() || result.exit_code != 0 {
-            return None;
+        if let Some(error) = &result.error {
+            return State::Refused(format!("it is installed and would not start: {error}"));
+        }
+        if result.timed_out {
+            return State::Refused(format!(
+                "it is installed and did not answer within {} seconds, which a run \
+                 would have waited for too",
+                rust_mutants::runner::PROBE.as_secs()
+            ));
+        }
+        if result.exit_code != 0 {
+            let said = String::from_utf8_lossy(&result.output)
+                .lines()
+                .next()
+                .map(str::trim)
+                .unwrap_or_default()
+                .to_owned();
+            return State::Refused(format!(
+                "it is installed and exited {}{}",
+                result.exit_code,
+                if said.is_empty() {
+                    String::new()
+                } else {
+                    format!(": {said}")
+                }
+            ));
         }
         String::from_utf8_lossy(&result.stdout)
             .lines()
             .next()
             .map(str::trim)
             .filter(|line| !line.is_empty())
-            .map(ToOwned::to_owned)
+            .map_or_else(
+                || State::Refused(String::from("it is installed and printed no version")),
+                |line| State::Found(line.to_owned()),
+            )
     }
 
     /// Where `program` is on the environment's `PATH`, if it is anywhere.

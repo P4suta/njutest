@@ -37,7 +37,7 @@ fn run(fixture: &Fixture, extra: &[&str]) -> std::process::Output {
 }
 
 fn document(fixture: &Fixture) -> serde_json::Value {
-    let directory = fixture.root().join("reports/mutation");
+    let directory = rust_mutants_cli::app::stored::Store::read(fixture.root()).root();
     let pointer: serde_json::Value = serde_json::from_str(
         &std::fs::read_to_string(directory.join("latest.json"))
             .expect("a pointer to the newest run"),
@@ -98,6 +98,7 @@ fn environment(fixture: &Fixture) -> Environment {
     Environment {
         vars: njutest_devkit::paths::environment_for_a_run(),
         temp_directory: fixture.temp().to_path_buf(),
+        program: std::path::PathBuf::from("this test never runs it"),
         cache_directory: fixture.cache().to_path_buf(),
         working_directory: fixture.root().to_path_buf(),
         no_color: true,

@@ -79,6 +79,7 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/setup-rust
       - name: Build the release binaries
+        shell: bash
         run: cargo build --locked --release --workspace
       - name: Bundle them
         shell: bash

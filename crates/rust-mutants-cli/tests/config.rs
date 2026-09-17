@@ -16,8 +16,7 @@ use std::time::Duration;
 use rust_mutants::session::Timeout;
 
 use rust_mutants_cli::config::{
-    Config, ConfigErrorKind, DEFAULT_REPORTS_DIRECTORY, DEFAULT_REPORTS_KEEP, DEFAULT_TIMEOUT,
-    FILE_NAME, skeleton,
+    Config, ConfigErrorKind, DEFAULT_REPORTS_KEEP, DEFAULT_TIMEOUT, FILE_NAME, skeleton,
 };
 
 fn parse(text: &str) -> Result<Config, rust_mutants_cli::config::ConfigError> {
@@ -60,10 +59,7 @@ fn the_defaults_are_the_numbers_the_contract_states() {
     assert!(config.mutation.expect.is_empty());
     assert!(config.project.packages.is_empty());
     assert_eq!(config.reports.keep, DEFAULT_REPORTS_KEEP);
-    assert_eq!(
-        config.reports.directory,
-        Path::new(DEFAULT_REPORTS_DIRECTORY)
-    );
+    assert_eq!(config.reports.directory, Path::new("reports/mutation"));
     assert!(!config.execution.offline);
     assert!(!config.execution.locked);
 }
@@ -471,6 +467,7 @@ fn a_root_a_command_names_is_resolved_against_where_the_command_was_told_it_is()
     let environment = rust_mutants_cli::Environment {
         vars: Vec::new(),
         temp_directory: PathBuf::from("/tmp"),
+        program: PathBuf::from("this test never runs it"),
         cache_directory: PathBuf::from("/tmp/cache"),
         working_directory: here.path().to_path_buf(),
         no_color: true,

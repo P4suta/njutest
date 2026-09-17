@@ -23,7 +23,10 @@ pub const FILE_NAME: &str = ".rust-mutants.toml";
 pub const DEFAULT_TIMEOUT: Timeout = Timeout::Auto;
 
 /// Where run reports are written when the file does not say.
-pub const DEFAULT_REPORTS_DIRECTORY: &str = "reports/mutation";
+///
+/// Reached through [`crate::app::stored::Store`] and never joined anywhere
+/// else: a command that joins it is a command that ignores the configuration.
+pub(crate) const DEFAULT_REPORTS_DIRECTORY: &str = "reports/mutation";
 
 /// How many run directories are kept when the file does not say.
 pub const DEFAULT_REPORTS_KEEP: u32 = 20;
@@ -52,6 +55,16 @@ pub struct Config {
     pub execution: Execution,
     /// What is written under the report directory.
     pub reports: Reports,
+    /// What the copy a run works in leaves behind.
+    pub snapshot: Snapshot,
+}
+
+/// What the copy a run works in leaves behind.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct Snapshot {
+    /// Workspace-relative globs naming what the copy does not carry.
+    pub omit: Vec<String>,
 }
 
 impl Default for Config {
@@ -63,6 +76,7 @@ impl Default for Config {
             mutation: Mutation::default(),
             execution: Execution::default(),
             reports: Reports::default(),
+            snapshot: Snapshot::default(),
         }
     }
 }
@@ -75,30 +89,13 @@ pub struct Project {
     pub packages: Vec<String>,
     /// Workspace-relative globs a file must match to be mutable.
     pub include: Vec<String>,
-    /// Workspace-relative globs that remove a file again, from the snapshot as well as from what is mutated.
-    ///
-    /// The file is not copied into the tree a run builds, so a pattern that
-    /// names a file the crate declares as a module leaves a tree that does not
-    /// compile and the run refuses before it instruments anything. That is the
-    /// price of the snapshot being smaller than the workspace; to keep a file
-    /// in the tree and out of the mutations, narrow `include` instead.
+    /// Workspace-relative globs naming files nothing is mutated in, which is what [`Project::include`] is the other half of.
     pub exclude: Vec<String>,
     /// Directories outside the root the workspace may read code from.
-    ///
-    /// A run measures a copy of the tree, so a path dependency outside it is
-    /// not in the copy. Naming a directory here says the run may copy it
-    /// beside the tree, which makes the measurement about a tree that is not
-    /// the one on disk: a decision for a person rather than one a run takes.
     pub allow_outside: Vec<String>,
 }
 
 /// What the project is compiled as.
-///
-/// Cargo compiles a different program for a different feature set, target
-/// triple, or profile. A run that measures one of them while the project
-/// ships another measures a program nobody runs, so these are the words a
-/// person would have typed, passed on unchanged. An empty name and a zero are
-/// what nobody said.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Build {
@@ -115,12 +112,6 @@ pub struct Build {
     /// How many compilation jobs cargo may run at once. Zero lets cargo choose.
     pub jobs: u32,
     /// Write debug information into what a run builds.
-    ///
-    /// Off, because a run reads what a test harness printed and never a
-    /// backtrace, and the debug information is most of what a build writes:
-    /// six gigabytes against one for this repository's own engine, every byte
-    /// of it generated, linked, and thrown away with the temporary directory.
-    /// Turn it on to attach a debugger to a snapshot `--keep-temp` preserved.
     pub debug: bool,
 }
 
@@ -167,24 +158,10 @@ pub struct Mutation {
     /// Run every test target once with nothing active before believing anything a mutant does.
     pub verify: bool,
     /// Build once with LLVM coverage instrumentation and route by the regions it exported.
-    ///
-    /// The guards already say which of a target's tests reached each mutation,
-    /// and they say it on a run the engine was making anyway, so this is off:
-    /// instrumenting for coverage rebuilds every crate in the graph, which on
-    /// a real workspace is the largest single thing a run could do. It is kept
-    /// as an independent second opinion, and for the branch proofs of the
-    /// bodies no marker could be written into.
     pub coverage: bool,
     /// Ask the guards, on the run that verifies the baseline, which of each target's tests reached them, and put a mutation only to those tests.
-    ///
-    /// It costs the run nothing it was not already spending. Turning it off is
-    /// how a caller asks for the answer a run with nothing removed would give.
     pub touch: bool,
     /// After the run, ask the compiler whether each survivor's mutation is one it renders at all.
-    ///
-    /// It costs a tree of its own and one build per survivor, and it never
-    /// says a mutation is equivalent: what it can say is that the compiler
-    /// renders the two identically, which is a fact about the binaries.
     pub equivalence: bool,
     /// The mutants a reviewer declared equivalent, with the outcome the run must confirm.
     pub expect: Vec<Expect>,
@@ -193,11 +170,6 @@ pub struct Mutation {
 }
 
 /// One `[[mutation.expect]]` entry, as a person writes it.
-///
-/// The mutant is named either by identity, which is exact and changes when
-/// anything in the file does, or by a locator — path, item, rule, and the
-/// bytes the edit replaces — which survives an edit elsewhere in the file.
-/// Never both.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Expect {
@@ -339,6 +311,11 @@ impl Default for Mutation {
 }
 
 /// How the workspace is built and the tests are run.
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each is one switch a person writes in a file and one flag on the command line, and \
+              a switch is a bool wherever it is stored"
+)]
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Execution {
@@ -348,16 +325,11 @@ pub struct Execution {
     pub locked: bool,
     /// Harness flags to pass through; see [`ALLOWED_TEST_ARGS`].
     pub test_binary_args: Vec<String>,
+    /// Start every test process in a directory of its own rather than where cargo would.
+    pub scratch_working_directory: bool,
     /// Run a library's documented examples as a target of their own.
-    ///
-    /// A documented example is a test the project wrote, and a mutation only
-    /// one of them can notice is one nothing else in the suite covers.
     pub doctests: bool,
     /// Targets never to start, by the id a report names them with.
-    ///
-    /// A suite whose tests are about the text of what the compiler said fails
-    /// under instrumentation for a reason that is not the mutation. Naming it
-    /// here is a decision somebody made, and the report says so.
     pub skip_targets: Vec<String>,
     /// How many mutants to measure at once. Zero is as many as the machine has, capped at four.
     pub jobs: usize,
@@ -370,6 +342,7 @@ impl Default for Execution {
             locked: false,
             doctests: true,
             test_binary_args: Vec::new(),
+            scratch_working_directory: false,
             skip_targets: Vec::new(),
             jobs: 0,
         }
@@ -852,9 +825,14 @@ version = 1
 
 [project]
 # packages = []                  # cargo package names; empty = every member
-# include = []                   # workspace-relative globs a file must match
-# exclude = []                   # workspace-relative globs that remove a file
+# include = []                   # workspace-relative globs a file must match to be mutated
+# exclude = []                   # workspace-relative globs naming files nothing is mutated in
 # allow_outside = []             # directories outside the root the build may read
+
+[snapshot]
+# omit = []                      # workspace-relative globs the copy does not carry at all;
+#                                # a file a crate declares as a module leaves a tree that
+#                                # does not compile, which is why it is not spelled `exclude`
 
 [build]
 # features = []                   # cargo features to turn on
@@ -908,6 +886,9 @@ version = 1
 # skip_targets = []              # target ids never to start, as pkg/kind/name
 # jobs = 0                        # mutants measured at once; 0 = the machine, capped at 4
 # test_binary_args = []          # allowed: {allowed}
+# scratch_working_directory = false # start each test process in a directory of its own,
+#                                # so a test that writes where it runs does not write into
+#                                # the tree being measured
 
 [reports]
 # directory = \"{directory}\"   # workspace-relative

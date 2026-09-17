@@ -2,12 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Every committed seed is one its target's reader accepts.
-//!
-//! A seed exists so a fuzzer starts inside the format instead of outside it.
-//! One the reader refuses is worth nothing at all: the target returns on the
-//! first line and the run explores what it explored before, which is what the
-//! seeds were added to stop. So each is put to the reader the target puts it
-//! to, and a directory nothing here reads is a directory nobody is checking.
 
 #![expect(
     clippy::expect_used,
@@ -89,11 +83,6 @@ const READERS: [(&str, Reader); 15] = [
 ];
 
 /// The seed directories this suite cannot reach, and why.
-///
-/// `run_report` and `engine_config` are the engine command line's own
-/// documents, and the runner may not depend on the engine's command line;
-/// `crates/rust-mutants-cli` checks those where they live. `trace_reader` is
-/// the engine's recording, whose reader this crate does not re-export.
 const ELSEWHERE: [&str; 3] = ["run_report", "engine_config", "trace_reader"];
 
 fn seeds() -> PathBuf {

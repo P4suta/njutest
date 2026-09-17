@@ -49,6 +49,20 @@ fn rules(report: &Report) -> Vec<serde_json::Value> {
         .collect()
 }
 
+/// What makes two runs' findings the same finding, which has to survive the commit between them.
+///
+/// Code scanning carries alert state on this. A mutant's identity is a
+/// function of the whole file, so keying on it closes every alert in a file
+/// and opens them again as new on any commit touching it, taking a reviewer's
+/// dismissals with them. Where the finding names a place, the place is the
+/// key; where it names nothing else, its own kind and subject are all there is.
+fn fingerprint(finding: &Finding) -> String {
+    finding.path.as_ref().map_or_else(
+        || format!("{}:{}", finding.kind_name(), finding.subject),
+        |path| format!("{}:{}", finding.kind_name(), path),
+    )
+}
+
 fn result(finding: &Finding) -> serde_json::Value {
     let mut value = serde_json::Map::new();
     value.insert("ruleId".to_owned(), finding.kind_name().into());
@@ -59,7 +73,7 @@ fn result(finding: &Finding) -> serde_json::Value {
     );
     value.insert(
         "partialFingerprints".to_owned(),
-        serde_json::json!({ "njutestSubject": finding.subject }),
+        serde_json::json!({ "njutestFinding/v2": fingerprint(finding) }),
     );
     if let Some((path, position)) = finding
         .path

@@ -2,10 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! A cargo, a rustc, a coverage tool, or a test binary that says what a script told it to say.
-//!
-//! The engine's process boundary is a handful of command lines and what comes
-//! back from them. A test that drives a real toolchain across it measures
-//! cargo; a test that drives this measures the engine.
 
 #![expect(
     clippy::expect_used,
@@ -61,11 +57,6 @@ impl Script {
 }
 
 /// One command the fake answers, and what it answers with.
-///
-/// A command matches when the program it was started as is `program`, every
-/// element of `args_prefix` is in front of its arguments, and the environment
-/// conditions hold. The first matching entry that has not run out of `times`
-/// answers.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Invocation {
     /// The file stem of the program: `cargo`, `rustc`, `llvm-profdata`, or the name of a test binary.
@@ -228,15 +219,6 @@ impl Installed {
 
 /// The fake, as `cargo build --examples` leaves it beside the test binaries.
 ///
-/// No test build produces it. `cargo test --all-targets` builds an example as
-/// a libtest harness — a binary that prints "running 0 tests" and exits —
-/// rather than as the program it is, and cargo guarantees a plainly named
-/// binary to an integration test only for a `[[bin]]` of the same package.
-/// Every task and job that runs this suite therefore builds it first, and
-/// where one did not, this builds it once rather than failing a suite for the
-/// want of a link step. A tree the engine copied and built is such a place:
-/// its build produced the test binaries and no example.
-///
 /// # Panics
 /// When the example is not there and cannot be built, with the command that
 /// builds it.
@@ -300,21 +282,6 @@ fn build_the_example(profile: &Path) {
 
 /// Writes `script` and puts the fake at every program name it answers to, under a directory of this test's own.
 ///
-/// Keep the [`Installed`] alive for as long as the run it scripts: dropping it
-/// removes the programs, and the next command finds no cargo.
-///
-/// Placeholders expanded in `stdout`, `stderr`, and every write: `{{bin}}` for
-/// the program directory, `{{script_dir}}` for the directory the script is in,
-/// `{{bin_json}}` and `{{script_dir_json}}` for the same two written into a
-/// document the script itself carries, and, at run time, `{{cwd}}`,
-/// `{{target_dir}}`, `{{pid}}`, and `{{now_ms}}`.
-///
-/// The first two are put into the rendered document rather than into the
-/// values it is rendered from, so what replaces them is escaped the way a JSON
-/// string escapes its contents. A Windows path written in plainly would end
-/// the document at its first separator, and the fake would refuse every
-/// command with `is not the script`.
-///
 /// # Panics
 /// When the script cannot be written or the fake cannot be placed.
 #[must_use]
@@ -355,12 +322,6 @@ pub fn install(script: &Script) -> Installed {
 }
 
 /// `path` escaped for a JSON string that is itself inside a JSON string.
-///
-/// A scripted `stdout` is often a document of its own — the message stream a
-/// build prints — and the script holding it is a document too. A path written
-/// into the inner one is escaped twice on the way out and unescaped twice on
-/// the way back, and a path escaped only once arrives at the inner reader with
-/// bare separators it cannot read.
 fn nested(path: &Path) -> String {
     crate::paths::in_json(Path::new(&crate::paths::in_json(path)))
 }

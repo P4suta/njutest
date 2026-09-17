@@ -769,11 +769,6 @@ fn a_line_that_is_not_a_verdict_is_not_a_test() {
 
 proptest::proptest! {
     /// Nothing a harness can print makes the reader panic or invent a test.
-    ///
-    /// The output a run keeps is the tail of what the process wrote, so the
-    /// reader meets half lines, interleaved lines, and whatever a test printed
-    /// on purpose. Every name it reports has to come from a line that is
-    /// there, because a name in a report is a sentence somebody will act on.
     #[test]
     fn parse_lines_never_panics_and_never_reports_more_than_the_lines(
         text in "(test [a-z:_ ]{0,12} \\.\\.\\. (ok|FAILED|ignored)\n|[a-zA-Z:. \n]{0,40}){0,8}"

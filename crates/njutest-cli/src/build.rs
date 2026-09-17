@@ -157,23 +157,8 @@ pub fn build(
 
     let built = run(&spec, watch.cancel);
     watch.trace.exec(ExecRecord::of(&spec, &built));
-    if let Some(error) = &built.error {
-        return Err(BuildError::NotRun {
-            message: error.to_string(),
-        });
-    }
-    if built.timed_out {
-        return Err(BuildError::NotRun {
-            message: format!(
-                "cargo did not finish within {} milliseconds",
-                options.timeout.unwrap_or_default().as_millis()
-            ),
-        });
-    }
-    if built.exit_code == EXIT_CODE_UNAVAILABLE {
-        return Err(BuildError::NotRun {
-            message: "cargo was stopped before it reported an exit status".to_owned(),
-        });
+    if let Some(refusal) = never_ran(&built, options.timeout) {
+        return Err(refusal);
     }
     let messages =
         parse_messages(&built.stdout).map_err(|source| BuildError::Unreadable { source })?;
@@ -273,18 +258,6 @@ fn arguments(toolchain: &Toolchain, options: &BuildOptions) -> Vec<OsString> {
 pub const BUILD_PROFILES: &str = "build-profiles";
 
 /// What a cargo configuration costs an instrumented build, which is what the build says it could not honour.
-///
-/// An instrumented build compiles with a flag of its own, which it can only
-/// add by writing every flag the project configured back in one place. Two
-/// kinds of flag do not survive that. A `target.*` table says flags whose
-/// application is cargo's decision about the target being built rather than
-/// this build's, so they are left out. A file this release could not read
-/// faithfully says nothing about what it asks for, so nothing of it is written
-/// back.
-///
-/// Both are stated when both apply: a reader told only one of them would go
-/// looking for the wrong file, and the coverage a run routes by was taken from
-/// a build that differs from the project's in both ways rather than in one.
 #[must_use]
 pub fn configured_limitations(configured: &rustflags::Configured) -> Vec<&'static str> {
     let mut named = Vec::new();
@@ -371,11 +344,45 @@ fn failure_of(messages: &[Message], output: &[u8]) -> Option<String> {
     Some(rendered.join("\n"))
 }
 
-/// The files each package's library compiles, workspace-relative with forward slashes.
+/// Why cargo produced nothing to read, when it did not.
+fn never_ran(
+    built: &rust_mutants::runner::RunResult,
+    timeout: Option<Duration>,
+) -> Option<BuildError> {
+    let said = if let Some(error) = &built.error {
+        error.to_string()
+    } else if built.timed_out {
+        format!(
+            "cargo did not finish within {} milliseconds",
+            timeout.unwrap_or_default().as_millis()
+        )
+    } else if built.exit_code == EXIT_CODE_UNAVAILABLE {
+        String::from("cargo was stopped before it reported an exit status")
+    } else {
+        return None;
+    };
+    Some(BuildError::NotRun {
+        message: with_output(&said, &built.output),
+    })
+}
+
+/// What went wrong, with what cargo said about it.
 ///
-/// A documented example is compiled by rustdoc into a binary this run never
-/// sees, so there is no coverage to read for it. What is known is the library
-/// it exercises, and these are its files.
+/// The remedy on this code is to run the same cargo command and read what it
+/// says — but the run composed an environment of its own, built into a
+/// directory it then removed, and holds the bytes cargo wrote. Telling
+/// somebody to reproduce output the tool already has is asking them to rebuild
+/// a command they cannot see.
+fn with_output(said: &str, output: &[u8]) -> String {
+    let printed = String::from_utf8_lossy(output);
+    let printed = printed.trim();
+    if printed.is_empty() {
+        return said.to_owned();
+    }
+    format!("{said}; cargo said:\n{printed}")
+}
+
+/// The files each package's library compiles, workspace-relative with forward slashes.
 fn library_sources(
     messages: &[Message],
     packages: &[rust_mutants::cargo::Package],

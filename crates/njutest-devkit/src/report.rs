@@ -6,18 +6,6 @@
 use std::collections::BTreeSet;
 
 /// Every way a document can ask for something that is not in it.
-///
-/// Both products project a report to one HTML file, and both say in the same
-/// words that it carries no external resource of any kind: a report is read
-/// from a build artefact on a machine with no network as often as from a
-/// desk. Two products stating one rule wrote two lists of it, each missing
-/// what the other had — one looked for `<link` and `<iframe`, the other did
-/// not; the other looked for `<script`, which is not this rule at all, since
-/// a page may carry its own.
-///
-/// `url(` covers the stylesheet, `src=` and `srcset=` every element that
-/// loads one, and `<base` the trick that makes every relative path in the
-/// document point somewhere else.
 pub const OUTSIDE: [&str; 10] = [
     "http://", "https://", "src=", "srcset=", "@import", "url(", "<link", "<iframe", "<object",
     "<base",
@@ -27,9 +15,6 @@ pub const OUTSIDE: [&str; 10] = [
 pub const PLACEHOLDER: &str = "<volatile>";
 
 /// A report with everything that changes between two runs of the same work replaced by [`PLACEHOLDER`], so what is left is what the run claimed.
-///
-/// A run identity and the run a fact was read back from are volatile; *whether*
-/// it was read back is not, because that is the claim a reuse test is about.
 #[must_use]
 pub fn normalize(document: &serde_json::Value) -> serde_json::Value {
     let volatile: BTreeSet<&str> = [

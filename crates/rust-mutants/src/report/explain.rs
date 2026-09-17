@@ -54,6 +54,8 @@ pub struct ExplainDocument {
     pub retried: bool,
     /// The command that puts this one mutation back to the tests.
     pub reproduce: String,
+    /// The configuration block that records this mutation as one a reason is written for.
+    pub accept: String,
 }
 
 /// Why one mutant could not be explained.
@@ -91,11 +93,6 @@ pub struct Asked<'a> {
 
 /// Everything known about the one mutant `asked` names.
 ///
-/// It is built from what a run stored, so an explanation costs nothing but
-/// reading two documents: no snapshot, no build, no instrumented tree. What it
-/// cannot say without the tree is what the mutation looks like as a change,
-/// and it says so rather than guessing.
-///
 /// # Errors
 /// [`ExplainError::Nothing`] and [`ExplainError::Several`] for a prefix that
 /// does not name exactly one mutant.
@@ -123,9 +120,12 @@ pub fn explain(asked: &Asked<'_>) -> Result<ExplainDocument, ExplainError> {
     let row: Option<&RunMutantDocument> = asked
         .run
         .and_then(|run| run.mutants.iter().find(|one| one.id == mutant.id));
-    let refused = asked.catalog.rejections.iter().find_map(|one| {
-        (one.rule == mutant.rule && one.path == mutant.path).then(|| one.diagnostic.clone())
-    });
+    let refused = asked
+        .catalog
+        .rejections
+        .iter()
+        .find(|one| one.id == mutant.id)
+        .map(|one| one.diagnostic.clone());
     let (diff, source) = changed(&mutant, asked.source);
     Ok(ExplainDocument {
         document_type: DOCUMENT_TYPE.to_owned(),
@@ -144,6 +144,7 @@ pub fn explain(asked: &Asked<'_>) -> Result<ExplainDocument, ExplainError> {
         duration_ms: row.map(|one| one.duration_ms),
         retried: row.is_some_and(|one| one.retried),
         reproduce: reproduce(&mutant, row),
+        accept: accept(&mutant),
         mutant,
     })
 }
@@ -173,9 +174,34 @@ fn changed(mutant: &MutantDocument, source: Option<&str>) -> (Option<String>, Op
     )
 }
 
-/// The command that puts one mutation back to the tests.
+/// The command that puts one mutation back to the tests. How a reader names this mutation again, which has to hold after they have changed the file.
+#[must_use]
+pub fn names(mutant: &MutantDocument) -> String {
+    if mutant.item.is_empty() || mutant.path.is_empty() {
+        return mutant.display_id.clone();
+    }
+    format!(
+        "{}:{}:{}@{}",
+        mutant.path, mutant.item, mutant.rule, mutant.line
+    )
+}
+
+/// The `[[mutation.expect]]` a reader pastes to record this mutation with a reason.
+fn accept(mutant: &MutantDocument) -> String {
+    if mutant.item.is_empty() || mutant.path.is_empty() {
+        return format!(
+            "[[mutation.expect]]\nid = {:?}\nreason = \"\"  # why this is not a gap in the tests\n",
+            mutant.display_id
+        );
+    }
+    format!(
+        "[[mutation.expect]]\npath = {:?}\nitem = {:?}\nrule = {:?}\noriginal = {:?}\nline = {}\nreason = \"\"  # why this is not a gap in the tests\n",
+        mutant.path, mutant.item, mutant.rule, mutant.original, mutant.line
+    )
+}
+
 fn reproduce(mutant: &MutantDocument, row: Option<&RunMutantDocument>) -> String {
-    let mut text = format!("rust-mutants run --mutant {}", mutant.display_id);
+    let mut text = format!("rust-mutants run --mutant {}", names(mutant));
     if let Some(one) = row {
         if !one.target.is_empty() {
             text.push_str(" --target ");
