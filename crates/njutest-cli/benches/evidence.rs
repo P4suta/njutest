@@ -57,7 +57,7 @@ fn common() -> key::Common {
         environment: environment(20),
         contract: "standard-v1".to_owned(),
         test_args: Vec::new(),
-        features: vec!["default".to_owned()],
+        build: vec!["--features".to_owned(), "default".to_owned()],
         timeout_ms: 60_000,
         versions: vec!["njutest 0.1.0".to_owned(), "rust-mutants 0.1.0".to_owned()],
         corpus: "b".repeat(64),

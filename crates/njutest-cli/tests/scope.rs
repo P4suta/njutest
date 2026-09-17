@@ -51,7 +51,7 @@ fn common() -> Common {
         environment: Vec::new(),
         contract: "standard-v1".to_owned(),
         test_args: Vec::new(),
-        features: Vec::new(),
+        build: Vec::new(),
         timeout_ms: 1,
         versions: Vec::new(),
         corpus: String::new(),

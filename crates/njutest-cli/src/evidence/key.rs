@@ -12,7 +12,7 @@ use super::digest::Fields;
 use super::tree::Scan;
 
 /// The domain hashed first for a behaviour key.
-pub const KEY_DOMAIN: &str = "njutest-mutation-evidence-key-v2";
+pub const KEY_DOMAIN: &str = "njutest-mutation-evidence-key-v3";
 
 /// APIs whose result depends on what is in a directory rather than on what a file says.
 pub const DIRECTORY_READERS: [&str; 7] = [
@@ -38,8 +38,8 @@ pub struct Common {
     pub contract: String,
     /// The arguments the test binaries were given.
     pub test_args: Vec<String>,
-    /// The features the build selected.
-    pub features: Vec<String>,
+    /// What cargo was told to build, as the arguments that spell it: everything that decides which program comes out, and nothing about how fast.
+    pub build: Vec<String>,
     /// How long one command may take, in milliseconds.
     pub timeout_ms: u64,
     /// The version of the runner and of the engine.
@@ -108,7 +108,7 @@ fn key(domain: &str, linked: &Linked, common: &Common) -> String {
         )
         .field("contract", &common.contract)
         .list("test-args", &common.test_args)
-        .list("features", &common.features)
+        .list("build", &common.build)
         .field("timeout", &common.timeout_ms.to_string())
         .list("versions", &common.versions)
         .field("corpus", &common.corpus);

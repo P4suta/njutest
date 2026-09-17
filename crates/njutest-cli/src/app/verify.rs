@@ -345,7 +345,7 @@ fn evidence_of(
         .unwrap_or_default(),
         contract: format!("{:?}", config.contract).to_lowercase(),
         test_args: harness_args(arguments, config),
-        features: config.execution.features.clone(),
+        build: config.execution.build().arguments(),
         timeout_ms: u64::try_from(config.execution.timeout.as_millis()).unwrap_or(u64::MAX),
         versions: vec![
             format!("njutest {}", crate::VERSION),
