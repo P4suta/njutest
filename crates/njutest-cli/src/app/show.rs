@@ -28,12 +28,9 @@ pub fn run(
         Format::Json => runs::document(root, &run).map_err(|error| error.to_string()),
         Format::Lines => runs::report(root, &run)
             .map(|report| {
-                lines::kept(
-                    &report,
-                    &crate::app::reports::Store::read(root)
-                        .run(&run)
-                        .join(crate::app::reports::DOCUMENT_NAME),
-                )
+                let store = crate::app::reports::Store::read(root);
+                let document = store.run(&run).join(crate::app::reports::DOCUMENT_NAME);
+                lines::kept(&report, &store.said(&document))
             })
             .map_err(|error| error.to_string()),
     };

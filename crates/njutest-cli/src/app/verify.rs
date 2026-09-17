@@ -409,7 +409,7 @@ fn persist(
     persisting: &Persisting<'_>,
     arguments: &Verify,
     stderr: &mut dyn Write,
-) -> Result<PathBuf, u8> {
+) -> Result<String, u8> {
     let Persisting {
         root,
         report,
@@ -446,7 +446,7 @@ fn persist(
     if let Some(error) = stored {
         notes.note("not-stored", &error.to_string());
     }
-    Ok(written.document)
+    Ok(reports::Store::read(root).said(&written.document))
 }
 
 /// Whether an earlier run of the same inputs has already answered, and the claim this run holds while it establishes its own.
@@ -541,7 +541,9 @@ fn reuse(asking: &Asking<'_>, stdout: &mut dyn Write, stderr: &mut dyn Write) ->
             return Reuse::Establish;
         }
     };
-    let _written = stdout.write_all(lines::kept(&report, &written.document).as_bytes());
+    let _written = stdout.write_all(
+        lines::kept(&report, &reports::Store::read(root).said(&written.document)).as_bytes(),
+    );
     Reuse::Answered(report.verdict.exit_code())
 }
 

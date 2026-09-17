@@ -8,15 +8,15 @@ use super::{Report, TargetStatus};
 /// The record stream inside a run directory.
 pub const FILE_NAME: &str = "njutest-assurance-report-v1.lines";
 
-/// The whole report as records, each line terminated, and where the run's document is.
+/// The whole report as records, each line terminated, and where the run's document is from the project's own root.
 ///
 /// A reader who has the stream should not have to know the layout to find the
 /// document beside it: a `REPORT` record is how a script that read the verdict
 /// reads the rest, and guessing a path is how one stops working the day a
 /// project moves its report directory.
 #[must_use]
-pub fn kept(report: &Report, document: &std::path::Path) -> String {
-    written(report, Some(&rust_mutants::id::slashed(document)))
+pub fn kept(report: &Report, document: &str) -> String {
+    written(report, Some(document))
 }
 
 /// The whole report as records, each line terminated.

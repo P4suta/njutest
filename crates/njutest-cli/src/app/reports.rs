@@ -85,6 +85,16 @@ impl Store {
         self.root.join(index.file())
     }
 
+    /// Where `path` is from the project's own root, which is how a run names what it wrote.
+    ///
+    /// A run invoked with `--directory` keeps an absolute path, and one
+    /// invoked in the project keeps a relative one. A reader should not have
+    /// to tell which happened, so what a run says is always the second.
+    #[must_use]
+    pub fn said(&self, path: &Path) -> String {
+        rust_mutants::id::slashed(path.strip_prefix(&self.at).unwrap_or(path))
+    }
+
     /// What an index calls one run's directory, which is where it is from the project's own root.
     #[must_use]
     pub fn named(&self, run_id: &str) -> String {

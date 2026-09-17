@@ -79,6 +79,35 @@ fn of(root: &Path, named: &[(&str, &str)]) -> Environment {
     environment(root, &cache, named)
 }
 
+#[test]
+fn a_run_says_where_it_wrote_as_a_path_from_the_project_it_is_about() {
+    let fixture = fixture("fixture-assured");
+    let output = asked(
+        &of(&fixture.root, &[]),
+        &[
+            "verify",
+            "--offline",
+            "--locked",
+            "--directory",
+            &fixture.root.display().to_string(),
+        ],
+    );
+    let said = String::from_utf8_lossy(&output.stdout);
+    let written = said
+        .lines()
+        .find_map(|line| line.strip_prefix("REPORT\t"))
+        .expect("a run that kept a report says where it kept it");
+    assert!(
+        !Path::new(written).is_absolute(),
+        "a run told where to work says where it wrote from there, because a reader \
+         joining it onto the project would otherwise get the path twice: {written}"
+    );
+    assert!(
+        fixture.root.join(written).is_file(),
+        "and the path it says is one the project's own root reaches: {written}"
+    );
+}
+
 /// Where the latest run wrote its report.
 fn latest(fixture: &Fixture) -> PathBuf {
     njutest_cli::app::reports::Store::read(&fixture.root)
