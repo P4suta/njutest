@@ -1229,6 +1229,7 @@ pub fn record(report: &mut Report, mutation: &mutation::Mutation, accepted: &BTr
             killed_by: judged.disposition.decided_by().map(ToOwned::to_owned),
             reused: judged.source_run_id.is_some(),
             source_run_id: judged.source_run_id.clone(),
+            unnoticed_in: Vec::new(),
         })
         .collect();
     report.findings.extend(mutation.findings(accepted));

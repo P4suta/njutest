@@ -534,6 +534,9 @@ pub struct MutantRecord {
     pub replacement: String,
     /// What the run established.
     pub outcome: String,
+    /// The builds under which nothing noticed it, empty when the run measured one build or every build noticed.
+    #[serde(default)]
+    pub unnoticed_in: Vec<String>,
     /// The target that noticed it, when one did.
     pub killed_by: Option<String>,
     /// Whether this came from a previous run.

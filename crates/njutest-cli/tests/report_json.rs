@@ -156,6 +156,7 @@ fn populated() -> Report {
             killed_by: Some("0123456789abcdef".to_owned()),
             reused: true,
             source_run_id: Some("20260904T101500Z-123456".to_owned()),
+            unnoticed_in: vec!["release".to_owned()],
         }],
         findings: Vec::new(),
         limitations: vec![Limitation::new(

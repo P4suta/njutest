@@ -385,6 +385,7 @@ fn reported(findings: Vec<njutest_cli::report::Finding>) -> njutest_cli::report:
             killed_by: None,
             reused: false,
             source_run_id: None,
+            unnoticed_in: Vec::new(),
         })
         .collect();
     report.findings = findings;

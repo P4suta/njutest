@@ -150,6 +150,9 @@
       "original": ">",
       "replacement": "",
       "outcome": "killed",
+      "unnoticed_in": [
+        "release"
+      ],
       "killed_by": "0123456789abcdef",
       "reused": true,
       "source_run_id": "20260904T101500Z-123456"

@@ -49,6 +49,7 @@ fn reported() -> Report {
         killed_by: None,
         reused: false,
         source_run_id: None,
+        unnoticed_in: Vec::new(),
     });
     report.findings.push(Finding {
         kind: FindingKind::SurvivingMutant,

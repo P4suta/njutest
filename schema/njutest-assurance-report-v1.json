@@ -662,6 +662,7 @@
         "original",
         "replacement",
         "outcome",
+        "unnoticed_in",
         "killed_by",
         "reused",
         "source_run_id"
@@ -698,6 +699,14 @@
         "outcome": {
           "type": "string",
           "minLength": 1
+        },
+        "unnoticed_in": {
+          "type": "array",
+          "description": "The builds under which nothing noticed it. Empty when the run measured one build, or when every build noticed.",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
         },
         "killed_by": {
           "type": [
