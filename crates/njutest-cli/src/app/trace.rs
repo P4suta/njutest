@@ -213,7 +213,7 @@ fn load(root: &Path, named: Option<&str>, stderr: &mut dyn Write) -> Option<(Str
         None => match runs::resolve(root, None) {
             Ok(run) => run,
             Err(error) => {
-                super::diagnose(stderr, &error.to_string());
+                super::complain(stderr, &error, error.code());
                 return None;
             }
         },

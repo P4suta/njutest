@@ -499,3 +499,31 @@ fn a_directory_a_run_holds_is_counted_as_in_use_rather_than_removed() {
         said.out
     );
 }
+
+/// A clearing that could not remove a directory keeps naming it, because nothing else does.
+#[test]
+fn a_directory_that_would_not_go_is_still_in_the_ledger_afterwards() {
+    let fixture = Fixture::copy("fixture-simple");
+    let reports = fixture.root().join("reports/mutation");
+    std::fs::create_dir_all(&reports).expect("a report directory");
+    let held = fixture.temp().join("held-open");
+    std::fs::create_dir_all(&held).expect("a directory something is holding");
+    rust_mutants_cli::kept::Ledger::record(&reports, "kept-one", std::slice::from_ref(&held))
+        .expect("the ledger");
+
+    let refuses = |_path: &Path| Err(std::io::Error::other("something is holding this open"));
+    let (removed, left) =
+        rust_mutants_cli::kept::Ledger::clear_with(&reports, &refuses).expect("a clearing");
+
+    assert_eq!(removed, 0, "nothing went, because the removal refused");
+    assert!(
+        left.kept.iter().any(|one| one.path == held),
+        "a ledger that forgot it would leave a directory nothing names: not the ledger, \
+         which dropped it, and not the person, who was told the clearing was done"
+    );
+    assert_eq!(
+        rust_mutants_cli::kept::Ledger::read(&reports).kept.len(),
+        1,
+        "and what it kept is what the next clearing reads"
+    );
+}

@@ -86,23 +86,54 @@ impl Ledger {
         Ok(ledger)
     }
 
-    /// Removes every directory the ledger names, and writes an empty ledger back.
+    /// Removes the directories the ledger names, and writes back the ones that are still there.
+    ///
+    /// What it could not remove stays in the ledger. A directory something
+    /// else is holding — a mount, a device, a process with it open — refuses,
+    /// and a ledger that forgot it would leave a directory on the disk that
+    /// nothing now names: not the ledger, which just dropped it, and not the
+    /// person, who was told the clearing was done. Keeping it is what lets the
+    /// next clearing try again, and what lets `cache` still say it is there.
+    ///
+    /// The removals are bounded for the same reason the sweep is. A refusal
+    /// can take minutes, and a few hundred of those would run for a day; what
+    /// is not reached this time is still named, which is the whole point of
+    /// writing the survivors back.
     ///
     /// # Errors
     /// The ledger that could not be written.
     pub fn clear(directory: &Path) -> Result<(usize, Self), std::io::Error> {
+        Self::clear_with(directory, &|path: &Path| std::fs::remove_dir_all(path))
+    }
+
+    /// [`Ledger::clear`] with its removal as an argument, so the directory that refuses to go can be tested without a filesystem persuaded into refusing.
+    ///
+    /// # Errors
+    /// The ledger that could not be written.
+    pub fn clear_with(
+        directory: &Path,
+        remove: &dyn Fn(&Path) -> std::io::Result<()>,
+    ) -> Result<(usize, Self), std::io::Error> {
         let ledger = Self::read(directory);
+        let started = std::time::Instant::now();
         let mut removed = 0usize;
-        for entry in &ledger.kept {
-            if std::fs::remove_dir_all(&entry.path).is_ok() {
-                removed = removed.saturating_add(1);
+        let mut left = Self::default();
+        for entry in ledger.kept {
+            if !entry.path.exists() {
+                continue;
             }
+            if started.elapsed() >= rust_mutants::tempowner::SWEEP_BUDGET
+                || remove(&entry.path).is_err()
+            {
+                left.kept.push(entry);
+                continue;
+            }
+            removed = removed.saturating_add(1);
         }
-        let empty = Self::default();
-        let text = serde_json::to_string_pretty(&empty)
+        let text = serde_json::to_string_pretty(&left)
             .map_err(|error| std::io::Error::other(error.to_string()))?;
         rust_mutants::replace::file(&directory.join(FILE_NAME), format!("{text}\n").as_bytes())
             .map_err(|failure| failure.source)?;
-        Ok((removed, empty))
+        Ok((removed, left))
     }
 }

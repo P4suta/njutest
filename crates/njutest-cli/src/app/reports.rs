@@ -160,8 +160,26 @@ pub fn pointed_at(root: &Path, index: &str) -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
+/// Says, inside the directory this tool writes, that git has no business with what is in it.
+///
+/// A tool that leaves its output in somebody's repository and does not say so
+/// has left them a job. Every caller does the same thing next, and gets it
+/// slightly differently right. The file goes inside the directory rather than
+/// into the repository's own, because a directory that ignores itself is
+/// scoped to what this tool owns, moves when the configured directory moves,
+/// and goes away when the directory does. It is written once, so an edit
+/// somebody makes to it stays made.
+fn disowned(root: &Path) {
+    let path = root.join(".gitignore");
+    if path.exists() {
+        return;
+    }
+    drop(std::fs::write(&path, b"*\n"));
+}
+
 /// Writes one index.
 fn point(root: &Path, index: &str, run_id: &str) -> Result<(), StoreError> {
+    disowned(root);
     let path = root.join(index);
     let mut text = serde_json::to_string_pretty(&serde_json::json!({
         "schema": crate::report::SCHEMA,

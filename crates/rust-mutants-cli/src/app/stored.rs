@@ -70,6 +70,7 @@ pub fn store(
     let path = directory.join(id).join(run_report::FILE_NAME);
     rust_mutants::replace::file(&path, json_line(document).as_bytes())
         .map_err(|failure| CliError::writing(&failure.path, failure.source))?;
+    disowned(directory);
     let latest = directory.join(run_report::LATEST_FILE_NAME);
     let pointer = serde_json::json!({
         "document_type": "rust-mutants/latest-run",
@@ -80,6 +81,26 @@ pub fn store(
     rust_mutants::replace::file(&latest, json_line(&pointer).as_bytes())
         .map_err(|failure| CliError::writing(&failure.path, failure.source))?;
     Ok(path)
+}
+
+/// Says, inside the directory this tool writes, that git has no business with what is in it.
+///
+/// A tool that leaves its output in somebody's repository and does not say
+/// so has left them a job. Every caller does the same thing next — add the
+/// path to their own `.gitignore` — and gets it slightly differently right.
+/// The file goes *inside* the directory rather than into the repository's
+/// own, because a directory that ignores itself is scoped to what this tool
+/// owns: it cannot conflict with a rule somebody wrote, it moves when the
+/// configured directory moves, and deleting the directory takes it with it.
+///
+/// It is written once and never rewritten, so a caller who edits it — to
+/// keep one report, say — keeps their edit.
+fn disowned(directory: &Path) {
+    let path = directory.join(".gitignore");
+    if path.exists() {
+        return;
+    }
+    drop(std::fs::write(&path, b"*\n"));
 }
 
 /// Keeps the newest `keep` stored runs and the newest `keep` recordings of the other commands. Both sort chronologically by name, so the oldest are the first.

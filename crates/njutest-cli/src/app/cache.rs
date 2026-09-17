@@ -23,7 +23,7 @@ pub fn run(
     let config = match Config::load(&root) {
         Ok(config) => config,
         Err(error) => {
-            super::diagnose(stderr, &error.to_string());
+            super::complain(stderr, &error, error.code());
             return EXIT_ERROR;
         }
     };
@@ -42,7 +42,7 @@ pub fn run(
         match store.collect(Timestamp::now()) {
             Ok(collected) => collected,
             Err(error) => {
-                super::diagnose(stderr, &error.to_string());
+                super::complain(stderr, &error, error.code());
                 return EXIT_ERROR;
             }
         }
@@ -52,7 +52,7 @@ pub fn run(
     let status = match store.status() {
         Ok(status) => status,
         Err(error) => {
-            super::diagnose(stderr, &error.to_string());
+            super::complain(stderr, &error, error.code());
             return EXIT_ERROR;
         }
     };
@@ -131,7 +131,7 @@ fn said(
             EXIT_ASSURED
         }
         Err(error) => {
-            super::diagnose(stderr, &error.to_string());
+            super::complain(stderr, &error, error.code());
             EXIT_ERROR
         }
     }

@@ -32,7 +32,7 @@ pub fn run(arguments: &Arguments, stdout: &mut dyn Write, stderr: &mut dyn Write
     let document = match crate::report::json::document(&whole) {
         Ok(document) => document,
         Err(error) => {
-            super::diagnose(stderr, &error.to_string());
+            super::complain(stderr, &error, error.code());
             return EXIT_ERROR;
         }
     };

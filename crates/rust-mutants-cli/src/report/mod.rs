@@ -285,6 +285,13 @@ fn one_line(mutant: &Mutant) -> String {
     )
 }
 
+/// The block a reader pastes to record this mutation with a reason, under one label.
+fn accepting(accept: &str, say: &mut impl FnMut(&str, &str)) {
+    for (at, line) in accept.lines().enumerate() {
+        say(if at == 0 { "ACCEPT" } else { "" }, line);
+    }
+}
+
 /// Everything one run established about one mutant, as the lines a person reads.
 #[must_use]
 pub fn explained(document: &rust_mutants::report::explain::ExplainDocument) -> String {
@@ -294,6 +301,7 @@ pub fn explained(document: &rust_mutants::report::explain::ExplainDocument) -> S
         let written = writeln!(text, "{label:<9} {value}");
         debug_assert!(written.is_ok(), "writing to a String cannot fail");
     };
+    say("WHERE", &rust_mutants::report::explain::names(one));
     say("MUTANT", &one.id);
     say("SHORT", &one.display_id);
     say(
@@ -356,9 +364,7 @@ pub fn explained(document: &rust_mutants::report::explain::ExplainDocument) -> S
         }
     }
     say("REPRODUCE", &document.reproduce);
-    for (at, line) in document.accept.lines().enumerate() {
-        say(if at == 0 { "ACCEPT" } else { "" }, line);
-    }
+    accepting(&document.accept, &mut say);
     match (&document.diff, &document.source) {
         (Some(diff), _) => {
             text.push('\n');

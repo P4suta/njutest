@@ -114,7 +114,7 @@ pub fn run(
 ) -> u8 {
     let root = environment.rooted(arguments.verify.directory.as_deref());
     if let Err(error) = Config::load(&root) {
-        super::diagnose(stderr, &error.to_string());
+        super::complain(stderr, &error, error.code());
         return EXIT_ERROR;
     }
     let poll = arguments.poll_ms.map_or(POLL, Duration::from_millis);

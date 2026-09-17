@@ -13,7 +13,6 @@ pub const FILE_NAME: &str = "njutest-assurance-report-v1.lines";
 pub fn stream(report: &Report) -> String {
     let mut out = String::new();
     identity(report, &mut out);
-    accounting(report, &mut out);
     for target in &report.targets {
         record(
             &mut out,
@@ -63,6 +62,7 @@ pub fn stream(report: &Report) -> String {
         append(&mut out, &limitation.detail);
         out.push('\n');
     }
+    accounting(report, &mut out);
     record(&mut out, "VERDICT", &[&verdict_name(report)]);
     out.push('\n');
     out

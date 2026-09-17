@@ -32,7 +32,7 @@ pub fn run(
     let config = match Config::load(root) {
         Ok(config) => config,
         Err(error) => {
-            super::diagnose(stderr, &error.to_string());
+            super::complain(stderr, &error, error.code());
             return EXIT_ERROR;
         }
     };
@@ -71,7 +71,7 @@ pub fn run(
             said(outcome)
         }
         Err(error) => {
-            super::diagnose(stderr, &error.to_string());
+            super::complain(stderr, &error, error.code());
             EXIT_ERROR
         }
     }

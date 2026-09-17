@@ -23,7 +23,7 @@ pub fn run(
     let run = match runs::resolve(root, Some(&arguments.run)) {
         Ok(run) => run,
         Err(error) => {
-            super::diagnose(stderr, &error.to_string());
+            super::complain(stderr, &error, error.code());
             return EXIT_ERROR;
         }
     };

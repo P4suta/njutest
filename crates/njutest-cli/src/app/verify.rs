@@ -211,7 +211,7 @@ fn establish(establishing: &Establishing<'_>, streams: Streams<'_>) -> u8 {
         Ok(outcome) => outcome,
         Err(error) => {
             trace.run_end("ERROR", None, Some(error.to_string()));
-            super::diagnose(stderr, &error.to_string());
+            super::complain(stderr, &error, error.code());
             return EXIT_ERROR;
         }
     };
@@ -420,7 +420,7 @@ fn persist(persisting: &Persisting<'_>, arguments: &Verify, stderr: &mut dyn Wri
     let written = match reports::keep(root, report) {
         Ok(written) => written,
         Err(error) => {
-            super::diagnose(stderr, &error.to_string());
+            super::complain(stderr, &error, error.code());
             return Some(EXIT_ERROR);
         }
     };
@@ -522,7 +522,7 @@ fn reuse(asking: &Asking<'_>, stdout: &mut dyn Write, stderr: &mut dyn Write) ->
         Ok(Some(stored)) => stored,
         Ok(None) => return Reuse::Establish,
         Err(error) => {
-            super::diagnose(stderr, &error.to_string());
+            super::complain(stderr, &error, error.code());
             return Reuse::Establish;
         }
     };
@@ -534,7 +534,7 @@ fn reuse(asking: &Asking<'_>, stdout: &mut dyn Write, stderr: &mut dyn Write) ->
     report.timing.finished = Timestamp::now().to_string();
     report.timing.duration_ms = 0;
     if let Err(error) = reports::keep(root, &report) {
-        super::diagnose(stderr, &error.to_string());
+        super::complain(stderr, &error, error.code());
         return Reuse::Establish;
     }
     let _written = stdout.write_all(lines::stream(&report).as_bytes());
