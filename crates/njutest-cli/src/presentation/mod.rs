@@ -50,6 +50,8 @@ pub struct Headline {
     pub cataloged: u32,
     /// How many a test noticed.
     pub killed: u32,
+    /// How many the compiler refused, which is the type system noticing.
+    pub refused_by_types: u32,
     /// How many ran and nothing noticed.
     pub survived: u32,
     /// How many nothing reached.

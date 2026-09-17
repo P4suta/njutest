@@ -12,7 +12,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use njutest_cli::assure::mutation::{Disposition, Judged, Mutation, Unconfirmed, tail};
 use njutest_cli::assure::route::{BRANCH_NEVER_TAKEN, Discharge, NEVER_INFECTED, Reaches, Route};
-use njutest_cli::report::{FindingKind, Position};
+use njutest_cli::report::{Decision, FindingKind, Position};
 
 fn discharge(target: &str, proof: &'static str) -> Discharge {
     Discharge {
@@ -394,6 +394,36 @@ fn all_of_them() -> Mutation {
             ),
         ],
         skips: BTreeMap::new(),
+    }
+}
+
+#[test]
+fn the_outcome_a_disposition_records_is_one_the_report_can_say_who_decided() {
+    let mutation = all_of_them();
+    let mut seen: Vec<&str> = Vec::new();
+    for judged in &mutation.judged {
+        let outcome = judged.disposition.name();
+        let decided = Decision::of_outcome(outcome).unwrap_or_else(|| {
+            panic!(
+                "a run recorded the outcome {outcome:?} and nothing says who decided \
+                 it, so the report would count a mutation it cannot answer for"
+            )
+        });
+        assert_eq!(
+            decided,
+            judged.disposition.decision(),
+            "the outcome {outcome:?} and the disposition it came from disagree about \
+             who decided it; the two are read by different readers of the same run"
+        );
+        seen.push(outcome);
+    }
+    for (outcome, _) in Decision::OUTCOMES {
+        assert!(
+            seen.contains(&outcome),
+            "every outcome the report can record is one this test exercises, and \
+             {outcome:?} is not among {seen:?}: an outcome no test reaches is one \
+             whose standing nothing holds"
+        );
     }
 }
 

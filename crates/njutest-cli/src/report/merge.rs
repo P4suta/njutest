@@ -247,6 +247,9 @@ fn counted(parts: &[Report], mutants: &[super::MutantRecord]) -> MutantAccountin
         ..MutantAccounting::default()
     };
     for mutant in mutants {
+        counts.observers.counted(
+            super::Decision::of_outcome(&mutant.outcome).unwrap_or(super::Decision::Undecided),
+        );
         let executed = &mut counts.executed;
         match mutant.outcome.as_str() {
             "compile-rejected" => counts.rejected = counts.rejected.saturating_add(1),

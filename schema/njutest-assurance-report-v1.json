@@ -306,7 +306,8 @@
             "equivalent",
             "accepted",
             "reused_killed",
-            "reused_survived"
+            "reused_survived",
+            "observers"
           ],
           "properties": {
             "cataloged": {
@@ -341,6 +342,39 @@
             },
             "reused_survived": {
               "$ref": "#/$defs/count"
+            },
+            "observers": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "Who decided each catalogued mutation. These partition the catalog; the counts beside them overlap.",
+              "required": [
+                "types",
+                "tests",
+                "proved",
+                "unnoticed",
+                "unreached",
+                "undecided"
+              ],
+              "properties": {
+                "types": {
+                  "$ref": "#/$defs/count"
+                },
+                "tests": {
+                  "$ref": "#/$defs/count"
+                },
+                "proved": {
+                  "$ref": "#/$defs/count"
+                },
+                "unnoticed": {
+                  "$ref": "#/$defs/count"
+                },
+                "unreached": {
+                  "$ref": "#/$defs/count"
+                },
+                "undecided": {
+                  "$ref": "#/$defs/count"
+                }
+              }
             }
           }
         },

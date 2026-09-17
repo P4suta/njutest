@@ -10,11 +10,62 @@
 )]
 
 use njutest_cli::config::Config;
-use njutest_cli::report::FindingKind;
+use njutest_cli::report::{Decision, FindingKind};
 
 fn page(relative: &str) -> String {
     let path = njutest_devkit::paths::workspace_root().join(relative);
     std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display()))
+}
+
+#[test]
+fn the_ways_the_page_says_a_mutation_is_decided_are_the_ways_there_are() {
+    let text = page("docs/report-v1.md");
+    let listed: Vec<(String, Vec<String>)> = text
+        .lines()
+        .skip_while(|line| !line.starts_with("| column | what decided it |"))
+        .skip(2)
+        .take_while(|line| line.starts_with('|'))
+        .filter_map(|line| {
+            let mut cells = line.split('|').skip(1);
+            let column = cells.next()?.trim().trim_matches('`').to_owned();
+            let outcomes = cells
+                .nth(1)?
+                .split(',')
+                .map(|outcome| outcome.trim().trim_matches('`').to_owned())
+                .collect();
+            Some((column, outcomes))
+        })
+        .collect();
+
+    let columns: Vec<&str> = listed.iter().map(|(column, _)| column.as_str()).collect();
+    let ours: Vec<&str> = Decision::ALL.iter().map(|one| one.name()).collect();
+    assert_eq!(
+        columns, ours,
+        "the page's table is the one a reader adds up to check the verdict, so it \
+         holds one row per way a mutation can be decided, in the order the model \
+         lists them"
+    );
+
+    let mut paged: Vec<(String, String)> = listed
+        .iter()
+        .flat_map(|(column, outcomes)| {
+            outcomes
+                .iter()
+                .map(move |outcome| (outcome.clone(), column.clone()))
+        })
+        .collect();
+    paged.sort();
+    let mut ours: Vec<(String, String)> = Decision::OUTCOMES
+        .iter()
+        .map(|&(outcome, decision)| (outcome.to_owned(), decision.name().to_owned()))
+        .collect();
+    ours.sort();
+    assert_eq!(
+        paged, ours,
+        "and every outcome a report can record is on exactly one row of it: an \
+         outcome the page forgets is one a reader cannot tell the standing of, and \
+         one it puts on two rows is one they would count twice"
+    );
 }
 
 #[test]

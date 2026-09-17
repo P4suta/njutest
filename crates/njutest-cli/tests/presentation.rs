@@ -60,6 +60,7 @@ fn told() -> Told {
             project: "fixture-baseline".to_owned(),
             cataloged: 10,
             killed: 7,
+            refused_by_types: 0,
             survived: 2,
             unreached: 1,
             duration_ms: 1911,
@@ -134,6 +135,14 @@ fn a_caret_lands_under_the_code_however_wide_the_characters_before_it_are() {
     );
 }
 
+/// The line of a drawing that carries the counts, which is the last thing a reader is left with.
+fn headline(drawn: &str) -> &str {
+    drawn
+        .lines()
+        .find(|line| line.contains("killed,"))
+        .unwrap_or(drawn)
+}
+
 /// How wide `text` is on a terminal, which is what a caret is placed by.
 fn width(text: &str) -> usize {
     njutest_cli::presentation::wide(text)
@@ -162,6 +171,26 @@ fn a_file_that_moved_under_the_run_is_said_rather_than_drawn() {
 }
 
 #[test]
+fn what_the_type_system_refused_is_said_where_the_kills_are_said() {
+    let mut refused = told();
+    refused.headline.refused_by_types = 3;
+    let drawn = human::draw(&refused, Terminal::plain(80));
+    assert!(
+        headline(&drawn).contains("7 killed, 3 refused by types, 2 survived"),
+        "a mutation the compiler refuses is one the type system caught, and a reader \
+         who is never told cannot see how much of what could go wrong is answered \
+         before a test runs: {drawn}"
+    );
+
+    let none = human::draw(&told(), Terminal::plain(80));
+    assert!(
+        !headline(&none).contains("refused"),
+        "and a run where the type system caught nothing says nothing about it, \
+         because a zero in a headline is a column a reader learns to skip: {none}"
+    );
+}
+
+#[test]
 fn a_run_with_nothing_to_say_says_that_and_stops() {
     let told = Told {
         headline: Headline {
@@ -169,6 +198,7 @@ fn a_run_with_nothing_to_say_says_that_and_stops() {
             project: "fixture-assured".to_owned(),
             cataloged: 4,
             killed: 4,
+            refused_by_types: 0,
             survived: 0,
             unreached: 0,
             duration_ms: 1388,

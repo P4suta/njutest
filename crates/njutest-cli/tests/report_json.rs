@@ -12,9 +12,9 @@
 use std::path::{Path, PathBuf};
 
 use njutest_cli::report::{
-    Accounting, Finding, FindingKind, Git, Limitation, MutantAccounting, MutantRecord, Position,
-    Report, Repository, RunKind, SCHEMA, Scope, SoundnessAccounting, TargetAccounting,
-    TargetRecord, TargetStatus, Timing, Tool, Toolchain, Verdict, json,
+    Accounting, Finding, FindingKind, Git, Limitation, MutantAccounting, MutantRecord,
+    ObserverAccounting, Position, Report, Repository, RunKind, SCHEMA, Scope, SoundnessAccounting,
+    TargetAccounting, TargetRecord, TargetStatus, Timing, Tool, Toolchain, Verdict, json,
 };
 
 /// A report with something in every field, so the schema is exercised whole.
@@ -106,6 +106,14 @@ fn populated() -> Report {
                 accepted: 1,
                 reused_killed: 2,
                 reused_survived: 0,
+                observers: ObserverAccounting {
+                    types: 1,
+                    tests: 7,
+                    proved: 0,
+                    unnoticed: 1,
+                    unreached: 0,
+                    undecided: 0,
+                },
             },
             soundness: SoundnessAccounting {
                 unsafe_items: 3,

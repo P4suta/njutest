@@ -554,3 +554,23 @@ refused[NJ5001]: the workspace does not compile before anything is instrumented
 
   ·PARTIAL   3 killed, 0 survived, 0 unreached   1.9s
   reports/runs/20260101T000000Z-aaaaaa
+
+=== a run where the type system caught most of it — eighty columns, no colour
+
+  ASSURED   12 killed, 31 refused by types, 0 survived, 0 unreached   1.9s
+  reports/runs/20260101T000000Z-aaaaaa
+
+=== a run where the type system caught most of it — forty columns, no colour
+
+  ASSURED   12 killed, 31 refused by types, 0 survived, 0 unreached   1.9s
+  reports/runs/20260101T000000Z-aaaaaa
+
+=== a run where the type system caught most of it — eighty columns, colour
+
+  [1;38;5;114mASSURED[0m   [38;5;244m12 killed, 31 refused by types, 0 survived, 0 unreached   1.9s[0m
+  [38;5;244mreports/runs/20260101T000000Z-aaaaaa[0m
+
+=== a run where the type system caught most of it — eighty columns, unicode
+
+  ✓ ASSURED   12 killed, 31 refused by types, 0 survived, 0 unreached   1.9s
+  reports/runs/20260101T000000Z-aaaaaa

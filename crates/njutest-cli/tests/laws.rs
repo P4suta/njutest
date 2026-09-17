@@ -94,6 +94,42 @@ proptest! {
         );
     }
 
+    /// Every mutation the run catalogued was decided by somebody, or is recorded as decided by nobody.
+    #[test]
+    fn every_mutation_was_noticed_proved_run_unnoticed_unreached_or_left_undecided(
+        dispositions in proptest::collection::vec(disposition(), 0..24)
+    ) {
+        let counts = judged_from(dispositions).accounting(&BTreeSet::new());
+        let who = counts.observers;
+        prop_assert_eq!(
+            counts.cataloged,
+            who.types + who.tests + who.proved + who.unnoticed + who.unreached + who.undecided,
+            "a verdict is what stands behind each mutation, so the ways one can be \
+             decided have to cover the catalog exactly once. A mutation in none of \
+             these columns is one the report counted and never answered for, and a \
+             mutation in two is one counted twice in whichever column a reader \
+             trusts: {:?}",
+            counts
+        );
+    }
+
+    /// The compiler refusing a mutation is the type system noticing it, and the report says so.
+    #[test]
+    fn what_the_compiler_refused_is_what_the_type_system_noticed(
+        dispositions in proptest::collection::vec(disposition(), 0..24)
+    ) {
+        let counts = judged_from(dispositions).accounting(&BTreeSet::new());
+        prop_assert_eq!(
+            counts.observers.types,
+            counts.rejected,
+            "a mutation the compiler refuses is a program the type system would not \
+             let anybody have, which is the same event a test failing is: something \
+             noticed. Counting it only as work the run did not do throws away the \
+             one measurement nothing else makes: {:?}",
+            counts
+        );
+    }
+
     /// A reviewer answers for what nothing noticed, and for nothing else.
     #[test]
     fn an_acceptance_covers_a_survivor_an_unreached_mutation_or_an_equivalent_one(

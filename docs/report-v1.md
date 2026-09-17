@@ -126,6 +126,37 @@ ID. A mutant disposition may say `reused: true` with a `source_run_id`; the
 accounting carries `reused_killed` and `reused_survived`, each part of
 `killed` and `survived`.
 
+## Who decided each mutation
+
+The counts beside each other overlap — `executed` holds `killed` and
+`survived` both, and `reused_killed` is part of `killed` — so they answer how
+much of each kind of work a run did. `accounting.mutants.observers` answers a
+different question, and its six columns **partition the catalog**: every
+catalogued mutation is in exactly one of them, and
+`report::audit::validate_for_persistence` refuses a report where they do not
+add up to `cataloged`.
+
+| column | what decided it | the outcome it comes from |
+| --- | --- | --- |
+| `types` | the compiler refused the program | `compile-rejected` |
+| `tests` | a test noticed | `killed`, `timed_out` |
+| `proved` | no test of any kind could have noticed | `equivalent` |
+| `unnoticed` | it ran and nothing noticed | `survived` |
+| `unreached` | nothing ran at all | `unreached` |
+| `undecided` | nothing decided it | `unconfirmed`, `errored` |
+
+`types` is the same number as `rejected`, said as what it is. A mutation the
+compiler refuses is a program the type system would not let anybody have,
+which is the same kind of event a failing test is: something noticed. Counted
+only as work the run did not do, it is the one measurement nothing else in
+the toolchain makes and this report used to discard. It changes no
+denominator: `rejected` keeps its place in
+`cataloged = rejected + executed + unreached + equivalent`.
+
+`undecided` is a gap in the verification rather than in the project, and it is
+never silent: a run that could not decide a mutation says so here and carries
+the finding that explains it.
+
 ## What a finding is about
 
 A finding names its `subject` — a mutant, a target, a package — and an

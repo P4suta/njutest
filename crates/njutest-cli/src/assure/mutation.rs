@@ -16,7 +16,7 @@ use crate::assure::baseline::Measured;
 use crate::assure::route::Route;
 use crate::assure::schedule;
 use crate::evidence::store;
-use crate::report::{Finding, FindingKind, MutantAccounting};
+use crate::report::{Decision, Finding, FindingKind, MutantAccounting};
 use crate::watch::Watch;
 
 /// Why a kill could not be believed.
@@ -122,6 +122,19 @@ impl Disposition {
         }
     }
 
+    /// Who decided it, which is what stands behind the verdict it feeds.
+    #[must_use]
+    pub const fn decision(&self) -> Decision {
+        match self {
+            Self::Rejected { .. } => Decision::Types,
+            Self::Killed { .. } | Self::TimedOut { .. } => Decision::Tests,
+            Self::Equivalent { .. } => Decision::Proved,
+            Self::Survived { .. } => Decision::Unnoticed,
+            Self::Unreached => Decision::Unreached,
+            Self::Unconfirmed { .. } | Self::Errored { .. } => Decision::Undecided,
+        }
+    }
+
     /// The test that decided it, when one did.
     #[must_use]
     pub fn decided_by(&self) -> Option<&str> {
@@ -181,6 +194,7 @@ impl Mutation {
             ..MutantAccounting::default()
         };
         for judged in &self.judged {
+            counts.observers.counted(judged.disposition.decision());
             match &judged.disposition {
                 Disposition::Rejected { .. } => {
                     counts.rejected = counts.rejected.saturating_add(1);

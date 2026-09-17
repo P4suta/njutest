@@ -10,8 +10,8 @@
 
 use njutest_cli::report::audit::{Violation, validate_for_persistence};
 use njutest_cli::report::{
-    Finding, FindingKind, Git, Limitation, MutantAccounting, Position, Report, RunKind, SCHEMA,
-    TargetAccounting, TargetRecord, TargetStatus, UNAVAILABLE, Verdict,
+    Finding, FindingKind, Git, Limitation, MutantAccounting, ObserverAccounting, Position, Report,
+    RunKind, SCHEMA, TargetAccounting, TargetRecord, TargetStatus, UNAVAILABLE, Verdict,
 };
 
 /// A report that satisfies every invariant, for a test to break one thing in. One field of a report, and how to leave it saying nothing.
@@ -46,6 +46,10 @@ fn sound() -> Report {
         cataloged: 1,
         executed: 1,
         killed: 1,
+        observers: ObserverAccounting {
+            tests: 1,
+            ..ObserverAccounting::default()
+        },
         ..MutantAccounting::default()
     };
     report.targets = vec![
@@ -147,6 +151,32 @@ fn git_is_either_available_with_its_facts_or_explicitly_not() {
 #[test]
 fn a_sound_report_has_nothing_to_report() {
     assert_eq!(validate_for_persistence(&sound()), Vec::<Violation>::new());
+}
+
+#[test]
+fn a_report_says_who_decided_every_mutation_it_catalogued() {
+    let mut report = sound();
+    report.accounting.mutants.observers = ObserverAccounting::default();
+    let violations = validate_for_persistence(&report);
+    assert!(
+        violations
+            .iter()
+            .any(|violation| matches!(violation, Violation::DecisionsDoNotAddUp { .. })),
+        "a report that catalogued a mutation and names nobody who decided it is a \
+         verdict with nothing behind it, and there is no way for a reader to tell \
+         that from a run where everything was decided: {violations:?}"
+    );
+
+    let mut twice = sound();
+    twice.accounting.mutants.observers.types = 1;
+    let violations = validate_for_persistence(&twice);
+    assert!(
+        violations
+            .iter()
+            .any(|violation| matches!(violation, Violation::DecisionsDoNotAddUp { .. })),
+        "and one counted in two columns is one counted twice by whichever reader \
+         trusts the wrong column: {violations:?}"
+    );
 }
 
 #[test]

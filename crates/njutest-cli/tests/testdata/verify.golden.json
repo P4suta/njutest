@@ -6,6 +6,14 @@
       "equivalent": 0,
       "executed": 9,
       "killed": 7,
+      "observers": {
+        "proved": 0,
+        "tests": 7,
+        "types": 0,
+        "undecided": 0,
+        "unnoticed": 2,
+        "unreached": 1
+      },
       "rejected": 0,
       "reused_killed": 0,
       "reused_survived": 0,

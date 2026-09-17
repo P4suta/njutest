@@ -78,7 +78,15 @@
       "equivalent": 0,
       "accepted": 1,
       "reused_killed": 2,
-      "reused_survived": 0
+      "reused_survived": 0,
+      "observers": {
+        "types": 1,
+        "tests": 7,
+        "proved": 0,
+        "unnoticed": 1,
+        "unreached": 0,
+        "undecided": 0
+      }
     },
     "soundness": {
       "unsafe_items": 3,

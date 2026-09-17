@@ -266,6 +266,7 @@ fn headline(out: &mut String, told: &Told, terminal: Terminal) {
     let Headline {
         verdict,
         killed,
+        refused_by_types,
         survived,
         unreached,
         duration_ms,
@@ -273,9 +274,16 @@ fn headline(out: &mut String, told: &Told, terminal: Terminal) {
         ..
     } = &told.headline;
     let seconds = as_secs(*duration_ms);
+    let refused = if *refused_by_types == 0 {
+        String::new()
+    } else {
+        format!("{refused_by_types} refused by types, ")
+    };
     let counted = telling.painted(
         Style::Frame,
-        &format!("{killed} killed, {survived} survived, {unreached} unreached   {seconds}"),
+        &format!(
+            "{killed} killed, {refused}{survived} survived, {unreached} unreached   {seconds}"
+        ),
     );
     let _written = writeln!(out, "  {}   {counted}", telling.verdict(*verdict));
     let kept = telling.painted(Style::Frame, kept);

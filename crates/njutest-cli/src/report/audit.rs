@@ -18,6 +18,13 @@ pub enum Violation {
         /// What the terminal states add up to.
         accounted: u32,
     },
+    /// The ways a mutation can be decided do not cover the catalog exactly once.
+    DecisionsDoNotAddUp {
+        /// What the report says it catalogued.
+        cataloged: u32,
+        /// What the decisions add up to.
+        decided: u32,
+    },
     /// The target records and the target accounting disagree.
     TargetRecordsDisagree {
         /// What the accounting says.
@@ -90,6 +97,13 @@ impl fmt::Display for Violation {
                 "the report selected {selected} targets but accounts for {accounted}; \
                  every selected target has exactly one terminal state"
             ),
+            Self::DecisionsDoNotAddUp { cataloged, decided } => write!(
+                f,
+                "the report catalogued {cataloged} mutations and names who decided \
+                 {decided}; every catalogued mutation was decided by exactly one of \
+                 the type system, a test, a proof, nothing that ran, nothing that \
+                 could run, or nobody"
+            ),
             Self::FindingsDisagree {
                 verdict,
                 findings,
@@ -149,12 +163,25 @@ pub fn validate_for_persistence(report: &Report) -> Vec<Violation> {
     let mut violations = Vec::new();
     check_required(report, &mut violations);
     check_targets(report, &mut violations);
+    check_decisions(report, &mut violations);
     check_verdict(report, &mut violations);
     check_git(report, &mut violations);
     check_findings(report, &mut violations);
     check_acceptances(report, &mut violations);
     check_provenance(report, &mut violations);
     violations
+}
+
+/// Whether somebody is named for every mutation the run catalogued, and nobody twice.
+fn check_decisions(report: &Report, violations: &mut Vec<Violation>) {
+    let counts = report.accounting.mutants;
+    let decided = counts.observers.total();
+    if decided != counts.cataloged {
+        violations.push(Violation::DecisionsDoNotAddUp {
+            cataloged: counts.cataloged,
+            decided,
+        });
+    }
 }
 
 /// Whether every unmatched-acceptance finding really fails to name exactly one catalog entry.

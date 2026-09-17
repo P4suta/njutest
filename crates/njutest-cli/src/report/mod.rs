@@ -323,6 +323,116 @@ pub struct MutantAccounting {
     pub reused_killed: u32,
     /// How many of `survived` came from a previous run.
     pub reused_survived: u32,
+    /// Who decided each of them.
+    pub observers: ObserverAccounting,
+}
+
+/// Who decided one mutation, which is what stands behind the verdict it feeds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Decision {
+    /// The compiler refused the program.
+    Types,
+    /// A test noticed, a timeout among them.
+    Tests,
+    /// No test of any kind could have noticed, proved rather than run.
+    Proved,
+    /// It ran and nothing noticed.
+    Unnoticed,
+    /// Nothing ran at all.
+    Unreached,
+    /// Nothing decided it.
+    Undecided,
+}
+
+impl Decision {
+    /// Every way a mutation can be decided, in the order a reader adds them up.
+    pub const ALL: [Self; 6] = [
+        Self::Types,
+        Self::Tests,
+        Self::Proved,
+        Self::Unnoticed,
+        Self::Unreached,
+        Self::Undecided,
+    ];
+
+    /// Every outcome a report records, and who it says decided the mutation.
+    pub const OUTCOMES: [(&'static str, Self); 8] = [
+        ("compile-rejected", Self::Types),
+        ("killed", Self::Tests),
+        ("timed_out", Self::Tests),
+        ("equivalent", Self::Proved),
+        ("survived", Self::Unnoticed),
+        ("unreached", Self::Unreached),
+        ("unconfirmed", Self::Undecided),
+        ("errored", Self::Undecided),
+    ];
+
+    /// What decided a mutation a report records under this outcome, or nothing if no outcome is spelled that way.
+    #[must_use]
+    pub fn of_outcome(outcome: &str) -> Option<Self> {
+        Self::OUTCOMES
+            .iter()
+            .find(|(name, _)| *name == outcome)
+            .map(|&(_, decision)| decision)
+    }
+
+    /// The wire name a report records.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Types => "types",
+            Self::Tests => "tests",
+            Self::Proved => "proved",
+            Self::Unnoticed => "unnoticed",
+            Self::Unreached => "unreached",
+            Self::Undecided => "undecided",
+        }
+    }
+}
+
+/// Who noticed each mutation the run catalogued, and what became of the ones nobody did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ObserverAccounting {
+    /// How many the compiler refused, which is the type system noticing.
+    pub types: u32,
+    /// How many a test noticed, a timeout among them.
+    pub tests: u32,
+    /// How many no test of any kind could have noticed, proved rather than run.
+    pub proved: u32,
+    /// How many ran with nothing noticing.
+    pub unnoticed: u32,
+    /// How many nothing ran at all.
+    pub unreached: u32,
+    /// How many nothing decided, which is a gap in the verification rather than in the project.
+    pub undecided: u32,
+}
+
+impl ObserverAccounting {
+    /// Count one more mutation decided this way.
+    pub const fn counted(&mut self, decision: Decision) {
+        let column = match decision {
+            Decision::Types => &mut self.types,
+            Decision::Tests => &mut self.tests,
+            Decision::Proved => &mut self.proved,
+            Decision::Unnoticed => &mut self.unnoticed,
+            Decision::Unreached => &mut self.unreached,
+            Decision::Undecided => &mut self.undecided,
+        };
+        *column = column.saturating_add(1);
+    }
+
+    /// How many mutations these columns account for.
+    #[must_use]
+    pub const fn total(&self) -> u32 {
+        self.types
+            .saturating_add(self.tests)
+            .saturating_add(self.proved)
+            .saturating_add(self.unnoticed)
+            .saturating_add(self.unreached)
+            .saturating_add(self.undecided)
+    }
 }
 
 /// The soundness phase's inventory.

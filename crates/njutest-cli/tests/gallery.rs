@@ -78,11 +78,18 @@ fn headline(verdict: Verdict, killed: u32, survived: u32, unreached: u32) -> Hea
         project: "fixture-baseline".to_owned(),
         cataloged: killed.saturating_add(survived).saturating_add(unreached),
         killed,
+        refused_by_types: 0,
         survived,
         unreached,
         duration_ms: 1911,
         kept: kept("20260101T000000Z-aaaaaa"),
     }
+}
+
+const fn refused(mut headline: Headline, types: u32) -> Headline {
+    headline.refused_by_types = types;
+    headline.cataloged = headline.cataloged.saturating_add(types);
+    headline
 }
 
 fn site(at: (u32, u32), excerpt: Excerpt, label: &str, width: usize) -> Site {
@@ -397,6 +404,14 @@ fn cases() -> Vec<(&'static str, Told)> {
         (
             "a part of a catalog",
             told(Vec::new(), headline(Verdict::Partial, 3, 0, 0), Vec::new()),
+        ),
+        (
+            "a run where the type system caught most of it",
+            told(
+                Vec::new(),
+                refused(headline(Verdict::Assured, 12, 0, 0), 31),
+                Vec::new(),
+            ),
         ),
     ]
 }

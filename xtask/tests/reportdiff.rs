@@ -42,6 +42,30 @@ fn a_verdict_that_moved_is_the_first_thing_a_reviewer_sees() {
 }
 
 #[test]
+fn a_shift_between_who_decided_names_the_column_that_moved() {
+    let before = report(&serde_json::json!({
+        "accounting": { "mutants": { "cataloged": 12, "observers": {
+            "types": 3, "tests": 7, "proved": 0, "unnoticed": 2, "unreached": 0, "undecided": 0
+        } } }
+    }));
+    let after = report(&serde_json::json!({
+        "accounting": { "mutants": { "cataloged": 12, "observers": {
+            "types": 5, "tests": 7, "proved": 0, "unnoticed": 0, "unreached": 0, "undecided": 0
+        } } }
+    }));
+    assert_eq!(
+        diff(&before, &after),
+        [
+            "accounting.mutants.observers.types\t3\t5",
+            "accounting.mutants.observers.unnoticed\t2\t0",
+        ],
+        "a change that moves two mutations from nobody noticing to the type system \
+         catching them is the whole point of the review, and a diff that says only \
+         that an object called observers is different has told a reviewer nothing"
+    );
+}
+
+#[test]
 fn a_count_that_moved_names_the_count() {
     let before = report(&serde_json::json!({
         "accounting": { "mutants": { "killed": 10, "survived": 2 } }

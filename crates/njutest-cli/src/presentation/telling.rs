@@ -18,6 +18,7 @@ impl Told {
                 project: report.repository.root_name.clone(),
                 cataloged: report.accounting.mutants.cataloged,
                 killed: report.accounting.mutants.killed,
+                refused_by_types: report.accounting.mutants.observers.types,
                 survived: report.accounting.mutants.survived,
                 unreached: report.accounting.mutants.unreached,
                 duration_ms: report.timing.duration_ms,
