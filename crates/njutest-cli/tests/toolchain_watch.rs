@@ -60,6 +60,20 @@ impl Write for Stopping<'_> {
     }
 }
 
+/// The machine a watch is given: this tree, that scratch, and nothing of the outside.
+fn working_in(root: &std::path::Path, scratch: std::path::PathBuf) -> Environment {
+    let vars: Vec<(OsString, OsString)> = njutest_devkit::paths::environment_for_a_run();
+    Environment {
+        cache_directory: Environment::cache_directory_of(&vars),
+        working_directory: root.to_owned(),
+        temp_directory: scratch,
+        program: std::path::PathBuf::from("this test never runs it"),
+        vars,
+        cancel: Cancel::new(),
+        terminal: njutest_cli::presentation::Terminal::default(),
+    }
+}
+
 #[test]
 fn a_watch_verifies_the_tree_as_it_stands_and_carries_that_round_s_verdict() {
     let root = tempfile::Builder::new()
@@ -71,15 +85,7 @@ fn a_watch_verifies_the_tree_as_it_stands_and_carries_that_round_s_verdict() {
     let scratch = root.path().join("scratch");
     std::fs::create_dir_all(&scratch).expect("a scratch directory");
 
-    let vars: Vec<(OsString, OsString)> = njutest_devkit::paths::environment_for_a_run();
-    let environment = Environment {
-        cache_directory: Environment::cache_directory_of(&vars),
-        working_directory: root.path().to_owned(),
-        temp_directory: scratch,
-        program: std::path::PathBuf::from("this test never runs it"),
-        vars,
-        cancel: Cancel::new(),
-    };
+    let environment = working_in(root.path(), scratch);
 
     let watchdog = environment.cancel.clone();
     let (done, waited) = channel::<()>();
@@ -164,6 +170,7 @@ fn a_run_with_nowhere_to_work_stops_before_it_says_it_looked() {
         program: std::path::PathBuf::from("this test never runs it"),
         vars: Vec::new(),
         cancel: Cancel::new(),
+        terminal: njutest_cli::presentation::Terminal::default(),
     };
 
     let (mut said, mut complaints) = (Vec::new(), Vec::new());
@@ -244,6 +251,7 @@ fn a_run_told_where_to_look_for_a_toolchain_looks_there_and_nowhere_else() {
             OsString::from(empty.display().to_string()),
         )],
         cancel: Cancel::new(),
+        terminal: njutest_cli::presentation::Terminal::default(),
     };
 
     let (mut said, mut complaints) = (Vec::new(), Vec::new());
@@ -279,6 +287,7 @@ fn a_run_told_where_to_look_for_a_toolchain_looks_there_and_nowhere_else() {
             })
             .collect(),
         cancel: Cancel::new(),
+        terminal: njutest_cli::presentation::Terminal::default(),
     };
     let (mut said, mut complaints) = (Vec::new(), Vec::new());
     let _code = njutest_cli::run_from(
@@ -338,7 +347,7 @@ fn stages_of(complained: &str, root: &std::path::Path) {
     let progressed: Vec<&str> = events
         .iter()
         .filter_map(|event| match &event.payload {
-            njutest_cli::trace::Payload::Progress { progress } => Some(progress.message.as_str()),
+            njutest_cli::trace::Payload::Progress { progress } => Some(progress.subject.as_str()),
             _ => None,
         })
         .collect();
@@ -548,6 +557,7 @@ fn a_second_run_of_one_tree_reads_back_what_the_first_established_and_says_whose
         program: std::path::PathBuf::from("this test never runs it"),
         vars,
         cancel: Cancel::new(),
+        terminal: njutest_cli::presentation::Terminal::default(),
     };
     let once = || {
         let (mut said, mut complaints) = (Vec::new(), Vec::new());
@@ -678,6 +688,7 @@ fn fuzz_targets_a_run_was_not_asked_to_drive_are_a_gap_it_states_rather_than_pas
         program: std::path::PathBuf::from("this test never runs it"),
         vars,
         cancel: Cancel::new(),
+        terminal: njutest_cli::presentation::Terminal::default(),
     };
     let (mut said, mut complaints) = (Vec::new(), Vec::new());
     let code = njutest_cli::run_from(
@@ -735,6 +746,7 @@ fn a_mutation_the_compiler_renders_identically_is_only_equivalent_where_the_test
         program: std::path::PathBuf::from("this test never runs it"),
         vars,
         cancel: Cancel::new(),
+        terminal: njutest_cli::presentation::Terminal::default(),
     };
 
     let (mut said, mut complaints) = (Vec::new(), Vec::new());
@@ -857,6 +869,7 @@ fn a_run_that_held_something_says_what_it_held_and_lets_go_of_it() {
         program: std::path::PathBuf::from("this test never runs it"),
         vars,
         cancel: Cancel::new(),
+        terminal: njutest_cli::presentation::Terminal::default(),
     };
 
     let (mut said, mut complaints) = (Vec::new(), Vec::new());
@@ -970,6 +983,7 @@ fn a_candidate_offered_for_a_gap_is_put_to_the_tests_before_it_is_recorded() {
         program: std::path::PathBuf::from("this test never runs it"),
         vars,
         cancel: Cancel::new(),
+        terminal: njutest_cli::presentation::Terminal::default(),
     };
 
     let (mut said, mut complaints) = (Vec::new(), Vec::new());
@@ -1165,6 +1179,7 @@ fn a_run_that_was_stopped_leaves_what_it_established_for_the_next_one() {
         program: std::path::PathBuf::from("this test never runs it"),
         vars,
         cancel: Cancel::new(),
+        terminal: njutest_cli::presentation::Terminal::default(),
     };
 
     let mut said = Vec::new();
@@ -1225,6 +1240,7 @@ fn left_behind(cache: &std::path::Path) {
 fn resumed(root: &std::path::Path, environment: Environment) {
     let environment = Environment {
         cancel: Cancel::new(),
+        terminal: njutest_cli::presentation::Terminal::default(),
         ..environment
     };
     let (mut said, mut complaints) = (Vec::new(), Vec::new());
@@ -1279,6 +1295,7 @@ fn once(
         program: std::path::PathBuf::from("this test never runs it"),
         vars,
         cancel: Cancel::new(),
+        terminal: njutest_cli::presentation::Terminal::default(),
     };
     let (mut said, mut complaints) = (Vec::new(), Vec::new());
     let code = njutest_cli::run_from(
@@ -1352,6 +1369,7 @@ fn part(root: &std::path::Path, dir: &std::path::Path, shard: &str) -> serde_jso
         program: std::path::PathBuf::from("this test never runs it"),
         vars,
         cancel: Cancel::new(),
+        terminal: njutest_cli::presentation::Terminal::default(),
     };
     let (mut said, mut complaints) = (Vec::new(), Vec::new());
     let code = njutest_cli::run_from(
@@ -1424,6 +1442,7 @@ fn refused(fixture: &str, dir: &std::path::Path, name: &str, configured: &str) -
         program: std::path::PathBuf::from("this test never runs it"),
         vars: njutest_devkit::paths::environment_for_a_run(),
         cancel: Cancel::new(),
+        terminal: njutest_cli::presentation::Terminal::default(),
     };
     let (mut said, mut complaints) = (Vec::new(), Vec::new());
     let code = njutest_cli::run_from(
@@ -1552,6 +1571,7 @@ fn a_target_the_fuzzer_could_not_drive_is_a_gap_and_never_a_target_that_found_no
         program: std::path::PathBuf::from("this test never runs it"),
         vars,
         cancel: Cancel::new(),
+        terminal: njutest_cli::presentation::Terminal::default(),
     };
     let (mut said, mut complaints) = (Vec::new(), Vec::new());
     let code = njutest_cli::run_from(
@@ -1629,6 +1649,7 @@ fn verified_in_process(
         program: std::path::PathBuf::from("this test never runs it"),
         vars,
         cancel: Cancel::new(),
+        terminal: njutest_cli::presentation::Terminal::default(),
     };
     let mut args: Vec<OsString> = ["njutest", "verify", "--offline", "--locked", "--no-cache"]
         .map(OsString::from)
@@ -1740,6 +1761,7 @@ fn a_run_in_this_process_writes_what_it_learned_before_it_compiled_anything() {
         program: std::path::PathBuf::from("this test never runs it"),
         vars,
         cancel: Cancel::new(),
+        terminal: njutest_cli::presentation::Terminal::default(),
     };
 
     let (mut said, mut complaints) = (Vec::new(), Vec::new());

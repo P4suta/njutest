@@ -67,10 +67,7 @@ fn blind(out: &mut String, place: &Place, terminal: Terminal) {
         .chain(place.spots.iter().map(|spot| spot.line.to_string().len()))
         .max()
         .unwrap_or(1);
-    let counted = match place.spots.len() {
-        1 => "1 blind spot".to_owned(),
-        many => format!("{many} blind spots"),
-    };
+    let counted = counting(place);
     let at = place.spots.first().map_or_else(
         || place.path.clone(),
         |spot| format!("{}:{}", place.path, spot.line),
@@ -124,20 +121,53 @@ fn blind(out: &mut String, place: &Place, terminal: Terminal) {
             }
         }
     }
-    let named: Vec<&str> = place
-        .spots
-        .iter()
-        .map(|spot| spot.locator.as_str())
-        .collect();
-    if let Some(first) = named.first() {
+    for (at, (asks, first)) in asked(place).into_iter().enumerate() {
+        let corner = if at == 0 {
+            strokes.closing
+        } else {
+            strokes.branch
+        };
         let _written = writeln!(
             out,
-            "{:gutter$} {} {}",
+            "{:gutter$} {} {}  {}",
             "",
-            telling.frame(strokes.closing),
+            telling.frame(corner),
+            telling.painted(Style::Gap, asks),
             telling.command(&format!("njutest explain {first}"))
         );
     }
+}
+
+/// How many places the tests do not see here, and what kinds they are.
+///
+/// One number over three kinds would say they are one fact. They are one
+/// drawing, because they are in one item and a reader reads it once, and they
+/// are not one fact, because each kind asks for different work.
+fn counting(place: &Place) -> String {
+    let mut kinds: Vec<(super::Blindness, usize)> = Vec::new();
+    for spot in &place.spots {
+        match kinds.iter_mut().find(|(kind, _)| *kind == spot.blindness) {
+            Some((_, count)) => *count = count.saturating_add(1),
+            None => kinds.push((spot.blindness, 1)),
+        }
+    }
+    kinds
+        .into_iter()
+        .map(|(kind, count)| format!("{count} {}", kind.counted()))
+        .collect::<Vec<String>>()
+        .join(", ")
+}
+
+/// What this item asks for, once per distinct kind of work, with one place to start on each.
+fn asked(place: &Place) -> Vec<(&'static str, &str)> {
+    let mut found: Vec<(&'static str, &str)> = Vec::new();
+    for spot in &place.spots {
+        let asks = spot.blindness.asks();
+        if !found.iter().any(|(said, _)| *said == asks) {
+            found.push((asks, spot.locator.as_str()));
+        }
+    }
+    found
 }
 
 /// One diagnostic: what it is, where it is, and what to do about it.
@@ -275,9 +305,13 @@ fn headline(out: &mut String, told: &Told, terminal: Terminal) {
     let seconds = as_secs(*duration_ms);
     let counted = telling.painted(
         Style::Frame,
-        &format!("{killed} killed, {survived} survived, {unreached} unreached   {seconds}"),
+        &format!("{killed} killed  {survived} survived  {unreached} unreached  {seconds}"),
     );
-    let _written = writeln!(out, "  {}   {counted}", telling.verdict(*verdict));
+    headed(
+        out,
+        &format!("{}   {counted}", telling.verdict(*verdict)),
+        telling,
+    );
     let kept = telling.painted(Style::Frame, kept);
     if told.places.is_empty()
         && !told
@@ -285,14 +319,29 @@ fn headline(out: &mut String, told: &Told, terminal: Terminal) {
             .iter()
             .any(|one| one.severity == super::Severity::Gap)
     {
-        let _written = writeln!(out, "  {kept}");
+        headed(out, &kept, telling);
         return;
     }
-    let _written = writeln!(
+    headed(
         out,
-        "  {}   {kept}",
-        telling.painted(Style::Gap, &gaps(told))
+        &format!("{}   {kept}", telling.painted(Style::Gap, &gaps(told))),
+        telling,
     );
+}
+
+/// One line of the headline, indented and folded like everything else.
+///
+/// A headline that ran past the edge was the one line nothing folded, so a
+/// narrow terminal wrapped it wherever it happened to reach and the two halves
+/// of a verdict ended up in different places.
+fn headed(out: &mut String, text: &str, telling: Telling) {
+    let mut lines = super::folded(text, telling.room(2)).into_iter();
+    if let Some(first) = lines.next() {
+        let _written = writeln!(out, "  {first}");
+    }
+    for rest in lines {
+        let _written = writeln!(out, "    {rest}");
+    }
 }
 
 /// How many gaps there are and how many files they are in, which is what a reader wants before the list.

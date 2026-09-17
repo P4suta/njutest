@@ -16,6 +16,7 @@ fn main() -> ExitCode {
         program: std::env::current_exe()
             .unwrap_or_else(|_error| std::path::PathBuf::from("rust-mutants")),
         cache_directory: njutest_cli::cli::Environment::cache_directory_of(&vars),
+        terminal: njutest_cli::presentation::Terminal::of(&njutest_cli::asked(&vars)),
         vars,
         cancel,
     };

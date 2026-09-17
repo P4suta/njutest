@@ -3,6 +3,7 @@
 
 //! What a person is told about a run, as a value every surface is a projection of.
 
+pub mod agent;
 pub mod human;
 mod telling;
 pub mod tint;
@@ -162,6 +163,35 @@ impl Blindness {
             Self::Waited => "timed out",
         }
     }
+
+    /// The same, in the words a count stands in front of.
+    ///
+    /// No comma in any of them: a heading that reads `1 ran, not noticed, 1
+    /// never run` parses on sight as four things rather than two, and a
+    /// heading is read at a glance or not at all.
+    #[must_use]
+    pub const fn counted(self) -> &'static str {
+        match self {
+            Self::Ran => "not noticed",
+            Self::Never => "never run",
+            Self::Waited => "timed out",
+        }
+    }
+
+    /// What a reader is being asked to do about it, which is not the same for all three.
+    ///
+    /// A test that notices a change, a test that reaches the line at all, and
+    /// an investigation into why nothing finished are three different pieces
+    /// of work. Drawing them under one heading, or handing all three the same
+    /// instruction, teaches somebody something false about two of them.
+    #[must_use]
+    pub const fn asks(self) -> &'static str {
+        match self {
+            Self::Ran => "write a test that notices it",
+            Self::Never => "write a test that reaches it",
+            Self::Waited => "find out why nothing finished",
+        }
+    }
 }
 
 /// Where a diagnostic is, and the line it is on.
@@ -275,6 +305,22 @@ pub struct Terminal {
     pub colour: bool,
     /// Whether the font is expected to have more than ASCII.
     pub unicode: bool,
+    /// Whether a person is reading this, rather than a program.
+    ///
+    /// The one thing that is not a capability: it decides which projection is
+    /// written at all, and a pipe gets the record stream because that is a
+    /// contract with whatever is on the other end of it.
+    pub drawing: bool,
+}
+
+impl Default for Terminal {
+    /// What a stream nobody has said anything about gets, which is what a pipe gets.
+    fn default() -> Self {
+        Self {
+            drawing: false,
+            ..Self::plain(ROOM)
+        }
+    }
 }
 
 impl Terminal {
@@ -285,6 +331,7 @@ impl Terminal {
             width,
             colour: false,
             unicode: false,
+            drawing: true,
         }
     }
 }
@@ -800,4 +847,85 @@ fn lines_of(text: &str) -> Vec<String> {
     text.lines()
         .map(|line| line.trim_end_matches('\r').to_owned())
         .collect()
+}
+
+/// Who is on the other end of the output.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Reader {
+    /// A person at a terminal.
+    Person,
+    /// Something that will parse it.
+    #[default]
+    Program,
+}
+
+/// What was said about colour, which is three answers rather than two flags.
+///
+/// `NO_COLOR` and `CLICOLOR_FORCE` are not independent — both set means forced
+/// — so they are one question with three answers rather than two booleans a
+/// caller can set to a combination nobody meant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Wanted {
+    /// `CLICOLOR_FORCE`: colour even where nothing else asks for it.
+    Forced,
+    /// `NO_COLOR`: none, whatever else is true.
+    Refused,
+    /// Nothing said, so whether the reader is a person decides.
+    #[default]
+    Unsaid,
+}
+
+/// What the font is expected to have.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Glyphs {
+    /// More than ASCII.
+    Drawn,
+    /// ASCII, which every terminal has.
+    #[default]
+    Plain,
+}
+
+/// What the composition root found out about where the output is going.
+///
+/// The pieces rather than the conclusion, so the rules that turn them into a
+/// [`Terminal`] — which of `NO_COLOR` and `CLICOLOR_FORCE` wins, what a `dumb`
+/// terminal means, what to do when nothing says how wide it is — are asserted
+/// in a test rather than believed.
+#[derive(Debug, Clone, Default)]
+pub struct Asked {
+    /// Who is on the other end.
+    pub reader: Reader,
+    /// How wide it said it is.
+    pub columns: Option<usize>,
+    /// What was said about colour.
+    pub colour: Wanted,
+    /// What `TERM` says.
+    pub term: Option<String>,
+    /// What the locale says the font has.
+    pub glyphs: Glyphs,
+}
+
+/// How wide to draw when nothing said.
+///
+/// Wider than eighty, because eighty is the width of a punched card and a
+/// diagnostic that fits one has been trimmed to fit a machine nobody has.
+pub const ROOM: usize = 100;
+
+impl Terminal {
+    /// What to draw for, given what was found out.
+    #[must_use]
+    pub fn of(asked: &Asked) -> Self {
+        let dumb = asked.term.as_deref() == Some("dumb");
+        let a_person = asked.reader == Reader::Person;
+        Self {
+            width: asked.columns.filter(|it| *it >= 20).unwrap_or(ROOM),
+            colour: match asked.colour {
+                Wanted::Forced => true,
+                Wanted::Refused => false,
+                Wanted::Unsaid => a_person && !dumb,
+            },
+            unicode: asked.glyphs == Glyphs::Drawn && !dumb,
+            drawing: a_person || asked.colour == Wanted::Forced,
+        }
+    }
 }

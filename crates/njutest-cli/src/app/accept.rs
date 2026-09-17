@@ -155,14 +155,8 @@ fn resolve(
 ) -> Result<crate::report::MutantRecord, String> {
     let run = runs::resolve(root, arguments.run.as_deref()).map_err(|error| error.to_string())?;
     let report = runs::report(root, &run).map_err(|error| error.to_string())?;
-    let matching: Vec<&crate::report::MutantRecord> = report
-        .mutants
-        .iter()
-        .filter(|mutant| {
-            mutant.id.starts_with(&arguments.mutant)
-                || mutant.display_id.starts_with(&arguments.mutant)
-        })
-        .collect();
+    let every: Vec<&crate::report::MutantRecord> = report.mutants.iter().collect();
+    let matching = crate::naming::matching(&every, &arguments.mutant);
     match matching.as_slice() {
         [only] if matches!(only.outcome.as_str(), "survived" | "unreached") => Ok((*only).clone()),
         [only] => Err(format!(

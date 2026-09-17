@@ -81,6 +81,8 @@ pub struct Environment {
     pub cache_directory: PathBuf,
     /// Raised when the process is asked to stop. The composition root owns the signals; every phase reads this flag.
     pub cancel: Cancel,
+    /// What the composition root found out about where the output is going, which a renderer is given rather than asks (ADR 0001).
+    pub terminal: crate::presentation::Terminal,
 }
 
 impl Environment {
@@ -419,6 +421,10 @@ pub enum Format {
     Lines,
     /// The canonical document, exactly as the run wrote it.
     Json,
+    /// What a person reads: the source, with every place the tests do not see marked on it.
+    Human,
+    /// A briefing for something that will act on this without a screen, as Markdown.
+    Agent,
 }
 
 /// How a run writes what it is doing while it does it.

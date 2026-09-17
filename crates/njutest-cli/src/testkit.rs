@@ -170,6 +170,7 @@ pub fn every_payload() -> Vec<crate::trace::Payload> {
         },
         Payload::Progress {
             progress: ProgressRecord {
+                subject: String::new(),
                 message: "measuring".to_owned(),
                 done: Some(1),
                 total: Some(2),

@@ -33,6 +33,7 @@ const SHAPES: [(&str, Terminal); 4] = [
             width: 80,
             colour: false,
             unicode: false,
+            drawing: true,
         },
     ),
     (
@@ -41,6 +42,7 @@ const SHAPES: [(&str, Terminal); 4] = [
             width: 40,
             colour: false,
             unicode: false,
+            drawing: true,
         },
     ),
     (
@@ -49,6 +51,7 @@ const SHAPES: [(&str, Terminal); 4] = [
             width: 80,
             colour: true,
             unicode: false,
+            drawing: true,
         },
     ),
     (
@@ -57,6 +60,7 @@ const SHAPES: [(&str, Terminal); 4] = [
             width: 80,
             colour: false,
             unicode: true,
+            drawing: true,
         },
     ),
 ];
@@ -412,6 +416,10 @@ fn every_shape_a_person_is_shown_is_one_somebody_has_looked_at() {
             let _written = writeln!(out, "\n=== {name} — {shape}\n");
             out.push_str(&human::draw(&told, terminal));
         }
+    }
+    for (name, told) in cases() {
+        let _written = writeln!(out, "\n=== {name} — as a briefing\n");
+        out.push_str(&njutest_cli::presentation::agent::brief(&told));
     }
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testdata/gallery.golden");
     if let Err(error) = njutest_devkit::golden::golden(&path, out.as_bytes()) {
