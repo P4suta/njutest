@@ -74,6 +74,7 @@ fn survivors(count: u32) -> (Vec<Judged>, Vec<Decided>) {
             rule: "le-to-lt".to_owned(),
             item: "demo".to_owned(),
             original: ">".to_owned(),
+            replacement: String::new(),
             position: None,
             disposition: Disposition::Survived {
                 route: Route::All {

@@ -35,6 +35,7 @@ fn part(shard: &str, mutants: &[(&str, &str)]) -> Report {
             rule: "gt-to-ge@1".to_owned(),
             item: "demo".to_owned(),
             original: ">".to_owned(),
+            replacement: String::new(),
             position: Position {
                 line: 1,
                 column: 1,
@@ -232,6 +233,7 @@ fn disposed(id: &str, outcome: &str, reused: bool) -> MutantRecord {
         rule: "gt-to-ge@1".to_owned(),
         item: "demo".to_owned(),
         original: ">".to_owned(),
+        replacement: String::new(),
         position: Position {
             line: 1,
             column: 1,

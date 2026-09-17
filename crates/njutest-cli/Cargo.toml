@@ -54,6 +54,7 @@ signal-hook = { workspace = true }
 thiserror = { workspace = true }
 toml = { workspace = true }
 toml_edit = { workspace = true }
+unicode-width = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 rustix = { workspace = true }

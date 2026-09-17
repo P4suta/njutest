@@ -401,6 +401,9 @@ pub struct MutantRecord {
     /// The bytes the edit replaces, which narrow a locator to one of several on a line.
     #[serde(default)]
     pub original: String,
+    /// The bytes it puts there instead, which is what a reader has to see to know what was asked of their tests.
+    #[serde(default)]
+    pub replacement: String,
     /// What the run established.
     pub outcome: String,
     /// The target that noticed it, when one did.

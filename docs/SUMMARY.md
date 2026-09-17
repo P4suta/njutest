@@ -58,3 +58,4 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 - [0017 An acceptance is a claim a run can refuse](adr/0017-an-acceptance-is-a-claim-a-run-can-refuse.md)
 - [0018 The assurance layer rides the standard interfaces](adr/0018-the-assurance-layer-rides-the-standard-interfaces.md)
 - [0019 The engine owns the compiled build cache](adr/0019-the-engine-owns-the-compiled-build-cache.md)
+- [0020 What a person is told is a value](adr/0020-what-a-person-is-told-is-a-value.md)

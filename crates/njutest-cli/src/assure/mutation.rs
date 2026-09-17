@@ -153,6 +153,8 @@ pub struct Judged {
     pub item: String,
     /// The bytes the edit replaces.
     pub original: String,
+    /// The bytes it puts there instead.
+    pub replacement: String,
     /// Where it is, when the catalog could say.
     pub position: Option<crate::report::Position>,
     /// What was established.
@@ -504,6 +506,7 @@ fn establish(
             .unwrap_or_default()
             .to_owned(),
         original: String::from_utf8_lossy(&mutant.candidate.original).into_owned(),
+        replacement: String::from_utf8_lossy(&mutant.candidate.replacement).into_owned(),
         position,
         disposition,
         source_run_id: source,

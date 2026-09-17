@@ -44,6 +44,7 @@ fn reported() -> Report {
         rule: "gt-to-ge@1".to_owned(),
         item: "demo".to_owned(),
         original: ">".to_owned(),
+        replacement: String::new(),
         outcome: "survived".to_owned(),
         killed_by: None,
         reused: false,
