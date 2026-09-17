@@ -581,3 +581,39 @@ fn a_difference_against_a_recording_that_is_not_there_establishes_nothing() {
         "and it says nothing at all rather than the beginning of a table: {said:?}"
     );
 }
+
+#[test]
+fn the_slowest_names_what_a_run_actually_spends_its_time_on() {
+    let events = vec![
+        ran(1, &["cargo", "build"], 900),
+        at(
+            2,
+            Payload::MutantExec {
+                mutant: njutest_cli::trace::MutantExecRecord {
+                    mutant: "src/lib.rs:sign:gt-to-ge@8".to_owned(),
+                    target: "fixture/test/smoke".to_owned(),
+                    args: vec!["--exact".to_owned()],
+                    outcome: "survived".to_owned(),
+                    duration_ms: 12_000,
+                    alone: false,
+                },
+            },
+        ),
+    ];
+    let named = slowest(&events);
+    assert_eq!(
+        named.first().map(|(duration, _)| *duration),
+        Some(12_000),
+        "a run spends most of itself putting mutations to targets, and a summary that \
+         names `cargo build` as its slowest command while the twelve-second measurement \
+         beside it is not in the list is a summary that reports the wrong thing to \
+         somebody trying to make their run shorter: {named:?}"
+    );
+    assert!(
+        named
+            .iter()
+            .any(|(_, command)| command.contains("src/lib.rs:sign:gt-to-ge@8")),
+        "and it names the measurement by the mutation and target it was, because that is \
+         what a reader would go and narrow: {named:?}"
+    );
+}
