@@ -388,7 +388,7 @@ The developer-facing infrastructure, and the milestone it arrives in:
 
 | Means | For | Arrives |
 | --- | --- | --- |
-| devkit (golden, paths), error-code ledger, `cargo xtask` gates, `bacon`, `mise run doctor`, `CLAUDE.md` | the inner loop and the ratchets | M0 |
+| devkit (golden, paths), error-code ledger, `cargo xtask` gates, `bacon`, `mise run doctor`, `CONTRIBUTING.md` | the inner loop and the ratchets | M0 |
 | engine trace (every discovery decision, every validation round), goldens with CRLF variants, property tests, fuzz targets for every fail-closed parser, fixtures with fate tables, `rust-mutants explain` / `instrument --file` / `why-skipped`, runner contract tests, external-consumer contract test | seeing why the engine did what it did | M1 |
 | runner trace v1 with `trace summary` and `trace diff`, diagnostics bundle, `--keep-temp` ledger, testkit (fixture repository builder, scripted workspace, `normalize_report`, helper subprocesses), report and help goldens, `xtask report-diff`, `njutest plan --why` | seeing why a run routed what it routed | M2 |
 | scripted session, route events, `njutest explain`, accounting property tests, `mise run dogfood` | the runner on itself | M3 |

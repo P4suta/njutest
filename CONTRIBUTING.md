@@ -9,9 +9,21 @@
   its developer-facing deliverables — tests, traces, gates, diagnostics,
   documentation — as completion criteria, not as follow-ups. The protocol is
   in [docs/development.md](docs/development.md).
-- **No warning suppressions.** An `#[allow(...)]` needs a `reason = "…"`; CI
-  runs clippy with `-D warnings` and the workspace lints deny `unwrap`,
-  `expect`, `panic`, indexing, and arithmetic side effects in production code.
+- **No warning suppressions.** `#[allow]` is never written — `cargo xtask
+  lints` refuses one anywhere, tests included. A waiver is `#[expect(…, reason
+  = "…")]`, which the compiler retires once the lint stops firing, so every
+  waiver in the tree is one somebody still needs. CI runs clippy with
+  `-D warnings` and the workspace lints deny `unwrap`, `expect`, `panic`,
+  indexing, and arithmetic side effects in production code.
+- **No comments, and one line of documentation.** `cargo xtask lints` refuses
+  a comment anywhere in the repository's own code. What stays is the SPDX
+  header, a `rust-mutants:` annotation, and one line per item saying what it
+  is — plus the `# Errors` and `# Panics` sections clippy asks for. A name
+  that needs a comment is a name to change; a rationale long enough to want
+  paragraphs belongs in `docs/` or an ADR.
+- **No `Box<dyn Trait>`**, and the same gate refuses it. A closed set of
+  implementations is an enum the compiler checks exhaustively; an open one is
+  a generic parameter.
 - **Conventional Commits**, enforced by the `commit-msg` hook (`committed`).
 - **Every `.rs`, `.toml`, and `.yml` file starts with the SPDX header:**
 

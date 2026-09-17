@@ -11,7 +11,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 <!--
 Paste the output of the test failing for the stated reason, before the change.
-A test that passed before the change is not evidence. See CLAUDE.md.
+A test that passed before the change is not evidence. See CONTRIBUTING.md.
 -->
 
 ```console
