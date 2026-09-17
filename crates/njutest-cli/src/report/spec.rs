@@ -124,16 +124,14 @@ fn began(one: &SeamRecord) -> Sentence {
 /// nobody could have noticed it, so counting it against the tests would ask
 /// them for something no test can give.
 fn counted(sentence: &mut Sentence, one: &SeamRecord) {
-    match one.decision {
-        SeamDecision::Tests => {
-            if let Some(who) = one.noticed_by.clone()
-                && !sentence.guarded_by.contains(&who)
-            {
-                sentence.guarded_by.push(who);
+    match &one.decision {
+        SeamDecision::Tests { noticed_by } => {
+            if !sentence.guarded_by.contains(noticed_by) {
+                sentence.guarded_by.push(noticed_by.clone());
             }
         }
         SeamDecision::Unnoticed => sentence.unguarded = sentence.unguarded.saturating_add(1),
         SeamDecision::Unreached => sentence.unasked = sentence.unasked.saturating_add(1),
-        SeamDecision::Proved => {}
+        SeamDecision::Proved { .. } => {}
     }
 }

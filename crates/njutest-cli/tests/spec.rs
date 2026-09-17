@@ -19,7 +19,7 @@ fn watched(seams: Vec<SeamRecord>) -> Report {
 }
 
 /// One question about `POST /orders`, decided as `decision` says.
-fn question(seq: u64, rule: &str, decision: SeamDecision, noticed_by: Option<&str>) -> SeamRecord {
+fn question(seq: u64, rule: &str, decision: SeamDecision) -> SeamRecord {
     SeamRecord {
         id: format!("{seq}{rule}"),
         capability: "payments".to_owned(),
@@ -29,7 +29,6 @@ fn question(seq: u64, rule: &str, decision: SeamDecision, noticed_by: Option<&st
         rule: njutest_cli::wire::rule::Rule::parse(rule)
             .unwrap_or(njutest_cli::wire::rule::Rule::DropConnection),
         decision,
-        noticed_by: noticed_by.map(ToOwned::to_owned),
     }
 }
 
@@ -39,15 +38,17 @@ fn every_exchange_the_run_watched_is_one_sentence_however_many_questions_it_lice
         question(
             0,
             "drop-connection",
-            SeamDecision::Tests,
-            Some("pkg/test/orders"),
+            SeamDecision::Tests {
+                noticed_by: "pkg/test/orders".to_owned(),
+            },
         ),
-        question(0, "status-server-error", SeamDecision::Unnoticed, None),
+        question(0, "status-server-error", SeamDecision::Unnoticed),
         question(
             0,
             "truncate-response",
-            SeamDecision::Proved,
-            Some("no-body-to-cut"),
+            SeamDecision::Proved {
+                proof: "no-body-to-cut".to_owned(),
+            },
         ),
     ]);
     let sentences = spoken(&report);
@@ -65,7 +66,6 @@ fn a_sentence_nothing_would_notice_changing_says_so_rather_than_saying_nothing()
         0,
         "status-server-error",
         SeamDecision::Unnoticed,
-        None,
     )]);
     let said = spoken(&report)
         .first()
@@ -84,8 +84,9 @@ fn a_question_a_proof_discharged_leaves_the_sentence_neither_held_up_nor_wanting
     let report = watched(vec![question(
         0,
         "truncate-response",
-        SeamDecision::Proved,
-        Some("no-body-to-cut"),
+        SeamDecision::Proved {
+            proof: "no-body-to-cut".to_owned(),
+        },
     )]);
     let sentence = spoken(&report).into_iter().next().expect("a sentence");
     assert!(!sentence.is_guarded(), "no test held it up");
@@ -100,8 +101,8 @@ fn a_question_a_proof_discharged_leaves_the_sentence_neither_held_up_nor_wanting
 #[test]
 fn a_question_the_run_could_not_put_is_counted_apart_from_one_nothing_noticed() {
     let report = watched(vec![
-        question(0, "status-server-error", SeamDecision::Unnoticed, None),
-        question(0, "stale-response", SeamDecision::Unreached, None),
+        question(0, "status-server-error", SeamDecision::Unnoticed),
+        question(0, "stale-response", SeamDecision::Unreached),
     ]);
     let sentence = spoken(&report).into_iter().next().expect("a sentence");
     assert_eq!(
@@ -124,14 +125,16 @@ fn one_target_that_noticed_several_questions_is_named_once() {
         question(
             0,
             "drop-connection",
-            SeamDecision::Tests,
-            Some("pkg/test/orders"),
+            SeamDecision::Tests {
+                noticed_by: "pkg/test/orders".to_owned(),
+            },
         ),
         question(
             0,
             "delay-response",
-            SeamDecision::Tests,
-            Some("pkg/test/orders"),
+            SeamDecision::Tests {
+                noticed_by: "pkg/test/orders".to_owned(),
+            },
         ),
     ]);
     let sentence = spoken(&report).into_iter().next().expect("a sentence");
@@ -151,12 +154,13 @@ fn a_run_that_watched_no_seam_says_it_watched_none_rather_than_printing_a_blank_
 #[test]
 fn the_page_says_how_many_of_the_sentences_nothing_would_notice_changing() {
     let report = watched(vec![
-        question(0, "status-server-error", SeamDecision::Unnoticed, None),
+        question(0, "status-server-error", SeamDecision::Unnoticed),
         question(
             1,
             "drop-connection",
-            SeamDecision::Tests,
-            Some("pkg/test/orders"),
+            SeamDecision::Tests {
+                noticed_by: "pkg/test/orders".to_owned(),
+            },
         ),
     ]);
     let said = page(&report);

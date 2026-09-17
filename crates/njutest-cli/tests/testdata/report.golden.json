@@ -126,8 +126,7 @@
       "asked": "GET /orders",
       "answered": 200,
       "rule": "status-server-error",
-      "decision": "unnoticed",
-      "noticed_by": null
+      "decision": "unnoticed"
     }
   ],
   "targets": [

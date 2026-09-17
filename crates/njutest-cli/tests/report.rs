@@ -903,7 +903,6 @@ fn a_seam_finding_that_names_a_question_the_report_does_not_hold_is_refused() {
         answered: Some(200),
         rule: njutest_cli::wire::rule::Rule::StatusServerError,
         decision: njutest_cli::report::SeamDecision::Unnoticed,
-        noticed_by: None,
     });
     let allowed = validate_for_persistence(&report);
     assert!(

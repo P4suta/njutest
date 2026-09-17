@@ -56,43 +56,28 @@ where
         if watch.cancel.is_cancelled() {
             break;
         }
-        if let Some(proof) = crate::wire::prove::discharges(fault, measuring.observed) {
-            asked_about(
-                &mut done,
-                measuring,
-                (fault, SeamDecision::Proved, Some(proof.to_owned())),
-            );
-            watch.trace.wire_exec(crate::trace::WireExecRecord {
-                fault: fault.id.clone(),
-                capability: fault.capability.clone(),
-                seq: fault.seq,
-                rule: fault.rule.name().to_owned(),
-                decision: SeamDecision::Proved.name().to_owned(),
-                noticed_by: Some(proof.to_owned()),
-            });
-            continue;
-        }
-        let settled = settle(fault, &run(fault));
-        asked_about(
-            &mut done,
-            measuring,
-            (fault, settled.decision, settled.noticed_by.clone()),
+        let decision = crate::wire::prove::discharges(fault, measuring.observed).map_or_else(
+            || settle(fault, &run(fault)).decision,
+            |proof| SeamDecision::Proved {
+                proof: proof.to_owned(),
+            },
         );
         watch.trace.wire_exec(crate::trace::WireExecRecord {
-            fault: settled.fault.id.clone(),
-            capability: settled.fault.capability.clone(),
-            seq: settled.fault.seq,
-            rule: settled.fault.rule.name().to_owned(),
-            decision: settled.decision.name().to_owned(),
-            noticed_by: settled.noticed_by.clone(),
+            fault: fault.id.clone(),
+            capability: fault.capability.clone(),
+            seq: fault.seq,
+            rule: fault.rule.name().to_owned(),
+            decision: decision.name().to_owned(),
+            noticed_by: decision.by().map(ToOwned::to_owned),
         });
-        match settled.decision {
-            SeamDecision::Tests | SeamDecision::Proved => {}
+        match &decision {
+            SeamDecision::Tests { .. } | SeamDecision::Proved { .. } => {}
             SeamDecision::Unreached => unput = unput.saturating_add(1),
             SeamDecision::Unnoticed => {
                 done.findings.push(unnoticed(fault, measuring.observed));
             }
         }
+        asked_about(&mut done, measuring, (fault, decision));
     }
     if unput > 0 {
         done.findings.push(Finding::new(
@@ -112,7 +97,7 @@ where
 fn asked_about(
     done: &mut Measured,
     measuring: &Measuring<'_>,
-    (fault, decision, noticed_by): (&Fault, SeamDecision, Option<String>),
+    (fault, decision): (&Fault, SeamDecision),
 ) {
     let named = measuring
         .observed
@@ -138,7 +123,6 @@ fn asked_about(
         answered,
         rule: fault.rule,
         decision,
-        noticed_by,
     });
 }
 

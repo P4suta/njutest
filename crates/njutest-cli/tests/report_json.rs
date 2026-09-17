@@ -49,7 +49,6 @@ fn populated() -> Report {
             answered: Some(200),
             rule: njutest_cli::wire::rule::Rule::StatusServerError,
             decision: njutest_cli::report::SeamDecision::Unnoticed,
-            noticed_by: None,
         }],
         resources: vec![njutest_cli::report::ResourceRecord {
             capability: "postgres".to_owned(),

@@ -535,73 +535,233 @@
       }
     },
     "seams": {
-      "description": "Every question a watched seam's recording licensed, and what became of it. A wire-unnoticed finding names a question by its identity; this is what a reader looks that identity up in, so the finding rests on the report rather than on the recording.",
+      "description": "Every question a watched seam's recording licensed, and what became of it. A wire-unnoticed finding names a question by its identity; this is what a reader looks that identity up in, so the finding rests on the report rather than on the recording. Who decided a question and who that was travel together, one closed shape per decision: a question the tests noticed names the target, a question a proof discharged names the proof, and one nothing decided names nobody. None of the other combinations is a document this schema accepts.",
       "type": "array",
       "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "id",
-          "capability",
-          "seq",
-          "asked",
-          "answered",
-          "rule",
-          "decision",
-          "noticed_by"
-        ],
-        "properties": {
-          "id": {
-            "type": "string",
-            "pattern": "^[0-9a-f]{64}$"
-          },
-          "capability": {
-            "type": "string",
-            "minLength": 1
-          },
-          "seq": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "asked": {
-            "type": "string"
-          },
-          "answered": {
-            "type": [
-              "integer",
-              "null"
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "capability",
+              "seq",
+              "asked",
+              "answered",
+              "rule",
+              "decision",
+              "noticed_by"
             ],
-            "minimum": 0,
-            "maximum": 599
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "capability": {
+                "type": "string",
+                "minLength": 1
+              },
+              "seq": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "asked": {
+                "type": "string"
+              },
+              "answered": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "minimum": 0,
+                "maximum": 599
+              },
+              "rule": {
+                "type": "string",
+                "enum": [
+                  "truncate-response",
+                  "delay-response",
+                  "drop-connection",
+                  "replay-request",
+                  "stale-response",
+                  "status-server-error",
+                  "status-not-found"
+                ]
+              },
+              "decision": {
+                "const": "tests"
+              },
+              "noticed_by": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
           },
-          "rule": {
-            "type": "string",
-            "enum": [
-              "truncate-response",
-              "delay-response",
-              "drop-connection",
-              "replay-request",
-              "stale-response",
-              "status-server-error",
-              "status-not-found"
-            ]
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "capability",
+              "seq",
+              "asked",
+              "answered",
+              "rule",
+              "decision",
+              "proof"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "capability": {
+                "type": "string",
+                "minLength": 1
+              },
+              "seq": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "asked": {
+                "type": "string"
+              },
+              "answered": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "minimum": 0,
+                "maximum": 599
+              },
+              "rule": {
+                "type": "string",
+                "enum": [
+                  "truncate-response",
+                  "delay-response",
+                  "drop-connection",
+                  "replay-request",
+                  "stale-response",
+                  "status-server-error",
+                  "status-not-found"
+                ]
+              },
+              "decision": {
+                "const": "proved"
+              },
+              "proof": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
           },
-          "decision": {
-            "type": "string",
-            "enum": [
-              "tests",
-              "proved",
-              "unnoticed",
-              "unreached"
-            ]
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "capability",
+              "seq",
+              "asked",
+              "answered",
+              "rule",
+              "decision"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "capability": {
+                "type": "string",
+                "minLength": 1
+              },
+              "seq": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "asked": {
+                "type": "string"
+              },
+              "answered": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "minimum": 0,
+                "maximum": 599
+              },
+              "rule": {
+                "type": "string",
+                "enum": [
+                  "truncate-response",
+                  "delay-response",
+                  "drop-connection",
+                  "replay-request",
+                  "stale-response",
+                  "status-server-error",
+                  "status-not-found"
+                ]
+              },
+              "decision": {
+                "const": "unnoticed"
+              }
+            }
           },
-          "noticed_by": {
-            "type": [
-              "string",
-              "null"
-            ]
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "capability",
+              "seq",
+              "asked",
+              "answered",
+              "rule",
+              "decision"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "capability": {
+                "type": "string",
+                "minLength": 1
+              },
+              "seq": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "asked": {
+                "type": "string"
+              },
+              "answered": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "minimum": 0,
+                "maximum": 599
+              },
+              "rule": {
+                "type": "string",
+                "enum": [
+                  "truncate-response",
+                  "delay-response",
+                  "drop-connection",
+                  "replay-request",
+                  "stale-response",
+                  "status-server-error",
+                  "status-not-found"
+                ]
+              },
+              "decision": {
+                "const": "unreached"
+              }
+            }
           }
-        }
+        ]
       }
     }
   },

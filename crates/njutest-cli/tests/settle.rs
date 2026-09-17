@@ -35,7 +35,11 @@ fn a_fault_nothing_ran_is_one_the_run_established_nothing_about() {
          calling it survived would count a question nobody asked as one nothing \
          could answer"
     );
-    assert_eq!(settled.noticed_by, None);
+    assert_eq!(
+        settled.decision.by(),
+        None,
+        "and a decision nobody made names nobody, which the type is what guarantees"
+    );
 }
 
 #[test]
@@ -47,7 +51,7 @@ fn a_fault_every_test_passed_with_is_one_nothing_noticed() {
         "the upstream answered 500 and the suite carried on, which is the gap this \
          phase exists to find"
     );
-    assert_eq!(settled.noticed_by, None);
+    assert_eq!(settled.decision.by(), None);
 }
 
 #[test]
@@ -60,12 +64,15 @@ fn a_fault_a_test_failed_with_is_one_the_tests_noticed_and_it_says_which() {
             answered("c", false),
         ],
     );
-    assert_eq!(settled.decision, SeamDecision::Tests);
     assert_eq!(
-        settled.noticed_by.as_deref(),
-        Some("b"),
+        settled.decision,
+        SeamDecision::Tests {
+            noticed_by: "b".to_owned()
+        },
         "the first that failed is the one a reader goes to, and naming a later one \
-         would send them past the test that already says it"
+         would send them past the test that already says it. The noticer travels \
+         inside the decision, so a run cannot record that the tests noticed and \
+         leave nobody named, nor name somebody where nothing noticed"
     );
 }
 

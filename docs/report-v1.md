@@ -165,8 +165,14 @@ this design, and that is a refusal rather than a defect.
 `seams` holds every question a watched seam's recording licensed and what
 became of it: the question's `id`, the `capability` and the `seq` of the
 exchange it is about, what was `asked` and what the upstream `answered` where
-the wire says how to read one, the `rule` it applies, the `decision`, and
-`noticed_by` — the target that noticed, or the proof that discharged it.
+the wire says how to read one, the `rule` it applies, and the `decision`.
+
+Who decided a question and who that was travel together. A question the tests
+noticed carries `noticed_by`, the target that did; one a proof discharged
+carries `proof`; and one nothing decided carries neither. The schema is four
+closed shapes rather than one with optional fields, so a document that says
+nothing noticed and then names a noticer is not a document it accepts, and
+neither is one that says the tests noticed and names nobody.
 
 A `wire-unnoticed` finding names a question by its `id` and nothing else. A
 reader handed a sixty-four character name with nothing to look it up in has

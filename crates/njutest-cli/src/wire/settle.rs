@@ -20,10 +20,8 @@ pub struct Answered {
 pub struct Settled {
     /// The fault this is about.
     pub fault: Fault,
-    /// What the run establishes.
+    /// What the run establishes, and — where somebody decided — who that was.
     pub decision: SeamDecision,
-    /// The target that noticed, when one did.
-    pub noticed_by: Option<String>,
 }
 
 /// What `answers` establish about `fault`.
@@ -37,16 +35,13 @@ pub fn settle(fault: &Fault, answers: &[Answered]) -> Settled {
         .iter()
         .find(|answered| !answered.passed)
         .map(|answered| answered.target.clone());
-    let decision = if answers.is_empty() {
-        SeamDecision::Unreached
-    } else if noticed_by.is_some() {
-        SeamDecision::Tests
-    } else {
-        SeamDecision::Unnoticed
+    let decision = match noticed_by {
+        _ if answers.is_empty() => SeamDecision::Unreached,
+        Some(noticed_by) => SeamDecision::Tests { noticed_by },
+        None => SeamDecision::Unnoticed,
     };
     Settled {
         fault: fault.clone(),
         decision,
-        noticed_by,
     }
 }
