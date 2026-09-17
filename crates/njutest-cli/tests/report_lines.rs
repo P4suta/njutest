@@ -111,6 +111,34 @@ fn the_verdict_is_the_last_record_so_a_reader_can_take_the_tail() {
 }
 
 #[test]
+fn a_run_says_where_it_wrote_so_nobody_reading_it_has_to_know_the_layout() {
+    let document =
+        Path::new("elsewhere/runs/20260101T000000Z-aaaaaa/njutest-assurance-report-v1.json");
+    let text = lines::kept(&report(), document);
+    let said = records(&text, "REPORT");
+    assert_eq!(
+        said,
+        vec![
+            "REPORT\telsewhere/runs/20260101T000000Z-aaaaaa/njutest-assurance-report-v1.json"
+                .to_owned()
+        ],
+        "a script that read the verdict reads the rest beside it, and a project that moved \
+         its report directory did not thereby break every reader: {text}"
+    );
+    assert_eq!(
+        text.lines().next_back(),
+        Some("VERDICT\tINSUFFICIENT"),
+        "and the verdict is still the last record, because that is what a reader takes \
+         the tail for: {text}"
+    );
+    assert!(
+        records(&lines::stream(&report()), "REPORT").is_empty(),
+        "while a report printed with nowhere to point at says nothing rather than \
+         guessing where one would be"
+    );
+}
+
+#[test]
 fn there_is_one_record_for_each_thing_the_report_holds() {
     let report = report();
     let text = lines::stream(&report);

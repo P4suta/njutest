@@ -61,7 +61,7 @@ fn verified(root: &std::path::Path) -> String {
     .expect("the report");
     std::fs::write(
         store.index(njutest_cli::app::reports::Index::Any),
-        json!({ "directory": njutest_cli::app::reports::Store::named("one"), "run_id": report.run_id }).to_string(),
+        json!({ "directory": store.named("one"), "run_id": report.run_id }).to_string(),
     )
     .expect("the pointer a reader follows");
     njutest_cli::app::lsp::uri_of(&root.join("src/lib.rs"))

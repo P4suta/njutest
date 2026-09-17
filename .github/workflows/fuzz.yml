@@ -3,22 +3,21 @@
 #
 # cargo-fuzz against the fail-closed parsers and byte transformations of both
 # products (fuzz/README.md lists the targets and their properties).
-# A pull request that touches either of them or the harness gets a short smoke;
-# the weekly run spends real time. A crash is uploaded as an artifact and is
-# a test to write, never an input to blame.
+# A crash is uploaded as an artifact and is a test to write, never an input to
+# blame.
 #
-# This file is not in that list. What a change to it usually is, is the digest
-# of an action moving: twenty-three targets built and fuzzed to find out that
-# nothing about them changed. `actionlint` reads this file on every pull
-# request, and the weekly run is what says the targets still work.
+# This runs weekly and on request, and never on a pull request. Twenty-three
+# targets built on nightly and given five thousand executions each is
+# twenty-three machines spending a quarter of an hour to search a space that
+# wants hours, and none of it gates anything: `ci-success` does not wait for
+# it, so a crash it found could not have stopped a merge anyway. What guards a
+# pull request is that the targets still compile against the API they fuzz,
+# which `lint` answers in seconds as `mise run fuzz:check`. What finds a crash
+# is time, which the weekly run spends and `mise run fuzz:smoke` spends on the
+# machine of whoever is changing a parser.
 name: fuzz
 
 on:
-  pull_request:
-    paths:
-      - "crates/rust-mutants/**"
-      - "crates/njutest-cli/**"
-      - "fuzz/**"
   schedule:
     - cron: "17 4 * * 1"
   workflow_dispatch:
@@ -95,13 +94,8 @@ jobs:
         working-directory: fuzz
         env:
           FUZZ_TARGET: ${{ matrix.target }}
-          EVENT: ${{ github.event_name }}
         run: |
-          if [ "$EVENT" = "pull_request" ]; then
-            budget="-runs=5000"
-          else
-            budget="-max_total_time=1500"
-          fi
+          budget="-max_total_time=1500"
           if [ -d "fuzz/seeds/$FUZZ_TARGET" ]; then
             mkdir -p "fuzz/corpus/$FUZZ_TARGET"
             cp "fuzz/seeds/$FUZZ_TARGET/"* "fuzz/corpus/$FUZZ_TARGET/"

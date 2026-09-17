@@ -307,11 +307,15 @@ jobs:
           printf 'version = 1\ncontract = "deep-v1"\n' > "$RUNNER_TEMP/interpreted/.njutest.toml"
           ./target/release/njutest verify \
             --directory "$RUNNER_TEMP/interpreted" --offline --locked --no-cache --ui=plain \
-            || test $? -eq 1
+            | tee "$RUNNER_TEMP/interpreted.out" \
+            || test "${PIPESTATUS[0]}" -eq 1
+      # The run says where it wrote, so this never has to know the layout.
       - name: The run says it interpreted the suite
         run: |
-          report="$RUNNER_TEMP/interpreted/$(jq -r .directory "$RUNNER_TEMP/interpreted/reports/latest-any.json")/njutest-assurance-report-v1.json"
-          jq --exit-status '.contract == "deep-v1" and .accounting.soundness.executed == true' "$report"
+          written=$(awk -F'\t' '$1 == "REPORT" { print $2 }' "$RUNNER_TEMP/interpreted.out")
+          test -n "$written" || { echo "the run said nothing about where it wrote"; exit 1; }
+          jq --exit-status '.contract == "deep-v1" and .accounting.soundness.executed == true' \
+            "$RUNNER_TEMP/interpreted/$written"
 
   action-smoke:
     name: action-smoke

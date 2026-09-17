@@ -211,7 +211,7 @@ fn establish(establishing: &Establishing<'_>, streams: Streams<'_>) -> u8 {
         Some(report.accounting),
         None,
     );
-    if let Some(code) = persist(
+    let document = match persist(
         &Persisting {
             root,
             report: &report,
@@ -225,10 +225,11 @@ fn establish(establishing: &Establishing<'_>, streams: Streams<'_>) -> u8 {
         arguments,
         stderr,
     ) {
-        return code;
-    }
+        Ok(document) => document,
+        Err(code) => return code,
+    };
 
-    let _written = stdout.write_all(lines::stream(&report).as_bytes());
+    let _written = stdout.write_all(lines::kept(&report, &document).as_bytes());
     report.verdict.exit_code()
 }
 
@@ -404,7 +405,11 @@ struct Persisting<'a> {
 }
 
 /// Writes the report where a reader will look for it, retires what the configuration no longer keeps, and stores the answer for the next run of the same inputs. Returns the exit code only when the report could not be written, which is the one failure that stops the run from having answered at all.
-fn persist(persisting: &Persisting<'_>, arguments: &Verify, stderr: &mut dyn Write) -> Option<u8> {
+fn persist(
+    persisting: &Persisting<'_>,
+    arguments: &Verify,
+    stderr: &mut dyn Write,
+) -> Result<PathBuf, u8> {
     let Persisting {
         root,
         report,
@@ -417,7 +422,7 @@ fn persist(persisting: &Persisting<'_>, arguments: &Verify, stderr: &mut dyn Wri
         Ok(written) => written,
         Err(error) => {
             super::complain(stderr, &error, error.code());
-            return Some(EXIT_ERROR);
+            return Err(EXIT_ERROR);
         }
     };
     let removed = reports::retain(root, request_keep(request));
@@ -441,7 +446,7 @@ fn persist(persisting: &Persisting<'_>, arguments: &Verify, stderr: &mut dyn Wri
     if let Some(error) = stored {
         notes.note("not-stored", &error.to_string());
     }
-    None
+    Ok(written.document)
 }
 
 /// Whether an earlier run of the same inputs has already answered, and the claim this run holds while it establishes its own.
@@ -529,11 +534,14 @@ fn reuse(asking: &Asking<'_>, stdout: &mut dyn Write, stderr: &mut dyn Write) ->
     report.timing.started = started.to_string();
     report.timing.finished = Timestamp::now().to_string();
     report.timing.duration_ms = 0;
-    if let Err(error) = reports::keep(root, &report) {
-        super::complain(stderr, &error, error.code());
-        return Reuse::Establish;
-    }
-    let _written = stdout.write_all(lines::stream(&report).as_bytes());
+    let written = match reports::keep(root, &report) {
+        Ok(written) => written,
+        Err(error) => {
+            super::complain(stderr, &error, error.code());
+            return Reuse::Establish;
+        }
+    };
+    let _written = stdout.write_all(lines::kept(&report, &written.document).as_bytes());
     Reuse::Answered(report.verdict.exit_code())
 }
 

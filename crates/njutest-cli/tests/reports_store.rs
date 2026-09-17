@@ -32,7 +32,7 @@ fn filled(runs: &[&str], indexes: &[(Index, &str)]) -> (tempfile::TempDir, PathB
             serde_json::json!({
                 "schema": "njutest-report-index-v1",
                 "run_id": run,
-                "directory": Store::named(run),
+                "directory": store.named(run),
             })
             .to_string(),
         )
@@ -206,7 +206,7 @@ fn a_run_keeps_every_projection_beside_its_document_and_points_both_indexes() {
         format!(
             "{{\n  \"directory\": \"{}\",\n  \"run_id\": \"{run}\",\n  \
              \"schema\": \"njutest-assurance-report-v1\"\n}}\n",
-            Store::named(run)
+            Store::read(root).named(run)
         ),
         "an index is a stable newline-terminated interface, not merely JSON that happens to parse"
     );
@@ -255,31 +255,36 @@ fn a_report_that_fails_its_own_audit_is_not_written_at_all() {
     );
 }
 
+/// The run the blocked-path cases are about.
+const BLOCKED_RUN: &str = "20260101T000000Z-aaaaaa";
+
+/// One path a run has to write, asked of the type that owns the layout.
+type Wanted = fn(&Store) -> PathBuf;
+
 #[test]
 fn every_failed_projection_and_index_names_the_path_that_was_not_kept() {
-    let run = "20260101T000000Z-aaaaaa";
-    let blocked = [
-        (Store::named(run), true),
-        (format!("{}/{DOCUMENT_NAME}", Store::named(run)), false),
-        (format!("{}/{SCHEMA_NAME}", Store::named(run)), false),
+    let blocked: [(Wanted, bool); 9] = [
+        (|store| store.run(BLOCKED_RUN), true),
+        (|store| store.run(BLOCKED_RUN).join(DOCUMENT_NAME), false),
+        (|store| store.run(BLOCKED_RUN).join(SCHEMA_NAME), false),
         (
-            format!(
-                "{}/{}",
-                Store::named(run),
-                njutest_cli::report::lines::FILE_NAME
-            ),
+            |store| {
+                store
+                    .run(BLOCKED_RUN)
+                    .join(njutest_cli::report::lines::FILE_NAME)
+            },
             false,
         ),
-        (format!("{}/{HTML_NAME}", Store::named(run)), false),
-        (format!("{}/{SARIF_NAME}", Store::named(run)), false),
-        (format!("{}/{JUNIT_NAME}", Store::named(run)), false),
-        (Index::Any.file().to_owned(), false),
-        (Index::Full.file().to_owned(), false),
+        (|store| store.run(BLOCKED_RUN).join(HTML_NAME), false),
+        (|store| store.run(BLOCKED_RUN).join(SARIF_NAME), false),
+        (|store| store.run(BLOCKED_RUN).join(JUNIT_NAME), false),
+        (|store| store.index(Index::Any), false),
+        (|store| store.index(Index::Full), false),
     ];
 
-    for (relative, file_in_place_of_directory) in blocked {
+    for (of, file_in_place_of_directory) in blocked {
         let dir = tempfile::tempdir().expect("tempdir");
-        let path = Store::read(dir.path()).within(&relative);
+        let path = of(&Store::read(dir.path()));
         std::fs::create_dir_all(path.parent().unwrap_or_else(|| dir.path())).expect("the parent");
         if file_in_place_of_directory {
             std::fs::write(&path, "occupied").expect("a file where a directory is needed");
@@ -287,13 +292,14 @@ fn every_failed_projection_and_index_names_the_path_that_was_not_kept() {
             std::fs::create_dir_all(&path).expect("a directory where a file is needed");
         }
 
-        let error = keep(dir.path(), &keepable(run, RunKind::Full))
+        let error = keep(dir.path(), &keepable(BLOCKED_RUN, RunKind::Full))
             .expect_err("one output path refused the report");
         assert!(
             matches!(&error, StoreError::NotKept { path: named, .. } if Path::new(named) == path),
-            "{relative} failed as {error}. The two are compared as paths because a run \
+            "{} failed as {error}. The two are compared as paths because a run \
              builds one a component at a time and a test writes one out, and on a platform \
-             with two separators those are two spellings of the same place"
+             with two separators those are two spellings of the same place",
+            path.display()
         );
     }
 }

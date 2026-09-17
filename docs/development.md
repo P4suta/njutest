@@ -44,7 +44,16 @@ That is not the order CI runs them in, because CI runs the jobs at once and
 waits for all of them while a person waits for each in turn: formatting answers
 in seconds, `lint` — clippy, rustdoc, the repository gates, the fuzz crate's
 own type check, spelling, TOML, workflows — in tens of them, and the suite in
-minutes. Among them, `cargo xtask all` is this repository's own:
+minutes.
+
+It is also what the pre-push hook runs, so a push that goes out has already
+answered everything CI asks but four things this machine cannot answer: the
+suite on Linux and Windows, the coverage ratchets, the suite under Miri, and
+the composite action driven the way another repository drives it.
+`xtask/tests/tasks.rs` holds the correspondence — a job added to `ci-success`
+has to name the local task that answers it first, or say why none can.
+
+Among them, `cargo xtask all` is this repository's own:
 
 | Gate | Refuses |
 | --- | --- |
@@ -270,9 +279,12 @@ expected outcome. See [fixtures/README.md](../fixtures/README.md).
 `fuzz/` is a standalone cargo-fuzz crate (nightly, sanitizer) with one target
 per fail-closed parser or byte transformation of the engine; each target
 states one property in its doc comment and `fuzz/README.md` lists them.
-`mise run fuzz:smoke` runs every target briefly; the `fuzz` workflow does the
-same on a pull request that touches the engine and spends real time weekly.
-A crash reproducer worth keeping becomes a regular test.
+`mise run fuzz:smoke` runs every target briefly, which is what somebody
+changing a parser does before pushing; the `fuzz` workflow spends twenty-five
+minutes a target, weekly and on request, and never on a pull request. Five
+thousand executions searches nothing a parser is afraid of, and the workflow
+does not gate `ci-success`, so a crash found there could not have stopped a
+merge in any case. A crash reproducer worth keeping becomes a regular test.
 `xtask/tests/fuzz_ledger.rs` keeps the four places that name the targets in
 step: the source files, the manifest stanzas (each with `bench = false`, so
 `cargo bench` never builds a sanitizer target), the README rows, and the

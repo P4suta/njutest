@@ -8,9 +8,24 @@ use super::{Report, TargetStatus};
 /// The record stream inside a run directory.
 pub const FILE_NAME: &str = "njutest-assurance-report-v1.lines";
 
+/// The whole report as records, each line terminated, and where the run's document is.
+///
+/// A reader who has the stream should not have to know the layout to find the
+/// document beside it: a `REPORT` record is how a script that read the verdict
+/// reads the rest, and guessing a path is how one stops working the day a
+/// project moves its report directory.
+#[must_use]
+pub fn kept(report: &Report, document: &std::path::Path) -> String {
+    written(report, Some(&rust_mutants::id::slashed(document)))
+}
+
 /// The whole report as records, each line terminated.
 #[must_use]
 pub fn stream(report: &Report) -> String {
+    written(report, None)
+}
+
+fn written(report: &Report, document: Option<&str>) -> String {
     let mut out = String::new();
     identity(report, &mut out);
     for target in &report.targets {
@@ -64,6 +79,10 @@ pub fn stream(report: &Report) -> String {
     }
     onward(report, &mut out);
     accounting(report, &mut out);
+    if let Some(document) = document {
+        record(&mut out, "REPORT", &[document]);
+        out.push('\n');
+    }
     record(&mut out, "VERDICT", &[&verdict_name(report)]);
     out.push('\n');
     out

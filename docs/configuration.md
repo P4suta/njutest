@@ -11,7 +11,7 @@ tests; `njutest init` writes the skeleton below, and a test loads the
 untouched skeleton and asserts it is exactly the defaults.
 
 `.njutest.toml` is optional and strict. Missing configuration uses
-`standard-v1`, the whole workspace, a ten-minute execution timeout, and a
+`standard-v1`, the whole workspace, a ten-minute measurement timeout, and a
 cache capped at 5 GiB and 30 days. Unknown keys, malformed values, and any
 `version` other than `1` are errors.
 
@@ -34,7 +34,8 @@ all_features = false
 no_default_features = false
 test_binary_args = []           # allowed: --test-threads=N, --include-ignored, --nocapture, --show-output
 environment = []                # variable names only, never values; RUST_TEST_* is refused
-timeout = "10m"                 # upper bound for one executed command; Go duration syntax
+timeout = "10m"                 # upper bound for one measurement; Go duration syntax
+build_timeout = ""              # upper bound for one build; empty = no bound
 jobs = 0                        # mutation workers; 0 = logical CPUs capped at four
 skip_targets = []               # stable target ids never to start; every one is reported
 

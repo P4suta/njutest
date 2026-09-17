@@ -27,7 +27,14 @@ pub fn run(
     let text = match arguments.format {
         Format::Json => runs::document(root, &run).map_err(|error| error.to_string()),
         Format::Lines => runs::report(root, &run)
-            .map(|report| lines::stream(&report))
+            .map(|report| {
+                lines::kept(
+                    &report,
+                    &crate::app::reports::Store::read(root)
+                        .run(&run)
+                        .join(crate::app::reports::DOCUMENT_NAME),
+                )
+            })
             .map_err(|error| error.to_string()),
     };
     match text {

@@ -467,6 +467,7 @@ fn considered(
             harness_args: request.test_args.clone(),
             skip_targets: request.config.execution.skip_targets.clone(),
             timeout: request.config.execution.timeout,
+            build_timeout: request.config.execution.build_timeout,
             reports: crate::app::reports::Store::of(
                 &request.root,
                 &request.config.reports.directory,
@@ -1132,7 +1133,7 @@ fn prepare(
             harness_args: request.test_args.clone(),
             verify: true,
             failing: rust_mutants::session::Failing::Exclude,
-            build_timeout: Some(request.config.execution.timeout),
+            build_timeout: request.config.execution.build_timeout,
             mutant_timeout: rust_mutants::session::Timeout::Fixed(request.config.execution.timeout),
             skip_targets: request.config.execution.skip_targets.clone(),
             ..rust_mutants::session::PrepareOptions::default()

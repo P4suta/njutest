@@ -21,7 +21,7 @@ they explain most of what looks unusual here.
 ## Gates you must keep green
 
 ```console
-mise run check          # fmt, build, test, clippy, doc, gates, typos, taplo, actionlint, deny
+mise run check          # everything CI asks that this machine can answer, and what pre-push runs
 cargo xtask all         # seam ratchet, lints, dependency direction, fixtures, release consistency
 cargo xtask report-diff A B   # what changed between two stored reports
 ```

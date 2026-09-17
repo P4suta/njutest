@@ -149,9 +149,16 @@ pub struct Execution {
     pub test_binary_args: Vec<String>,
     /// Environment variable *names* a test process may see.
     pub environment: Vec<String>,
-    /// The upper bound on one executed command.
+    /// The upper bound on one measurement, which is one test binary run against one mutation.
     #[serde(deserialize_with = "duration", serialize_with = "as_millis")]
     pub timeout: Duration,
+    /// The upper bound on one build. `None` is no bound, which is the default: a build is not a measurement, and a project that tightened the one it waits for per mutation did not thereby say how long its own compiler may take.
+    #[serde(
+        default,
+        deserialize_with = "optional_duration",
+        serialize_with = "as_optional_millis"
+    )]
+    pub build_timeout: Option<Duration>,
     /// How many mutation workers. Zero means the logical CPUs, capped.
     pub jobs: u32,
     /// Test targets never to start, by the stable id a report names them with.
@@ -180,6 +187,7 @@ impl Default for Execution {
             test_binary_args: Vec::new(),
             environment: Vec::new(),
             timeout: DEFAULT_TIMEOUT,
+            build_timeout: None,
             jobs: 0,
             skip_targets: Vec::new(),
         }
@@ -632,7 +640,8 @@ contract = \"standard-v1\"        # \"standard-v1\" | \"deep-v1\"
 # no_default_features = false
 # test_binary_args = []          # allowed: {allowed}
 # environment = []               # variable names only, never values
-# timeout = \"{timeout}m\"              # upper bound for one executed command
+# timeout = \"{timeout}m\"              # upper bound for one measurement
+# build_timeout = \"\"            # upper bound for one build; empty = no bound
 # jobs = 0                       # mutation workers; 0 = logical CPUs, capped
 # skip_targets = []              # target ids never to start; reported as a limitation
 
@@ -689,6 +698,34 @@ contract = \"standard-v1\"        # \"standard-v1\" | \"deep-v1\"
 /// A [`Duration`] as whole milliseconds, so the digest of a configuration does not depend on how a person spelled `10m`.
 fn as_millis<S: serde::Serializer>(value: &Duration, serializer: S) -> Result<S::Ok, S::Error> {
     serializer.serialize_u128(value.as_millis())
+}
+
+/// A bound a project may leave unsaid, where an empty string says it out loud.
+fn optional_duration<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<Duration>, D::Error> {
+    let text = Option::<String>::deserialize(deserializer)?;
+    match text.as_deref() {
+        None | Some("") => Ok(None),
+        Some(said) => parse_duration(said)
+            .map(Some)
+            .map_err(serde::de::Error::custom),
+    }
+}
+
+#[expect(
+    clippy::ref_option,
+    reason = "serde's serialize_with hands the field by reference, so the signature is its \
+              contract rather than a choice"
+)]
+fn as_optional_millis<S: serde::Serializer>(
+    value: &Option<Duration>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    match value {
+        Some(bound) => serializer.serialize_u128(bound.as_millis()),
+        None => serializer.serialize_none(),
+    }
 }
 
 impl Config {

@@ -38,6 +38,8 @@ pub struct Checking<'a> {
     pub skip_targets: Vec<String>,
     /// How long one execution may take.
     pub timeout: Duration,
+    /// How long the build may take, which is not how long a measurement may take. `None` is no bound.
+    pub build_timeout: Option<Duration>,
     /// Where this project keeps what its runs leave behind, which the tree under test is copied without.
     pub reports: crate::app::reports::Store,
 }
@@ -111,7 +113,7 @@ pub fn check(
             build: checking.build.clone(),
             harness_args: checking.harness_args.clone(),
             skip_targets: checking.skip_targets.clone(),
-            build_timeout: Some(checking.timeout),
+            build_timeout: checking.build_timeout,
             mutant_timeout: Timeout::Fixed(checking.timeout),
             ..PrepareOptions::default()
         },

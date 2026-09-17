@@ -32,6 +32,23 @@ fn task(name: &str) -> String {
 /// Every gate `cargo xtask all` runs, which is what CI runs.
 const GATES: [&str; 5] = ["devgates", "lints", "deps", "fixtures", "release-check"];
 
+/// Every job `ci-success` waits for, and the local task that answers it first.
+///
+/// `None` is a job this machine cannot answer, with the reason it cannot. The
+/// list is the whole of what a push has to wait for CI to find out, so adding
+/// to it is a decision rather than an omission.
+const GATED: [(&str, Option<&str>); 9] = [
+    ("test", Some("mise run test")),
+    ("lint", Some("mise run lint")),
+    ("deny", Some("mise run deny")),
+    ("audit", Some("mise run audit")),
+    ("book", Some("mise run book")),
+    ("package-install", Some("mise run package")),
+    ("coverage", None),
+    ("soundness", None),
+    ("action-smoke", None),
+];
+
 #[test]
 fn the_gates_a_person_runs_are_the_gates_the_pipeline_runs() {
     let local = task("gates");
@@ -44,9 +61,49 @@ fn the_gates_a_person_runs_are_the_gates_the_pipeline_runs() {
     }
     let hooks = repository("lefthook.yml");
     assert!(
-        hooks.contains("cargo xtask all"),
-        "the pre-push hook runs one gate rather than every gate: {hooks}"
+        hooks.contains("mise run check"),
+        "the pre-push hook runs something other than every local gate: {hooks}"
     );
+}
+
+#[test]
+fn every_gate_the_pipeline_waits_for_is_one_this_machine_answered_first() {
+    let workflow = repository(".github/workflows/ci.yml");
+    let needs = workflow
+        .split_once("  ci-success:")
+        .and_then(|(_before, rest)| rest.split_once("needs:"))
+        .and_then(|(_before, rest)| rest.split_once(']'))
+        .map(|(list, _rest)| list.to_owned())
+        .expect("ci-success names the jobs it waits for");
+    let waited: Vec<String> = needs
+        .trim_start()
+        .trim_start_matches('[')
+        .split(',')
+        .map(|name| name.trim().to_owned())
+        .filter(|name| !name.is_empty())
+        .collect();
+    let mut named: Vec<String> = GATED.iter().map(|(job, _task)| (*job).to_owned()).collect();
+    let mut waited = waited;
+    waited.sort();
+    named.sort();
+    assert_eq!(
+        waited, named,
+        "a job was added to or taken from `ci-success` without saying whether a push can \
+         find out about it first, which is how a twenty-minute answer becomes the only \
+         answer"
+    );
+
+    let check = task("check");
+    for (job, locally) in GATED {
+        let Some(locally) = locally else {
+            continue;
+        };
+        assert!(
+            check.contains(locally),
+            "`{job}` is a gate this machine can answer, but `mise run check` does not run \
+             `{locally}`, so a push waits for the pipeline to say what it knew: {check}"
+        );
+    }
 }
 
 #[test]

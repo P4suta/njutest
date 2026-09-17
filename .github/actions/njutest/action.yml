@@ -82,12 +82,13 @@ runs:
         njutest verify ${ARGS} | tee njutest-verify.out
         status=${PIPESTATUS[0]}
         verdict=$(awk -F'\t' '$1 == "VERDICT" { print $2 }' njutest-verify.out)
-        index="reports/latest-any.json"
-        if [ -f "${index}" ]; then
-          directory=$(jq -r .directory "${index}")
+        # The run says where it wrote, so this never has to know the layout:
+        # `[reports] directory` is the project's to choose.
+        report=$(awk -F'\t' '$1 == "REPORT" { print $2 }' njutest-verify.out)
+        if [ -n "${report}" ]; then
           {
-            echo "report=${directory}/njutest-assurance-report-v1.json"
-            echo "sarif=${directory}/njutest-assurance-report-v1.sarif"
+            echo "report=${report}"
+            echo "sarif=${report%njutest-assurance-report-v1.json}njutest-assurance-report-v1.sarif"
           } >> "${GITHUB_OUTPUT}"
         fi
         {

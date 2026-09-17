@@ -309,8 +309,7 @@ fn ran(root: &std::path::Path) {
     .expect("the report");
     std::fs::write(
         store.index(njutest_cli::app::reports::Index::Any),
-        json!({ "directory": njutest_cli::app::reports::Store::named("one"), "run_id": "one" })
-            .to_string(),
+        json!({ "directory": store.named("one"), "run_id": "one" }).to_string(),
     )
     .expect("the pointer a reader follows");
 }
@@ -555,7 +554,7 @@ fn a_run_that_has_not_happened_is_not_a_file_with_nothing_wrong_in_it() {
 
     std::fs::write(
         store.index(njutest_cli::app::reports::Index::Any),
-        json!({ "directory": njutest_cli::app::reports::Store::named("gone") }).to_string(),
+        json!({ "directory": store.named("gone") }).to_string(),
     )
     .expect("a pointer to a run whose report is not there");
     let missing = served(

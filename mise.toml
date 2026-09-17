@@ -49,10 +49,14 @@ run = "cargo build --locked --workspace --all-targets"
 [tasks.fmt]
 description = "Format Rust and TOML"
 run = ["cargo fmt --all", "taplo fmt"]
+# taplo lists every file it read at INFO, which is seventy lines of noise in
+# front of whatever it has to say.
+env = { RUST_LOG = "warn" }
 
 [tasks."fmt:check"]
 description = "Check Rust and TOML formatting without rewriting files"
 run = ["cargo fmt --all -- --check", "taplo fmt --check", "taplo lint"]
+env = { RUST_LOG = "warn" }
 
 [tasks.clippy]
 description = "Lint every target with warnings denied"
@@ -149,6 +153,13 @@ cargo llvm-cov report --summary-only --fail-under-regions 80 \
   --ignore-filename-regex 'crates/|fuzz/'
 """
 
+[tasks.package]
+description = "Package every publishable member and write what a release would say it is made of"
+run = [
+  "cargo package --locked --workspace --no-verify --allow-dirty --exclude-lockfile",
+  "cargo xtask sbom --output target/njutest.cdx.json",
+]
+
 [tasks.deny]
 description = "Check licenses, advisories, bans, and sources"
 run = "cargo deny --locked check"
@@ -190,6 +201,12 @@ run = "cargo mutants --config .cargo/mutants.toml --workspace"
 # documentation links and two fuzz targets naming code that had been deleted
 # all lived behind a three-minute suite, and every one of them is something
 # `lint` says in seventeen seconds.
+# What this leaves to CI is what this machine cannot answer: the suite on the
+# other two platforms, the coverage ratchets (a second instrumented run of
+# everything), the suite under the interpreter, and the composite action driven
+# the way another repository drives it. Everything else CI asks is asked here
+# first, because a push that has to wait twenty minutes to be told about a
+# stale golden is a push nobody waits for.
 [tasks.check]
 description = "Run every local gate, the ones that answer quickest first"
 run = [
@@ -199,6 +216,8 @@ run = [
   "mise run test",
   "mise run deny",
   "mise run audit",
+  "mise run book",
+  "mise run package",
 ]
 
 [tasks.bench]

@@ -67,6 +67,34 @@ fn the_defaults_ask_for_nothing_a_run_has_to_be_told() {
 }
 
 #[test]
+fn how_long_a_measurement_may_take_is_not_how_long_a_build_may_take() {
+    let config = load("version = 1\n\n[execution]\ntimeout = \"2s\"\n").expect("a configuration");
+    assert_eq!(config.execution.timeout, Duration::from_secs(2));
+    assert_eq!(
+        config.execution.build_timeout, None,
+        "a project that said how long it waits for one mutation has not said how long \
+         its own compiler may take, and bounding the build by the same number is how a \
+         tight bound turns every run into RM1014 on a machine that was busy"
+    );
+
+    let bounded =
+        load("version = 1\n\n[execution]\nbuild_timeout = \"5m\"\n").expect("a configuration");
+    assert_eq!(
+        bounded.execution.build_timeout,
+        Some(Duration::from_secs(300)),
+        "and a project that does want one says so in its own key"
+    );
+    assert_eq!(
+        load("version = 1\n\n[execution]\nbuild_timeout = \"\"\n")
+            .expect("a configuration")
+            .execution
+            .build_timeout,
+        None,
+        "where empty is the same as saying nothing, which is what the skeleton shows"
+    );
+}
+
+#[test]
 fn an_empty_file_and_the_written_skeleton_both_mean_the_defaults() {
     let written = skeleton();
     assert_eq!(load("").expect("empty is legal"), Config::default());

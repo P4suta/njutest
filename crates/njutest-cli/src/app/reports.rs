@@ -20,6 +20,7 @@ use crate::report::{Report, json};
 pub struct Store {
     runs: PathBuf,
     root: PathBuf,
+    at: PathBuf,
     configured: PathBuf,
 }
 
@@ -31,6 +32,7 @@ impl Store {
         Self {
             runs: here.join(RUNS_NAME),
             root: here,
+            at: root.to_path_buf(),
             configured: configured.to_path_buf(),
         }
     }
@@ -65,21 +67,16 @@ impl Store {
 
     /// The directory of the run one index names, or nothing when it names none.
     ///
-    /// An index holds a path relative to itself, so resolving one against the
-    /// project root reads as a run nobody stored the moment the report
-    /// directory moves. Every reader asks here instead.
+    /// An index names a run the way somebody standing in the project would:
+    /// a jq one-liner and a person reading the file want the same path, and a
+    /// reader who joined it onto the wrong root would be reading a run nobody
+    /// stored.
     #[must_use]
     pub fn run_of(&self, index: Index) -> Option<PathBuf> {
         let text = std::fs::read_to_string(self.index(index)).ok()?;
         let value: serde_json::Value = serde_json::from_str(&text).ok()?;
         let directory = value.get("directory")?.as_str()?;
-        Some(self.within(directory))
-    }
-
-    /// Where something one index names sits, which an index names relative to itself so that moving the directory moves what it says.
-    #[must_use]
-    pub fn within(&self, relative: &str) -> PathBuf {
-        self.root.join(relative)
+        Some(self.at.join(directory))
     }
 
     /// Where one index that names the newest run sits.
@@ -88,10 +85,10 @@ impl Store {
         self.root.join(index.file())
     }
 
-    /// What an index calls one run's directory, which is relative to the index itself.
+    /// What an index calls one run's directory, which is where it is from the project's own root.
     #[must_use]
-    pub fn named(run_id: &str) -> String {
-        format!("{RUNS_NAME}/{run_id}")
+    pub fn named(&self, run_id: &str) -> String {
+        format!("{}/{RUNS_NAME}/{run_id}", self.relative())
     }
 }
 
@@ -285,7 +282,7 @@ fn point(store: &Store, index: Index, run_id: &str) -> Result<(), StoreError> {
     let mut text = serde_json::to_string_pretty(&serde_json::json!({
         "schema": crate::report::SCHEMA,
         "run_id": run_id,
-        "directory": Store::named(run_id),
+        "directory": store.named(run_id),
     }))
     .unwrap_or_default();
     text.push('\n');
