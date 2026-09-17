@@ -35,6 +35,7 @@ fn against(fixture: &Fixture, args: &[&str]) -> Said {
     let environment = Environment {
         vars,
         temp_directory: fixture.temp().to_path_buf(),
+        program: std::path::PathBuf::from("this test never runs it"),
         cache_directory: fixture.cache().to_path_buf(),
         working_directory: fixture.root().to_path_buf(),
         no_color: true,

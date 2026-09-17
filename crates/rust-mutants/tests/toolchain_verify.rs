@@ -183,14 +183,17 @@ fn a_tree_that_passes_reports_a_baseline_for_every_target_it_ran() {
         "the run asked every target and kept what each came to"
     );
     for (target, baseline) in &verified.targets {
-        assert!(baseline.passed(), "{target} passed");
         assert!(
-            baseline.output.is_empty(),
+            baseline.judgeable().is_some(),
+            "{target} passed, so it hands back something a mutation can be judged against"
+        );
+        assert!(
+            baseline.baseline().output.is_empty(),
             "{target} passed, so nobody reads what it printed"
         );
         assert_eq!(
             session.tests_of(target).max(1),
-            baseline.tests.max(1),
+            baseline.baseline().tests.max(1),
             "what one target's baseline ran is what asking the whole of it costs"
         );
     }
@@ -206,13 +209,14 @@ fn a_target_whose_every_test_is_ignored_says_so_rather_than_saying_nothing() {
         .get("fixture-ignored/lib/fixture_ignored")
         .expect("the library target was verified");
     assert_eq!(
-        baseline.outcome,
+        baseline.baseline().outcome,
         rust_mutants::outcome::Outcome::Inconclusive,
         "a target that ran no test decided nothing"
     );
-    assert_eq!(baseline.tests, 0, "it ran none");
+    assert_eq!(baseline.baseline().tests, 0, "it ran none");
     assert_eq!(
-        baseline.ignored, 2,
+        baseline.baseline().ignored,
+        2,
         "and it says how many it was told to skip, which is what tells it from a harness \
          that printed no summary at all"
     );
@@ -400,4 +404,38 @@ fn a_target_that_did_not_pass_the_first_time_is_run_once_more_before_the_session
          that once came out differently is worth that much less: {:?}",
         verified.touched.limitations
     );
+}
+
+/// A target whose own tests fail hands back nothing a result may rest on.
+///
+/// The check used to be a method every caller had to remember to call, and a
+/// caller who forgot would report a kill for every mutation put to a target
+/// that answers every one of them with the same failure. There is no longer a
+/// way from a failing baseline to something a judgement can take.
+#[test]
+fn a_failing_baseline_is_not_something_a_result_can_rest_on() {
+    let fixture = Fixture::copy("fixture-verify-fails");
+    let session = prepare(&fixture, Failing::Exclude).expect("the table rather than a refusal");
+    let verified = session.verified();
+
+    let failing = verified.failing();
+    assert!(
+        !failing.is_empty(),
+        "this fixture fails its own tests, which is what it is for"
+    );
+    for target in failing {
+        assert!(
+            verified.judgeable(target).is_none(),
+            "{target} answers every mutation with the same failure, so there is nothing \
+             here a kill could be about"
+        );
+        assert!(
+            verified
+                .targets
+                .get(target)
+                .is_some_and(|measured| !measured.baseline().output.is_empty()),
+            "{target} still says what it printed, because a reader has to be told which \
+             target it was and why"
+        );
+    }
 }

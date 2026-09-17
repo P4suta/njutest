@@ -142,14 +142,14 @@ proptest! {
         targets in 0u64..64,
     ) {
         let counted = Estimated {
-            cataloged,
-            selected,
-            pairs,
-            tests,
-            tests_whole,
+            cataloged: cataloged.into(),
+            selected: selected.into(),
+            pairs: pairs.into(),
+            tests: tests.into(),
+            tests_whole: tests_whole.into(),
             ..Estimated::default()
         };
-        let said = counted.said(targets);
+        let said = counted.said(targets.into());
         for share in said
             .split_whitespace()
             .filter_map(|word| word.strip_suffix("%"))

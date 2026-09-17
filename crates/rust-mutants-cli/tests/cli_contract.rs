@@ -36,6 +36,7 @@ fn environment() -> Environment {
     Environment {
         vars: njutest_devkit::paths::environment_for_a_run(),
         temp_directory: std::env::temp_dir(),
+        program: PathBuf::from("this test never runs it"),
         cache_directory: std::env::temp_dir(),
         working_directory: std::env::current_dir().unwrap_or_else(|_error| PathBuf::from(".")),
         no_color: true,

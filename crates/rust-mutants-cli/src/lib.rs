@@ -39,6 +39,14 @@ pub struct Environment {
     pub vars: Vec<(OsString, OsString)>,
     /// The directory snapshots and target directories are created in.
     pub temp_directory: PathBuf,
+    /// This program's own path, which `doctor` copies to measure what running a newly written file costs.
+    ///
+    /// An argument for the same reason the temporary directory is: the
+    /// composition root is where the operating system is asked. It has to be a
+    /// program somebody may copy and run — a system binary is signed in place
+    /// and is killed when it is run from anywhere else — and this one is both
+    /// to hand and known to run.
+    pub program: PathBuf,
     /// The user's cache directory, which what earlier runs established is kept under.
     pub cache_directory: PathBuf,
     /// The working directory, which a command with no `--root` reads.

@@ -69,6 +69,14 @@ pub struct Environment {
     pub working_directory: PathBuf,
     /// The operating system's temporary directory.
     pub temp_directory: PathBuf,
+    /// This program's own path, which `doctor` copies to measure what running a newly written file costs.
+    ///
+    /// An argument for the same reason the temporary directory is: the
+    /// composition root is where the operating system is asked. It has to be a
+    /// program somebody may copy and run — a system binary is signed in place
+    /// and is killed when it is run from anywhere else — and this one is both
+    /// to hand and known to run.
+    pub program: PathBuf,
     /// The user's cache directory, which earlier outcomes live under.
     pub cache_directory: PathBuf,
     /// Raised when the process is asked to stop. The composition root owns the signals; every phase reads this flag.

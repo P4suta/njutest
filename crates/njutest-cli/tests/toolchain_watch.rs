@@ -76,6 +76,7 @@ fn a_watch_verifies_the_tree_as_it_stands_and_carries_that_round_s_verdict() {
         cache_directory: Environment::cache_directory_of(&vars),
         working_directory: root.path().to_owned(),
         temp_directory: scratch,
+        program: std::path::PathBuf::from("this test never runs it"),
         vars,
         cancel: Cancel::new(),
     };
@@ -160,6 +161,7 @@ fn a_run_with_nowhere_to_work_stops_before_it_says_it_looked() {
         cache_directory: root.path().to_owned(),
         working_directory: root.path().to_owned(),
         temp_directory: occupied,
+        program: std::path::PathBuf::from("this test never runs it"),
         vars: Vec::new(),
         cancel: Cancel::new(),
     };
@@ -236,6 +238,7 @@ fn a_run_told_where_to_look_for_a_toolchain_looks_there_and_nowhere_else() {
         cache_directory: root.path().to_owned(),
         working_directory: root.path().to_owned(),
         temp_directory: scratch,
+        program: std::path::PathBuf::from("this test never runs it"),
         vars: vec![(
             OsString::from("PATH"),
             OsString::from(empty.display().to_string()),
@@ -269,6 +272,7 @@ fn a_run_told_where_to_look_for_a_toolchain_looks_there_and_nowhere_else() {
         cache_directory: root.path().to_owned(),
         working_directory: root.path().to_owned(),
         temp_directory: scratch,
+        program: std::path::PathBuf::from("this test never runs it"),
         vars: std::env::vars_os()
             .filter(|(name, _)| {
                 njutest_devkit::paths::same_name(name, std::ffi::OsStr::new("PATH"))
@@ -546,6 +550,7 @@ fn a_second_run_of_one_tree_reads_back_what_the_first_established_and_says_whose
         cache_directory: dir.path().join("cache"),
         working_directory: root.clone(),
         temp_directory: scratch,
+        program: std::path::PathBuf::from("this test never runs it"),
         vars,
         cancel: Cancel::new(),
     };
@@ -675,6 +680,7 @@ fn fuzz_targets_a_run_was_not_asked_to_drive_are_a_gap_it_states_rather_than_pas
         cache_directory: dir.path().join("cache"),
         working_directory: root.clone(),
         temp_directory: scratch,
+        program: std::path::PathBuf::from("this test never runs it"),
         vars,
         cancel: Cancel::new(),
     };
@@ -731,6 +737,7 @@ fn a_mutation_the_compiler_renders_identically_is_only_equivalent_where_the_test
         cache_directory: dir.path().join("cache"),
         working_directory: root.clone(),
         temp_directory: scratch,
+        program: std::path::PathBuf::from("this test never runs it"),
         vars,
         cancel: Cancel::new(),
     };
@@ -852,6 +859,7 @@ fn a_run_that_held_something_says_what_it_held_and_lets_go_of_it() {
         cache_directory: dir.path().join("cache"),
         working_directory: root.clone(),
         temp_directory: scratch,
+        program: std::path::PathBuf::from("this test never runs it"),
         vars,
         cancel: Cancel::new(),
     };
@@ -964,6 +972,7 @@ fn a_candidate_offered_for_a_gap_is_put_to_the_tests_before_it_is_recorded() {
         cache_directory: dir.path().join("cache"),
         working_directory: root.clone(),
         temp_directory: scratch,
+        program: std::path::PathBuf::from("this test never runs it"),
         vars,
         cancel: Cancel::new(),
     };
@@ -1087,6 +1096,7 @@ fn unkeepable(dir: &std::path::Path, from: &std::path::Path, environment: Enviro
     let elsewhere = Environment {
         working_directory: blocked.clone(),
         temp_directory: scratch,
+        program: std::path::PathBuf::from("this test never runs it"),
         cache_directory: dir.join("cache-again"),
         ..environment
     };
@@ -1157,6 +1167,7 @@ fn a_run_that_was_stopped_leaves_what_it_established_for_the_next_one() {
         cache_directory: dir.path().join("cache"),
         working_directory: root.clone(),
         temp_directory: scratch,
+        program: std::path::PathBuf::from("this test never runs it"),
         vars,
         cancel: Cancel::new(),
     };
@@ -1270,6 +1281,7 @@ fn once(
         cache_directory: dir.join(format!("{name}-cache")),
         working_directory: root.clone(),
         temp_directory: scratch,
+        program: std::path::PathBuf::from("this test never runs it"),
         vars,
         cancel: Cancel::new(),
     };
@@ -1336,6 +1348,7 @@ fn part(root: &std::path::Path, dir: &std::path::Path, shard: &str) -> serde_jso
         cache_directory: dir.join("parts-cache"),
         working_directory: root.to_path_buf(),
         temp_directory: scratch,
+        program: std::path::PathBuf::from("this test never runs it"),
         vars,
         cancel: Cancel::new(),
     };
@@ -1407,6 +1420,7 @@ fn refused(fixture: &str, dir: &std::path::Path, name: &str, configured: &str) -
         cache_directory: dir.join(format!("{name}-cache")),
         working_directory: root,
         temp_directory: scratch,
+        program: std::path::PathBuf::from("this test never runs it"),
         vars: njutest_devkit::paths::environment_for_a_run(),
         cancel: Cancel::new(),
     };
@@ -1534,6 +1548,7 @@ fn a_target_the_fuzzer_could_not_drive_is_a_gap_and_never_a_target_that_found_no
         cache_directory: dir.path().join("cache"),
         working_directory: root.clone(),
         temp_directory: scratch,
+        program: std::path::PathBuf::from("this test never runs it"),
         vars,
         cancel: Cancel::new(),
     };
@@ -1610,6 +1625,7 @@ fn verified_in_process(
         cache_directory: Environment::cache_directory_of(&vars),
         working_directory: root.clone(),
         temp_directory: scratch,
+        program: std::path::PathBuf::from("this test never runs it"),
         vars,
         cancel: Cancel::new(),
     };
@@ -1720,6 +1736,7 @@ fn a_run_in_this_process_writes_what_it_learned_before_it_compiled_anything() {
         cache_directory: Environment::cache_directory_of(&vars),
         working_directory: root.clone(),
         temp_directory: scratch,
+        program: std::path::PathBuf::from("this test never runs it"),
         vars,
         cancel: Cancel::new(),
     };

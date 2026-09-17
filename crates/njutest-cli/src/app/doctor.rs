@@ -236,7 +236,7 @@ fn examine(environment: &Environment) -> Vec<Finding> {
         Finding {
             named: "exec",
             need: Need::Required,
-            detail: exec_cost(&environment.temp_directory),
+            detail: exec_cost(&environment.temp_directory, &environment.program),
         },
     ]
 }
@@ -250,13 +250,12 @@ fn examine(environment: &Environment) -> Vec<Finding> {
 /// caller can see reports it: not load, not free processors, not free memory.
 /// The pair is the evidence — one slow run could be a slow disk, and a slow one
 /// beside a fast one of the same file cannot be anything else.
-fn exec_cost(temp: &Path) -> State {
-    let Some((first, second)) = rust_mutants::execcost::exec_twice(temp) else {
-        return State::Found(String::from(
-            "not measured on this platform, so nothing here says what running a fresh \
-             binary costs",
-        ));
+fn exec_cost(temp: &Path, program: &Path) -> State {
+    let (first, second) = match rust_mutants::execcost::exec_twice(temp, program) {
+        Ok(measured) => measured,
+        Err(why) => return State::Found(format!("not measured: {why}")),
     };
+
     let (first, second) = (first.as_secs_f64(), second.as_secs_f64());
     let said = format!(
         "a newly written file took {first:.2}s to run the first time and {second:.2}s the \

@@ -353,6 +353,7 @@ fn asked(root: &std::path::Path, args: &[&str]) -> (u8, String, String) {
         cache_directory: root.join("cache"),
         working_directory: root.to_path_buf(),
         temp_directory: scratch,
+        program: std::path::PathBuf::from("this test never runs it"),
         vars: Vec::new(),
         cancel: rust_mutants::runner::Cancel::new(),
     };

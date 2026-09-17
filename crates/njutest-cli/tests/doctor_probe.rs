@@ -36,6 +36,7 @@ fn environment(
         cache_directory: root.join("cache"),
         working_directory: root.to_path_buf(),
         temp_directory: root.join("temp"),
+        program: std::path::PathBuf::from(env!("CARGO_BIN_EXE_njutest")),
         vars,
         cancel: Cancel::new(),
     }

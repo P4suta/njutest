@@ -21,6 +21,7 @@ fn stopped(root: &Path) -> Environment {
         vars: Vec::new(),
         working_directory: root.to_owned(),
         temp_directory: root.to_owned(),
+        program: std::path::PathBuf::from("this test never runs it"),
         cache_directory: root.to_owned(),
         cancel,
     }

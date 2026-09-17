@@ -471,6 +471,7 @@ fn a_root_a_command_names_is_resolved_against_where_the_command_was_told_it_is()
     let environment = rust_mutants_cli::Environment {
         vars: Vec::new(),
         temp_directory: PathBuf::from("/tmp"),
+        program: PathBuf::from("this test never runs it"),
         cache_directory: PathBuf::from("/tmp/cache"),
         working_directory: here.path().to_path_buf(),
         no_color: true,

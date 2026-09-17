@@ -8,6 +8,7 @@
 pub mod canonical;
 pub mod cargo;
 pub mod catalog;
+pub mod count;
 pub mod coverage;
 pub mod discover;
 pub mod duration;

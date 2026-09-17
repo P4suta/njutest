@@ -100,7 +100,9 @@ fn verify_targets(
     for target in targets {
         let (baseline, observed) = verify_target(target, scratch, building, &mut verified.touched);
         let _old = tests_run.insert(target.id.clone(), observed);
-        let _kept = verified.targets.insert(target.id.clone(), baseline);
+        let _kept = verified
+            .targets
+            .insert(target.id.clone(), Measured::of(baseline));
     }
     (verified, tests_run)
 }
@@ -384,7 +386,7 @@ impl Remembering {
                 return None;
             }
             let _old = tests_run.insert(target.clone(), baseline.tests_run);
-            let _old = verified.targets.insert(target, value);
+            let _old = verified.targets.insert(target, Measured::of(value));
         }
         Some(Recalled {
             verified,
@@ -401,7 +403,12 @@ impl Remembering {
     ) -> Result<(), String> {
         let mut remembered_targets = BTreeMap::new();
         for target in targets {
-            let Some(baseline) = verified.targets.get(&target.id).filter(|one| one.passed()) else {
+            let Some(baseline) = verified
+                .targets
+                .get(&target.id)
+                .and_then(Measured::judgeable)
+                .map(Passing::baseline)
+            else {
                 return Err(format!("{} has no passing baseline to remember", target.id));
             };
             let Some(observed_tests_run) = tests_run.get(&target.id) else {
@@ -462,7 +469,7 @@ fn replay(
     trace: &crate::trace::Recorder,
 ) {
     for target in targets {
-        let Some(baseline) = verified.targets.get(&target.id) else {
+        let Some(baseline) = verified.targets.get(&target.id).map(Measured::baseline) else {
             continue;
         };
         trace.verify(crate::trace::VerifyRecord {
@@ -738,7 +745,7 @@ pub(super) fn refusal(verified: &Verified) -> EngineError {
 fn said(verified: &Verified, failed: &[&str]) -> String {
     let mut text = String::new();
     for target in failed {
-        let Some(baseline) = verified.targets.get(*target) else {
+        let Some(baseline) = verified.targets.get(*target).map(Measured::baseline) else {
             continue;
         };
         if baseline.output.trim().is_empty() {
@@ -825,9 +832,72 @@ impl Baseline {
 #[non_exhaustive]
 pub struct Verified {
     /// What each target's own baseline came to, by target identity.
-    pub targets: BTreeMap<String, Baseline>,
+    pub targets: BTreeMap<String, Measured>,
     /// What the guards recorded on that same run.
     pub touched: crate::touch::Touched,
+}
+
+/// What one target's baseline came to, in the two cases that mean different things.
+///
+/// The distinction used to be a method somebody had to remember to call. A
+/// target whose own tests do not pass answers every mutation with the same
+/// failure, so a run that judged against one would report a kill for every
+/// mutation it put to it and not one of those kills would be about a mutation.
+/// Taking a baseline out of here now makes the caller say which case they are
+/// in, and only one of the two hands back something a mutation can be judged
+/// against.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Measured {
+    /// A baseline a mutation may be put to.
+    Passing(Passing),
+    /// One it may not, kept because a reader has to be told which target it was.
+    Failing(Baseline),
+}
+
+impl Measured {
+    /// What the target came to, whichever case it is in, for an account that covers all of them.
+    #[must_use]
+    pub const fn baseline(&self) -> &Baseline {
+        match self {
+            Self::Passing(passing) => passing.baseline(),
+            Self::Failing(baseline) => baseline,
+        }
+    }
+
+    /// The baseline where a mutation may be judged against it, and nothing where it may not.
+    #[must_use]
+    pub const fn judgeable(&self) -> Option<&Passing> {
+        match self {
+            Self::Passing(passing) => Some(passing),
+            Self::Failing(_) => None,
+        }
+    }
+
+    /// Which case `baseline` is in, decided once here rather than at every use.
+    #[must_use]
+    pub const fn of(baseline: Baseline) -> Self {
+        if baseline.passed() {
+            Self::Passing(Passing(baseline))
+        } else {
+            Self::Failing(baseline)
+        }
+    }
+}
+
+/// A baseline that passed, which is the only kind a mutation may be judged against.
+///
+/// There is no way to make one from a baseline that did not, so a function
+/// that takes this has been given the check rather than asked to remember it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Passing(Baseline);
+
+impl Passing {
+    /// What the target came to.
+    #[must_use]
+    pub const fn baseline(&self) -> &Baseline {
+        &self.0
+    }
 }
 
 impl Verified {
@@ -836,9 +906,19 @@ impl Verified {
     pub fn failing(&self) -> Vec<&str> {
         self.targets
             .iter()
-            .filter(|(_, baseline)| !baseline.passed())
+            .filter(|(_, measured)| measured.judgeable().is_none())
             .map(|(target, _)| target.as_str())
             .collect()
+    }
+
+    /// The baseline a mutation may be judged against for `target`, and nothing where there is none.
+    ///
+    /// The only way to a baseline a result may rest on. Everything else hands
+    /// back what the target came to for an account of it, which is a different
+    /// question and reads differently at the call site.
+    #[must_use]
+    pub fn judgeable(&self, target: &str) -> Option<&Passing> {
+        self.targets.get(target).and_then(Measured::judgeable)
     }
 }
 

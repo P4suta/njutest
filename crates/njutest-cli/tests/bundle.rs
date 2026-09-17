@@ -21,6 +21,7 @@ fn environment(root: &Path) -> Environment {
     Environment {
         working_directory: root.to_path_buf(),
         temp_directory: root.join("tmp"),
+        program: std::path::PathBuf::from("this test never runs it"),
         cache_directory: root.join("cache"),
         ..Environment::default()
     }

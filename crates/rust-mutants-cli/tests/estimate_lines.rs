@@ -23,18 +23,18 @@ fn line<'a>(text: &'a str, name: &str) -> &'a str {
 #[test]
 fn an_estimate_counts_the_pairs_a_run_would_start_against_the_pairs_there_are() {
     let counted = Estimated {
-        cataloged: 10,
-        selected: 4,
-        pairs: 8,
-        unreached: 24,
-        discharged: 6,
-        unselected: 2,
-        nothing_to_ask: 4,
-        tests: 30,
-        tests_whole: 120,
+        cataloged: 10_u64.into(),
+        selected: 4_u64.into(),
+        pairs: 8_u64.into(),
+        unreached: 24_u64.into(),
+        discharged: 6_u64.into(),
+        unselected: 2_u64.into(),
+        nothing_to_ask: 4_u64.into(),
+        tests: 30_u64.into(),
+        tests_whole: 120_u64.into(),
         duration: Duration::from_secs(90),
     };
-    let said = counted.said(4);
+    let said = counted.said(rust_mutants::count::Count::new(4));
 
     assert!(
         line(&said, "WOULD START").contains("8 of 40 pairs (10 mutants against 4 targets)"),
@@ -52,12 +52,12 @@ fn an_estimate_counts_the_pairs_a_run_would_start_against_the_pairs_there_are() 
     );
     assert!(
         line(&said, "REMOVED BY")
-            .contains("unreached=24 discharged=6 pairs the route removed, of 32"),
+            .contains("unreached=24 discharged=6 of the 32 pairs the route removed"),
         "every pair removed is removed by something a person can go and look at, and the \
          two numbers add up to the pairs the line above says were removed: {said}"
     );
     assert!(
-        line(&said, "NEVER ASKED").contains("unselected=2 nothing-to-ask=4 mutants, of the 10"),
+        line(&said, "NEVER ASKED").contains("unselected=2 nothing-to-ask=4 of the 10 mutants"),
         "a mutant nothing asks about is not a pair that was removed, and a reader who \
          added it to the pairs was adding two different things: {said}"
     );
@@ -69,7 +69,7 @@ fn an_estimate_counts_the_pairs_a_run_would_start_against_the_pairs_there_are() 
 
 #[test]
 fn a_catalog_with_nothing_in_it_removed_nothing_rather_than_everything() {
-    let said = Estimated::default().said(0);
+    let said = Estimated::default().said(rust_mutants::count::Count::new(0));
     assert!(
         line(&said, "WOULD START").contains("0 of 0 pairs")
             && line(&said, "WOULD START").contains("0.0% removed"),
@@ -90,35 +90,47 @@ fn a_catalog_with_nothing_in_it_removed_nothing_rather_than_everything() {
 #[test]
 fn a_run_that_removed_every_pair_says_so_and_a_run_that_removed_none_says_that() {
     let whole = Estimated {
-        cataloged: 5,
-        selected: 5,
-        pairs: 10,
-        tests: 40,
-        tests_whole: 40,
+        cataloged: 5_u64.into(),
+        selected: 5_u64.into(),
+        pairs: 10_u64.into(),
+        tests: 40_u64.into(),
+        tests_whole: 40_u64.into(),
         ..Estimated::default()
     };
     assert!(
-        line(&whole.said(2), "WOULD START").contains("0.0% removed"),
+        line(
+            &whole.said(rust_mutants::count::Count::new(2)),
+            "WOULD START"
+        )
+        .contains("0.0% removed"),
         "every pair a run would start is a run the proof layers did nothing for: {}",
-        whole.said(2)
+        whole.said(rust_mutants::count::Count::new(2))
     );
     assert!(
-        line(&whole.said(2), "WHICH RUN").contains("0.0% removed"),
+        line(&whole.said(rust_mutants::count::Count::new(2)), "WHICH RUN").contains("0.0% removed"),
         "and the same of the tests: {}",
-        whole.said(2)
+        whole.said(rust_mutants::count::Count::new(2))
     );
 
     let none = Estimated {
-        cataloged: 5,
-        nothing_to_ask: 5,
-        unreached: 10,
+        cataloged: 5_u64.into(),
+        nothing_to_ask: 5_u64.into(),
+        unreached: 10_u64.into(),
         ..Estimated::default()
     };
     assert!(
-        line(&none.said(2), "WOULD START").contains("0 of 10 pairs")
-            && line(&none.said(2), "WOULD START").contains("100.0% removed"),
+        line(
+            &none.said(rust_mutants::count::Count::new(2)),
+            "WOULD START"
+        )
+        .contains("0 of 10 pairs")
+            && line(
+                &none.said(rust_mutants::count::Count::new(2)),
+                "WOULD START"
+            )
+            .contains("100.0% removed"),
         "and a run that would start nothing removed all of it: {}",
-        none.said(2)
+        none.said(rust_mutants::count::Count::new(2))
     );
 }
 
@@ -128,7 +140,7 @@ fn the_time_is_a_guess_and_says_so_where_a_person_reads_it() {
         duration: Duration::from_secs(3 * 3600 + 25 * 60 + 9),
         ..Estimated::default()
     };
-    let said = hours.said(1);
+    let said = hours.said(rust_mutants::count::Count::new(1));
     assert!(
         line(&said, "ROUGHLY").contains("3:25:09"),
         "a run of hours is read in hours, minutes and seconds rather than as a number of \
@@ -148,33 +160,33 @@ fn work_shorter_than_a_second_is_a_second_rather_than_none() {
         ..Estimated::default()
     };
     assert!(
-        line(&barely.said(1), "ROUGHLY").contains("0:00:01"),
+        line(&barely.said(rust_mutants::count::Count::new(1)), "ROUGHLY").contains("0:00:01"),
         "work that is going to happen takes some time, and rounding it to nothing reads \
          as a run that would not start: {}",
-        barely.said(1)
+        barely.said(rust_mutants::count::Count::new(1))
     );
     let nothing = Estimated {
         duration: Duration::ZERO,
         ..Estimated::default()
     };
     assert!(
-        line(&nothing.said(1), "ROUGHLY").contains("0:00:00"),
+        line(&nothing.said(rust_mutants::count::Count::new(1)), "ROUGHLY").contains("0:00:00"),
         "while no work is no time: {}",
-        nothing.said(1)
+        nothing.said(rust_mutants::count::Count::new(1))
     );
 }
 
 #[test]
 fn the_tally_is_six_lines_a_reader_finds_by_its_shape() {
     let counted = Estimated {
-        cataloged: 3,
-        selected: 1,
-        pairs: 1,
-        tests: 1,
-        tests_whole: 3,
+        cataloged: 3_u64.into(),
+        selected: 1_u64.into(),
+        pairs: 1_u64.into(),
+        tests: 1_u64.into(),
+        tests_whole: 3_u64.into(),
         ..Estimated::default()
     };
-    let said = counted.said(1);
+    let said = counted.said(rust_mutants::count::Count::new(1));
     assert_eq!(
         said.lines().filter(|line| !line.is_empty()).count(),
         6,

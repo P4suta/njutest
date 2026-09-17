@@ -54,6 +54,7 @@ fn environment(directory: &Path, named: &[(&str, &str)]) -> Environment {
         cache_directory: directory.join("njutest-cache"),
         working_directory: directory.to_path_buf(),
         temp_directory: directory.join("njutest-temp"),
+        program: std::path::PathBuf::from("this test never runs it"),
         vars,
         cancel: Cancel::new(),
     }

@@ -10,7 +10,7 @@ mod verify;
 pub use prepare::{prepare, rewrite_needed};
 use prepare::{pristine, selection};
 use verify::verify;
-pub use verify::{Baseline, Verified};
+pub use verify::{Baseline, Measured, Passing, Verified};
 
 pub use route::{
     Asked, BRANCH_NEVER_TAKEN, Discharge, Fallback, NEVER_INFECTED, Reaches, Route, Routing, Timing,
@@ -561,7 +561,7 @@ impl Session {
         self.verified
             .targets
             .get(target)
-            .map_or(1, |baseline| baseline.tests)
+            .map_or(1, |measured| measured.baseline().tests)
             .max(1)
     }
 
@@ -615,7 +615,7 @@ impl Session {
         self.verified
             .targets
             .get(target)
-            .map(|baseline| baseline.duration)
+            .map(|measured| measured.baseline().duration)
     }
 
     /// What one target costs: how long its own baseline took, and how many tests that was the cost of.
@@ -633,7 +633,7 @@ impl Session {
         self.verified
             .targets
             .values()
-            .map(|baseline| baseline.duration)
+            .map(|measured| measured.baseline().duration)
             .max()
             .unwrap_or(Duration::from_secs(1))
     }

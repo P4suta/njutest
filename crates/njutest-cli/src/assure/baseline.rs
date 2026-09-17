@@ -80,6 +80,7 @@ pub fn observe(session: &Session, mut reporting: Reporting<'_, '_>) -> Baseline 
         .targets
         .iter()
         .filter(|(id, _observed)| !built(id).is_some_and(unmeasurable))
+        .map(|(id, measured)| (id, measured.baseline()))
         .collect();
     let total = u64::try_from(rows.len()).unwrap_or(u64::MAX);
     for (done, (id, observed)) in rows.into_iter().enumerate() {

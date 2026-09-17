@@ -79,8 +79,9 @@ pub(super) fn doctor_document(
             "config",
             Well,
             &format!(
-                "none; the defaults apply. `rust-mutants init` writes {}",
-                crate::config::FILE_NAME
+                "no {} under {}; the defaults apply, and `rust-mutants init` writes one",
+                crate::config::FILE_NAME,
+                root.display()
             ),
         ));
     }
@@ -99,17 +100,13 @@ pub(super) fn doctor_document(
         (!temp.is_dir()).then_some("set TMPDIR to a directory a run may write in"),
     ));
 
-    checks.push(git_check(environment));
+    checks.extend(machine(environment));
     checks.push(targets_check(
         toolchain.as_ref().ok(),
         &root,
         asked.packages,
         cancel,
     ));
-    checks.push(environment_check(environment));
-    checks.push(cache_check(environment));
-    checks.push(disk_check(&environment.temp_directory));
-    checks.push(exec_check(&environment.temp_directory));
     checks.push(snapshots_check(&reports, environment));
     checks.push(llvm_tools_check(toolchain.as_ref().ok()));
     checks.push(guards_check(
@@ -119,6 +116,17 @@ pub(super) fn doctor_document(
             .map(rust_mutants::cargo::Toolchain::host),
     ));
     doctor_report::DoctorDocument::of(checks)
+}
+
+/// What this machine offers a run, as against what the workspace does.
+fn machine(environment: &Environment) -> Vec<doctor_report::Check> {
+    vec![
+        git_check(environment),
+        environment_check(environment),
+        cache_check(environment),
+        disk_check(&environment.temp_directory),
+        exec_check(&environment.temp_directory, &environment.program),
+    ]
 }
 
 /// Whether git is installed, which is what `--changed` asks.
@@ -229,6 +237,13 @@ fn tests_something(target: &rust_mutants::cargo::Target) -> bool {
 }
 
 /// Whether the temporary directory has room for the snapshots and target directories a run makes.
+/// Whether there is room, said in whole gigabytes.
+///
+/// The figure is rounded because it is read twice: a check that reported the
+/// exact free bytes disagreed with itself between two invocations a moment
+/// apart, which is the same thing that made the execution check unreadable
+/// before it was made to rest on a ratio. Whole gigabytes is the granularity a
+/// person decides at, and it does not move while they are looking.
 fn disk_check(temp: &Path) -> doctor_report::Check {
     use doctor_report::Standing::{Fail, Ok as Well, Warn};
     const GIB: u64 = 1024 * 1024 * 1024;
@@ -240,7 +255,11 @@ fn disk_check(temp: &Path) -> doctor_report::Check {
             None,
         );
     };
-    let detail = format!("{} free under {}", rendered_bytes(free), temp.display());
+    let detail = format!(
+        "{} GiB free under {}",
+        free.wrapping_div(GIB),
+        temp.display()
+    );
     let standing = if free < GIB / 4 {
         Fail
     } else if free < GIB {
@@ -257,16 +276,15 @@ fn disk_check(temp: &Path) -> doctor_report::Check {
 }
 
 /// What it costs to run a file that has just been written, which a run does for every target it builds.
-fn exec_check(temp: &Path) -> doctor_report::Check {
+fn exec_check(temp: &Path, program: &Path) -> doctor_report::Check {
     use doctor_report::Standing::Ok as Well;
-    let Some((first, second)) = rust_mutants::execcost::exec_twice(temp) else {
-        return doctor_report::Check::new(
-            "exec",
-            Well,
-            "what it costs to run a newly written file is not measured on this platform",
-            None,
-        );
+    let (first, second) = match rust_mutants::execcost::exec_twice(temp, program) {
+        Ok(measured) => measured,
+        Err(why) => {
+            return doctor_report::Check::new("exec", Well, &format!("not measured: {why}"), None);
+        }
     };
+
     let (first, second) = (first.as_secs_f64(), second.as_secs_f64());
     let detail = format!(
         "a newly written file took {first:.2}s to run the first time and {second:.2}s the second"
@@ -385,7 +403,12 @@ fn environment_check(environment: &Environment) -> doctor_report::Check {
     use doctor_report::Standing::{Fail, Ok as Well};
     let set = super::reserved_names(environment);
     if set.is_empty() {
-        return doctor_report::Check::new("environment", Well, "no reserved variable is set", None);
+        return doctor_report::Check::new(
+            "environment",
+            Well,
+            &format!("none of {} is set", crate::app::RESERVED_ENV.join(", ")),
+            None,
+        );
     }
     doctor_report::Check::new(
         "environment",
@@ -439,7 +462,15 @@ fn snapshots_check(reports: &Path, environment: &Environment) -> doctor_report::
         })
         .unwrap_or_default();
     if abandoned == 0 && ledger.kept.is_empty() {
-        return doctor_report::Check::new("snapshots", Well, "nothing is left over", None);
+        return doctor_report::Check::new(
+            "snapshots",
+            Well,
+            &format!(
+                "nothing is left over under {}",
+                environment.temp_directory.display()
+            ),
+            None,
+        );
     }
     doctor_report::Check::new(
         "snapshots",

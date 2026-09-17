@@ -13,6 +13,8 @@ fn main() -> ExitCode {
     let environment = njutest_cli::cli::Environment {
         working_directory: std::env::current_dir().unwrap_or_else(|_error| ".".into()),
         temp_directory: std::env::temp_dir(),
+        program: std::env::current_exe()
+            .unwrap_or_else(|_error| std::path::PathBuf::from("njutest")),
         cache_directory: njutest_cli::cli::Environment::cache_directory_of(&vars),
         vars,
         cancel,

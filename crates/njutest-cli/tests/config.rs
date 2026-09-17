@@ -463,6 +463,7 @@ fn a_directory_a_command_names_is_resolved_against_where_the_command_was_told_it
         vars: Vec::new(),
         working_directory: PathBuf::from("/somewhere/a/caller/named"),
         temp_directory: PathBuf::from("/tmp"),
+        program: PathBuf::from("this test never runs it"),
         cache_directory: PathBuf::from("/tmp/cache"),
         cancel: Cancel::new(),
     };
