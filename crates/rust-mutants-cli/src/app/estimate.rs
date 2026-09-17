@@ -141,7 +141,10 @@ impl Estimated {
             "\nWOULD START  {} of {whole} pairs ({} mutants against {targets} targets); \
              {share:.1}% removed\n\
              WHICH RUN    {} of {} tests; {tests_share:.1}% removed\n\
-             REMOVED BY   unreached={} discharged={} unselected={} nothing-to-ask={}\n\
+             REMOVED BY   unreached={} discharged={} pairs, of the {removed} the route \
+             removed\n\
+             NEVER ASKED  unselected={} nothing-to-ask={} mutants, of the {} the catalog \
+             holds\n\
              AT MOST      {} mutants execute; one target that answers ends the rest\n\
              ROUGHLY      {}:{:02}:{:02} on this machine, being each target's own baseline \
              scaled by the tests its route names, which is a guess about the machine rather \
@@ -154,6 +157,7 @@ impl Estimated {
             self.discharged,
             self.unselected,
             self.nothing_to_ask,
+            self.cataloged,
             self.selected,
             seconds / 3600,
             seconds % 3600 / 60,

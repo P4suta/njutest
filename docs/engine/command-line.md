@@ -34,7 +34,8 @@ read them too, so what those preview is what a run would do.
 | Flag | What it does |
 | --- | --- |
 | `--package NAME` | only these packages; repeatable |
-| `--include GLOB`, `--exclude GLOB` | workspace-relative globs; repeatable |
+| `--include GLOB`, `--exclude GLOB` | workspace-relative globs naming what is and is not mutated; repeatable |
+| `--omit GLOB` | workspace-relative globs the copy does not carry at all; repeatable |
 | `--changed`, `--changed-from REV` | only the files that differ from `HEAD` or from a revision |
 | `--tier balanced\|strong\|all` | which operators the run asks |
 | `--operator NAME` | exactly these rules, whatever the tier says |

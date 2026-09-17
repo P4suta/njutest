@@ -124,8 +124,12 @@ fn every_task_that_asks_for_pipefail_says_which_shell_it_is_asking() {
 fn every_task_that_runs_the_suite_builds_the_scripted_toolchain_first() {
     for name in ["\"test:fast\"", "\"test:slow\"", "coverage"] {
         let body = task(name);
+        let depends = body
+            .lines()
+            .find(|line| line.starts_with("depends = ["))
+            .unwrap_or_default();
         assert!(
-            body.contains("depends = [\"build:examples\"]"),
+            depends.contains("\"build:examples\""),
             "`cargo test --all-targets` builds an example as a test harness rather than as the \
              program it is, so a suite that drives one fails on a clean checkout without this: \
              {body}"

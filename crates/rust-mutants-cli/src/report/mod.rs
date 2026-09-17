@@ -409,19 +409,44 @@ fn work_line(document: &run::RunDocument) -> String {
 }
 
 /// The stored run as the lines a person reads.
+///
+/// The findings come first and the totals last, because the totals are what a
+/// reader looks for and a run with ninety findings puts them off the top of
+/// the screen. Anyone who pipes this into `tail` is asking for the end of it,
+/// and the end of it should be the part worth keeping.
 #[must_use]
 pub fn lines(document: &run::RunDocument) -> String {
+    let mut text = String::new();
+    let written = write!(
+        text,
+        "run       {}\nworkspace {}\ncatalog   {}\n",
+        document.run.id, document.workspace.workspace_digest, document.workspace.catalog_digest,
+    );
+    debug_assert!(written.is_ok(), "writing to a String cannot fail");
+    if !document.findings.is_empty() {
+        text.push('\n');
+        for one in &document.findings {
+            let written = writeln!(text, "{:<22} {}", one.kind, one.detail);
+            debug_assert!(written.is_ok(), "writing to a String cannot fail");
+        }
+    }
+    text.push('\n');
+    text.push_str(&totals(document));
+    if document.run.interrupted {
+        text.push_str("\nINTERRUPTED  the run stopped before every mutant was executed\n");
+    }
+    text
+}
+
+/// What the run came to, in the four lines a reader takes away from it.
+fn totals(document: &run::RunDocument) -> String {
     let a = &document.accounting;
     let mut text = String::new();
     let written = write!(
         text,
-        "run       {}\nworkspace {}\ncatalog   {}\n\n\
-         MUTANTS   cataloged={} refused={} skipped={} executed={}\n\
+        "MUTANTS   cataloged={} refused={} skipped={} executed={}\n\
          OUTCOMES  killed={} survived={} timed_out={} inconclusive={} errored={} not_run={} \
          unreached={} discharged={} expected={}\n",
-        document.run.id,
-        document.workspace.workspace_digest,
-        document.workspace.catalog_digest,
         a.cataloged,
         a.refused,
         a.skipped,
@@ -450,15 +475,5 @@ pub fn lines(document: &run::RunDocument) -> String {
         None => text.push_str("SCORE     none; the run decided nothing\n"),
     }
     text.push_str(&work_line(document));
-    if !document.findings.is_empty() {
-        text.push('\n');
-        for one in &document.findings {
-            let written = writeln!(text, "{:<22} {}", one.kind, one.detail);
-            debug_assert!(written.is_ok(), "writing to a String cannot fail");
-        }
-    }
-    if document.run.interrupted {
-        text.push_str("\nINTERRUPTED  the run stopped before every mutant was executed\n");
-    }
     text
 }

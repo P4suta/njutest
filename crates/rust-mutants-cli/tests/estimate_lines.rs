@@ -58,10 +58,14 @@ fn an_estimate_counts_the_pairs_a_run_would_start_against_the_pairs_there_are() 
          however many tests its route names: {said}"
     );
     assert!(
-        line(&said, "REMOVED BY")
-            .contains("unreached=24 discharged=6 unselected=2 nothing-to-ask=4"),
-        "and every pair removed is removed by something a person can go and look at: \
-         {said}"
+        line(&said, "REMOVED BY").contains("unreached=24 discharged=6 pairs, of the 32"),
+        "every pair removed is removed by something a person can go and look at, and the \
+         two numbers add up to the pairs the line above says were removed: {said}"
+    );
+    assert!(
+        line(&said, "NEVER ASKED").contains("unselected=2 nothing-to-ask=4 mutants, of the 10"),
+        "a mutant nothing asks about is not a pair that was removed, and a reader who \
+         added it to the pairs was adding two different things: {said}"
     );
     assert!(
         line(&said, "AT MOST").contains('4'),
@@ -167,7 +171,7 @@ fn work_shorter_than_a_second_is_a_second_rather_than_none() {
 }
 
 #[test]
-fn the_tally_is_five_lines_a_reader_finds_by_its_shape() {
+fn the_tally_is_six_lines_a_reader_finds_by_its_shape() {
     let counted = Estimated {
         cataloged: 3,
         selected: 1,
@@ -179,8 +183,10 @@ fn the_tally_is_five_lines_a_reader_finds_by_its_shape() {
     let said = counted.said(1);
     assert_eq!(
         said.lines().filter(|line| !line.is_empty()).count(),
-        5,
-        "the tally is five lines and no more, because it is read at the end of a wall of \
-         mutants and a person finds it by its shape: {said}"
+        6,
+        "the tally is six lines and no more, because it is read at the end of a wall of \
+         mutants and a person finds it by its shape. It was five until the two the route \
+         removed and the two nobody asked about shared a line, where they could not be \
+         added up because they are not counted in the same thing: {said}"
     );
 }

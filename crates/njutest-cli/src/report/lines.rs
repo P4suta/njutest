@@ -109,9 +109,9 @@ fn identity(report: &Report, out: &mut String) {
         out,
         "SCOPE",
         &[
-            &format!("requested={}", report.scope.requested_packages.join(",")),
-            &format!("resolved={}", report.scope.resolved_packages.join(",")),
-            &format!("excluded={}", report.scope.excluded.join(",")),
+            &format!("requested={}", named(&report.scope.requested_packages)),
+            &format!("resolved={}", named(&report.scope.resolved_packages)),
+            &format!("excluded={}", named(&report.scope.excluded)),
         ],
     );
     out.push('\n');
@@ -125,6 +125,18 @@ fn identity(report: &Report, out: &mut String) {
         ],
     );
     out.push('\n');
+}
+
+/// A list as a reader sees it, saying that it is empty rather than being empty.
+///
+/// `requested=` followed by nothing reads as a value the run failed to get.
+/// The run did get it: nobody asked for anything, which is a different fact
+/// and the commonest one.
+fn named(values: &[String]) -> String {
+    if values.is_empty() {
+        return String::from("(nothing named)");
+    }
+    values.join(",")
 }
 
 /// What the run counted.

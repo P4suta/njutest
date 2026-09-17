@@ -4,6 +4,12 @@
 # Tool pins and the task runner. `justfile` is a thin wrapper over these.
 # The cargo-tool versions mirror CI's install-action pins
 # (.github/workflows/ci.yml) for local == CI parity — bump them together.
+#
+# A `cargo:` entry is built from source for the machine it is installed on. The
+# plain ones are downloaded, and a release that ships no asset for an
+# architecture leaves a binary that will not start on it: `committed` moved
+# here after an operating system upgrade left its x86_64 download unable to
+# exec, which stops every commit and says only "Bad CPU type in executable".
 
 [tools]
 rust = "1.98.0"
@@ -11,13 +17,13 @@ actionlint = "1.7.12"
 taplo = "0.10.0"
 typos = "1.48.0"
 lefthook = "2.1.9"
-committed = "1.1.11"
 "cargo:cargo-nextest" = "0.9.140"
 "cargo:cargo-deny" = "0.19.7"
 "cargo:cargo-llvm-cov" = "0.9.0"
 "cargo:cargo-audit" = "0.22.2"
 "cargo:cargo-mutants" = "27.1.0"
 "cargo:cargo-fuzz" = "0.13.2"
+"cargo:committed" = "1.1.11"
 mdbook = "0.5.4"
 
 [tasks.bootstrap]
@@ -98,9 +104,13 @@ run_windows = "cargo nextest run --locked --workspace --all-targets --all-featur
 # on top of this, because a hosted runner multiplies those build jobs into
 # resource exhaustion; a developer's machine is not that machine, and the bound
 # costs minutes there without changing which tests pass.
+[tasks."exec-tax"]
+description = "Report what it costs to run a newly written file, which is what a suite of fixture binaries pays per binary"
+run = "bash scripts/exec-tax.sh"
+
 [tasks."test:slow"]
 description = "Run the suites that drive a real cargo against the fixture projects"
-depends = ["build:examples"]
+depends = ["exec-tax", "build:examples"]
 run = "cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast --status-level fail -E 'binary(/^toolchain_/)'"
 run_windows = "cargo nextest run --locked --workspace --all-targets --all-features --no-fail-fast --status-level fail -E 'binary(/^toolchain_/)'"
 
@@ -120,7 +130,7 @@ depends = ["test:fast", "test:slow", "test:doc"]
 # one that job asks is the one that has to be green.
 [tasks.coverage]
 description = "Measure region coverage with the ratchet CI enforces (never lower a floor)"
-depends = ["build:examples"]
+depends = ["exec-tax", "build:examples"]
 shell = "bash -c"
 run = """
 set -euo pipefail

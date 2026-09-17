@@ -39,6 +39,18 @@ pub const DOCTESTS_NONE: &str = "doctests-none";
 /// The target's own tests do not pass with nothing active, so no outcome against it would be about a mutation.
 pub const BASELINE_NOT_PASSING: &str = "baseline-not-passing";
 
+/// The target's own tests did not pass the first time they were run with nothing active, and passed when they were run again.
+///
+/// The run is measured against the second answer, because a target that
+/// passes is one a mutation can be put to. What the first answer says is
+/// about the run's footing rather than about the tree: something outside the
+/// code decided the outcome once, so a single later result against this
+/// target is worth a little less than one against a target that passed twice.
+/// On macOS the commonest such thing is the first execution of a file the
+/// tests had just written, which the system evaluates before it may run and
+/// which the second execution never pays again.
+pub const BASELINE_PASSED_ON_RETRY: &str = "baseline-passed-on-retry";
+
 /// The target's guards were not asked what they reached, or were asked and said nothing, so every test of it reaches every mutation in it.
 pub const TOUCH_NOT_RECORDED: &str = "touch-not-recorded";
 
@@ -46,12 +58,13 @@ pub const TOUCH_NOT_RECORDED: &str = "touch-not-recorded";
 pub const TOUCH_LOG_UNREADABLE: &str = "touch-log-unreadable";
 
 /// Every limitation, in the order a reader meets them.
-pub const ALL: [&str; 12] = [
+pub const ALL: [&str; 13] = [
     CUSTOM_HARNESS,
     TARGET_SKIPPED_BY_CONFIGURATION,
     DOCTESTS_ROUTED_BY_FILE,
     DOCTESTS_NONE,
     BASELINE_NOT_PASSING,
+    BASELINE_PASSED_ON_RETRY,
     TOUCH_NOT_RECORDED,
     TOUCH_LOG_UNREADABLE,
     COVERAGE_BUILD_FAILED,

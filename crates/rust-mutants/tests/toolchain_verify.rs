@@ -336,3 +336,70 @@ fn a_failing_baseline_is_never_remembered() {
         "a failure is never an answer for another run"
     );
 }
+
+/// A target whose first run fails and whose second passes, keyed by a file it leaves in the
+/// directory the run gives it: both baseline runs of one target share that directory, so the
+/// second finds what the first wrote.
+const PASSES_ON_RETRY: &str = r#"// SPDX-FileCopyrightText: 2026 njutest contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! A library whose own test fails the first time it is run and passes the second.
+
+/// Twice `n`.
+#[must_use]
+pub fn double(n: i32) -> i32 {
+    n * 2
+}
+
+#[cfg(test)]
+mod tests {
+    use super::double;
+
+    #[test]
+    fn doubling_two_is_four_once_this_has_run_before() {
+        let mark = std::env::temp_dir().join("been-here-before");
+        assert!(mark.exists() || std::fs::write(&mark, b"1").is_err());
+        assert_eq!(double(2), 4);
+    }
+}
+"#;
+
+/// A second target that passes every time, so that what the run says is about the first one.
+const BESIDE: &str = r"// SPDX-FileCopyrightText: 2026 njutest contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! A target beside the library that passes whenever it is run.
+
+#[test]
+fn doubling_three_is_six() {
+    assert_eq!(fixture_verify_fails::double(3), 6);
+}
+";
+
+#[test]
+fn a_target_that_did_not_pass_the_first_time_is_run_once_more_before_the_session_refuses() {
+    let fixture = Fixture::copy("fixture-verify-fails");
+    fixture.write("src/lib.rs", PASSES_ON_RETRY.as_bytes());
+    fixture.write("tests/beside.rs", BESIDE.as_bytes());
+    let session = prepare(&fixture, Failing::Refuse).expect(
+        "a target that passes the second time is one a mutation can be put to, and a run \
+         that refused it would have thrown away everything it spent getting here",
+    );
+    let verified = session.verified();
+    assert!(
+        verified.failing().is_empty(),
+        "the second answer is the one the run is measured against: {:?}",
+        verified.failing()
+    );
+    assert!(
+        verified.touched.limitations.iter().any(|one| {
+            one == &format!(
+                "{}:fixture-verify-fails/lib/fixture_verify_fails",
+                rust_mutants::limitation::BASELINE_PASSED_ON_RETRY
+            )
+        }),
+        "and the run says which target it was, because a single result against a target \
+         that once came out differently is worth that much less: {:?}",
+        verified.touched.limitations
+    );
+}

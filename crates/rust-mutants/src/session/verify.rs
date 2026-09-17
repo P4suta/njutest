@@ -123,6 +123,7 @@ fn verify_target(
             .join(format!("{}.log", slug(&target.id)))
     });
     let mut result = ran(target, scratch, recording.as_deref(), building);
+    let mut retried = false;
     let recording = if result.exit_code == crate::instrument::TOUCH_UNAVAILABLE_EXIT {
         building.trace.note(
             crate::touch::UNRECORDED,
@@ -137,12 +138,17 @@ fn verify_target(
     } else {
         recording
     };
+    if let Some(again) = again(&result, target, (scratch, recording.as_deref()), building) {
+        result = again;
+        retried = true;
+    }
     building.trace.verify(crate::trace::VerifyRecord {
         target: target.id.clone(),
         outcome: result.outcome.name().to_owned(),
         tests_run: result.tests_run,
         duration_ms: u64::try_from(result.duration.as_millis()).unwrap_or(u64::MAX),
         remembered: false,
+        retried,
     });
     let baseline = Baseline {
         outcome: result.outcome,
@@ -165,6 +171,9 @@ fn verify_target(
             .limitations
             .push(crate::limitation::DOCTESTS_NONE.to_owned());
     }
+    if baseline.passed() && retried {
+        touched.limited(crate::limitation::BASELINE_PASSED_ON_RETRY, &target.id);
+    }
     if baseline.passed() {
         gather(
             touched,
@@ -184,6 +193,39 @@ fn verify_target(
 
 /// The trace note proving why no baseline process follows it.
 const BASELINE_REMEMBERED: &str = "baseline-remembered";
+
+/// The trace note saying a target was run a second time, and why.
+const BASELINE_RETRIED: &str = "baseline-retried";
+
+/// One more run of a target that did not pass, or nothing when the first answer stands.
+///
+/// A first answer a run refuses on had better be about the code. Three
+/// different things arrive at this point as one refusal — a target that is
+/// broken, a target that lost a race with something outside it, and a target
+/// that was about to pass — and only the first is a reason to end a run that
+/// has already spent everything it spent getting here. The second run
+/// separates them at the cost of one target's tests, paid only where the
+/// session was going to refuse anyway.
+fn again(
+    result: &MutantResult,
+    target: &TestTarget,
+    (scratch, recording): (&Path, Option<&Path>),
+    building: &Building<'_>,
+) -> Option<MutantResult> {
+    if passing(result.outcome) || building.cancel.is_cancelled() {
+        return None;
+    }
+    building.trace.note(
+        BASELINE_RETRIED,
+        &format!(
+            "{}: the target did not pass with nothing active, so it is run once more before \
+             the session refuses: a first answer something outside the code decided is not \
+             one to end a run on",
+            target.id
+        ),
+    );
+    Some(ran(target, scratch, recording, building))
+}
 
 /// Why a passing baseline could not safely become an answer for another run.
 const BASELINE_NOT_REMEMBERED: &str = "baseline-not-remembered";
@@ -453,6 +495,7 @@ fn replay(
             tests_run: tests_run.get(&target.id).copied().flatten(),
             duration_ms: u64::try_from(baseline.duration.as_millis()).unwrap_or(u64::MAX),
             remembered: true,
+            retried: false,
         });
         if target.kind == TargetKind::Doc && tests_run.get(&target.id).copied().flatten() == Some(0)
         {
@@ -718,11 +761,33 @@ pub(super) fn refusal(verified: &Verified) -> EngineError {
     let failed = verified.failing();
     EngineError::from(SessionError::VerifyFailed {
         targets: failed.iter().map(|target| (*target).to_owned()).collect(),
-        output: failed
-            .first()
-            .and_then(|target| verified.targets.get(*target))
-            .map_or_else(String::new, |baseline| baseline.output.clone()),
+        output: said(verified, &failed),
     })
+}
+
+/// What every failing target printed, each under its own name.
+///
+/// A refusal that named three targets and quoted one of them told a reader
+/// which target to look at and left them to run the other two by hand. The
+/// run has all three answers already, and a person who has just lost the whole
+/// verification phase should not have to spend it again to read them.
+fn said(verified: &Verified, failed: &[&str]) -> String {
+    let mut text = String::new();
+    for target in failed {
+        let Some(baseline) = verified.targets.get(*target) else {
+            continue;
+        };
+        if baseline.output.trim().is_empty() {
+            continue;
+        }
+        if !text.is_empty() {
+            text.push('\n');
+        }
+        text.push_str(target);
+        text.push('\n');
+        text.push_str(&baseline.output);
+    }
+    text
 }
 
 /// One target run with nothing active, recording into `log` when it was asked to.
@@ -783,6 +848,17 @@ pub struct Baseline {
     pub output: String,
 }
 
+/// Whether an outcome with nothing active is one a mutation can be put to.
+///
+/// The same question [`Baseline::passed`] answers, asked of an outcome before
+/// there is a baseline to ask it of.
+const fn passing(outcome: crate::outcome::Outcome) -> bool {
+    matches!(
+        outcome,
+        crate::outcome::Outcome::Survived | crate::outcome::Outcome::Inconclusive
+    )
+}
+
 impl Baseline {
     /// Whether this target can be judged against.
     ///
@@ -793,10 +869,7 @@ impl Baseline {
     /// rather than one that said no.
     #[must_use]
     pub const fn passed(&self) -> bool {
-        matches!(
-            self.outcome,
-            crate::outcome::Outcome::Survived | crate::outcome::Outcome::Inconclusive
-        )
+        passing(self.outcome)
     }
 }
 

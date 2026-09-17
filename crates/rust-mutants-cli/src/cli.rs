@@ -340,9 +340,12 @@ pub struct Scope {
     /// Only mutate files matching this pattern. Repeatable.
     #[arg(long = "include", value_name = "GLOB")]
     pub include: Vec<String>,
-    /// Keep files matching this pattern out of the run entirely: the snapshot does not carry them and nothing in them is mutated. Repeatable.
+    /// Mutate nothing in the files matching this pattern; they are still compiled. The other half of `--include`. Repeatable.
     #[arg(long = "exclude", value_name = "GLOB")]
     pub exclude: Vec<String>,
+    /// Leave files matching this pattern out of the copy the run works in. A file a crate declares as a module leaves a tree that does not compile. Repeatable.
+    #[arg(long = "omit", value_name = "GLOB")]
+    pub omit: Vec<String>,
     /// Mutate only the files that differ from `HEAD`, committed and not. Narrows `--include` rather than widening it.
     #[arg(long, conflicts_with = "changed_from")]
     pub changed: bool,

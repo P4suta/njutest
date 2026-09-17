@@ -111,9 +111,30 @@ pub(super) fn cache(
         left.failures.len().saturating_add(taken.failures.len()),
     );
     debug_assert!(written.is_ok(), "writing to a String cannot fail");
+    text.push_str(&unreached(left.unreached.saturating_add(taken.unreached)));
     write(stdout, &text);
     write(stdout, &preserved(asked, environment)?);
     Ok(0)
+}
+
+/// What a sweep that spent its budget says, which is what it did not look at rather than what it failed to remove.
+///
+/// Removing a directory is usually instant. One a wedged device still holds
+/// can take minutes to refuse, and a sweep that walked a hundred of those
+/// would run for a day — so it stops, says how many it left, and the next
+/// sweep starts with them. The remedy is not to run it again harder: a
+/// directory that will not go is being held by something, and that something
+/// is what a person has to deal with.
+fn unreached(count: usize) -> String {
+    if count == 0 {
+        return String::new();
+    }
+    format!(
+        "unreached   {count} left for the next sweep; it spent its {} seconds on the ones \
+         before them\n            try: something is holding a directory open, and a sweep \
+         cannot take it back\n",
+        tempowner::SWEEP_BUDGET.as_secs()
+    )
 }
 
 /// What measuring trees established, which a run of an unchanged tree reads instead of measuring again.

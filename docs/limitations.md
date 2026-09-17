@@ -89,6 +89,15 @@ below is stated fail-closed.
   is named. Every mutation put to such a target comes back killed and not one
   of those kills is about a mutation. The run still reports the table, because
   the moment a reader most needs it is the moment the answer is "all of them".
+- A target that does not pass the first time is run once more before the
+  session refuses, and one that passes the second time is measured against that
+  second answer with `baseline-passed-on-retry` against its name. Three things
+  a reader has to tell apart used to arrive as one refusal: a target that is
+  broken, a target that lost a race with something outside the code, and a
+  target that passed. The middle one is a finding about the run's footing, not
+  a reason to throw away the work already done, and the run says which target
+  it was so that a later reader knows a single result against it rests on a
+  measurement that once came out differently.
 - A target whose guards recorded nothing this run can route by keeps every test
   of it in every route (`touch-not-recorded`), and one whose record did not
   read back is believed about nothing (`touch-log-unreadable`).
@@ -297,6 +306,112 @@ fail-closed:
   understands (`soundness-source-unreadable`), so what it holds is not in the
   count. A count taken over part of a tree and reported as a count over the
   tree is the one number a reader cannot check.
+
+## What a run asks of a suite that talks about time
+
+A run does something to a suite that `cargo test` never does: it runs every
+target's baseline before it measures anything, and then measures mutants
+against a machine that is already busy. Every assumption a suite holds about
+how long something takes is put to that, and the first thing a run finds is
+usually not a mutant at all — it is which of those assumptions was never
+proof against a machine doing something else.
+
+Four shapes of assumption, and the fourth is the one that hides:
+
+- an assertion on elapsed time, `assert!(started.elapsed() < THREE_SECONDS)`;
+- a deadline a fake server takes once and reuses across requests, where what
+  sits between two requests is a whole command;
+- a read or accept timeout;
+- **a timeout a fixture is passed**, `required("policy", &hook, 5)`, repeated
+  at every call site. This one is not an assertion about time and does not
+  read as a clock: it reads as configuration, and nothing greps for it.
+
+None of these is a defect this tool found in the code under test, and none is
+a wrong answer — they arrive as a refusal, at the end of the most expensive
+phase. Stating it in advance is the useful thing: *if your suite talks to
+sockets, spawns processes, or asserts on elapsed time, the first thing a run
+will tell you is which of those assumptions was never load-proof.*
+
+The remedy is almost never a larger constant. A bound of that kind exists so
+that a wedged process cannot hang a suite, not to decide how patient a machine
+is entitled to be; a number tuned against one busy afternoon is one nobody can
+defend six months later.
+
+### A suite that makes something outside its own process makes it once per mutant
+
+A run executes the tests once with nothing active and then once per mutant it
+puts to them. A test that creates a resource the operating system owns rather
+than the process — a mount, a loopback device, a container, a listening port, a
+record in an external service — creates it that many times. Three under `cargo
+test` is five hundred here.
+
+Two things then differ from an ordinary test run, and the second is the one
+that costs:
+
+- **The count.** What a suite creates and destroys three times, a measurement
+  creates and destroys as many times as there are mutants reaching it.
+- **The interruption.** A run can be stopped, and a `Drop` does not run in a
+  process that was killed. Cleanup that lives in a destructor is cleanup that
+  does not happen. One caller stopped a run and found 183 mounts and 442
+  attached devices left behind, and the mounts held directories that then could
+  not be removed at all.
+
+`[execution] skip_targets` is the right answer for such a target, and it is
+reported as a limitation, so leaving it out is a thing the run says rather than
+a thing it hides. The unit is the test binary, which is the unit a resource of
+this kind belongs to.
+
+### Taking something back has to be faster than making it was
+
+This is advice about cleanup code in general, and it applies to this tool's own
+`cache --gc` as much as to a suite's.
+
+Removing a directory is usually instant. A directory something else is holding
+can take minutes to refuse, and a loop that walks a few hundred of those runs
+for a day. The caller above wrote recovery code for the leak in the section
+above; it asked the system to release the devices one at a time, and the system
+was already wedged, so what should have taken seconds was on course to take
+fifteen hours. The measurement that found it was a test that had gone from
+135 seconds to 10 once the recovery had a budget.
+
+Three rules, which `rust-mutants cache --gc` now follows:
+
+- **Give the recovery a budget.** Failing means "some of it is still there",
+  never "this does not finish".
+- **Let the first failure tell you about the rest.** Where taking one back and
+  making one go through the same thing, a recovery that failed says the next
+  creation will too, and paying that timeout twice is paying it for nothing.
+- **Say what was left, with what to do about it.** A count of what it did not
+  reach is worth more than a longer wait, because a directory that will not go
+  is being held by something, and that something is what a person has to deal
+  with.
+
+### On macOS, measure what an execution costs before measuring anything else
+
+macOS evaluates an executable before it may run, once per file, and where that
+evaluation has a backlog the first execution of a newly written file costs
+seconds or minutes. Measured on one developer's machine: a two-line shell
+script took **395 seconds** to run the first time and **0.22 seconds** the
+second. A run builds a file per target and runs each of them, so it pays that
+once per target.
+
+Three things about it are counter-intuitive enough to be worth writing down,
+because each was believed here and each was wrong:
+
+- **Load average is not the signal.** The 395-second execution happened at a
+  load average of 4.93. An earlier 23-second one happened at 22.
+- **The backlog outlives what made it.** The builds that produced the files
+  had finished; the evaluation kept running for over two hours afterwards.
+  "Wait for the build to finish" is not the advice.
+- **Reducing parallelism cannot help**, and the evaluation is not
+  single-threaded, so there is no queue to shorten by sending it less at once.
+
+Nothing a caller can see reports this — not load, not free processors, not
+free memory. `rust-mutants doctor` therefore runs one newly written file twice
+and prints both numbers, because the pair is the evidence and neither number
+means anything alone. A first execution in the hundreds of seconds beside a
+second in hundredths says a run started now would measure the evaluation and
+not the tests.
 
 ## Places a run passed over
 

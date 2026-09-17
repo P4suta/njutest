@@ -5,8 +5,13 @@
 #
 # Strictness policy:
 # - pre-commit is the gentle pass: format-and-restage, deny obvious mistakes.
-# - pre-push is the strict gate: no writes; every check that can run locally
-#   runs here. If anything fails, the push is blocked.
+# - pre-push is the gate a person waits for, so it is the gate a person can
+#   afford to wait for: everything that answers in seconds, and nothing that
+#   drives a real cargo against the fixture projects. Those suites run in CI
+#   on the three platforms they are written for, which is where they belong —
+#   two of the three answers cannot be had here at all, and a gate somebody
+#   has to arrange their afternoon around is a gate they push past. Run them
+#   yourself with `mise run test:slow` when you have changed what they cover.
 
 pre-commit:
   parallel: true
@@ -46,7 +51,7 @@ pre-push:
     rust-clippy:
       run: cargo clippy --workspace --all-targets --all-features -- -D warnings
     rust-test:
-      run: mise run test
+      run: mise run test:fast
     rust-doc:
       run: cargo doc --workspace --no-deps --document-private-items
       env:

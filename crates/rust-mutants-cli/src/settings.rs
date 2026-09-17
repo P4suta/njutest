@@ -46,6 +46,7 @@ impl Settings {
         replace(&mut config.mutation.operators, &scope.operators);
         replace(&mut config.project.include, &scope.include);
         replace(&mut config.project.exclude, &scope.exclude);
+        replace(&mut config.snapshot.omit, &scope.omit);
         replace(&mut config.project.packages, &scope.packages);
         config
             .execution
@@ -101,7 +102,7 @@ impl Settings {
             env: environment.vars.clone(),
             temp_directory: environment.temp_directory.clone(),
             report_directory: Some(self.config.reports.directory.to_string_lossy().into_owned()),
-            exclude: compile(&self.config.project.exclude)?,
+            exclude: compile(&self.config.snapshot.omit)?,
             allow_outside: self
                 .config
                 .project

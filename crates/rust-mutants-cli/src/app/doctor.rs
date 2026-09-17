@@ -9,6 +9,7 @@
 //! look says so; nothing here reads silence as a pass.
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use rust_mutants::runner::Cancel;
 
@@ -114,6 +115,7 @@ pub(super) fn doctor_document(
     checks.push(environment_check(environment));
     checks.push(cache_check(environment));
     checks.push(disk_check(&environment.temp_directory));
+    checks.push(exec_check(&environment.temp_directory));
     checks.push(snapshots_check(&reports, environment));
     checks.push(llvm_tools_check(toolchain.as_ref().ok()));
     checks.push(guards_check(
@@ -258,6 +260,120 @@ fn disk_check(temp: &Path) -> doctor_report::Check {
         &detail,
         (standing != Well).then_some("free some room, or point TMPDIR at a filesystem that has it"),
     )
+}
+
+/// What it costs to run a file that has just been written, which a run does for every target it builds.
+///
+/// A system that evaluates an executable before it may run pays that cost once
+/// per file, on the first execution and never again. Where the evaluation has
+/// a backlog the cost is seconds or minutes rather than milliseconds, and a
+/// run started then measures the evaluation instead of the tests: every target
+/// it builds is a file nothing has run before. Nothing else a caller can see
+/// reports it — not load, not free processors, not free memory — so the only
+/// way to know is to pay it once and look.
+///
+/// The check runs the same file twice and prints both, because the pair is the
+/// evidence and neither number is on its own: one slow execution could be a
+/// slow disk, and a slow one beside a fast one of the same file cannot be
+/// anything else. It is given no deadline for the same reason. A probe that
+/// gave up after a minute would report nothing on precisely the machine that
+/// needed the answer, and a reader would take its silence for a pass.
+fn exec_check(temp: &Path) -> doctor_report::Check {
+    use doctor_report::Standing::Ok as Well;
+    let Some((first, second)) = exec_twice(temp) else {
+        return doctor_report::Check::new(
+            "exec",
+            Well,
+            "what it costs to run a newly written file is not measured on this platform",
+            None,
+        );
+    };
+    let (first, second) = (first.as_secs_f64(), second.as_secs_f64());
+    let detail = format!(
+        "a newly written file took {first:.2}s to run the first time and {second:.2}s the second"
+    );
+    let standing = standing_of(first, second);
+    doctor_report::Check::new(
+        "exec",
+        standing,
+        &detail,
+        (standing != Well).then_some(
+            "this machine is evaluating new executables; a run started now measures that \
+             and not your tests, so wait until the first number is under a second. A \
+             process waiting on it looks hung rather than slow, and a sample of one shows \
+             a single frame in the dynamic loader",
+        ),
+    )
+}
+
+/// What the pair says, which is not what either number says alone.
+///
+/// A machine nobody is evaluating executables on runs the probe twice in
+/// hundredths of a second, and the two numbers are within noise of each other.
+/// The phenomenon this check exists for is not a slow first run — a cold page
+/// cache gives that — it is a first run that costs orders of magnitude more
+/// than the second run of the same file, which nothing but an evaluation per
+/// file explains. So the verdict asks for both: long enough to matter, and
+/// lopsided enough to be this and not something else. A standing that turned
+/// on the first number alone would flip between two invocations a second
+/// apart, and a check that disagrees with itself teaches a reader to skip it.
+const fn standing_of(first: f64, second: f64) -> doctor_report::Standing {
+    use doctor_report::Standing::{Fail, Ok as Well, Warn};
+    const SLOW: f64 = 5.0;
+    const LOPSIDED: f64 = 10.0;
+    if first < SLOW {
+        return Well;
+    }
+    if first >= second * LOPSIDED {
+        Fail
+    } else {
+        Warn
+    }
+}
+
+/// The program copied as the probe: a real executable, small, and at a path every Unix has.
+///
+/// It has to be a program and not a script, because a script is not what gets
+/// evaluated: it is read by an interpreter that was evaluated long ago, and a
+/// machine paying minutes per new executable runs a fresh `#!/bin/sh` file in
+/// milliseconds. Measured side by side on a machine in that state, a fresh
+/// script cost two seconds and a fresh copy of a real program cost a hundred
+/// and seventy-six, so a check that asked the cheap question would have called
+/// that machine well. It also has to be small: the shell is tens of kilobytes,
+/// where this tool's own unoptimized binary is hundreds of megabytes and
+/// copying it would time the disk instead.
+#[cfg(unix)]
+const PROBE_PROGRAM: &str = "/bin/sh";
+
+/// Copies a program nobody has run from this path before, runs it twice, and hands back what each run took.
+#[cfg(unix)]
+fn exec_twice(temp: &Path) -> Option<(Duration, Duration)> {
+    let dir = temp.join(format!("rm-exec-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).ok()?;
+    let path = dir.join("probe");
+    let copied = std::fs::copy(PROBE_PROGRAM, &path).is_ok();
+    let measured = copied
+        .then(|| Some((timed(&path)?, timed(&path)?)))
+        .flatten();
+    drop(std::fs::remove_dir_all(&dir));
+    measured
+}
+
+/// Writes one trivial executable, runs it twice, and hands back what each run took.
+#[cfg(not(unix))]
+const fn exec_twice(_temp: &Path) -> Option<(Duration, Duration)> {
+    None
+}
+
+/// How long one run of `path` took, or nothing when it could not be started.
+#[cfg(unix)]
+fn timed(path: &Path) -> Option<Duration> {
+    let at = std::time::Instant::now();
+    let status = std::process::Command::new(path)
+        .args(["-c", "exit 0"])
+        .status()
+        .ok()?;
+    status.success().then(|| at.elapsed())
 }
 
 /// How many bytes the filesystem holding `path` will still take.

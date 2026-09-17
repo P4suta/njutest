@@ -530,6 +530,7 @@ fn one_of_each_measurement(recorder: &Recorder) {
         tests_run: Some(3),
         duration_ms: 12,
         remembered: false,
+        retried: false,
     });
     recorder.touch(rust_mutants::trace::TouchRecord {
         target: "demo/lib/demo".to_owned(),

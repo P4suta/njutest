@@ -1488,6 +1488,11 @@ pub fn limitation_detail(name: &str) -> String {
              to it would come back killed and not one of those kills would be about a \
              mutation"
         }
+        rust_mutants::limitation::BASELINE_PASSED_ON_RETRY => {
+            "the target's own tests did not pass the first time they were run with nothing \
+             active and passed the second time, so something outside the code decided an \
+             answer once and every result against this target is worth that much less"
+        }
         rust_mutants::limitation::TOUCH_NOT_RECORDED => {
             "the target's guards recorded nothing this run can route by, so every test of \
              it reaches every mutation in it and none of them is narrowed"

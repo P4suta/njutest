@@ -52,6 +52,28 @@ pub struct Config {
     pub execution: Execution,
     /// What is written under the report directory.
     pub reports: Reports,
+    /// What the copy a run works in leaves behind.
+    pub snapshot: Snapshot,
+}
+
+/// What the copy a run works in leaves behind.
+///
+/// A run measures a copy of the tree, and a tree can hold things a copy has no
+/// use for: a directory of test data measured in gigabytes, a file nobody
+/// outside the machine should hold. This is where a project says what not to
+/// copy. It is not where a project says what not to mutate — that is
+/// `[project] include` and `[project] exclude`, which leave the file in the
+/// tree and take it out of the catalog.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct Snapshot {
+    /// Workspace-relative globs naming what the copy does not carry.
+    ///
+    /// The file is not in the tree a run builds, so naming one the crate
+    /// declares as a module leaves a tree that does not compile: the run
+    /// refuses before it instruments anything, and the compiler's complaint is
+    /// about a file that is missing because this said not to copy it.
+    pub omit: Vec<String>,
 }
 
 impl Default for Config {
@@ -63,6 +85,7 @@ impl Default for Config {
             mutation: Mutation::default(),
             execution: Execution::default(),
             reports: Reports::default(),
+            snapshot: Snapshot::default(),
         }
     }
 }
@@ -75,13 +98,11 @@ pub struct Project {
     pub packages: Vec<String>,
     /// Workspace-relative globs a file must match to be mutable.
     pub include: Vec<String>,
-    /// Workspace-relative globs that remove a file again, from the snapshot as well as from what is mutated.
+    /// Workspace-relative globs naming files nothing is mutated in, which is what [`Project::include`] is the other half of.
     ///
-    /// The file is not copied into the tree a run builds, so a pattern that
-    /// names a file the crate declares as a module leaves a tree that does not
-    /// compile and the run refuses before it instruments anything. That is the
-    /// price of the snapshot being smaller than the workspace; to keep a file
-    /// in the tree and out of the mutations, narrow `include` instead.
+    /// The file stays in the tree and is compiled like any other; what it
+    /// loses is its mutants. A file the copy should not carry at all is
+    /// `[snapshot] omit`, which is a different thing and says so.
     pub exclude: Vec<String>,
     /// Directories outside the root the workspace may read code from.
     ///
@@ -852,9 +873,14 @@ version = 1
 
 [project]
 # packages = []                  # cargo package names; empty = every member
-# include = []                   # workspace-relative globs a file must match
-# exclude = []                   # workspace-relative globs that remove a file
+# include = []                   # workspace-relative globs a file must match to be mutated
+# exclude = []                   # workspace-relative globs naming files nothing is mutated in
 # allow_outside = []             # directories outside the root the build may read
+
+[snapshot]
+# omit = []                      # workspace-relative globs the copy does not carry at all;
+#                                # a file a crate declares as a module leaves a tree that
+#                                # does not compile, which is why it is not spelled `exclude`
 
 [build]
 # features = []                   # cargo features to turn on

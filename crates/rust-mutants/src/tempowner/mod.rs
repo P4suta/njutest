@@ -356,7 +356,20 @@ pub struct SweepResult {
     pub cached: usize,
     /// The directories that could not be judged or removed. A failure does not stop the sweep of the others.
     pub failures: Vec<SweepFailure>,
+    /// How many prefixed directories the sweep never reached, because it had spent its budget.
+    pub unreached: usize,
 }
+
+/// How long a sweep spends before it leaves the rest for the next one.
+///
+/// Removing a directory is usually instant and occasionally is not: a
+/// directory a wedged device still holds can take minutes to refuse, and a
+/// temporary root with hundreds of them would take a day to walk. A sweep is
+/// housekeeping done on the way to the work, so it is the one thing here that
+/// must be faster than what it is cleaning up after. Spending the budget is
+/// not a failure — the directories it did not reach are still there, still
+/// prefixed, and the next sweep starts with them.
+pub const SWEEP_BUDGET: Duration = Duration::from_secs(10);
 
 /// Removes every abandoned directory directly under `parent` whose name begins with one of `prefixes`.
 ///
@@ -441,6 +454,7 @@ fn collect(parent: &Path, pass: &Pass<'_>) -> io::Result<SweepResult> {
         Err(error) => return Err(error),
     };
     let mut result = SweepResult::default();
+    let started = std::time::Instant::now();
     for entry in entries {
         let entry = match entry {
             Ok(entry) => entry,
@@ -459,6 +473,10 @@ fn collect(parent: &Path, pass: &Pass<'_>) -> io::Result<SweepResult> {
                 .any(|prefix| !prefix.is_empty() && name.starts_with(prefix))
         });
         if !is_prefixed || !entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+            continue;
+        }
+        if started.elapsed() >= SWEEP_BUDGET {
+            result.unreached = result.unreached.saturating_add(1);
             continue;
         }
         let dir = parent.join(&name);

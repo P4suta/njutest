@@ -464,6 +464,9 @@ pub struct VerifyRecord {
     /// Whether this exact passing measurement was read back instead of running the target again.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub remembered: bool,
+    /// Whether the target had to be run a second time, because the first run did not pass.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub retried: bool,
 }
 
 /// What one target's guards recorded on the run that verified its baseline.
