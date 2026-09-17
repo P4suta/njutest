@@ -63,6 +63,7 @@ Every surface is a function of that value and nothing else:
 | the record stream | `fn records(&Told) -> String` |
 | the terminal | `fn human(&Told, Terminal) -> String` |
 | the document | `fn json(&Told) -> String` |
+| the briefing | `fn brief(&Told) -> String` |
 | the review loop | `fn review(&Told, impl Answers) -> Reviewed` |
 | the watch line | `fn moved(&Told, &Told) -> String` |
 
@@ -70,6 +71,16 @@ Every surface is a function of that value and nothing else:
 whether colour is wanted, whether the font has the glyphs, whether stdout is a
 terminal at all. The renderer never asks; `main.rs` answers, which is where
 ADR 0001 has always put it.
+
+The shape is guessed from where the output is going only when nobody said:
+`--format` names it, and a run takes that at its word. The guess is right for
+the two readers it was written for, a person at a terminal and a program
+reading a stream, and wrong for the third, which is neither. Something that
+will act on a run without a screen starts the same command through the same
+pipe as a CI job does and is handed a record stream because of how it was
+started rather than because of what it is. It is the one reader that can act
+on what a run found and the one that could not ask for the shape that says
+what to do about it.
 
 ## Consequences
 

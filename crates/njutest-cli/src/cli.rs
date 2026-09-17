@@ -234,6 +234,9 @@ pub struct Verify {
     /// How to write progress.
     #[arg(long, value_enum, default_value_t = Ui::Plain)]
     pub ui: Ui,
+    /// What to write when the run is over. The default is the drawing at a terminal and the record stream anywhere else.
+    #[arg(long, value_enum, value_name = "FORMAT")]
+    pub format: Option<Format>,
     /// Record what the run does, under DIR or `.njutest/trace/<run>`.
     #[arg(
         long,
@@ -412,7 +415,7 @@ pub enum TraceCommand {
     },
 }
 
-/// How a stored report is written out.
+/// What a run, stored or just finished, is written out as.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, ValueEnum)]
 #[value(rename_all = "lower")]
 pub enum Format {
