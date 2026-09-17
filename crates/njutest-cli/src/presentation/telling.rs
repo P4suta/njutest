@@ -4,10 +4,10 @@
 //! A report, read as what a person is told about it.
 
 use super::{
-    Action, Blindness, Diagnostic, Headline, Place, Severity, Site, Sources, Spot, Stated, Told,
+    Action, Diagnostic, Headline, Place, Severity, Site, Sources, Spot, Standing, Stated, Told,
+    Unsettled,
 };
-use crate::report::Outcome;
-use crate::report::{Finding, FindingKind, MutantRecord, Report};
+use crate::report::{Blind, Finding, FindingKind, MutantRecord, Outcome, Report};
 
 impl Told {
     /// What `report` has to say, with the lines it is about taken from `sources`.
@@ -21,6 +21,7 @@ impl Told {
                 killed: report.accounting.mutants.killed,
                 survived: report.accounting.mutants.survived,
                 unreached: report.accounting.mutants.unreached,
+                timed_out: report.accounting.mutants.timed_out,
                 duration_ms: report.timing.duration_ms,
                 kept: kept.to_owned(),
             },
@@ -104,9 +105,9 @@ fn drawn(path: &str, item: &str, spots: Vec<Spot>, sources: &Sources) -> Place {
                 .any(|(line, text)| *line == spot.line && text.contains(&spot.was))
     });
     let instead = if excerpt.is_empty() {
-        Some(super::Excerpt::Unreadable)
+        Some(super::Missing::Unreadable)
     } else if moved {
-        Some(super::Excerpt::Moved)
+        Some(super::Missing::Moved)
     } else {
         None
     };
@@ -124,27 +125,28 @@ fn drawn(path: &str, item: &str, spots: Vec<Spot>, sources: &Sources) -> Place {
 }
 
 /// One blind spot: what the run changed, and what it established by changing it.
+///
+/// Read through `Blind`, so the only outcomes that reach a spot are the four
+/// that leave a hole and each of them arrives as itself. An outcome that is
+/// not a hole has no spot to be, and one this layer could somehow be handed
+/// anyway says nothing was established rather than that the tests ran the
+/// line and missed it — which is the expensive way to be wrong, because
+/// somebody goes looking for the assertion they are missing and the run never
+/// got an answer at all (ADR 0023).
 fn spot(mutant: &MutantRecord, finding: &Finding) -> Spot {
-    let blindness = match (mutant.outcome.outcome(), finding.kind) {
-        (_, FindingKind::Timeout) | (Outcome::TimedOut, _) => Blindness::Waited,
-        (Outcome::Unreached, _) => Blindness::Never,
-        (
-            Outcome::CompileRejected
-            | Outcome::Killed
-            | Outcome::Survived
-            | Outcome::Equivalent
-            | Outcome::Unconfirmed
-            | Outcome::Errored,
-            _,
-        ) => Blindness::Ran,
-    };
+    let standing = finding
+        .kind
+        .eq(&FindingKind::Timeout)
+        .then_some(Blind::Waited)
+        .or_else(|| mutant.outcome.decision().blind())
+        .map_or(Standing::Unsettled(Unsettled::Errored), Standing::of);
     Spot {
         line: mutant.position.line,
         column: mutant.position.column,
         was: mutant.original.clone(),
         now: mutant.replacement.clone(),
-        said: blindness.word().to_owned(),
-        blindness,
+        said: standing.word().to_owned(),
+        standing,
         locator: locator(mutant),
     }
 }

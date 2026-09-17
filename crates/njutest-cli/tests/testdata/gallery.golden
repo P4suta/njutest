@@ -94,8 +94,8 @@ Written by crates/njutest-cli/tests/gallery.rs; UPDATE_GOLDEN=1 rewrites it.
    = find out why nothing finished
      njutest explain src/lib.rs:sign:return-default@13
 
-  INSUFFICIENT   7 killed  2 survived  1 unreached  1.9s
-  3 gaps in 1 file   reports/runs/20260101T000000Z-aaaaaa
+  INSUFFICIENT   7 killed  2 survived  1 unreached  1 timed out  1.9s
+  2 gaps in 1 file, 1 not established   reports/runs/20260101T000000Z-aaaaaa
 
 === one item, every kind of blindness on it at once — forty columns, no colour
 
@@ -125,8 +125,8 @@ Written by crates/njutest-cli/tests/gallery.rs; UPDATE_GOLDEN=1 rewrites it.
      njutest explain src/lib.rs:sign:return-default@13
 
   INSUFFICIENT   7 killed  2 survived  1
-    unreached  1.9s
-  3 gaps in 1 file
+    unreached  1 timed out  1.9s
+  2 gaps in 1 file, 1 not established
     reports/runs/20260101T000000Z-aaaaaa
 
 === one item, every kind of blindness on it at once — eighty columns, colour
@@ -149,8 +149,8 @@ Written by crates/njutest-cli/tests/gallery.rs; UPDATE_GOLDEN=1 rewrites it.
    [38;5;244m=[0m [1;38;5;214mfind out why nothing finished[0m
      [38;5;252mnjutest explain src/lib.rs:sign:return-default@13[0m
 
-  [1;38;5;214mINSUFFICIENT[0m   [38;5;244m7 killed  2 survived  1 unreached  1.9s[0m
-  [1;38;5;214m3 gaps in 1 file[0m   [38;5;244mreports/runs/20260101T000000Z-aaaaaa[0m
+  [1;38;5;214mINSUFFICIENT[0m   [38;5;244m7 killed  2 survived  1 unreached  1 timed out  1.9s[0m
+  [1;38;5;214m2 gaps in 1 file, 1 not established[0m   [38;5;244mreports/runs/20260101T000000Z-aaaaaa[0m
 
 === one item, every kind of blindness on it at once — eighty columns, unicode
 
@@ -171,8 +171,8 @@ Written by crates/njutest-cli/tests/gallery.rs; UPDATE_GOLDEN=1 rewrites it.
    ├─ find out why nothing finished
       njutest explain src/lib.rs:sign:return-default@13
 
-  ✗ INSUFFICIENT   7 killed  2 survived  1 unreached  1.9s
-  3 gaps in 1 file   reports/runs/20260101T000000Z-aaaaaa
+  ✗ INSUFFICIENT   7 killed  2 survived  1 unreached  1 timed out  1.9s
+  2 gaps in 1 file, 1 not established   reports/runs/20260101T000000Z-aaaaaa
 
 === two items of one file — eighty columns, no colour
 
@@ -708,7 +708,7 @@ If the line is unreachable by construction, record that instead: `njutest accept
 
 On line 13, `"zero"` became `Default::default()`, and nothing finished, so the run established nothing about it.
 
-**Do not write a test for this yet.** The run established nothing here, so there is no gap to close and no way to tell whether one exists. `replay` can pass without proving anything, which would say a fix worked when nothing was fixed.
+**Do not write a test for this yet.** The run established nothing here, so there is no gap to close and no way to tell whether one exists.
 
 ```console
 njutest explain src/lib.rs:sign:return-default@13   # what ran, and how long it ran for

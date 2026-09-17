@@ -10,7 +10,7 @@
 )]
 
 use njutest_cli::presentation::{
-    Action, Diagnostic, Excerpt, Headline, Severity, Site, Terminal, Told, human,
+    Action, Diagnostic, Excerpt, Headline, Missing, Severity, Site, Terminal, Told, human,
 };
 use njutest_cli::report::Verdict;
 
@@ -62,6 +62,7 @@ fn told() -> Told {
             killed: 7,
             survived: 2,
             unreached: 1,
+            timed_out: 0,
             duration_ms: 1911,
             kept: kept("20260101T000000Z-aaaaaa"),
         },
@@ -148,7 +149,7 @@ fn before(line: &str, mark: char) -> String {
 fn a_file_that_moved_under_the_run_is_said_rather_than_drawn() {
     let mut told = told();
     if let Some(site) = told.diagnostics[0].at.as_mut() {
-        site.excerpt = Excerpt::Moved;
+        site.excerpt = Excerpt::Instead(Missing::Moved);
     }
     let drawn = human::draw(&told, Terminal::plain(80));
     assert!(
@@ -171,6 +172,7 @@ fn a_run_with_nothing_to_say_says_that_and_stops() {
             killed: 4,
             survived: 0,
             unreached: 0,
+            timed_out: 0,
             duration_ms: 1388,
             kept: kept("20260101T000000Z-bbbbbb"),
         },

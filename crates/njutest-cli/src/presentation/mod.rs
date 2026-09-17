@@ -55,6 +55,8 @@ pub struct Headline {
     pub survived: u32,
     /// How many nothing reached.
     pub unreached: u32,
+    /// How many ran out of time rather than answering, which is not a gap and is not a pass.
+    pub timed_out: u32,
     /// How long the whole run took.
     pub duration_ms: u64,
     /// Where the run's own record was kept, from the project's root.
@@ -118,7 +120,7 @@ pub struct Place {
     /// The lines to draw, in order, each with its own number.
     pub excerpt: Vec<(u32, String)>,
     /// Why the lines are not being drawn, when they are not.
-    pub instead: Option<Excerpt>,
+    pub instead: Option<Missing>,
     /// Every place in it the tests did not see, in the order the source has them.
     pub spots: Vec<Spot>,
 }
@@ -136,21 +138,92 @@ pub struct Spot {
     pub now: String,
     /// What the run established about it, in the fewest words that are true.
     pub said: String,
-    /// Which kind of blindness it is, which is what a reader does something different about.
-    pub blindness: Blindness,
+    /// What the run established about it, which is what a reader does something different about.
+    pub standing: Standing,
     /// How a reader names it again after they have edited the file.
     pub locator: String,
 }
 
-/// The kinds of not-seeing, which are different things to do something about.
+/// What a run established about one place: a gap in the tests, or a gap in the run.
+///
+/// Two things rather than one enum with three arms, because the difference is
+/// not a shade of the same fact and the invariants that rest on it are not
+/// notes for somebody to remember. A gap in the tests has a test that closes
+/// it and a `replay` that proves the closing; a gap in the run has neither,
+/// and offering either says a person succeeded at something they did not do.
+/// Held apart here, the compiler refuses to hand one the other's words
+/// (ADR 0023), and a variant added to either side is a variant somebody is
+/// made to place.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Standing {
+    /// The tests were there to see it and did not.
+    Blind(Blindness),
+    /// The run established nothing, so there is nothing yet to have missed.
+    Unsettled(Unsettled),
+}
+
+impl Standing {
+    /// What a reader is shown about one of the four ways a mutation can be a hole.
+    ///
+    /// Total, and one arm per `Blind`, so neither side of the line can be
+    /// reached by accident: `Waited` and `Errored` are each the only way to
+    /// their own `Unsettled`, and nothing maps two of the report's holes onto
+    /// one of this layer's (ADR 0023).
+    #[must_use]
+    pub const fn of(blind: crate::report::Blind) -> Self {
+        match blind {
+            crate::report::Blind::Unnoticed => Self::Blind(Blindness::Ran),
+            crate::report::Blind::Unreached => Self::Blind(Blindness::Never),
+            crate::report::Blind::Waited => Self::Unsettled(Unsettled::Waited),
+            crate::report::Blind::Errored => Self::Unsettled(Unsettled::Errored),
+        }
+    }
+
+    /// What the mark under the code says, which is how a reader tells them apart at a glance.
+    #[must_use]
+    pub const fn word(self) -> &'static str {
+        match self {
+            Self::Blind(blindness) => blindness.word(),
+            Self::Unsettled(unsettled) => unsettled.word(),
+        }
+    }
+
+    /// The same, in the words a count stands in front of.
+    #[must_use]
+    pub const fn counted(self) -> &'static str {
+        match self {
+            Self::Blind(blindness) => blindness.counted(),
+            Self::Unsettled(unsettled) => unsettled.counted(),
+        }
+    }
+
+    /// What a reader is being asked to do about it.
+    #[must_use]
+    pub const fn asks(self) -> &'static str {
+        match self {
+            Self::Blind(blindness) => blindness.write_a_test(),
+            Self::Unsettled(unsettled) => unsettled.find_out(),
+        }
+    }
+
+    /// Whether this is one of the gaps a verdict is about.
+    ///
+    /// A run that could not finish a measurement has not found a gap; it has
+    /// failed to look. Counting it among them is a headline that reports a
+    /// busy machine as a hole in somebody's tests.
+    #[must_use]
+    pub const fn is_a_gap(self) -> bool {
+        matches!(self, Self::Blind(_))
+    }
+}
+
+/// A gap in the tests: what somebody writes a test to close.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Blindness {
     /// A test ran the code and did not notice the change: the test is weak.
     Ran,
     /// No test runs the code at all: the test is missing.
     Never,
-    /// It ran out of time rather than answering.
-    Waited,
 }
 
 impl Blindness {
@@ -160,7 +233,6 @@ impl Blindness {
         match self {
             Self::Ran => "ran, not noticed",
             Self::Never => "never run",
-            Self::Waited => "timed out",
         }
     }
 
@@ -174,22 +246,67 @@ impl Blindness {
         match self {
             Self::Ran => "not noticed",
             Self::Never => "never run",
-            Self::Waited => "timed out",
         }
     }
 
-    /// What a reader is being asked to do about it, which is not the same for all three.
-    ///
-    /// A test that notices a change, a test that reaches the line at all, and
-    /// an investigation into why nothing finished are three different pieces
-    /// of work. Drawing them under one heading, or handing all three the same
-    /// instruction, teaches somebody something false about two of them.
+    /// The test this asks somebody to write, which is not the same test for both.
     #[must_use]
-    pub const fn asks(self) -> &'static str {
+    pub const fn write_a_test(self) -> &'static str {
         match self {
             Self::Ran => "write a test that notices it",
             Self::Never => "write a test that reaches it",
+        }
+    }
+
+    /// What `replay` proves after that test is written.
+    ///
+    /// Only here. A run that established nothing has nothing to reproduce, and
+    /// `replay` against it can pass without proving anything — so the method
+    /// that offers one exists on the side that has something to offer, and no
+    /// reader of the other side has to remember that.
+    #[must_use]
+    pub const fn replay_proves(self) -> &'static str {
+        match self {
+            Self::Ran => "`REPRODUCED` means the gap is still open",
+            Self::Never => "`REPRODUCED` means it is still unreached",
+        }
+    }
+}
+
+/// A gap in the run: what somebody investigates rather than writes a test for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Unsettled {
+    /// It ran out of time rather than answering.
+    Waited,
+    /// The measurement could not be taken, so nothing was observed either way.
+    Errored,
+}
+
+impl Unsettled {
+    /// What the mark under the code looks like.
+    #[must_use]
+    pub const fn word(self) -> &'static str {
+        match self {
+            Self::Waited => "timed out",
+            Self::Errored => "not measured",
+        }
+    }
+
+    /// The same, in the words a count stands in front of.
+    #[must_use]
+    pub const fn counted(self) -> &'static str {
+        match self {
+            Self::Waited => "timed out",
+            Self::Errored => "not measured",
+        }
+    }
+
+    /// The investigation this asks for, which is never a test.
+    #[must_use]
+    pub const fn find_out(self) -> &'static str {
+        match self {
             Self::Waited => "find out why nothing finished",
+            Self::Errored => "find out why nothing could be measured",
         }
     }
 }
@@ -216,10 +333,43 @@ pub struct Site {
 pub enum Excerpt {
     /// The line as it was when the run measured it.
     Read(String),
+    /// The line is not being shown, and this is why.
+    Instead(Missing),
+}
+
+/// Why a run is not showing the source it is talking about.
+///
+/// Held apart from [`Excerpt`] so that a place which is *not* showing its
+/// lines cannot be given a line: `Excerpt::Read` in that field was a state
+/// nothing answered for, and what answered for it was a `_` arm in two
+/// renderers saying "the file could not be read" about a file that could
+/// (ADR 0023).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Missing {
     /// The file has changed since the run, so the line there now is not the line that was.
     Moved,
     /// The file could not be read at all.
     Unreadable,
+}
+
+impl Missing {
+    /// Why the lines are not there, as a reader is told it.
+    #[must_use]
+    pub const fn why(self) -> &'static str {
+        match self {
+            Self::Moved => "the file has changed since the run, so the lines are not shown",
+            Self::Unreadable => "the file could not be read, so the lines are not shown",
+        }
+    }
+
+    /// The same, for something that will go and read the file itself.
+    #[must_use]
+    pub const fn told(self) -> &'static str {
+        match self {
+            Self::Moved => "the file has changed since the run, so read it yourself before acting",
+            Self::Unreadable => "the file could not be read",
+        }
+    }
 }
 
 /// Something a reader can do about a diagnostic.
@@ -670,10 +820,10 @@ impl Telling {
                 self.tinted(now)
             ),
         };
-        let style = match spot.blindness {
-            Blindness::Ran => Style::Gap,
-            Blindness::Never => Style::Refusal,
-            Blindness::Waited => Style::Limitation,
+        let style = match spot.standing {
+            Standing::Blind(Blindness::Ran) => Style::Gap,
+            Standing::Blind(Blindness::Never) => Style::Refusal,
+            Standing::Unsettled(_) => Style::Limitation,
         };
         let said = format!("{change}   {}", self.painted(style, &spot.said));
         self.marked(
@@ -862,16 +1012,16 @@ impl Sources {
     #[must_use]
     pub fn at(&self, path: &str, line: u32, original: &str) -> Excerpt {
         let Some(lines) = self.0.get(path) else {
-            return Excerpt::Unreadable;
+            return Excerpt::Instead(Missing::Unreadable);
         };
         let at = usize::try_from(line)
             .unwrap_or(usize::MAX)
             .saturating_sub(1);
         let Some(text) = lines.get(at) else {
-            return Excerpt::Moved;
+            return Excerpt::Instead(Missing::Moved);
         };
         if !original.is_empty() && !text.contains(original) {
-            return Excerpt::Moved;
+            return Excerpt::Instead(Missing::Moved);
         }
         Excerpt::Read(text.clone())
     }

@@ -20,8 +20,8 @@ use std::fmt::Write as _;
 use std::path::Path;
 
 use njutest_cli::presentation::{
-    Action, Blindness, Diagnostic, Excerpt, Headline, Place, Severity, Site, Spot, Stated,
-    Terminal, Told, human,
+    Action, Blindness, Diagnostic, Excerpt, Headline, Missing, Place, Severity, Site, Spot,
+    Standing, Stated, Terminal, Told, Unsettled, human,
 };
 use njutest_cli::report::Verdict;
 
@@ -84,6 +84,7 @@ fn headline(verdict: Verdict, killed: u32, survived: u32, unreached: u32) -> Hea
         killed,
         survived,
         unreached,
+        timed_out: 0,
         duration_ms: 1911,
         kept: kept("20260101T000000Z-aaaaaa"),
     }
@@ -121,14 +122,14 @@ fn place(item: &str, from: u32, lines: &[&str], spots: Vec<Spot>) -> Place {
 }
 
 /// One place the tests did not see.
-fn spot(at: (u32, u32), change: (&str, &str), blindness: Blindness, locator: &str) -> Spot {
+fn spot(at: (u32, u32), change: (&str, &str), standing: Standing, locator: &str) -> Spot {
     Spot {
         line: at.0,
         column: at.1,
         was: change.0.to_owned(),
         now: change.1.to_owned(),
-        said: blindness.word().to_owned(),
-        blindness,
+        said: standing.word().to_owned(),
+        standing,
         locator: locator.to_owned(),
     }
 }
@@ -168,7 +169,7 @@ fn cases() -> Vec<(&'static str, Told)> {
                     vec![spot(
                         (8, 10),
                         (">", ">="),
-                        Blindness::Ran,
+                        Standing::Blind(Blindness::Ran),
                         "src/lib.rs:sign:gt-to-ge@8",
                     )],
                 )],
@@ -187,24 +188,27 @@ fn cases() -> Vec<(&'static str, Told)> {
                         spot(
                             (8, 10),
                             (">", ">="),
-                            Blindness::Ran,
+                            Standing::Blind(Blindness::Ran),
                             "src/lib.rs:sign:gt-to-ge@8",
                         ),
                         spot(
                             (10, 17),
                             ("<", "<="),
-                            Blindness::Never,
+                            Standing::Blind(Blindness::Never),
                             "src/lib.rs:sign:lt-to-le@10",
                         ),
                         spot(
                             (13, 9),
                             ("\"zero\"", "Default::default()"),
-                            Blindness::Waited,
+                            Standing::Unsettled(Unsettled::Waited),
                             "src/lib.rs:sign:return-default@13",
                         ),
                     ],
                 )],
-                headline(Verdict::Insufficient, 7, 2, 1),
+                Headline {
+                    timed_out: 1,
+                    ..headline(Verdict::Insufficient, 7, 2, 1)
+                },
                 Vec::new(),
             ),
         ),
@@ -219,7 +223,7 @@ fn cases() -> Vec<(&'static str, Told)> {
                         vec![spot(
                             (8, 10),
                             (">", ">="),
-                            Blindness::Ran,
+                            Standing::Blind(Blindness::Ran),
                             "src/lib.rs:sign:gt-to-ge@8",
                         )],
                     ),
@@ -230,7 +234,7 @@ fn cases() -> Vec<(&'static str, Told)> {
                         vec![spot(
                             (19, 7),
                             ("*", "/"),
-                            Blindness::Ran,
+                            Standing::Blind(Blindness::Ran),
                             "src/lib.rs:double:mul-to-div@19",
                         )],
                     ),
@@ -243,7 +247,7 @@ fn cases() -> Vec<(&'static str, Told)> {
             "a file that moved under the run",
             told(
                 vec![Place {
-                    instead: Some(Excerpt::Moved),
+                    instead: Some(Missing::Moved),
                     excerpt: Vec::new(),
                     ..place(
                         "sign",
@@ -252,7 +256,7 @@ fn cases() -> Vec<(&'static str, Told)> {
                         vec![spot(
                             (8, 10),
                             (">", ">="),
-                            Blindness::Ran,
+                            Standing::Blind(Blindness::Ran),
                             "src/lib.rs:sign:gt-to-ge@8",
                         )],
                     )
@@ -275,7 +279,7 @@ fn cases() -> Vec<(&'static str, Told)> {
                     vec![spot(
                         (3, 24),
                         (">", ">="),
-                        Blindness::Ran,
+                        Standing::Blind(Blindness::Ran),
                         "src/lib.rs:heading:gt-to-ge@3",
                     )],
                 )],
@@ -353,43 +357,43 @@ fn cases() -> Vec<(&'static str, Told)> {
                         spot(
                             (21, 33),
                             ("?", ".unwrap()"),
-                            Blindness::Ran,
+                            Standing::Blind(Blindness::Ran),
                             "src/lib.rs:settle:question-to-unwrap@21",
                         ),
                         spot(
                             (22, 5),
                             ("self.count += 1;", ""),
-                            Blindness::Ran,
+                            Standing::Blind(Blindness::Ran),
                             "src/lib.rs:settle:delete-compound-assignment@22",
                         ),
                         spot(
                             (23, 5),
                             ("log(\"settling\");", ""),
-                            Blindness::Never,
+                            Standing::Blind(Blindness::Never),
                             "src/lib.rs:settle:delete-call-statement@23",
                         ),
                         spot(
                             (24, 22),
                             ("saturating_add", "wrapping_add"),
-                            Blindness::Ran,
+                            Standing::Blind(Blindness::Ran),
                             "src/lib.rs:settle:saturating-add-to-wrapping-add@24",
                         ),
                         spot(
                             (26, 21),
                             ("if total > 0 ", ""),
-                            Blindness::Ran,
+                            Standing::Blind(Blindness::Ran),
                             "src/lib.rs:settle:remove-match-guard@26",
                         ),
                         spot(
                             (27, 9),
                             ("Kind::Part => Ok(total / 2),", ""),
-                            Blindness::Never,
+                            Standing::Blind(Blindness::Never),
                             "src/lib.rs:settle:delete-match-arm@27",
                         ),
                         spot(
                             (28, 23),
                             ("Err(Error::Empty)", "Ok(Default::default())"),
-                            Blindness::Ran,
+                            Standing::Blind(Blindness::Ran),
                             "src/lib.rs:settle:return-ok-default@28",
                         ),
                     ],
