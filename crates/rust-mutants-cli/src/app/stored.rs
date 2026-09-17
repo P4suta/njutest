@@ -122,12 +122,22 @@ pub fn kept(directory: &Path) -> (Vec<PathBuf>, Vec<PathBuf>) {
     (runs, recordings)
 }
 
-/// Removes everything but the newest `keep` of `directories`.
+/// Removes everything but the newest `keep` of `directories`, within a budget.
+///
+/// This runs on every run that stores a report, so it is the one thing here
+/// that must be faster than what it is cleaning up after: a directory on a
+/// wedged mount takes minutes to refuse, and the run cannot exit until it
+/// does. What is not reached stays, is still the oldest, and is what the next
+/// run starts with.
 pub fn oldest(directories: &[PathBuf], keep: u32) {
     let excess = directories
         .len()
         .saturating_sub(usize::try_from(keep).unwrap_or(usize::MAX));
+    let started = std::time::Instant::now();
     for old in directories.iter().take(excess) {
+        if started.elapsed() >= rust_mutants::tempowner::SWEEP_BUDGET {
+            break;
+        }
         drop(std::fs::remove_dir_all(old));
     }
 }

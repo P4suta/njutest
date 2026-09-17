@@ -157,23 +157,8 @@ pub fn build(
 
     let built = run(&spec, watch.cancel);
     watch.trace.exec(ExecRecord::of(&spec, &built));
-    if let Some(error) = &built.error {
-        return Err(BuildError::NotRun {
-            message: error.to_string(),
-        });
-    }
-    if built.timed_out {
-        return Err(BuildError::NotRun {
-            message: format!(
-                "cargo did not finish within {} milliseconds",
-                options.timeout.unwrap_or_default().as_millis()
-            ),
-        });
-    }
-    if built.exit_code == EXIT_CODE_UNAVAILABLE {
-        return Err(BuildError::NotRun {
-            message: "cargo was stopped before it reported an exit status".to_owned(),
-        });
+    if let Some(refusal) = never_ran(&built, options.timeout) {
+        return Err(refusal);
     }
     let messages =
         parse_messages(&built.stdout).map_err(|source| BuildError::Unreadable { source })?;
@@ -357,6 +342,44 @@ fn failure_of(messages: &[Message], output: &[u8]) -> Option<String> {
         });
     }
     Some(rendered.join("\n"))
+}
+
+/// Why cargo produced nothing to read, when it did not.
+fn never_ran(
+    built: &rust_mutants::runner::RunResult,
+    timeout: Option<Duration>,
+) -> Option<BuildError> {
+    let said = if let Some(error) = &built.error {
+        error.to_string()
+    } else if built.timed_out {
+        format!(
+            "cargo did not finish within {} milliseconds",
+            timeout.unwrap_or_default().as_millis()
+        )
+    } else if built.exit_code == EXIT_CODE_UNAVAILABLE {
+        String::from("cargo was stopped before it reported an exit status")
+    } else {
+        return None;
+    };
+    Some(BuildError::NotRun {
+        message: with_output(&said, &built.output),
+    })
+}
+
+/// What went wrong, with what cargo said about it.
+///
+/// The remedy on this code is to run the same cargo command and read what it
+/// says — but the run composed an environment of its own, built into a
+/// directory it then removed, and holds the bytes cargo wrote. Telling
+/// somebody to reproduce output the tool already has is asking them to rebuild
+/// a command they cannot see.
+fn with_output(said: &str, output: &[u8]) -> String {
+    let printed = String::from_utf8_lossy(output);
+    let printed = printed.trim();
+    if printed.is_empty() {
+        return said.to_owned();
+    }
+    format!("{said}; cargo said:\n{printed}")
 }
 
 /// The files each package's library compiles, workspace-relative with forward slashes.

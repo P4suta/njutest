@@ -4,7 +4,6 @@
 //! What a run would find in this environment, asked before it is spent finding out.
 
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 use rust_mutants::runner::Cancel;
 
@@ -260,7 +259,7 @@ fn disk_check(temp: &Path) -> doctor_report::Check {
 /// What it costs to run a file that has just been written, which a run does for every target it builds.
 fn exec_check(temp: &Path) -> doctor_report::Check {
     use doctor_report::Standing::Ok as Well;
-    let Some((first, second)) = exec_twice(temp) else {
+    let Some((first, second)) = rust_mutants::execcost::exec_twice(temp) else {
         return doctor_report::Check::new(
             "exec",
             Well,
@@ -299,41 +298,6 @@ const fn standing_of(first: f64, second: f64) -> doctor_report::Standing {
     } else {
         Warn
     }
-}
-
-/// The program copied as the probe: a real executable, small, and at a path every Unix has.
-#[cfg(unix)]
-const PROBE_PROGRAM: &str = "/bin/sh";
-
-/// Copies a program nobody has run from this path before, runs it twice, and hands back what each run took.
-#[cfg(unix)]
-fn exec_twice(temp: &Path) -> Option<(Duration, Duration)> {
-    let dir = temp.join(format!("rm-exec-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).ok()?;
-    let path = dir.join("probe");
-    let copied = std::fs::copy(PROBE_PROGRAM, &path).is_ok();
-    let measured = copied
-        .then(|| Some((timed(&path)?, timed(&path)?)))
-        .flatten();
-    drop(std::fs::remove_dir_all(&dir));
-    measured
-}
-
-/// Writes one trivial executable, runs it twice, and hands back what each run took.
-#[cfg(not(unix))]
-const fn exec_twice(_temp: &Path) -> Option<(Duration, Duration)> {
-    None
-}
-
-/// How long one run of `path` took, or nothing when it could not be started.
-#[cfg(unix)]
-fn timed(path: &Path) -> Option<Duration> {
-    let at = std::time::Instant::now();
-    let status = std::process::Command::new(path)
-        .args(["-c", "exit 0"])
-        .status()
-        .ok()?;
-    status.success().then(|| at.elapsed())
 }
 
 /// How many bytes the filesystem holding `path` will still take.

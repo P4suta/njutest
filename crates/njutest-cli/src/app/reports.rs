@@ -135,7 +135,11 @@ pub fn retain(root: &Path, keep: u32) -> Vec<PathBuf> {
 
     let mut removed = Vec::new();
     let keep = usize::try_from(keep).unwrap_or(usize::MAX);
+    let started = std::time::Instant::now();
     for path in names.into_iter().skip(keep) {
+        if started.elapsed() >= rust_mutants::tempowner::SWEEP_BUDGET {
+            break;
+        }
         let candidate = path
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())

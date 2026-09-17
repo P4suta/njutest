@@ -415,6 +415,12 @@ pub fn sweep_with(
 }
 
 /// What one pass over the temporary directory looks for.
+///
+/// A failure about one directory is recorded against that directory and the
+/// pass goes on. Propagating it would throw away everything the pass had
+/// already established — every directory removed, every byte counted, every
+/// other failure — and answer with the temporary root's name, which is not
+/// the directory that refused.
 struct Pass<'a> {
     prefixes: &'a [&'a str],
     now: Timestamp,
@@ -463,12 +469,13 @@ fn collect(parent: &Path, pass: &Pass<'_>) -> io::Result<SweepResult> {
         }
         let dir = parent.join(&name);
         let verdict = match judge(&dir, &entry, now) {
-            Ok(Verdict::Cache) if caches_too => match acquire(&lock_path(&dir))? {
-                None => Ok(Verdict::Live),
-                Some(mut lock) => {
-                    lock.release()?;
-                    Ok(Verdict::Abandoned)
-                }
+            Ok(Verdict::Cache) if caches_too => match acquire(&lock_path(&dir)) {
+                Ok(None) => Ok(Verdict::Live),
+                Ok(Some(mut lock)) => match lock.release() {
+                    Ok(()) => Ok(Verdict::Abandoned),
+                    Err(source) => Err(source),
+                },
+                Err(source) => Err(source),
             },
             other => other,
         };

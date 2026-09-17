@@ -182,7 +182,7 @@ fn a_successful_probe_keeps_only_its_trimmed_first_line() {
 }
 
 #[test]
-fn an_empty_successful_probe_is_missing() {
+fn an_empty_successful_probe_says_it_printed_no_version() {
     let root = tempfile::tempdir().expect("a directory");
     let installed = scripted(Invocation::new("git", &["--version"]));
     let environment = with_fake(
@@ -195,14 +195,14 @@ fn an_empty_successful_probe_is_missing() {
     let said = asked(&environment);
 
     assert!(
-        row(&said, "git").ends_with("missing"),
-        "{}",
+        row(&said, "git").contains("printed no version"),
+        "a tool that is there and said nothing is not one to go and install: {}",
         row(&said, "git")
     );
 }
 
 #[test]
-fn a_probe_that_cannot_be_started_is_missing() {
+fn a_probe_that_cannot_be_started_says_it_is_installed_and_would_not_start() {
     let root = tempfile::tempdir().expect("a directory");
     let bin = root.path().join("bin");
     std::fs::create_dir_all(&bin).expect("a program directory");
@@ -215,14 +215,15 @@ fn a_probe_that_cannot_be_started_is_missing() {
     ));
 
     assert!(
-        row(&said, "git").ends_with("missing"),
-        "{}",
+        row(&said, "git").contains("would not start"),
+        "a file that is there and is not a program is a different thing to be told from \
+         one that is not there at all: {}",
         row(&said, "git")
     );
 }
 
 #[test]
-fn a_probe_that_exits_nonzero_is_missing_even_when_it_prints_a_version() {
+fn a_probe_that_exits_nonzero_says_it_is_installed_and_refused() {
     let root = tempfile::tempdir().expect("a directory");
     let mut git = Invocation::new("git", &["--version"]).printing("git lying 9.8.7\n");
     git.exit = 7;
@@ -237,8 +238,15 @@ fn a_probe_that_exits_nonzero_is_missing_even_when_it_prints_a_version() {
     let said = asked(&environment);
     let git = row(&said, "git");
 
-    assert!(git.ends_with("missing"), "{git}");
-    assert!(!git.contains("lying"), "{git}");
+    assert!(
+        git.contains("refused") && git.contains("installed") && git.contains("exited 7"),
+        "a tool that is there and answered badly is not a tool to go and install, and \
+         saying `missing` for both sends somebody to install what they already have: {git}"
+    );
+    assert!(
+        !git.contains("lying"),
+        "and a version it printed alongside a failure is not a version: {git}"
+    );
 }
 
 #[test]

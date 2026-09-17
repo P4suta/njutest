@@ -13,6 +13,7 @@ pub mod discover;
 pub mod duration;
 pub mod equivalence;
 pub mod error;
+pub mod execcost;
 pub mod execute;
 pub mod flatten;
 pub mod git;
