@@ -117,7 +117,7 @@ fn mutants(report: &Report) -> String {
         format!(
             "<tr><td class=\"{outcome}\">{outcome}</td><td><code>{id}</code></td>\
              <td><code>{path}:{line}</code></td><td>{rule}</td><td>{by}</td></tr>",
-            outcome = escape(&mutant.outcome),
+            outcome = escape(mutant.outcome.name()),
             id = escape(&mutant.display_id),
             path = escape(&mutant.path),
             line = mutant.position.line,

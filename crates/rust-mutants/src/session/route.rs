@@ -39,14 +39,96 @@ pub enum Route {
     },
 }
 
+/// Why a target that could have been asked about a mutation was not.
+///
+/// A closed set rather than a name, because the report carries these into a
+/// schema and an audit re-derives them: a proof spelled one way in one place
+/// and another way elsewhere is a discharge nobody can hold the run to.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
+#[serde(rename_all = "kebab-case")]
+#[non_exhaustive]
+pub enum Proof {
+    /// The target never ran the body of the branch the mutation sits in.
+    BranchNeverTaken,
+    /// The target ran the mutation without its value ever differing.
+    NeverInfected,
+}
+
+impl Proof {
+    /// Every proof that removes a target, which is what a schema and an audit have to know in full.
+    pub const ALL: [Self; 2] = [Self::BranchNeverTaken, Self::NeverInfected];
+
+    /// The name a route record carries.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::BranchNeverTaken => "branch-never-taken",
+            Self::NeverInfected => "never-infected",
+        }
+    }
+}
+
+impl std::fmt::Display for Proof {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.name())
+    }
+}
+
 /// The proof that a target which never ran the body of the branch a mutation sits in cannot have noticed it.
-pub const BRANCH_NEVER_TAKEN: &str = "branch-never-taken";
+pub const BRANCH_NEVER_TAKEN: Proof = Proof::BranchNeverTaken;
 
 /// The proof that a target which ran the mutation without its value ever differing cannot have noticed it.
-pub const NEVER_INFECTED: &str = "never-infected";
+pub const NEVER_INFECTED: Proof = Proof::NeverInfected;
+
+/// How narrowly a run chose which targets to ask about a mutation.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
+#[serde(rename_all = "kebab-case")]
+#[non_exhaustive]
+pub enum Granularity {
+    /// Every target, because the measurement says nothing about this place.
+    All,
+    /// The targets a measurement places at the mutation, each asked for all of its tests.
+    Block,
+    /// The targets a measurement places at the mutation, each asked for the tests that reach it.
+    Test,
+    /// Every target a proof removed, so nothing runs.
+    Discharged,
+    /// No measured target executes it, so nothing runs.
+    Unreached,
+}
+
+impl Granularity {
+    /// Every granularity a route can be decided at, which is what a schema and an audit have to know in full.
+    pub const ALL: [Self; 5] = [
+        Self::All,
+        Self::Block,
+        Self::Test,
+        Self::Discharged,
+        Self::Unreached,
+    ];
+
+    /// The name a route record carries.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::Block => "block",
+            Self::Test => "test",
+            Self::Discharged => "discharged",
+            Self::Unreached => "unreached",
+        }
+    }
+}
 
 /// Why a route is wider than a measurement alone would make it. Every one of these runs more, never less.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
+#[serde(rename_all = "kebab-case")]
 #[non_exhaustive]
 pub enum Fallback {
     /// Nothing was measured at all.
@@ -147,7 +229,7 @@ pub struct Discharge {
     /// The target.
     pub target: String,
     /// The proof that removed it.
-    pub proof: &'static str,
+    pub proof: Proof,
 }
 
 /// What a route is decided among.
@@ -358,26 +440,26 @@ impl Route {
 
     /// The granularity a route record carries: `all`, `test`, `block`, `discharged`, or `unreached`.
     #[must_use]
-    pub fn granularity(&self) -> &'static str {
+    pub fn granularity(&self) -> Granularity {
         match self {
-            Self::All { .. } => "all",
+            Self::All { .. } => Granularity::All,
             Self::Block { reaching, .. }
                 if reaching.iter().all(|one| one.tests == Asked::Every) =>
             {
-                "block"
+                Granularity::Block
             }
-            Self::Block { .. } => "test",
-            Self::Discharged { .. } => "discharged",
-            Self::Unreached { .. } => "unreached",
+            Self::Block { .. } => Granularity::Test,
+            Self::Discharged { .. } => Granularity::Discharged,
+            Self::Unreached { .. } => Granularity::Unreached,
         }
     }
 
     /// Why the route is wider than the measurement alone would make it, when it is.
     #[must_use]
-    pub fn fallback(&self) -> Option<&'static str> {
+    pub const fn fallback(&self) -> Option<Fallback> {
         match self {
-            Self::All { fallback, .. } => Some(fallback.name()),
-            Self::Block { fallback, .. } => fallback.map(Fallback::name),
+            Self::All { fallback, .. } => Some(*fallback),
+            Self::Block { fallback, .. } => *fallback,
             Self::Discharged { .. } | Self::Unreached { .. } => None,
         }
     }
@@ -463,8 +545,8 @@ impl Route {
         crate::trace::RouteRecord {
             mutant: mutant.display_id.clone(),
             index: mutant.index,
-            granularity: self.granularity().to_owned(),
-            fallback: self.fallback().map(str::to_owned),
+            granularity: self.granularity().name().to_owned(),
+            fallback: self.fallback().map(|one| one.name().to_owned()),
             reaching: self.reaching().into_iter().map(str::to_owned).collect(),
             considered: self.considered().to_vec(),
             discharged: self
@@ -472,7 +554,7 @@ impl Route {
                 .iter()
                 .map(|discharge| crate::trace::DischargeRecord {
                     target: discharge.target.clone(),
-                    proof: discharge.proof.to_owned(),
+                    proof: discharge.proof.name().to_owned(),
                 })
                 .collect(),
             executed,

@@ -85,7 +85,8 @@
         "proved": 0,
         "unnoticed": 1,
         "unreached": 0,
-        "undecided": 0
+        "waited": 0,
+        "errored": 0
       }
     },
     "soundness": {
@@ -163,7 +164,10 @@
       "replacement": "",
       "outcome": "killed",
       "blind_in": [
-        "release"
+        {
+          "build": "release",
+          "decision": "unnoticed"
+        }
       ],
       "routing": {
         "granularity": "block",

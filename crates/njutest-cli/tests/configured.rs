@@ -11,8 +11,8 @@
 
 use njutest_cli::report::across::configured;
 use njutest_cli::report::{
-    Decision, MutantAccounting, MutantRecord, ObserverAccounting, Position, Report, RunKind,
-    Verdict,
+    Blind, BlindIn, MutantAccounting, MutantRecord, ObserverAccounting, Outcome, Position, Report,
+    RunKind, Verdict,
 };
 
 fn report(run: &str, outcomes: &[(&str, &str)]) -> Report {
@@ -37,7 +37,7 @@ fn report(run: &str, outcomes: &[(&str, &str)]) -> Report {
             item: "sign".to_owned(),
             original: ">".to_owned(),
             replacement: ">=".to_owned(),
-            outcome: (*outcome).to_owned(),
+            outcome: Outcome::parse(outcome).unwrap_or(Outcome::Errored),
             killed_by: None,
             reused: false,
             source_run_id: None,
@@ -47,7 +47,7 @@ fn report(run: &str, outcomes: &[(&str, &str)]) -> Report {
         .collect();
     let mut observers = ObserverAccounting::default();
     for record in &report.mutants {
-        observers.counted(Decision::of_outcome(&record.outcome).expect("a known outcome"));
+        observers.counted(record.outcome.decision());
     }
     report.accounting.mutants = MutantAccounting {
         cataloged: u32::try_from(report.mutants.len()).expect("a count"),
@@ -66,16 +66,22 @@ fn a_mutation_only_one_build_noticed_is_a_mutation_the_run_did_not_notice() {
     .expect("two builds of one catalog");
 
     assert_eq!(
-        whole.mutants[0].outcome, "survived",
+        whole.mutants[0].outcome.name(),
+        "survived",
         "the release build is a program somebody ships, so a mutation nothing \
          noticed there is a mutation nothing noticed; letting the debug build \
          outvote it would turn measuring more into a way of claiming more"
     );
     assert_eq!(
         whole.mutants[0].blind_in,
-        vec!["release".to_owned()],
-        "and the run says which build, because a survivor everywhere and a survivor \
-         in one build are different things to act on"
+        vec![BlindIn {
+            build: "release".to_owned(),
+            decision: Blind::Unnoticed,
+        }],
+        "and the run says which build and what that build established, because a \
+         survivor everywhere and a survivor in one build are different things to act \
+         on — and so are a build whose tests noticed nothing and one that established \
+         nothing at all"
     );
     assert_eq!(whole.accounting.mutants.observers.unnoticed, 1);
     assert_eq!(whole.accounting.mutants.observers.tests, 0);
@@ -89,7 +95,7 @@ fn a_mutation_every_build_noticed_is_noticed_and_names_no_build() {
     ])
     .expect("two builds of one catalog");
 
-    assert_eq!(whole.mutants[0].outcome, "killed");
+    assert_eq!(whole.mutants[0].outcome.name(), "killed");
     assert!(
         whole.mutants[0].blind_in.is_empty(),
         "naming a build where nothing went wrong is a column a reader learns to skip"
@@ -126,5 +132,32 @@ fn nothing_to_reconcile_is_refused_rather_than_invented() {
         Some(njutest_cli::report::across::ConfiguredError::Nothing),
         "a report of no builds would say a run established something it never \
          looked at"
+    );
+}
+
+#[test]
+fn a_build_that_established_nothing_is_named_apart_from_one_the_tests_are_blind_in() {
+    let whole = configured(&[
+        ("default".to_owned(), report("r", &[("a", "survived")])),
+        ("release".to_owned(), report("r", &[("a", "errored")])),
+    ])
+    .expect("two builds of one catalog");
+
+    assert_eq!(
+        whole.mutants[0].blind_in,
+        vec![
+            BlindIn {
+                build: "default".to_owned(),
+                decision: Blind::Unnoticed,
+            },
+            BlindIn {
+                build: "release".to_owned(),
+                decision: Blind::Errored,
+            },
+        ],
+        "a list of names alone would make a reader believe the same thing happened \
+         in both. It did not: one build ran the tests and nothing noticed, and the \
+         other never answered — and the first wants a test written where the second \
+         wants somebody to find out why first"
     );
 }

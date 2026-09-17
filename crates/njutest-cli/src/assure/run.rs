@@ -1286,7 +1286,7 @@ pub fn record(report: &mut Report, mutation: &mutation::Mutation, accepted: &BTr
             item: judged.item.clone(),
             original: judged.original.clone(),
             replacement: judged.replacement.clone(),
-            outcome: judged.disposition.name().to_owned(),
+            outcome: judged.disposition.outcome(),
             killed_by: judged.disposition.decided_by().map(ToOwned::to_owned),
             reused: judged.source_run_id.is_some(),
             source_run_id: judged.source_run_id.clone(),
@@ -1295,8 +1295,11 @@ pub fn record(report: &mut Report, mutation: &mutation::Mutation, accepted: &BTr
         })
         .collect();
     report.findings.extend(mutation.findings(accepted));
-    let hollow = crate::report::hollow::found(&report.mutants);
-    report.findings.extend(hollow);
+    if report.scope.shard.is_none() {
+        report
+            .findings
+            .extend(crate::report::hollow::found(&report.mutants));
+    }
     for (reason, count) in &mutation.skips {
         report.limitations.push(Limitation::new(
             &format!("skipped-{reason}"),

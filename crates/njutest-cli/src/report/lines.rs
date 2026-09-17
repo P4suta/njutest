@@ -46,7 +46,7 @@ fn written(report: &Report, document: Option<&str>) -> String {
             &mut out,
             "MUTANT",
             &[
-                &mutant.outcome,
+                mutant.outcome.name(),
                 &mutant.display_id,
                 &format!(
                     "{}:{}:{}",
@@ -106,7 +106,11 @@ fn locating(mutant: &crate::report::MutantRecord) -> String {
 }
 
 fn onward(report: &Report, out: &mut String) {
-    let Some(first) = report.mutants.iter().find(|one| one.outcome == "survived") else {
+    let Some(first) = report
+        .mutants
+        .iter()
+        .find(|one| one.outcome == super::Outcome::Survived)
+    else {
         return;
     };
     record(

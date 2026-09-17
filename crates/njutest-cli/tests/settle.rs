@@ -3,8 +3,9 @@
 
 //! What a run establishes about one wire fault, from what the tests did with it in place.
 
-use njutest_cli::report::Decision;
+use njutest_cli::report::SeamDecision;
 use njutest_cli::wire::derive::Fault;
+use njutest_cli::wire::rule::Rule;
 use njutest_cli::wire::settle::{Answered, settle};
 
 fn fault() -> Fault {
@@ -13,8 +14,7 @@ fn fault() -> Fault {
         capability: "api".to_owned(),
         seq: 0,
         during: Some("pkg/test/it".to_owned()),
-        rule: "status-server-error".to_owned(),
-        asks: "answer 500 where the upstream answered otherwise".to_owned(),
+        rule: Rule::StatusServerError,
     }
 }
 
@@ -30,7 +30,7 @@ fn a_fault_nothing_ran_is_one_the_run_established_nothing_about() {
     let settled = settle(&fault(), &[]);
     assert_eq!(
         settled.decision,
-        Decision::Unreached,
+        SeamDecision::Unreached,
         "a fault the run never put to anything is a hole rather than a survivor: \
          calling it survived would count a question nobody asked as one nothing \
          could answer"
@@ -43,7 +43,7 @@ fn a_fault_every_test_passed_with_is_one_nothing_noticed() {
     let settled = settle(&fault(), &[answered("a", true), answered("b", true)]);
     assert_eq!(
         settled.decision,
-        Decision::Unnoticed,
+        SeamDecision::Unnoticed,
         "the upstream answered 500 and the suite carried on, which is the gap this \
          phase exists to find"
     );
@@ -60,7 +60,7 @@ fn a_fault_a_test_failed_with_is_one_the_tests_noticed_and_it_says_which() {
             answered("c", false),
         ],
     );
-    assert_eq!(settled.decision, Decision::Tests);
+    assert_eq!(settled.decision, SeamDecision::Tests);
     assert_eq!(
         settled.noticed_by.as_deref(),
         Some("b"),

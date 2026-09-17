@@ -354,7 +354,8 @@
                 "proved",
                 "unnoticed",
                 "unreached",
-                "undecided"
+                "waited",
+                "errored"
               ],
               "properties": {
                 "types": {
@@ -372,7 +373,10 @@
                 "unreached": {
                   "$ref": "#/$defs/count"
                 },
-                "undecided": {
+                "waited": {
+                  "$ref": "#/$defs/count"
+                },
+                "errored": {
                   "$ref": "#/$defs/count"
                 }
               }
@@ -572,17 +576,23 @@
           },
           "rule": {
             "type": "string",
-            "minLength": 1
+            "enum": [
+              "truncate-response",
+              "delay-response",
+              "drop-connection",
+              "replay-request",
+              "stale-response",
+              "status-server-error",
+              "status-not-found"
+            ]
           },
           "decision": {
             "type": "string",
             "enum": [
-              "types",
               "tests",
               "proved",
               "unnoticed",
-              "unreached",
-              "undecided"
+              "unreached"
             ]
           },
           "noticed_by": {
@@ -767,11 +777,30 @@
           "minLength": 1
         },
         "blind_in": {
+          "description": "The builds this mutation is a hole in, each with what that build established. The name alone would make a reader believe the same thing happened in every build listed: a build whose tests ran and noticed nothing wants a test written, and a build that established nothing wants somebody to find out why first. Empty when the run measured one build, or when every build answered.",
           "type": "array",
-          "description": "The builds under which nothing noticed it. Empty when the run measured one build, or when every build noticed.",
           "items": {
-            "type": "string",
-            "minLength": 1
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "build",
+              "decision"
+            ],
+            "properties": {
+              "build": {
+                "type": "string",
+                "minLength": 1
+              },
+              "decision": {
+                "type": "string",
+                "enum": [
+                  "unnoticed",
+                  "unreached",
+                  "waited",
+                  "errored"
+                ]
+              }
+            }
           }
         },
         "routing": {

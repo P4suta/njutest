@@ -644,11 +644,16 @@ fn changed(spot: &Spot) -> Changed<'_> {
 }
 
 /// What a reader is told about one blind spot, naming the builds it is in when a run measured more than one.
+///
+/// A build that established nothing is named apart from the ones the word is
+/// about. Naming them together would say the tests ran and noticed nothing in
+/// a build where nothing ran at all, and send somebody looking for an
+/// assertion where what is missing is an answer.
 #[must_use]
 pub fn blindness_of(mutant: &crate::report::MutantRecord, waited: bool) -> String {
     let word = if waited {
         Blindness::Waited.word()
-    } else if mutant.outcome == "unreached" {
+    } else if mutant.outcome == crate::report::Outcome::Unreached {
         Blindness::Never.word()
     } else {
         Blindness::Ran.word()
@@ -656,7 +661,40 @@ pub fn blindness_of(mutant: &crate::report::MutantRecord, waited: bool) -> Strin
     if mutant.blind_in.is_empty() {
         return word.to_owned();
     }
-    format!("{word} in {}", mutant.blind_in.join(", "))
+    let mut clauses: Vec<String> = Vec::new();
+    for way in crate::report::Blind::ALL {
+        let builds = named(&mutant.blind_in, way);
+        if builds.is_empty() {
+            continue;
+        }
+        clauses.push(format!("{} in {builds}", worded(way, waited)));
+    }
+    clauses.join("; ")
+}
+
+/// What one way of being a hole reads as, which is total over the ways there are.
+///
+/// A run that read a build where nothing was established as one whose tests
+/// ran and noticed nothing would send somebody looking for an assertion where
+/// what is missing is an answer.
+const fn worded(way: crate::report::Blind, waited: bool) -> &'static str {
+    match way {
+        crate::report::Blind::Unnoticed if waited => Blindness::Waited.word(),
+        crate::report::Blind::Unnoticed => Blindness::Ran.word(),
+        crate::report::Blind::Unreached => Blindness::Never.word(),
+        crate::report::Blind::Waited => "nothing finished",
+        crate::report::Blind::Errored => "nothing established",
+    }
+}
+
+/// The builds of `blind_in` that are a hole in the way `way` says, in the order the record lists them.
+fn named(blind_in: &[crate::report::BlindIn], way: crate::report::Blind) -> String {
+    blind_in
+        .iter()
+        .filter(|one| one.decision == way)
+        .map(|one| one.build.clone())
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// How many columns `text` takes on a terminal, counting nothing for what it is painted with.

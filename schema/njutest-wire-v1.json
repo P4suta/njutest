@@ -65,7 +65,8 @@
           "status",
           "request_bytes",
           "response_bytes",
-          "body_bytes"
+          "body_bytes",
+          "status_line"
         ],
         "properties": {
           "method": {
@@ -92,6 +93,9 @@
           "body_bytes": {
             "type": "integer",
             "minimum": 0
+          },
+          "status_line": {
+            "type": "string"
           }
         }
       }

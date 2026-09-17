@@ -14,7 +14,7 @@ use njutest_cli::assure::mutation::{Disposition, Judged, Mutation, Unconfirmed, 
 use njutest_cli::assure::route::{BRANCH_NEVER_TAKEN, Discharge, NEVER_INFECTED, Reaches, Route};
 use njutest_cli::report::{Decision, FindingKind, Position};
 
-fn discharge(target: &str, proof: &'static str) -> Discharge {
+fn discharge(target: &str, proof: rust_mutants::session::Proof) -> Discharge {
     Discharge {
         target: target.to_owned(),
         proof,
@@ -154,7 +154,7 @@ fn a_survivor_no_test_could_have_noticed_says_so_and_names_the_proofs() {
          that should have: {detail}"
     );
     assert!(
-        detail.contains(BRANCH_NEVER_TAKEN) && detail.contains(NEVER_INFECTED),
+        detail.contains(BRANCH_NEVER_TAKEN.name()) && detail.contains(NEVER_INFECTED.name()),
         "and the proofs are named, because a reader who cannot tell a discharge from an \
          oversight can act on neither: {detail}"
     );
@@ -412,7 +412,8 @@ fn a_record_says_who_could_have_noticed_a_mutation_and_what_removed_the_rest() {
     let routing = njutest_cli::report::Routing::of(&route);
 
     assert_eq!(
-        routing.granularity, "block",
+        routing.granularity,
+        rust_mutants::session::Granularity::Block,
         "how narrowly a run chose is part of what a survivor rests on: a reader \
          cannot weigh `nothing noticed` without knowing how many things looked"
     );
@@ -443,13 +444,13 @@ fn a_record_says_who_could_have_noticed_a_mutation_and_what_removed_the_rest() {
 #[test]
 fn a_target_that_never_appears_as_a_killer_is_not_a_target_that_noticed_nothing() {
     let asked = njutest_cli::report::Routing {
-        granularity: "block".to_owned(),
+        granularity: rust_mutants::session::Granularity::Block,
         reaching: vec!["fast".to_owned(), "slow".to_owned()],
         discharged: Vec::new(),
         fallback: None,
         answered: vec![njutest_cli::report::Answered {
             target: "fast".to_owned(),
-            outcome: "killed".to_owned(),
+            outcome: njutest_cli::report::Outcome::Killed,
         }],
     };
 
@@ -489,7 +490,7 @@ fn the_outcome_a_disposition_records_is_one_the_report_can_say_who_decided() {
         );
         seen.push(outcome);
     }
-    for (outcome, _) in Decision::OUTCOMES {
+    for outcome in njutest_cli::report::Outcome::ALL.map(njutest_cli::report::Outcome::name) {
         assert!(
             seen.contains(&outcome),
             "every outcome the report can record is one this test exercises, and \

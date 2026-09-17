@@ -75,9 +75,9 @@ fn the_ways_the_page_says_a_mutation_is_decided_are_the_ways_there_are() {
         })
         .collect();
     paged.sort();
-    let mut ours: Vec<(String, String)> = Decision::OUTCOMES
+    let mut ours: Vec<(String, String)> = njutest_cli::report::Outcome::ALL
         .iter()
-        .map(|&(outcome, decision)| (outcome.to_owned(), decision.name().to_owned()))
+        .map(|one| (one.name().to_owned(), one.decision().name().to_owned()))
         .collect();
     ours.sort();
     assert_eq!(

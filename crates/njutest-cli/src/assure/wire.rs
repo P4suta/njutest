@@ -3,7 +3,7 @@
 
 //! Putting every question a seam licensed to the tests, and saying what nothing noticed.
 
-use crate::report::Decision;
+use crate::report::SeamDecision;
 use crate::report::{Finding, FindingKind, Limitation};
 use crate::watch::Watch;
 use crate::wire::Exchange;
@@ -60,14 +60,14 @@ where
             asked_about(
                 &mut done,
                 measuring,
-                (fault, Decision::Proved, Some(proof.to_owned())),
+                (fault, SeamDecision::Proved, Some(proof.to_owned())),
             );
             watch.trace.wire_exec(crate::trace::WireExecRecord {
                 fault: fault.id.clone(),
                 capability: fault.capability.clone(),
                 seq: fault.seq,
-                rule: fault.rule.clone(),
-                decision: Decision::Proved.name().to_owned(),
+                rule: fault.rule.name().to_owned(),
+                decision: SeamDecision::Proved.name().to_owned(),
                 noticed_by: Some(proof.to_owned()),
             });
             continue;
@@ -82,14 +82,16 @@ where
             fault: settled.fault.id.clone(),
             capability: settled.fault.capability.clone(),
             seq: settled.fault.seq,
-            rule: settled.fault.rule.clone(),
+            rule: settled.fault.rule.name().to_owned(),
             decision: settled.decision.name().to_owned(),
             noticed_by: settled.noticed_by.clone(),
         });
         match settled.decision {
-            Decision::Tests => {}
-            Decision::Unreached => unput = unput.saturating_add(1),
-            _ => done.findings.push(unnoticed(fault, measuring.observed)),
+            SeamDecision::Tests | SeamDecision::Proved => {}
+            SeamDecision::Unreached => unput = unput.saturating_add(1),
+            SeamDecision::Unnoticed => {
+                done.findings.push(unnoticed(fault, measuring.observed));
+            }
         }
     }
     if unput > 0 {
@@ -110,7 +112,7 @@ where
 fn asked_about(
     done: &mut Measured,
     measuring: &Measuring<'_>,
-    (fault, decision, noticed_by): (&Fault, Decision, Option<String>),
+    (fault, decision, noticed_by): (&Fault, SeamDecision, Option<String>),
 ) {
     let named = measuring
         .observed
@@ -134,7 +136,7 @@ fn asked_about(
         seq: fault.seq,
         asked,
         answered,
-        rule: fault.rule.clone(),
+        rule: fault.rule,
         decision,
         noticed_by,
     });
@@ -162,7 +164,7 @@ fn unnoticed(fault: &Fault, observed: &[Exchange]) -> Finding {
         &fault.id,
         &format!(
             "nothing noticed when the run was told to {}, answering {spoke}",
-            fault.asks
+            fault.asks()
         ),
     );
     finding.path = None;
@@ -233,6 +235,7 @@ fn recorded(exchange: &Exchange) -> crate::trace::WireExchangeRecord {
             request_bytes,
             response_bytes,
             body_bytes: _,
+            status_line: _,
         } => crate::trace::WireExchangeRecord {
             wire: "http".to_owned(),
             method: Some(method.clone()),

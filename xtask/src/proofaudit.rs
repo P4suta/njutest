@@ -396,9 +396,19 @@ struct FindingRow {
 ///
 /// Re-derived from the executions alone. A target is asked about a mutation
 /// only after every target before it in the route survived it, so every
-/// execution the recording holds is one where that target had its chance.
+/// execution the recording holds is one where that target had its chance —
+/// except one nobody decided, which is a chance the run could not give it and
+/// is left out of the count rather than held against it.
+///
+/// A part of a catalog is not held to this at all. Whether a target notices
+/// anything is a statement about the whole catalog, and a part has seen a
+/// slice: a target silent in this part may have noticed something in another,
+/// and demanding a finding here would demand one the whole would contradict.
 fn hollow(recording: &Recording<'_>, recorded: Option<&str>, audit: &mut Audit) {
     let mut notes = Notes::on(audit, Layer::Hollow);
+    if recording.shard.is_some() {
+        return;
+    }
     let Some(recorded) = recorded else {
         notes.unaudited(
             "executions",
@@ -420,6 +430,12 @@ fn hollow(recording: &Recording<'_>, recorded: Option<&str>, audit: &mut Audit) 
     }
     let mut asked: BTreeMap<&str, (u64, bool)> = BTreeMap::new();
     for exec in &routing.execs {
+        if !matches!(
+            exec.outcome.as_str(),
+            "killed" | "timed_out" | "survived" | "unreached" | "equivalent" | "compile-rejected"
+        ) {
+            continue;
+        }
         let held = asked.entry(exec.target.as_str()).or_insert((0, false));
         held.0 = held.0.saturating_add(1);
         if matches!(exec.outcome.as_str(), "killed" | "timed_out") {
@@ -450,8 +466,8 @@ fn hollow(recording: &Recording<'_>, recorded: Option<&str>, audit: &mut Audit) 
         notes.violated(
             target,
             format!(
-                "{target} was put to {count} mutation(s) and answered none of them with a \
-                 detection, and the report names no hollow-target finding about it"
+                "{target} answered about {count} mutation(s) and noticed none of them, \
+                 and the report names no hollow-target finding about it"
             ),
         );
     }
@@ -460,7 +476,7 @@ fn hollow(recording: &Recording<'_>, recorded: Option<&str>, audit: &mut Audit) 
             target,
             format!(
                 "the report calls {target} hollow, and the recording has it noticing \
-                 something or being asked nothing"
+                 something or answering about nothing"
             ),
         );
     }

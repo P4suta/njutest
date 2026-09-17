@@ -10,9 +10,10 @@
         "proved": 0,
         "tests": 7,
         "types": 0,
-        "undecided": 0,
         "unnoticed": 2,
-        "unreached": 1
+        "unreached": 1,
+        "waited": 0,
+        "errored": 0
       },
       "rejected": 0,
       "reused_killed": 0,

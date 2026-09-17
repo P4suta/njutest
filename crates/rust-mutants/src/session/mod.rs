@@ -13,7 +13,8 @@ use verify::verify;
 pub use verify::{Baseline, Measured, Passing, Verified};
 
 pub use route::{
-    Asked, BRANCH_NEVER_TAKEN, Discharge, Fallback, NEVER_INFECTED, Reaches, Route, Routing, Timing,
+    Asked, BRANCH_NEVER_TAKEN, Discharge, Fallback, Granularity, NEVER_INFECTED, Proof, Reaches,
+    Route, Routing, Timing,
 };
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -298,7 +299,7 @@ enum Narrowed {
     /// The target stays in the route, asked for these tests.
     Reaching(Reaches),
     /// Nothing of the target could have noticed, and this names what says so.
-    Discharged(&'static str),
+    Discharged(Proof),
 }
 
 impl Session {
@@ -787,7 +788,7 @@ impl Session {
     }
 
     /// The proof that this target cannot have noticed this mutation, when a layer has one.
-    fn proof_against(&self, mutant: &Mutant, target: &str) -> Option<&'static str> {
+    fn proof_against(&self, mutant: &Mutant, target: &str) -> Option<Proof> {
         if self.never_took_the_branch(mutant, target) {
             return Some(BRANCH_NEVER_TAKEN);
         }

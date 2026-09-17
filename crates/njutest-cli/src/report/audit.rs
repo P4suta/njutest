@@ -109,12 +109,7 @@ impl fmt::Display for Violation {
                  the type system, a test, a proof, nothing that ran, nothing that \
                  could run, or nobody"
             ),
-            Self::SeamFindingNamesNothing { id } => write!(
-                f,
-                "the report calls {id} a question nothing noticed and holds no such \
-                 question; a reader handed a name with nothing to look it up in has \
-                 been told nothing they can act on"
-            ),
+            Self::SeamFindingNamesNothing { id } => write!(f, "{}", names_nothing(id)),
             Self::FindingsDisagree {
                 verdict,
                 findings,
@@ -194,6 +189,15 @@ fn check_decisions(report: &Report, violations: &mut Vec<Violation>) {
             decided,
         });
     }
+}
+
+/// What a reader is told where a seam finding names a question the report does not hold.
+fn names_nothing(id: &str) -> String {
+    format!(
+        "the report calls {id} a question nothing noticed and holds no such question; \
+         a reader handed a name with nothing to look it up in has been told nothing \
+         they can act on"
+    )
 }
 
 /// Whether every finding about a seam names a question the report itself holds.

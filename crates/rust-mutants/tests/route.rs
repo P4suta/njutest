@@ -9,7 +9,7 @@ type Reached<'a> = &'a [(&'a str, &'a [u32])];
 /// Every target of a record, each with what its tests reached.
 type Records<'a> = &'a [(&'a str, Reached<'a>)];
 
-use rust_mutants::session::{Fallback, Route, Routing};
+use rust_mutants::session::{Fallback, Granularity, Route, Routing};
 use rust_mutants::touch::{Seen, TargetTouches, Touched};
 
 /// A record in which each named target's tests reached exactly the mutations given.
@@ -55,7 +55,7 @@ fn a_route_that_reaches_nothing_names_every_target_it_asked() {
 
     assert_eq!(
         route.granularity(),
-        "unreached",
+        Granularity::Unreached,
         "nothing of either target reached mutation 1"
     );
     assert_eq!(
@@ -119,7 +119,7 @@ fn a_route_every_target_answered_says_nothing_widened_it() {
     );
     assert_eq!(
         widened.fallback(),
-        Some(Fallback::NotMeasured.name()),
+        Some(Fallback::NotMeasured),
         "and a record that measured nothing says so rather than removing anything"
     );
 }
@@ -145,7 +145,7 @@ fn a_target_the_record_does_not_name_is_kept_and_says_the_route_is_incomplete() 
     );
     assert_eq!(
         route.fallback(),
-        Some(Fallback::TouchIncomplete.name()),
+        Some(Fallback::TouchIncomplete),
         "and the route says why it is wider than the record alone would make it"
     );
     assert!(
@@ -246,7 +246,7 @@ fn narrowed() -> Route {
 fn a_route_narrowed_to_some_tests_says_test_rather_than_block() {
     assert_eq!(
         narrowed().granularity(),
-        "test",
+        Granularity::Test,
         "a route that put the mutation to some of a target's tests and not all of them is a \
          narrower question than the block it sits in, and a reader counting work has to see that"
     );
@@ -313,7 +313,7 @@ fn a_route_every_proof_removed_says_so_and_widens_nothing() {
     };
     assert_eq!(
         route.granularity(),
-        "discharged",
+        Granularity::Discharged,
         "a mutation every target was proved unable to notice is not one nothing reached, and a \
          reader deciding whether the tests have a gap there needs the two apart"
     );

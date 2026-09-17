@@ -416,9 +416,8 @@ fn cases() -> Vec<(&'static str, Told)> {
                     title: "this test target noticed none of the changes it was put to".to_owned(),
                     at: None,
                     notes: vec![
-                        "core/test/smoke was put to 31 mutations and noticed none of \
-                         them, so nothing it asserts is held up by any of the changes \
-                         this run made"
+                        "core/test/smoke answered about 31 mutations and noticed none \
+                         of them"
                             .to_owned(),
                     ],
                     actions: Vec::new(),

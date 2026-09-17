@@ -4,6 +4,7 @@
 //! The faults a recording of a seam licenses, and the ones it does not.
 
 use njutest_cli::wire::derive::{ID_DOMAIN, derive};
+use njutest_cli::wire::rule::Rule;
 use njutest_cli::wire::{Exchange, Spoken};
 
 fn http(seq: u64, path: &str, status: u16) -> Exchange {
@@ -19,6 +20,7 @@ fn http(seq: u64, path: &str, status: u16) -> Exchange {
             request_bytes: 0,
             response_bytes: 84,
             body_bytes: 40,
+            status_line: "HTTP/1.1 200 OK".to_owned(),
         },
     }
 }
@@ -68,7 +70,7 @@ fn every_fault_names_the_exchange_it_was_derived_from() {
 #[test]
 fn a_protocol_nothing_parsed_licenses_no_question_about_its_answer() {
     let faults = derive(&[raw(0)]);
-    let named: Vec<&str> = faults.iter().map(|fault| fault.rule.as_str()).collect();
+    let named: Vec<&str> = faults.iter().map(|fault| fault.rule.name()).collect();
     assert!(
         !named.iter().any(|rule| rule.contains("status")),
         "the interposer read nothing of this exchange, so a run that proposed \
@@ -85,7 +87,7 @@ fn a_protocol_nothing_parsed_licenses_no_question_about_its_answer() {
 #[test]
 fn an_answer_that_was_read_licenses_a_question_about_the_answer() {
     let faults = derive(&[http(0, "/orders", 200)]);
-    let named: Vec<&str> = faults.iter().map(|fault| fault.rule.as_str()).collect();
+    let named: Vec<&str> = faults.iter().map(|fault| fault.rule.name()).collect();
     assert!(
         named.contains(&"status-server-error"),
         "the interposer read a 200, so `what if this had been a 500` is a question \
@@ -138,12 +140,13 @@ fn the_identity_of_a_question_is_the_one_the_recipe_states_and_not_this_implemen
             request_bytes: 0,
             response_bytes: 0,
             body_bytes: 0,
+            status_line: "HTTP/1.1 200 OK".to_owned(),
         },
     }];
     let minted = derive(&observed);
     let asked = minted
         .iter()
-        .find(|one| one.rule == "status-server-error")
+        .find(|one| one.rule == Rule::StatusServerError)
         .expect("the question about the status");
     assert_eq!(
         asked.id, "f714f108a1ce93e4cae5d149115f5f2efc4d4ceb620ccecc762f1c4b914022ed",
@@ -164,7 +167,7 @@ fn the_first_exchange_on_a_seam_licenses_no_question_about_what_came_before_it()
     let minted = derive(&observed);
     let stale: Vec<u64> = minted
         .iter()
-        .filter(|one| one.rule == "stale-response")
+        .filter(|one| one.rule == Rule::StaleResponse)
         .map(|one| one.seq)
         .collect();
     assert_eq!(

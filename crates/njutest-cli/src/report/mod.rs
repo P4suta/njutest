@@ -336,8 +336,8 @@ pub struct MutantAccounting {
 pub struct Discharged {
     /// The target, by the identity a report names it with.
     pub target: String,
-    /// The proof's name.
-    pub proof: String,
+    /// The proof that removed it.
+    pub proof: rust_mutants::session::Proof,
 }
 
 /// One target a run actually asked about a mutation, and what it answered.
@@ -346,8 +346,8 @@ pub struct Discharged {
 pub struct Answered {
     /// The target, by the identity a report names it with.
     pub target: String,
-    /// What it said, as an outcome a report records.
-    pub outcome: String,
+    /// What it said.
+    pub outcome: Outcome,
 }
 
 /// Which targets could have noticed one mutation, and what removed the ones that could not.
@@ -358,17 +358,17 @@ pub struct Answered {
 /// diagnostics. ADR 0002 says a trace is never evidence, so a reader holding
 /// a survivor to that predicate was holding it to something the run does not
 /// answer for.
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Routing {
-    /// How narrowly the run chose, one of [`rust_mutants::session::Route::GRANULARITIES`].
-    pub granularity: String,
+    /// How narrowly the run chose.
+    pub granularity: rust_mutants::session::Granularity,
     /// The targets that could have noticed it.
     pub reaching: Vec<String>,
     /// The targets a proof removed, each with the proof that removed it.
     pub discharged: Vec<Discharged>,
     /// What widened the question, when the run could not narrow it.
-    pub fallback: Option<String>,
+    pub fallback: Option<rust_mutants::session::Fallback>,
     /// The targets the run actually asked, in the order it asked them, with what each answered. A target in `reaching` and not here reached the mutation and was never given the chance, because one asked before it noticed.
     #[serde(default)]
     pub answered: Vec<Answered>,
@@ -379,7 +379,7 @@ impl Routing {
     #[must_use]
     pub fn of(route: &rust_mutants::session::Route) -> Self {
         Self {
-            granularity: route.granularity().to_owned(),
+            granularity: route.granularity(),
             reaching: route
                 .reaching()
                 .into_iter()
@@ -390,10 +390,10 @@ impl Routing {
                 .iter()
                 .map(|one| Discharged {
                     target: one.target.clone(),
-                    proof: one.proof.to_owned(),
+                    proof: one.proof,
                 })
                 .collect(),
-            fallback: route.fallback().map(ToOwned::to_owned),
+            fallback: route.fallback(),
             answered: Vec::new(),
         }
     }
@@ -405,7 +405,7 @@ impl Routing {
 pub enum Decision {
     /// The compiler refused the program.
     Types,
-    /// A test noticed, a timeout among them.
+    /// A test noticed.
     Tests,
     /// No test of any kind could have noticed, proved rather than run.
     Proved,
@@ -413,63 +413,68 @@ pub enum Decision {
     Unnoticed,
     /// Nothing ran at all.
     Unreached,
-    /// Nothing decided it.
-    Undecided,
+    /// A bound expired before anything finished, which establishes nothing about the mutation.
+    Waited,
+    /// Nothing could be measured: a harness that would not start, or a pair that did not agree.
+    Errored,
 }
 
 impl Decision {
     /// Every way a mutation can be decided, in the order a reader adds them up.
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Types,
         Self::Tests,
         Self::Proved,
         Self::Unnoticed,
         Self::Unreached,
-        Self::Undecided,
-    ];
-
-    /// Every outcome a report records, and who it says decided the mutation.
-    pub const OUTCOMES: [(&'static str, Self); 8] = [
-        ("compile-rejected", Self::Types),
-        ("killed", Self::Tests),
-        ("timed_out", Self::Tests),
-        ("equivalent", Self::Proved),
-        ("survived", Self::Unnoticed),
-        ("unreached", Self::Unreached),
-        ("unconfirmed", Self::Undecided),
-        ("errored", Self::Undecided),
+        Self::Waited,
+        Self::Errored,
     ];
 
     /// What decided a mutation a report records under this outcome, or nothing if no outcome is spelled that way.
     #[must_use]
     pub fn of_outcome(outcome: &str) -> Option<Self> {
-        Self::OUTCOMES
-            .iter()
-            .find(|(name, _)| *name == outcome)
-            .map(|&(_, decision)| decision)
+        Outcome::parse(outcome).map(Outcome::decision)
     }
 
     /// How much a mutation decided this way stands on, where less is a weaker run.
     ///
-    /// The first three are holes in the verification and the last three are
+    /// The first four are holes in the verification and the last three are
     /// not; the order inside each group decides only which sentence a reader
     /// is given when two builds disagree.
     #[must_use]
     pub const fn standing(self) -> u8 {
         match self {
-            Self::Undecided => 0,
-            Self::Unnoticed => 1,
-            Self::Unreached => 2,
-            Self::Types => 3,
-            Self::Tests => 4,
-            Self::Proved => 5,
+            Self::Errored => 0,
+            Self::Waited => 1,
+            Self::Unnoticed => 2,
+            Self::Unreached => 3,
+            Self::Types => 4,
+            Self::Tests => 5,
+            Self::Proved => 6,
         }
     }
 
     /// Whether this is a gap in the verification rather than something that stands behind the verdict.
     #[must_use]
     pub const fn is_a_hole(self) -> bool {
-        matches!(self, Self::Undecided | Self::Unnoticed | Self::Unreached)
+        self.blind().is_some()
+    }
+
+    /// Which way this is a hole, or nothing where somebody answered.
+    ///
+    /// Matched without a catch-all, so a decision added later is one the
+    /// compiler makes somebody place on one side of the line rather than one
+    /// that quietly falls on the answered side.
+    #[must_use]
+    pub const fn blind(self) -> Option<Blind> {
+        match self {
+            Self::Unnoticed => Some(Blind::Unnoticed),
+            Self::Unreached => Some(Blind::Unreached),
+            Self::Waited => Some(Blind::Waited),
+            Self::Errored => Some(Blind::Errored),
+            Self::Types | Self::Tests | Self::Proved => None,
+        }
     }
 
     /// The wire name a report records.
@@ -481,9 +486,220 @@ impl Decision {
             Self::Proved => "proved",
             Self::Unnoticed => "unnoticed",
             Self::Unreached => "unreached",
-            Self::Undecided => "undecided",
+            Self::Waited => "waited",
+            Self::Errored => "errored",
         }
     }
+}
+
+/// What a run established about one mutation, as the record spells it.
+///
+/// A closed set rather than a name. The mapping from an outcome to who decided
+/// it used to live in two places, and they disagreed: one called a timeout a
+/// detection while the run's own finding said an expired budget establishes
+/// nothing. One table, read through one function, is what stops that.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+#[non_exhaustive]
+pub enum Outcome {
+    /// The compiler refused the mutated program.
+    #[serde(rename = "compile-rejected")]
+    CompileRejected,
+    /// A test noticed.
+    Killed,
+    /// A bound expired before anything finished.
+    #[serde(rename = "timed_out")]
+    TimedOut,
+    /// Every test that could notice ran and none did.
+    Survived,
+    /// Nothing ran it.
+    Unreached,
+    /// The compiler rendered it identically, so no observer could tell.
+    Equivalent,
+    /// A pair did not agree, so nothing was established.
+    Unconfirmed,
+    /// Nothing could be measured.
+    Errored,
+}
+
+impl Outcome {
+    /// Every outcome a report records.
+    pub const ALL: [Self; 8] = [
+        Self::CompileRejected,
+        Self::Killed,
+        Self::TimedOut,
+        Self::Survived,
+        Self::Unreached,
+        Self::Equivalent,
+        Self::Unconfirmed,
+        Self::Errored,
+    ];
+
+    /// The name a report records.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::CompileRejected => "compile-rejected",
+            Self::Killed => "killed",
+            Self::TimedOut => "timed_out",
+            Self::Survived => "survived",
+            Self::Unreached => "unreached",
+            Self::Equivalent => "equivalent",
+            Self::Unconfirmed => "unconfirmed",
+            Self::Errored => "errored",
+        }
+    }
+
+    /// The outcome of that name, or nothing where no outcome is spelled that way.
+    #[must_use]
+    pub fn parse(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|one| one.name() == name)
+    }
+
+    /// Who decided a mutation this outcome is recorded for.
+    ///
+    /// A timeout is `Waited` rather than `Tests`. The engine is right to call
+    /// it a detection — the process hung with the mutant active — but njutest
+    /// measures something else: a bound is a budget, and ADR 0004 says a
+    /// result resting on a budget is not a proof, which is why a timeout has
+    /// its own column and its own finding saying an expired budget establishes
+    /// nothing about the mutation.
+    #[must_use]
+    pub const fn decision(self) -> Decision {
+        match self {
+            Self::CompileRejected => Decision::Types,
+            Self::Killed => Decision::Tests,
+            Self::TimedOut => Decision::Waited,
+            Self::Survived => Decision::Unnoticed,
+            Self::Unreached => Decision::Unreached,
+            Self::Equivalent => Decision::Proved,
+            Self::Unconfirmed | Self::Errored => Decision::Errored,
+        }
+    }
+}
+
+/// Who can decide a question about a seam, which is everybody who could be watching bytes on a socket.
+///
+/// A closed set of four rather than a [`Decision`], because the type system
+/// never sees a fault injected into a socket: `types` is nonsense here, and a
+/// report that could spell it is a report that could say something no run
+/// could mean.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+#[non_exhaustive]
+pub enum SeamDecision {
+    /// A test noticed.
+    Tests,
+    /// No observer could have noticed, proved rather than run.
+    Proved,
+    /// The suite ran with it in place and nothing noticed.
+    Unnoticed,
+    /// The run could not put the question, so it established nothing.
+    Unreached,
+}
+
+impl SeamDecision {
+    /// Every way a seam question can be decided.
+    pub const ALL: [Self; 4] = [Self::Tests, Self::Proved, Self::Unnoticed, Self::Unreached];
+
+    /// The decision this is one of.
+    #[must_use]
+    pub const fn decision(self) -> Decision {
+        match self {
+            Self::Tests => Decision::Tests,
+            Self::Proved => Decision::Proved,
+            Self::Unnoticed => Decision::Unnoticed,
+            Self::Unreached => Decision::Unreached,
+        }
+    }
+
+    /// The wire name a report records.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        self.decision().name()
+    }
+
+    /// How much a question decided this way stands on, where less is a weaker run.
+    #[must_use]
+    pub const fn standing(self) -> u8 {
+        self.decision().standing()
+    }
+}
+
+/// The ways a mutation can be a hole, which is every way short of somebody answering for it.
+///
+/// A closed set of exactly the decisions that leave a hole. `blind_in` carries
+/// this rather than a [`Decision`] because a build that answered is not one
+/// anybody is blind in: writing that down is a state a report must never hold,
+/// and a type that cannot spell it is a proof where a check would have been a
+/// promise somebody keeps.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Blind {
+    /// The tests ran it and nothing noticed.
+    Unnoticed,
+    /// Nothing ran it.
+    Unreached,
+    /// A bound expired before anything finished.
+    Waited,
+    /// Nothing could be measured: a harness that would not start, or a pair that did not agree.
+    Errored,
+}
+
+impl Blind {
+    /// Every way a mutation can be a hole.
+    pub const ALL: [Self; 4] = [
+        Self::Unnoticed,
+        Self::Unreached,
+        Self::Waited,
+        Self::Errored,
+    ];
+
+    /// The decision this is one of.
+    #[must_use]
+    pub const fn decision(self) -> Decision {
+        match self {
+            Self::Unnoticed => Decision::Unnoticed,
+            Self::Unreached => Decision::Unreached,
+            Self::Waited => Decision::Waited,
+            Self::Errored => Decision::Errored,
+        }
+    }
+
+    /// The wire name a report records.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        self.decision().name()
+    }
+
+    /// Whether nothing answered here, as against the tests having been there and missed it.
+    ///
+    /// A run that read these two together would count a broken harness among
+    /// the chances a suite failed to take, and put the count behind the
+    /// accusation.
+    #[must_use]
+    pub const fn is_unanswered(self) -> bool {
+        match self {
+            Self::Waited | Self::Errored => true,
+            Self::Unnoticed | Self::Unreached => false,
+        }
+    }
+}
+
+/// One build a mutation is a hole in, and what that build established about it.
+///
+/// The name alone would make a reader believe the same thing happened in every
+/// build it lists. A build whose tests ran and noticed nothing wants a test
+/// written; a build that established nothing wants somebody to find out why
+/// first, and telling them to write a test sends them looking for an assertion
+/// that is not what is missing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BlindIn {
+    /// The build, as `[[configuration]]` names it.
+    pub build: String,
+    /// What that build established, which is one of the ways a mutation is a hole and cannot be anything else.
+    pub decision: Blind,
 }
 
 /// One question a seam's recording licensed, and what the run made of it.
@@ -506,9 +722,9 @@ pub struct SeamRecord {
     /// What the upstream answered, where the wire says how to read one. `None` where it does not.
     pub answered: Option<u16>,
     /// What the question asks of the exchange.
-    pub rule: String,
-    /// Who decided it.
-    pub decision: Decision,
+    pub rule: crate::wire::rule::Rule,
+    /// Who decided it, which is one of the four a seam question can be decided by.
+    pub decision: SeamDecision,
     /// The target that noticed, or the proof that discharged it. `None` where neither did.
     pub noticed_by: Option<String>,
 }
@@ -527,8 +743,10 @@ pub struct ObserverAccounting {
     pub unnoticed: u32,
     /// How many nothing ran at all.
     pub unreached: u32,
-    /// How many nothing decided, which is a gap in the verification rather than in the project.
-    pub undecided: u32,
+    /// How many a bound expired on before anything finished, which establishes nothing about them.
+    pub waited: u32,
+    /// How many nothing could be measured about, which is a gap in the verification rather than in the project.
+    pub errored: u32,
 }
 
 impl ObserverAccounting {
@@ -540,7 +758,8 @@ impl ObserverAccounting {
             Decision::Proved => &mut self.proved,
             Decision::Unnoticed => &mut self.unnoticed,
             Decision::Unreached => &mut self.unreached,
-            Decision::Undecided => &mut self.undecided,
+            Decision::Waited => &mut self.waited,
+            Decision::Errored => &mut self.errored,
         };
         *column = column.saturating_add(1);
     }
@@ -553,7 +772,8 @@ impl ObserverAccounting {
             .saturating_add(self.proved)
             .saturating_add(self.unnoticed)
             .saturating_add(self.unreached)
-            .saturating_add(self.undecided)
+            .saturating_add(self.waited)
+            .saturating_add(self.errored)
     }
 }
 
@@ -637,10 +857,10 @@ pub struct MutantRecord {
     #[serde(default)]
     pub replacement: String,
     /// What the run established.
-    pub outcome: String,
-    /// The builds that are blind to it — nothing noticed, nothing ran it, or nothing decided — empty when the run measured one build or every build answered for it.
+    pub outcome: Outcome,
+    /// The builds it is a hole in, each with what that build established. Empty when the run measured one build or every build answered for it.
     #[serde(default)]
-    pub blind_in: Vec<String>,
+    pub blind_in: Vec<BlindIn>,
     /// Which targets could have noticed it, and what removed the rest. `null` where the run never asked.
     #[serde(default)]
     pub routing: Option<Routing>,

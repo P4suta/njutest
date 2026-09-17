@@ -47,8 +47,8 @@ fn populated() -> Report {
             seq: 3,
             asked: "GET /orders".to_owned(),
             answered: Some(200),
-            rule: "status-server-error".to_owned(),
-            decision: njutest_cli::report::Decision::Unnoticed,
+            rule: njutest_cli::wire::rule::Rule::StatusServerError,
+            decision: njutest_cli::report::SeamDecision::Unnoticed,
             noticed_by: None,
         }],
         resources: vec![njutest_cli::report::ResourceRecord {
@@ -122,7 +122,8 @@ fn populated() -> Report {
                     proved: 0,
                     unnoticed: 1,
                     unreached: 0,
-                    undecided: 0,
+                    waited: 0,
+                    errored: 0,
                 },
             },
             soundness: SoundnessAccounting {
@@ -162,22 +163,27 @@ fn populated() -> Report {
             item: "demo".to_owned(),
             original: ">".to_owned(),
             replacement: String::new(),
-            outcome: "killed".to_owned(),
+            outcome: njutest_cli::report::Outcome::parse("killed")
+                .unwrap_or(njutest_cli::report::Outcome::Errored),
             killed_by: Some("0123456789abcdef".to_owned()),
             reused: true,
             source_run_id: Some("20260904T101500Z-123456".to_owned()),
-            blind_in: vec!["release".to_owned()],
+            blind_in: vec![njutest_cli::report::BlindIn {
+                build: "release".to_owned(),
+                decision: njutest_cli::report::Blind::Unnoticed,
+            }],
             routing: Some(njutest_cli::report::Routing {
-                granularity: "block".to_owned(),
+                granularity: rust_mutants::session::Granularity::Block,
                 reaching: vec!["0123456789abcdef".to_owned()],
                 discharged: vec![njutest_cli::report::Discharged {
                     target: "fedcba9876543210".to_owned(),
-                    proof: "never-infected".to_owned(),
+                    proof: rust_mutants::session::Proof::NeverInfected,
                 }],
                 fallback: None,
                 answered: vec![njutest_cli::report::Answered {
                     target: "0123456789abcdef".to_owned(),
-                    outcome: "killed".to_owned(),
+                    outcome: njutest_cli::report::Outcome::parse("killed")
+                        .unwrap_or(njutest_cli::report::Outcome::Errored),
                 }],
             }),
         }],

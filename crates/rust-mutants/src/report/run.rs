@@ -497,8 +497,8 @@ pub struct TargetDocument {
 #[must_use]
 pub fn route_document(route: &crate::session::Route, executed: Vec<String>) -> RouteDocument {
     RouteDocument {
-        granularity: route.granularity().to_owned(),
-        fallback: route.fallback().map(ToOwned::to_owned),
+        granularity: route.granularity().name().to_owned(),
+        fallback: route.fallback().map(|one| one.name().to_owned()),
         reaching: route
             .reaching()
             .into_iter()
@@ -509,7 +509,7 @@ pub fn route_document(route: &crate::session::Route, executed: Vec<String>) -> R
             .iter()
             .map(|one| DischargeDocument {
                 target: one.target.clone(),
-                proof: one.proof.to_owned(),
+                proof: one.proof.name().to_owned(),
             })
             .collect(),
         executed,

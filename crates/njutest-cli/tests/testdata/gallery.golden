@@ -558,8 +558,7 @@ refused[NJ5001]: the workspace does not compile before anything is instrumented
 === a target that noticed none of what it was put to — eighty columns, no colour
 
 gap[NJ-HOLLOW-TARGET]: this test target noticed none of the changes it was put to
-  = core/test/smoke was put to 31 mutations and noticed none of them, so nothing
-    it asserts is held up by any of the changes this run made
+  = core/test/smoke answered about 31 mutations and noticed none of them
 
   INSUFFICIENT   31 killed, 0 survived, 0 unreached   1.9s
   1 gap   reports/runs/20260101T000000Z-aaaaaa
@@ -567,10 +566,8 @@ gap[NJ-HOLLOW-TARGET]: this test target noticed none of the changes it was put t
 === a target that noticed none of what it was put to — forty columns, no colour
 
 gap[NJ-HOLLOW-TARGET]: this test target noticed none of the changes it was put to
-  = core/test/smoke was put to 31
-    mutations and noticed none of them,
-    so nothing it asserts is held up by
-    any of the changes this run made
+  = core/test/smoke answered about 31
+    mutations and noticed none of them
 
   INSUFFICIENT   31 killed, 0 survived, 0 unreached   1.9s
   1 gap   reports/runs/20260101T000000Z-aaaaaa
@@ -578,8 +575,7 @@ gap[NJ-HOLLOW-TARGET]: this test target noticed none of the changes it was put t
 === a target that noticed none of what it was put to — eighty columns, colour
 
 [1;38;5;214mgap[0m[38;5;244m[[0m[1;38;5;214mNJ-HOLLOW-TARGET[38;5;244m][0m[0m: [1;38;5;253mthis test target noticed none of the changes it was put to[0m
-  [38;5;244m=[0m core/test/smoke was put to 31 mutations and noticed none of them, so nothing
-    it asserts is held up by any of the changes this run made
+  [38;5;244m=[0m core/test/smoke answered about 31 mutations and noticed none of them
 
   [1;38;5;214mINSUFFICIENT[0m   [38;5;244m31 killed, 0 survived, 0 unreached   1.9s[0m
   [1;38;5;214m1 gap[0m   [38;5;244mreports/runs/20260101T000000Z-aaaaaa[0m
@@ -587,8 +583,7 @@ gap[NJ-HOLLOW-TARGET]: this test target noticed none of the changes it was put t
 === a target that noticed none of what it was put to — eighty columns, unicode
 
 gap[NJ-HOLLOW-TARGET]: this test target noticed none of the changes it was put to
-  ╰─ core/test/smoke was put to 31 mutations and noticed none of them, so
-     nothing it asserts is held up by any of the changes this run made
+  ╰─ core/test/smoke answered about 31 mutations and noticed none of them
 
   ✗ INSUFFICIENT   31 killed, 0 survived, 0 unreached   1.9s
   1 gap   reports/runs/20260101T000000Z-aaaaaa

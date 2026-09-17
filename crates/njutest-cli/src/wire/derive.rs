@@ -5,6 +5,7 @@
 
 use sha2::{Digest as _, Sha256};
 
+use super::rule::Rule;
 use super::{Exchange, Spoken};
 
 /// Separates these identities from every other kind this workspace mints.
@@ -22,55 +23,16 @@ pub struct Fault {
     /// The test that was running when it happened, when the run could tell.
     pub during: Option<String>,
     /// What this asks of the exchange.
-    pub rule: String,
-    /// One sentence saying what a run would do.
-    pub asks: String,
+    pub rule: Rule,
 }
 
-/// What a run may ask of an exchange whose answer nothing parsed.
-///
-/// Cutting short, holding up and dropping need no reading, so they are
-/// licensed by any exchange at all.
-const UNPARSED: [(&str, &str); 4] = [
-    (
-        "truncate-response",
-        "cut the answer short, as a connection that died mid-body does",
-    ),
-    (
-        "delay-response",
-        "hold the answer back past what the caller waits for",
-    ),
-    (
-        "drop-connection",
-        "drop the connection with nothing said back",
-    ),
-    (
-        "replay-request",
-        "deliver the same request twice, as a retry after a lost answer does",
-    ),
-];
-
-/// What a run may ask only of an exchange something came before on the same seam.
-///
-/// Answering with what the one before it got is a question about a caller
-/// reading a replica that has not caught up, and the first exchange on a seam
-/// has nothing to be answered with.
-const PRECEDED: [(&str, &str); 1] = [(
-    "stale-response",
-    "answer with what the exchange before it got, as a replica behind the writer does",
-)];
-
-/// What a run may ask of an exchange whose answer it read.
-const PARSED: [(&str, &str); 2] = [
-    (
-        "status-server-error",
-        "answer 500 where the upstream answered otherwise",
-    ),
-    (
-        "status-not-found",
-        "answer 404 where the upstream answered otherwise",
-    ),
-];
+impl Fault {
+    /// One sentence saying what a run would do, which is what a reader is told.
+    #[must_use]
+    pub const fn asks(&self) -> &'static str {
+        self.rule.asks()
+    }
+}
 
 /// Every fault the `observed` exchanges license, in the order they were observed.
 ///
@@ -81,17 +43,17 @@ const PARSED: [(&str, &str); 2] = [
 pub fn derive(observed: &[Exchange]) -> Vec<Fault> {
     let mut faults = Vec::new();
     for exchange in observed {
-        for (rule, asks) in UNPARSED {
-            faults.push(one(exchange, rule, asks));
+        for rule in Rule::UNPARSED {
+            faults.push(one(exchange, rule));
         }
         if exchange.seq > 0 {
-            for (rule, asks) in PRECEDED {
-                faults.push(one(exchange, rule, asks));
+            for rule in Rule::PRECEDED {
+                faults.push(one(exchange, rule));
             }
         }
         if matches!(exchange.spoken, Spoken::Http { .. }) {
-            for (rule, asks) in PARSED {
-                faults.push(one(exchange, rule, asks));
+            for rule in Rule::PARSED {
+                faults.push(one(exchange, rule));
             }
         }
     }
@@ -99,25 +61,24 @@ pub fn derive(observed: &[Exchange]) -> Vec<Fault> {
 }
 
 /// One fault, named by the exchange it is about and the rule it applies.
-fn one(exchange: &Exchange, rule: &str, asks: &str) -> Fault {
+fn one(exchange: &Exchange, rule: Rule) -> Fault {
     Fault {
         id: identity(exchange, rule),
         capability: exchange.capability.clone(),
         seq: exchange.seq,
         during: exchange.during.clone(),
-        rule: rule.to_owned(),
-        asks: asks.to_owned(),
+        rule,
     }
 }
 
 /// The identity of one question about one exchange, reproducible from those alone.
-fn identity(exchange: &Exchange, rule: &str) -> String {
+fn identity(exchange: &Exchange, rule: Rule) -> String {
     let mut hasher = Sha256::new();
     for part in [
         ID_DOMAIN,
         &exchange.capability,
         &exchange.seq.to_string(),
-        rule,
+        rule.name(),
         &spoken(&exchange.spoken),
     ] {
         let bytes = part.as_bytes();

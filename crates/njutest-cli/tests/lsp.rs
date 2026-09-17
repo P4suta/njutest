@@ -13,6 +13,7 @@ use std::io::{BufRead, Cursor, Read, Write};
 
 use njutest_cli::app::lsp::{Encoding, diagnostics, framed, message, serve};
 use njutest_cli::config::Contract;
+use njutest_cli::report::Outcome;
 use njutest_cli::report::{
     Finding, FindingKind, MutantRecord, Position, Report, RunKind, TargetRecord, TargetStatus,
 };
@@ -45,7 +46,7 @@ fn reported() -> Report {
         item: "demo".to_owned(),
         original: ">".to_owned(),
         replacement: String::new(),
-        outcome: "survived".to_owned(),
+        outcome: Outcome::parse("survived").unwrap_or(Outcome::Errored),
         killed_by: None,
         reused: false,
         source_run_id: None,

@@ -21,6 +21,7 @@ fn observed() -> Vec<Exchange> {
             request_bytes: 0,
             response_bytes: 12,
             body_bytes: 12,
+            status_line: "HTTP/1.1 200 OK".to_owned(),
         },
     }]
 }

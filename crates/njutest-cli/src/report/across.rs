@@ -6,15 +6,15 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
-use super::{Decision, MutantRecord, Report};
+use super::{BlindIn, Decision, MutantRecord, Report};
 
 /// What a run records about one mutation, taken across every build that measured it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Resolved {
     /// What the run records, which is the weakest thing any build established.
     pub decision: Decision,
-    /// The builds that are blind to it — nothing noticed, nothing ran it, or nothing decided — in the order a report lists them. A run of one build names none: which build is not a question it has.
-    pub blind_in: Vec<String>,
+    /// The builds it is a hole in, each with what that build established, in the order a report lists them. A run of one build names none: which build is not a question it has.
+    pub blind_in: Vec<BlindIn>,
 }
 
 /// What `by_build` leaves one mutation standing on, which is the weakest of what its builds established.
@@ -24,11 +24,15 @@ pub fn across(by_build: &BTreeMap<String, Decision>) -> Resolved {
         .values()
         .copied()
         .min_by_key(|decision| decision.standing())
-        .unwrap_or(Decision::Undecided);
+        .unwrap_or(Decision::Errored);
     let blind_in = by_build
         .iter()
-        .filter(|(_, held)| held.is_a_hole())
-        .map(|(name, _)| name.clone())
+        .filter_map(|(build, held)| {
+            Some(BlindIn {
+                build: build.clone(),
+                decision: held.blind()?,
+            })
+        })
         .collect();
     Resolved { decision, blind_in }
 }
@@ -142,8 +146,8 @@ fn weakest(record: &MutantRecord, measured: &[(String, Report)]) -> MutantRecord
 }
 
 /// What decided one record, where an outcome no decision is spelled for decided nothing.
-fn decision_of(record: &MutantRecord) -> Decision {
-    Decision::of_outcome(&record.outcome).unwrap_or(Decision::Undecided)
+const fn decision_of(record: &MutantRecord) -> Decision {
+    record.outcome.decision()
 }
 
 /// The columns the reconciled records add up to.

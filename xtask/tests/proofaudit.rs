@@ -1969,3 +1969,61 @@ fn a_question_no_exchange_licenses_is_a_violation_however_the_run_decided_it() {
         audit.remarks
     );
 }
+
+/// A recording where `blunt` was put to two mutations and answered `outcome` to both.
+fn answering(outcome: &str) -> Vec<serde_json::Value> {
+    let mut lines = routes();
+    for (at, mutant) in [KILLED, SURVIVED].iter().enumerate() {
+        lines.push(serde_json::json!({
+            "type": "mutant-exec",
+            "mutant": {
+                "id": mutant,
+                "index": at,
+                "target": "blunt",
+                "outcome": outcome,
+                "duration_ms": 1
+            }
+        }));
+    }
+    lines
+}
+
+#[test]
+fn a_target_whose_executions_nobody_decided_is_not_one_the_audit_demands_a_finding_about() {
+    for outcome in ["errored", "unconfirmed"] {
+        let audit = audited_with(&base(), &answering(outcome));
+        assert!(
+            !audit
+                .remarks
+                .iter()
+                .any(|remark| remark.layer == Layer::Hollow
+                    && remark.standing == Standing::Violated
+                    && remark.subject == "blunt"),
+            "a target whose harness would not start did not notice nothing — the run \
+             established nothing about it, and an audit that demanded a finding here \
+             would demand that a broken harness be called a suite asserting nothing: \
+             {:?}",
+            audit.remarks
+        );
+    }
+}
+
+#[test]
+fn a_part_of_a_catalog_is_not_held_to_whether_a_target_noticed_anything() {
+    let mut document = base();
+    merge(
+        &mut document,
+        serde_json::json!({ "scope": { "shard": "1/2" } }),
+    );
+    let audit = audited_with(&document, &never_noticed());
+    assert!(
+        !audit
+            .remarks
+            .iter()
+            .any(|remark| remark.layer == Layer::Hollow),
+        "whether a target notices anything is a statement about the whole catalog, \
+         and a part has seen a slice: demanding a finding here would demand one the \
+         whole would contradict: {:?}",
+        audit.remarks
+    );
+}

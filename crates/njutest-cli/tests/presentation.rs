@@ -185,8 +185,12 @@ fn a_gap_that_is_only_in_one_build_says_which_build_it_is_in() {
         item: "sign".to_owned(),
         original: ">".to_owned(),
         replacement: ">=".to_owned(),
-        outcome: "survived".to_owned(),
-        blind_in: vec!["release".to_owned()],
+        outcome: njutest_cli::report::Outcome::parse("survived")
+            .unwrap_or(njutest_cli::report::Outcome::Errored),
+        blind_in: vec![njutest_cli::report::BlindIn {
+            build: "release".to_owned(),
+            decision: njutest_cli::report::Blind::Unnoticed,
+        }],
         routing: None,
         killed_by: None,
         reused: false,

@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
-use super::{Decision, Report, SeamRecord};
+use super::{Report, SeamDecision, SeamRecord};
 
 /// What one exchange the run observed does, and who would notice if it stopped.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -125,17 +125,15 @@ fn began(one: &SeamRecord) -> Sentence {
 /// them for something no test can give.
 fn counted(sentence: &mut Sentence, one: &SeamRecord) {
     match one.decision {
-        Decision::Tests => {
+        SeamDecision::Tests => {
             if let Some(who) = one.noticed_by.clone()
                 && !sentence.guarded_by.contains(&who)
             {
                 sentence.guarded_by.push(who);
             }
         }
-        Decision::Unnoticed => sentence.unguarded = sentence.unguarded.saturating_add(1),
-        Decision::Unreached | Decision::Undecided => {
-            sentence.unasked = sentence.unasked.saturating_add(1);
-        }
-        Decision::Proved | Decision::Types => {}
+        SeamDecision::Unnoticed => sentence.unguarded = sentence.unguarded.saturating_add(1),
+        SeamDecision::Unreached => sentence.unasked = sentence.unasked.saturating_add(1),
+        SeamDecision::Proved => {}
     }
 }

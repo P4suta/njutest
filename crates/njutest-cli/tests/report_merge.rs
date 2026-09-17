@@ -4,6 +4,7 @@
 //! Combining the parts of one catalog into the report the whole would have written.
 
 use njutest_cli::config::Contract;
+use njutest_cli::report::Outcome;
 use njutest_cli::report::merge::{MergeError, merge};
 use njutest_cli::report::{
     CandidateRecord, Finding, FindingKind, Limitation, MutantRecord, Position, Report, RunKind,
@@ -41,7 +42,7 @@ fn part(shard: &str, mutants: &[(&str, &str)]) -> Report {
                 column: 1,
                 character_column: 1,
             },
-            outcome: (*outcome).to_owned(),
+            outcome: Outcome::parse(outcome).unwrap_or(Outcome::Errored),
             killed_by: Some("pkg/lib/pkg".to_owned()),
             reused: false,
             source_run_id: None,
@@ -241,7 +242,7 @@ fn disposed(id: &str, outcome: &str, reused: bool) -> MutantRecord {
             column: 1,
             character_column: 1,
         },
-        outcome: outcome.to_owned(),
+        outcome: Outcome::parse(outcome).unwrap_or(Outcome::Errored),
         killed_by: None,
         reused,
         source_run_id: reused.then(|| "an earlier run".to_owned()),
@@ -472,5 +473,96 @@ fn the_acceptances_of_the_whole_are_the_ones_its_parts_recorded_and_no_others() 
          one part, so the parts add up to what a reviewer recorded and to nothing more: \
          a whole that counted one acceptance nobody made would excuse a survivor nobody \
          looked at"
+    );
+}
+
+/// `report` with `target` recorded as having answered `outcome` about its one mutation.
+fn answered_by(mut report: Report, target: &str, outcome: &str) -> Report {
+    for record in &mut report.mutants {
+        record.killed_by = None;
+        record.routing = Some(njutest_cli::report::Routing {
+            granularity: rust_mutants::session::Granularity::Block,
+            reaching: vec![target.to_owned()],
+            discharged: Vec::new(),
+            fallback: None,
+            answered: vec![njutest_cli::report::Answered {
+                target: target.to_owned(),
+                outcome: Outcome::parse(outcome).unwrap_or(Outcome::Errored),
+            }],
+        });
+    }
+    report
+}
+
+#[test]
+fn a_target_silent_in_one_part_and_noticing_in_another_is_accused_by_neither_nor_by_the_whole() {
+    let one = answered_by(
+        part("1/2", &[("a".repeat(64).as_str(), "survived")]),
+        "pkg/lib/pkg",
+        "survived",
+    );
+    let two = answered_by(
+        part("2/2", &[("b".repeat(64).as_str(), "killed")]),
+        "pkg/lib/pkg",
+        "killed",
+    );
+
+    for named in [&one, &two] {
+        assert!(
+            !named
+                .findings
+                .iter()
+                .any(|one| one.kind == FindingKind::HollowTarget),
+            "a part has seen a slice of the catalog, and whether a target notices \
+             anything is a statement about the whole of it: {:?}",
+            named.findings
+        );
+    }
+
+    let whole = merge(&[one, two]).expect("two parts of one catalog");
+    assert!(
+        !whole
+            .findings
+            .iter()
+            .any(|one| one.kind == FindingKind::HollowTarget),
+        "and the whole sees it notice something, so nobody is accused. A conclusion \
+         that came out differently because of where the catalog was cut is an \
+         artefact of the measurement: {:?}",
+        whole.findings
+    );
+}
+
+#[test]
+fn a_target_that_noticed_nothing_in_the_whole_catalog_is_accused_by_the_merge() {
+    let one = answered_by(
+        part("1/2", &[("a".repeat(64).as_str(), "survived")]),
+        "pkg/lib/pkg",
+        "survived",
+    );
+    let two = answered_by(
+        part("2/2", &[("b".repeat(64).as_str(), "survived")]),
+        "pkg/lib/pkg",
+        "survived",
+    );
+
+    let whole = merge(&[one, two]).expect("two parts of one catalog");
+    let accused: Vec<&Finding> = whole
+        .findings
+        .iter()
+        .filter(|one| one.kind == FindingKind::HollowTarget)
+        .collect();
+    assert_eq!(
+        accused.len(),
+        1,
+        "the whole is what may say it, and it says it once over both parts: {:?}",
+        whole.findings
+    );
+    let said = accused
+        .first()
+        .map(|one| one.detail.clone())
+        .unwrap_or_default();
+    assert!(
+        said.contains("2 mutations"),
+        "over the whole catalog rather than over either part of it: {said}"
     );
 }

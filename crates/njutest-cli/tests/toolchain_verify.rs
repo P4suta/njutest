@@ -199,10 +199,11 @@ fn a_mutation_only_one_of_the_builds_notices_is_a_survivor_that_names_the_other(
         );
         assert_eq!(
             mutation["blind_in"],
-            serde_json::json!(["default"]),
-            "and the run names the build that is blind to it, because a gap \
-             everywhere and a gap under the defaults are different things to act \
-             on: {mutation}"
+            serde_json::json!([{ "build": "default", "decision": "unreached" }]),
+            "and the run names the build and what that build established, because a \
+             gap everywhere and a gap under the defaults are different things to act \
+             on — and so are a build whose tests noticed nothing and one where nothing \
+             ran it at all: {mutation}"
         );
     }
 

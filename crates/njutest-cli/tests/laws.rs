@@ -108,15 +108,19 @@ proptest! {
     }
 
     /// Every mutation the run catalogued was decided by somebody, or is recorded as decided by nobody.
+    ///
+    /// Summed through `total()` rather than by naming the columns here: a
+    /// column added to one and not the other is the drift this law exists to
+    /// refuse, and a law that could drift is not one.
     #[test]
-    fn every_mutation_was_noticed_proved_run_unnoticed_unreached_or_left_undecided(
+    fn every_mutation_is_in_exactly_one_of_the_columns_that_say_who_decided_it(
         dispositions in proptest::collection::vec(disposition(), 0..24)
     ) {
         let counts = judged_from(dispositions).accounting(&BTreeSet::new());
         let who = counts.observers;
         prop_assert_eq!(
             counts.cataloged,
-            who.types + who.tests + who.proved + who.unnoticed + who.unreached + who.undecided,
+            who.total(),
             "a verdict is what stands behind each mutation, so the ways one can be \
              decided have to cover the catalog exactly once. A mutation in none of \
              these columns is one the report counted and never answered for, and a \
@@ -195,17 +199,22 @@ proptest! {
             .map(|(at, decision)| (format!("build-{at}"), *decision))
             .collect();
         let named = across(&by_build).blind_in;
-        let expected: Vec<String> = by_build
+        let expected: Vec<njutest_cli::report::BlindIn> = by_build
             .iter()
-            .filter(|(_, decision)| decision.is_a_hole())
-            .map(|(name, _)| name.clone())
+            .filter_map(|(build, decision)| {
+                Some(njutest_cli::report::BlindIn {
+                    build: build.clone(),
+                    decision: decision.blind()?,
+                })
+            })
             .collect();
         prop_assert_eq!(
             named,
             expected,
             "a gap under one build is a different thing to act on than one that is \
              there everywhere, and the reader cannot tell them apart unless the run \
-             says which"
+             says which — nor can they tell a build whose tests noticed nothing from \
+             one that established nothing, unless the run says that too"
         );
     }
 
@@ -382,7 +391,7 @@ fn reported(findings: Vec<njutest_cli::report::Finding>) -> njutest_cli::report:
             item: "demo".to_owned(),
             original: ">".to_owned(),
             replacement: String::new(),
-            outcome: "survived".to_owned(),
+            outcome: njutest_cli::report::Outcome::Survived,
             killed_by: None,
             reused: false,
             source_run_id: None,

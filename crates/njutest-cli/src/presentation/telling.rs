@@ -125,7 +125,7 @@ fn drawn(path: &str, item: &str, spots: Vec<Spot>, sources: &Sources) -> Place {
 
 /// One blind spot: what the run changed, and what it established by changing it.
 fn spot(mutant: &MutantRecord, finding: &Finding) -> Spot {
-    let blindness = match (mutant.outcome.as_str(), finding.kind) {
+    let blindness = match (mutant.outcome.name(), finding.kind) {
         (_, FindingKind::Timeout) => Blindness::Waited,
         ("unreached", _) => Blindness::Never,
         _ => Blindness::Ran,
@@ -147,7 +147,7 @@ fn said(finding: &Finding, report: &Report, sources: &Sources) -> Diagnostic {
         .mutants
         .iter()
         .find(|one| one.display_id == finding.subject || one.id == finding.subject);
-    let unreached = mutant.is_some_and(|one| one.outcome == "unreached");
+    let unreached = mutant.is_some_and(|one| one.outcome == crate::report::Outcome::Unreached);
     let (severity, code, title) = about(finding.kind, unreached);
     Diagnostic {
         severity,
@@ -194,7 +194,7 @@ fn site(mutant: &MutantRecord, sources: &Sources) -> Site {
 /// What to say under the mark: what the run changed, and what noticed.
 fn labelled(mutant: &MutantRecord) -> String {
     let rule = &mutant.rule;
-    match (mutant.outcome.as_str(), mutant.killed_by.as_deref()) {
+    match (mutant.outcome.name(), mutant.killed_by.as_deref()) {
         ("unreached", _) => format!("{rule} here, and nothing executed it"),
         (_, Some(target)) => format!("{rule} here, and {target} noticed"),
         (_, None) => format!("{rule} here, and nothing noticed"),

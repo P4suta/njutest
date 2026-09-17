@@ -143,7 +143,7 @@ fn every_mutation_judged_is_a_row_that_says_what_became_of_it() {
     assert_eq!(rows.len(), 2);
     let killed = rows.first().expect("the kill");
     assert_eq!(killed.display_id, "aaaa");
-    assert_eq!(killed.outcome, "killed");
+    assert_eq!(killed.outcome.name(), "killed");
     assert_eq!(
         killed.killed_by.as_deref(),
         Some("one"),
@@ -157,7 +157,7 @@ fn every_mutation_judged_is_a_row_that_says_what_became_of_it() {
     assert_eq!(killed.position.line, 12);
 
     let survived = rows.get(1).expect("the survivor");
-    assert_eq!(survived.outcome, "survived");
+    assert_eq!(survived.outcome.name(), "survived");
     assert_eq!(survived.killed_by, None);
     assert!(!survived.reused);
     assert_eq!(

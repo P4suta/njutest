@@ -8,6 +8,7 @@
     reason = "a test asserts with panics and reads as a table; no finding where this reads one is the failure it is here to report"
 )]
 
+use njutest_cli::report::Outcome;
 use njutest_cli::report::{Answered, FindingKind, MutantRecord, Position, Routing, hollow::found};
 
 fn record(id: &str, outcome: &str, answered: &[(&str, &str)]) -> MutantRecord {
@@ -24,10 +25,10 @@ fn record(id: &str, outcome: &str, answered: &[(&str, &str)]) -> MutantRecord {
         item: "sign".to_owned(),
         original: ">".to_owned(),
         replacement: ">=".to_owned(),
-        outcome: outcome.to_owned(),
+        outcome: Outcome::parse(outcome).unwrap_or(Outcome::Errored),
         blind_in: Vec::new(),
         routing: Some(Routing {
-            granularity: "block".to_owned(),
+            granularity: rust_mutants::session::Granularity::Block,
             reaching: answered
                 .iter()
                 .map(|(name, _)| (*name).to_owned())
@@ -38,7 +39,7 @@ fn record(id: &str, outcome: &str, answered: &[(&str, &str)]) -> MutantRecord {
                 .iter()
                 .map(|(name, said)| Answered {
                     target: (*name).to_owned(),
-                    outcome: (*said).to_owned(),
+                    outcome: Outcome::parse(said).unwrap_or(Outcome::Errored),
                 })
                 .collect(),
         }),
@@ -113,5 +114,57 @@ fn a_run_that_reused_every_answer_asked_nobody_and_accuses_nobody() {
         found(&[reused]).is_empty(),
         "a run that read its answers back asked no target anything, and the empty \
          list says so rather than reading as everybody staying silent"
+    );
+}
+
+#[test]
+fn a_target_whose_answers_were_all_undecided_is_not_accused_of_noticing_nothing() {
+    let findings = found(&[
+        record("a", "unconfirmed", &[("broken", "unconfirmed")]),
+        record("b", "errored", &[("broken", "errored")]),
+    ]);
+    assert!(
+        findings.is_empty(),
+        "a target whose harness would not start did not notice nothing — the run \
+         established nothing about it. Counting those as chances it failed to take \
+         accuses a broken harness of asserting nothing, and puts the count behind the \
+         accusation: {findings:?}"
+    );
+}
+
+#[test]
+fn an_undecided_answer_is_not_counted_among_the_ones_a_target_did_give() {
+    let findings = found(&[
+        record("a", "survived", &[("blunt", "survived")]),
+        record("b", "errored", &[("blunt", "errored")]),
+    ]);
+    assert_eq!(findings.len(), 1, "it answered once and noticed nothing");
+    assert!(
+        findings[0].detail.contains("1 mutation") && !findings[0].detail.contains("2 mutation"),
+        "the count is the weight of the accusation, so it counts what was answered \
+         and not what was attempted: {}",
+        findings[0].detail
+    );
+}
+
+#[test]
+fn a_target_that_noticed_something_anywhere_in_the_catalog_is_not_accused_for_a_slice_of_it() {
+    let whole = [
+        record("a", "survived", &[("sharp", "survived")]),
+        record("b", "killed", &[("sharp", "killed")]),
+    ];
+    assert!(
+        found(&whole).is_empty(),
+        "hollow is a statement about a target over the whole catalog; a target \
+         silent in one part and noticing in another has noticed something, and a \
+         conclusion that came out differently because of where the catalog was cut \
+         is an artefact of the measurement rather than a fact about the suite: {:?}",
+        found(&whole)
+    );
+    assert_eq!(
+        found(&whole[..1]).len(),
+        1,
+        "and the slice on its own does read as hollow, which is why a part may not \
+         raise it"
     );
 }

@@ -4,7 +4,7 @@
 //! What a run establishes about one wire fault, from what the tests did with it in place.
 
 use super::derive::Fault;
-use crate::report::Decision;
+use crate::report::SeamDecision;
 
 /// What one target did with a fault in place.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -21,7 +21,7 @@ pub struct Settled {
     /// The fault this is about.
     pub fault: Fault,
     /// What the run establishes.
-    pub decision: Decision,
+    pub decision: SeamDecision,
     /// The target that noticed, when one did.
     pub noticed_by: Option<String>,
 }
@@ -38,11 +38,11 @@ pub fn settle(fault: &Fault, answers: &[Answered]) -> Settled {
         .find(|answered| !answered.passed)
         .map(|answered| answered.target.clone());
     let decision = if answers.is_empty() {
-        Decision::Unreached
+        SeamDecision::Unreached
     } else if noticed_by.is_some() {
-        Decision::Tests
+        SeamDecision::Tests
     } else {
-        Decision::Unnoticed
+        SeamDecision::Unnoticed
     };
     Settled {
         fault: fault.clone(),

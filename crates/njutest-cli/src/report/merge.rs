@@ -5,6 +5,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use super::Outcome;
 use super::{MutantAccounting, Report};
 
 /// Why some reports are not the parts of one catalog.
@@ -73,6 +74,7 @@ pub fn merge(parts: &[Report]) -> Result<Report, MergeError> {
     whole.scope.shard = None;
     whole.mutants = judged(parts)?;
     whole.findings = gathered(parts, |part| part.findings.clone());
+    whole.findings.extend(super::hollow::found(&whole.mutants));
     whole.limitations = gathered(parts, |part| part.limitations.clone());
     whole.candidates = gathered(parts, |part| part.candidates.clone());
     whole.timing = spanning(parts);
@@ -247,33 +249,33 @@ fn counted(parts: &[Report], mutants: &[super::MutantRecord]) -> MutantAccountin
         ..MutantAccounting::default()
     };
     for mutant in mutants {
-        counts.observers.counted(
-            super::Decision::of_outcome(&mutant.outcome).unwrap_or(super::Decision::Undecided),
-        );
+        counts.observers.counted(mutant.outcome.decision());
         let executed = &mut counts.executed;
-        match mutant.outcome.as_str() {
-            "compile-rejected" => counts.rejected = counts.rejected.saturating_add(1),
-            "killed" => {
+        match mutant.outcome {
+            Outcome::CompileRejected => counts.rejected = counts.rejected.saturating_add(1),
+            Outcome::Killed => {
                 *executed = executed.saturating_add(1);
                 counts.killed = counts.killed.saturating_add(1);
                 if mutant.reused {
                     counts.reused_killed = counts.reused_killed.saturating_add(1);
                 }
             }
-            "timed_out" => {
+            Outcome::TimedOut => {
                 *executed = executed.saturating_add(1);
                 counts.timed_out = counts.timed_out.saturating_add(1);
             }
-            "survived" => {
+            Outcome::Survived => {
                 *executed = executed.saturating_add(1);
                 counts.survived = counts.survived.saturating_add(1);
                 if mutant.reused {
                     counts.reused_survived = counts.reused_survived.saturating_add(1);
                 }
             }
-            "unreached" => counts.unreached = counts.unreached.saturating_add(1),
-            "equivalent" => counts.equivalent = counts.equivalent.saturating_add(1),
-            _ => *executed = executed.saturating_add(1),
+            Outcome::Unreached => counts.unreached = counts.unreached.saturating_add(1),
+            Outcome::Equivalent => counts.equivalent = counts.equivalent.saturating_add(1),
+            Outcome::Unconfirmed | Outcome::Errored => {
+                *executed = executed.saturating_add(1);
+            }
         }
     }
     counts

@@ -128,6 +128,38 @@ ID. A mutant disposition may say `reused: true` with a `source_run_id`; the
 accounting carries `reused_killed` and `reused_survived`, each part of
 `killed` and `survived`.
 
+## Which build a hole is in
+
+`blind_in` names every build a mutation is a hole in, and what that build
+established about it:
+
+```json
+"blind_in": [
+  { "build": "default",  "decision": "unnoticed" },
+  { "build": "release",  "decision": "errored" }
+]
+```
+
+The names alone would make a reader believe the same thing happened in both. It
+did not. `unnoticed` is a build whose tests ran and noticed nothing, and wants a
+test written. `errored` is a build that established nothing — a harness that
+would not start, a pair that did not agree — and wants somebody to find out why
+first; telling them to write a test sends them looking for an assertion where
+what is missing is an answer. `waited` is a build where a bound expired before
+anything finished, which asks why nothing finished rather than why nothing
+could be measured. `unreached` is a build where nothing ran it at all.
+
+Only those three ever appear. A build that answered for a mutation is not one
+anybody is blind in, and the audit refuses to persist a report that lists one.
+
+Across builds the quantifiers invert: a mutation stands on the *weakest* thing
+any build established, because two builds are two programs and a run that took
+the strongest would report a release-only gap as closed. Builds that catalogued
+different mutations are not builds of one catalog and the run refuses to
+reconcile them, rather than reading one build's silence as agreement — a
+project whose features change what exists cannot be measured across builds by
+this design, and that is a refusal rather than a defect.
+
 ## What a seam was asked
 
 `seams` holds every question a watched seam's recording licensed and what
@@ -144,8 +176,9 @@ refuses to persist a report whose seam finding names a question the report does
 not hold.
 
 `decision` is the same six-way partition the mutations use. `proved` is a
-question no observer could have answered — cutting an answer with no body short
-hands the caller the bytes it had — and `unreached` is a question the run could
+question no observer could have answered — cutting an answer with no body short,
+or asking for the status the upstream already gave, hands the caller the bytes
+it had — and `unreached` is a question the run could
 not put, which is stated as a `not-measured` finding and never as a survivor.
 
 ## What the run observed the system doing
@@ -183,11 +216,12 @@ add up to `cataloged`.
 | column | what decided it | the outcome it comes from |
 | --- | --- | --- |
 | `types` | the compiler refused the program | `compile-rejected` |
-| `tests` | a test noticed | `killed`, `timed_out` |
+| `tests` | a test noticed | `killed` |
 | `proved` | no test of any kind could have noticed | `equivalent` |
 | `unnoticed` | it ran and nothing noticed | `survived` |
 | `unreached` | nothing ran at all | `unreached` |
-| `undecided` | nothing decided it | `unconfirmed`, `errored` |
+| `waited` | a bound expired before anything finished | `timed_out` |
+| `errored` | nothing could be measured | `unconfirmed`, `errored` |
 
 `types` is the same number as `rejected`, said as what it is. A mutation the
 compiler refuses is a program the type system would not let anybody have,
@@ -197,9 +231,19 @@ the toolchain makes and this report used to discard. It changes no
 denominator: `rejected` keeps its place in
 `cataloged = rejected + executed + unreached + equivalent`.
 
-`undecided` is a gap in the verification rather than in the project, and it is
-never silent: a run that could not decide a mutation says so here and carries
-the finding that explains it.
+`waited` and `errored` are gaps in the verification rather than in the
+project, and neither is ever silent: a run that could not decide a mutation
+says so here and carries the finding that explains it.
+
+A timeout is `waited` and not `tests`. The engine is right to call it a
+detection — the process hung with the mutant active — but njutest measures
+something else. A bound is a budget, [ADR 0004](adr/0004-proof-layers-not-budgets.md)
+says a result resting on a budget is not a proof, and this report already gave
+a timeout its own column and a finding reading *an expired budget establishes
+nothing about the mutation*. Calling it a detection here contradicted both, and
+hid a build that timed out from `blind_in` entirely. The mapping from an
+outcome to who decided it now exists once, on `Outcome::decision`, because the
+reason it could disagree at all was that it existed three times.
 
 ## Who could have noticed
 
@@ -258,12 +302,13 @@ whatever the debug build said, because the release build is a program
 somebody ships.
 
 So each mutation stands on **the weakest thing any build established**, in
-the order `undecided`, `unnoticed`, `unreached`, `types`, `tests`, `proved`
-— the first three being holes and the last three not. A run cannot come out
-better for having looked at more.
+the order `errored`, `waited`, `unnoticed`, `unreached`, `types`, `tests`,
+`proved` — the first four being holes and the last three not. A run cannot come
+out better for having looked at more.
 
 `mutants[].blind_in` names the builds that are blind to a mutation: the ones
-where nothing noticed it, nothing ran it, or nothing decided it. A gap under
+where nothing noticed it, nothing ran it, a bound expired, or nothing could be
+measured. A gap under
 one build and a gap everywhere are different things to act on. A run that
 measured one build names none, because which build is not a question it has.
 

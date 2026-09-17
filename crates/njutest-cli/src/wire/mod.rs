@@ -7,6 +7,7 @@ pub mod derive;
 pub mod dialled;
 pub mod interpose;
 pub mod prove;
+pub mod rule;
 pub mod settle;
 
 use serde::{Deserialize, Serialize};
@@ -51,6 +52,8 @@ pub enum Spoken {
         response_bytes: u64,
         /// How many of those were the body, which is what says whether cutting it short changes anything.
         body_bytes: u64,
+        /// The status line as the upstream wrote it, which is what says whether restating it changes anything.
+        status_line: String,
     },
     /// One exchange over a protocol the interposer does not parse.
     Raw {

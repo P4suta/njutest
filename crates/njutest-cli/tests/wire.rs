@@ -23,6 +23,7 @@ fn http(seq: u64, path: &str, status: u16) -> Exchange {
             request_bytes: 0,
             response_bytes: 84,
             body_bytes: 40,
+            status_line: "HTTP/1.1 200 OK".to_owned(),
         },
     }
 }

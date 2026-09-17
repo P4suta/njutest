@@ -125,13 +125,18 @@ below is stated fail-closed.
   `sanitizer-unavailable`; every sanitizer run also carries
   `sanitizer-standard-library-not-instrumented`.
 - A question about a seam that hands the caller the bytes it was handed
-  already is `proved` and never run: cutting an answer with no body short keeps
+  already is `proved` and never run. Cutting an answer with no body short keeps
   everything up to and including the blank line that ends the head, so what
-  comes back is identical, and nothing that reads bytes can tell the two apart.
-  That is a stronger answer than a run — not that no test noticed, but that no
-  observer could — and it is the only thing proved about a seam. Every other
-  question changes what the caller is handed or when, so every other question
-  is put.
+  comes back is identical; asking for the status the upstream already gave,
+  worded the way a run words it, writes the line that is already there. Nothing
+  that reads bytes can tell either pair apart, which is a stronger answer than
+  a run — not that no test noticed, but that no observer could. Both checks are
+  asked of the code that would have done the injecting, so a proof is a check
+  on the injection rather than a second opinion about it. A 500 whose reason
+  phrase differs from the one a run writes is a different answer and is still
+  put: a proof that held only most of the time would not be a proof. Every
+  other question changes what the caller is handed or when, so every other
+  question is put.
 - `replay-request` delivers the same request to the dependency a second time
   and hands the caller the first answer, which is what a retry after a lost
   answer leaves behind. What could notice is whatever holds the dependency's

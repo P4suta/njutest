@@ -10,9 +10,9 @@
 
 use njutest_cli::report::audit::{Violation, validate_for_persistence};
 use njutest_cli::report::{
-    Decision, Finding, FindingKind, Git, Limitation, MutantAccounting, ObserverAccounting,
-    Position, Report, RunKind, SCHEMA, SeamRecord, TargetAccounting, TargetRecord, TargetStatus,
-    UNAVAILABLE, Verdict,
+    Finding, FindingKind, Git, Limitation, MutantAccounting, ObserverAccounting, Position, Report,
+    RunKind, SCHEMA, SeamRecord, TargetAccounting, TargetRecord, TargetStatus, UNAVAILABLE,
+    Verdict,
 };
 
 /// A report that satisfies every invariant, for a test to break one thing in. One field of a report, and how to leave it saying nothing.
@@ -396,7 +396,7 @@ fn mutant(id: &str) -> njutest_cli::report::MutantRecord {
         item: "demo".to_owned(),
         original: ">".to_owned(),
         replacement: ">=".to_owned(),
-        outcome: "killed".to_owned(),
+        outcome: njutest_cli::report::Outcome::Killed,
         killed_by: Some("core/lib/core one".to_owned()),
         reused: false,
         source_run_id: None,
@@ -901,8 +901,8 @@ fn a_seam_finding_that_names_a_question_the_report_does_not_hold_is_refused() {
         seq: 3,
         asked: "GET /orders".to_owned(),
         answered: Some(200),
-        rule: "status-server-error".to_owned(),
-        decision: Decision::Unnoticed,
+        rule: njutest_cli::wire::rule::Rule::StatusServerError,
+        decision: njutest_cli::report::SeamDecision::Unnoticed,
         noticed_by: None,
     });
     let allowed = validate_for_persistence(&report);

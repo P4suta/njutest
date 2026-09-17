@@ -8,6 +8,7 @@ use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
+use super::rule::Rule;
 use super::{Exchange, Spoken, Wire};
 use crate::error::{self, ErrorCode};
 
@@ -274,7 +275,7 @@ fn carry(mut downstream: TcpStream, interposing: &Interposing, carrying: Carryin
         putting.as_ref(),
         &interposing.capability,
         seq,
-        "replay-request",
+        Rule::ReplayRequest,
     );
     if put {
         delivered_again(interposing.upstream, &asked);
@@ -327,7 +328,7 @@ fn exchanged(downstream: &mut TcpStream, interposing: &Interposing) -> Option<(V
 }
 
 /// Whether `putting` is the question of `rule` about this exchange of this seam.
-fn names(putting: Option<&super::derive::Fault>, capability: &str, seq: u64, rule: &str) -> bool {
+fn names(putting: Option<&super::derive::Fault>, capability: &str, seq: u64, rule: Rule) -> bool {
     putting.is_some_and(|fault| {
         fault.capability == capability && fault.seq == seq && fault.rule == rule
     })
@@ -375,20 +376,25 @@ fn injected(
     if fault.capability != capability || fault.seq != seq {
         return Done::untouched(answered);
     }
-    match fault.rule.as_str() {
-        "drop-connection" => Done {
+    match fault.rule {
+        Rule::DropConnection => Done {
             answered: None,
             applied: true,
         },
-        "truncate-response" => Done::put(cut(answered)),
-        "delay-response" => {
+        Rule::TruncateResponse => Done::put(cut(answered)),
+        Rule::DelayResponse => {
             std::thread::sleep(held_up);
             Done::put(answered)
         }
-        "status-server-error" => Done::put(restated(&answered, 500, "Internal Server Error")),
-        "status-not-found" => Done::put(restated(&answered, 404, "Not Found")),
-        "stale-response" => previous.map_or_else(|| Done::untouched(answered), Done::put),
-        _ => Done::untouched(answered),
+        Rule::StatusServerError | Rule::StatusNotFound => fault.rule.restates().map_or_else(
+            || Done::untouched(answered.clone()),
+            |(status, reason)| Done::put(restated(&answered, status, reason)),
+        ),
+        Rule::StaleResponse => previous.map_or_else(|| Done::untouched(answered), Done::put),
+        Rule::ReplayRequest => Done {
+            answered: Some(answered),
+            applied: true,
+        },
     }
 }
 
@@ -431,18 +437,34 @@ fn cut(answered: Vec<u8>) -> Vec<u8> {
     answered.get(..head).map(<[u8]>::to_vec).unwrap_or(answered)
 }
 
+/// What `restated` writes in place of a status line, from the line alone.
+///
+/// The proof that restating an answer changes nothing compares what this
+/// would write against what the upstream wrote. Sharing the function is what
+/// makes that a check rather than a second opinion: a proof about what the
+/// injection does, held to the injection.
+#[must_use]
+pub fn restated_line(line: &str, status: u16, reason: &str) -> String {
+    let version = line.split(' ').next().unwrap_or_default();
+    let version = if version.is_empty() {
+        "HTTP/1.1"
+    } else {
+        version
+    };
+    format!("{version} {status} {reason}")
+}
+
 /// The answer with its status line restated, and everything else as it was.
 fn restated(answered: &[u8], status: u16, reason: &str) -> Vec<u8> {
     let end = answered
         .iter()
         .position(|byte| *byte == b'\r' || *byte == b'\n')
         .unwrap_or(answered.len());
-    let version = answered
+    let line = answered
         .get(..end)
         .and_then(|line| std::str::from_utf8(line).ok())
-        .and_then(|line| line.split(' ').next().map(ToOwned::to_owned))
-        .unwrap_or_else(|| "HTTP/1.1".to_owned());
-    let mut out = format!("{version} {status} {reason}").into_bytes();
+        .unwrap_or_default();
+    let mut out = restated_line(line, status, reason).into_bytes();
     if let Some(rest) = answered.get(end..) {
         out.extend_from_slice(rest);
     }
@@ -483,6 +505,7 @@ fn spoken(wire: Wire, asked: &[u8], answered: &[u8]) -> Spoken {
                 request_bytes,
                 response_bytes,
                 body_bytes: response_bytes.saturating_sub(head_of(answered)),
+                status_line: opening(answered).unwrap_or_default(),
             }
         }
     }

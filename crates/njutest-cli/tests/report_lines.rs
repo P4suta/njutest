@@ -68,7 +68,8 @@ fn report() -> Report {
         item: "demo".to_owned(),
         original: ">".to_owned(),
         replacement: ">=".to_owned(),
-        outcome: "survived".to_owned(),
+        outcome: njutest_cli::report::Outcome::parse("survived")
+            .unwrap_or(njutest_cli::report::Outcome::Errored),
         killed_by: None,
         reused: false,
         source_run_id: None,

@@ -13,6 +13,7 @@ use std::io::{Read as _, Write as _};
 use std::net::{TcpListener, TcpStream};
 
 use njutest_cli::wire::interpose::{Interposer, Interposing};
+use njutest_cli::wire::rule::Rule;
 use njutest_cli::wire::{Spoken, Wire};
 
 /// An upstream that answers every request the same way, for as many requests as it is told to expect.
@@ -208,8 +209,7 @@ fn fault(rule: &str, seq: u64) -> njutest_cli::wire::derive::Fault {
         capability: "api".to_owned(),
         seq,
         during: None,
-        rule: rule.to_owned(),
-        asks: String::new(),
+        rule: Rule::parse(rule).unwrap_or(Rule::DropConnection),
     }
 }
 
@@ -703,18 +703,68 @@ fn the_first_exchange_on_a_seam_has_nothing_stale_to_be_answered_with() {
     let _joined = serving.join();
 }
 
-#[test]
-fn a_rule_this_release_carries_out_nothing_for_is_a_question_that_was_never_put() {
-    let (upstream_at, serving) = upstream("[]", 1);
-    let interposer = injecting(upstream_at, Some(fault("a-rule-from-a-later-release", 0)));
+/// An upstream that answers with `line` and `body`, and nothing else.
+fn answering(
+    line: &'static str,
+    body: &'static str,
+    expecting: usize,
+) -> (std::net::SocketAddr, std::thread::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("a port");
+    let address = listener.local_addr().expect("the address");
+    let handle = std::thread::spawn(move || {
+        for _ in 0..expecting {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+            let mut heard = [0_u8; 1024];
+            let _read = stream.read(&mut heard);
+            let answer = format!("{line}\r\nContent-Length: {}\r\n\r\n{body}", body.len());
+            let _written = stream.write_all(answer.as_bytes());
+            let _flushed = stream.flush();
+        }
+    });
+    (address, handle)
+}
 
-    let answer = ask(interposer.address(), "/orders");
-    assert!(answer.contains(" 200"));
-    assert!(
-        !interposer.was_put(),
-        "a name the catalogue grows before the interposer does would otherwise pass \
-         the answer along quietly and come back a survivor, which is a gap reported \
-         where no question was asked"
+#[test]
+fn restating_the_status_an_upstream_already_gave_hands_the_caller_what_it_would_have_had() {
+    let (upstream_at, serving) = answering("HTTP/1.1 500 Internal Server Error", "boom", 2);
+    let untouched = {
+        let interposer = injecting(upstream_at, None);
+        let answer = ask(interposer.address(), "/orders");
+        let _recorded = interposer.stop();
+        answer
+    };
+    let interposer = injecting(upstream_at, Some(fault("status-server-error", 0)));
+    let restated = ask(interposer.address(), "/orders");
+
+    assert_eq!(
+        restated, untouched,
+        "this is the premise the proof rests on, held against the code that would \
+         have done the restating. A layer that removed this run while the two \
+         differed would report a gap as assured"
+    );
+
+    let _recorded = interposer.stop();
+    let _joined = serving.join();
+}
+
+#[test]
+fn restating_a_status_worded_differently_hands_the_caller_something_else() {
+    let (upstream_at, serving) = answering("HTTP/1.1 500 Server Error", "boom", 2);
+    let untouched = {
+        let interposer = injecting(upstream_at, None);
+        let answer = ask(interposer.address(), "/orders");
+        let _recorded = interposer.stop();
+        answer
+    };
+    let interposer = injecting(upstream_at, Some(fault("status-server-error", 0)));
+    let restated = ask(interposer.address(), "/orders");
+
+    assert_ne!(
+        restated, untouched,
+        "and where the phrases differ the bytes differ, which is why the proof asks \
+         about the line rather than about the code"
     );
 
     let _recorded = interposer.stop();

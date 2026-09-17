@@ -16,6 +16,7 @@ use crate::assure::baseline::Measured;
 use crate::assure::route::Route;
 use crate::assure::schedule;
 use crate::evidence::store;
+use crate::report::Outcome as Recorded;
 use crate::report::{Decision, Finding, FindingKind, MutantAccounting};
 use crate::watch::Watch;
 
@@ -107,32 +108,36 @@ pub enum Disposition {
 }
 
 impl Disposition {
-    /// The wire name a report records.
+    /// What the run established, which is the one thing a report records this as.
     #[must_use]
-    pub const fn name(&self) -> &'static str {
+    pub const fn outcome(&self) -> Recorded {
         match self {
-            Self::Rejected { .. } => "compile-rejected",
-            Self::Killed { .. } => "killed",
-            Self::TimedOut { .. } => "timed_out",
-            Self::Survived { .. } => "survived",
-            Self::Unreached => "unreached",
-            Self::Equivalent { .. } => "equivalent",
-            Self::Unconfirmed { .. } => "unconfirmed",
-            Self::Errored { .. } => "errored",
+            Self::Rejected { .. } => Recorded::CompileRejected,
+            Self::Killed { .. } => Recorded::Killed,
+            Self::TimedOut { .. } => Recorded::TimedOut,
+            Self::Survived { .. } => Recorded::Survived,
+            Self::Unreached => Recorded::Unreached,
+            Self::Equivalent { .. } => Recorded::Equivalent,
+            Self::Unconfirmed { .. } => Recorded::Unconfirmed,
+            Self::Errored { .. } => Recorded::Errored,
         }
     }
 
+    /// The wire name a report records.
+    #[must_use]
+    pub const fn name(&self) -> &'static str {
+        self.outcome().name()
+    }
+
     /// Who decided it, which is what stands behind the verdict it feeds.
+    ///
+    /// Read through the outcome rather than spelled again here. This mapping
+    /// used to exist three times, and they disagreed: two of them called a
+    /// timeout a detection while the finding beside them said an expired
+    /// budget establishes nothing about the mutation.
     #[must_use]
     pub const fn decision(&self) -> Decision {
-        match self {
-            Self::Rejected { .. } => Decision::Types,
-            Self::Killed { .. } | Self::TimedOut { .. } => Decision::Tests,
-            Self::Equivalent { .. } => Decision::Proved,
-            Self::Survived { .. } => Decision::Unnoticed,
-            Self::Unreached => Decision::Unreached,
-            Self::Unconfirmed { .. } | Self::Errored { .. } => Decision::Undecided,
-        }
+        self.outcome().decision()
     }
 
     /// The test that decided it, when one did.
@@ -273,7 +278,7 @@ fn survived(judged: &Judged, route: &Route) -> String {
     );
     let discharged = route.discharged();
     if route.reaching().is_empty() && !discharged.is_empty() {
-        let mut proofs: Vec<&str> = discharged.iter().map(|one| one.proof).collect();
+        let mut proofs: Vec<&str> = discharged.iter().map(|one| one.proof.name()).collect();
         proofs.sort_unstable();
         proofs.dedup();
         return format!(
@@ -568,8 +573,8 @@ fn record_probe(watch: Watch<'_>, session: &Session, baseline: &[Measured]) {
 fn record_route(watch: Watch<'_>, mutant: &Mutant, route: &Route, consulted: &Consulted) {
     watch.trace.route(crate::trace::RouteRecord {
         mutant: mutant.display_id.clone(),
-        granularity: route.granularity().to_owned(),
-        fallback: route.fallback().map(ToOwned::to_owned),
+        granularity: route.granularity().name().to_owned(),
+        fallback: route.fallback().map(|one| one.name().to_owned()),
         reaching: route
             .reaching()
             .into_iter()
@@ -585,7 +590,7 @@ fn record_route(watch: Watch<'_>, mutant: &Mutant, route: &Route, consulted: &Co
             .iter()
             .map(|one| crate::trace::DischargeRecord {
                 target: one.target.clone(),
-                proof: one.proof.to_owned(),
+                proof: one.proof.name().to_owned(),
             })
             .collect(),
         considered: route.considered().to_vec(),
@@ -752,8 +757,7 @@ fn judge(
             target: target.to_owned(),
             outcome: established
                 .as_ref()
-                .map_or("survived", Disposition::name)
-                .to_owned(),
+                .map_or(Recorded::Survived, Disposition::outcome),
         });
         if let Some(disposition) = established {
             return Ok((disposition, answered));
