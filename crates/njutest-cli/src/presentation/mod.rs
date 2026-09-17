@@ -529,11 +529,44 @@ impl Telling {
         let indent = wide(&before);
         let width = site.width.max(1);
         let painted = self.painted(Style::Gap, &self.strokes().point.repeat(width));
+        self.marked(
+            &painted,
+            Marked {
+                indent,
+                width,
+                gutter,
+            },
+            &site.label,
+        )
+    }
+
+    /// A mark at the column it is about, and what to say about it, beside it or under it.
+    ///
+    /// Beside is where a reader looks first, and it is where the label goes
+    /// while there is room for it. A caret far enough to the right leaves no
+    /// room, and a label hung under it there is folded to nothing and drawn
+    /// past the edge anyway; below the mark it is narrow but whole.
+    fn marked(self, mark: &str, at: Marked, label: &str) -> Vec<String> {
+        let Marked {
+            indent,
+            width,
+            gutter,
+        } = at;
         let hanging = indent.saturating_add(width).saturating_add(1);
         let room = self.room(gutter.saturating_add(3).saturating_add(hanging));
-        let mut folded = folded(&site.label, room).into_iter();
+        if room < BESIDE {
+            let under = gutter.saturating_add(5);
+            let mut lines = vec![format!("{:indent$}{mark}", "")];
+            lines.extend(
+                folded(label, self.room(under))
+                    .into_iter()
+                    .map(|one| format!("  {one}")),
+            );
+            return lines;
+        }
+        let mut folded = folded(label, room).into_iter();
         let first = folded.next().unwrap_or_default();
-        let mut lines = vec![format!("{:indent$}{painted} {first}", "")];
+        let mut lines = vec![format!("{:indent$}{mark} {first}", "")];
         lines.extend(folded.map(|rest| format!("{:hanging$}{rest}", "")));
         lines
     }
@@ -643,13 +676,15 @@ impl Telling {
             Blindness::Waited => Style::Limitation,
         };
         let said = format!("{change}   {}", self.painted(style, &spot.said));
-        let hanging = indent.saturating_add(width).saturating_add(1);
-        let room = self.room(gutter.saturating_add(3).saturating_add(hanging));
-        let mut folded = folded(&said, room).into_iter();
-        let first = folded.next().unwrap_or_default();
-        let mut lines = vec![format!("{:indent$}{mark} {first}", "")];
-        lines.extend(folded.map(|rest| format!("{:hanging$}{rest}", "")));
-        lines
+        self.marked(
+            &mark,
+            Marked {
+                indent,
+                width,
+                gutter,
+            },
+            &said,
+        )
     }
 
     /// How many columns there are for prose after `indent` has been spent.
@@ -903,6 +938,20 @@ pub struct Asked {
     pub term: Option<String>,
     /// What the locale says the font has.
     pub glyphs: Glyphs,
+}
+
+/// The least room a label needs beside a mark before it reads better under one.
+const BESIDE: usize = 24;
+
+/// Where a mark goes on a line, and what is to the left of it.
+#[derive(Debug, Clone, Copy)]
+struct Marked {
+    /// How many columns of the line come before the mark.
+    indent: usize,
+    /// How many columns the mark covers, which is how wide the code under it is.
+    width: usize,
+    /// How wide the line numbers to its left are.
+    gutter: usize,
 }
 
 /// How wide to draw when nothing said.

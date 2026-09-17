@@ -426,3 +426,55 @@ fn every_shape_a_person_is_shown_is_one_somebody_has_looked_at() {
         panic!("the gallery: {error}");
     }
 }
+
+/// What a line is allowed to run past the edge for: code, a mark under code, and a command.
+///
+/// Folding any of the three makes it worse. A wrapped source line takes the
+/// caret away from the column it is under; a mark that is not at that column
+/// points at nothing, so it is exactly as wide as the code it is about and no
+/// narrower; and a wrapped command is one a reader cannot select. Everything
+/// else is prose, and prose that runs past the edge is wrapped by the terminal
+/// at whatever column it happens to reach, which is the one place nobody chose.
+fn unbreakable(line: &str) -> bool {
+    let trimmed = line.trim_start();
+    if trimmed.starts_with("njutest ") || trimmed.starts_with("cargo ") {
+        return true;
+    }
+    let numbered = |before: &str| {
+        let seen = before.trim();
+        !seen.is_empty() && seen.chars().all(|one| one.is_ascii_digit())
+    };
+    if line
+        .split_once(" | ")
+        .is_some_and(|(before, _)| numbered(before))
+    {
+        return true;
+    }
+    line.split_once('|').is_some_and(|(_, after)| {
+        let marked = after.trim();
+        !marked.is_empty() && marked.chars().all(|one| one == '^' || one == '\u{25b2}')
+    })
+}
+
+#[test]
+fn nothing_a_person_is_shown_runs_past_the_edge_but_the_two_things_that_must() {
+    let mut over: Vec<String> = Vec::new();
+    for (name, told) in cases() {
+        for (shape, terminal) in SHAPES {
+            for line in human::draw(&told, terminal).lines() {
+                if unbreakable(line) || njutest_cli::presentation::wide(line) <= terminal.width {
+                    continue;
+                }
+                over.push(format!("{name} — {shape}: {line}"));
+            }
+        }
+    }
+    assert!(
+        over.is_empty(),
+        "a renderer that is given the width and then draws past it has not been given \
+         anything: the terminal wraps the line wherever it reaches, which is the one place \
+         nobody chose, and the two halves of a sentence end up in different parts of the \
+         drawing:\n{}",
+        over.join("\n")
+    );
+}

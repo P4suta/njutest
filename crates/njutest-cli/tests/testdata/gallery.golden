@@ -36,13 +36,15 @@ Written by crates/njutest-cli/tests/gallery.rs; UPDATE_GOLDEN=1 rewrites it.
 
 === one item, one blind spot — forty columns, no colour
 
-  --> sign   src/lib.rs:8   1 not noticed
+  --> sign   src/lib.rs:8
+      1 not noticed
 7 | pub fn sign(n: i32) -> &'static str {
 8 |     if n > 0 {
   |          ^ > => >=   ran, not
   |            noticed
 9 |         "positive"
-  = write a test that notices it  njutest explain src/lib.rs:sign:gt-to-ge@8
+  = write a test that notices it
+    njutest explain src/lib.rs:sign:gt-to-ge@8
 
   INSUFFICIENT   7 killed  1 survived  0
     unreached  1.9s
@@ -89,32 +91,38 @@ Written by crates/njutest-cli/tests/gallery.rs; UPDATE_GOLDEN=1 rewrites it.
 14 |     }
    = write a test that notices it  njutest explain src/lib.rs:sign:gt-to-ge@8
    = write a test that reaches it  njutest explain src/lib.rs:sign:lt-to-le@10
-   = find out why nothing finished  njutest explain src/lib.rs:sign:return-default@13
+   = find out why nothing finished
+     njutest explain src/lib.rs:sign:return-default@13
 
   INSUFFICIENT   7 killed  2 survived  1 unreached  1.9s
   3 gaps in 1 file   reports/runs/20260101T000000Z-aaaaaa
 
 === one item, every kind of blindness on it at once — forty columns, no colour
 
-   --> sign   src/lib.rs:8   1 not noticed, 1 never run, 1 timed out
+   --> sign   src/lib.rs:8
+       1 not noticed, 1 never run, 1
+       timed out
  7 | pub fn sign(n: i32) -> &'static str {
  8 |     if n > 0 {
    |          ^ > => >=   ran, not
    |            noticed
  9 |         "positive"
 10 |     } else if n < 0 {
-   |                 ^ < => <=   never
-   |                   run
+   |                 ^
+   |   < => <=   never run
 11 |         "negative"
 12 |     } else {
 13 |         "zero"
-   |         ^^^^^^ "zero" =>
-   |                Default::default()
-   |                timed out
+   |         ^^^^^^
+   |   "zero" => Default::default()
+   |   timed out
 14 |     }
-   = write a test that notices it  njutest explain src/lib.rs:sign:gt-to-ge@8
-   = write a test that reaches it  njutest explain src/lib.rs:sign:lt-to-le@10
-   = find out why nothing finished  njutest explain src/lib.rs:sign:return-default@13
+   = write a test that notices it
+     njutest explain src/lib.rs:sign:gt-to-ge@8
+   = write a test that reaches it
+     njutest explain src/lib.rs:sign:lt-to-le@10
+   = find out why nothing finished
+     njutest explain src/lib.rs:sign:return-default@13
 
   INSUFFICIENT   7 killed  2 survived  1
     unreached  1.9s
@@ -123,7 +131,8 @@ Written by crates/njutest-cli/tests/gallery.rs; UPDATE_GOLDEN=1 rewrites it.
 
 === one item, every kind of blindness on it at once — eighty columns, colour
 
-   [38;5;244m-->[0m [1;38;5;253msign[0m   [38;5;244m]8;;file://src/lib.rssrc/lib.rs:8]8;;[0m   [1;38;5;214m1 not noticed, 1 never run, 1 timed out[0m
+   [38;5;244m-->[0m [1;38;5;253msign[0m   [38;5;244m]8;;file://src/lib.rssrc/lib.rs:8]8;;[0m
+       [1;38;5;214m1 not noticed, 1 never run, 1 timed out[0m
 [38;5;244m7[0m [38;5;244m|[0m [38;5;176mpub[0m[38;5;250m [0m[38;5;176mfn[0m[38;5;250m [0m[38;5;111msign[0m[38;5;250m([0m[38;5;250mn[0m[38;5;250m: [0m[38;5;250mi32[0m[38;5;250m) -> &[0m[38;5;139m'static[0m[38;5;250m [0m[38;5;250mstr[0m[38;5;250m {[0m
 [38;5;244m8[0m [38;5;244m|[0m [38;5;250m    [0m[38;5;176mif[0m[38;5;250m [0m[38;5;250mn[0m[38;5;250m [0m[1;4;38;5;204m>[0m[38;5;250m [0m[38;5;179m0[0m[38;5;250m {[0m
    [38;5;244m|[0m          [1;38;5;214m^[0m [38;5;250m>[0m [1;38;5;214m=>[0m [38;5;250m>=[0m   [1;38;5;214mran, not noticed[0m
@@ -137,7 +146,8 @@ Written by crates/njutest-cli/tests/gallery.rs; UPDATE_GOLDEN=1 rewrites it.
 [38;5;244m14[0m [38;5;244m|[0m [38;5;250m    }[0m
    [38;5;244m=[0m [1;38;5;214mwrite a test that notices it[0m  [38;5;252mnjutest explain src/lib.rs:sign:gt-to-ge@8[0m
    [38;5;244m=[0m [1;38;5;214mwrite a test that reaches it[0m  [38;5;252mnjutest explain src/lib.rs:sign:lt-to-le@10[0m
-   [38;5;244m=[0m [1;38;5;214mfind out why nothing finished[0m  [38;5;252mnjutest explain src/lib.rs:sign:return-default@13[0m
+   [38;5;244m=[0m [1;38;5;214mfind out why nothing finished[0m
+     [38;5;252mnjutest explain src/lib.rs:sign:return-default@13[0m
 
   [1;38;5;214mINSUFFICIENT[0m   [38;5;244m7 killed  2 survived  1 unreached  1.9s[0m
   [1;38;5;214m3 gaps in 1 file[0m   [38;5;244mreports/runs/20260101T000000Z-aaaaaa[0m
@@ -158,7 +168,8 @@ Written by crates/njutest-cli/tests/gallery.rs; UPDATE_GOLDEN=1 rewrites it.
 14 │     }
    ╰─ write a test that notices it  njutest explain src/lib.rs:sign:gt-to-ge@8
    ├─ write a test that reaches it  njutest explain src/lib.rs:sign:lt-to-le@10
-   ├─ find out why nothing finished  njutest explain src/lib.rs:sign:return-default@13
+   ├─ find out why nothing finished
+      njutest explain src/lib.rs:sign:return-default@13
 
   ✗ INSUFFICIENT   7 killed  2 survived  1 unreached  1.9s
   3 gaps in 1 file   reports/runs/20260101T000000Z-aaaaaa
@@ -177,27 +188,32 @@ Written by crates/njutest-cli/tests/gallery.rs; UPDATE_GOLDEN=1 rewrites it.
 19 |     n * 2
    |       ^ * => /   ran, not noticed
 20 | }
-   = write a test that notices it  njutest explain src/lib.rs:double:mul-to-div@19
+   = write a test that notices it
+     njutest explain src/lib.rs:double:mul-to-div@19
 
   INSUFFICIENT   7 killed  2 survived  0 unreached  1.9s
   2 gaps in 1 file   reports/runs/20260101T000000Z-aaaaaa
 
 === two items of one file — forty columns, no colour
 
-  --> sign   src/lib.rs:8   1 not noticed
+  --> sign   src/lib.rs:8
+      1 not noticed
 7 | pub fn sign(n: i32) -> &'static str {
 8 |     if n > 0 {
   |          ^ > => >=   ran, not
   |            noticed
 9 |         "positive"
-  = write a test that notices it  njutest explain src/lib.rs:sign:gt-to-ge@8
+  = write a test that notices it
+    njutest explain src/lib.rs:sign:gt-to-ge@8
 
-   --> double   src/lib.rs:19   1 not noticed
+   --> double   src/lib.rs:19
+       1 not noticed
 18 | pub fn double(n: i32) -> i32 {
 19 |     n * 2
    |       ^ * => /   ran, not noticed
 20 | }
-   = write a test that notices it  njutest explain src/lib.rs:double:mul-to-div@19
+   = write a test that notices it
+     njutest explain src/lib.rs:double:mul-to-div@19
 
   INSUFFICIENT   7 killed  2 survived  0
     unreached  1.9s
@@ -218,7 +234,8 @@ Written by crates/njutest-cli/tests/gallery.rs; UPDATE_GOLDEN=1 rewrites it.
 [38;5;244m19[0m [38;5;244m|[0m [38;5;250m    [0m[38;5;250mn[0m[38;5;250m [0m[1;4;38;5;204m*[0m[38;5;250m [0m[38;5;179m2[0m
    [38;5;244m|[0m       [1;38;5;214m^[0m [38;5;250m*[0m [1;38;5;214m=>[0m [38;5;250m/[0m   [1;38;5;214mran, not noticed[0m
 [38;5;244m20[0m [38;5;244m|[0m [38;5;250m}[0m
-   [38;5;244m=[0m [1;38;5;214mwrite a test that notices it[0m  [38;5;252mnjutest explain src/lib.rs:double:mul-to-div@19[0m
+   [38;5;244m=[0m [1;38;5;214mwrite a test that notices it[0m
+     [38;5;252mnjutest explain src/lib.rs:double:mul-to-div@19[0m
 
   [1;38;5;214mINSUFFICIENT[0m   [38;5;244m7 killed  2 survived  0 unreached  1.9s[0m
   [1;38;5;214m2 gaps in 1 file[0m   [38;5;244mreports/runs/20260101T000000Z-aaaaaa[0m
@@ -237,7 +254,8 @@ Written by crates/njutest-cli/tests/gallery.rs; UPDATE_GOLDEN=1 rewrites it.
 19 │     n * 2
    ·       ▲ * ⇢ /   ran, not noticed
 20 │ }
-   ╰─ write a test that notices it  njutest explain src/lib.rs:double:mul-to-div@19
+   ╰─ write a test that notices it
+      njutest explain src/lib.rs:double:mul-to-div@19
 
   ✗ INSUFFICIENT   7 killed  2 survived  0 unreached  1.9s
   2 gaps in 1 file   reports/runs/20260101T000000Z-aaaaaa
@@ -253,9 +271,12 @@ Written by crates/njutest-cli/tests/gallery.rs; UPDATE_GOLDEN=1 rewrites it.
 
 === a file that moved under the run — forty columns, no colour
 
-  --> sign   src/lib.rs:8   1 not noticed
-  | the file has changed since the run, so the lines are not shown
-  = write a test that notices it  njutest explain src/lib.rs:sign:gt-to-ge@8
+  --> sign   src/lib.rs:8
+      1 not noticed
+  | the file has changed since the run,
+    so the lines are not shown
+  = write a test that notices it
+    njutest explain src/lib.rs:sign:gt-to-ge@8
 
   INSUFFICIENT   7 killed  1 survived  0
     unreached  1.9s
@@ -294,15 +315,15 @@ Written by crates/njutest-cli/tests/gallery.rs; UPDATE_GOLDEN=1 rewrites it.
 
 === a line whose characters are wider than one byte — forty columns, no colour
 
-  --> heading   src/lib.rs:3   1 not noticed
+  --> heading   src/lib.rs:3
+      1 not noticed
 2 | pub fn heading(count: usize) -> bool {
 3 |     let 見出し = count > 0;
-  |                           ^ > => >=
-  |                               ran,
-  |                             not
-  |                             noticed
+  |                           ^
+  |   > => >=   ran, not noticed
 4 |     見出し
-  = write a test that notices it  njutest explain src/lib.rs:heading:gt-to-ge@3
+  = write a test that notices it
+    njutest explain src/lib.rs:heading:gt-to-ge@3
 
   INSUFFICIENT   0 killed  1 survived  0
     unreached  1.9s
@@ -388,17 +409,19 @@ refused[NJ5001]: the workspace does not compile before anything is instrumented
 
 === a run that could not proceed — forty columns, no colour
 
-refused[NJ5001]: the workspace does not compile before anything is instrumented
+refused[NJ5001]: the workspace does not
+                 compile before anything
+                 is instrumented
   --> src/lib.rs:4:5
   |
 4 |     undefined_function();
-  |     ^^^^^^^^^^^^^^^^^^ cannot find
-  |                        function
-  |                        `undefined_function`
-  |                        in this scope
+  |     ^^^^^^^^^^^^^^^^^^
+  |   cannot find function
+  |   `undefined_function` in this scope
   = a run measures a suite that passes,
     so there is nothing here to measure
-  = see it yourself  cargo test --workspace --no-run
+  = see it yourself
+    cargo test --workspace --no-run
 
   ERROR   0 killed  0 survived  0
     unreached  1.9s
@@ -455,49 +478,49 @@ refused[NJ5001]: the workspace does not compile before anything is instrumented
    |                                         not noticed
 29 |     }
 30 | }
-   = write a test that notices it  njutest explain src/lib.rs:settle:question-to-unwrap@21
-   = write a test that reaches it  njutest explain src/lib.rs:settle:delete-call-statement@23
+   = write a test that notices it
+     njutest explain src/lib.rs:settle:question-to-unwrap@21
+   = write a test that reaches it
+     njutest explain src/lib.rs:settle:delete-call-statement@23
 
   INSUFFICIENT   24 killed  6 survived  1 unreached  1.9s
   7 gaps in 1 file   reports/runs/20260101T000000Z-aaaaaa
 
 === the rules a run actually applies, on one function — forty columns, no colour
 
-   --> settle   src/lib.rs:21   5 not noticed, 2 never run
+   --> settle   src/lib.rs:21
+       5 not noticed, 2 never run
 20 | pub fn settle(&mut self, kind: Kind, n: u32) -> Result<u32, Error> {
 21 |     let held = self.store.read()?;
-   |                                 ^ ?
-   |                                   =>
-   |                                   .unwrap()
-   |                                   
-   |                                   
-   |                                   ran,
-   |                                   not
-   |                                   noticed
+   |                                 ^
+   |   ? => .unwrap()   ran, not noticed
 22 |     self.count += 1;
-   |     ^^^^^^^^^^^^^^^^ deleted   ran,
-   |                      not noticed
+   |     ^^^^^^^^^^^^^^^^
+   |   deleted   ran, not noticed
 23 |     log("settling");
-   |     ^^^^^^^^^^^^^^^^ deleted
-   |                      never run
+   |     ^^^^^^^^^^^^^^^^
+   |   deleted   never run
 24 |     let total = held.saturating_add(n);
-   |                      ^^^^^^^^^^^^^^ saturating_add => wrapping_add   ran, not noticed
+   |                      ^^^^^^^^^^^^^^
+   |   saturating_add => wrapping_add
+   |   ran, not noticed
 25 |     match kind {
 26 |         Kind::Whole if total > 0 => Ok(total),
-   |                     ^^^^^^^^^^^^^ deleted
-   |                                   
-   |                                   
-   |                                   ran,
-   |                                   not
-   |                                   noticed
+   |                     ^^^^^^^^^^^^^
+   |   deleted   ran, not noticed
 27 |         Kind::Part => Ok(total / 2),
-   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ deleted   never run
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |   deleted   never run
 28 |         Kind::None => Err(Error::Empty),
-   |                       ^^^^^^^^^^^^^^^^^ => Ok(Default::default())   ran, not noticed
+   |                       ^^^^^^^^^^^^^^^^^
+   |   => Ok(Default::default())   ran,
+   |   not noticed
 29 |     }
 30 | }
-   = write a test that notices it  njutest explain src/lib.rs:settle:question-to-unwrap@21
-   = write a test that reaches it  njutest explain src/lib.rs:settle:delete-call-statement@23
+   = write a test that notices it
+     njutest explain src/lib.rs:settle:question-to-unwrap@21
+   = write a test that reaches it
+     njutest explain src/lib.rs:settle:delete-call-statement@23
 
   INSUFFICIENT   24 killed  6 survived
     1 unreached  1.9s
@@ -527,8 +550,10 @@ refused[NJ5001]: the workspace does not compile before anything is instrumented
    [38;5;244m|[0m                                         not noticed[0m
 [38;5;244m29[0m [38;5;244m|[0m [38;5;250m    }[0m
 [38;5;244m30[0m [38;5;244m|[0m [38;5;250m}[0m
-   [38;5;244m=[0m [1;38;5;214mwrite a test that notices it[0m  [38;5;252mnjutest explain src/lib.rs:settle:question-to-unwrap@21[0m
-   [38;5;244m=[0m [1;38;5;214mwrite a test that reaches it[0m  [38;5;252mnjutest explain src/lib.rs:settle:delete-call-statement@23[0m
+   [38;5;244m=[0m [1;38;5;214mwrite a test that notices it[0m
+     [38;5;252mnjutest explain src/lib.rs:settle:question-to-unwrap@21[0m
+   [38;5;244m=[0m [1;38;5;214mwrite a test that reaches it[0m
+     [38;5;252mnjutest explain src/lib.rs:settle:delete-call-statement@23[0m
 
   [1;38;5;214mINSUFFICIENT[0m   [38;5;244m24 killed  6 survived  1 unreached  1.9s[0m
   [1;38;5;214m7 gaps in 1 file[0m   [38;5;244mreports/runs/20260101T000000Z-aaaaaa[0m
@@ -556,8 +581,10 @@ refused[NJ5001]: the workspace does not compile before anything is instrumented
    ·                                         noticed
 29 │     }
 30 │ }
-   ╰─ write a test that notices it  njutest explain src/lib.rs:settle:question-to-unwrap@21
-   ├─ write a test that reaches it  njutest explain src/lib.rs:settle:delete-call-statement@23
+   ╰─ write a test that notices it
+      njutest explain src/lib.rs:settle:question-to-unwrap@21
+   ├─ write a test that reaches it
+      njutest explain src/lib.rs:settle:delete-call-statement@23
 
   ✗ INSUFFICIENT   24 killed  6 survived  1 unreached  1.9s
   7 gaps in 1 file   reports/runs/20260101T000000Z-aaaaaa

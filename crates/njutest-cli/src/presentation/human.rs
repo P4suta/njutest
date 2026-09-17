@@ -67,36 +67,7 @@ fn blind(out: &mut String, place: &Place, terminal: Terminal) {
         .chain(place.spots.iter().map(|spot| spot.line.to_string().len()))
         .max()
         .unwrap_or(1);
-    let counted = counting(place);
-    let at = place.spots.first().map_or_else(
-        || place.path.clone(),
-        |spot| format!("{}:{}", place.path, spot.line),
-    );
-    let _written = writeln!(
-        out,
-        "{:gutter$} {} {}   {}   {}",
-        "",
-        telling.frame(strokes.opening),
-        telling.painted(Style::Subject, &place.item),
-        telling.painted(
-            Style::Frame,
-            &telling.linked(&format!("file://{}", place.path), &at)
-        ),
-        telling.painted(Style::Gap, &counted)
-    );
-    if let Some(instead) = &place.instead {
-        let why = match instead {
-            Excerpt::Moved => "the file has changed since the run, so the lines are not shown",
-            _ => "the file could not be read, so the lines are not shown",
-        };
-        let _written = writeln!(
-            out,
-            "{:gutter$} {} {}",
-            "",
-            telling.frame(strokes.rule),
-            telling.painted(Style::Limitation, why)
-        );
-    }
+    heads(out, place, gutter, telling);
     for (line, text) in &place.excerpt {
         let here: Vec<&super::Spot> = place
             .spots
@@ -121,20 +92,109 @@ fn blind(out: &mut String, place: &Place, terminal: Terminal) {
             }
         }
     }
+    wants(out, place, gutter, telling);
+}
+
+/// What the item is, where it is, and how much of it the tests do not see.
+///
+/// The counts go beside the name while there is room for them and under it
+/// when there is not, rather than off the edge, where a narrow terminal breaks
+/// them wherever they happen to reach.
+fn heads(out: &mut String, place: &Place, gutter: usize, telling: Telling) {
+    let strokes = telling.strokes();
+    let counted = counting(place);
+    let at = place.spots.first().map_or_else(
+        || place.path.clone(),
+        |spot| format!("{}:{}", place.path, spot.line),
+    );
+    let named = format!(
+        "{:gutter$} {} {}   {}",
+        "",
+        telling.frame(strokes.opening),
+        telling.painted(Style::Subject, &place.item),
+        telling.painted(
+            Style::Frame,
+            &telling.linked(&format!("file://{}", place.path), &at)
+        )
+    );
+    let opening = gutter
+        .saturating_add(1)
+        .saturating_add(strokes.opening.chars().count())
+        .saturating_add(1);
+    let heading = telling.painted(Style::Gap, &counted);
+    if super::wide(&named)
+        .saturating_add(3)
+        .saturating_add(counted.len())
+        <= telling.room(0)
+    {
+        let _written = writeln!(out, "{named}   {heading}");
+    } else {
+        let _written = writeln!(out, "{named}");
+        for folded in super::folded(&heading, telling.room(opening)) {
+            let _written = writeln!(out, "{:opening$}{folded}", "");
+        }
+    }
+    let Some(instead) = &place.instead else {
+        return;
+    };
+    let why = match instead {
+        Excerpt::Moved => "the file has changed since the run, so the lines are not shown",
+        _ => "the file could not be read, so the lines are not shown",
+    };
+    let opening = gutter
+        .saturating_add(1)
+        .saturating_add(strokes.rule.chars().count());
+    let mut lines = super::folded(why, telling.room(opening.saturating_add(1))).into_iter();
+    if let Some(first) = lines.next() {
+        let _written = writeln!(
+            out,
+            "{:gutter$} {} {}",
+            "",
+            telling.frame(strokes.rule),
+            telling.painted(Style::Limitation, &first)
+        );
+    }
+    for rest in lines {
+        let _written = writeln!(
+            out,
+            "{:opening$} {}",
+            "",
+            telling.painted(Style::Limitation, &rest)
+        );
+    }
+}
+
+/// What this item asks for, and the command that starts each piece of the work.
+///
+/// A command goes on its own line rather than being folded when it will not
+/// fit beside what it answers: a wrapped command is one nobody can select.
+fn wants(out: &mut String, place: &Place, gutter: usize, telling: Telling) {
+    let strokes = telling.strokes();
     for (at, (asks, first)) in asked(place).into_iter().enumerate() {
         let corner = if at == 0 {
             strokes.closing
         } else {
             strokes.branch
         };
-        let _written = writeln!(
-            out,
-            "{:gutter$} {} {}  {}",
-            "",
-            telling.frame(corner),
-            telling.painted(Style::Gap, asks),
-            telling.command(&format!("njutest explain {first}"))
-        );
+        let command = format!("njutest explain {first}");
+        let opening = gutter
+            .saturating_add(1)
+            .saturating_add(corner.chars().count())
+            .saturating_add(1);
+        let asked = telling.painted(Style::Gap, asks);
+        let typed = telling.command(&command);
+        let head = format!("{:gutter$} {} {asked}", "", telling.frame(corner));
+        let together = asks
+            .len()
+            .saturating_add(2)
+            .saturating_add(command.len())
+            .saturating_add(opening);
+        if together <= telling.room(0) {
+            let _written = writeln!(out, "{head}  {typed}");
+        } else {
+            let _written = writeln!(out, "{head}");
+            let _written = writeln!(out, "{:opening$}{typed}", "");
+        }
     }
 }
 
@@ -173,12 +233,24 @@ fn asked(place: &Place) -> Vec<(&'static str, &str)> {
 /// One diagnostic: what it is, where it is, and what to do about it.
 fn said(out: &mut String, diagnostic: &Diagnostic, terminal: Terminal) {
     let telling = Telling::of(terminal);
-    let _written = writeln!(
-        out,
-        "{} {}",
-        telling.severity(diagnostic.severity, diagnostic.code),
-        telling.painted(Style::Subject, &diagnostic.title)
-    );
+    let severity = telling.severity(diagnostic.severity, diagnostic.code);
+    let opening = super::wide(&severity).saturating_add(1);
+    let mut titled = super::folded(&diagnostic.title, telling.room(opening)).into_iter();
+    if let Some(first) = titled.next() {
+        let _written = writeln!(
+            out,
+            "{severity} {}",
+            telling.painted(Style::Subject, &first)
+        );
+    }
+    for rest in titled {
+        let _written = writeln!(
+            out,
+            "{:opening$}{}",
+            "",
+            telling.painted(Style::Subject, &rest)
+        );
+    }
     let gutter = diagnostic
         .at
         .as_ref()
@@ -201,14 +273,26 @@ fn said(out: &mut String, diagnostic: &Diagnostic, terminal: Terminal) {
         .map(|action| super::wide(&action.said))
         .max()
         .unwrap_or_default();
+    let hung = gutter
+        .saturating_add(2)
+        .saturating_add(telling.strokes().closing.chars().count());
     for action in &diagnostic.actions {
         written = written.saturating_add(1);
-        let said = format!(
-            "{:column$}  {}",
-            action.said,
-            telling.command(&action.command)
-        );
-        under(out, (gutter, written == last), &said, telling);
+        let together = column
+            .saturating_add(2)
+            .saturating_add(action.command.len())
+            .saturating_add(hung);
+        if together <= telling.room(0) {
+            let said = format!(
+                "{:column$}  {}",
+                action.said,
+                telling.command(&action.command)
+            );
+            under(out, (gutter, written == last), &said, telling);
+        } else {
+            under(out, (gutter, written == last), &action.said, telling);
+            let _written = writeln!(out, "{:hung$}{}", "", telling.command(&action.command));
+        }
     }
 }
 
