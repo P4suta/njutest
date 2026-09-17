@@ -66,10 +66,88 @@ impl State {
     }
 }
 
+/// One thing a run needs, named as a closed set so that adding one is adding its remedy.
+///
+/// A `&'static str` here let `remedy` end in a `_` arm, so a check added
+/// without advice was a check that said nothing about what to do — silently,
+/// and only at the moment somebody's machine was missing it (ADR 0023).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Needed {
+    /// The project's own configuration file.
+    Configuration,
+    /// The cargo this project pins.
+    Cargo,
+    /// The rustc this project pins.
+    Rustc,
+    /// The coverage reader.
+    Profdata,
+    /// The coverage summariser.
+    Cov,
+    /// Version control, which is what `--changed` asks.
+    Git,
+    /// The nightly toolchain, which miri needs.
+    Nightly,
+    /// The interpreter a deep contract runs.
+    Miri,
+    /// The fuzzing driver.
+    CargoFuzz,
+    /// What it costs this machine to run a file it has just written.
+    Exec,
+}
+
+impl Needed {
+    /// What a reader calls it, which is what the report prints.
+    const fn named(self) -> &'static str {
+        match self {
+            Self::Configuration => "configuration",
+            Self::Cargo => "cargo",
+            Self::Rustc => "rustc",
+            Self::Profdata => "llvm-profdata",
+            Self::Cov => "llvm-cov",
+            Self::Git => "git",
+            Self::Nightly => "nightly",
+            Self::Miri => "miri",
+            Self::CargoFuzz => "cargo-fuzz",
+            Self::Exec => "exec",
+        }
+    }
+
+    /// What to do about it when it is not there, which every one of them has.
+    const fn remedy(self) -> &'static str {
+        match self {
+            Self::Configuration => {
+                "njutest init writes one; a run without it uses the defaults and says so"
+            }
+            Self::Cargo | Self::Rustc => {
+                "install the toolchain this project pins, or put it on the PATH this \
+                 process was given"
+            }
+            Self::Profdata | Self::Cov => "rustup component add llvm-tools-preview",
+            Self::Nightly => "rustup toolchain install nightly",
+            Self::Miri => {
+                "rustup +nightly component add miri; without it a deep-v1 contract cannot \
+                 interpret, and a standard-v1 run does not need it"
+            }
+            Self::CargoFuzz => {
+                "cargo install cargo-fuzz; without it [fuzz] run = true finds targets and \
+                 drives none of them"
+            }
+            Self::Git => {
+                "install git; without it --changed cannot say what changed and the report \
+                 records the repository as unavailable"
+            }
+            Self::Exec => {
+                "this machine is evaluating new executables; a run started now measures \
+                 that and not your tests, so wait until the first number is under a second"
+            }
+        }
+    }
+}
+
 /// One thing a run needs, and what was found out about it.
 struct Finding {
-    /// What it is called, which is a tool's name or the word for what it is.
-    named: &'static str,
+    /// Which of the things a run needs this is.
+    named: Needed,
     need: Need,
     detail: State,
 }
@@ -79,46 +157,20 @@ impl Finding {
         let mut text = format!(
             "{:<8} {:<14} {}{}",
             self.need.name(),
-            self.named,
+            self.named.named(),
             self.detail.word(),
             self.detail.detail()
         );
-        if !self.detail.held()
-            && let Some(remedy) = self.remedy()
-        {
-            let written = write!(text, "\n         try: {remedy}");
+        if !self.detail.held() {
+            let written = write!(text, "\n         try: {}", self.remedy());
             debug_assert!(written.is_ok(), "writing to a String cannot fail");
         }
         text
     }
 
     /// What to do about this one, which is the half a reader acts on.
-    fn remedy(&self) -> Option<&'static str> {
-        Some(match self.named {
-            "cargo" | "rustc" => {
-                "install the toolchain this project pins, or put it on the PATH this \
-                 process was given"
-            }
-            "llvm-profdata" | "llvm-cov" => "rustup component add llvm-tools-preview",
-            "nightly" => "rustup toolchain install nightly",
-            "miri" => {
-                "rustup +nightly component add miri; without it a deep-v1 contract cannot \
-                 interpret, and a standard-v1 run does not need it"
-            }
-            "cargo-fuzz" => {
-                "cargo install cargo-fuzz; without it [fuzz] run = true finds targets and \
-                 drives none of them"
-            }
-            "git" => {
-                "install git; without it --changed cannot say what changed and the report \
-                 records the repository as unavailable"
-            }
-            "exec" => {
-                "this machine is evaluating new executables; a run started now measures \
-                 that and not your tests, so wait until the first number is under a second"
-            }
-            _ => return None,
-        })
+    const fn remedy(&self) -> &'static str {
+        self.named.remedy()
     }
 }
 
@@ -136,7 +188,7 @@ pub(super) fn run(
     let wanting: Vec<String> = findings
         .iter()
         .filter(|finding| finding.need == Need::Required && !finding.detail.held())
-        .map(|finding| format!("{} is {}", finding.named, finding.detail.word()))
+        .map(|finding| format!("{} is {}", finding.named.named(), finding.detail.word()))
         .collect();
     super::say(stdout, "");
     if wanting.is_empty() {
@@ -182,59 +234,59 @@ fn examine(environment: &Environment) -> Vec<Finding> {
         cancel: &cancel,
     };
 
-    let required = |named, detail: Option<String>| Finding {
+    let required = |named: Needed, detail: Option<String>| Finding {
         named,
         need: Need::Required,
         detail: detail.map_or(State::Missing, State::Found),
     };
-    let optional = |named, detail: State| Finding {
+    let optional = |named: Needed, detail: State| Finding {
         named,
         need: Need::Optional,
         detail,
     };
     vec![
         Finding {
-            named: "configuration",
+            named: Needed::Configuration,
             need: Need::Required,
             detail: configuration(&dir),
         },
         required(
-            "cargo",
+            Needed::Cargo,
             toolchain
                 .as_ref()
                 .map(|located| located.cargo().display().to_string()),
         ),
         required(
-            "rustc",
+            Needed::Rustc,
             toolchain
                 .as_ref()
                 .map(|located| located.rustc().display().to_string()),
         ),
         required(
-            "llvm-profdata",
+            Needed::Profdata,
             tools
                 .as_ref()
                 .map(|found| found.profdata.display().to_string()),
         ),
         required(
-            "llvm-cov",
+            Needed::Cov,
             tools.as_ref().map(|found| found.cov.display().to_string()),
         ),
-        optional("git", probe.version_of("git", &["--version"])),
+        optional(Needed::Git, probe.version_of("git", &["--version"])),
         optional(
-            "nightly",
+            Needed::Nightly,
             probe.version_of("rustup", &["run", "nightly", "rustc", "--version"]),
         ),
         optional(
-            "miri",
+            Needed::Miri,
             probe.version_of("cargo", &["+nightly", "miri", "--version"]),
         ),
         optional(
-            "cargo-fuzz",
+            Needed::CargoFuzz,
             probe.version_of("cargo", &["fuzz", "--version"]),
         ),
         Finding {
-            named: "exec",
+            named: Needed::Exec,
             need: Need::Required,
             detail: exec_cost(&environment.temp_directory, &environment.program),
         },
