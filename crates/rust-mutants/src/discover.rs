@@ -270,6 +270,7 @@ pub fn discover(
             Role::Mutable if !selected_by_patterns(path, options) => Some(SkipReason::Excluded),
             Role::Mutable => None,
             Role::NoStd => Some(SkipReason::NoStdCrate),
+            Role::TestOnly if options.selection.asks_the_tests() => None,
             Role::TestOnly => Some(SkipReason::TestOnlyFile),
         };
         if role.is_none() {

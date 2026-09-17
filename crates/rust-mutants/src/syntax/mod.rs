@@ -350,6 +350,7 @@ impl FileDiscovery {
 pub struct Selection<'r> {
     registry: &'r Registry,
     rules: Vec<Rule>,
+    oracle: bool,
 }
 
 impl<'r> Selection<'r> {
@@ -359,6 +360,7 @@ impl<'r> Selection<'r> {
         Self {
             registry,
             rules: registry.select_tier(tier),
+            oracle: false,
         }
     }
 
@@ -375,7 +377,31 @@ impl<'r> Selection<'r> {
                 })
             })
             .collect::<Result<Vec<Rule>, RuleError>>()?;
-        Ok(Self { registry, rules })
+        Ok(Self {
+            registry,
+            rules,
+            oracle: false,
+        })
+    }
+
+    /// The same selection, looking inside the tests rather than past them.
+    ///
+    /// A test whose assertion can be weakened without the test failing is a
+    /// test that asserts nothing, and the only way to ask is to weaken it. A
+    /// run that is not asking passes over test code, because mutating a test
+    /// and then asking whether the tests notice is a question about nothing.
+    #[must_use]
+    pub fn asking_the_tests(self) -> Self {
+        Self {
+            oracle: true,
+            ..self
+        }
+    }
+
+    /// Whether this selection looks inside the tests.
+    #[must_use]
+    pub const fn asks_the_tests(&self) -> bool {
+        self.oracle
     }
 
     /// The registry the rules come from.

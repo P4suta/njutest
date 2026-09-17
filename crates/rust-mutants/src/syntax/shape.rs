@@ -294,17 +294,27 @@ pub(super) fn spells_default(bound: &syn::TypeParamBound) -> bool {
 }
 
 /// The reason attributes suppress what they decorate: `#[test]` and `#[bench]` are test code, a `cfg` mentioning `test` is test code, and any other `cfg` is a configuration the walker does not evaluate.
-pub(super) fn suppression_of(attrs: &[Attribute]) -> Option<SkipReason> {
+///
+/// A run `asking` the tests passes over none of the first two, because test
+/// code is what it is about. It still passes over what a `cfg` gates, since
+/// a mutation in a branch the compiler removes never dies and never lives.
+pub(super) fn suppression_of(attrs: &[Attribute], asking: bool) -> Option<SkipReason> {
     let mut cfg = None;
     for attr in attrs {
         let path = attr.path();
         if path.is_ident("test") || path.is_ident("bench") {
+            if asking {
+                continue;
+            }
             return Some(SkipReason::TestCode);
         }
         if path.is_ident("cfg") {
             if let Meta::List(list) = &attr.meta
                 && mentions_test(&list.tokens)
             {
+                if asking {
+                    continue;
+                }
                 return Some(SkipReason::TestCode);
             }
             cfg = Some(SkipReason::CfgAttribute);
