@@ -2,10 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Driving the fuzz targets a tree holds, and what their crashes become.
-//!
-//! A crash is an input, and an input a run found is not an input a run
-//! writes: the artifact becomes a candidate for the corpus, which a person
-//! applies with `fix --apply`, exactly as a generated test is.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -131,14 +127,6 @@ pub fn fuzz(fuzzing: &Fuzzing<'_>, watch: Watch<'_>) -> Fuzzed {
 }
 
 /// Drives one target and reads what it left behind.
-///
-/// A fuzzer that came back with a status and left nothing behind did not run:
-/// libFuzzer exits non-zero when it finds something, and something is an input
-/// it keeps. So a non-zero status with no new artifact is a target that never
-/// started — a crate that would not build, a sanitizer the toolchain has no
-/// runtime for — and counting that as driven is the worst answer a fuzzing
-/// phase can give: nothing ran, and the report reads as though something did
-/// and found nothing.
 fn one(done: &mut Fuzzed, fuzzing: &Fuzzing<'_>, target: &str, watch: Watch<'_>) {
     let before = artifacts(fuzzing.root, target);
     let mut spec = Spec::new([

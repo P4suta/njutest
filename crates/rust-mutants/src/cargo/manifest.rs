@@ -2,12 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What a manifest says that `cargo metadata` does not.
-//!
-//! `cargo metadata` reports the graph it resolved, and a `[patch]` table is
-//! not in it: the patch has already been applied, so the document names the
-//! replacement without saying it was one. A run that copies a tree has to know
-//! about a patch that points outside the tree, because inside the copy it
-//! points at nothing.
 
 use std::path::{Path, PathBuf};
 
@@ -26,10 +20,6 @@ pub struct Patch {
 }
 
 /// Every `[patch]` entry of the manifest at `root` that names a directory.
-///
-/// A manifest that cannot be read or parsed has no patches to report: the
-/// build will say so in its own words, and guessing at half a document is
-/// worse than saying nothing.
 #[must_use]
 pub fn patches(root: &Path) -> Vec<Patch> {
     let Ok(text) = std::fs::read_to_string(root.join(FILE_NAME)) else {
@@ -68,13 +58,6 @@ pub fn read_patches(text: &str) -> Vec<Patch> {
 }
 
 /// Whether each target of the manifest at `path` is built with the libtest harness.
-///
-/// Neither `cargo metadata` nor the build's own messages say: the flag is in
-/// the manifest and nowhere else. A target without one is harnessed, which is
-/// cargo's default and what an auto-discovered target gets.
-///
-/// The key is `(kind, name)` in cargo's own words: `lib`, `bin`, `test`,
-/// `bench`, `example`.
 #[must_use]
 pub fn harnesses(path: &Path) -> std::collections::BTreeMap<(String, String), bool> {
     let Ok(text) = std::fs::read_to_string(path) else {
@@ -118,11 +101,6 @@ pub fn read_harnesses(text: &str) -> std::collections::BTreeMap<(String, String)
 }
 
 /// Every lint the manifest at `path` forbids, with the workspace lints it inherits.
-///
-/// Cargo turns a `[lints]` entry into a command line argument, and a `forbid`
-/// there is one no attribute in the source can override — exactly like an
-/// inner attribute at the crate root, and invisible to anything that only
-/// reads the source.
 #[must_use]
 pub fn forbidden(path: &Path, workspace: Option<&Path>) -> Vec<String> {
     let Ok(text) = std::fs::read_to_string(path) else {

@@ -2,11 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What a run would find in this environment, asked before it is spent finding out.
-//!
-//! Every check answers about the tree as it is rather than about the tree as it
-//! would build: a doctor is for a workspace that may not compile, and one that
-//! could not answer until it did would be no use at all. A check that cannot
-//! look says so; nothing here reads silence as a pass.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -263,21 +258,6 @@ fn disk_check(temp: &Path) -> doctor_report::Check {
 }
 
 /// What it costs to run a file that has just been written, which a run does for every target it builds.
-///
-/// A system that evaluates an executable before it may run pays that cost once
-/// per file, on the first execution and never again. Where the evaluation has
-/// a backlog the cost is seconds or minutes rather than milliseconds, and a
-/// run started then measures the evaluation instead of the tests: every target
-/// it builds is a file nothing has run before. Nothing else a caller can see
-/// reports it — not load, not free processors, not free memory — so the only
-/// way to know is to pay it once and look.
-///
-/// The check runs the same file twice and prints both, because the pair is the
-/// evidence and neither number is on its own: one slow execution could be a
-/// slow disk, and a slow one beside a fast one of the same file cannot be
-/// anything else. It is given no deadline for the same reason. A probe that
-/// gave up after a minute would report nothing on precisely the machine that
-/// needed the answer, and a reader would take its silence for a pass.
 fn exec_check(temp: &Path) -> doctor_report::Check {
     use doctor_report::Standing::Ok as Well;
     let Some((first, second)) = exec_twice(temp) else {
@@ -307,16 +287,6 @@ fn exec_check(temp: &Path) -> doctor_report::Check {
 }
 
 /// What the pair says, which is not what either number says alone.
-///
-/// A machine nobody is evaluating executables on runs the probe twice in
-/// hundredths of a second, and the two numbers are within noise of each other.
-/// The phenomenon this check exists for is not a slow first run — a cold page
-/// cache gives that — it is a first run that costs orders of magnitude more
-/// than the second run of the same file, which nothing but an evaluation per
-/// file explains. So the verdict asks for both: long enough to matter, and
-/// lopsided enough to be this and not something else. A standing that turned
-/// on the first number alone would flip between two invocations a second
-/// apart, and a check that disagrees with itself teaches a reader to skip it.
 const fn standing_of(first: f64, second: f64) -> doctor_report::Standing {
     use doctor_report::Standing::{Fail, Ok as Well, Warn};
     const SLOW: f64 = 5.0;
@@ -332,16 +302,6 @@ const fn standing_of(first: f64, second: f64) -> doctor_report::Standing {
 }
 
 /// The program copied as the probe: a real executable, small, and at a path every Unix has.
-///
-/// It has to be a program and not a script, because a script is not what gets
-/// evaluated: it is read by an interpreter that was evaluated long ago, and a
-/// machine paying minutes per new executable runs a fresh `#!/bin/sh` file in
-/// milliseconds. Measured side by side on a machine in that state, a fresh
-/// script cost two seconds and a fresh copy of a real program cost a hundred
-/// and seventy-six, so a check that asked the cheap question would have called
-/// that machine well. It also has to be small: the shell is tens of kilobytes,
-/// where this tool's own unoptimized binary is hundreds of megabytes and
-/// copying it would time the disk instead.
 #[cfg(unix)]
 const PROBE_PROGRAM: &str = "/bin/sh";
 
@@ -395,10 +355,6 @@ const fn free_space(_path: &Path) -> Option<u64> {
 }
 
 /// Bytes as a person reads them.
-///
-/// The value is truncated rather than rounded, in the unit and in the tenth:
-/// the number is read where a person is deciding whether a sweep gave back
-/// enough room, and one that overstated it would send them away satisfied.
 #[must_use]
 pub fn rendered_bytes(bytes: u64) -> String {
     const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
@@ -424,10 +380,6 @@ fn noted(name: &str, standing: doctor_report::Standing, detail: &str) -> doctor_
 }
 
 /// Whether the root is the workspace, which is what a run measures.
-///
-/// The check reads the manifests rather than asking cargo: a doctor answers
-/// about a tree that may not build, and `cargo metadata` on a tree that does
-/// not resolve says nothing about where the workspace is.
 fn workspace_check(root: &Path, manifest: &Path) -> doctor_report::Check {
     use doctor_report::Standing::{Fail, Ok as Well};
     if !manifest.is_file() {
@@ -506,10 +458,6 @@ fn cache_check(environment: &Environment) -> doctor_report::Check {
 }
 
 /// What earlier runs left in the temporary directory, and what a run kept on purpose.
-///
-/// The ledger of what was kept lives under the report directory the
-/// configuration names, not under the default one: a project that moved its
-/// reports would otherwise be told nothing was kept.
 fn snapshots_check(reports: &Path, environment: &Environment) -> doctor_report::Check {
     use doctor_report::Standing::{Ok as Well, Warn};
     let ledger = crate::kept::Ledger::read(reports);
@@ -544,18 +492,6 @@ fn snapshots_check(reports: &Path, environment: &Environment) -> doctor_report::
 }
 
 /// Whether the LLVM tools the coverage layer needs are installed.
-///
-/// Coverage routing fails open — a measurement it cannot make routes every
-/// mutation everywhere — so a missing component is a warning about how much a
-/// run will cost, never a reason not to run.
-/// Whether the guards of an instrumented tree can say which test reached them, on the host a run compiles for.
-///
-/// The record is per test because libtest gives each test a thread of its own
-/// named after it, and it only does that where the platform has threads. On
-/// one that does not, every touch is recorded under a name no test answers
-/// for, so every mutation is put to every test of its target: sound, and none
-/// of the saving. Saying so before a run is better than a person reading a
-/// work ledger afterwards and wondering.
 fn guards_check(host: Option<&str>) -> doctor_report::Check {
     use doctor_report::Standing::{Ok as Well, Warn};
     let threadless = ["wasm", "emscripten", "zkvm"];

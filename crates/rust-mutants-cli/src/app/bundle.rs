@@ -2,12 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Everything a run knew, in one directory somebody can send.
-//!
-//! A person reporting what the engine did to their workspace has to be able to
-//! hand over what it saw. What travels is the run's own documents and the names
-//! of the environment variables that were set — never a value of one, because a
-//! bundle travels and a value that travels with it is a value its owner did not
-//! choose to publish.
 
 use std::fmt::Write as _;
 use std::io::Write;

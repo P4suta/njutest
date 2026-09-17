@@ -2,12 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! `njutest fix`: what repairs a run was offered, and writing the ones that still hold up.
-//!
-//! Nothing is written on the strength of what a run recorded. `--apply` puts
-//! every test a provider wrote to the compiler and the tests again, in a
-//! snapshot, and checks that the file it patches is still the file the
-//! provider saw. A corpus entry is an input rather than a claim, so what is
-//! checked of it is that the file it would create is still not there.
 
 use std::io::Write;
 use std::path::Path;

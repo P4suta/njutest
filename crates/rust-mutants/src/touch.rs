@@ -2,33 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The touch log: which of a test process's threads reached which guard.
-//!
-//! Every guard an instrumented tree carries already asks the runtime whether it
-//! is the live one, and libtest gives each test a thread of its own named after
-//! it (`library/test/src/lib.rs`, `thread::Builder::new().name(…)`, on every
-//! platform that has threads and at every concurrency level). So the guards can
-//! say which test reached them, and the run that asks them costs nothing but the
-//! baseline execution it was already going to do.
-//!
-//! A thread the process cannot name after a test — the main thread, a benchmark,
-//! one a test spawned for itself — is recorded as `-`. Nothing was attributed to
-//! it, so everything it reached has to reach every test of its target: the
-//! fallback is toward running more, never less.
-//!
-//! The guards answer a second question on the same run. Where the compiler has
-//! vouched that a condition is inert, the guard evaluates both of its branches
-//! and records every time they parted, which is the infection question with no
-//! tree and no run of its own.
-//!
-//! Why the guards rather than a coverage build:
-//! [ADR 0014](../../../docs/adr/0014-the-guards-are-the-measurement.md); why
-//! they are the infection probe as well:
-//! [ADR 0015](../../../docs/adr/0015-the-guard-is-the-infection-probe.md).
-//!
-//! The reader is fail-closed: a
-//! truncated line or a header naming another catalog yields no facts at all,
-//! because a smaller wrong answer is what a partially-written log looks like and
-//! acting on one would skip a test that could have killed something.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -88,12 +61,6 @@ pub enum TouchError {
 }
 
 /// One kind of thing the guards report, by the thread that reported it.
-///
-/// Every kind is the same shape: what each thread a test answers for reported,
-/// and what was reported where nothing names a test. The second is not a
-/// smaller version of the first — it is a report about every test of the
-/// target at once, because the record could not say which one, and not
-/// knowing is answered by running more.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[non_exhaustive]
 pub struct Seen {
@@ -146,11 +113,6 @@ pub struct Touches {
 }
 
 /// Every touch the log records, gathered by the thread that made it.
-///
-/// `catalog` is the digest this run is about and `count` how many mutants it
-/// holds; both are what makes a stale log say nothing rather than something
-/// wrong. A thread that filled more than one line is one entry, because a long
-/// list is written in pieces that each repeat the name.
 ///
 /// # Errors
 /// See [`TouchError`]. Every failure yields no facts at all, never the prefix
@@ -269,14 +231,6 @@ pub struct Touched {
 }
 
 /// What a reader has to know before this record narrows anything: which mutants the tree that made it could say something about.
-///
-/// Every record here is an absence saying something, and an absence says
-/// nothing unless something was recording. A guard the compiler did not vouch
-/// for evaluates one branch, so `infected` never names its mutant however
-/// often a test ran it; a body the instrumenter could not write a marker into
-/// never appears in `bodies` either. This says which mutants the tree does
-/// carry the call for, so a route rests on silence only where silence is
-/// evidence.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[non_exhaustive]
 pub struct Narrowing {
@@ -317,13 +271,6 @@ pub enum Reaching {
 
 impl TargetTouches {
     /// Which of this target's tests reached `index`.
-    ///
-    /// A site recorded on a thread nothing names a test after is reached by
-    /// every test of the target: the measurement could not say which one, and
-    /// the answer to that is to run more rather than fewer. A target that ran
-    /// tests this reader never saw named — a harness of its own, an output
-    /// this engine does not parse — has an empty `ran`, and then a site
-    /// nothing was attributed to is the whole target as well.
     #[must_use]
     pub fn reaching(&self, index: u32) -> Reaching {
         if self.reached.loose.contains(&index) {

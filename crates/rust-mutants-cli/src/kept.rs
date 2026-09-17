@@ -45,11 +45,6 @@ impl Default for Ledger {
 
 impl Ledger {
     /// The ledger under `directory`, or an empty one when there is none this release reads.
-    ///
-    /// A ledger this release cannot read authorises nothing: it is read as
-    /// empty rather than guessed at, so a sweep never removes a directory on
-    /// the strength of a document it did not understand, and never keeps one
-    /// on the strength of one either.
     #[must_use]
     pub fn read(directory: &Path) -> Self {
         std::fs::read_to_string(directory.join(FILE_NAME))
@@ -87,18 +82,6 @@ impl Ledger {
     }
 
     /// Removes the directories the ledger names, and writes back the ones that are still there.
-    ///
-    /// What it could not remove stays in the ledger. A directory something
-    /// else is holding — a mount, a device, a process with it open — refuses,
-    /// and a ledger that forgot it would leave a directory on the disk that
-    /// nothing now names: not the ledger, which just dropped it, and not the
-    /// person, who was told the clearing was done. Keeping it is what lets the
-    /// next clearing try again, and what lets `cache` still say it is there.
-    ///
-    /// The removals are bounded for the same reason the sweep is. A refusal
-    /// can take minutes, and a few hundred of those would run for a day; what
-    /// is not reached this time is still named, which is the whole point of
-    /// writing the survivors back.
     ///
     /// # Errors
     /// The ledger that could not be written.

@@ -109,10 +109,6 @@ pub struct Estimated {
 
 impl Estimated {
     /// The estimate, counted in work first and guessed at in time last.
-    ///
-    /// A count is the same on every machine; a duration is a guess about this
-    /// one. The count is what a person decides by, so it comes first and the
-    /// guess comes last, marked as one.
     #[must_use]
     pub fn said(&self, targets: u64) -> String {
         let whole = self.cataloged.saturating_mul(targets);
@@ -167,9 +163,6 @@ impl Estimated {
 }
 
 /// What one route would take on this machine, priced from what this session timed.
-///
-/// A target this session never timed is priced at the slowest one it did,
-/// which is the guess that errs toward too long.
 fn priced(session: &Session, route: &Route) -> std::time::Duration {
     route.costing(|target| {
         session::Timing::new(

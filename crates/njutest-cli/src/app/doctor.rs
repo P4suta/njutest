@@ -193,10 +193,6 @@ fn examine(environment: &Environment) -> Vec<Finding> {
 }
 
 /// What a run in this directory would make of the configuration beside it.
-///
-/// A doctor says whether a run can go ahead here, and a run reads this file
-/// before it does anything else. One that answered about the tools alone would
-/// say a run can go ahead and be contradicted by the next command.
 fn configuration(root: &Path) -> State {
     let path = root.join(crate::config::FILE_NAME);
     match crate::config::Config::load(root) {

@@ -415,13 +415,13 @@ fn survivors_of_one_unexercised_path_are_counted_as_one_and_the_rest_are_not() {
         .find(|line| line.starts_with("SURVIVORS"))
         .unwrap_or_else(|| panic!("a survivors line in:\n{said}"));
     assert!(
-        line.contains("3 of them are 1 unexercised paths"),
+        line.contains("3 that are 1 unexercised paths"),
         "three question-to-unwrap survivors in one file are three instances of one \
          proposition, and a reader who works through them one at a time reads the same \
          sentence three times: {said}"
     );
     assert!(
-        line.contains("other 2 are their own"),
+        line.contains("2 each its own finding"),
         "two comparisons are two boundaries, and saying they are one would hide one of \
          them: {said}"
     );

@@ -2,13 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The binaries the workspace declares, against the three places that decide what a person can install.
-//!
-//! A binary that is built and not bundled is one `cargo binstall` looks for in
-//! an archive that does not carry it, and the failure arrives at the person
-//! installing rather than at the release that made it. So the manifests, the
-//! archive the release workflow builds, and the version check it makes are
-//! held to each other here, where a change to one of them is refused before
-//! it is tagged.
 
 #![expect(
     clippy::panic,

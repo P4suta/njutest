@@ -23,15 +23,6 @@ pub const TARGET_DIR_PREFIX: &str = "rust-mutants-target-";
 pub const TARGET_OWNER_SCHEMA: &str = "rust-mutants-target-owner-v1";
 
 /// Where a run's test processes work, under the temporary root: one per run, beside the target directory rather than inside it.
-///
-/// A test process pays for every byte of this name. A Unix socket bound under
-/// the directory a test runs in has to fit in `sun_path` — 104 bytes on macOS,
-/// 108 on Linux — and the temporary root alone spends about forty of them, so
-/// a test that binds one passes on its own and fails under a run whose scratch
-/// path is long. What follows the prefix is therefore the smallest number that
-/// no other run holds, rather than the sixteen hexadecimal digits that key a
-/// build cache to its tree: a scratch directory is worth nothing once its run
-/// is over, so it has nothing to be keyed to.
 pub const SCRATCH_DIR_PREFIX: &str = "rm-scratch-";
 
 /// How many scratch directories the engine will look at before naming one after the process instead.
@@ -64,11 +55,6 @@ pub fn scratch_of(parent: &Path, at: u32) -> PathBuf {
 }
 
 /// Takes the lowest-numbered scratch directory no other run holds, so the name stays short however many runs share a temporary root.
-///
-/// Every candidate is claimed rather than merely created, because the number
-/// says nothing about who is using it: the lock is what makes the directory
-/// this run's own. A run that claims none of them works in one named after its
-/// process, which no concurrent run can be using either.
 fn claim_scratch(parent: &Path, now: jiff::Timestamp) -> (PathBuf, Option<tempowner::Owner>) {
     for at in 0..SCRATCH_ATTEMPTS {
         let dir = scratch_of(parent, at);
@@ -108,11 +94,6 @@ pub struct OpenOptions {
     /// Pass `--locked` to every cargo command.
     pub locked: bool,
     /// Directories outside the root the workspace may read code from, each copied beside the tree.
-    ///
-    /// A run measures a copy, so a path dependency outside the root is not in
-    /// it. Naming one here says the run may copy it too, which makes the
-    /// measurement about a tree that is not the one on disk: it is a decision
-    /// for a person to make rather than one a run takes silently.
     pub allow_outside: Vec<PathBuf>,
     /// Where the run records what it did. [`Recorder::disabled`] by default.
     pub trace: Recorder,
@@ -212,10 +193,6 @@ pub enum SessionError {
     )]
     VerifyFailed {
         /// Every target that failed, in identity order.
-        ///
-        /// A run does not stop at the first: somebody reading this is about to
-        /// fix what it names, and a refusal that names one of five sends them
-        /// round the loop five times.
         targets: Vec<String>,
         /// The tail of what the first of them said.
         output: String,
@@ -294,16 +271,6 @@ impl SessionError {
 
 impl Workspace {
     /// Refuses a tree a copy of which would not build: one that is a member of a workspace, and one that reads code from outside itself.
-    ///
-    /// Both are asked of the tree on disk, before it is copied. Asked of the
-    /// copy they would be asked of a tree that already cannot resolve, and
-    /// cargo's answer would be about a manifest that is missing rather than
-    /// about what a run could have done instead.
-    /// Checks the root is the workspace and every path it reads is one the run may copy, and answers where cargo builds.
-    ///
-    /// The answer is the build directory as a source-root-relative path when
-    /// it is inside the root, and nothing when it is not — `CARGO_TARGET_DIR`
-    /// elsewhere is a directory the copy never walks into anyway.
     fn reachable(
         root: &Path,
         toolchain: &Toolchain,

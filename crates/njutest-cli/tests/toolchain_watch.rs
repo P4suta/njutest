@@ -19,31 +19,9 @@ use njutest_devkit::fixture::copy_tree;
 use rust_mutants::runner::Cancel;
 
 /// The longest this test will wait for a round that is not coming.
-///
-/// The round here answers in well under a second, so this is an order of
-/// magnitude of headroom and never a bound the work runs into. It is here
-/// because the alternative bound is a line the round prints, and a test whose
-/// only bound is something the code under test says stops terminating the
-/// moment that code loses the line. A test that hangs when a rule goes missing
-/// is not a test that holds the rule: it is one something outside has to kill,
-/// and a killed test reports nothing.
-///
-/// It is ten seconds and not sixty because a bound only helps while it is
-/// shorter than whatever else would stop the process first. At sixty a
-/// measurement's own patience ran out before this did, and four rules of the
-/// watch loop came back as a mutation that timed out rather than one a test
-/// caught — the same finding to a reader counting survivors, and nothing at
-/// all to one asking which rule is held.
 const LONGEST: Duration = Duration::from_secs(10);
 
 /// One of the watch's two streams, stopping it once the round has been.
-///
-/// Both streams share one flag, and the round here is one the workspace makes
-/// fail, so its complaint on the error stream is the signal that it has run.
-/// Stopping on *that* rather than only on the line being asserted is what
-/// keeps every later assertion an assertion: a round that printed the wrong
-/// thing on the other stream, or nothing at all, still ends the loop and still
-/// fails here rather than running out the clock.
 struct Stopping<'a> {
     cancel: &'a Cancel,
     stops: bool,
@@ -533,12 +511,6 @@ fn executions(events: &[njutest_cli::trace::Event]) -> Vec<&njutest_cli::trace::
 }
 
 /// Every event the latest recording under `root` holds.
-///
-/// A recording is filed under the run's own identity, which starts with the
-/// time it began, so the last of them in order is the last of them in time. A
-/// directory listing is in no order at all, and a test that took whichever came
-/// first would read an earlier run's recording as this one's the moment a
-/// second run existed.
 fn events_of(root: &std::path::Path) -> Vec<njutest_cli::trace::Event> {
     let mut recordings: Vec<std::path::PathBuf> = std::fs::read_dir(root.join(".njutest/trace"))
         .expect("the trace directory")
@@ -1144,11 +1116,6 @@ fn unkeepable(dir: &std::path::Path, from: &std::path::Path, environment: Enviro
 }
 
 /// A stream that raises `cancel` once a run has judged a mutation and started saying so about the next.
-///
-/// The counting-off is looked for after the stage that judges mutations names
-/// itself, because the phase before it counts its targets off the same way: a
-/// stream that stopped on the first `[2/` it saw would interrupt the baseline
-/// and leave nothing established to keep.
 struct Interrupting<'a> {
     cancel: &'a Cancel,
     said: String,
@@ -1430,9 +1397,6 @@ fn a_catalog_cut_into_parts_and_put_back_together_says_what_the_whole_would_have
 }
 
 /// One run of `fixture` in this process under `configured`, and what it exited with rather than the report it did not write.
-///
-/// A run that fails closed writes no report to read back, so a test about
-/// refusing has to ask the run itself rather than ask for a verdict.
 fn refused(fixture: &str, dir: &std::path::Path, name: &str, configured: &str) -> (u8, String) {
     let root = dir.join(name);
     copy_tree(&njutest_devkit::paths::fixtures_dir().join(fixture), &root);
@@ -1611,12 +1575,6 @@ fn a_target_the_fuzzer_could_not_drive_is_a_gap_and_never_a_target_that_found_no
 }
 
 /// A run in this process against `fixture`, and what it left behind.
-///
-/// A `carrying` that is not empty also writes a configuration bounding one
-/// command at two seconds and letting those variables through. Two and not
-/// one because the bound has to be longer than an ordinary measurement takes
-/// on a machine that is doing something else at the time: a bound a loaded
-/// machine reaches turns the load into a finding.
 fn verified_in_process(
     fixture: &str,
     dir: &std::path::Path,

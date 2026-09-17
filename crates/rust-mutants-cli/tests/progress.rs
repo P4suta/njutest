@@ -2,12 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What a run says while it is still preparing.
-//!
-//! Preparing is most of a long run — the snapshot, the check, the measurement,
-//! the instrumented build — and a reader who is shown none of it until it is
-//! over cannot tell a slow run from a hung one. These hold the display to
-//! writing each phase as it arrives rather than collecting them and printing
-//! the lot at the end.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;

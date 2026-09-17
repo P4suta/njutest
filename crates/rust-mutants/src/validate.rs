@@ -184,14 +184,6 @@ pub fn attribute(files: &[FileOutput], messages: &[Message]) -> Attributed {
 }
 
 /// The mutant whose branch holds a span of this diagnostic, primary first, then the rest, then its notes.
-///
-/// The compiler points at the place it decided, which for a type error is
-/// often the definition rather than the edit; the edit is named by another
-/// span of the same message, or by one of its notes. Reading only the primary
-/// span left every such error attributed to nobody, which sends validation to
-/// bisection to find out one build at a time what the message already said.
-/// Reading the others widens what can be attributed and never what is
-/// guessed: a span that names no branch still names nobody.
 fn locate(files: &[FileOutput], diagnostic: &Diagnostic) -> Option<u32> {
     if let Some(index) = diagnostic
         .primary_span()
@@ -279,13 +271,7 @@ pub fn validate(
     validate_set(catalog, &all, compile, validating)
 }
 
-/// Establishes which mutants in `selected` compile, without making any claim
-/// about the rest of the catalog.
-///
-/// The selected indices keep their positions in the complete catalog. An
-/// index outside the catalog is ignored: callers derive this set from that
-/// catalog, and treating an invented index as a candidate would manufacture a
-/// result with no identity to report.
+/// Establishes which mutants in `selected` compile, without making any claim about the rest of the catalog.
 ///
 /// # Errors
 /// The same failures as [`validate`].
@@ -606,12 +592,6 @@ impl Isolation<'_> {
     }
 
     /// Compiles one offence on its own so its own diagnostic can be kept.
-    ///
-    /// Bisection says which mutants the compiler refuses; it does not say
-    /// what the compiler said about them, because the build that found them
-    /// held every other suspect too. One build each is what turns "the
-    /// compiler refused this and no diagnostic named it" into the compiler's
-    /// own words.
     fn alone(&mut self, offence: &[u32]) -> Result<Alone, ValidateError> {
         let attempt = self.only(offence)?;
         if attempt.success {
@@ -649,15 +629,6 @@ impl Isolation<'_> {
     }
 
     /// The smallest part of `suspects` the compiler still refuses, when no half of it is refused alone.
-    ///
-    /// Neither half failing means what the compiler refused is a combination
-    /// that straddles them, and halving cannot find it: it is only ever seen
-    /// with mutants from both sides live. Splitting into more parts and
-    /// trying each part's complement is what finds it, and condemning the
-    /// whole live set instead would refuse every mutant that happened to be
-    /// in the room. The budget bounds a search that is quadratic in the worst
-    /// case; running out of it condemns what is left rather than guessing
-    /// further, which is the same answer halving used to give.
     fn narrow(&mut self, suspects: Vec<u32>) -> Result<Vec<u32>, ValidateError> {
         let budget = self.attempts.saturating_add(bisect_budget(suspects.len()));
         let mut candidate = suspects;

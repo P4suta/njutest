@@ -14,8 +14,7 @@ use njutest_cli::report::{
     TargetAccounting, TargetRecord, TargetStatus, UNAVAILABLE, Verdict,
 };
 
-/// A report that satisfies every invariant, for a test to break one thing in.
-/// One field of a report, and how to leave it saying nothing.
+/// A report that satisfies every invariant, for a test to break one thing in. One field of a report, and how to leave it saying nothing.
 type Blank = (&'static str, fn(&mut Report));
 
 /// One fact about git, and how to make a report claim it.

@@ -2,12 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Reading a stored run at a terminal: the outcomes on the left, and on the right whichever of the mutant, its source, the findings, or the keys the reader asked for.
-//!
-//! The drawing is a pure function of what is being browsed, so a test draws
-//! into a buffer and compares it, and the terminal loop below is only the part
-//! that reads keys and swaps screens. Keys arrive as [`Key`] rather than as
-//! `char`, because a browser that could not tell `Escape` from a letter could
-//! not have a search box.
 
 use std::collections::BTreeMap;
 

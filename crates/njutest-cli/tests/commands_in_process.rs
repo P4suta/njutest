@@ -2,12 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The commands that read what a run left behind, driven in this process against one real run.
-//!
-//! `toolchain_commands.rs` drives the same commands as a process, which is
-//! what a person does and what the exit codes are about. This drives them
-//! here, because a measurement of what a crate's own tests reach does not
-//! follow a guard into a child: of the 268 mutations of these ten modules,
-//! 222 were ones nothing was ever routed to.
 
 #![expect(
     clippy::expect_used,
@@ -41,10 +35,6 @@ struct Said {
 }
 
 /// The environment a run of the tree at `root` is given, with what it writes beside the tree rather than in it.
-///
-/// A cache inside the tree under verification changes that tree's own digest
-/// every time a run writes to it, and the run that holds a lock in there is a
-/// run whose own snapshot cannot copy the file it is holding.
 fn environment(root: &Path) -> Environment {
     Environment {
         cache_directory: njutest_devkit::paths::cache_beside(root).expect("a cache directory"),

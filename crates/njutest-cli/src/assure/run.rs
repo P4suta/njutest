@@ -58,12 +58,6 @@ pub struct Request {
     /// Where what earlier runs established about individual mutants is kept. `None` establishes everything afresh.
     pub evidence_store: Option<PathBuf>,
     /// Which part of the catalog this run judges. `None` judges every one of them.
-    ///
-    /// A part still measures the whole baseline, because a mutation cannot be
-    /// judged against tests that were not run. What it divides is the judging,
-    /// and every mutant belongs to exactly one part, so no execution is paid
-    /// for twice and none goes missing. That is why this is not a budget:
-    /// nothing is sampled, and `njutest merge` is what carries a verdict.
     pub shard: Option<rust_mutants::run::Shard>,
 }
 
@@ -233,8 +227,7 @@ fn deepened(
     Ok(())
 }
 
-/// What a run reads before it builds anything: the tree, the identity, and the repository.
-/// What the run can say before it has compiled anything, and what it already knows it cannot claim.
+/// What a run reads before it builds anything: the tree, the identity, and the repository. What the run can say before it has compiled anything, and what it already knows it cannot claim.
 pub fn opened(
     report: &mut Report,
     request: &Request,
@@ -324,10 +317,6 @@ fn environment_of(
 }
 
 /// Keeps one crashing input as a candidate for the corpus.
-///
-/// It is not written into the tree: an input a fuzzer found is a proposal
-/// like any other, and `fix --apply` is what puts it where a later run will
-/// read it.
 fn kept(report: &mut Report, request: &Request, crash: &super::fuzz::Crash) {
     let proposal = crate::repair::Proposal {
         kind: crate::repair::Kind::Corpus,
@@ -361,13 +350,6 @@ fn kept(report: &mut Report, request: &Request, crash: &super::fuzz::Crash) {
 }
 
 /// The limitation a run states when a candidate held up and could not be stored.
-///
-/// A different name from [`crate::limitation::GENERATION_PROVIDER_UNAVAILABLE`] because it is a different
-/// thing to do about: a provider nobody could ask is a provider to fix, and a
-/// candidate that held up and could not be kept is a disk to make room on.
-/// `fix --apply` writes what was checked rather than asking again, so a
-/// candidate whose content is gone is an offer nothing can take up.
-/// Asks the generation provider, when the configuration names one.
 fn proposed(
     report: &mut Report,
     request: &Request,
@@ -384,10 +366,6 @@ fn proposed(
 }
 
 /// Asks the generation provider to close what the run found, and puts every candidate to the tests before keeping it.
-///
-/// Nothing here fails a run. A provider that cannot be asked leaves a
-/// limitation; a candidate that does not work is kept as a record of what was
-/// tried, marked as one nobody may apply.
 fn propose(report: &mut Report, request: &Request, environment: &Environment, watch: Watch<'_>) {
     let Some(generation) = &request.config.generation else {
         return;
@@ -441,12 +419,6 @@ fn propose(report: &mut Report, request: &Request, environment: &Environment, wa
 }
 
 /// What the provider is told about one finding.
-///
-/// A finding names its subject the way a person types it, which is the short
-/// form of a mutant's identity, and the row it stands for carries both. The
-/// lookup takes either: matching only the long one silently sent every ask out
-/// with no path, no line and no rule, leaving a provider the summary sentence
-/// to parse and nothing else.
 fn ask(
     report: &Report,
     request: &Request,
@@ -563,10 +535,6 @@ fn holding(
 }
 
 /// Starts every resource the configuration declares, in name order, and records what the run holds.
-///
-/// A resource that will not start ends the run: the tests would pass in a
-/// world the configuration does not describe, and the report would say so
-/// without knowing it.
 fn hold(
     resources: &mut crate::resource::Manager,
     request: &Request,
@@ -599,10 +567,6 @@ fn hold(
 }
 
 /// The environment every later phase runs with: this run's own, and what the resources it holds told it.
-///
-/// Composed as a map, so a name a resource spoke for is the value every later
-/// phase reads rather than one of two the operating system chooses between,
-/// and so two runs of one workspace hand the same list over in the same order.
 fn with_resources(environment: &Environment, resources: &crate::resource::Manager) -> Environment {
     let mut held = environment.clone();
     let mut vars: BTreeMap<std::ffi::OsString, std::ffi::OsString> =
@@ -618,12 +582,6 @@ fn with_resources(environment: &Environment, resources: &crate::resource::Manage
 }
 
 /// The report as it is before anything has run: what the run is, what it was asked to verify, and what it already knows it will not claim.
-///
-/// Everything here is what makes two reports of the same workspace comparable
-/// to each other, and none of it is established by running anything: it is the
-/// question, written down before the answer. A run that could not read the
-/// tree as one number says so here, because a result nothing can be keyed to
-/// is one no later run may reuse.
 #[must_use]
 pub fn identity(request: &Request) -> Report {
     let mut report = Report::new(&request.run_id, kind_of(request), request.config.contract);
@@ -748,11 +706,6 @@ impl Journal {
     }
 
     /// Clears what this run established, because a run that reached its end has nothing left to continue.
-    ///
-    /// A cancelled run reaches the same line. It is not finished: it stopped,
-    /// and what it established up to there is exactly what the next one may
-    /// skip. Clearing it here would make an interrupt cost the whole run,
-    /// which is the opposite of what a checkpoint is for.
     fn finished(&self, cancel: &rust_mutants::runner::Cancel) {
         if cancel.is_cancelled() {
             return;
@@ -805,9 +758,6 @@ fn open_phase(report: &mut Report, opening: &Opening<'_>, watch: Watch<'_>) {
 }
 
 /// Counts every place a selected package steps outside what the compiler guarantees.
-///
-/// `standard-v1` does not execute any of them: a non-empty inventory is a
-/// limitation the report states rather than a claim it makes (ADR 0009).
 fn take_inventory(report: &mut Report, request: &Request, metadata: &Metadata) -> BTreeSet<String> {
     let selected = selected(&report.scope.resolved_packages, metadata);
     let Ok(taken) = soundness::inventory(&request.root, &selected) else {
@@ -828,16 +778,6 @@ fn take_inventory(report: &mut Report, request: &Request, metadata: &Metadata) -
 }
 
 /// The packages a run's scope names, each with the directory its manifest is in.
-///
-/// A scope that names nothing is a run that looked at everything, which is why
-/// an empty list widens rather than narrows.
-///
-/// A package whose manifest names no directory is left out, and there are two
-/// ways for it to name none: a path with no parent at all, and one whose
-/// parent is the empty path, which is what every bare file name has. Both
-/// would be walked from wherever the process happens to stand, which is the
-/// whole machine as readily as the package, and an inventory taken over the
-/// wrong tree is a count nobody can check against anything.
 #[must_use]
 pub fn selected(resolved: &[String], metadata: &Metadata) -> Vec<(String, PathBuf)> {
     metadata
@@ -855,12 +795,6 @@ pub fn selected(resolved: &[String], metadata: &Metadata) -> Vec<(String, PathBu
 }
 
 /// What a report says about an inventory, which is nothing at all when there was nothing to say.
-///
-/// `standard-v1` counts the places a package steps outside what the compiler
-/// guarantees and does not execute any of them, so a non-empty inventory is a
-/// limitation the report states rather than a claim it makes (ADR 0009). An
-/// empty one states nothing: a limitation on every report of every tree with no
-/// unsafe in it is a line a reader learns to skip.
 #[must_use]
 pub fn stated(taken: &soundness::Inventory) -> Vec<Limitation> {
     let mut stated = Vec::new();
@@ -890,12 +824,6 @@ pub fn stated(taken: &soundness::Inventory) -> Vec<Limitation> {
 }
 
 /// Whether there is anything to measure mutations against.
-///
-/// A mutation is noticed by a test that passes without it and fails with it,
-/// so a suite that does not pass has nothing to say about one: the engine
-/// refuses to prepare a tree whose instrumented baseline fails, and a run that
-/// reached it anyway would report that refusal as an error over a failure this
-/// run has already found and already reports. The verdict is the baseline's.
 #[must_use]
 pub fn measurable(baseline: &baseline::Baseline) -> bool {
     baseline.failure.is_none()
@@ -906,9 +834,6 @@ pub fn measurable(baseline: &baseline::Baseline) -> bool {
 }
 
 /// How much of the workspace this run looked at.
-///
-/// A run that named packages looked at those, and the contract reserves
-/// `ASSURED` for a run that looked at everything.
 #[must_use]
 pub fn kind_of(request: &Request) -> RunKind {
     if request.changed.is_some() {
@@ -993,9 +918,6 @@ pub struct ResolvedAcceptances {
 }
 
 /// Resolves every unexpired acceptance against the complete catalog for a session.
-///
-/// An entry that does not name exactly one mutant suppresses nothing and becomes
-/// an auditable finding. Expired entries answer for nothing and are ignored.
 #[must_use]
 pub fn resolve_acceptances(
     catalog: &rust_mutants::catalog::Catalog,
@@ -1091,10 +1013,6 @@ struct Proving<'a> {
 }
 
 /// Asks the compiler, about every mutation nothing noticed, whether it renders it identically to the code it mutates.
-///
-/// The layer removes findings and never verdicts: a mutation it does not
-/// answer for keeps the finding it had, and a run it cannot open a tree for
-/// says so and keeps every one of them.
 fn prove_equivalence(
     proving: &Proving<'_>,
     mutation: &mut mutation::Mutation,
@@ -1148,13 +1066,6 @@ fn prove_equivalence(
 }
 
 /// The prepared workspace: the trees, the one run of every target with nothing active, and what its guards recorded.
-///
-/// A target whose own tests fail is excluded rather than refused. Every
-/// mutation put to such a target comes back killed and not one of those kills
-/// is about a mutation, so it may not be judged against — but it is the
-/// finding, and a run that refused would report the finding as an error and
-/// name one target where there are five. The engine hands back the table even
-/// when the answer is "all of them", which is when a reader needs it most.
 fn prepare(
     request: &Request,
     environment: &Environment,
@@ -1196,11 +1107,6 @@ fn prepare(
 }
 
 /// Where this run reads and writes what is established about individual mutants, or nothing when it may not.
-///
-/// Reuse is confined to a run that looked at the whole project with no
-/// configured resources: a run that looked at less established less, and a
-/// resource a run started is a fact about the world its tests ran in that no
-/// key covers.
 fn evidence_of(mutating: &Mutating<'_>) -> Option<mutation::Evidence> {
     let request = mutating.request;
     let root = request.evidence_store.as_ref()?;
@@ -1241,14 +1147,6 @@ fn evidence_of(mutating: &Mutating<'_>) -> Option<mutation::Evidence> {
 }
 
 /// Whether a run of this shape may read and write what earlier runs established about individual mutants.
-///
-/// Both conditions remove reuse rather than allow it, and either alone is
-/// enough to remove it. A run that looked at less than the whole project
-/// established less: what it did not route to a mutant it did not ask, so a
-/// survival it records is a claim over a smaller set wearing the name of the
-/// larger one. And a resource a run started is a fact about the world its
-/// tests ran in that no behaviour key covers — the next run may start a
-/// different one, or none, and nothing in the record would say so.
 #[must_use]
 pub fn reusable(run_kind: RunKind, resources: &BTreeMap<String, crate::config::Resource>) -> bool {
     run_kind == RunKind::Full && resources.is_empty()
@@ -1264,11 +1162,6 @@ fn package_id(metadata: &Metadata, name: &str) -> Option<String> {
 }
 
 /// Which files anything may be mutated in: what the configuration allows, narrowed to what changed.
-///
-/// An empty include list is every file, so either one alone is itself. Both
-/// together is the intersection and never the union: `--changed` narrows what
-/// a run looks at, and a run told to look at four files and then told to look
-/// at what changed has not been told to look at more.
 fn narrowing(request: &Request) -> Vec<rust_mutants::glob::Pattern> {
     let configured = request.config.project.included();
     let Some(change) = request.changed.as_ref() else {
@@ -1316,12 +1209,6 @@ pub fn record(report: &mut Report, mutation: &mutation::Mutation, accepted: &BTr
 }
 
 /// Each limitation the baseline stated, once, beside the targets it was stated about.
-///
-/// A target-shaped limitation arrives as `<limitation>:<target>`, because
-/// which target could not be measured is what a reader acts on. The name is
-/// what the ledger in [`docs/limitations.md`](../../../../docs/limitations.md)
-/// is keyed by, so the name is what reaches the report and the targets go into
-/// the sentence: one limitation about five targets is one row, not five.
 #[must_use]
 pub fn about(limitations: &[String]) -> Vec<(String, Vec<String>)> {
     let mut named: BTreeMap<String, Vec<String>> = BTreeMap::new();
@@ -1411,11 +1298,6 @@ pub fn requested(request: &Request) -> Vec<String> {
 }
 
 /// The packages a run is about: the ones a reader named, or the ones the configuration names when they named none.
-///
-/// The command line takes the place of the file rather than adding to it, and
-/// this is the one place that says so. The scope a run reports and the scope
-/// it measures are one thing: a run that read the file for one and the command
-/// line for the other made a narrow claim about a wide tree.
 #[must_use]
 pub fn asked_for(named: &[String], config: &Config) -> Vec<String> {
     if named.is_empty() {
@@ -1448,10 +1330,6 @@ fn root_name(root: &std::path::Path) -> String {
 }
 
 /// One sentence of a compiler's several, and something to say when it said nothing.
-///
-/// A build that failed with no message on any line is a build a person still
-/// has to be told about, and an empty sentence in a report reads as a run that
-/// forgot to fill it in.
 #[must_use]
 pub fn first_line(text: &str) -> String {
     text.lines()
@@ -1461,15 +1339,6 @@ pub fn first_line(text: &str) -> String {
 }
 
 /// What a named limitation means, for the ones a phase reports by name.
-///
-/// A name a target carries arrives as `<limitation>:<target>`, because which
-/// target could not be measured is what a reader acts on. The sentence is
-/// about the limitation, so the target is cut off before it is looked up.
-///
-/// [`every_limitation_the_engine_can_state_has_a_sentence_of_its_own`](../../tests/limitations.rs)
-/// holds this to `rust_mutants::limitation::ALL`: a layer whose name reaches a
-/// report with nothing a reader can do about it is a layer that is not really
-/// visible.
 #[must_use]
 pub fn limitation_detail(name: &str) -> String {
     let named = name.split_once(':').map_or(name, |(head, _target)| head);

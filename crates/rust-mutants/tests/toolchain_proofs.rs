@@ -589,10 +589,6 @@ mod tests {
 }
 
 /// What the pass left in the recording, held to being a sentence somebody can act on.
-///
-/// The note is the only place a reader learns how much of what the syntax
-/// offered the compiler took, so a note that says nothing is a layer nobody
-/// can see the yield of.
 fn said(recorder: &rust_mutants::trace::Recorder, established: &rust_mutants::prove::Established) {
     use rust_mutants::trace::Payload;
 

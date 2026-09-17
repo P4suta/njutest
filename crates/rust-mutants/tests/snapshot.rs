@@ -724,11 +724,6 @@ fn cleanup_succeeds_on_a_later_attempt_without_reporting_the_earlier_ones() {
 }
 
 /// A path that is absolute on the machine the test runs on, from a slash-separated tail.
-///
-/// A leading slash alone is not an absolute path on Windows, and a guard that
-/// asks whether a directory is one would refuse the case the test means to
-/// accept: the suite would pass by taking the branch it meant to prove is not
-/// taken.
 fn absolute(tail: &str) -> PathBuf {
     if cfg!(windows) {
         PathBuf::from(format!("C:\\{}", tail.replace('/', "\\")))

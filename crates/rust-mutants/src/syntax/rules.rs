@@ -68,9 +68,6 @@ pub(super) const fn is_not(op: &UnOp) -> bool {
 }
 
 /// The rule that removes `op`, with the name it answers to.
-///
-/// Both of these replace the whole expression with its operand, which is why
-/// the walker reads them as one shape: `!x` becomes `x` and `-x` becomes `x`.
 pub(super) const fn unary_removal(op: &UnOp) -> Option<&'static str> {
     match op {
         UnOp::Not(_) => Some("remove-not"),
@@ -80,31 +77,6 @@ pub(super) const fn unary_removal(op: &UnOp) -> Option<&'static str> {
 }
 
 /// The rule that swaps a method whose name says the opposite of another the same receiver has, with the name it writes in its place.
-///
-/// The saturating three are in the `all` tier rather than beside the rest, and
-/// the reason is a measurement. `saturating_add` and `wrapping_add` are the
-/// same function everywhere except at the type's boundary, so whether the
-/// mutant is observable at all is a question about the *values that arrive*,
-/// not about the edit. On an unsigned type the boundary is zero and index
-/// arithmetic reaches it constantly. On a wide signed type holding a small
-/// domain — a length in some fraction of an em, say, six orders of magnitude
-/// from `i32::MAX` — no input any test supplies can tell the two apart, and
-/// every mutant is a survivor no reading will resolve. Asked of one such crate,
-/// the three minted 438 mutants and killed none of them.
-///
-/// Nothing in this pass knows a type ([ADR 0008](../../../../docs/adr/0008-compiler-validated-acceptance-and-the-type-witness-pass.md)),
-/// so the engine cannot mint them only where they pay. A tier a person opts
-/// into is the honest place for a rule whose yield is a property of the
-/// caller's value range.
-///
-/// What is deliberately absent is `saturating_sub` to bare `-`: that mutant
-/// panics in one profile and wraps in another, and a mutant that means two
-/// things is one this engine does not mint.
-///
-/// The identifier is the whole of the edit: nothing here looks at a type, so a
-/// receiver that has no such method is a mutation the compiler refuses, which
-/// is where the engine settles acceptance
-/// ([ADR 0008](../../../../docs/adr/0008-compiler-validated-acceptance-and-the-type-witness-pass.md)).
 pub(super) fn method_swap(name: &str) -> Option<(&'static str, &'static str)> {
     Some(match name {
         "is_some" => ("is-some-to-is-none", "is_none"),
@@ -129,10 +101,6 @@ pub(super) fn method_swap(name: &str) -> Option<(&'static str, &'static str)> {
 }
 
 /// Whether a method's name says it answers a question, so that asking the opposite question is a mutation.
-///
-/// The four `Option` and `Result` predicates are left out: a swap already
-/// asks the opposite of each of them, and two rules writing the same question
-/// at one span is one mutation reported twice.
 pub(super) fn bool_method(name: &str) -> bool {
     if matches!(name, "is_some" | "is_none" | "is_ok" | "is_err") {
         return false;
@@ -146,11 +114,6 @@ pub(super) fn bool_method(name: &str) -> bool {
 }
 
 /// The literal one more or one less than `lit`, written in the radix and with the suffix it was written with.
-///
-/// Rust spells no negative literal — `-1` is a unary minus on `1` — so zero
-/// has no predecessor to write, and a suffix that names a type bounds what
-/// the literal may become. What the syntax cannot spell is not offered, which
-/// is a mutation the compiler would have refused.
 #[must_use]
 pub fn respell_int(lit: &syn::LitInt, delta: i32) -> Option<String> {
     let raw = lit.token().to_string();
@@ -230,12 +193,6 @@ fn unary_call<'e>(expr: &'e Expr, name: &str) -> Option<&'e Expr> {
 }
 
 /// Whether `expr` is spelled as the value `Default::default()` would produce, as far as syntax can tell: `0`, `0.0`, `false`, `""`, `()`, `None`, `[]`, `&[]`, `vec![]`, `Default::default()`, `T::default()`, and a zero-argument `T::new()`. A return replacement that would write the same value again is not a mutation, so these produce no candidate. The list is necessarily incomplete; what it misses is an equivalent mutant that survives, never a missed defect.
-///
-/// A borrow counts only in front of an empty array. `<&[T]>::default()` is an
-/// empty slice, so `&[]` writes what the replacement would; nothing else the
-/// standard library implements `Default` for behind a reference is spelled
-/// this way, and unwrapping every borrow would refuse mutations a test can
-/// notice.
 pub(super) fn is_default_spelling(expr: &Expr) -> bool {
     match expr {
         Expr::Paren(paren) => is_default_spelling(&paren.expr),
@@ -304,15 +261,6 @@ pub(super) fn has_let(expr: &Expr) -> bool {
 }
 
 /// How many of an assertion macro's leading arguments are expressions the tests are about.
-///
-/// The allowlist is fixed here rather than configured. What a macro does with
-/// its tokens is the macro's business, and a guard spliced into an invocation
-/// the engine does not understand is a guess: these six expand their leading
-/// arguments as expressions, evaluate them, and compare or test them, which is
-/// exactly what a mutation of one of them is a question about. `panic!`,
-/// `unreachable!`, `write!` and `format!` are not here — their arguments are a
-/// message and a format string, and mutating those asks nothing about the
-/// program.
 pub(super) fn assertion_arity(path: &syn::Path) -> Option<usize> {
     if path.segments.len() != 1 {
         return None;
@@ -336,10 +284,6 @@ pub(super) fn assertion_is_condition(path: &syn::Path) -> bool {
 }
 
 /// The macro's arguments, split at the commas between them.
-///
-/// Only a comma at depth zero separates arguments: one inside `f(a, b)` or
-/// `[a, b]` belongs to the argument it is in, and `proc_macro2` has already
-/// grouped those for us.
 pub(super) fn arguments(tokens: &proc_macro2::TokenStream) -> Vec<proc_macro2::TokenStream> {
     let mut split: Vec<proc_macro2::TokenStream> = Vec::new();
     let mut current: Vec<proc_macro2::TokenTree> = Vec::new();

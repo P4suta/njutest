@@ -84,9 +84,9 @@ Options:
       --timeout <DURATION>
           How long one mutant execution may take before it is retried serially, as in `90s` or `5m`
 
-      --trace [<DIR>]
-          Record what the run does, as JSON Lines. Without a directory a run writes beside its
-          report and every other command under `<reports>/traces/`
+      --trace[=<DIR>]
+          Record what the run does, as JSON Lines. Written with `--trace=DIR`; bare `--trace` writes
+          beside the report, and every other command under `<reports>/traces/`
 
       --offline
           Never touch the network

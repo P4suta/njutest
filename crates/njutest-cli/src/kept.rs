@@ -2,12 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The ledger of what runs left behind on purpose.
-//!
-//! A keep is recorded where it outlives the run, so a successful untraced run
-//! still accounts for what it preserved (ADR 0006, decision 7). The ledger
-//! names a directory; the directory's own marker says whether it may be
-//! removed, because a path in an editable file may not authorize a recursive
-//! delete (decision 8).
 
 use std::path::{Path, PathBuf};
 

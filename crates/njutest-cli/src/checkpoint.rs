@@ -2,16 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Scheduling state for continuing an interrupted verification.
-//!
-//! A checkpoint is never assurance evidence, never a partial report, and never
-//! updates an index. One exact input identity owns one checkpoint, and there is
-//! no resume flag: only a checkpoint under the newly computed, identical
-//! identity is considered.
-//!
-//! A saved baseline target carries the files it reached and not the coverage
-//! regions inside them, so it is routed at file granularity for the rest of the
-//! run. A resumed run therefore executes at least the work a cold run would,
-//! never less.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -127,12 +117,6 @@ impl SavedTarget {
 }
 
 /// The dispositions a checkpoint may carry.
-///
-/// A kill and a confirmed timeout are existential claims: one named test
-/// noticed the mutant on this exact tree, and that stays true however the next
-/// run routes. Every other disposition depends on which tests the run decided
-/// could notice, and a resumed run routes at file granularity, so it re-derives
-/// them rather than inheriting a claim it did not make.
 pub const SAVEABLE: [&str; 2] = ["killed", "timed_out"];
 
 /// One mutant an interrupted run had already judged.

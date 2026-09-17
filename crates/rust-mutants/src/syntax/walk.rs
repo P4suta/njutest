@@ -275,8 +275,7 @@ impl<'a> Walker<'a> {
         }
     }
 
-    /// The results, unsorted.
-    /// Hands the walk the markers it is to honour, before it starts.
+    /// The results, unsorted. Hands the walk the markers it is to honour, before it starts.
     pub(super) fn annotate(&mut self, markers: Vec<Marker>) {
         self.matched = vec![false; markers.len()];
         self.markers = markers;
@@ -341,12 +340,6 @@ impl<'a> Walker<'a> {
     }
 
     /// Walks a construct under the marker that speaks about it, if one does.
-    ///
-    /// A marker with the line to itself speaks about what follows: the edits
-    /// that start on the next line, and everything inside the item, statement,
-    /// arm, or `else` block that starts there. Attributes are part of what a
-    /// marker may sit above, so either the line the attributes start on or the
-    /// line of the first token after them is the line it speaks about.
     fn maybe_annotated(&mut self, lines: [u32; 2], walk: impl FnOnce(&mut Self)) {
         let found = lines
             .into_iter()
@@ -542,13 +535,6 @@ impl<'a> Walker<'a> {
     }
 
     /// The leading arguments of an assertion macro, walked as the expressions they are. Answers whether they were.
-    ///
-    /// `proc_macro2` is compiled with span locations, so every token here still
-    /// knows where in the file it came from: parsing an argument back into an
-    /// expression re-reads the same bytes rather than a pretty-printed copy of
-    /// them, and an edit inside one is an edit at the position the reader sees.
-    /// An argument that does not parse as an expression is not one this engine
-    /// understands, and the whole invocation goes back to being a skip.
     fn walk_assertion(&mut self, mac: &Macro) -> bool {
         let Some(arity) = assertion_arity(&mac.path) else {
             return false;
@@ -631,10 +617,6 @@ impl<'a> Walker<'a> {
     }
 
     /// Whether the loop a jump names is one whose breaks decide its value.
-    ///
-    /// A jump that names no loop the walk is inside is one the compiler will
-    /// refuse anyway; reading it as valued is what keeps the engine from
-    /// proposing a mutation on top of a program that does not build.
     fn breaks_decide_the_value(&self, label: Option<&syn::Lifetime>) -> bool {
         label.map_or_else(
             || self.loops.last().is_none_or(|(_, valued)| *valued),
@@ -1124,18 +1106,6 @@ impl<'a> Walker<'a> {
     }
 
     /// What a method call offers: the one identifier a swap edits, and the negation of a call that answers a question.
-    ///
-    /// A swap is guarded at the end of the chain the call is a receiver in,
-    /// not at the call: `skip` and `take` do not produce the same type, and
-    /// the two branches of a guard have to meet somewhere. A negation is
-    /// guarded at the call, because `!` of a question is a question and the
-    /// types already meet there.
-    ///
-    /// A call whose question another rule already asks is left to that rule:
-    /// the whole of an `if` or `while` condition is `negate-condition`'s and
-    /// `negate-loop-condition`'s, what sits under a `!` is `remove-not`'s, and
-    /// `is_some` and its three companions are the swaps'. Each of those places
-    /// carries the other rule's decision, so none of them is silent.
     fn walk_method_name(&mut self, m: &syn::ExprMethodCall, ctx: Ctx) {
         let name = m.method.to_string();
         let own = self.span(m);
@@ -1231,10 +1201,6 @@ impl<'a> Walker<'a> {
     }
 
     /// The `else` a statement's `if` chain ends with, which a statement can do without.
-    ///
-    /// An `if` that is a value has to have an `else` and every branch has to
-    /// produce the same type, so only an `if` standing as a statement can lose
-    /// one and still be the program it was.
     fn deletable_else(&mut self, expr: &Expr, stmt_span: Span) {
         let Some((then_branch, otherwise)) = terminal_else(expr) else {
             return;
@@ -1258,9 +1224,6 @@ impl<'a> Walker<'a> {
     }
 
     /// A `break` and a `continue` say opposite things about the loop they are in, and either is the other with its label kept.
-    ///
-    /// A `break` that carries a value is left alone: `continue` carries none,
-    /// and a loop whose value it was would have nothing to be.
     fn walk_jump(&mut self, expr: &Expr, ctx: Ctx) {
         let (rule, replacement) = match expr {
             Expr::Break(one) => {
@@ -1388,11 +1351,6 @@ impl<'a> Walker<'a> {
     }
 
     /// What an arm's head offers: a guard that can be made false, so the arm is gone, and one that can be made true, so it stops narrowing.
-    ///
-    /// An arm that has a guard already is a boolean position like any other,
-    /// and both edits are written where the guard is. An arm without one has
-    /// no bytes to replace, so the edit is the empty place between its pattern
-    /// and its `=>` and the guard is written there.
     fn walk_arm_head(&mut self, pat: &Pat, deletable: bool) {
         let Some(guard) = guard_of(pat) else {
             let pattern = self.span(pat);
@@ -1555,12 +1513,6 @@ impl<'a> Walker<'a> {
     }
 
     /// Every branch of a returned `if` or `match` is a place the function returns from too.
-    ///
-    /// A replacement of the whole expression is one mutation; a replacement of
-    /// one arm is another, and a suite that notices the first may notice
-    /// nothing about the second. The whole keeps the identity it had, because
-    /// an identity is minted from the bytes an edit replaces and those bytes
-    /// have not moved.
     fn branches_of(&mut self, expr: &Expr) {
         match expr {
             Expr::If(one) => {

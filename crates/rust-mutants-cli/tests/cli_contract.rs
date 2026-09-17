@@ -64,11 +64,6 @@ fn help_flag_matches_the_recorded_help_text() {
 }
 
 /// Every command the top-level help lists, which is every command there is.
-///
-/// Read from the help rather than written down here, because a list somebody
-/// maintains beside the one the program prints is a list that falls behind:
-/// none of these had a recorded help at all until it was read from the
-/// program instead.
 fn subcommands() -> Vec<String> {
     let help = String::from_utf8_lossy(&rust_mutants(&["--help"]).stdout).into_owned();
     let listing = help
@@ -336,4 +331,25 @@ fn rules_narrowed_to_a_tier_is_what_that_tier_selects() {
         .collect();
     assert_eq!(named, selected);
     assert!(named.len() < rust_mutants::rule::CANONICAL_RULE_COUNT);
+}
+
+/// An optional-valued flag joined with a space takes the next word, which is somebody's argument.
+#[test]
+fn the_trace_flag_never_eats_the_argument_after_it() {
+    use clap::Parser as _;
+    let parsed = rust_mutants_cli::cli::Cli::try_parse_from([
+        "rust-mutants",
+        "explain",
+        "--trace",
+        "deadbeef1234",
+    ])
+    .expect("a command line naming a mutant and asking for a trace");
+    let rust_mutants_cli::cli::Command::Explain { mutant, .. } = parsed.command else {
+        panic!("explain parses as explain");
+    };
+    assert_eq!(
+        mutant, "deadbeef1234",
+        "the word after --trace is the mutant the caller named; reading it as the trace \
+         directory made the command refuse for want of an argument it had been given"
+    );
 }

@@ -2,17 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The run as the JUnit XML every continuous integration server already reads.
-//!
-//! One test case per cataloged mutant, grouped into one suite per file. A
-//! mutant the tests noticed passed; a survivor is a failure, because a
-//! survivor is a gap in the tests and that is exactly what a failing case
-//! means to a reader of this format. A mutant the run could not decide is an
-//! error, and one nothing ran is skipped with the reason it was not run.
-//!
-//! A finding that is not about a mutant the report still holds — a claim
-//! nothing answers to, a marker that hides nothing — has no row to sit on, so
-//! it gets a suite of its own. A finding nobody can see in the view they
-//! actually read is a finding that does not exist.
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;

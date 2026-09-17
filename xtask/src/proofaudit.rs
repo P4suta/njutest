@@ -384,17 +384,6 @@ struct FindingRow {
 }
 
 /// Whether any layer removed a target that then killed the mutation it removed.
-///
-/// [ADR 0004](../../docs/adr/0004-proof-layers-not-budgets.md) decision 5
-/// ships a layer only against a re-implementation that is not asked whether it
-/// agrees with itself, and holds it to every kill the run proved: a layer that
-/// would drop one recorded killer is unsound. The recording of the routes and
-/// the executions is the only place that can be checked, and it is read here as
-/// lines of JSON rather than through the code that wrote it.
-///
-/// A run recorded without `--trace` leaves nothing to re-derive from, which is
-/// said rather than passed over: fail-closed is never turning "I cannot check
-/// this" into "this is fine".
 fn proofs(recording: &Recording<'_>, recorded: Option<&str>, audit: &mut Audit) {
     let mut notes = Notes::on(audit, Layer::Proofs);
     let Some(recorded) = recorded else {
@@ -456,12 +445,6 @@ fn proofs(recording: &Recording<'_>, recorded: Option<&str>, audit: &mut Audit) 
 }
 
 /// Reuse, re-derived: a route names the run whose answer it took, or why it took none, and never both.
-///
-/// A believed record is an execution that did not happen, so reuse is a layer
-/// like the others and the recording has to say which way it went for every
-/// mutation. A route that names a run and a reason at once is a recording that
-/// says the answer was read back and that it was not, and a reader who cannot
-/// tell which cannot tell what the run did.
 fn believed(routes: &[crate::route::Route], notes: &mut Notes<'_>) {
     for route in routes {
         if let (Some(run), Some(refusal)) = (route.reused.as_ref(), route.refused.as_ref()) {
@@ -499,16 +482,6 @@ fn discharges(
 }
 
 /// Every kill, against the route that decided which targets would be asked: a layer that drops a target which then finds a defect is unsound, however it dropped it.
-///
-/// [`discharges`] asks this of the targets a proof removed, which a route
-/// names. This asks it of the ones the reach layer removed, which a route does
-/// not name — it names what it kept, and the rest were dropped because the
-/// measurement placed them elsewhere. The check does not need them named: a
-/// kill by a target the route did not keep is a kill by a target the route
-/// removed, and that is the one thing no layer may do.
-///
-/// A route that kept nothing is [`reach`]'s to answer for, and a route that
-/// widened to everything kept everything, so neither is asked here.
 fn kept(routes: &[crate::route::Route], ran: &[(String, String, String)], notes: &mut Notes<'_>) {
     for (mutant, target, outcome) in ran {
         if outcome != KILLED && outcome != TIMED_OUT {
@@ -539,15 +512,6 @@ fn kept(routes: &[crate::route::Route], ran: &[(String, String, String)], notes:
 }
 
 /// The reach layer, re-derived from what the route named rather than confirmed from what it decided.
-///
-/// A route that says nothing reaches a mutation makes a claim about the code,
-/// and the claim names the targets that were measured, were asked, and
-/// answered that nothing of them executes the position. Every one of those
-/// names is checked here: against the targets the run says it has, against the
-/// targets the same route kept, and against whether anything then ran. A claim
-/// that names nobody cannot be checked at all, and a layer that cannot be
-/// checked is one [ADR 0004](../../docs/adr/0004-proof-layers-not-budgets.md)
-/// decision 5 does not ship.
 fn reach(
     routes: &[crate::route::Route],
     known: &BTreeSet<&str>,

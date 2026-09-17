@@ -32,12 +32,6 @@ fn provider() -> Vec<String> {
 }
 
 /// A resource whose provider is given long enough to answer on a machine that has not seen its program before.
-///
-/// The bound under test is the short one two tests set for themselves. This
-/// one is only the room the others need: a platform that checks a freshly
-/// linked binary the first time it is started spends seconds doing it, and a
-/// suite that read that as a provider saying nothing would fail after every
-/// rebuild of the program it drives.
 fn resource(command: Vec<String>) -> Resource {
     Resource {
         command,

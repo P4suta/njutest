@@ -63,12 +63,6 @@ fn measured() -> Fixture {
 }
 
 /// A run whose report holds a gap no proof can close: `earlier` compares two values the compiler will not vouch for, so nothing removes the mutation and a test has to notice it or not.
-///
-/// A report is read by somebody looking for what the tests do not cover, and a
-/// projection of one is only worth testing against a run that has some. The
-/// simple fixture has none any more: its one comparison is between two
-/// primitives, and the guards prove on the baseline that the tests could not
-/// have noticed the mutation.
 fn with_a_survivor() -> Fixture {
     ran("fixture-coverage")
 }

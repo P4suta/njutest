@@ -82,6 +82,7 @@ pub fn keep(root: &Path, report: &Report) -> Result<Kept, StoreError> {
     let document_text = json::document(report)?;
     let directory = root.join(RUNS_DIR).join(&report.run_id);
 
+    disowned(&root.join(RUNS_DIR));
     let document = directory.join(DOCUMENT_NAME);
     write(&document, document_text.as_bytes())?;
     write(&directory.join(SCHEMA_NAME), SCHEMA_TEXT.as_bytes())?;
@@ -161,16 +162,11 @@ pub fn pointed_at(root: &Path, index: &str) -> Option<String> {
 }
 
 /// Says, inside the directory this tool writes, that git has no business with what is in it.
-///
-/// A tool that leaves its output in somebody's repository and does not say so
-/// has left them a job. Every caller does the same thing next, and gets it
-/// slightly differently right. The file goes inside the directory rather than
-/// into the repository's own, because a directory that ignores itself is
-/// scoped to what this tool owns, moves when the configured directory moves,
-/// and goes away when the directory does. It is written once, so an edit
-/// somebody makes to it stays made.
-fn disowned(root: &Path) {
-    let path = root.join(".gitignore");
+fn disowned(directory: &Path) {
+    if !directory.is_dir() {
+        return;
+    }
+    let path = directory.join(".gitignore");
     if path.exists() {
         return;
     }
@@ -179,7 +175,6 @@ fn disowned(root: &Path) {
 
 /// Writes one index.
 fn point(root: &Path, index: &str, run_id: &str) -> Result<(), StoreError> {
-    disowned(root);
     let path = root.join(index);
     let mut text = serde_json::to_string_pretty(&serde_json::json!({
         "schema": crate::report::SCHEMA,

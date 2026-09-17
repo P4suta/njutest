@@ -52,13 +52,6 @@ pub struct Marker {
     #[serde(default)]
     pub role: Role,
     /// The tree a cache is keyed to, so a sweep can tell a cache a run will look up from one nothing can name again.
-    ///
-    /// A cache is spared however old it is, which is only safe while some
-    /// later run can still hit it. The key is derived from the source tree, so
-    /// a cache whose tree is gone is one no run will ever look up, and
-    /// sparing it is how a temporary directory grows without bound. Absent in
-    /// a marker written before caches said this, which says nothing either
-    /// way and is therefore spared as it always was.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub keyed_to: Option<String>,
 }
@@ -361,14 +354,6 @@ pub struct SweepResult {
 }
 
 /// How long a sweep spends before it leaves the rest for the next one.
-///
-/// Removing a directory is usually instant and occasionally is not: a
-/// directory a wedged device still holds can take minutes to refuse, and a
-/// temporary root with hundreds of them would take a day to walk. A sweep is
-/// housekeeping done on the way to the work, so it is the one thing here that
-/// must be faster than what it is cleaning up after. Spending the budget is
-/// not a failure — the directories it did not reach are still there, still
-/// prefixed, and the next sweep starts with them.
 pub const SWEEP_BUDGET: Duration = Duration::from_secs(10);
 
 /// Removes every abandoned directory directly under `parent` whose name begins with one of `prefixes`.
@@ -380,9 +365,6 @@ pub fn sweep(parent: &Path, prefixes: &[&str], now: Timestamp) -> io::Result<Swe
 }
 
 /// Removes every unlocked directory under `parent` whose name is prefixed, caches included.
-///
-/// This is what a person means by collecting the caches: [`sweep`] spares
-/// them so that the next run is fast, and this does not.
 ///
 /// # Errors
 /// Returns the failure to read `parent` itself.
@@ -546,10 +528,6 @@ fn judge(dir: &Path, entry: &fs::DirEntry, now: Timestamp) -> io::Result<Verdict
 }
 
 /// Whether a cache is keyed to a tree that is no longer there.
-///
-/// A cache with no key says nothing either way: it was written before caches
-/// said what they are keyed to, and a sweep that guessed would remove one a
-/// run is about to use.
 fn orphaned(keyed_to: Option<&str>) -> bool {
     keyed_to.is_some_and(|tree| !Path::new(tree).exists())
 }
@@ -572,14 +550,6 @@ fn legacy(entry: &fs::DirEntry, now: Timestamp) -> io::Result<Verdict> {
 }
 
 /// Adds up the regular files under `dir`, best effort.
-///
-/// The number is for a person reading a line, and every failure to read one
-/// entry is passed over: a sweep must not fail to reclaim a directory because
-/// it could not measure one file inside it, and a cache must not fail to
-/// report its size because one layer of it went away while being counted.
-/// Both products ask this, so it is asked in one place; a directory that is
-/// not there at all is nothing rather than a failure, which is the same
-/// answer as a directory with nothing in it and is the right one for both.
 #[must_use]
 pub fn directory_size(dir: &Path) -> u64 {
     let mut total = 0u64;

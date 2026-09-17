@@ -2,20 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Every limitation the runner can state, in one place.
-//!
-//! A limitation is what a run says when it could not establish something:
-//! never a failure, and never silence. The engine keeps its names in
-//! [`rust_mutants::limitation`] for a reason it writes down there — one test
-//! can then hold the set to
-//! [`docs/limitations.md`](../../../docs/limitations.md), so a name that
-//! reaches a report is a name a reader can look up. This is the same list for
-//! this side, and it exists because the names were scattered across nine
-//! modules and six of them had reached a report without ever reaching the
-//! page.
-//!
-//! Three of them were called `UNAVAILABLE_LIMITATION` in three modules and
-//! meant three different things, which is what a name without a place to live
-//! looks like.
 
 /// The tree could not be read as one number, so nothing about it is reused and it is reused by nothing.
 pub const WORKSPACE_DIGEST_NOT_COMPUTED: &str = "workspace-digest-not-computed";
@@ -77,10 +63,6 @@ pub const GENERATION_CANDIDATE_NOT_KEPT: &str = "generation-candidate-not-kept";
 pub const RESOURCE_NOT_STOPPED: &str = "resource-not-stopped";
 
 /// Every limitation this runner states of its own, in the order a reader meets them in a run.
-///
-/// The names it shares with the engine are not here: they are
-/// [`rust_mutants::limitation::ALL`], which the engine's own page test holds,
-/// and a name in two lists is a name one of them will lose.
 pub const ALL: [&str; 18] = [
     WORKSPACE_DIGEST_NOT_COMPUTED,
     TREE_WRITTEN_DURING_MEASUREMENT,

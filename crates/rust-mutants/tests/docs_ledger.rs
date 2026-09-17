@@ -2,11 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Every ledger the documentation keeps, against the code that is the ledger.
-//!
-//! A page that names a set the code also names is a page that goes stale
-//! silently. These tests are the two-way set equalities that stop it: a name
-//! the code adds and the page does not is a failure here rather than a reader
-//! looking up something that is not there, and the reverse.
 
 #![expect(
     clippy::panic,

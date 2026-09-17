@@ -115,11 +115,6 @@ fn an_unknown_flag_is_invalid_input_and_exits_3() {
 }
 
 /// Every command the top-level help lists, which is every command there is.
-///
-/// Read from the help rather than written down here, because a list somebody
-/// maintains beside the one the program prints is a list that falls behind:
-/// half of these had no recorded help at all until it was read from the
-/// program instead.
 fn subcommands() -> Vec<String> {
     let help = String::from_utf8_lossy(&njutest(&["--help"]).stdout).into_owned();
     let listing = help
@@ -230,10 +225,6 @@ fn doctor_reads_the_configuration_a_run_would_read() {
 }
 
 /// A directory holding only what a run requires, so every optional tool is out of reach.
-///
-/// The two required programs are placed from wherever this machine keeps them,
-/// which the doctor has just said; `llvm-profdata` and `llvm-cov` come from the
-/// toolchain's own sysroot and are found whatever `PATH` says.
 fn only_what_is_required(dir: &Path, said: &str) -> std::path::PathBuf {
     let bin = dir.join("bin");
     std::fs::create_dir_all(&bin).expect("a directory");

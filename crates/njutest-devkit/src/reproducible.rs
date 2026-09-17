@@ -2,14 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Whether this machine builds one tree to the same bytes twice.
-//!
-//! It is the premise every answer of the engine's equivalence layer rests on:
-//! the layer builds a tree, builds it again with one mutation spliced in, and
-//! reads the difference between the two as the mutation's doing. A machine
-//! whose linker stamps what it writes renders one unchanged tree two ways, and
-//! there the layer establishes nothing — which is a different answer from
-//! "the compiler renders this mutation", and the suites have to be able to
-//! tell which machine they are on before they can say which answer is right.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -20,10 +12,6 @@ use sha2::{Digest as _, Sha256};
 type Built = BTreeMap<String, String>;
 
 /// Whether a tree built, changed, and built back comes out as the bytes it came out as.
-///
-/// The build is the one the layer makes: the project's own test profile,
-/// without the incremental state that would make what the compiler emits
-/// depend on what it emitted before.
 ///
 /// # Panics
 /// When the fixture cannot be copied, which is a setup failure rather than an

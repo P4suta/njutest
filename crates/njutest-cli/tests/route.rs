@@ -2,11 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What a route means to a report.
-//!
-//! The rule that decides a route lives in the engine, and
-//! `crates/rust-mutants/tests/route.rs` holds it. What is held here is what
-//! the runner still owns: the sentence a reader acts on for each fallback,
-//! and the premise the equivalence layer holds a route to.
 
 use njutest_cli::assure::route::{
     Asked, Discharge, Fallback, NEVER_INFECTED, Reaches, Route, detail, nothing_ran,

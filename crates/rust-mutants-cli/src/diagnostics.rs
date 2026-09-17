@@ -2,15 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! `rust-mutants diagnostics`: everything one run established, in one directory, for a bug report.
-//!
-//! What a person can attach to an issue is what a reader can re-decide the run
-//! from: the report, the catalog, the measurement, the probe logs, the
-//! recording, and the state of the machine it ran on. What is absent is named
-//! rather than passed over, because a reader who does not know a file is
-//! missing reads its absence as a run that had nothing to say.
-//!
-//! No environment variable's value is ever written. A bundle travels, and a
-//! value that travels with it is a value its owner did not choose to publish.
 
 use std::path::{Path, PathBuf};
 
@@ -68,9 +59,6 @@ pub enum Part<'a> {
 }
 
 /// Gathers `parts` into `bundle`, answering with what it holds and what was not there.
-///
-/// Nothing here fails the command: a part that could not be read is a part a
-/// reader is told is absent, which is what a bundle is for.
 #[must_use]
 pub fn gather(bundle: &Path, parts: &[(&str, Part<'_>)]) -> (Vec<String>, Vec<String>) {
     let mut held = Vec::new();

@@ -80,11 +80,6 @@ fn is_run_report(pair: Pair<'_>) -> bool {
 }
 
 /// What a mutation run's document is compared by.
-///
-/// How long a run took is not a difference worth showing: the same tree
-/// measured twice takes two different amounts of time and establishes one
-/// thing. What moved is the accounting, the score, which mutants the tests
-/// noticed, and what the run found.
 fn compare_run(pair: Pair<'_>, changes: &mut Vec<Change>) {
     compare_flat_counts("accounting", pair, changes);
     for field in ["detected", "decided", "value"] {

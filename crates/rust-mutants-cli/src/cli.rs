@@ -382,8 +382,14 @@ pub struct Scope {
     /// How long one mutant execution may take before it is retried serially, as in `90s` or `5m`.
     #[arg(long, value_name = "DURATION")]
     pub timeout: Option<String>,
-    /// Record what the run does, as JSON Lines. Without a directory a run writes beside its report and every other command under `<reports>/traces/`.
-    #[arg(long, value_name = "DIR", num_args = 0..=1, default_missing_value = "")]
+    /// Record what the run does, as JSON Lines. Written with `--trace=DIR`; bare `--trace` writes beside the report, and every other command under `<reports>/traces/`.
+    #[arg(
+        long,
+        value_name = "DIR",
+        num_args = 0..=1,
+        require_equals = true,
+        default_missing_value = ""
+    )]
     pub trace: Option<String>,
     /// How the workspace is treated.
     #[command(flatten)]
@@ -509,11 +515,6 @@ pub struct Usage {
 }
 
 /// The same arguments, less the word cargo repeats when it calls a subcommand.
-///
-/// `cargo rust-mutants run` runs `cargo-rust-mutants rust-mutants run`, so the
-/// subcommand's own name arrives twice. Dropping it is cargo's convention and
-/// not this program's: called directly, `rust-mutants rust-mutants run` is a
-/// mistake, and saying so is more use than guessing what was meant.
 fn subcommand(mut args: Vec<OsString>) -> Vec<OsString> {
     let called_by_cargo = args
         .first()

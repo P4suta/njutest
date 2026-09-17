@@ -2,13 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The report held to the recording of what the run actually did.
-//!
-//! A recording is diagnostic exhaust rather than evidence
-//! ([ADR 0002](../../../docs/adr/0002-trace-is-not-evidence.md)), so nothing
-//! here rests a verdict on one. What it does is the other direction: a report
-//! that claims a route the recording has no execution for, or a count of
-//! processes the recording does not hold, is a report contradicting the
-//! exhaust of the run that produced it.
 
 use std::collections::BTreeSet;
 
@@ -329,11 +322,6 @@ fn routed(report: &Report, recorded: &str, notes: &mut Notes<'_>) {
 }
 
 /// The row's own answer, against the execution of the target it names.
-///
-/// A run walks the targets a route holds and stops at the first that detects,
-/// so the target a row names is the one whose answer it carries and not
-/// necessarily the last one that ran: a target that ran nothing says nothing,
-/// and the answer comes from the one before it.
 fn answered(row: &Row, execs: &[&crate::route::Exec], notes: &mut Notes<'_>) {
     if execs.is_empty() {
         return;
@@ -461,14 +449,7 @@ fn discharged(
     }
 }
 
-/// The ledger of accepted survivors, against the run that was asked to hold to it.
-/// The work the report claims, against the routes it claims it from and the recording of what ran.
-///
-/// The unit is one pair of one mutant and one target. A run that asked every
-/// target about every mutant would start `mutants × targets` of them; every
-/// pair short of that is one something removed, and the report has to be able
-/// to say what. A pair the report says nothing started, and the recording says
-/// a process was started for, is a report that undercounts its own cost.
+/// The ledger of accepted survivors, against the run that was asked to hold to it. The work the report claims, against the routes it claims it from and the recording of what ran.
 pub(super) fn work(report: &Report, recorded: Option<&str>, audit: &mut Audit) {
     let mut notes = Notes::on(audit, Layer::Work);
     let targets = report.targets.len();

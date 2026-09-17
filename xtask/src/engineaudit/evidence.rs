@@ -2,14 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The report held to the files the run kept so that somebody else could re-decide it.
-//!
-//! A discharge removes an execution, so a report that names one without the
-//! premises is a claim rather than a proof
-//! ([ADR 0004](../../../docs/adr/0004-proof-layers-not-budgets.md)). Every
-//! rule here is re-implemented from the documents alone: what each target's
-//! guards recorded, what the coverage build measured, the catalog with the
-//! bodies the compiler vouched for, and the log each probe process appended
-//! to. Nothing calls the engine to ask whether it agrees with itself.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -22,12 +14,6 @@ use super::{
 };
 
 /// Every place a rule targets, against the decision the walk took about it.
-///
-/// A file the run may mutate has one decision per place: a candidate with its
-/// guard form, or a skip with its reason. A file passed over whole has none of
-/// either and one tally saying how much it hid. Anything else is a place the
-/// walk saw and said nothing about, which is the one thing a reader cannot ask
-/// the engine to explain.
 pub(super) fn sites(evidence: &Evidence<'_>, audit: &mut Audit) {
     let mut notes = Notes::on(audit, Layer::Sites);
     if !evidence.sites {
@@ -166,19 +152,6 @@ pub(super) fn merge(report: &Report, evidence: &Evidence<'_>, audit: &mut Audit)
 }
 
 /// Re-derives every discharge the run claimed from the evidence it kept.
-///
-/// A discharge removes an execution, so a report that names one without the
-/// premises is a claim rather than a proof. This reads the measurement and
-/// the catalog the run kept, re-implements the rule — a target whose covered
-/// regions begin nowhere inside the body a branch proof names cannot have
-/// noticed the mutation — and says whether the run's own answer follows.
-/// Whether the measurement the run kept accounts for every target the run built.
-///
-/// A route removes a target by saying that target ran and covered nothing
-/// there, and it can only say that about a target the measurement **named**.
-/// A measurement that names neither the target nor a reason it could not read
-/// it is one a route could narrow by without anybody having looked, which is
-/// how a kill becomes a survivor.
 fn measured_every_target(report: &Report, reached: Option<&str>, notes: &mut Notes<'_>) {
     let Some(reached) = reached else {
         notes.unaudited(
@@ -237,15 +210,6 @@ fn measured_every_target(report: &Report, reached: Option<&str>, notes: &mut Not
 }
 
 /// Every route the guards decided, re-decided from what the guards recorded.
-///
-/// A route decided by the guards makes two removals, and both are checked
-/// here against the record rather than against the engine that made them. A
-/// target the route leaves out is one the record has to name and has to say
-/// reached nothing at that index: leaving out a target the record does not
-/// account for is how a kill becomes a survivor. And a target the route
-/// narrows to some of its tests has to be narrowed to exactly the tests the
-/// record names, because a test dropped from that set is a test that would
-/// have run and did not.
 pub(super) fn touch(report: &Report, touched: Option<&str>, audit: &mut Audit) {
     let mut notes = Notes::on(audit, Layer::Touch);
     let routed = report
@@ -564,19 +528,6 @@ impl Touches {
     }
 
     /// Which of this target's tests could have noticed the mutation at `index`, re-derived from the record alone.
-    ///
-    /// Three records answer it and a test has to survive all three: it reached
-    /// the site, it entered the body a branch proof about the mutation names,
-    /// and it saw the guard's two branches part. The last two are absences,
-    /// and `narrowing` is what says the tree would have broken them.
-    ///
-    /// The order is the engine's, and it has to be. A target every test of
-    /// which reached the site is asked as a whole rather than through a
-    /// filter — the same tests either way, and one fewer question to
-    /// establish — and a route that asks for the whole of a target never
-    /// narrows it further. Narrowing before that check would re-derive a
-    /// smaller set than the run could have taken and call the run wrong for
-    /// not taking it.
     fn reaching(&self, index: u64, narrowing: &Narrowing) -> Reaching {
         if self.reached.loose.contains(&index) {
             return Reaching::Whole;

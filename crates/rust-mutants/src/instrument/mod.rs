@@ -32,20 +32,9 @@ pub use runtime::{
 };
 
 /// The first words the runtime prints before it exits [`runtime::STALE_CATALOG_EXIT`].
-///
-/// A test binary the engine starts itself is recognised by that exit code. One
-/// cargo starts for it — a documentation example — reaches the engine as
-/// cargo's own 101, which is the code a failing test has, so a tree that had
-/// been rebuilt behind the run's back would look exactly like a kill. What
-/// cargo does pass through is the output, and this is the engine's own
-/// sentence in it.
 pub const STALE_CATALOG_MARKER: &str = "rust-mutants: this binary was built from catalog ";
 
 /// Every lint a guard's own text can trip, which the attribute it carries turns off.
-///
-/// A crate that *forbids* one of these forbids the attribute too — `forbid`
-/// is the level `allow` cannot override — so no mutant of it would compile,
-/// and a run says so by name rather than refusing every candidate.
 pub const GUARD_NOISE_LINTS: [&str; 9] = [
     "warnings",
     "unused",
@@ -145,10 +134,6 @@ pub struct FileOutput {
     /// Every alternative branch, in file order: where each mutant's own text landed.
     pub branches: Vec<Branch>,
     /// Every mutant whose guard in this text evaluates its two branches and records whether they differed, ascending.
-    ///
-    /// It is what the tree does rather than what it was offered: a form that
-    /// cannot compare reports nothing here, so a run reading it back never
-    /// rests a proof on a comparison no guard makes.
     pub compared: Vec<u32>,
     /// Every marker this text holds the call for, ascending, which is not every marker it was given: a body inside a guard's own site takes none.
     pub marked: Vec<u32>,
@@ -519,17 +504,7 @@ impl File<'_> {
         Ok(forest)
     }
 
-    /// Applies every guard and every allow attribute to the file's bytes, and reports where each alternative landed in the result.
-    /// The markers that can be written where they are, which is every one outside every guard's own site.
-    ///
-    /// A guard replaces its site with `if active { alternative } else {
-    /// original }`, and a marker strictly inside that site would have to be
-    /// written into both halves rather than spliced once. A body inside a
-    /// guard's site is left unmarked instead, which costs its claim the marker
-    /// and leaves the coverage region as the premise it rests on. A marker at
-    /// a site's own first byte is not inside it: the splice is an insertion,
-    /// it sorts before the replacement, and what it writes lands where the
-    /// body's first statement was about to be.
+    /// Applies every guard and every allow attribute to the file's bytes, and reports where each alternative landed in the result. The markers that can be written where they are, which is every one outside every guard's own site.
     fn markable(markers: &[Marker], forest: &interval::Forest<Placement>) -> Vec<Marker> {
         markers
             .iter()

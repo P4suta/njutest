@@ -2,26 +2,10 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Reading how a run routed, from either recording that writes it down.
-//!
-//! Two programs record routes: the engine, which routes one mutation to the
-//! targets a coverage measurement puts at its position, and the runner, which
-//! routes it to the units its own evidence supports. They share the key names
-//! and differ in the words they use for granularity and in the fields each has
-//! that the other does not.
-//!
-//! One reader over both is what lets the two audits ask the same question of a
-//! recording. It reads a line as data and never as a claim: an unknown
-//! granularity is kept as it was written, and a field that is absent is absent
-//! rather than a default that would read as evidence.
 
 use serde_json::Value;
 
 /// Every granularity a route can be decided at.
-///
-/// The two producers used to write different words for the same decisions,
-/// because each kept a rule of its own. The runner asks the engine now, so
-/// there is one vocabulary, and an audit that reads either recording asks the
-/// same question of both.
 pub const GRANULARITIES: [&str; 5] = ["all", "block", "test", "discharged", "unreached"];
 
 /// The granularities the engine writes, which are [`GRANULARITIES`].
@@ -57,11 +41,6 @@ pub struct Route {
     /// The targets that ran, which only the engine records.
     pub executed: Vec<String>,
     /// The targets that were measured, asked, and did not reach the mutation.
-    ///
-    /// A layer that removes an execution names who was in a position to notice
-    /// and did not, or an audit has the word `unreached` and no way to check
-    /// it. This is that list, and it is what the reach layer is re-derived
-    /// from.
     pub considered: Vec<String>,
     /// The run this disposition was read back from.
     pub reused: Option<String>,
@@ -71,11 +50,6 @@ pub struct Route {
 
 impl Route {
     /// Whether this decision is about the mutant either identity names.
-    ///
-    /// The two producers name a mutant differently in different records: one
-    /// writes the short form a person types, the other the full identity. A
-    /// caller that holds a row holds both, so the join is over both rather
-    /// than over a prefix, which would make two mutants one.
     #[must_use]
     pub fn names(&self, id: &str, display_id: &str) -> bool {
         self.mutant == id || (!display_id.is_empty() && self.mutant == display_id)
@@ -157,10 +131,6 @@ impl Routing {
 }
 
 /// Reads the routes and executions out of a recording, ignoring every line that is neither.
-///
-/// A line that is not JSON is skipped rather than refused: a recording is
-/// diagnostic exhaust, and one truncated line is not a reason to say nothing
-/// about the rest.
 #[must_use]
 pub fn read(recorded: &str) -> Routing {
     let mut routing = Routing::default();

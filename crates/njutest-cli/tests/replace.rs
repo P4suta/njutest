@@ -2,13 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What a reader holds while a writer is replacing what it is reading.
-//!
-//! Three stores under `.njutest` are written by one run and read by another,
-//! and nothing orders the two: a run is interrupted mid-write, a shard writes
-//! while its sibling reads, an editor loop verifies while a pipeline does. A
-//! reader that catches a replacement half done reads a file that is neither
-//! answer, and every one of these stores is read to decide what a run may
-//! believe without measuring it again.
 
 use std::collections::BTreeMap;
 use std::path::Path;

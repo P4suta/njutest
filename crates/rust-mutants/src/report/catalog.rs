@@ -92,11 +92,6 @@ pub struct MutantDocument {
     /// The rule's name.
     pub rule: String,
     /// The item the mutation sits in, as a reader writes it: `mod::path::Type::method`.
-    ///
-    /// This is what lets a reader name the mutation again after they have
-    /// changed the file, which is the next thing they do: an identity is a
-    /// function of the file's bytes and is re-minted by the very edit that
-    /// fixes the survivor.
     #[serde(default)]
     pub item: String,
     /// The rule's version, which enters the identity.

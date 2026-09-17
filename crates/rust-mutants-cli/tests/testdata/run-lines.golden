@@ -4,6 +4,8 @@ catalog   bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 
 surviving-mutant       no test noticed 00000000000000000002; 1 tests ran and passed
 
+SURVIVORS    1 survivors: 1 each its own finding, and 0 that are 0 unexercised paths, named once each below
+
 MUTANTS   cataloged=5 refused=2 skipped=7 executed=5
 OUTCOMES  killed=3 survived=2 timed_out=0 inconclusive=0 errored=0 not_run=0 unreached=0 discharged=0 expected=1
 SCORE     60.0%  (3 detected of 5 decided)

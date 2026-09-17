@@ -13,9 +13,6 @@ use rust_mutants::tempowner::{self, Lock};
 pub const POLL: Duration = Duration::from_millis(50);
 
 /// Whether a wait has spent its whole budget.
-///
-/// Equality is expired: a zero budget performs exactly one acquisition
-/// attempt, and a caller never waits beyond the duration it named.
 #[must_use]
 pub fn timed_out(elapsed: Duration, within: Duration) -> bool {
     elapsed >= within

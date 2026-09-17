@@ -121,13 +121,6 @@ pub fn check(events: &[Event]) -> Vec<Problem> {
 }
 
 /// Every phase name that began more than once.
-///
-/// A reader sums a recording's phase durations by name, so one name opened
-/// twice is one phase reported at twice its length. It happens where a stage
-/// and the work inside it are given the same name, and the run that does it
-/// looks slower in exactly the place a person is trying to make faster. The
-/// nested phases of this runner are named for the work rather than for the
-/// stage — `baseline-measure` inside `baseline` — and this holds them to it.
 fn repeated(events: &[Event]) -> Vec<Problem> {
     let mut began: BTreeMap<&str, u64> = BTreeMap::new();
     for event in events {

@@ -91,10 +91,6 @@ impl Toolchain {
     }
 
     /// The toolchain directory rustc names as its own, when it would say.
-    ///
-    /// A test binary cargo built with `prefer-dynamic` — every proc-macro
-    /// crate's own tests — finds `libstd` under it, and the engine starts test
-    /// binaries directly rather than through `cargo test`.
     #[must_use]
     pub fn sysroot(&self) -> Option<&Path> {
         self.sysroot.as_deref()

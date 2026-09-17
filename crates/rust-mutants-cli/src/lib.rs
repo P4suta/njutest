@@ -53,13 +53,6 @@ pub struct Environment {
 
 impl Environment {
     /// The workspace a command was pointed at: what it named, or where it was started.
-    ///
-    /// A name that is not an absolute path is resolved against the working
-    /// directory the command was given rather than against the process's own.
-    /// The two are the same for the binary, which composes one from the other,
-    /// and they are not the same for anything else that calls the entry point:
-    /// a caller that says where it is and then gets an answer about somewhere
-    /// else has been told about a tree it did not name.
     #[must_use]
     pub fn rooted(&self, named: Option<&Path>) -> PathBuf {
         named.map_or_else(
@@ -91,17 +84,9 @@ impl<'a> Composition<'a> {
 pub const EXIT_INTERRUPTED: u8 = 130;
 
 /// The exit code of a run that was terminated, which is `SIGTERM` by the convention every shell reports.
-///
-/// A continuous integration job that cancels a run sends this one rather than
-/// an interrupt, so a person reading a log sees it more often than they see
-/// 130, and a table that named only 130 left them to guess.
 pub const EXIT_TERMINATED: u8 = 143;
 
 /// What every exit code of this program means, as the lines `--help` ends with.
-///
-/// The table is rendered from the codes rather than written beside them: a
-/// person reads it to decide what their script does next, and one that named a
-/// code no run returns has them waiting for an exit that never comes.
 #[must_use]
 pub fn exit_codes() -> String {
     let mut said = String::from("Exit codes:");
@@ -155,11 +140,6 @@ impl Environment {
 }
 
 /// A cancellation flag the process raises on `SIGINT` and `SIGTERM`, and the number of the signal that raised it.
-///
-/// Both binaries of this crate are composition roots and both want this, and
-/// neither of them is where the duplication should live: registering a handler
-/// reads nothing of the process, so it belongs beside the code it cancels
-/// rather than beside the code that reads `argv`.
 #[must_use]
 pub fn interruptible() -> (Cancel, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
     let cancel = Cancel::new();
@@ -195,10 +175,6 @@ where
 }
 
 /// Runs the command line with the catalog identity Cargo embedded in this composition root.
-///
-/// A normal build passes `None`. The two binaries pass their `option_env!`
-/// value, which lets an instrumented copy recognize only the outer run that
-/// compiled it from the same catalog.
 pub fn run_from_compiled<I>(
     args: I,
     composition: Composition<'_>,
@@ -253,11 +229,6 @@ where
 }
 
 /// What went wrong, and what to do about it when the code carries one.
-///
-/// A remedy is the next step rather than an explanation: a flag to pass, a
-/// component to install, a variable to unset. Where the message already names
-/// the file and the line there is nothing a remedy could add, and none is
-/// printed.
 fn complain(stderr: &mut dyn Write, error: &error::CliError) {
     let _written = writeln!(stderr, "rust-mutants: {error}");
     if let Some(remedy) = error.code().remedy {

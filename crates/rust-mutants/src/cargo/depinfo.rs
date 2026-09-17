@@ -93,12 +93,6 @@ fn split_escaped(text: &str) -> Vec<String> {
 }
 
 /// Whether the file is one this engine reads as Rust.
-///
-/// A dep-info names every file the compilation depended on, and not all of
-/// them are programs: `#[doc = include_str!("../README.md")]` puts a markdown
-/// file in there, and so does any other `include_str!` or `include_bytes!`.
-/// Reading one as Rust fails, and failing a run over it would refuse to
-/// measure a project the compiler is perfectly happy with.
 fn is_rust(path: &Path) -> bool {
     path.extension().is_some_and(|extension| extension == "rs")
 }
@@ -125,13 +119,7 @@ pub fn units_of(messages: &[Message], workspace_root: &Path) -> Result<Vec<Unit>
     Ok(units)
 }
 
-/// Whether this artifact is cargo's uplifted copy of a unit rather than the
-/// unit itself.
-///
-/// Cargo compiles into `deps/` and then hard-links a binary up into the
-/// profile directory so a person can run it by name. The copy carries no
-/// dep-info of its own, and the unit it copies is either reported separately
-/// or is one nothing reads; either way it is not a compilation.
+/// Whether this artifact is cargo's uplifted copy of a unit rather than the unit itself.
 fn is_uplift(artifact: &Artifact) -> bool {
     artifact.filenames.iter().all(|file| {
         file.parent()
@@ -140,8 +128,7 @@ fn is_uplift(artifact: &Artifact) -> bool {
     })
 }
 
-/// Every place this artifact's dep-info could sit: cargo puts it beside the
-/// hashed file in `deps/` and, for a binary it uplifts, beside the copy too.
+/// Every place this artifact's dep-info could sit: cargo puts it beside the hashed file in `deps/` and, for a binary it uplifts, beside the copy too.
 fn dep_info_candidates(artifact: &Artifact) -> Vec<PathBuf> {
     let mut candidates: Vec<PathBuf> = artifact
         .filenames

@@ -2,12 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What holds for every run of the engine's command line rather than for the ones somebody thought to write down.
-//!
-//! A table of cases is as thorough as whoever wrote it was, and the rows that
-//! matter most are the ones nobody imagined. Each law here is one a person
-//! acting on what the command line says relies on: a report is stored where
-//! the report directory holds it, the runs read back in the order they ran,
-//! and a number they are deciding by never says there is more than there is.
 
 #![expect(
     clippy::panic,
@@ -36,10 +30,6 @@ fn run_named(id: &str) -> cli::Command {
 }
 
 /// The names a person may pass to `--run-id`: anything, and the few a filesystem answers to already.
-///
-/// A random string is never `..`, so a law over one holds nothing about the
-/// name that matters most: every directory already has that entry, and it is
-/// the directory holding every other run.
 fn named() -> impl Strategy<Value = String> {
     prop_oneof![
         4 => "\\PC{0,80}",

@@ -88,11 +88,6 @@ enum Direction {
 }
 
 /// Carries answers between this machine's store and a file, and says how many moved.
-///
-/// A command that carried nothing says so with the same line as one that
-/// carried a thousand, because "it worked" and "there was nothing to work on"
-/// are different facts and a job that silently exports an empty store is one
-/// whose matrix quietly builds everything twice.
 fn carry(
     store: &Store,
     path: &Path,

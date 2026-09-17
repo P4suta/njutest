@@ -2,22 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What `.cargo/config.toml` says about the flags a build compiles with.
-//!
-//! A coverage build has to add `-Cinstrument-coverage`, and it does that
-//! through `CARGO_ENCODED_RUSTFLAGS`, which *replaces* `build.rustflags`
-//! rather than adding to it. A project that configures its own flags would
-//! have them dropped and would be measured as a program it is not. Reading
-//! them here is what lets the build put them back instead of refusing.
-//!
-//! What is not put back is `target.<triple>` and `target.cfg(…)`: which of
-//! them apply is cargo's decision about the target being built, and a guess
-//! compiles something other than the project's own binaries. A tree that
-//! configures those is told so by name.
-//!
-//! Cargo joins array values across files rather than letting the nearest one
-//! win, with the higher-precedence items placed later, and the home directory
-//! is the lowest precedence of all. So the order here is `$CARGO_HOME` first,
-//! then the outermost ancestor, and the directory itself last.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -68,10 +52,6 @@ pub fn configured(root: &Path, cargo_home: Option<&Path>) -> Configured {
 }
 
 /// What one configuration file says about compiler flags.
-///
-/// A file nobody can parse, and a file that spells a flag this could not pass
-/// on as itself, are both read as saying nothing: `unreadable` is what a run
-/// states, rather than flags it never saw or a flag cut in two.
 #[must_use]
 pub fn read(text: &str) -> Configured {
     let Ok(document) = text.parse::<toml::Table>() else {

@@ -2,11 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The three projections a team's existing surfaces read, put to their readers here rather than through a process.
-//!
-//! A run report is what a program reads and these are what somebody else's
-//! program reads, so each is held to the shape its reader accepts. Driving the
-//! command instead means starting a process, and a measurement of what a
-//! crate's own tests reach does not follow a guard across that boundary.
 
 #![expect(
     clippy::expect_used,
@@ -624,9 +619,7 @@ fn the_sarif_log_is_the_document_that_was_reviewed() {
     .expect("the log a reviewer read");
 }
 
-/// A run whose report carries every side of itself: what nothing reached, what was
-/// refused, what discovery passed over, a file the tests noticed every mutation in, and
-/// text with the characters a page has to escape.
+/// A run whose report carries every side of itself: what nothing reached, what was refused, what discovery passed over, a file the tests noticed every mutation in, and text with the characters a page has to escape.
 fn everything() -> RunDocument {
     let mut document = document();
     let mut unreached = outcome(2, "not_run", true);

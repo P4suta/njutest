@@ -306,11 +306,6 @@ pub struct FileDiscovery {
 }
 
 /// One file another file pastes in with `include!`.
-///
-/// The path is resolved against the directory of the file that includes it,
-/// which is what `include!` itself does, and only when the argument is a single
-/// string literal: an argument built out of `concat!` and `env!` names a file
-/// this run cannot know, and a file it cannot name it says nothing about.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Include {
     /// The workspace-relative path of the included file, with forward slashes.

@@ -57,9 +57,6 @@ impl Color {
 }
 
 /// The colour an outcome is written in, when the output is painted at all.
-///
-/// Three colours and no more: what a reader is looking for is the one line
-/// that is not a kill, and a page of colours is a page nobody scans.
 #[must_use]
 pub const fn paint(outcome: rust_mutants::outcome::Outcome) -> &'static str {
     match outcome {
@@ -220,10 +217,6 @@ impl Observer for Display<'_> {
 }
 
 /// What a row says after the outcome: the target that reached the verdict, or why no target did.
-///
-/// A mutant nothing ran has no target to name, and a row that trailed off
-/// there left the reader to go and look up what happened to it. The reason it
-/// was not run is the answer, and the run already has it.
 fn beside(judged: &Judged) -> Option<&str> {
     if !judged.target.is_empty() {
         return Some(&judged.target);
@@ -232,19 +225,6 @@ fn beside(judged: &Judged) -> Option<&str> {
 }
 
 /// One phase line, from the recording the engine keeps while it prepares.
-///
-/// A line when a phase begins as well as when it ends, because the longest
-/// phase of a run is otherwise the one that says nothing: a reader piping this
-/// into a log has no way to tell a slow `verify` from a hang, and the question
-/// arrives at minute ninety of a two-hour job. The recording has carried
-/// `phase-start` all along; this only reads it.
-///
-/// Preparing is not a run, so nothing observes it. What it does is in the
-/// recording, though, and a display is one more reader of that: a tee of the
-/// recorder's sink hands each event to this thread, which writes the line a
-/// person watching wants. A recording never fails a run
-/// ([ADR 0002](../../../docs/adr/0002-trace-is-not-evidence.md)), and
-/// neither does this.
 #[must_use]
 pub fn phase_line(event: &Event) -> Option<String> {
     match &event.payload {
@@ -262,10 +242,6 @@ pub fn phase_line(event: &Event) -> Option<String> {
 }
 
 /// One line per phase the recorder has started or finished, in the order it did.
-///
-/// The channel is drained rather than waited on: preparing does not hand back
-/// control until it is done, so what a reader gets is what preparing did, as
-/// soon as there is a thread free to write it.
 #[must_use]
 pub fn phases(events: &Receiver<Event>) -> String {
     let mut text = String::new();
@@ -281,16 +257,6 @@ pub fn phases(events: &Receiver<Event>) -> String {
 const LOOKING: Duration = Duration::from_millis(200);
 
 /// Writes each phase as it ends, for as long as `working` says there is work.
-///
-/// Preparing is most of a long run — the snapshot, the check, the measurement,
-/// the instrumented build — and a reader who is shown none of it until it is
-/// over cannot tell a slow run from a hung one. That is the one thing a
-/// progress display is for, so it is written as it happens rather than
-/// collected and printed afterwards.
-///
-/// Nothing here can fail the run: the display reads a channel the recorder
-/// writes to and stops when it is told the work is done, whatever it has or
-/// has not seen ([ADR 0002](../../../docs/adr/0002-trace-is-not-evidence.md)).
 pub fn watch(events: &Receiver<Event>, stream: &mut dyn Write, working: &dyn Fn() -> bool) {
     loop {
         match events.recv_timeout(LOOKING) {

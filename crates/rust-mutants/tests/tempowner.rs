@@ -130,10 +130,6 @@ const BACKUP_SEMANTICS: u32 = 0x0200_0000;
 const ATTRIBUTES: u32 = 0x0080 | 0x0100;
 
 /// Opens `dir` as a handle its timestamps can be set through.
-///
-/// A directory is not a file to Windows unless the open says so, and reading
-/// its attributes is not permission to write them; asked for neither, the call
-/// is refused rather than answered: `Access is denied`.
 fn opened(dir: &Path) -> fs::File {
     #[cfg(windows)]
     {

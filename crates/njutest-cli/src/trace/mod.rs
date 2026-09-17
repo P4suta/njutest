@@ -176,12 +176,6 @@ impl Recorder {
     }
 
     /// Records that the run has reached a stage, ending the stage before it.
-    ///
-    /// A stage is what the person watching is told the run is doing, and the
-    /// stages are sequential: one ends where the next begins. [`Self::phase`]
-    /// times a scope a module happens to hold, which leaves whatever no module
-    /// guards — the builds, which is most of a run — outside every phase and
-    /// unattributable. A reader asking where a run spent its time reads these.
     pub fn stage(&self, name: &str) {
         let Some(inner) = &self.inner else {
             return;

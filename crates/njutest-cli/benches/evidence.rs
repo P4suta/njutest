@@ -2,12 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What deciding a run's identity costs, and what settling the layer that removes findings costs.
-//!
-//! These are observations rather than gates. Two of them are here because the
-//! work they do grows with the workspace and the third because it grows with
-//! the square of it: `equivalence::settle` looks every survivor up in the
-//! answers by name, so a catalog that doubles costs four times as much. A
-//! number nobody has is a number nobody notices growing.
 
 use std::collections::BTreeMap;
 

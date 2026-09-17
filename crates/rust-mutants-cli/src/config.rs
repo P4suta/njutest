@@ -57,22 +57,10 @@ pub struct Config {
 }
 
 /// What the copy a run works in leaves behind.
-///
-/// A run measures a copy of the tree, and a tree can hold things a copy has no
-/// use for: a directory of test data measured in gigabytes, a file nobody
-/// outside the machine should hold. This is where a project says what not to
-/// copy. It is not where a project says what not to mutate — that is
-/// `[project] include` and `[project] exclude`, which leave the file in the
-/// tree and take it out of the catalog.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Snapshot {
     /// Workspace-relative globs naming what the copy does not carry.
-    ///
-    /// The file is not in the tree a run builds, so naming one the crate
-    /// declares as a module leaves a tree that does not compile: the run
-    /// refuses before it instruments anything, and the compiler's complaint is
-    /// about a file that is missing because this said not to copy it.
     pub omit: Vec<String>,
 }
 
@@ -99,27 +87,12 @@ pub struct Project {
     /// Workspace-relative globs a file must match to be mutable.
     pub include: Vec<String>,
     /// Workspace-relative globs naming files nothing is mutated in, which is what [`Project::include`] is the other half of.
-    ///
-    /// The file stays in the tree and is compiled like any other; what it
-    /// loses is its mutants. A file the copy should not carry at all is
-    /// `[snapshot] omit`, which is a different thing and says so.
     pub exclude: Vec<String>,
     /// Directories outside the root the workspace may read code from.
-    ///
-    /// A run measures a copy of the tree, so a path dependency outside it is
-    /// not in the copy. Naming a directory here says the run may copy it
-    /// beside the tree, which makes the measurement about a tree that is not
-    /// the one on disk: a decision for a person rather than one a run takes.
     pub allow_outside: Vec<String>,
 }
 
 /// What the project is compiled as.
-///
-/// Cargo compiles a different program for a different feature set, target
-/// triple, or profile. A run that measures one of them while the project
-/// ships another measures a program nobody runs, so these are the words a
-/// person would have typed, passed on unchanged. An empty name and a zero are
-/// what nobody said.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Build {
@@ -136,12 +109,6 @@ pub struct Build {
     /// How many compilation jobs cargo may run at once. Zero lets cargo choose.
     pub jobs: u32,
     /// Write debug information into what a run builds.
-    ///
-    /// Off, because a run reads what a test harness printed and never a
-    /// backtrace, and the debug information is most of what a build writes:
-    /// six gigabytes against one for this repository's own engine, every byte
-    /// of it generated, linked, and thrown away with the temporary directory.
-    /// Turn it on to attach a debugger to a snapshot `--keep-temp` preserved.
     pub debug: bool,
 }
 
@@ -188,24 +155,10 @@ pub struct Mutation {
     /// Run every test target once with nothing active before believing anything a mutant does.
     pub verify: bool,
     /// Build once with LLVM coverage instrumentation and route by the regions it exported.
-    ///
-    /// The guards already say which of a target's tests reached each mutation,
-    /// and they say it on a run the engine was making anyway, so this is off:
-    /// instrumenting for coverage rebuilds every crate in the graph, which on
-    /// a real workspace is the largest single thing a run could do. It is kept
-    /// as an independent second opinion, and for the branch proofs of the
-    /// bodies no marker could be written into.
     pub coverage: bool,
     /// Ask the guards, on the run that verifies the baseline, which of each target's tests reached them, and put a mutation only to those tests.
-    ///
-    /// It costs the run nothing it was not already spending. Turning it off is
-    /// how a caller asks for the answer a run with nothing removed would give.
     pub touch: bool,
     /// After the run, ask the compiler whether each survivor's mutation is one it renders at all.
-    ///
-    /// It costs a tree of its own and one build per survivor, and it never
-    /// says a mutation is equivalent: what it can say is that the compiler
-    /// renders the two identically, which is a fact about the binaries.
     pub equivalence: bool,
     /// The mutants a reviewer declared equivalent, with the outcome the run must confirm.
     pub expect: Vec<Expect>,
@@ -214,11 +167,6 @@ pub struct Mutation {
 }
 
 /// One `[[mutation.expect]]` entry, as a person writes it.
-///
-/// The mutant is named either by identity, which is exact and changes when
-/// anything in the file does, or by a locator — path, item, rule, and the
-/// bytes the edit replaces — which survives an edit elsewhere in the file.
-/// Never both.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Expect {
@@ -375,28 +323,10 @@ pub struct Execution {
     /// Harness flags to pass through; see [`ALLOWED_TEST_ARGS`].
     pub test_binary_args: Vec<String>,
     /// Start every test process in a directory of its own rather than where cargo would.
-    ///
-    /// A test that writes into the directory it runs in writes into the tree
-    /// being measured, and the run says `tree-written-during-measurement`
-    /// about every mutation after it. Turning this on puts those writes
-    /// outside the tree without changing a line of the suite, because what a
-    /// test resolves against "here" moves with it — including a temporary
-    /// directory it makes in the current directory on purpose.
-    ///
-    /// It is off by default because a test that reads a fixture by a path
-    /// relative to where cargo starts it stops finding it. Which of the two a
-    /// suite does is a thing its author knows and a run cannot.
     pub scratch_working_directory: bool,
     /// Run a library's documented examples as a target of their own.
-    ///
-    /// A documented example is a test the project wrote, and a mutation only
-    /// one of them can notice is one nothing else in the suite covers.
     pub doctests: bool,
     /// Targets never to start, by the id a report names them with.
-    ///
-    /// A suite whose tests are about the text of what the compiler said fails
-    /// under instrumentation for a reason that is not the mutation. Naming it
-    /// here is a decision somebody made, and the report says so.
     pub skip_targets: Vec<String>,
     /// How many mutants to measure at once. Zero is as many as the machine has, capped at four.
     pub jobs: usize,

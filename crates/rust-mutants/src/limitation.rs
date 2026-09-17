@@ -2,12 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Every limitation the engine can state, in one place.
-//!
-//! A limitation is what a run says when a proof layer could not do its work:
-//! never a failure, and never silence. Keeping the names here rather than
-//! beside the code that emits them is what lets one test hold the set to
-//! [`docs/limitations.md`](../../../docs/limitations.md), so a name that
-//! reaches a report is a name a reader can look up.
 
 /// The tree could not be built with coverage instrumentation, so nothing was measured.
 pub const COVERAGE_BUILD_FAILED: &str = "coverage-build-failed";
@@ -40,15 +34,6 @@ pub const DOCTESTS_NONE: &str = "doctests-none";
 pub const BASELINE_NOT_PASSING: &str = "baseline-not-passing";
 
 /// The target's own tests did not pass the first time they were run with nothing active, and passed when they were run again.
-///
-/// The run is measured against the second answer, because a target that
-/// passes is one a mutation can be put to. What the first answer says is
-/// about the run's footing rather than about the tree: something outside the
-/// code decided the outcome once, so a single later result against this
-/// target is worth a little less than one against a target that passed twice.
-/// On macOS the commonest such thing is the first execution of a file the
-/// tests had just written, which the system evaluates before it may run and
-/// which the second execution never pays again.
 pub const BASELINE_PASSED_ON_RETRY: &str = "baseline-passed-on-retry";
 
 /// The target's guards were not asked what they reached, or were asked and said nothing, so every test of it reaches every mutation in it.
@@ -75,14 +60,6 @@ pub const ALL: [&str; 13] = [
 ];
 
 /// What a log a runtime appends to says, keeping the failure where the file is there and this run could not read it.
-///
-/// The log the engine reads back — the guards' record — is
-/// written by a process that creates the file the first time it has something
-/// to say. A file that is not there is therefore a process that had nothing to
-/// say, and reads as the empty record. Any other failure is a file that exists
-/// and did not come back, and a record a run cannot read is not a record of
-/// nothing: reading the two as one turns every mutant of that target into one
-/// the tests could not have noticed.
 ///
 /// # Errors
 /// Whatever the filesystem said, less the one answer that means the process

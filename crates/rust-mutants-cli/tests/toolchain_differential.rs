@@ -2,25 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Whether removing the work changed the answer.
-//!
-//! Every proof layer exists to not run something. The claim each one makes is
-//! not "this was probably fine to skip" but "running it would have established
-//! exactly this", and a claim of that shape is one a test can call. So: run a
-//! fixture twice, once with every layer on and once with every layer off, and
-//! hold the two reports to each other mutant by mutant.
-//!
-//! A mutant the proved run never started a process for, because a measurement
-//! or a proof said no target could notice it, has to be one the whole run
-//! found nothing noticed either. If a discharged mutant turns out to be killed
-//! when something actually runs it, the proof is wrong, and this is where that
-//! is found out rather than in somebody's report.
-//!
-//! There are two measurements now and they are checked separately, each against
-//! a run with nothing removed: the guards, which record on the baseline run
-//! which of a target's tests reached each mutation, and the LLVM coverage
-//! build, which is kept as an independent second opinion. Two layers that
-//! agree with a whole run agree with each other, and one that does not is
-//! named here.
 
 #![expect(
     clippy::expect_used,
@@ -39,11 +20,6 @@ use rust_mutants::work::Work;
 use rust_mutants_cli::{Environment, Streams};
 
 /// The fixtures the layers have something to say about.
-///
-/// The last two are the fallbacks: a target whose tests only pass beside each
-/// other, and one whose tests reach the code on threads of their own. Both are
-/// cases where the guards cannot narrow, and a fallback that got the answer
-/// wrong would show up here as a row that moved.
 const FIXTURES: [&str; 6] = [
     "fixture-simple",
     "fixture-coverage",
@@ -97,10 +73,6 @@ fn established(name: &str, extra: &[&str]) -> Established {
 }
 
 /// What a run that removed nothing would have said about a mutant a proof removed.
-///
-/// A proof removes a (mutant, target) pair by claiming the target could not
-/// have noticed. A mutant every target was removed from is therefore one no
-/// test notices: a survivor. That is the whole claim, and it is falsifiable.
 fn claimed(row: &RunMutantDocument) -> &str {
     match (row.outcome.as_str(), row.not_run_reason.as_deref()) {
         ("not_run", Some("unreached" | "discharged")) => "survived",

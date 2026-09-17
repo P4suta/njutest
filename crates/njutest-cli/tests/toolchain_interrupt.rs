@@ -98,14 +98,6 @@ fn a_terminated_verification_exits_143_and_leaves_no_process_behind() {
 }
 
 /// Waits until `child` says it has begun measuring.
-///
-/// A run installs what answers a signal while it is starting, so a test that
-/// signalled after a fixed wait would be asking how quickly this machine
-/// schedules a new process: where the answer is "not within that wait", the
-/// signal arrives before anything is there to answer it and the default
-/// action kills the run — which reads as the contract broken rather than as
-/// the race it is. What the run prints when it reaches the baseline is the
-/// evidence that it is there to be asked.
 fn measuring(child: &mut std::process::Child) {
     let mut reader = BufReader::new(child.stderr.take().expect("stderr is piped"));
     let mut line = String::new();

@@ -9,11 +9,6 @@ use serde::{Deserialize, Serialize};
 pub const SCHEMA: &str = "rust-mutants-trace-v1";
 
 /// Every type a recording can hold, in the order [`Payload::type_name`] answers with.
-///
-/// A reader that knows the vocabulary can say whether it read a recording it
-/// understands whole, and the schema under `schema/` is held to this list by a
-/// test: a type added to one and not the other is a recording no consumer can
-/// validate.
 pub const EVERY_TYPE: [&str; 24] = [
     "run-start",
     "phase-start",
@@ -532,11 +527,6 @@ pub struct DischargeRecord {
 }
 
 /// How one mutant's targets were chosen, and which of them ran.
-///
-/// The vocabulary is the runner's, so one reader reads both recordings: a
-/// `granularity` of `all` is every target, `block` the ones a measurement
-/// places, `discharged` a mutation every target was proved unable to notice,
-/// and `unreached` one no measured target executes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RouteRecord {
     /// The mutant's short identity.

@@ -107,27 +107,13 @@ pub struct Project {
     /// The cargo packages to verify. Empty is every workspace member.
     pub packages: Vec<String>,
     /// Workspace-relative globs a file must match for anything in it to be mutated. Empty is every file.
-    ///
-    /// The pair of [`Project::exclude`], and here for the reason a pair is
-    /// worth having: a project that wants four files verified out of a hundred
-    /// writes four patterns here, and one that has only this key writes
-    /// ninety-six there. The engine has both, and a project narrowing the same
-    /// scope in both files should not have to say it as a permission in one
-    /// and a prohibition in the other.
     pub include: Vec<String>,
     /// Workspace-relative globs whose files are left out of the mutations, which the report carries as an explicit limitation.
     pub exclude: Vec<String>,
 }
 
 impl Project {
-    /// The exclusions, compiled.
-    ///
-    /// They say which files are mutated and nothing else: the tree is copied
-    /// whole, every package still builds, and every test still runs, so a file
-    /// left out of the mutations is still one the run is a function of. A
-    /// pattern that does not compile cannot reach here, because
-    /// [`Config::parse`] refuses it; one that somehow does is left out, which
-    /// mutates more rather than less.
+    /// The inclusions, compiled.
     #[must_use]
     pub fn included(&self) -> Vec<rust_mutants::glob::Pattern> {
         self.include
@@ -171,11 +157,6 @@ pub struct Execution {
 
 impl Execution {
     /// What a build of this project is, beyond the tree itself.
-    ///
-    /// Cargo compiles a different program for a different feature set, so a
-    /// run that measures the default build while the project ships another
-    /// measures a program nobody runs: the features a configuration names are
-    /// the features every command of the run compiles with.
     #[must_use]
     pub fn build(&self) -> rust_mutants::cargo::BuildConfig {
         rust_mutants::cargo::BuildConfig {
@@ -342,11 +323,6 @@ pub struct Acceptance {
 
 impl Acceptance {
     /// Whether this acceptance still answers for anything at `now`.
-    ///
-    /// An acceptance is a person saying they looked, and the expiry is when
-    /// they said to look again. One that has passed answers for nothing, or
-    /// the date is a comment. One that names no date never lapses, which is
-    /// what a reviewer who wrote none asked for.
     #[must_use]
     pub fn holds(&self, now: jiff::Timestamp) -> bool {
         self.expires.is_none_or(|when| when > now)
@@ -465,6 +441,10 @@ impl Config {
                     self.version
                 ),
             ));
+        }
+        for pattern in &self.project.include {
+            rust_mutants::glob::Pattern::compile(pattern)
+                .map_err(|error| invalid(format!("include names an {error}")))?;
         }
         for pattern in &self.project.exclude {
             rust_mutants::glob::Pattern::compile(pattern)

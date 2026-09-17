@@ -2,26 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What a run did, counted rather than timed.
-//!
-//! The unit is one **pair**: one mutant and one test target, which a run either
-//! starts a process for or does not. A run that asked every target about every
-//! mutant would start `cataloged × targets` of them; every pair short of that
-//! is one something removed, and this ledger names what.
-//!
-//! A pair is a process, and a process is not the whole of what a run does: one
-//! that runs the two tests that reached a mutation costs less than one that
-//! runs the target's two hundred. So the ledger counts **tests** as well, and
-//! that is the number the guards move. Every test a run started is in it, the
-//! ones it started to establish that a filtered set answers on its own
-//! included.
-//!
-//! Nothing here is a duration. A count is the same on a loaded machine and an
-//! idle one, on four jobs and on one, so a change that makes the engine do less
-//! work is a change a test can see and a ratchet can hold. Time is what the
-//! work costs, not what it is.
-//!
-//! Every number is derived from the stored run report and nothing else, so an
-//! audit re-derives the same ledger without the engine that produced it.
 
 use std::collections::BTreeMap;
 
@@ -55,10 +35,6 @@ pub enum Removal {
 
 impl Removal {
     /// Whether a run that removed pairs this way still answers for the whole catalog.
-    ///
-    /// A proof, a sufficient answer and a remembered one all leave the verdict
-    /// exactly where a whole run would have left it. A selection does not: it
-    /// is a smaller question, honestly asked.
     #[must_use]
     pub const fn whole(self) -> bool {
         !matches!(self, Self::Selection)
@@ -151,10 +127,6 @@ impl Work {
     }
 
     /// Whether every pair a whole run would have started is one this run started or one something named removed.
-    ///
-    /// A retry is work beyond the whole, so it is added back before the two are
-    /// compared: the identity is about pairs, and a pair asked twice is still
-    /// one pair.
     #[must_use]
     pub fn balances(&self) -> bool {
         self.pairs().saturating_add(self.skipped()) == self.whole
@@ -221,11 +193,6 @@ fn processes(mutant: &RunMutantDocument) -> u64 {
 }
 
 /// How many tests one mutant cost, which is what each target it ran was asked for.
-///
-/// A target a route narrowed to some of its tests was asked for exactly those;
-/// one it did not narrow was asked for every test that target has. A retry
-/// puts the same question to the target that answered, so it costs what that
-/// target was asked for again.
 fn tests(mutant: &RunMutantDocument, held: &BTreeMap<&str, u64>) -> u64 {
     if mutant.source_run_id.is_some() {
         return 0;

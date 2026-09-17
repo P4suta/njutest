@@ -2,17 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The findings as SARIF 2.1.0, which is what a code scanning view already reads.
-//!
-//! A result is a finding and nothing else. A killed mutant is not a result:
-//! SARIF describes what is wrong with the code, and a mutant the tests noticed
-//! is the tests working. The rules are the operators the run's findings came
-//! from, so a reader can group by what asked the question.
-//!
-//! Every finding is a result, including one that is not about a mutant the
-//! report still holds — a claim nothing answers to, a marker that hides
-//! nothing. Those carry no location rather than an invented one: SARIF allows
-//! a result with none, and a location a reader would go and look at had
-//! better be one.
 
 use std::collections::BTreeMap;
 

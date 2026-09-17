@@ -2,12 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! `njutest lsp`: what a completed run found, in the editor the code is being written in.
-//!
-//! This server runs nothing. It reads the report a run already wrote and
-//! projects it, which is what keeps `verify` the only thing that establishes
-//! anything and this a way of reading it. A code action hands back the
-//! `njutest accept` a reviewer would type; applying it is that command's job,
-//! because a run is read-only and `fix --apply` is the one thing that writes.
 
 use std::io::{BufRead, Read as _, Write};
 use std::path::{Path, PathBuf};
@@ -67,12 +61,6 @@ pub struct Reported {
 }
 
 /// The findings of `report` that name a place in a file, by file.
-///
-/// A finding carries a position and not a path, because what it is about is
-/// named by its subject: a surviving mutation is a mutant, and the mutant
-/// record is what says which file it is in. A finding whose subject is not a
-/// mutation of this run — a failing target, a missing one — has no file to be
-/// shown in and is left out rather than guessed at.
 #[must_use]
 pub fn diagnostics(report: &Report, root: &Path, encoding: Encoding) -> Vec<Reported> {
     let mut by_file: std::collections::BTreeMap<String, Vec<Value>> =
@@ -107,12 +95,6 @@ pub fn diagnostics(report: &Report, root: &Path, encoding: Encoding) -> Vec<Repo
 }
 
 /// Where the report's column falls in the units the client counts.
-///
-/// The report records both a byte column and a scalar one, so UTF-8 needs no
-/// file at all. UTF-16 does: how many code units a scalar takes is a fact
-/// about the character, and the only place the characters are is the line
-/// itself. A line this cannot read falls back to the scalar column, which is
-/// the same number wherever a line holds nothing outside the basic plane.
 fn column(root: &Path, path: &str, at: crate::report::Position, encoding: Encoding) -> u32 {
     let scalar = at.character_column.saturating_sub(1);
     if encoding == Encoding::Utf8 {
@@ -141,16 +123,6 @@ pub fn framed(message: &Value) -> String {
 }
 
 /// The next message, or nothing when the stream ended.
-///
-/// A header this reader does not know is skipped rather than refused: the
-/// protocol allows more of them, and a server that stopped at the first one it
-/// had not heard of would stop at a client doing nothing wrong.
-///
-/// The length a client declares bounds the read and is not trusted for the
-/// allocation: a body that arrives shorter than its header said is not the
-/// message the client framed, even when the bytes that did arrive happen to
-/// parse, and a header naming a length nobody is going to send is not a reason
-/// to reserve it.
 pub fn message(input: &mut dyn BufRead) -> Option<Value> {
     let mut length = None;
     let mut header = String::new();
@@ -176,10 +148,6 @@ pub fn message(input: &mut dyn BufRead) -> Option<Value> {
 }
 
 /// Serves the protocol over `input` and `output` until the client asks it to stop.
-///
-/// A client that has asked this to shut down is one that has stopped reading:
-/// it is waiting for the answer to that request and for nothing else, so what
-/// a later notification would say goes to nobody. Only `exit` follows.
 ///
 /// # Errors
 /// None: a message this server does not answer is one it says nothing about,
@@ -235,10 +203,6 @@ fn capabilities(encoding: Encoding) -> Value {
 }
 
 /// The acceptance a reviewer would record for each mutation the request's range holds.
-///
-/// The action is the command line and not an edit. A run is read-only, and
-/// `njutest accept` is what writes an acceptance, so handing back what to type
-/// keeps the one thing that changes the tree in the one place that does it.
 fn actions(request: &Value) -> Value {
     let mut offered = Vec::new();
     let empty = Vec::new();
@@ -286,12 +250,6 @@ fn publish(output: &mut dyn Write, root: &Path, encoding: Encoding) {
 }
 
 /// `path` as the URI an editor holds the document under.
-///
-/// An editor matches a diagnostic to a document by the URI it is published
-/// against, so a second spelling of one file is a diagnostic about a file
-/// nobody has open. A URI separates with `/` whatever the platform separates
-/// with, and a path that begins at a volume rather than at a root needs the
-/// root the form puts before it.
 #[must_use]
 pub fn uri_of(path: &Path) -> String {
     let text = rust_mutants::id::slashed(path);

@@ -86,9 +86,6 @@ pub struct RunMeta {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Accounting {
     /// How many candidate rows the run accounts for, excluding compiler refusals.
-    ///
-    /// A row left `unselected` by a scoped run was not necessarily presented
-    /// to the compiler and makes no acceptance claim.
     pub cataloged: u32,
     /// How many candidates the compiler refused.
     pub refused: u32,
@@ -130,9 +127,6 @@ pub struct ScoreDocument {
 }
 
 /// One non-refused candidate and what the run established about it.
-///
-/// `not_run/unselected` is an explicit absence of a compiler-acceptance claim:
-/// selection-aware preparation need not instrument or validate that candidate.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunMutantDocument {
     /// The dense catalog index the guards name.
@@ -423,10 +417,6 @@ fn mutant(one: &crate::run::Judged, catalog: Option<MutantDocument>) -> RunMutan
 }
 
 /// One test target a run built, and what it is beyond its name.
-///
-/// A run's work is counted in pairs of one mutant and one target, so a reader
-/// that cannot see how many targets there were cannot say what a whole run
-/// would have cost.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TargetDocument {
     /// `package/kind/name`.
@@ -472,9 +462,6 @@ fn millis(value: std::time::Duration) -> u64 {
 }
 
 /// Which targets could have noticed one mutation, and what became of the ones that ran.
-///
-/// A recording says the same thing, and a run that was not recorded has to be
-/// able to answer it too: `explain` draws a route from the report alone.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RouteDocument {
     /// `all`, `test`, `block`, `discharged`, or `unreached`.
@@ -532,10 +519,6 @@ pub enum MergeError {
 }
 
 /// The report the whole of a catalog would have written, from the reports of its parts.
-///
-/// The parts are checked for being parts: they must be about one catalog, and
-/// no mutant may appear in two of them. A merge that let them overlap would
-/// count one execution twice and report a score no run ever established.
 ///
 /// # Errors
 /// See [`MergeError`].

@@ -11,11 +11,6 @@ pub struct ErrorCode {
     /// One line saying what the code means.
     pub summary: &'static str,
     /// What to do about it. Every code carries one.
-    ///
-    /// A remedy is the next step, not an explanation: a flag to pass, a
-    /// component to install, a command to run. Where the answer is that the
-    /// fault is this tool's, the remedy says that, because a reader told only
-    /// what went wrong will go looking for the mistake they made.
     pub remedy: Option<&'static str>,
 }
 
@@ -171,12 +166,6 @@ pub const SOURCE_UNREADABLE: ErrorCode = ErrorCode {
 };
 
 /// Declares one error code. There is no form without a remedy, on purpose.
-///
-/// A diagnostic that names what went wrong and stops has told a reader they
-/// have a problem and left them to find the way out. Where the way out is
-/// "this is a defect in this tool", that is worth saying too: somebody
-/// reading it would otherwise spend an afternoon looking for the mistake they
-/// made.
 macro_rules! snapshot_code {
     ($name:ident, $code:literal, $summary:literal, $remedy:literal) => {
         pub(crate) const $name: ErrorCode = ErrorCode {

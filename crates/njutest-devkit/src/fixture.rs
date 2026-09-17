@@ -15,11 +15,6 @@ use std::path::{Path, PathBuf};
 use sha2::Digest as _;
 
 /// A copy of a fixture project, removed when the test drops it.
-///
-/// The copy is what a test hands to the thing it is testing, so a run that
-/// writes into the tree it measures writes into the copy. The temporary and
-/// cache directories sit beside the tree rather than inside it: a cache under
-/// the root would change the tree's own digest every time a run wrote to it.
 #[derive(Debug)]
 pub struct Fixture {
     root: PathBuf,
@@ -239,12 +234,6 @@ pub struct Fates {
 }
 
 /// Every fate the `fates` block of `readme` states, in the order it states them.
-///
-/// The rest of the fence line is the arguments the run takes, so a fixture
-/// that exists for a proof layer says which layer rather than leaving a
-/// reader to guess why its fates read the way they do. A README without the
-/// block states nothing, which is what lets a fixture with no ledger have
-/// none.
 #[must_use]
 pub fn fates(readme: &str) -> Fates {
     let Some(after) = readme.split_once(FATES_FENCE).map(|(_, rest)| rest) else {
@@ -295,12 +284,6 @@ pub fn stated_fates(name: &str) -> Fates {
 }
 
 /// The directory of the newest stored run under `reports/mutation`, followed from the pointer a run writes.
-///
-/// A test that reads a stored run by scanning the directory and taking any
-/// entry, or the one whose name sorts highest, is a test resting on a naming
-/// convention rather than on the contract. A run writes `latest.json` saying
-/// which document is the newest; following it is what a reader would do, and
-/// it stays right when two runs land in the same second.
 ///
 /// # Panics
 /// When the pointer is not there or does not name a document, which means no

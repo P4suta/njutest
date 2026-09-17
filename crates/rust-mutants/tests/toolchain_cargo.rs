@@ -39,11 +39,6 @@ fn scratch_target(name: &str) -> tempfile::TempDir {
         .expect("tempdir")
 }
 /// Where `path` is below `root`, spelled the one way a catalog spells a path.
-///
-/// The compiler reports a source with the separator its own platform uses, and
-/// the engine records one with a slash wherever it runs, so a test that
-/// compared what came back against what it wrote would be a test about the
-/// machine rather than about the units.
 fn under(root: &Path, path: &Path) -> String {
     path.strip_prefix(root)
         .expect("under the root")

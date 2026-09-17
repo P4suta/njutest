@@ -130,12 +130,6 @@ pub enum Entry {
 
 /// Every path under `root` that is part of what a run verifies, in no particular order.
 ///
-/// The rule for what counts lives here and nowhere else, so a reader that
-/// digests the tree and a reader that only asks when it last changed agree
-/// about which files they are talking about. Two walks with two rules would
-/// eventually disagree, and then a watch would sit still through an edit to a
-/// file the digest does count.
-///
 /// # Errors
 /// See [`ScanError`].
 pub fn walk<V>(
@@ -205,8 +199,6 @@ where
 }
 
 /// Reads `root` and digests it: the files under verification into [`Scan::tree`], the fuzz corpora into [`Scan::corpus`].
-///
-/// `exclude` are the configuration's own patterns. `elsewhere` are directories a run writes rather than reads that are not in [`EXCLUDED_DIRECTORIES`] — cargo's build directory, the user's cache directory — named absolutely or relative to `root`. Neither counts.
 ///
 /// # Errors
 /// See [`ScanError`].

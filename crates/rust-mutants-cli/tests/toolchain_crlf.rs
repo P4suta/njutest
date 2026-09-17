@@ -19,11 +19,6 @@ use rust_mutants::runner::Cancel;
 use rust_mutants_cli::{Environment, Streams};
 
 /// A copy of `fixture-simple` with every source line ending the other way.
-///
-/// The tree is derived rather than committed. A committed copy is a second
-/// spelling of the same program that a checkout, an editor, or a careless
-/// rewrite can quietly change, and then the test proves the two agree rather
-/// than that the engine handles both endings.
 fn crlf_copy() -> Fixture {
     let fixture = Fixture::copy("fixture-simple");
     for relative in rust_sources(fixture.root()) {

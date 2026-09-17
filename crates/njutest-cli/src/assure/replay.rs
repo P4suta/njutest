@@ -2,17 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Putting one finding back to the tests, with nothing read back and nothing kept.
-//!
-//! A replay is an operation rather than an assurance about a project: it
-//! answers whether the one finding it was given is still there, and advances no
-//! index and stores no verdict. It reads no evidence and no cache, which is how
-//! a timeout — the one outcome a run never reuses as a proof — is deliberately
-//! run again.
-//!
-//! It also asks nothing of coverage. The finding says that nothing noticed a
-//! mutation, and the way to put that to the tests again is to offer the
-//! mutation to every test of its own package rather than to the ones a
-//! measurement once said could reach it.
 
 use std::path::Path;
 use std::time::Duration;

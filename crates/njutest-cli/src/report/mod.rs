@@ -262,11 +262,6 @@ pub struct Scope {
     /// The patterns that removed files from the scope.
     pub excluded: Vec<String>,
     /// The file these came from, so a reader knows which of two configurations they are looking at.
-    ///
-    /// A repository that uses both products has two configuration files a few
-    /// lines apart. Somebody who has just set one of them up and then runs the
-    /// other tool is looking at settings they did not write, and the run is
-    /// the only thing in a position to say which file it read.
     #[serde(default)]
     pub configuration: String,
     /// Which part of the catalog this run judged, as `K/N`, or nothing when it judged every one.
@@ -486,11 +481,6 @@ pub struct Finding {
     /// One sentence a person can act on.
     pub detail: String,
     /// The file it is in, when the run knows, relative to the workspace root.
-    ///
-    /// A subject is an identity — a mutant, a target, a package — and an
-    /// identity is not somewhere anybody can open. Every projection that puts
-    /// a finding on a line needs the file as well, and a log that gives a
-    /// consumer the identity instead puts every alert on a path nobody has.
     #[serde(default)]
     pub path: Option<String>,
     /// Where it is, when the run knows.
@@ -684,9 +674,6 @@ impl Report {
     }
 
     /// Counts the target rows this report holds, which is where its target accounting comes from.
-    ///
-    /// Derived from the rows rather than kept alongside them, so a report
-    /// cannot say it selected a number of targets it does not list.
     pub fn count_targets(&mut self) {
         let counts = &mut self.accounting.targets;
         *counts = TargetAccounting {
@@ -704,13 +691,6 @@ impl Report {
     }
 
     /// What these observations support.
-    ///
-    /// A run given a part of the catalog assures nothing on its own, however
-    /// clean the part is: the mutations it did not judge are not mutations
-    /// nothing noticed, they are mutations nobody put to a test. It concludes
-    /// [`Verdict::Partial`], and `njutest merge` is what carries a verdict. A
-    /// finding is still a finding — a defect found in one part is a defect —
-    /// so the part only reads where nothing was found.
     #[must_use]
     pub fn concluded(&self) -> Verdict {
         if self.findings.iter().any(|finding| finding.kind.is_defect()) {

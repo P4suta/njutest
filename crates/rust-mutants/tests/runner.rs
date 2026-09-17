@@ -148,10 +148,6 @@ fn the_environment_a_spec_names_is_the_whole_of_the_child_s_own() {
 }
 
 /// The directory a spec names is where the child runs.
-///
-/// Asked of a POSIX shell, because `pwd` is how a shell says where it is and
-/// the one on a Windows machine answers in its own spelling rather than the
-/// platform's: a suite that compared the two would be comparing shells.
 #[cfg(unix)]
 #[test]
 fn the_directory_a_spec_names_is_the_one_the_child_runs_in() {
@@ -378,11 +374,6 @@ fn the_supervisor_of_this_platform_is_the_one_a_diagnostic_names() {
 
 proptest::proptest! {
     /// Whatever a child writes and however it is cut into writes, the buffer keeps the end of it and stays inside its budget.
-    ///
-    /// The tail is what a person reads when a test fails, and the budget is
-    /// what stops a runaway child from filling memory. A buffer that kept the
-    /// beginning, or that grew past its limit, would fail exactly the run
-    /// somebody needed the output of.
     #[test]
     fn the_tail_buffer_keeps_the_end_within_its_budget_however_the_writes_are_cut(
         chunks in proptest::collection::vec(proptest::collection::vec(0u8..=255, 0..64), 0..40),

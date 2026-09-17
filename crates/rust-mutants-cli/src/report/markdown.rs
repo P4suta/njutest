@@ -2,11 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The run as the paragraph a person puts in a pull request or a job summary.
-//!
-//! Nothing here is volatile except the run's own identity: no duration, no
-//! path outside the workspace, no timestamp. Two runs of the same tree that
-//! established the same thing write the same summary, so the diff between two
-//! of them is what changed rather than when they ran.
 
 use std::fmt::Write as _;
 

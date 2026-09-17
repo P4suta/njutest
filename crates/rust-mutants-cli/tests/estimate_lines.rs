@@ -2,13 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What a dry run says a run would cost.
-//!
-//! The count is the same on every machine and the duration is a guess about
-//! this one, so the count is what a person decides by. Every share here is a
-//! division somebody could write the wrong way round, and the answer is a
-//! percentage that reads as reassurance either way: `100.0% removed` is what a
-//! run that will measure nothing says and also what a division by the wrong
-//! total says.
 
 #![expect(
     clippy::panic,

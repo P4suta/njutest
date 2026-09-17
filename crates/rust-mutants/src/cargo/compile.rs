@@ -38,14 +38,6 @@ impl CompileKind {
 }
 
 /// What this compilation is asked to cover, before the flags that are the same either way.
-///
-/// A check answers "is this edit a program", and a mutation of one package can
-/// stop being one only where another instantiates it, so a check is always
-/// about the whole workspace. A test build answers "which binaries will this
-/// run start", and a run only ever starts the binaries of the packages it is
-/// about, so building the rest is work nothing reads. Scoping a run is the one
-/// thing a person can do to make it shorter, and it did not use to shorten the
-/// longest part of it.
 fn arguments(kind: CompileKind, packages: &[String]) -> Vec<String> {
     let (command, rest) = kind.command();
     let mut args = vec![command.to_owned()];
@@ -62,11 +54,6 @@ fn arguments(kind: CompileKind, packages: &[String]) -> Vec<String> {
 }
 
 /// What a build is asked to compile, beyond the tree itself.
-///
-/// Cargo compiles a different program for a different feature set, target
-/// triple, or profile, and a run that measures one of them while the project
-/// ships another measures a program nobody runs. These are the words a person
-/// would have typed, passed on unchanged.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct BuildConfig {
     /// The features to turn on, which cargo takes as one comma-separated argument.
@@ -82,15 +69,6 @@ pub struct BuildConfig {
     /// How many compilation jobs cargo may run at once. `None` lets cargo choose.
     pub jobs: Option<u32>,
     /// Whether the compiler writes debug information into what it builds.
-    ///
-    /// A run reads what a test harness printed and never a backtrace, so the
-    /// debug information a build writes is bytes nobody reads — and on a real
-    /// workspace it is most of what a build writes: six gigabytes against one
-    /// for this repository's own engine. Every byte of it is generated,
-    /// linked, and written to a temporary directory that is thrown away.
-    ///
-    /// Somebody who wants a debugger on a kept snapshot asks for it, and then
-    /// nothing here overrides the profile they wrote.
     pub debug: bool,
 }
 
@@ -129,10 +107,6 @@ impl BuildConfig {
     }
 
     /// What tells cargo to write no debug information, when nothing asked for any.
-    ///
-    /// Only the two profiles this engine drives are named. A profile somebody
-    /// chose with `--profile` is one they meant, and editing it would be this
-    /// engine deciding something about a build it was told how to make.
     pub(crate) fn without_debug_information(&self) -> Vec<String> {
         if self.debug || self.profile.is_some() {
             return Vec::new();

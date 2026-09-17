@@ -2,11 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What a run keeps of itself, and what a later run may take away.
-//!
-//! Every one of these is reached here directly. Driving `verify` instead means
-//! starting a run, and the rule a collection rests on — that the newest is
-//! kept and the ones the indexes name are never taken — is one no run exercises
-//! until a directory has more in it than anybody wants to make in a test.
 
 #![expect(
     clippy::expect_used,

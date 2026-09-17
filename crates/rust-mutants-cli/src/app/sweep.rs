@@ -2,18 +2,10 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What the engine left in the temporary directory, and what a sweep may take back.
-//!
-//! There are three answers rather than two. Saying what is there removes
-//! nothing. `--gc` removes the snapshots nothing owns and the build caches
-//! nothing can look up any more — a cache is keyed to a source tree, so one
-//! whose tree is gone is one no run will ever hit, and sparing it is how a
-//! temporary directory grows without bound. `--gc --all` removes every build
-//! cache no live run holds, which is what a person means when the disk is
-//! full and the next run being slow is the price.
 
 use std::fmt::Write as _;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use jiff::Timestamp;
 use rust_mutants::{snapshot, tempowner, workspace};
@@ -118,13 +110,6 @@ pub(super) fn cache(
 }
 
 /// What a sweep that spent its budget says, which is what it did not look at rather than what it failed to remove.
-///
-/// Removing a directory is usually instant. One a wedged device still holds
-/// can take minutes to refuse, and a sweep that walked a hundred of those
-/// would run for a day — so it stops, says how many it left, and the next
-/// sweep starts with them. The remedy is not to run it again harder: a
-/// directory that will not go is being held by something, and that something
-/// is what a person has to deal with.
 fn unreached(count: usize) -> String {
     if count == 0 {
         return String::new();
@@ -138,10 +123,6 @@ fn unreached(count: usize) -> String {
 }
 
 /// What measuring trees established, which a run of an unchanged tree reads instead of measuring again.
-///
-/// A measurement is filed under everything it is a function of, so one that no
-/// longer answers is one no key names: they go stale by being unreachable
-/// rather than by being wrong, and a sweep never has to decide which.
 fn measurements(environment: &Environment) -> String {
     let directory = environment
         .cache_directory
@@ -159,14 +140,38 @@ fn measurements(environment: &Environment) -> String {
     format!("{held} records, {bytes} bytes, at {}", directory.display())
 }
 
+/// Where this project keeps its reports, which is where the ledger of kept directories lives.
+fn reports_directory(root: &Path) -> PathBuf {
+    crate::config::Config::load(root).map_or_else(
+        |_error| PathBuf::from(crate::config::DEFAULT_REPORTS_DIRECTORY),
+        |config| config.reports.directory,
+    )
+}
+
 /// The directories runs were asked to keep, listed or removed.
 fn preserved(asked: &Sweeping<'_>, environment: &Environment) -> Result<String, CliError> {
     let root = environment.rooted(asked.root);
-    let directory = root.join(crate::config::DEFAULT_REPORTS_DIRECTORY);
+    let directory = root.join(reports_directory(&root));
     if asked.kept {
-        let (removed, _empty) = crate::kept::Ledger::clear(&directory)
+        let (removed, left) = crate::kept::Ledger::clear(&directory)
             .map_err(|source| CliError::writing(&directory, source))?;
-        return Ok(format!("kept        {removed} removed\n"));
+        let mut text = format!("kept        {removed} removed\n");
+        for entry in &left.kept {
+            let written = writeln!(
+                text,
+                "            still there: {} ({})",
+                entry.path.display(),
+                entry.run_id
+            );
+            debug_assert!(written.is_ok(), "writing to a String cannot fail");
+        }
+        if !left.kept.is_empty() {
+            text.push_str(
+                "            try: something is holding these open, and a sweep cannot take \
+                 them back\n",
+            );
+        }
+        return Ok(text);
     }
     let ledger = crate::kept::Ledger::read(&directory);
     let mut text = format!("kept        {}\n", ledger.kept.len());

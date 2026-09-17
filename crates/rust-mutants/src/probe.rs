@@ -2,24 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Which return replacements a guard may ask about, and what it asks.
-//!
-//! A return replacement writes a constant — the default, `true`,
-//! `Ok(default)`, `Some(default)` — so whether a test could have seen it is
-//! answered by comparing the value the program already computed against that
-//! constant. A value that already equals it changed nothing the test could
-//! see, and the test cannot have killed the mutant however far it ran
-//! afterwards.
-//!
-//! Two things have to hold, and this module decides the first. Evaluating the
-//! value must not itself be an event — no effects, no possible panic,
-//! guaranteed to terminate — which is an allowlist over the syntax,
-//! deliberately narrow. The second is the type, which only the compiler can
-//! answer: [`crate::instrument::witness`] puts the question, and the sealed
-//! trait the witness tree and the runtime are both rendered from says what an
-//! answer of yes means.
-//!
-//! A question this release cannot state is a mutant executed the ordinary way,
-//! which costs time and never correctness.
 
 use syn::{BinOp, Expr, Lit, UnOp};
 
@@ -38,13 +20,6 @@ pub fn is_probed(rule: &str) -> bool {
 }
 
 /// Whether evaluating `expr` a second time is not itself an event.
-///
-/// The allowlist is paths, literals, field chains, references, casts, `!`,
-/// comparisons, the connectives, tuple and struct literals, the unit
-/// constructors, and `Default::default()`. Everything else is refused,
-/// including every call and every arithmetic operator: in a debug build `a + b`
-/// can panic, and a panic during a probe is an event the unprobed program does
-/// not have.
 #[must_use]
 pub fn is_effect_free(expr: &Expr) -> bool {
     match expr {

@@ -337,9 +337,7 @@ fn a_failing_baseline_is_never_remembered() {
     );
 }
 
-/// A target whose first run fails and whose second passes, keyed by a file it leaves in the
-/// directory the run gives it: both baseline runs of one target share that directory, so the
-/// second finds what the first wrote.
+/// A target whose first run fails and whose second passes, keyed by a file it leaves in the directory the run gives it: both baseline runs of one target share that directory, so the second finds what the first wrote.
 const PASSES_ON_RETRY: &str = r#"// SPDX-FileCopyrightText: 2026 njutest contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 

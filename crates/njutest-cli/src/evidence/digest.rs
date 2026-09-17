@@ -58,17 +58,6 @@ impl Fields {
 }
 
 /// Adds one value to a digest as the digest of its bytes, which is a fixed width, so no two different lists of values give one number.
-///
-/// Fixed width is what makes the concatenation unambiguous, and it is why
-/// there is no length here to write. A length is not fixed width: it has a
-/// value it cannot carry, and therefore a branch for what to do about that
-/// value — a branch no field of this digest can ever reach, since every one
-/// of them is a digest, a version banner, a path, or an environment value.
-/// A branch nothing reaches is a branch nothing holds to anything, and the
-/// way to be rid of one is to not have it.
-///
-/// Two different values give two different digests unless SHA-256 collides,
-/// which is the assumption the whole recipe already rests on.
 fn write(hasher: &mut Sha256, value: &str) {
     hasher.update(Sha256::digest(value.as_bytes()));
 }
@@ -142,11 +131,6 @@ pub struct Inputs {
     /// How much of the workspace the run looked at.
     pub mode: Mode,
     /// Which part of the catalog the run judged, as `K/N`, or nothing when it judged every one.
-    ///
-    /// `mode` says how much of the tree was read; this says how much of the
-    /// catalog was put to a test, which is a different axis. Without it a run
-    /// that judged half a catalog and one that judged all of it have one
-    /// identity, and the first is handed the second's answer.
     pub shard: Option<String>,
 }
 

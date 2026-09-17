@@ -2,17 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! One command's answer, in the shape a spawned one has.
-//!
-//! An instrumented subprocess retains the outer mutation identity, so its
-//! guards are measured. Its main thread has no libtest test name, which makes
-//! those touches unattributed and safely widens their route to every test of
-//! the target. Driving the same command through the library entry point in the
-//! test process retains per-test attribution and avoids that extra work.
-//!
-//! [`answered`] lets a suite written against [`std::process::Output`] keep its
-//! assertions when it moves in-process. What is not exercised there is the
-//! wiring in `main.rs` between the process and the entry point, which is what
-//! the remaining spawning tests are for.
 
 /// What one command said, as a spawned process would have said it.
 #[must_use]

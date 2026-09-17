@@ -39,11 +39,6 @@ pub fn describe(root: &Path, env: &[(OsString, OsString)], watch: Watch<'_>) -> 
 }
 
 /// Every file that differs from `base`, committed and not.
-///
-/// Returns nothing when git could not be asked or does not know `base`,
-/// which the caller states as a limitation rather than reading as an empty
-/// change set: a run that verified nothing because it could not see what
-/// changed must never look like a run that verified everything that did.
 #[must_use]
 pub fn changed(
     root: &Path,

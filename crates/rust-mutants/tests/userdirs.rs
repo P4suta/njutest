@@ -17,11 +17,6 @@ fn given(named: &[(&str, &str)]) -> Vec<(OsString, OsString)> {
 }
 
 /// A path that is absolute on the machine the test runs on, from a slash-separated tail.
-///
-/// What counts as an absolute path is the platform's question, not a shape:
-/// Windows wants a volume in front of it and a leading slash alone does not
-/// give one. A suite that spelled a unix path would be asking a unix question
-/// there, and would pass by taking the branch it meant to prove is not taken.
 fn absolute(tail: &str) -> String {
     if cfg!(windows) {
         format!("C:\\{}", tail.replace('/', "\\"))

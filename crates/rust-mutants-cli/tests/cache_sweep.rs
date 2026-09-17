@@ -2,12 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What `cache` says is on the disk, and what a sweep takes back.
-//!
-//! Every line here is a number a person reads before deciding to remove
-//! something, so the two failures that matter are a sweep that removed what it
-//! only said it would, and one that said it removed what is still there. Both
-//! are the same line read two ways, so the tests read the disk afterwards
-//! rather than the line alone.
 
 #![expect(
     clippy::expect_used,

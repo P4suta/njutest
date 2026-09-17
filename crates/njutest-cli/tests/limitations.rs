@@ -138,13 +138,6 @@ fn the_names_a_run_states_are_the_names_the_register_holds() {
 }
 
 /// The limitations nothing puts to a run, and why.
-///
-/// Both are decided inside a function that builds a tree with instrumentation
-/// and runs a toolchain over it, so nothing can ask them without paying for all
-/// of it: a coverage build that fails where the ordinary one succeeded, and a
-/// toolchain whose sysroot holds no `llvm-profdata`. Neither is a state a
-/// fixture can be written into. The list is here so that the next limitation
-/// added is one somebody has to put on it on purpose.
 const UNREACHED: [&str; 2] = [
     rust_mutants::limitation::COVERAGE_BUILD_FAILED,
     rust_mutants::limitation::COVERAGE_TOOLS_MISSING,
@@ -156,11 +149,6 @@ fn shouted(name: &str) -> String {
 }
 
 /// Every other name a limitation is exported under, which is how the module that states it names it.
-///
-/// A layer re-exports the limitation it can state under a name that reads in
-/// its own terms — `reach::UNMEASURED`, `touch::UNREADABLE` — and a test of
-/// that layer names it the way the layer does. Reading the re-exports rather
-/// than listing them keeps the next one from being a gap nobody sees.
 fn aliases(root: &Path) -> BTreeMap<String, Vec<String>> {
     let mut found: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut pending = vec![root.join("crates")];

@@ -8,12 +8,6 @@ use std::collections::BTreeMap;
 use crate::catalog::Mutant;
 
 /// Which targets could notice a mutation, and what the route rests on.
-///
-/// A route is the reach layer of [ADR 0004](../../../../docs/adr/0004-proof-layers-not-budgets.md):
-/// a rule that removes an execution because evidence the run already holds
-/// says the execution could not observe the mutant. Every fallback is toward
-/// running more, and every one of them is named, so a reader who sees a run go
-/// faster can say which layer did it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Route {
@@ -41,11 +35,6 @@ pub enum Route {
     /// A mutation no measured target executes, which nothing needs to run to find out again.
     Unreached {
         /// The targets that were measured, asked, and did not reach the mutation, in the order they were offered.
-        ///
-        /// A layer that removes an execution has to name who was in a position
-        /// to notice and did not, or a reader has only the word "unreached"
-        /// and no way to check it. This is that list, and its length is what a
-        /// report counts.
         considered: Vec<String>,
     },
 }
@@ -96,11 +85,6 @@ impl Fallback {
 }
 
 /// One target a route keeps, and which of its tests it puts the mutation to.
-///
-/// The tests belong to the target rather than beside it, so a route cannot
-/// name tests of a target it does not keep, and cannot keep a target whose
-/// tests it forgot to say anything about. Both were states two parallel
-/// collections could reach and neither is a state that means anything.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Reaches {
     /// The target.
@@ -172,11 +156,6 @@ pub struct Routing<'a> {
     /// Every target the run built.
     pub targets: &'a [&'a str],
     /// The targets a coverage build can measure, which is every one it compiles.
-    ///
-    /// A library's documented examples are compiled by rustdoc while cargo
-    /// runs them, so no coverage build instruments them and no measurement can
-    /// name them. They are not unmeasured targets, they are targets this
-    /// measurement is not about, and they reach by the rule in `also_reaching`.
     pub measurable: &'a [&'a str],
     /// The targets routed by a rule other than the measurement.
     pub also_reaching: &'a [&'a str],
@@ -188,16 +167,6 @@ impl Route {
         ["all", "block", "test", "discharged", "unreached"];
 
     /// Which targets a measurement puts at `position` of `path`, out of `targets`.
-    ///
-    /// A target that ran and whose profile could not be read is kept: what the
-    /// measurement says nothing about is run rather than assumed.
-    /// A target a coverage build could have measured is measured when the
-    /// measurement **names** it, and not otherwise. One that is absent — its
-    /// profile unreadable, its run never made, the measurement cut short
-    /// before it — is one nothing was established about, and it stays in the
-    /// route. Being absent from a measurement is not the same as being
-    /// measured and covering nothing, and reading the first as the second
-    /// turns a kill into a survivor: the one thing this layer must never do.
     #[must_use]
     pub fn decide(
         reached: &crate::reach::Reached,
@@ -259,13 +228,6 @@ impl Route {
     }
 
     /// Which of each target's tests the guards put at `index`, out of `targets`.
-    ///
-    /// The guards record on the run that verifies the baseline, and libtest
-    /// names each test's thread after the test, so the answer is per test
-    /// rather than per target. A target the record does not name is one
-    /// nothing was established about and stays in the route with every test
-    /// of it; a site recorded where nothing named a test reaches every test of
-    /// its target, for the same reason. Both run more, never less.
     #[must_use]
     pub fn by_touch(touched: &crate::touch::Touched, index: u32, among: &Routing<'_>) -> Self {
         let Routing {
@@ -376,14 +338,6 @@ impl Route {
     }
 
     /// What this route would take, as the share of each target's own baseline the tests it names come to.
-    ///
-    /// A pair is a process, and what a process takes is what its tests take. A
-    /// route that puts a mutation to two tests of a target with two hundred
-    /// takes a hundredth of that target's baseline, not the whole of it — and
-    /// not the whole of the slowest target the build happened to produce,
-    /// which is all an estimate that knows one number can reach for. A target
-    /// the caller cannot time is priced at whatever it hands back, which is
-    /// the guess that errs toward too long.
     #[must_use]
     pub fn costing<F: Fn(&str) -> Timing>(&self, of: F) -> std::time::Duration {
         self.reaching()
@@ -441,15 +395,6 @@ impl Route {
     }
 
     /// The targets the coverage measurement alone places at the mutation, or nothing when it places none.
-    ///
-    /// This is what [`super::Session::exec`] runs, and it is deliberately wider than
-    /// [`Route::reaching`]: a discharge is a proof a caller may not share, and
-    /// `exec` is the question "what do the tests say", asked by a caller with
-    /// its own evidence. [`super::Session::judge`] is the one that removes work.
-    ///
-    /// It is the one place a coverage narrowing is decided: an execution that
-    /// narrowed by anything else would run fewer targets than the route says,
-    /// and a survivor it reported would be one nobody measured.
     #[must_use]
     pub fn narrowing(&self) -> Option<Vec<String>> {
         let with_discharged = |reaching: &[String], discharged: &[Discharge]| {
@@ -478,16 +423,6 @@ impl Route {
     }
 
     /// The targets that were measured, asked, and did not reach the mutation.
-    ///
-    /// A route that keeps nothing has to say who it asked, or "unreached" is a
-    /// word with nothing behind it and an audit can only confirm that the
-    /// engine said it.
-    ///
-    /// Only a route that keeps nothing carries the list. A route that kept
-    /// some targets and dropped others names the ones it kept and the ones a
-    /// proof removed, and says nothing about the ones the measurement placed
-    /// elsewhere — an asymmetry, and one a reader asking "why was this target
-    /// not run" meets.
     #[must_use]
     pub fn considered(&self) -> &[String] {
         match self {
@@ -506,12 +441,6 @@ impl Route {
     }
 
     /// The targets an execution of this route ran, given the target that answered and whether it detected the mutation.
-    ///
-    /// [`super::Session::exec`] walks the routed targets in order and stops at the
-    /// first one that detects, so what ran is the whole route when nothing
-    /// detected and the prefix ending at the answer when one did. An answer
-    /// this route does not hold is one target on its own, which is what
-    /// `--target` asks for.
     #[must_use]
     pub fn executed(&self, answered: &str, detected: bool) -> Vec<String> {
         if answered.is_empty() {

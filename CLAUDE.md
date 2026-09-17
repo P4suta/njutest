@@ -40,14 +40,15 @@ cargo xtask report-diff A B   # what changed between two stored reports
 
 - English in code, documentation, and commits. Conventional Commits. SPDX
   header on every `.rs`, `.toml`, `.yml`.
-- **No comments.** `cargo xtask lints` refuses one anywhere in the
-  repository's own code. What stays is the SPDX header, the documentation the
-  lint set requires (plus the `# Errors` and `# Panics` sections clippy asks
-  for), and a `rust-mutants:` annotation, which is an instruction the engine
-  reads rather than an account of the code. Nothing else: a name that needs a
-  comment is a name to change, an assertion that needs one wants a better
-  message, and a rationale worth writing belongs in the item's own
-  documentation, where `cargo doc` shows it and a reader can find it.
+- **No comments, and one line of documentation.** `cargo xtask lints` refuses a
+  comment anywhere in the repository's own code. What stays is the SPDX header,
+  a `rust-mutants:` annotation, which is an instruction the engine reads rather
+  than an account of the code, and one line per item saying what it is — plus
+  the `# Errors` and `# Panics` sections clippy asks for. Nothing else: a name
+  that needs a comment is a name to change, and an assertion that needs one
+  wants a better message. A rationale long enough to want paragraphs belongs in
+  `docs/` or an ADR, where somebody deciding goes looking for it, rather than
+  beside the code, where it is read by everybody working past it.
 - Workspace lints are strict (`pedantic`, `nursery`, `unwrap_used`, …).
   **`#[allow]` is never written** — `cargo xtask lints` refuses it anywhere,
   tests included. A waiver is `#[expect(…, reason = "…")]`, which the

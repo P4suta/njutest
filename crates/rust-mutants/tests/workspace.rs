@@ -2,9 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Opening a tree: what the engine asks the toolchain, and what it says when the answer is not one it can use.
-//!
-//! Every command here is scripted, so what fails is the engine's reading of a
-//! toolchain rather than a toolchain.
 
 use std::path::PathBuf;
 
@@ -402,11 +399,6 @@ fn a_compile_stopped_by_cancellation_is_an_error_not_a_failed_build() {
 }
 
 /// A test process binding a Unix socket under the directory it runs in pays for every byte of that directory's path.
-///
-/// `sun_path` is 104 bytes on macOS, where the temporary root already spends
-/// about fifty, and a test that binds a socket has to fit its own temporary
-/// directory and a name inside what is left. The engine's contribution is what
-/// decides whether that test passes under a run and fails outside one.
 #[test]
 fn what_a_run_adds_leaves_a_test_room_to_bind_a_socket() {
     const SUN_PATH: usize = 104;

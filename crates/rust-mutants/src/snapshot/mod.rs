@@ -56,25 +56,10 @@ pub struct Options {
     /// Patterns matched against each entry's `/`-normalized path relative to the source root. A matching directory is skipped whole.
     pub exclude: Vec<Pattern>,
     /// Directories to copy beside the tree, each under its own name.
-    ///
-    /// A workspace that reads a path dependency from a sibling directory
-    /// reads it from beside the tree, and a copy that holds only the tree
-    /// cannot build. Copying the sibling under the same name makes the same
-    /// relative path resolve inside the copy. Their contents are not part of
-    /// the workspace digest: they are read and never mutated, and a run that
-    /// says what it measured must say the tree.
     pub beside: Vec<PathBuf>,
     /// The configured report directory as a source-root-relative path. `None` means the default. It is excluded in addition to, never instead of, [`DEFAULT_REPORT_DIR`].
     pub report_dir: Option<String>,
     /// The directory cargo builds into, as a source-root-relative path, when it is inside the root.
-    ///
-    /// `CACHEDIR.TAG` is a hint a cooperating tool leaves, and cargo leaves it
-    /// only when it creates the directory itself. A project whose makefile put
-    /// something under `target/` before the first `cargo` invocation has a
-    /// build directory that is never tagged and never will be, and a walk that
-    /// knew only the tag copied thirteen gigabytes of somebody else's build
-    /// output. Cargo says where it builds, so the run asks it rather than
-    /// hoping. `None` leaves the tag as the only rule.
     pub build_dir: Option<String>,
     /// The absolute directory the snapshot is created in. The composition root decides where the temporary area is; this module never asks the process environment.
     pub dest_parent: PathBuf,
@@ -105,16 +90,6 @@ pub struct Entry {
 }
 
 /// One entry the snapshot did not copy because it is not a regular file.
-///
-/// A symbolic link, a Windows reparse point, and a device or socket are not
-/// files this engine copies: following one can leave the tree, and copying one
-/// is not copying what it stands for. Refusing to *run* over one is a
-/// different thing, and it refuses to measure trees the compiler is perfectly
-/// happy with — a `node_modules` beside the Rust, a `.git` hook directory, a
-/// convenience link to a sibling checkout. So the entry is recorded, its
-/// spelling goes into the workspace digest, and the build is left to say
-/// whether it mattered: a tree missing something it needs does not compile,
-/// and the pristine gate reports that before anything is measured.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PassedOver {
     /// The path relative to the tree, with forward slashes.
@@ -618,12 +593,6 @@ struct Walker<'a> {
     rejected: Vec<SnapshotError>,
     passed_over: Vec<PassedOver>,
     /// Whether an entry that is not a regular file is recorded and walked past rather than refused.
-    ///
-    /// It is, in the tree being copied: what a user keeps beside their Rust is
-    /// their business, and the build says whether a link mattered. It is not,
-    /// in the snapshot being re-walked afterwards, where such an entry can only
-    /// have appeared while the tests were running, which is the drift the
-    /// re-walk is there to find.
     forgiving: bool,
 }
 
@@ -810,11 +779,6 @@ const CACHE_TAG: &[u8] = b"Signature: 8a477f597d28d172789f06886806bc55";
 const CACHE_TAG_NAME: &str = "CACHEDIR.TAG";
 
 /// Whether this directory is a cache somebody else owns.
-///
-/// `target/` carries the tag, and copying it would put gigabytes of build
-/// output into the snapshot — output another cargo may be rewriting while
-/// the copy reads it, which is a race with no upside: nothing under it is
-/// source, and the engine builds into a directory of its own.
 fn is_cache_directory(dir: &Path) -> bool {
     let Ok(bytes) = fs::read(dir.join(CACHE_TAG_NAME)) else {
         return false;
@@ -867,17 +831,6 @@ fn copy_file(src: &Path, dst: &Path, meta: &Metadata) -> io::Result<(u64, String
 }
 
 /// Gives the copy the time the original was written, and says nothing when it cannot.
-///
-/// Cargo decides whether to compile a file by comparing its modification time
-/// with the artifact built from it. A copy stamped with *now* is newer than
-/// every artifact any earlier run left behind, so the whole dependency graph
-/// is compiled again on every run however much of it is already there — which
-/// makes the build cache this engine keeps between runs worth nothing.
-///
-/// The time is metadata, not content: the manifest's digests are of the bytes,
-/// and nothing about drift, identity or instrumentation reads a timestamp. A
-/// copy that carries it is a more faithful copy, and a filesystem that will
-/// not set it costs a rebuild rather than a run.
 fn keep_times(output: &File, meta: &Metadata) {
     let Ok(modified) = meta.modified() else {
         return;

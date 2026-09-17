@@ -2,10 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The record the guards leave, read as data: what it refuses, and what it says about one test.
-//!
-//! Every refusal here is a whole log that says nothing. A reader that took the
-//! prefix that parsed would hand a route a smaller answer than the truth, and
-//! a smaller answer is a test that would have run and did not.
 
 use std::collections::BTreeSet;
 

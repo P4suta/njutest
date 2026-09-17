@@ -30,11 +30,6 @@ pub(super) fn run(
 }
 
 /// Writes a complete plan or returns the one reason no plan can be made.
-///
-/// Keeping failure in the value until the composition boundary gives success
-/// and failure one observable exit decision. It also avoids a tail expression
-/// whose only possible value is zero, which is indistinguishable from
-/// `u8::default()` under mutation.
 fn planned(
     arguments: &Arguments,
     environment: &Environment,
@@ -91,10 +86,6 @@ fn planned(
 }
 
 /// Every binary a run would measure, and how many tests each of them holds.
-///
-/// A run measures a binary and a route names which of its tests a mutation is
-/// put to, so a plan that listed tests would name a thing a run never reports.
-/// What a reader wants from the count is still there, one column along.
 fn selected(
     units: &[crate::targets::Unit],
     watch: Watch<'_>,
@@ -174,12 +165,6 @@ fn locate(
 }
 
 /// One target, and — when asked — what put it in scope.
-///
-/// The three reasons are the three kinds of thing a run measures, and each of
-/// them is a different thing for a reader to do: a library's examples are a
-/// target a route cannot narrow, a binary that answers by exiting is one a
-/// route cannot narrow either but for another reason, and everything else is a
-/// count they can compare with what the suite says it has.
 #[must_use]
 pub fn line(planned: &Planned, why: bool) -> String {
     let head = format!("TARGET\t{}\t{}", planned.target.id, planned.target.name());
@@ -201,10 +186,6 @@ pub fn line(planned: &Planned, why: bool) -> String {
 }
 
 /// What a run of this tree would compile: the packages the reader or the configuration named, and the features the configuration turns on.
-///
-/// A plan says what a run would measure, so it answers to the same
-/// configuration the run answers to. One that read none of it would describe a
-/// run nobody asked for, and be believed, because describing is all it does.
 ///
 /// # Errors
 /// Returns the configuration's own refusal, rendered.
@@ -236,11 +217,6 @@ fn scope(arguments: &Arguments, packages: &[String]) -> String {
 }
 
 /// The first package named that is no member of the workspace, if one is.
-///
-/// A verification refuses this and says so; a plan used to answer `TARGETS 0`
-/// and exit zero, which reads as a package with nothing to run in it. A plan is
-/// what a person asks before a run to find out what will happen, so the two
-/// must give the same answer to the same mistake.
 fn unknown_package(named: &[String], members: &[rust_mutants::cargo::Package]) -> Option<String> {
     named
         .iter()

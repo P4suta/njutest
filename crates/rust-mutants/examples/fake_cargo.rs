@@ -2,18 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! A cargo, a rustc, a coverage tool, or a test binary that says what a script told it to say.
-//!
-//! It answers to whatever name it was started as, reads one variable, and does
-//! what the first entry matching its command line says: write these files, wait
-//! this long, print this, exit with that. An invocation no entry matches exits
-//! 99 with its own command line on stderr, so a suite that forgot to script
-//! something fails saying what it forgot.
-//!
-//! This is not part of the engine. It is an example so that `cargo test`,
-//! `cargo nextest run`, and `cargo llvm-cov` build it beside the test binaries
-//! on every platform, which a binary of a development-only crate would not be.
-//! The script it reads is `njutest_devkit::fake_cargo::Script`, so what a test
-//! writes and what this reads are one type.
 
 #![expect(
     clippy::print_stderr,

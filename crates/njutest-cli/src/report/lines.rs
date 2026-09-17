@@ -137,10 +137,6 @@ fn identity(report: &Report, out: &mut String) {
 }
 
 /// A list as a reader sees it, saying that it is empty rather than being empty.
-///
-/// `requested=` followed by nothing reads as a value the run failed to get.
-/// The run did get it: nobody asked for anything, which is a different fact
-/// and the commonest one.
 fn named(values: &[String]) -> String {
     if values.is_empty() {
         return String::from("(nothing named)");

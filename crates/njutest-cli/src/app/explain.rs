@@ -93,8 +93,7 @@ pub fn run(
     EXIT_ASSURED
 }
 
-/// The one mutant a prefix names, or a diagnostic saying why it names none
-/// or several.
+/// The one mutant a prefix names, or a diagnostic saying why it names none or several.
 fn one<'a>(
     matching: &[&'a crate::report::MutantRecord],
     prefix: &str,

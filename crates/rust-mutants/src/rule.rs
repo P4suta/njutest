@@ -159,12 +159,6 @@ pub struct Rule {
 }
 
 /// The rules whose survivor is a statement about a path, rather than about a value nobody checked.
-///
-/// Each of these replaces the failing half of a fallible expression with
-/// something that cannot fail. A mutation of that kind surviving is not
-/// evidence weighed against other evidence: it follows from the definition
-/// that the failing half was never executed, because a test that had executed
-/// it would have seen the replacement do something else.
 const UNEXECUTED_PATH_RULES: [&str; 3] = [
     "question-to-unwrap",
     "ignore-question-statement",
@@ -173,14 +167,6 @@ const UNEXECUTED_PATH_RULES: [&str; 3] = [
 
 impl Rule {
     /// Whether a survivor of this rule says a path was never taken.
-    ///
-    /// The distinction decides whether several survivors of one rule in one
-    /// file are several findings or one. Twenty-seven surviving
-    /// `question-to-unwrap` mutations are twenty-seven instances of a single
-    /// proposition — the error paths of this file are not exercised — and
-    /// reading them one at a time is reading the same sentence twenty-seven
-    /// times. Nine surviving `le-to-lt` mutations are nine different
-    /// boundaries, and folding them would hide eight.
     #[must_use]
     pub fn survivor_names_an_unexecuted_path(&self) -> bool {
         UNEXECUTED_PATH_RULES.contains(&self.name)

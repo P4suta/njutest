@@ -273,18 +273,6 @@ fn arguments(toolchain: &Toolchain, options: &BuildOptions) -> Vec<OsString> {
 pub const BUILD_PROFILES: &str = "build-profiles";
 
 /// What a cargo configuration costs an instrumented build, which is what the build says it could not honour.
-///
-/// An instrumented build compiles with a flag of its own, which it can only
-/// add by writing every flag the project configured back in one place. Two
-/// kinds of flag do not survive that. A `target.*` table says flags whose
-/// application is cargo's decision about the target being built rather than
-/// this build's, so they are left out. A file this release could not read
-/// faithfully says nothing about what it asks for, so nothing of it is written
-/// back.
-///
-/// Both are stated when both apply: a reader told only one of them would go
-/// looking for the wrong file, and the coverage a run routes by was taken from
-/// a build that differs from the project's in both ways rather than in one.
 #[must_use]
 pub fn configured_limitations(configured: &rustflags::Configured) -> Vec<&'static str> {
     let mut named = Vec::new();
@@ -372,10 +360,6 @@ fn failure_of(messages: &[Message], output: &[u8]) -> Option<String> {
 }
 
 /// The files each package's library compiles, workspace-relative with forward slashes.
-///
-/// A documented example is compiled by rustdoc into a binary this run never
-/// sees, so there is no coverage to read for it. What is known is the library
-/// it exercises, and these are its files.
 fn library_sources(
     messages: &[Message],
     packages: &[rust_mutants::cargo::Package],

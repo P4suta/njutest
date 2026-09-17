@@ -2,19 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Combining the parts of one catalog into the report the whole would have written.
-//!
-//! A part judged the mutants its shard held and measured the whole baseline,
-//! and it concluded [`crate::report::Verdict::Partial`] because the mutations it did not
-//! judge are not mutations nothing noticed. This puts the parts back together
-//! and derives the verdict the whole supports.
-//!
-//! What it refuses is the point. The engine refuses parts of two catalogs and
-//! parts that overlap; this refuses two more, because a runner's report is not
-//! the same kind of document. The engine's is a collection of "running it said
-//! this", and two such collections add up whatever settings produced them. A
-//! runner's report is one claim — that a contract was met — and a claim
-//! assembled from a part that met it and a part that met something else is
-//! true of neither.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -75,11 +62,6 @@ impl MergeError {
 
 /// The report the whole catalog would have written, from the reports of its parts.
 ///
-/// The accounting and the verdict are derived again from what the whole holds
-/// rather than combined from what the parts said: a part's numbers are over a
-/// different denominator, and averaging them is how a report comes to say
-/// something no run observed.
-///
 /// # Errors
 /// See [`MergeError`]. Every one of them is a refusal to add up things that
 /// are not parts of one answer.
@@ -102,11 +84,6 @@ pub fn merge(parts: &[Report]) -> Result<Report, MergeError> {
 }
 
 /// Requires exactly one report for every part of one `K/N` division.
-///
-/// Clearing `scope.shard` turns the union into a claim about the whole catalog.
-/// That is sound only when the labels themselves prove that no part is absent;
-/// disjoint mutant rows cannot prove that, because an absent part has no rows
-/// with which to overlap.
 fn complete_shard_set(parts: &[Report]) -> Result<(), MergeError> {
     if parts.len() == 1 && parts.first().is_some_and(|part| part.scope.shard.is_none()) {
         return Ok(());
@@ -248,11 +225,6 @@ fn judged(parts: &[Report]) -> Result<Vec<super::MutantRecord>, MergeError> {
 }
 
 /// One list from every part's, each entry once, in the order the parts were offered.
-///
-/// A part states what it found and what it is not claiming, and two parts of
-/// one run state the same limitations about the same baseline: keeping one of
-/// each is what stops a whole from saying a thing twice for every part it was
-/// cut into.
 fn gathered<T: PartialEq + Clone, F: Fn(&Report) -> Vec<T>>(parts: &[Report], of: F) -> Vec<T> {
     let mut seen: Vec<T> = Vec::new();
     for part in parts {
@@ -266,16 +238,6 @@ fn gathered<T: PartialEq + Clone, F: Fn(&Report) -> Vec<T>>(parts: &[Report], of
 }
 
 /// The whole's mutant counts, derived from what the whole holds.
-///
-/// Derived rather than added up, so the whole's columns say what the whole's
-/// own records say however a part counted itself. A *score* would not survive
-/// either way — two ratios over different denominators average into a number
-/// no run observed — which is why the verdict is decided again from the whole
-/// rather than carried over from a part.
-///
-/// The one column no record carries is `accepted`, which is a fact about a
-/// reviewer rather than about a mutant, so it is summed. Every mutant belongs
-/// to exactly one part, so the sum counts each acceptance once.
 fn counted(parts: &[Report], mutants: &[super::MutantRecord]) -> MutantAccounting {
     let mut counts = MutantAccounting {
         cataloged: u32::try_from(mutants.len()).unwrap_or(u32::MAX),
@@ -315,10 +277,6 @@ fn counted(parts: &[Report], mutants: &[super::MutantRecord]) -> MutantAccountin
 }
 
 /// When the parts ran, as one span: the first start, the last finish, and the time they cost between them.
-///
-/// The duration is the sum rather than the span, because parts run on
-/// different machines at once and the wall clock of the whole is not what the
-/// work cost.
 fn spanning(parts: &[Report]) -> super::Timing {
     let said = |when: fn(&Report) -> &String| {
         parts

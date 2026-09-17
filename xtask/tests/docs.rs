@@ -244,11 +244,6 @@ fn linking_files() -> Vec<PathBuf> {
 }
 
 /// Every local path one file links to, as written.
-///
-/// A markdown link target is what a reader clicks, in a page and in the doc
-/// comment of an item alike. Anything else that looks like a path is not a
-/// link: a test that writes `docs/design.md` into a fixture is naming a file
-/// it creates, not one this repository holds.
 fn linked(text: &str) -> BTreeSet<String> {
     let mut found = BTreeSet::new();
     let mut rest = text;

@@ -58,12 +58,6 @@ struct Source<'a> {
 
 /// Every marker in one file, in source order.
 ///
-/// A comment is what the lexer threw away, so the markers are read out of the
-/// gaps between the tokens rather than out of the text: bytes inside a string
-/// literal are a token's, and a marker spelled there is a string that says the
-/// words. A documentation comment is a `#[doc]` attribute by the time the
-/// tokens exist, so its bytes are a token's too and it is never a marker.
-///
 /// # Errors
 /// Returns the first marker that names no reason or an unknown directive.
 pub(super) fn markers(

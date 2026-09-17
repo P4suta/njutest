@@ -2,9 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Which regions of which files one test reached.
-//!
-//! The columns `llvm-cov` reports are 1-based byte columns, the same unit the
-//! engine's positions use, so a region and a mutant can be compared directly.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -379,11 +376,6 @@ impl Tools {
     }
 
     /// Turns a merged profile and the binaries it may name into regions.
-    ///
-    /// Every binary a test process may have run belongs here: a test that
-    /// spawns another of the workspace's binaries writes that binary's
-    /// counters into the same profile, and a reader given only the test
-    /// binary would report the spawned code as never executed.
     ///
     /// # Errors
     /// [`CoverageErrorKind::ToolFailed`] and the refusals of

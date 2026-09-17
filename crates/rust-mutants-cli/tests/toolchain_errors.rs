@@ -54,11 +54,6 @@ fn environment(fixture: &Fixture) -> Environment {
 }
 
 /// A reserved variable is about the environment a process inherits, so this one starts a process.
-///
-/// An instrumented child legitimately inherits the outer measurement's
-/// activation and catalog. Removing that complete pair and adding an
-/// incomplete touch mode reaches the composition root's fail-closed boundary
-/// without the generated runtime rejecting a stale activation first.
 #[test]
 fn a_reserved_variable_names_itself_and_says_what_to_do() {
     let fixture = Fixture::copy("fixture-simple");

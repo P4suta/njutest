@@ -166,9 +166,6 @@ impl RunResult {
 }
 
 /// What a supervised command runs under: the flag that stops it, and who hears that it ran.
-///
-/// A caller that keeps no record implements [`Watch::exec`] as nothing, so
-/// the code that runs commands never branches on whether anybody is listening.
 pub trait Watch {
     /// Raised when the caller should stop.
     fn cancel(&self) -> &Cancel;
@@ -371,19 +368,6 @@ fn start(spec: &Spec, program: &OsString) -> Result<Started, Failed> {
 }
 
 /// The program to start, found on the search path the spec's own environment names.
-///
-/// A spec that names an environment names all of it, and what a bare program
-/// name means is part of that. Windows does not read it that way: it resolves
-/// a bare name against the environment of the process doing the starting, so a
-/// run handed a search path with nothing on it would start the caller's
-/// program anyway and report what somebody else's machine has. Resolving here
-/// makes the answer the same everywhere, including the answer "there is no
-/// such program": a name the search path does not hold is refused here rather
-/// than handed on, because handing it on is exactly what lets the platform
-/// answer in this one's place.
-///
-/// A name that is already a path is left alone, and so is a spec that asked to
-/// inherit this process's own environment.
 ///
 /// # Errors
 /// The name is bare and the environment's search path does not hold it.

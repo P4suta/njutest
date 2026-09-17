@@ -123,10 +123,6 @@ fn ledger() -> String {
 }
 
 /// The text of every Rust file of the runner, with the ledger's declarations taken out.
-///
-/// A code is declared once and reported wherever a failure carries it, and it
-/// is the second that this looks for. Leaving the declarations in would make
-/// every code report itself, which is the one thing being checked against.
 fn sources() -> Vec<String> {
     let root = njutest_devkit::paths::workspace_root().join("crates/njutest-cli/src");
     let mut found = Vec::new();
@@ -153,10 +149,6 @@ fn sources() -> Vec<String> {
 }
 
 /// The ledger with everything that declares a code taken out, so a declaration is not a report.
-///
-/// That is both halves of it: the `code!` invocations and the list they are
-/// gathered into. Leaving either in would let a code name itself, which is the
-/// one thing being checked against.
 fn declarations_removed(text: &str) -> String {
     let text = text.split_once("pub const fn error_codes()").map_or_else(
         || text.to_owned(),

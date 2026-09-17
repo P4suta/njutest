@@ -2,13 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The baseline: what the one verified run of every target observed.
-//!
-//! The engine runs every target once with nothing active before it will judge
-//! anything, and the guards it compiled in record which tests reached which
-//! mutation while it does. This phase reads that run rather than making a
-//! second one of its own. Two measurements of one thing are two chances to
-//! disagree, and the measurement a route rests on has to be the run that
-//! actually happened.
 
 use std::collections::BTreeSet;
 
@@ -62,14 +55,6 @@ pub struct Reporting<'a, 'b> {
 
 impl Reporting<'_, '_> {
     /// Says how far a phase has got, to the person watching and to the recording alike.
-    ///
-    /// [The trace's contract](../../../../docs/trace-v1.md) calls a `progress`
-    /// event "a progress note as the UI saw it", which makes the two one
-    /// statement rather than two. Saying it in one place is what keeps them
-    /// one: while they were two calls the baseline phase made both and the
-    /// mutation phase — the long one, the one somebody leaves running — made
-    /// only the terminal's, so a recording of that run could not tell a slow
-    /// phase from a stuck one.
     pub fn progress(&mut self, message: &str, done: u64, total: u64) {
         self.watch.trace.progress(ProgressRecord {
             message: message.to_owned(),
@@ -81,10 +66,6 @@ impl Reporting<'_, '_> {
 }
 
 /// Reads what the session's one verified run of every target came to.
-///
-/// A target that did not pass is a row like any other. The engine hands back
-/// the table whether or not anything in it passed, because the moment a reader
-/// most needs the table is the moment the answer is "all of them".
 #[must_use]
 pub fn observe(session: &Session, mut reporting: Reporting<'_, '_>) -> Baseline {
     let watch = reporting.watch;
@@ -119,11 +100,6 @@ pub fn observe(session: &Session, mut reporting: Reporting<'_, '_>) -> Baseline 
 }
 
 /// The build failure a refusal to prepare carries, which is a finding rather than an error.
-///
-/// A workspace that does not compile is the run's answer about the workspace,
-/// and a person reading a report that says so needs the compiler's first line
-/// rather than an exit status. Every other refusal stays an error, because
-/// every other refusal is about this run rather than about the tree.
 #[must_use]
 pub fn refused(error: &crate::error::RunnerError) -> Option<Baseline> {
     let crate::error::RunnerError::Engine(engine) = error else {
@@ -142,10 +118,6 @@ pub fn refused(error: &crate::error::RunnerError) -> Option<Baseline> {
 }
 
 /// Whether this target answers nothing and is not a row a report carries.
-///
-/// One target per library is what the contract promises, and a library with
-/// nothing documented is not a target that ran nothing: reporting it as
-/// missing would raise a finding about documentation nobody wrote.
 #[must_use]
 pub fn unmeasurable(target: &TestTarget) -> bool {
     target
@@ -155,11 +127,6 @@ pub fn unmeasurable(target: &TestTarget) -> bool {
 }
 
 /// Every limitation `targets` and the run's own `touched` record state, each named once.
-///
-/// A target that answers nothing states nothing either. A library that
-/// documents no example is not a library whose examples were routed coarsely,
-/// and saying both would put a reader in front of a limitation about work
-/// nobody did.
 #[must_use]
 pub fn limitations(targets: &[TestTarget], touched: &[String]) -> Vec<String> {
     let mut named = BTreeSet::new();
@@ -197,11 +164,6 @@ pub fn target_of(target: &TestTarget) -> Target {
 }
 
 /// The target one identity names, for a target the session dropped and still has a record of.
-///
-/// A target whose own tests do not pass is not one this run may judge against,
-/// so the session does not carry it, and the report has to name it anyway: it
-/// is the finding. Its identity is `package/kind/name`, which is every field a
-/// row needs; the rest is how to start it, and this one is never started.
 #[must_use]
 pub fn named(id: &str) -> Target {
     let mut fields = id.splitn(3, '/');
@@ -225,17 +187,6 @@ pub fn named(id: &str) -> Target {
 }
 
 /// What one target's verified run says became of it.
-///
-/// `Survived` is a target that ran and said so, whether it said it with a
-/// summary line or by exiting: a binary with its own harness prints what it
-/// likes and answers by its status, so counting its tests is not what decides.
-///
-/// `Inconclusive` is a target that executed no test, and there are two of
-/// those. One whose every test libtest was told to skip has nothing to say and
-/// is `Skipped`; one that ran nothing and skipped nothing is a target nothing
-/// was learned about, and that is the finding. The ignored count is what tells
-/// them apart, and reading the second as the first would let an absence of
-/// evidence pass for a pass.
 #[must_use]
 pub fn status_of(outcome: Outcome, ignored: u32, output: &str) -> (TargetStatus, Option<String>) {
     match outcome {
@@ -269,13 +220,6 @@ pub fn status_of(outcome: Outcome, ignored: u32, output: &str) -> (TargetStatus,
 }
 
 /// The line of what a target printed that a reader would act on.
-///
-/// A target the engine starts prints its own failures and nothing else, and
-/// the first line is the answer. One cargo runs prints a build log first, and
-/// the first line of that is which crate was compiled — true, and not what
-/// somebody looking at a failing test needs. So the line that names a test as
-/// having failed wins, then the one the compiler or cargo marked as an error,
-/// and the first line of any output at all is the last resort.
 #[must_use]
 pub fn failure(output: &str) -> Option<String> {
     let lines = || {

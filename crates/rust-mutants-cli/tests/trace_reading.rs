@@ -2,11 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Reading a recording back: which one is read, and what is said about one that is not whole.
-//!
-//! A recording is what a person goes to when a run did something they did not
-//! expect, so the two things that must never happen are reading a different
-//! run's and being told a broken one is fine. Every recording here is written
-//! by hand, because what is being put to the test is the reading.
 
 #![expect(
     clippy::expect_used,

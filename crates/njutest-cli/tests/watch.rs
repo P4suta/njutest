@@ -2,12 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The watch loop: what makes it run a round, and what makes it stop.
-//!
-//! Every test here bounds how many times the loop may look before the watch
-//! is cancelled. Without that, a rule broken in the loop stops the test from
-//! terminating rather than making it fail, and a test that hangs when a rule
-//! goes missing is not a test that holds the rule — it is one that has to be
-//! killed by a timeout and reports nothing.
 
 use std::cell::Cell;
 use std::ffi::OsString;

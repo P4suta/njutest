@@ -83,12 +83,6 @@ pub struct Machine<'a> {
 
 /// Everything the identity is computed from, read from the tree and the process.
 ///
-/// The whole tree counts, `[project] exclude` included. That configuration
-/// says which files are mutated; every one of them is still compiled and still
-/// run, so a run is a function of its bytes whether or not a mutation was put
-/// to it, and an identity that passed over it would hand the next run an
-/// answer measured against bytes that are no longer there.
-///
 /// # Errors
 /// Returns what could not be read about the tree.
 pub fn inputs(

@@ -389,16 +389,6 @@ fn a_registry_refuses_a_table_that_breaks_an_invariant() {
 }
 
 /// The relative order of the rules that were in the v1 table when it had 36 of them.
-///
-/// A mutant's identity is the rule that produced it, and two rules that can
-/// produce the same replacement at the same span are separated by which comes
-/// first in this table. Reordering them therefore renames mutants, which
-/// silently invalidates every stored acceptance and every reused verdict about
-/// them. Adding a rule does not: a new family goes at the end of the table and
-/// a new rule at the end of its family's block, which leaves every existing
-/// pair in the order it was in. The end of the table is the end of the tier's
-/// run rather than the end of the file: the table is non-decreasing in tier so
-/// that each profile's rules are a prefix of the next one's.
 const THIRTY_SIX: [&str; 36] = [
     "true-to-false",
     "false-to-true",

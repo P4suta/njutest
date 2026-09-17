@@ -14,11 +14,6 @@ use crate::report::run as run_report;
 
 /// The name this run goes by, which is what its report directory is called.
 ///
-/// The name becomes a path under the report directory, so `.` and `..` are
-/// refused along with everything a separator could hide in: a run named `..`
-/// writes its report over the directory that holds every other run, and reads
-/// back as this run's when the next person asks about it.
-///
 /// # Errors
 /// [`CliError::InvalidValue`] for a name that is not one a directory can be.
 pub fn named(command: &cli::Command, now: Timestamp) -> Result<String, CliError> {
@@ -84,17 +79,6 @@ pub fn store(
 }
 
 /// Says, inside the directory this tool writes, that git has no business with what is in it.
-///
-/// A tool that leaves its output in somebody's repository and does not say
-/// so has left them a job. Every caller does the same thing next — add the
-/// path to their own `.gitignore` — and gets it slightly differently right.
-/// The file goes *inside* the directory rather than into the repository's
-/// own, because a directory that ignores itself is scoped to what this tool
-/// owns: it cannot conflict with a rule somebody wrote, it moves when the
-/// configured directory moves, and deleting the directory takes it with it.
-///
-/// It is written once and never rewritten, so a caller who edits it — to
-/// keep one report, say — keeps their edit.
 fn disowned(directory: &Path) {
     let path = directory.join(".gitignore");
     if path.exists() {
@@ -104,10 +88,6 @@ fn disowned(directory: &Path) {
 }
 
 /// Keeps the newest `keep` stored runs and the newest `keep` recordings of the other commands. Both sort chronologically by name, so the oldest are the first.
-///
-/// A directory that holds no run report is not a run and never costs a run its
-/// place: `traces/` sorts after every run name, and counting it would leave
-/// `keep - 1` runs stored.
 pub fn prune(directory: &Path, keep: u32) {
     if keep == 0 {
         return;
@@ -123,10 +103,6 @@ pub fn prune(directory: &Path, keep: u32) {
 
 #[must_use]
 /// The stored runs and, apart from them, the directories a run that wrote no report left a recording in.
-///
-/// A run asked to record and not to report still names itself and still keeps
-/// what it recorded, so those directories are bounded by `keep` of their own
-/// rather than either counting against the stored runs or growing forever.
 pub fn kept(directory: &Path) -> (Vec<PathBuf>, Vec<PathBuf>) {
     let mut runs = Vec::new();
     let mut recordings = Vec::new();
@@ -171,11 +147,6 @@ pub fn subdirectories(directory: &Path) -> Vec<PathBuf> {
 }
 
 /// The report of the run a command was told to read, or of the newest when it was told nothing.
-///
-/// A name is a name a person typed, so one no directory answers to is a
-/// refusal rather than a fall back to the newest: a command that read another
-/// run than the one it was asked for would answer confidently about the wrong
-/// one.
 ///
 /// # Errors
 /// [`CliError::ReportMissing`] when `named` is not a stored run under

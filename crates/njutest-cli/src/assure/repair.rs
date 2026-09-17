@@ -2,11 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Putting a candidate to the compiler and the tests before anybody is offered it.
-//!
-//! A provider's word is not evidence. A candidate is believed only when the
-//! tree it patches still builds and passes without any mutant active, three
-//! times over, and fails twice with the mutant it claims to close — measured
-//! in a snapshot, so the tree a person is working in is never written to.
 
 use std::path::Path;
 use std::time::Duration;

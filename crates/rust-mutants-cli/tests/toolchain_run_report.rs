@@ -268,11 +268,6 @@ fn an_expectation_the_run_confirms_stops_being_a_finding_and_a_stale_one_starts(
 }
 
 /// An incomplete mutation mode is about the environment a process inherits, so this one starts a process.
-///
-/// An instrumented child legitimately inherits the outer measurement's
-/// activation and catalog. Removing that complete pair and adding an
-/// incomplete touch mode leaves the generated runtime inert and puts the
-/// invalid tuple to the composition root itself.
 #[test]
 fn a_process_with_an_incomplete_touch_mode_is_refused_before_anything_runs() {
     let fixture = Fixture::copy("fixture-simple");
@@ -993,11 +988,6 @@ fn a_claim_written_for_several_mutations_says_how_many_it_was_resolved_against()
 }
 
 /// The document with everything a second run of one catalog is allowed to say differently taken out.
-///
-/// What is taken out is what a run costs rather than what it establishes: when
-/// it started, how long it took, what it called itself, and how many tests it
-/// had to start to find out. Everything left is an answer about the catalog,
-/// and two runs of one catalog answer the same.
 fn timeless(mut document: serde_json::Value) -> serde_json::Value {
     fn strip(value: &mut serde_json::Value) {
         match value {

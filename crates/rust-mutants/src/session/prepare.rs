@@ -35,21 +35,6 @@ pub(super) fn selection(options: &PrepareOptions) -> Result<Selection<'static>, 
 }
 
 /// Refuses a tree that does not compile before anything is instrumented, and hands back the units the check compiled.
-///
-/// The check is also what says which files each target compiles **outside** a
-/// test build, and a file no non-test unit compiled is one only the tests see:
-/// without that, a library whose only compilation is its own test harness has
-/// every one of its files read as test-only and nothing in it is worth
-/// mutating. So the check is not only a gate and cannot be skipped.
-///
-/// Whether the tree *links* is a second question, and it used to be a second
-/// compilation of the whole workspace on every run. It is not one any more.
-/// The first validation round links the instrumented tree, and an instrumented
-/// tree that links is one whose pristine form links too — the guards only add
-/// code. A round that fails with nothing attributable to a mutation is a round
-/// that compiles with nothing live, which is `RM4001`: the tree, in the
-/// compiler's own words. The answer is the same and the successful run does
-/// one build fewer.
 fn gate(
     workspace: &Workspace,
     options: &PrepareOptions,
@@ -87,15 +72,6 @@ pub(super) fn pristine(
 }
 
 /// The digest of the pristine sources every unit of the build compiled.
-///
-/// The bytes hashed are the ones the file held before anything was
-/// instrumented: for a file with guards in it that is what the plan kept, and
-/// for every other file it is the snapshot's own copy, which nothing wrote to.
-/// Hashing the rewrite instead would tie the digest to the catalog, and a
-/// catalog changes whenever any mutant anywhere does.
-///
-/// A build whose dep-info cannot be read yields nothing at all rather than a
-/// partial answer, and a caller with nothing to key on remembers nothing.
 fn closure_of(workspace: &Workspace, checked: &crate::cargo::Compiled) -> String {
     let root = workspace.snapshot_root();
     let units = &checked.units;
@@ -283,13 +259,6 @@ fn built(building: &Building<'_>) -> Result<Built, EngineError> {
 }
 
 /// Which of the built targets a run was told never to start, refusing a name no target of the workspace has.
-///
-/// The name is held to what the workspace declares rather than to what this
-/// run built, because a configuration is written once and a run is narrowed
-/// every day: a name that is a target's is one a narrowed run may be told to
-/// leave out without having built it. A name that is no target's narrows
-/// nothing, and a run that passed over it in silence would measure what a
-/// reader believed was left out.
 fn left_out(
     workspace: &Workspace,
     targets: &[TestTarget],
@@ -310,17 +279,6 @@ fn left_out(
 }
 
 /// Leaves out every target whose own baseline did not pass, where the run asked for that rather than for a refusal.
-///
-/// A target that was already failing answers every mutation with the failure
-/// it was already giving, so a run that kept it would put a number on the
-/// report that is about the target rather than about any mutation. `verify`
-/// has already recorded why each one is gone.
-///
-/// Excluding every target there was leaves a session with nothing to run, and
-/// that session is still handed back: the caller that asked to exclude asked
-/// for the table rather than for a refusal, and the moment it most needs the
-/// table is the moment the answer is "all of them". Running it is what refuses,
-/// with the error a run of no targets earns.
 fn excluded(targets: &mut Vec<TestTarget>, verified: &Verified, options: &PrepareOptions) {
     if options.failing == super::Failing::Refuse {
         return;
@@ -364,19 +322,6 @@ fn layers(
 }
 
 /// What measuring this tree established, made now or remembered from the last run that made it.
-///
-/// The measurement is the most expensive thing a run does: instrumenting for
-/// coverage changes the fingerprint of every crate and rebuilds the whole
-/// graph. It is also a function of the tree alone, which a mutation does not
-/// change, so a tree nothing has touched since the last run has already been
-/// measured. Reading that back is a whole build removed on the claim the
-/// outcome store already rests on: nothing that could change the answer
-/// changed.
-///
-/// A measurement that did not reach every target is not remembered. It is a
-/// measurement of some of them — sound to route by, because what it could not
-/// read stays in every route — and remembering it would hand every later run
-/// of the tree a partial answer with nothing to tell it from a whole one.
 fn measured(
     asking: &crate::prove::Asking<'_>,
     remembering: Option<&crate::reach::remembered::Remembering>,
@@ -464,8 +409,7 @@ fn remembering(
     ))
 }
 
-/// What a mutant no measured target reached amounts to: nothing ran, because nothing that ran could have noticed.
-/// The gate a run stands on, and what discovery found on the tree it passed.
+/// What a mutant no measured target reached amounts to: nothing ran, because nothing that ran could have noticed. The gate a run stands on, and what discovery found on the tree it passed.
 ///
 /// # Errors
 /// The pristine gate and the failures of discovery.
@@ -716,12 +660,6 @@ fn establish(
 }
 
 /// The marker each mutant's branch proof rests on, keeping only the markers the instrumenter wrote.
-///
-/// A body inside a guard's own site takes no marker: the guard writes the site
-/// twice and one splice cannot land in both. The proof survives with a
-/// coverage region as its premise, and a run that measured no coverage has
-/// none — so a mutant whose marker was dropped must not be discharged by a
-/// record that was never going to name it.
 fn resting(
     proofs: &BTreeMap<u32, crate::syntax::branch::Proof>,
     marked: &BTreeSet<u32>,
@@ -783,10 +721,6 @@ fn plan_tree(
 }
 
 /// The catalog indices compiler validation has to decide for this preparation.
-///
-/// The catalog itself stays whole. A filter narrows only the expensive claim
-/// that a candidate compiles, using the same pristine line calculation a
-/// later run uses, so moving selection earlier changes cost and not meaning.
 fn eligible(
     catalog: &Catalog,
     sources: &BTreeMap<String, Vec<u8>>,
@@ -817,8 +751,7 @@ fn eligible(
         .collect()
 }
 
-/// Keeps only placements validation was asked to decide, without renumbering
-/// them: every guard still names its index in the complete catalog.
+/// Keeps only placements validation was asked to decide, without renumbering them: every guard still names its index in the complete catalog.
 fn selected_placements(
     placements: BTreeMap<String, Vec<Placement>>,
     eligible: &BTreeSet<u32>,
@@ -849,10 +782,6 @@ fn body_lines(file: &FileOutput) -> u64 {
 }
 
 /// The markers each file carries, by the file the bodies they mark are in.
-///
-/// One body carries one marker however many claims rest on it, and the proof
-/// of each of them names the same one, so what is written is the set of them
-/// rather than the list.
 fn marked(
     catalog: &Catalog,
     proofs: &BTreeMap<u32, crate::syntax::branch::Proof>,
@@ -989,11 +918,6 @@ impl Compile for TreeCompiler<'_> {
 }
 
 /// Whether a round has to write this file again: only what its condemnations changed.
-///
-/// Every round instruments every mutable file, because attribution needs each
-/// file's branch spans whatever it condemns. Writing them all back costs the
-/// whole tree in bytes for every round, and a file whose live set did not
-/// change holds what it already held.
 #[must_use]
 pub fn rewrite_needed(written: Option<&String>, next: &str) -> bool {
     written.is_none_or(|last| last != next)

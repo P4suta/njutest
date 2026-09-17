@@ -2,13 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The report held to itself: every identity re-minted, every column re-tallied, every finding re-derived.
-//!
-//! Nothing here needs anything the run kept beside its report. A row that does
-//! not mint the identity it carries, a column that is not the rows it
-//! summarises, a score that is not the ratio it says, a survivor with no
-//! finding naming it, an exit code that is not what the rows earned — each is
-//! the document contradicting itself, and a document that contradicts itself
-//! is one no evidence can rescue.
 
 use std::collections::{BTreeMap, BTreeSet};
 

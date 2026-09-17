@@ -101,12 +101,6 @@ const ANNOTATION: &str = "rust-mutants:";
 const HEADER: &str = "SPDX-";
 
 /// Every comment in `source` that is neither documentation, the licence header, nor an annotation the engine reads.
-///
-/// `syn` throws non-documentation comments away, and so does a token stream,
-/// so this reads the text. What it has to get right is which slashes are a
-/// comment at all: not the ones inside a string, a raw string of any hash
-/// count, a byte string, or a character literal. A lifetime is not a
-/// character literal and is stepped over as itself.
 fn comments(file: &str, source: &str) -> Vec<Finding> {
     let bytes: Vec<char> = source.chars().collect();
     let mut found = Vec::new();

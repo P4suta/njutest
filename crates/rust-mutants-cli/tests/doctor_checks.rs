@@ -2,13 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What the doctor answers, asked in this process about trees arranged to make it answer.
-//!
-//! A doctor that says `ok` to everything is a doctor nobody learns anything
-//! from, and every one of these checks is only worth its line when the state
-//! it warns about actually reaches it. So each test here arranges the one
-//! thing the check looks at — a reserved variable, a root below the
-//! workspace, a configuration nobody can read, a cache directory that is a
-//! file — and reads the standing back out of the document.
 
 #![expect(
     clippy::indexing_slicing,

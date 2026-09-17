@@ -112,14 +112,7 @@ pub fn run(
     )
 }
 
-/// Everything one verification needs to establish its own answer.
-/// The configuration file this run read, or nothing when it read none.
-///
-/// A repository that uses both products has `.njutest.toml` and
-/// `.rust-mutants.toml` a few lines apart in the same directory, and somebody
-/// who has just written one of them and then runs the other tool is looking at
-/// settings they did not write. Saying which file the scope came from costs a
-/// line and is the only thing in a position to say it.
+/// Everything one verification needs to establish its own answer. The configuration file this run read, or nothing when it read none.
 fn read_from(root: &Path) -> String {
     if root.join(crate::config::FILE_NAME).is_file() {
         return crate::config::FILE_NAME.to_owned();
@@ -142,10 +135,6 @@ struct Establishing<'a> {
 }
 
 /// Which part of the catalog the command line asked for, refused before anything is built.
-///
-/// A part that is not a part of anything is a mistake in a CI matrix, and the
-/// cheapest place to find out is before the first build rather than after the
-/// baseline.
 ///
 /// # Errors
 /// What is wrong with the text, as a reader would want it said.
@@ -244,10 +233,6 @@ fn establish(establishing: &Establishing<'_>, streams: Streams<'_>) -> u8 {
 }
 
 /// The change set a run was asked to mutate within, or nothing when it was not asked.
-///
-/// A run that cannot see what changed cannot claim to have verified what
-/// changed, so a tree git cannot be asked about ends the command rather than
-/// reading as a run about nothing.
 fn change_set(
     arguments: &Verify,
     root: &Path,
@@ -403,11 +388,6 @@ struct Persisting<'a> {
 }
 
 /// Writes the report where a reader will look for it, retires what the configuration no longer keeps, and stores the answer for the next run of the same inputs. Returns the exit code only when the report could not be written, which is the one failure that stops the run from having answered at all.
-///
-/// A run that was asked to stop does not store its answer. It still writes it
-/// where a person can read it — what it got through is what it got through —
-/// but the next run of the same tree may not read it back as a whole one, and
-/// what it did establish is carried forward by the checkpoint instead.
 fn persist(persisting: &Persisting<'_>, arguments: &Verify, stderr: &mut dyn Write) -> Option<u8> {
     let Persisting {
         root,
@@ -547,23 +527,11 @@ const fn request_keep(request: &Request) -> u32 {
 }
 
 /// The packages this run is about: the ones a reader named, or the ones the configuration names when they named none.
-///
-/// The command line takes the place of the configuration rather than adding
-/// to it, which is what `mode_of` has always done with the same two lists:
-/// the scope a run reports and the scope it measures are one thing, and a run
-/// that reported one and measured the other made a narrow claim about a wide
-/// tree.
 fn packages(arguments: &Verify, config: &Config) -> Vec<String> {
     run::asked_for(&arguments.packages, config)
 }
 
 /// The arguments every test binary of this run is started with.
-///
-/// The command line takes the place of the configuration rather than adding
-/// to it, which is the rule `[project] packages` already follows: two
-/// spellings of `--test-threads` on one command line is a contradiction
-/// nobody wrote on purpose, and a reader overriding a file means the file to
-/// stop applying.
 fn harness_args(arguments: &Verify, config: &Config) -> Vec<String> {
     if arguments.test_args.is_empty() {
         config.execution.test_binary_args.clone()

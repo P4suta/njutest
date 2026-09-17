@@ -74,10 +74,6 @@ pub fn diagnose(stderr: &mut dyn Write, message: &str) {
 }
 
 /// Writes one failure and the next step it carries.
-///
-/// A diagnostic that names what went wrong and stops has told a reader they
-/// have a problem and left them to find the way out. Every code here carries
-/// one, including the ones whose answer is that the fault is this tool's.
 pub fn complain(
     stderr: &mut dyn Write,
     error: &impl std::fmt::Display,

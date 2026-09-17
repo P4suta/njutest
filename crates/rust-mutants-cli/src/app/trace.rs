@@ -2,11 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! `--trace` and the `trace` readings: where a recording goes, and what one says afterwards.
-//!
-//! A recording is diagnostic exhaust and never evidence
-//! ([ADR 0002](../../../../docs/adr/0002-trace-is-not-evidence.md)). A
-//! directory that cannot be created costs one line on standard error and
-//! nothing else: a command that could not record still does what it was asked.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -28,10 +23,6 @@ pub const RUN_DIRECTORY_NAME: &str = "trace";
 pub const TRACES_DIRECTORY_NAME: &str = "traces";
 
 /// The recording a command was asked for, or the one that records nothing.
-///
-/// Without `--trace` there is no recording. With it and no directory, a run
-/// records beside its report and every other command records under
-/// `<reports>/traces/<id>-<command>`, which is outside what a snapshot copies.
 pub fn recorder(
     wanted: &Recording<'_>,
     progress: Option<std::sync::mpsc::Sender<Event>>,
@@ -65,9 +56,6 @@ pub fn recorder(
 }
 
 /// The recording's own directory, with the directories above it made first.
-///
-/// A recording owns its directory: the sink refuses one that is already there,
-/// which is what keeps two runs from writing one stream.
 fn created(directory: &Path) -> std::io::Result<DirSink> {
     if let Some(parent) = directory.parent() {
         std::fs::create_dir_all(parent)?;

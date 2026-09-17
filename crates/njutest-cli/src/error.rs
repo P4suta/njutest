@@ -11,11 +11,6 @@ pub struct ErrorCode {
     /// One line saying what the code means.
     pub summary: &'static str,
     /// What to do about it. Every code carries one.
-    ///
-    /// A remedy is the next step, not an explanation: a flag to pass, a
-    /// component to install, a command to run. Where the answer is that the
-    /// fault is this tool's, the remedy says that, because a reader told only
-    /// what went wrong will go looking for the mistake they made.
     pub remedy: &'static str,
 }
 

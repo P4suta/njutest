@@ -2,16 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The run as one self-contained page: no font, no stylesheet, nothing to fetch, and one script of its own.
-//!
-//! A survivor is only worth reading where it is, so every file that holds one
-//! is shown whole with its mutants on the lines they are on. A file whose
-//! every mutation the tests noticed is counted rather than printed: a page
-//! that shows a thousand lines nobody has to read is a page nobody opens.
-//!
-//! The page shows a file only when it is the one the run measured, which the
-//! recorded digest settles; a file that changed since is named as changed
-//! rather than shown, because showing the new bytes would be a lie about what
-//! was measured.
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;

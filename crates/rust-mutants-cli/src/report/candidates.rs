@@ -12,11 +12,6 @@ pub const DOCUMENT_TYPE: &str = "rust-mutants/candidates";
 pub const SCHEMA_VERSION: u32 = 1;
 
 /// Every place the selected rules target, as the walk found them.
-///
-/// This is what `list` says and `catalog` does not: a candidate here has not
-/// been compiled, so nothing in it claims the compiler would accept it. A
-/// reader who wants the accepted set, with the refusals and their reasons,
-/// wants `catalog`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CandidatesDocument {
     /// [`DOCUMENT_TYPE`].

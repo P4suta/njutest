@@ -2,11 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The integration resources a run starts, and what they may tell a test.
-//!
-//! A resource is a fact about the world the tests ran in. A run that could
-//! not start one it was told to start does not run the tests without it: the
-//! report would say the suite passed, and it would be about a different world
-//! than the one the configuration describes.
 
 use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};

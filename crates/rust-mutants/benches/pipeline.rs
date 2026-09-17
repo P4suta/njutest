@@ -2,12 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What each stage of preparing a workspace costs, on inputs the size of a real one.
-//!
-//! [ADR 0004](../../../docs/adr/0004-proof-layers-not-budgets.md) says a run
-//! that is too slow is a run missing a proof or doing work nothing reads. These
-//! numbers are how to tell the two apart: a stage that got slower here is work
-//! somebody added, and a run that got slower with these unchanged is a proof
-//! layer that stopped removing executions.
 
 #![expect(
     clippy::expect_used,
@@ -45,8 +39,7 @@ fn source(functions: usize) -> String {
     text
 }
 
-/// A coverage export naming `functions` functions with four regions each.
-/// A match of `arms` arms, half of them guarded, ending in a bare wildcard.
+/// A coverage export naming `functions` functions with four regions each. A match of `arms` arms, half of them guarded, ending in a bare wildcard.
 fn arms(count: usize) -> String {
     let mut text =
         String::from("//! A generated match.\n\npub fn pick(n: i32) -> i32 {\n    match n {\n");
@@ -242,11 +235,6 @@ fn routes(criterion: &mut Criterion) {
 }
 
 /// A record of what the guards of `targets` tests reached, with `mutants` sites each.
-///
-/// Routing is the one decision made once per mutant of the catalog, so its cost
-/// is multiplied by everything a run measures: a route that got slower here is
-/// a run that got slower for every mutation, including the ones no proof
-/// removed.
 fn recorded(targets: usize, tests: usize, mutants: u32) -> Touched {
     let mut held = Touched::default();
     held.narrowing.compared = (0..mutants).collect();

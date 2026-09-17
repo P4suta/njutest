@@ -2,13 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What a run costs, counted in pairs, held to a ceiling that may fall and never rise.
-//!
-//! A pair is one mutant asked of one target: one test process started. A test
-//! is what that process is asked for, and the two fall separately — a route
-//! that puts a mutation to one test of a target rather than to all of its two
-//! hundred costs the same pair and a two-hundredth of the tests. Both are the
-//! same number on every machine, at every job count, under every load, which
-//! is what makes them things a gate can hold. A duration is not.
 
 #![expect(
     clippy::expect_used,
@@ -155,11 +148,6 @@ fn every_removal_a_whole_run_still_answers_for_is_a_proof_a_reader_can_name() {
 }
 
 /// How many times a run may start cargo before somebody has to say why.
-///
-/// Every one of these is a compilation of the tree: the two `cargo metadata`
-/// calls, the check, the coverage build, the instrumented build, and the
-/// documented examples. A number that goes up is a whole compilation nobody
-/// asked for.
 const CARGO_CEILING: u64 = 6;
 
 /// How many times a run started each program, read back from its own recording.

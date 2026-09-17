@@ -155,10 +155,6 @@ pub fn why_skipped(skips: &[Skip]) -> String {
 }
 
 /// Every decision the walk took in one file, in source order.
-///
-/// The tally says how much each reason hid; this says what each place was, so
-/// a reader asking "why is there no mutant here" is answered about the place
-/// rather than about the file.
 #[must_use]
 pub fn decisions(discovery: &Discovery, file: &str, line: Option<u32>) -> String {
     let mut text = String::new();
@@ -419,10 +415,6 @@ pub const fn exit_code(outcome: rust_mutants::outcome::Outcome) -> u8 {
 /// The run as lines a person reads: the tally, the score, and every finding.
 #[must_use]
 /// What a whole run would have started, what this one started, and what removed the rest.
-///
-/// A report from before the target list was written carries no work line at
-/// all: a share of nothing is not nought per cent, and a reader shown one
-/// would read a run that measured everything as a run that measured nothing.
 fn work_line(document: &run::RunDocument) -> String {
     let work = rust_mutants::work::Work::of(document);
     if work.whole == 0 {
@@ -470,11 +462,6 @@ fn work_line(document: &run::RunDocument) -> String {
 }
 
 /// The stored run as the lines a person reads.
-///
-/// The findings come first and the totals last, because the totals are what a
-/// reader looks for and a run with ninety findings puts them off the top of
-/// the screen. Anyone who pipes this into `tail` is asking for the end of it,
-/// and the end of it should be the part worth keeping.
 #[must_use]
 pub fn lines(document: &run::RunDocument) -> String {
     let mut text = String::new();
@@ -501,17 +488,6 @@ pub fn lines(document: &run::RunDocument) -> String {
 }
 
 /// How many separate gaps the survivors are, which is not how many survivors there are.
-///
-/// A survivor of a rule that replaces the failing half of a fallible
-/// expression says a path was never taken. Twenty-seven of those in one file
-/// are twenty-seven instances of one proposition, and a reader who works
-/// through them one at a time reads the same sentence twenty-seven times. Every
-/// other survivor is its own finding: nine surviving comparisons are nine
-/// boundaries, and saying "these are one" would hide eight of them.
-///
-/// So this counts the two apart and says nothing else. It does not decide
-/// which gap is worth closing, and it does not remove a line from the findings
-/// above: a reader who wants all twenty-seven still has them.
 fn survivors(document: &run::RunDocument) -> String {
     let mut folded: BTreeMap<(&str, &str), u32> = BTreeMap::new();
     let mut alone = 0_u32;
@@ -531,14 +507,14 @@ fn survivors(document: &run::RunDocument) -> String {
             alone = alone.saturating_add(1);
         }
     }
-    if folded.is_empty() {
+    let counted: u32 = folded.values().copied().sum();
+    if counted == 0 && alone == 0 {
         return String::new();
     }
-    let counted: u32 = folded.values().copied().sum();
     let mut text = format!(
-        "\nSURVIVORS    {} of them are {} unexercised paths, each named once below; the \
-         other {alone} are their own\n",
-        counted,
+        "\nSURVIVORS    {} survivors: {alone} each its own finding, and {counted} that are \
+         {} unexercised paths, named once each below\n",
+        counted.saturating_add(alone),
         folded.len()
     );
     for ((path, rule), count) in &folded {

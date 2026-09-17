@@ -2,12 +2,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! The commands that read what a run left behind, driven in this process against one real run.
-//!
-//! Thirty-seven test files drive this program and every one of them starts a
-//! process, which is what a person does and what the exit codes are about. A
-//! measurement of what a crate's own tests reach does not follow a guard into
-//! a child, so the command layer — `app/mod.rs` alone is 1680 lines — was
-//! reached by nothing at all.
 
 #![expect(
     clippy::indexing_slicing,

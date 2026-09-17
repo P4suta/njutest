@@ -26,11 +26,6 @@ use rust_mutants::syntax::{Selection, discover_file};
 static REGISTRY: Registry = Registry::canonical();
 
 /// Discovers, catalogs, and instruments one source, returning the text with the file's own runtime module named `__rm`.
-///
-/// Every file's module carries the digest of its path so that two files
-/// pasted into one scope by `include!` do not define the same item twice.
-/// What each case here is about is the shape of the guards rather than which
-/// eight hex characters this path came to, so the name is put back to its stem.
 fn instrument(source: &str) -> String {
     let (text, _) = instrument_with_catalog(source);
     text.replace(&module_name("src/lib.rs", source), MODULE_STEM)
@@ -59,11 +54,6 @@ fn instrument_with_catalog(source: &str) -> (String, Catalog) {
 }
 
 /// Every mutant the syntax offers a comparison for, as a run has it once the compiler has vouched for the operands.
-///
-/// A test cannot ask the compiler, so it asks for all of them: what the
-/// goldens are about is the shape of a guard that compares, and a set the
-/// compiler pruned would only make the recorded shape depend on which
-/// operands this case happened to spell.
 fn offered(discovery: &rust_mutants::syntax::FileDiscovery, catalog: &Catalog) -> BTreeSet<u32> {
     discovery
         .candidates
@@ -717,11 +707,6 @@ fn generated_match(arms: usize, guarded: bool) -> String {
 
 proptest::proptest! {
     /// However many arms a match holds and whichever way its lines end, writing a guard onto one keeps the line count and leaves a file that parses.
-    ///
-    /// Form M writes a guard where the source had none, which is the one
-    /// splice that adds syntax rather than replacing it. A pattern that spans
-    /// several lines, an `|` alternation, and an arm that already has a guard
-    /// are the shapes it has to get right.
     #[test]
     fn arm_guards_keep_line_counts_and_reparse_for_every_generated_shape(
         arms in 1usize..8,
@@ -745,10 +730,6 @@ proptest::proptest! {
     }
 
     /// However many functions a file holds and whichever way its lines end, instrumenting keeps the line count and leaves a file that parses.
-    ///
-    /// A rewrite that moved a line makes every position in the report a
-    /// position in a file nobody has, and one that does not parse fails the
-    /// build for a reason that is not the mutation.
     #[test]
     fn instrumenting_a_generated_file_keeps_its_lines_and_reparses(
         functions in 1usize..12,
