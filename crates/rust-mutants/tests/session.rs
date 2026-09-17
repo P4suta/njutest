@@ -131,3 +131,59 @@ fn a_confirming_retry_takes_the_quiet_lock_alone() {
         "and shares it the rest of the time"
     );
 }
+
+/// A reader names a mutation again after they have changed the file, which is the next thing they do.
+#[test]
+fn a_locator_is_read_from_the_spelling_a_report_prints() {
+    use rust_mutants::session::Locator;
+    let one = Locator::parse("src/policy/gate.rs:reject:or-to-and").expect("a locator");
+    assert_eq!(one.path, "src/policy/gate.rs");
+    assert_eq!(one.item, "reject");
+    assert_eq!(one.rule, "or-to-and");
+    assert_eq!(
+        one.line, None,
+        "the line is the part a reader adds only when they need it"
+    );
+    let narrowed =
+        Locator::parse("src/policy/gate.rs:Gate::reject:or-to-and@261").expect("a locator");
+    assert_eq!(narrowed.item, "Gate::reject");
+    assert_eq!(narrowed.line, Some(261));
+}
+
+/// An identity is hexadecimal and holds no colon, so nothing that used to resolve stops resolving.
+#[test]
+fn an_identity_is_not_read_as_a_locator() {
+    use rust_mutants::session::Locator;
+    assert!(Locator::parse("8aabace61e628bed23e7").is_none());
+    assert!(Locator::parse("").is_none());
+    assert!(
+        Locator::parse("src/lib.rs::or-to-and").is_none(),
+        "an empty item names every item rather than one, which is not what a reader meant"
+    );
+}
+
+/// Whether several survivors of one rule are several findings is a property of the rule.
+#[test]
+fn a_survivor_of_an_error_path_rule_says_a_path_was_never_taken() {
+    let registry = rust_mutants::rule::Registry::canonical();
+    for name in [
+        "question-to-unwrap",
+        "ignore-question-statement",
+        "return-ok-default",
+    ] {
+        let rule = registry.lookup(name).expect("a canonical rule");
+        assert!(
+            rule.survivor_names_an_unexecuted_path(),
+            "{name} replaces the failing half of a fallible expression, so surviving it \
+             follows from the failing half never having run"
+        );
+    }
+    for name in ["le-to-lt", "or-to-and", "int-increment"] {
+        let rule = registry.lookup(name).expect("a canonical rule");
+        assert!(
+            !rule.survivor_names_an_unexecuted_path(),
+            "{name} is a different boundary on every line it is on, and folding them would \
+             hide every one but the first"
+        );
+    }
+}
