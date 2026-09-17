@@ -113,15 +113,15 @@ fn a_boolean_position_takes_the_selector_form_and_a_value_position_the_expressio
         "pub fn f(a: i32, b: i32, c: i32) -> bool {\n    if a > b {\n        return true;\n    }\n    a + c > b\n}\n",
     );
     assert!(
-        text.contains("if (__rm::active(0) && (!(a > b)) || __rm::active(1) && (a >= b) || !(__rm::active(0)) && !(__rm::active(1)) && __rm::differing(1, (a > b), || (a >= b))) {"),
+        text.contains("if (__rm::active(0) && (!(a > b)) || __rm::active(1) && (true) || __rm::active(2) && (false) || __rm::active(3) && (a >= b) || !(__rm::active(0)) && !(__rm::active(1)) && !(__rm::active(2)) && !(__rm::active(3)) && __rm::differing(3, (a > b), || (a >= b))) {"),
         "{text}"
     );
     assert!(
-        text.contains("return (if __rm::active(2) { false } else { true });"),
+        text.contains("return (if __rm::active(4) { false } else { true });"),
         "{text}"
     );
     assert!(
-        text.contains("(if __rm::active(3) { true } else if __rm::active(5) { a + c >= b } else {"),
+        text.contains("(if __rm::active(5) { true } else if __rm::active(7) { a + c >= b } else {"),
         "{text}"
     );
 }

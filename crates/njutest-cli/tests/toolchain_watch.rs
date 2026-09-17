@@ -468,7 +468,7 @@ fn once_slow(report: &serde_json::Value) {
             report["accounting"]["mutants"]["killed"].as_u64(),
             report["accounting"]["mutants"]["survived"].as_u64(),
         ),
-        (Some(6), Some(1)),
+        (Some(8), Some(1)),
         "every mutation but one is noticed here, and by the second measurement rather \
          than the first. The one nothing noticed ran and was not noticed, which is a \
          different fact from one nothing could decide: {report}"
@@ -1901,7 +1901,7 @@ fn concluded(report: &serde_json::Value, root: &std::path::Path) {
             report["accounting"]["mutants"]["survived"].as_u64(),
             report["accounting"]["mutants"]["unreached"].as_u64(),
         ),
-        (Some(7), Some(2), Some(1)),
+        (Some(10), Some(3), Some(1)),
         "and every mutation is in the column it belongs to. A phase that reported them \
          all as unnoticed, or all as something nothing could decide, reaches the same \
          verdict on this fixture by a route that says nothing about the suite: {report}"
@@ -1914,7 +1914,7 @@ fn concluded(report: &serde_json::Value, root: &std::path::Path) {
         .collect();
     assert_eq!(
         named.len(),
-        7,
+        10,
         "and each kill names the test that noticed, because the whole of what a kill \
          hands a person is where to look: {named:?}"
     );

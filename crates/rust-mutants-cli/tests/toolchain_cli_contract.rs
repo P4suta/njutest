@@ -52,13 +52,13 @@ fn list_names_every_candidate_without_building_anything() {
     );
     let text = stdout(&output);
     let rows: Vec<&str> = text.lines().filter(|line| line.contains(" => ")).collect();
-    assert_eq!(rows.len(), 11, "{text}");
+    assert_eq!(rows.len(), 13, "{text}");
     assert!(
         rows.iter().all(|line| line.contains("src/lib.rs:")),
         "{text}"
     );
     assert!(
-        text.contains("11 candidates, which is what the rules propose"),
+        text.contains("13 candidates, which is what the rules propose"),
         "a list says how many it listed and what listing them is not: {text}"
     );
     assert!(text.contains("gt-to-ge@1"), "{text}");

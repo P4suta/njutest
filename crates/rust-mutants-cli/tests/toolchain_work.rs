@@ -87,6 +87,8 @@ fn measured(name: &str) -> Work {
 fn no_fixture_starts_more_processes_than_the_ceiling_allows() {
     let mut risen = Vec::new();
     let mut fallen = Vec::new();
+    let mut asked = Vec::new();
+    let mut measurements = Vec::new();
     for ceiling in ceilings() {
         let work = measured(&ceiling.fixture);
         assert!(
@@ -94,12 +96,13 @@ fn no_fixture_starts_more_processes_than_the_ceiling_allows() {
             "{}: a pair nothing accounts for is work nobody can explain: {work:?}",
             ceiling.fixture
         );
-        assert_eq!(
-            (work.whole, work.tests_whole),
-            (ceiling.whole, ceiling.tests_whole),
-            "{}: what a whole run would start changed; if that is right, the ceiling says so too",
-            ceiling.fixture
-        );
+        measurements.push(format!(
+            "{:<20} {:>5} {:>8} {:>6} {:>14}",
+            ceiling.fixture, work.whole, work.started, work.tests_whole, work.tests_started
+        ));
+        if (work.whole, work.tests_whole) != (ceiling.whole, ceiling.tests_whole) {
+            asked.push(ceiling.fixture.clone());
+        }
         for (unit, started, allowed) in [
             ("pairs", work.started, ceiling.started),
             ("tests", work.tests_started, ceiling.tests_started),
@@ -115,6 +118,14 @@ fn no_fixture_starts_more_processes_than_the_ceiling_allows() {
             }
         }
     }
+    assert!(
+        asked.is_empty(),
+        "what a whole run would start changed for {asked:?}. A fixture that gained code asks a \
+         bigger question and a rule that was added asks more of the same one; either way the \
+         ceiling states it rather than following it. Every row as it measures now, for the file:\n\
+         # fixture             whole  started  tests  tests_started\n{}",
+        measurements.join("\n")
+    );
     assert!(
         risen.is_empty(),
         "the engine started more of something than it used to for the same question. That is a \

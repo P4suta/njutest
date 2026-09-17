@@ -6,7 +6,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 # Operators
 
 **Status: implemented** (`rust_mutants::syntax`, `rust_mutants::instrument`,
-`rust_mutants::validate`). The v1 table: sixteen families, seventy-two rules,
+`rust_mutants::validate`). The v1 table: seventeen families, seventy-four rules,
 named `family` / `rule@version`. The version enters the mutant identity, so
 changing a rule's output is a new version and every old identity lapses with
 it. Adding a rule does not: what enters an identity is the rule's own name and
@@ -63,6 +63,7 @@ type-check. Replacements derive from the token, never from a string.
 | `error-propagation` | `question-to-unwrap`, `ignore-question-statement` | balanced |
 | `match-arm` | `delete-match-arm`, `remove-match-guard` | balanced |
 | `control-flow` | `break-to-continue`, `continue-to-break` | balanced |
+| `condition-removal` | `condition-to-true`, `condition-to-false` | balanced |
 | `bitwise` | `band-to-bor`, `bor-to-band`, `xor-to-band`, `shl-to-shr`, `shr-to-shl` | strong |
 | `compound-assignment` | `add-assign-to-sub-assign`, `sub-assign-to-add-assign`, `mul-assign-to-div-assign`, `div-assign-to-mul-assign`, `rem-assign-to-mul-assign`, `band-assign-to-bor-assign`, `bor-assign-to-band-assign`, `xor-assign-to-band-assign`, `shl-assign-to-shr-assign`, `shr-assign-to-shl-assign` | strong |
 | `method-swap` | `is-some-to-is-none`, `is-none-to-is-some`, `is-ok-to-is-err`, `is-err-to-is-ok`, `max-to-min`, `min-to-max`, `all-to-any`, `any-to-all`, `first-to-last`, `last-to-first`, `skip-to-take`, `take-to-skip`, `sum-to-product`, `product-to-sum` | strong |
@@ -88,6 +89,19 @@ says which loop the jump is about. A `break` that carries a value is left
 alone: `continue` carries none, and the loop whose value it was would have
 nothing to be. A swap that turns the only way out of a loop into a way round
 it is a mutation the tests notice as a timeout, which is a kill.
+
+`condition-to-true` and `condition-to-false` fix an `if` condition at each
+answer in turn. They ask of an `if` exactly what `remove-match-guard` and
+`delete-match-arm` already ask of an arm, which is why they are two rules
+rather than one: a suite that kills `negate-condition` has one test whose
+branch changed, and that test kills exactly one of the pair. The negation
+says a branch is checked; the pair says *which* branch is checked and which
+is not, which is a different question and the one somebody can act on. A
+condition somebody already wrote as `true` or `false` is left alone — writing
+`true` where `true` is written is an equivalent mutant offered by
+construction — and a loop condition is left alone because `while true` does
+not answer a question about the tests: it hangs, the run bounds it, and the
+bound is recorded as a kill nobody learned anything from.
 
 `delete-else-branch` takes the `else` an `if` chain ends with, and only where
 the chain stands as a statement: an `if` that is a value has to have an `else`

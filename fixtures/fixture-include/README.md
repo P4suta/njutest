@@ -44,6 +44,8 @@ src/items.rs:9:9 int-decrement survived
 src/items.rs:9:9 int-increment killed
 src/lib.rs:14:33 sum-to-product killed
 src/lib.rs:15:5 return-default killed
+src/lib.rs:15:8 condition-to-false killed
+src/lib.rs:15:8 condition-to-true killed
 src/lib.rs:15:8 negate-condition killed
 src/lib.rs:15:18 return-default killed
 src/lib.rs:15:22 mul-to-div killed

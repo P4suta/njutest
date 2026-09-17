@@ -1,19 +1,19 @@
 # Mutation report — fixture-coverage <run>
 
-**94.7%** — 18 detected of 19 decided
+**96.6%** — 28 detected of 29 decided
 
-22 mutants were cataloged: 19 executed, 0 refused by the compiler, 4 places that produced no candidate.
+32 mutants were cataloged: 29 executed, 0 refused by the compiler, 4 places that produced no candidate.
 
 | outcome | how many |
 | --- | --- |
-| killed | 18 |
+| killed | 28 |
 | survived | 1 |
 | timed out | 0 |
 | inconclusive | 0 |
 | errored | 0 |
 | not run | 3 |
 
-Those 6 add to the 22 cataloged. Within them, not run is 0 unreached, not run is 3 discharged, survived is 0 expected.
+Those 6 add to the 32 cataloged. Within them, not run is 0 unreached, not run is 3 discharged, survived is 0 expected.
 
 ## Findings
 

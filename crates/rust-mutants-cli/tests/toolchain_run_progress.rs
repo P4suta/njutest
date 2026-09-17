@@ -53,7 +53,7 @@ fn a_plain_run_names_every_phase_every_mutant_and_the_tally_it_ends_with() {
         "and how much there is to do: {text}"
     );
     let judged: Vec<&str> = text.lines().filter(|line| line.starts_with('[')).collect();
-    assert_eq!(judged.len(), 11, "one line per mutant: {text}");
+    assert_eq!(judged.len(), 13, "one line per mutant: {text}");
     assert!(
         judged.iter().all(|line| line.contains("killed")
             || line.contains("survived")

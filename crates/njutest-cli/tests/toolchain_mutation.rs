@@ -127,15 +127,16 @@ fn a_gap_the_suite_cannot_see_is_insufficient_and_named() {
     let report = document(&fixture);
     assert_eq!(report["verdict"], "INSUFFICIENT");
     let mutants = &report["accounting"]["mutants"];
-    assert_eq!(mutants["cataloged"], 10);
-    assert_eq!(mutants["killed"], 7);
+    assert_eq!(mutants["cataloged"], 14);
+    assert_eq!(mutants["killed"], 10);
     assert_eq!(
-        mutants["survived"], 2,
-        "the two boundary mutations only the ignored test would have caught"
+        mutants["survived"], 3,
+        "what the ignored test would have caught, said three ways: both boundaries, and \
+         the whole third branch nothing ever reaches while `sign(0)` is not asked for"
     );
 
     let findings = report["findings"].as_array().expect("findings");
-    assert_eq!(findings.len(), 3);
+    assert_eq!(findings.len(), 4);
     let rules: Vec<&str> = report["mutants"]
         .as_array()
         .expect("mutants")
@@ -145,8 +146,9 @@ fn a_gap_the_suite_cannot_see_is_insufficient_and_named() {
         .collect();
     assert_eq!(
         rules,
-        ["gt-to-ge", "lt-to-le"],
-        "the two sides of the zero nobody tests"
+        ["gt-to-ge", "condition-to-true", "lt-to-le"],
+        "the two sides of the zero nobody tests, and the branch on the far side of them \
+         that nothing reaches at all while it goes untested"
     );
     for finding in findings {
         assert_eq!(finding["kind"], "surviving-mutant");
@@ -168,7 +170,7 @@ fn a_mutant_a_reviewer_accepted_stops_being_a_finding() {
         .filter(|mutant| mutant["outcome"] == "survived" || mutant["outcome"] == "unreached")
         .filter_map(|mutant| mutant["id"].as_str().map(ToOwned::to_owned))
         .collect();
-    assert_eq!(survivors.len(), 3);
+    assert_eq!(survivors.len(), 4);
 
     let mut configuration = String::from("version = 1\n");
     for id in &survivors {
@@ -189,9 +191,9 @@ fn a_mutant_a_reviewer_accepted_stops_being_a_finding() {
     );
     let report = document(&fixture);
     assert_eq!(report["verdict"], "ASSURED");
-    assert_eq!(report["accounting"]["mutants"]["accepted"], 3);
+    assert_eq!(report["accounting"]["mutants"]["accepted"], 4);
     assert_eq!(
-        report["accounting"]["mutants"]["survived"], 2,
+        report["accounting"]["mutants"]["survived"], 3,
         "an acceptance does not rewrite what was measured"
     );
     assert_eq!(report["findings"].as_array().expect("findings").len(), 0);
@@ -229,7 +231,7 @@ fn an_acceptance_that_names_no_single_catalog_entry_suppresses_nothing() {
             .iter()
             .filter(|finding| finding["kind"] == "surviving-mutant")
             .count(),
-        3,
+        4,
         "every survivor remains visible: {findings:?}"
     );
 }
@@ -321,7 +323,7 @@ fn explain_refuses_a_prefix_that_names_more_than_one() {
     let output = njutest(&fixture, &["explain", ""]);
     assert_eq!(output.status.code(), Some(3));
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("names 10 mutants"), "{stderr}");
+    assert!(stderr.contains("names 14 mutants"), "{stderr}");
 }
 
 #[test]
@@ -329,7 +331,7 @@ fn accept_records_the_decision_where_the_next_run_will_read_it() {
     let fixture = fixture("fixture-baseline");
     verify(&fixture, &[]);
     let names = unanswered(&fixture);
-    assert_eq!(names.len(), 3);
+    assert_eq!(names.len(), 4);
 
     for name in &names {
         let output = njutest(
@@ -350,7 +352,7 @@ fn accept_records_the_decision_where_the_next_run_will_read_it() {
     }
     let written =
         std::fs::read_to_string(fixture.root.join(".njutest.toml")).expect("a configuration");
-    assert_eq!(written.matches("[[acceptance]]").count(), 3, "{written}");
+    assert_eq!(written.matches("[[acceptance]]").count(), 4, "{written}");
     assert!(
         written.contains("an ignored test covers this boundary"),
         "{written}"
@@ -979,7 +981,7 @@ fn an_acceptance_whose_expiry_has_passed_answers_for_nothing() {
         .filter(|mutant| mutant["outcome"] == "survived" || mutant["outcome"] == "unreached")
         .filter_map(|mutant| mutant["id"].as_str().map(ToOwned::to_owned))
         .collect();
-    assert_eq!(survivors.len(), 3);
+    assert_eq!(survivors.len(), 4);
 
     let mut configuration = String::from("version = 1\n");
     for id in &survivors {
@@ -1003,7 +1005,7 @@ fn an_acceptance_whose_expiry_has_passed_answers_for_nothing() {
     );
     assert_eq!(
         report["findings"].as_array().expect("findings").len(),
-        3,
+        4,
         "and the findings it was hiding are back"
     );
 }

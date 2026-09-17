@@ -45,6 +45,8 @@ src/lib.rs:22:5 return-default unreached
 src/lib.rs:22:13 int-increment unreached
 src/lib.rs:27:11 string-to-empty unreached
 src/lib.rs:32:5 return-default unreached
+src/lib.rs:32:8 condition-to-false unreached
+src/lib.rs:32:8 condition-to-true unreached
 src/lib.rs:32:8 negate-condition unreached
 src/lib.rs:32:10 gt-to-ge unreached
 src/lib.rs:32:16 return-default unreached

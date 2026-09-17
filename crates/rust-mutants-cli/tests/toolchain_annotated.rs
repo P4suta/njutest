@@ -89,7 +89,7 @@ fn every_marker_hides_what_it_says_and_the_one_that_hides_nothing_is_a_finding()
         .expect("the annotated tally");
     assert_eq!(
         annotated["count"].as_u64(),
-        Some(8),
+        Some(10),
         "the tally says how much the markers hid: {annotated}"
     );
 }
