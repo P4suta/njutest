@@ -24,6 +24,10 @@ fn expect_error(text: &str) -> njutest_cli::config::ConfigError {
     load(text).expect_err("this configuration is refused")
 }
 
+fn expect_ok(text: &str) -> Config {
+    load(text).expect("this configuration is read")
+}
+
 #[test]
 fn the_defaults_are_the_numbers_the_contract_states() {
     let config = Config::default();
@@ -429,6 +433,50 @@ fn an_acceptance_without_a_reason_is_not_an_acceptance() {
 }
 
 #[test]
+fn a_configuration_is_a_named_way_to_build_the_project_and_is_named_once() {
+    let read = expect_ok(
+        "[[configuration]]\nname = \"all-features\"\nall_features = true\n\n\
+         [[configuration]]\nname = \"release\"\nprofile = \"release\"\n",
+    );
+    assert_eq!(
+        read.configuration.len(),
+        2,
+        "a project whose tests pass with the default features and break with all of \
+         them has a hole nothing reports, because a run measures one build"
+    );
+    assert_eq!(read.configuration[0].name, "all-features");
+    assert!(read.configuration[0].all_features);
+    assert_eq!(read.configuration[1].profile.as_deref(), Some("release"));
+
+    assert_eq!(
+        Config::default().configuration,
+        Vec::new(),
+        "and a project that named none is measured exactly as it was before: the \
+         second build is a thing somebody asks for"
+    );
+
+    let blank = expect_error("[[configuration]]\nname = \"\"\n");
+    assert_eq!(blank.kind(), ConfigErrorKind::Invalid);
+
+    let twice =
+        expect_error("[[configuration]]\nname = \"same\"\n\n[[configuration]]\nname = \"same\"\n");
+    assert_eq!(
+        twice.kind(),
+        ConfigErrorKind::Invalid,
+        "two configurations under one name are two answers a report cannot tell apart"
+    );
+    assert!(twice.to_string().contains("same"), "{twice}");
+
+    let reserved = expect_error("[[configuration]]\nname = \"default\"\n");
+    assert_eq!(
+        reserved.kind(),
+        ConfigErrorKind::Invalid,
+        "`default` is what the report calls the build `[execution]` describes, so a \
+         second one under that name would overwrite the first"
+    );
+}
+
+#[test]
 fn a_resource_cannot_be_shared_and_exclusive_at_once() {
     let error =
         expect_error("[resources.db]\ncommand = [\"x\"]\nshared = true\nexclusive = true\n");
@@ -476,8 +524,21 @@ fn canonical_configuration_is_the_complete_serialized_contract() {
         serde_json::to_string(&config).expect("the configuration is serializable")
     );
     assert!(canonical.starts_with("{\"version\":1,"), "{canonical}");
-    assert!(canonical.ends_with("\"acceptance\":[]}"), "{canonical}");
+    assert!(canonical.ends_with("\"configuration\":[]}"), "{canonical}");
     assert_eq!(config.digest().len(), 64);
+
+    let mut two = Config::default();
+    two.configuration.push(njutest_cli::config::Configuration {
+        name: "release".to_owned(),
+        profile: Some("release".to_owned()),
+        ..njutest_cli::config::Configuration::default()
+    });
+    assert_ne!(
+        two.digest(),
+        config.digest(),
+        "a run that measures a second build is a different run, and the identity has \
+         to say so or the first run's answers would be read back for it"
+    );
 }
 
 #[test]
