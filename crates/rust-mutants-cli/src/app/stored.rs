@@ -133,13 +133,7 @@ pub fn oldest(directories: &[PathBuf], keep: u32) {
     let excess = directories
         .len()
         .saturating_sub(usize::try_from(keep).unwrap_or(usize::MAX));
-    let started = std::time::Instant::now();
-    for old in directories.iter().take(excess) {
-        if started.elapsed() >= rust_mutants::tempowner::SWEEP_BUDGET {
-            break;
-        }
-        drop(std::fs::remove_dir_all(old));
-    }
+    let _left = rust_mutants::reclaim::all(directories.iter().take(excess).map(PathBuf::as_path));
 }
 
 /// Every directory directly under `directory`, in name order.

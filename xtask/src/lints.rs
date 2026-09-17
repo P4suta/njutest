@@ -17,11 +17,21 @@ pub enum Kind {
     BoxedTraitObject,
     /// A comment that is not documentation.
     Comment,
+    /// A recursive removal outside the one place that bounds it and says what is left.
+    UnboundedRemoval,
+    /// A command or a configuration key built with an identity in it, which the next edit re-mints.
+    PerishableHandle,
 }
 
 impl Kind {
     /// Every kind, in the order a report lists them.
-    pub const ALL: [Self; 3] = [Self::AllowAttribute, Self::BoxedTraitObject, Self::Comment];
+    pub const ALL: [Self; 5] = [
+        Self::AllowAttribute,
+        Self::BoxedTraitObject,
+        Self::Comment,
+        Self::UnboundedRemoval,
+        Self::PerishableHandle,
+    ];
 
     /// What to write in a report.
     #[must_use]
@@ -30,6 +40,8 @@ impl Kind {
             Self::AllowAttribute => "allow-attribute",
             Self::BoxedTraitObject => "boxed-trait-object",
             Self::Comment => "comment",
+            Self::UnboundedRemoval => "unbounded-removal",
+            Self::PerishableHandle => "perishable-handle",
         }
     }
 
@@ -50,9 +62,42 @@ impl Kind {
                  assertion prints; a comment beside code is a second account of it that \
                  nothing keeps true"
             }
+            Self::UnboundedRemoval => {
+                "use rust_mutants::reclaim, which stops at a budget and hands back what \
+                 refused and what it never reached; a directory something else is holding \
+                 takes minutes to refuse, and a loop over a few hundred of those runs for \
+                 a day while saying nothing"
+            }
+            Self::PerishableHandle => {
+                "build it from a locator — path, item, rule — which holds after the file \
+                 has changed; a mutant identity is a function of the whole file, so the \
+                 edit that closes a survivor re-mints it and the command or the record \
+                 that names it stops naming anything"
+            }
         }
     }
 }
+
+/// What a reader is told to type back at the tool, where an identity in it would not survive them typing it.
+const HANDED_OUT: [&str; 5] = [
+    "--mutant ",
+    "njutest accept ",
+    "njutest replay ",
+    "rust-mutants explain ",
+    "njutest explain ",
+];
+
+/// The names of the things that are an identity rather than a place.
+const PERISHABLE: [&str; 2] = ["display_id", ".id"];
+
+/// The call this repository does not write directly, because every place that did lost what it could not remove.
+const RAW_REMOVAL: &str = "remove_dir_all";
+
+/// The module that is allowed to make it in a loop, being the one that bounds it.
+///
+/// A test may make it too: what a test removes is what it made, and it is
+/// standing there watching.
+const RECLAIMER: &str = "crates/rust-mutants/src/reclaim.rs";
 
 /// One thing found in one file.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -87,11 +132,41 @@ pub fn scan_source(file: &str, source: &str) -> Result<Vec<Finding>, syn::Error>
     let mut scan = Scan {
         file: file.to_owned(),
         found: Vec::new(),
+        looping: 0,
+        reclaimer: file.ends_with(RECLAIMER) || file.contains("/tests/"),
     };
     scan.visit_file(&parsed);
     scan.found.extend(comments(file, source));
+    scan.found.extend(handles(file, source));
     scan.found.sort();
     Ok(scan.found)
+}
+
+/// Every format string that hands a reader a command with an identity in it.
+///
+/// An identity is a function of the whole file, so the edit a reader makes
+/// next — the test that closes the survivor, in the file the survivor is in —
+/// re-mints it. A command printed with one in it stops working the moment it
+/// is followed, and a configuration record written with one stops naming
+/// anything. This finds them by the shape they have: a string that tells
+/// somebody what to type, built in the same expression as an identity.
+fn handles(file: &str, source: &str) -> Vec<Finding> {
+    if file.contains("/tests/") || file.contains("/testkit/") {
+        return Vec::new();
+    }
+    source
+        .lines()
+        .enumerate()
+        .filter(|(_at, line)| {
+            HANDED_OUT.iter().any(|said| line.contains(said))
+                && PERISHABLE.iter().any(|name| line.contains(name))
+        })
+        .map(|(at, _line)| Finding {
+            kind: Kind::PerishableHandle,
+            file: file.to_owned(),
+            line: at.saturating_add(1),
+        })
+        .collect()
 }
 
 /// The prefix of a comment that is an instruction to this engine rather than an account of the code beside it.
@@ -249,9 +324,20 @@ fn comment_at(rest: &[char]) -> Option<(usize, String, bool)> {
 struct Scan {
     file: String,
     found: Vec<Finding>,
+    /// How many loop bodies the walk is inside, which is what makes a removal unbounded.
+    looping: usize,
+    /// Whether this file is the one that bounds removals, and so may make the call.
+    reclaimer: bool,
 }
 
 impl Scan {
+    /// Walks a loop body, counting it, so a removal inside one is seen as inside one.
+    fn within_a_loop(&mut self, walk: impl FnOnce(&mut Self)) {
+        self.looping = self.looping.saturating_add(1);
+        walk(self);
+        self.looping = self.looping.saturating_sub(1);
+    }
+
     fn note(&mut self, kind: Kind, span: proc_macro2::Span) {
         self.found.push(Finding {
             kind,
@@ -262,6 +348,38 @@ impl Scan {
 }
 
 impl Visit<'_> for Scan {
+    fn visit_expr_for_loop(&mut self, loop_: &syn::ExprForLoop) {
+        self.within_a_loop(|scan| syn::visit::visit_expr_for_loop(scan, loop_));
+    }
+
+    fn visit_expr_while(&mut self, loop_: &syn::ExprWhile) {
+        self.within_a_loop(|scan| syn::visit::visit_expr_while(scan, loop_));
+    }
+
+    fn visit_expr_loop(&mut self, loop_: &syn::ExprLoop) {
+        self.within_a_loop(|scan| syn::visit::visit_expr_loop(scan, loop_));
+    }
+
+    fn visit_expr_call(&mut self, call: &syn::ExprCall) {
+        if self.looping > 0
+            && !self.reclaimer
+            && let syn::Expr::Path(path) = call.func.as_ref()
+            && path
+                .path
+                .segments
+                .last()
+                .is_some_and(|last| last.ident == RAW_REMOVAL)
+        {
+            let at = path
+                .path
+                .segments
+                .first()
+                .map_or_else(proc_macro2::Span::call_site, |one| one.ident.span());
+            self.note(Kind::UnboundedRemoval, at);
+        }
+        syn::visit::visit_expr_call(self, call);
+    }
+
     fn visit_attribute(&mut self, attribute: &syn::Attribute) {
         if attribute.path().is_ident("allow")
             && let Some(segment) = attribute.path().segments.first()

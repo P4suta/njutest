@@ -22,9 +22,15 @@ pub fn document(document: &RunDocument) -> String {
         "<testsuites name=\"rust-mutants\" tests=\"{tests}\" failures=\"{failures}\" \
          errors=\"{errors}\" skipped=\"{skipped}\" time=\"{time}\">",
         tests = counted.cataloged,
-        failures = counted.survived.saturating_sub(counted.expected),
-        errors = counted.inconclusive.saturating_add(counted.errored),
-        skipped = counted.not_run,
+        failures = counted
+            .survived
+            .count()
+            .saturating_sub(counted.expected.count()),
+        errors = counted
+            .inconclusive
+            .count()
+            .saturating_add(counted.errored.count()),
+        skipped = counted.not_run.count(),
         time = seconds(document.run.duration_ms),
     );
     for (path, mutants) in files {

@@ -6,7 +6,7 @@ surviving-mutant       no test noticed 00000000000000000002; 1 tests ran and pas
 
 SURVIVORS    1 survivors: 1 each its own finding, and 0 that are 0 unexercised paths, named once each below
 
-MUTANTS   cataloged=5 of which executed=5; the compiler refused=2 more, and skipped=7 places produced none
-OUTCOMES  killed=3 survived=2 timed_out=0 inconclusive=0 errored=0 not_run=0 (these add to cataloged)
-OF THOSE  not_run is unreached=0 discharged=0; survived includes expected=1
+MUTANTS   5 mutants were cataloged: 5 executed, 2 refused by the compiler, 7 places that produced no candidate.
+OUTCOMES  killed=3 survived=2 timed_out=0 inconclusive=0 errored=0 not_run=0
+OF THOSE  Those 6 add to the 5 cataloged. Within them, not run is 0 unreached, not run is 0 discharged, survived is 1 expected.
 SCORE     60.0%  (3 detected of 5 decided)

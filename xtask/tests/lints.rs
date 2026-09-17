@@ -173,3 +173,58 @@ fn the_development_page_names_every_kind_this_gate_reports() {
         );
     }
 }
+
+/// A recursive removal in a loop is refused, and one of a single directory is not.
+#[test]
+fn a_removal_in_a_loop_is_refused_and_one_of_a_named_directory_is_not() {
+    let looping = r"
+        fn sweep(directories: &[std::path::PathBuf]) {
+            for one in directories {
+                drop(std::fs::remove_dir_all(one));
+            }
+        }
+    ";
+    let single = r"
+        fn close(dir: &std::path::Path) {
+            drop(std::fs::remove_dir_all(dir));
+        }
+    ";
+    let found = scan_source("crates/demo/src/lib.rs", looping).expect("it parses");
+    assert!(
+        found.iter().any(|one| one.kind == Kind::UnboundedRemoval),
+        "a loop of removals is what runs for a day on a wedged mount while saying nothing: \
+         {found:?}"
+    );
+    let found = scan_source("crates/demo/src/lib.rs", single).expect("it parses");
+    assert!(
+        found.is_empty(),
+        "one directory a caller names is one removal, and a budget over one thing is a \
+         bound on nothing: {found:?}"
+    );
+}
+
+/// A command handed to a reader with an identity in it is refused.
+#[test]
+fn a_command_built_from_an_identity_is_refused() {
+    let perishable = r#"
+        fn said(mutant: &Mutant) -> String {
+            format!("rust-mutants explain {}", mutant.display_id)
+        }
+    "#;
+    let holding = r#"
+        fn said(mutant: &Mutant) -> String {
+            format!("rust-mutants explain {}:{}:{}", mutant.path, mutant.item, mutant.rule)
+        }
+    "#;
+    let found = scan_source("crates/demo/src/lib.rs", perishable).expect("it parses");
+    assert!(
+        found.iter().any(|one| one.kind == Kind::PerishableHandle),
+        "the edit that closes a survivor re-mints the identity naming it, so a command \
+         printed with one stops working the moment it is followed: {found:?}"
+    );
+    let found = scan_source("crates/demo/src/lib.rs", holding).expect("it parses");
+    assert!(
+        found.is_empty(),
+        "a locator holds through that edit, which is the whole reason it exists: {found:?}"
+    );
+}

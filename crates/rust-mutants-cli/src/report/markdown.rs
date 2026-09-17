@@ -39,30 +39,13 @@ fn score(out: &mut String, document: &RunDocument) {
 }
 
 fn accounting(out: &mut String, document: &RunDocument) {
-    let counted = &document.accounting;
-    let _written = writeln!(
-        out,
-        "{} mutants were cataloged, of which {} were executed. The compiler refused {} more, \
-         and {} places the rules target produced none.\n",
-        counted.cataloged, counted.executed, counted.refused, counted.skipped
-    );
+    let tally = super::tally::Tally::of(document);
+    let _written = writeln!(out, "{}\n", tally.said());
     out.push_str("| outcome | how many |\n| --- | --- |\n");
-    for (name, count) in [
-        ("killed", counted.killed),
-        ("survived", counted.survived),
-        ("timed out", counted.timed_out),
-        ("inconclusive", counted.inconclusive),
-        ("errored", counted.errored),
-        ("not run", counted.not_run),
-    ] {
+    for (name, count) in &tally.parts {
         let _written = writeln!(out, "| {name} | {count} |");
     }
-    let _written = writeln!(
-        out,
-        "\nThose six add to the {} cataloged. Within them, *not run* is {} unreached and {} \
-         discharged, and *survived* includes {} a reviewer expected.\n",
-        counted.cataloged, counted.unreached, counted.discharged, counted.expected
-    );
+    let _written = writeln!(out, "\n{}\n", tally.within_said());
 }
 
 fn findings(out: &mut String, document: &RunDocument) {

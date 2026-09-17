@@ -10,6 +10,7 @@ pub mod junit;
 pub mod markdown;
 pub mod sarif;
 pub mod sources;
+pub mod tally;
 
 pub use rust_mutants::report::catalog::{
     CatalogDocument, MutantDocument, PlatformDocument, RejectionDocument, SelectionDocument,
@@ -535,29 +536,17 @@ fn survivors(document: &run::RunDocument) -> String {
 
 /// What the run came to, in the four lines a reader takes away from it.
 fn totals(document: &run::RunDocument) -> String {
-    let a = &document.accounting;
-    let mut text = String::new();
-    let written = write!(
-        text,
-        "MUTANTS   cataloged={} of which executed={}; the compiler refused={} more, and \
-         skipped={} places produced none\n\
-         OUTCOMES  killed={} survived={} timed_out={} inconclusive={} errored={} not_run={} \
-         (these add to cataloged)\n\
-         OF THOSE  not_run is unreached={} discharged={}; survived includes expected={}\n",
-        a.cataloged,
-        a.executed,
-        a.refused,
-        a.skipped,
-        a.killed,
-        a.survived,
-        a.timed_out,
-        a.inconclusive,
-        a.errored,
-        a.not_run,
-        a.unreached,
-        a.discharged,
-        a.expected,
-    );
+    let tally = tally::Tally::of(document);
+    let mut text = format!("MUTANTS   {}\n", tally.said());
+    let outcomes = tally
+        .parts
+        .iter()
+        .map(|(name, count)| format!("{}={count}", name.replace(' ', "_")))
+        .collect::<Vec<String>>()
+        .join(" ");
+    let written = writeln!(text, "OUTCOMES  {outcomes}");
+    debug_assert!(written.is_ok(), "writing to a String cannot fail");
+    let written = writeln!(text, "OF THOSE  {}", tally.within_said());
     debug_assert!(written.is_ok(), "writing to a String cannot fail");
     match &document.score {
         Some(score) => {

@@ -88,32 +88,88 @@ pub struct Accounting {
     /// How many candidate rows the run accounts for, excluding compiler refusals.
     pub cataloged: u32,
     /// How many candidates the compiler refused.
-    pub refused: u32,
+    pub refused: Beside,
     /// How many places discovery passed over.
-    pub skipped: u32,
+    pub skipped: Beside,
     /// How many mutants an execution reached a verdict on.
-    pub executed: u32,
+    pub executed: Beside,
     /// How many a test failed on.
-    pub killed: u32,
+    pub killed: Of,
     /// How many every test passed on.
-    pub survived: u32,
+    pub survived: Of,
     /// How many exceeded the budget twice.
-    pub timed_out: u32,
+    pub timed_out: Of,
     /// How many the run could not decide.
-    pub inconclusive: u32,
+    pub inconclusive: Of,
     /// How many the harness itself failed on.
-    pub errored: u32,
+    pub errored: Of,
     /// How many never ran.
-    pub not_run: u32,
+    pub not_run: Of,
     /// How many of those never ran because no measured target reaches them.
     #[serde(default)]
-    pub unreached: u32,
+    pub unreached: Within,
     /// How many of those never ran because a proof removed every target that could have noticed them.
     #[serde(default)]
-    pub discharged: u32,
+    pub discharged: Within,
     /// How many survivors a reviewer had declared, and the run confirmed.
-    pub expected: u32,
+    pub expected: Within,
 }
+
+/// One count of a set that adds up to a stated whole.
+///
+/// The three counts in an accounting are three different things, and every
+/// renderer that put them in one list got the same defect: a reader adding a
+/// column of them gets more than there are. They are told apart here rather
+/// than in each renderer, because there were four renderers and they disagreed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct Of(u32);
+
+/// One count of *some of* another count. Adding it to that count's siblings counts it twice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct Within(u32);
+
+/// One count of something outside the whole: neither a part of it nor a part of a part.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct Beside(u32);
+
+/// Declares the three kinds with the same shape, and no `Display`.
+///
+/// None of them can be written into a message by `{}`. That is the point: a
+/// renderer reaching for one has to say which kind it is holding, and the type
+/// is what carries the answer to the place the columns are laid out.
+macro_rules! counted {
+    ($($name:ident),+) => {
+        $(impl $name {
+            /// The number, for arithmetic and for a renderer that has said which kind it is.
+            #[must_use]
+            pub const fn count(self) -> u32 {
+                self.0
+            }
+
+            /// One of these.
+            #[must_use]
+            pub const fn new(count: u32) -> Self {
+                Self(count)
+            }
+
+            /// Counts one more.
+            pub const fn raise(&mut self) {
+                self.0 = self.0.saturating_add(1);
+            }
+        }
+
+        impl From<u32> for $name {
+            fn from(count: u32) -> Self {
+                Self(count)
+            }
+        })+
+    };
+}
+
+counted!(Of, Within, Beside);
 
 /// The share of decided mutants the tests noticed.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -291,18 +347,18 @@ pub fn document(
         established_tests: session.established_tests(),
         accounting: Accounting {
             cataloged: tally.cataloged,
-            refused: tally.refused,
-            skipped: tally.skipped,
-            executed: tally.executed,
-            killed: tally.killed,
-            survived: tally.survived,
-            timed_out: tally.timed_out,
-            inconclusive: tally.inconclusive,
-            errored: tally.errored,
-            not_run: tally.not_run,
-            expected: tally.expected,
-            unreached: tally.unreached,
-            discharged: tally.discharged,
+            refused: tally.refused.into(),
+            skipped: tally.skipped.into(),
+            executed: tally.executed.into(),
+            killed: tally.killed.into(),
+            survived: tally.survived.into(),
+            timed_out: tally.timed_out.into(),
+            inconclusive: tally.inconclusive.into(),
+            errored: tally.errored.into(),
+            not_run: tally.not_run.into(),
+            expected: tally.expected.into(),
+            unreached: tally.unreached.into(),
+            discharged: tally.discharged.into(),
         },
         score: run.score().map(|score| ScoreDocument {
             detected: score.detected,
@@ -594,24 +650,27 @@ fn accounting_of(mutants: &[RunMutantDocument], first: &RunDocument) -> Accounti
             "not_run" => &mut counted.not_run,
             _ => &mut counted.errored,
         };
-        *slot = slot.saturating_add(1);
+        slot.raise();
         if one.unreached {
-            counted.unreached = counted.unreached.saturating_add(1);
+            counted.unreached.raise();
         }
         if one.not_run_reason.as_deref() == Some("discharged") {
-            counted.discharged = counted.discharged.saturating_add(1);
+            counted.discharged.raise();
         }
         if one.expected {
-            counted.expected = counted.expected.saturating_add(1);
+            counted.expected.raise();
         }
     }
-    counted.executed = counted.cataloged.saturating_sub(counted.not_run);
+    counted.executed = Beside::new(counted.cataloged.saturating_sub(counted.not_run.count()));
     counted
 }
 
 fn score_of(accounting: &Accounting) -> Option<ScoreDocument> {
-    let detected = accounting.killed.saturating_add(accounting.timed_out);
-    let decided = detected.saturating_add(accounting.survived);
+    let detected = accounting
+        .killed
+        .count()
+        .saturating_add(accounting.timed_out.count());
+    let decided = detected.saturating_add(accounting.survived.count());
     (decided > 0).then(|| ScoreDocument {
         detected,
         decided,

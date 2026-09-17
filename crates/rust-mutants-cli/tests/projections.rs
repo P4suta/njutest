@@ -19,7 +19,7 @@ use rust_mutants_cli::report::sources::Held;
 use rust_mutants_cli::report::stryker::Thresholds;
 use rust_mutants_cli::report::{
     PlatformDocument, RejectionDocument, SelectionDocument, SkipDocument, WorkspaceDocument, html,
-    sarif, stryker,
+    markdown, sarif, stryker, tally,
 };
 
 /// The source every mutation in the fixture is in.
@@ -100,18 +100,18 @@ fn document() -> RunDocument {
         established_tests: 0,
         accounting: Accounting {
             cataloged: 2,
-            refused: 0,
-            skipped: 0,
-            executed: 2,
-            killed: 1,
-            survived: 1,
-            timed_out: 0,
-            inconclusive: 0,
-            errored: 0,
-            unreached: 0,
-            discharged: 0,
-            not_run: 0,
-            expected: 0,
+            refused: 0_u32.into(),
+            skipped: 0_u32.into(),
+            executed: 2_u32.into(),
+            killed: 1_u32.into(),
+            survived: 1_u32.into(),
+            timed_out: 0_u32.into(),
+            inconclusive: 0_u32.into(),
+            errored: 0_u32.into(),
+            unreached: 0_u32.into(),
+            discharged: 0_u32.into(),
+            not_run: 0_u32.into(),
+            expected: 0_u32.into(),
         },
         score: Some(ScoreDocument {
             detected: 1,
@@ -515,7 +515,7 @@ fn the_page_says_what_the_run_decided_and_what_it_decided_nothing_about() {
          report: {page}"
     );
     assert!(
-        page.contains("2 mutants were cataloged, of which 2 were executed"),
+        page.contains("2 mutants were cataloged"),
         "the total says what it is the total of, in a sentence rather than as a row a \
          reader would add to the outcomes below it: {page}"
     );
@@ -527,7 +527,7 @@ fn the_page_says_what_the_run_decided_and_what_it_decided_nothing_about() {
         );
     }
     assert!(
-        page.contains("Those six add to the 2 cataloged"),
+        page.contains("add to the 2 cataloged"),
         "and the page says so, because a subset printed as a peer is a table that does \
          not add up: {page}"
     );
@@ -709,4 +709,44 @@ fn the_stryker_projection_of_a_run_with_every_side_to_it_is_the_one_reviewed() {
         format!("{text}\n").as_bytes(),
     )
     .expect("the projection a reviewer read");
+}
+
+/// Every projection of one run lays the accounting out from the same arrangement.
+///
+/// Four of them used to lay it out each for itself, and all four made the same
+/// mistake — a subset printed beside the count it is part of — while two also
+/// disagreed about which columns exist. The arrangement is one value now, and
+/// this holds them to it: a projection that reaches past `Tally` to the raw
+/// counts is one that can drift again.
+#[test]
+fn every_projection_lays_the_accounting_out_from_the_one_arrangement() {
+    let document = document();
+    let tally = tally::Tally::of(&document);
+    let page = html::document(&document, &sources());
+    let paged = markdown::document(&document);
+    let said = rust_mutants_cli::report::lines(&document);
+
+    for (name, count) in &tally.parts {
+        for (projection, text) in [("html", &page), ("markdown", &paged)] {
+            assert!(
+                text.contains(&format!("{name}</th><td>{count}"))
+                    || text.contains(&format!("| {name} | {count} |")),
+                "{projection} does not carry the {name} column the arrangement holds: {text}"
+            );
+        }
+        assert!(
+            said.contains(&format!("{}={count}", name.replace(' ', "_"))),
+            "the lines do not carry the {name} column the arrangement holds: {said}"
+        );
+    }
+    for (projection, text) in [("html", &page), ("markdown", &paged), ("lines", &said)] {
+        for (_part, what, count) in &tally.within {
+            assert!(
+                !text.contains(&format!("{what}</th><td>{count}"))
+                    && !text.contains(&format!("| {what} | {count} |")),
+                "{projection} prints {what} as a row beside the counts it is part of, which \
+                 is a table that does not add up: {text}"
+            );
+        }
+    }
 }

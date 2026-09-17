@@ -378,7 +378,9 @@ fn header(frame: &mut Frame<'_>, browser: &Browser, area: Rect) {
         )),
         Line::from(format!(
             "{score}  ·  killed {} survived {} not run {}",
-            accounting.killed, accounting.survived, accounting.not_run
+            accounting.killed.count(),
+            accounting.survived.count(),
+            accounting.not_run.count()
         )),
     ];
     frame.render_widget(

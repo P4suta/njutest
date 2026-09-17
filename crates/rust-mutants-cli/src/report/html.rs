@@ -103,30 +103,12 @@ fn score(document: &RunDocument) -> String {
 }
 
 fn accounting(document: &RunDocument) -> String {
-    let counted = &document.accounting;
-    let rows = [
-        ("killed", counted.killed),
-        ("survived", counted.survived),
-        ("timed out", counted.timed_out),
-        ("inconclusive", counted.inconclusive),
-        ("errored", counted.errored),
-        ("not run", counted.not_run),
-    ];
-    let mut out = format!(
-        "<p>{} mutants were cataloged, of which {} were executed. The compiler refused {} \
-         more, and {} places the rules target produced none.</p>\n<table>\n",
-        counted.cataloged, counted.executed, counted.refused, counted.skipped
-    );
-    for (name, count) in rows {
+    let tally = super::tally::Tally::of(document);
+    let mut out = format!("<p>{}</p>\n<table>\n", escape(&tally.said()));
+    for (name, count) in &tally.parts {
         let _written = writeln!(out, "<tr><th>{name}</th><td>{count}</td></tr>");
     }
-    let _written = write!(
-        out,
-        "</table>\n<p>Those six add to the {} cataloged. Within them, <em>not run</em> is {} \
-         unreached and {} discharged, and <em>survived</em> includes {} a reviewer \
-         expected.</p>",
-        counted.cataloged, counted.unreached, counted.discharged, counted.expected
-    );
+    let _written = write!(out, "</table>\n<p>{}</p>", escape(&tally.within_said()));
     out
 }
 

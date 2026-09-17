@@ -133,25 +133,19 @@ pub fn retain(root: &Path, keep: u32) -> Vec<PathBuf> {
         .filter_map(|index| pointed_at(root, index))
         .collect();
 
-    let mut removed = Vec::new();
     let keep = usize::try_from(keep).unwrap_or(usize::MAX);
-    let started = std::time::Instant::now();
-    for path in names.into_iter().skip(keep) {
-        if started.elapsed() >= rust_mutants::tempowner::SWEEP_BUDGET {
-            break;
-        }
-        let candidate = path
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        if protected.contains(&candidate) {
-            continue;
-        }
-        if std::fs::remove_dir_all(&path).is_ok() {
-            removed.push(path);
-        }
-    }
-    removed
+    let collectable: Vec<PathBuf> = names
+        .into_iter()
+        .skip(keep)
+        .filter(|path| {
+            let candidate = path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            !protected.contains(&candidate)
+        })
+        .collect();
+    rust_mutants::reclaim::all(collectable.iter().map(PathBuf::as_path)).removed
 }
 
 /// The run one index names, if it names one.
