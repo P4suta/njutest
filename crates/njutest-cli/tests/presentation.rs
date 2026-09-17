@@ -181,10 +181,78 @@ fn a_run_with_nothing_to_say_says_that_and_stops() {
     assert_eq!(
         human::draw(&told, Terminal::plain(80)),
         format!(
-            "  ASSURED   4 killed, 0 survived, 0 unreached   1.4s\n  {}\n",
+            "  ASSURED   4 killed  0 survived  0 unreached  1.4s\n  {}\n",
             kept("20260101T000000Z-bbbbbb")
         ),
         "a run that found nothing is four lines of nothing in most tools and one line \
          here, because the answer is the whole of what it has to say"
+    );
+}
+
+#[test]
+fn what_to_draw_for_is_decided_from_what_was_found_out_and_nothing_else() {
+    use njutest_cli::presentation::{Asked, Glyphs, ROOM, Reader, Wanted};
+
+    let piped = Terminal::of(&Asked::default());
+    assert!(
+        !piped.colour && !piped.unicode && !piped.drawing && piped.width == ROOM,
+        "a stream nobody said anything about gets the record stream, no colour, and a \
+         width that is not eighty, because eighty is the width of a punched card: {piped:?}"
+    );
+
+    let asked = Asked {
+        reader: Reader::Person,
+        columns: Some(132),
+        glyphs: Glyphs::Drawn,
+        ..Asked::default()
+    };
+    assert_eq!(
+        Terminal::of(&asked),
+        Terminal {
+            width: 132,
+            colour: true,
+            unicode: true,
+            drawing: true
+        },
+        "a person at a terminal that said how wide it is, and whose locale says the font \
+         has more than ASCII, gets all of it"
+    );
+
+    assert!(
+        !Terminal::of(&Asked {
+            colour: Wanted::Refused,
+            ..asked.clone()
+        })
+        .colour,
+        "NO_COLOR is honoured, because a person who set it meant it"
+    );
+    assert!(
+        Terminal::of(&Asked {
+            colour: Wanted::Forced,
+            ..Asked::default()
+        })
+        .drawing,
+        "and CLICOLOR_FORCE draws even into a pipe, which is how somebody captures it on \
+         purpose"
+    );
+
+    let dumb = Terminal::of(&Asked {
+        term: Some("dumb".to_owned()),
+        ..asked
+    });
+    assert!(
+        !dumb.colour && !dumb.unicode,
+        "a terminal that says it is dumb is taken at its word: {dumb:?}"
+    );
+
+    assert_eq!(
+        Terminal::of(&Asked {
+            columns: Some(3),
+            reader: Reader::Person,
+            ..Asked::default()
+        })
+        .width,
+        ROOM,
+        "and a width nothing can be drawn in is one nobody meant, so it is not believed"
     );
 }

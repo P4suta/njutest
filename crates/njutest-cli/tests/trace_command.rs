@@ -356,6 +356,7 @@ fn asked(root: &std::path::Path, args: &[&str]) -> (u8, String, String) {
         program: std::path::PathBuf::from("this test never runs it"),
         vars: Vec::new(),
         cancel: rust_mutants::runner::Cancel::new(),
+        terminal: njutest_cli::presentation::Terminal::default(),
     };
     let (mut said, mut complaints) = (Vec::new(), Vec::new());
     let code = njutest_cli::run_from(

@@ -9,6 +9,28 @@ use crate::app::runs;
 use crate::cli::{EXIT_ASSURED, EXIT_ERROR, Environment, Format, Report as Arguments};
 use crate::report::lines;
 
+/// One stored run, in the shape whoever asked for it wants.
+fn projected(
+    shape: Format,
+    report: &crate::report::Report,
+    stored: (&std::path::Path, &str),
+    environment: &Environment,
+) -> String {
+    let (root, run) = stored;
+    let store = crate::app::reports::Store::read(root);
+    let document = store.run(run).join(crate::app::reports::DOCUMENT_NAME);
+    let said = store.said(&document);
+    if shape == Format::Lines {
+        return lines::kept(report, &said);
+    }
+    let sources = crate::presentation::Sources::read(root, report);
+    let told = crate::presentation::Told::of(report, &sources, &said);
+    if shape == Format::Agent {
+        return crate::presentation::agent::brief(&told);
+    }
+    crate::presentation::human::draw(&told, environment.terminal)
+}
+
 /// Prints a run's report.
 pub fn run(
     arguments: &Arguments,
@@ -26,12 +48,8 @@ pub fn run(
     };
     let text = match arguments.format {
         Format::Json => runs::document(root, &run).map_err(|error| error.to_string()),
-        Format::Lines => runs::report(root, &run)
-            .map(|report| {
-                let store = crate::app::reports::Store::read(root);
-                let document = store.run(&run).join(crate::app::reports::DOCUMENT_NAME);
-                lines::kept(&report, &store.said(&document))
-            })
+        shape => runs::report(root, &run)
+            .map(|report| projected(shape, &report, (root, &run), environment))
             .map_err(|error| error.to_string()),
     };
     match text {

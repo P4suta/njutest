@@ -24,6 +24,7 @@ fn stopped(root: &Path) -> Environment {
         program: std::path::PathBuf::from("this test never runs it"),
         cache_directory: root.to_owned(),
         cancel,
+        terminal: njutest_cli::presentation::Terminal::default(),
     }
 }
 

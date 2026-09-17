@@ -229,8 +229,28 @@ fn establish(establishing: &Establishing<'_>, streams: Streams<'_>) -> u8 {
         Err(code) => return code,
     };
 
-    let _written = stdout.write_all(lines::kept(&report, &document).as_bytes());
+    let _written = stdout.write_all(said(&report, root, &document, environment).as_bytes());
     report.verdict.exit_code()
+}
+
+/// What a run has to say, in the shape the thing reading it wants.
+///
+/// A terminal gets the drawing and a pipe gets the record stream. They are two
+/// projections of one value rather than two accounts of a report (ADR 0020),
+/// and the stream keeps every guarantee `docs/report-v1.md` states, because it
+/// is a contract with programs.
+fn said(
+    report: &crate::report::Report,
+    root: &Path,
+    document: &str,
+    environment: &Environment,
+) -> String {
+    if !environment.terminal.drawing {
+        return lines::kept(report, document);
+    }
+    let sources = crate::presentation::Sources::read(root, report);
+    let told = crate::presentation::Told::of(report, &sources, document);
+    crate::presentation::human::draw(&told, environment.terminal)
 }
 
 /// The change set, asked for with the directories this project writes left out.
