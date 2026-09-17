@@ -677,7 +677,6 @@ pub fn exec(
         _ => target.cwd.clone(),
     });
     spec.env = Some(environment(context, target, request.scratch.as_deref()));
-    spec.timeout = request.timeout;
     let result = run(&spec, cancel);
     trace.exec(ExecRecord::of(&spec, &result));
     let summary = parse_summary(&result.output);
