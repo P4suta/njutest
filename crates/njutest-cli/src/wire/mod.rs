@@ -64,6 +64,28 @@ pub enum Spoken {
     },
 }
 
+impl Spoken {
+    /// What was asked and what came back, where the wire says how to read one.
+    ///
+    /// The pair a report and a sentence both want, asked of the protocol
+    /// rather than taken apart by each caller: a reader outside this crate
+    /// cannot match a `#[non_exhaustive]` set without a catch-all, and a
+    /// catch-all over a set this repository closes is the arm that absorbs the
+    /// next protocol silently.
+    #[must_use]
+    pub fn asked(&self) -> (String, Option<u16>) {
+        match self {
+            Self::Http {
+                method,
+                path,
+                status,
+                ..
+            } => (format!("{method} {path}"), Some(*status)),
+            Self::Raw { .. } => (String::new(), None),
+        }
+    }
+}
+
 /// One exchange over one seam, as the interposer recorded it.
 ///
 /// Not `deny_unknown_fields`: serde cannot refuse an unknown field and flatten
