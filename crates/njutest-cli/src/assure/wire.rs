@@ -153,48 +153,60 @@ fn unnoticed(fault: &Fault, observed: &[Exchange]) -> Finding {
 /// did. The suite may take a different path this time and pass throughout, and
 /// reading that as nothing noticing would report a gap the tests could close
 /// where nobody was asked anything.
+///
+/// Every seam is drained before any fault is put, and only then are they
+/// measured one at a time. Draining a seam after another seam's fault runs
+/// would take the traffic those runs drove through it for the baseline, and
+/// derive a catalogue from a program that was already being perturbed.
+///
+/// One seam at a time, so the seam a question is about is the one that
+/// derived it rather than one looked up by name afterwards. A lookup can
+/// fail, and a failed lookup returning no answers would report *the run could
+/// not put this question* about a run that had lost track of its own seam —
+/// two facts under one sentence, and the one a reader would act on is the
+/// wrong one.
 #[must_use]
 pub fn asking<R>(seams: &Seams, mut run: R, watch: Watch<'_>) -> Measured
 where
     R: FnMut() -> Vec<Answered>,
 {
-    let observed: Vec<Exchange> = seams
+    let baseline: Vec<Vec<Exchange>> = seams
         .watching
         .iter()
-        .flat_map(|one| one.interposer.taken())
+        .map(|one| one.interposer.taken())
         .collect();
-    for exchange in &observed {
-        watch.trace.wire_exchange(recorded(exchange));
+    let mut done = Measured::default();
+    for (at, observed) in seams.watching.iter().zip(baseline) {
+        for exchange in &observed {
+            watch.trace.wire_exchange(recorded(exchange));
+        }
+        let measured = measure(
+            &Measuring {
+                observed: &observed,
+            },
+            |fault| {
+                for one in &seams.watching {
+                    one.interposer.putting(None);
+                }
+                at.interposer.putting(Some(fault.clone()));
+                let answered = run();
+                if at.interposer.was_put() {
+                    answered
+                } else {
+                    Vec::new()
+                }
+            },
+            watch,
+        );
+        done.executed |= measured.executed;
+        done.findings.extend(measured.findings);
+        done.limitations.extend(measured.limitations);
+        done.seams.extend(measured.seams);
     }
-    let measured = measure(
-        &Measuring {
-            observed: &observed,
-        },
-        |fault| {
-            for one in &seams.watching {
-                one.interposer.putting(None);
-            }
-            let Some(at) = seams
-                .watching
-                .iter()
-                .find(|one| one.capability == fault.capability)
-            else {
-                return Vec::new();
-            };
-            at.interposer.putting(Some(fault.clone()));
-            let answered = run();
-            if at.interposer.was_put() {
-                answered
-            } else {
-                Vec::new()
-            }
-        },
-        watch,
-    );
     for one in &seams.watching {
         one.interposer.putting(None);
     }
-    measured
+    done
 }
 
 /// One exchange as the recording writes it down, which is what an audit re-derives the catalogue from.

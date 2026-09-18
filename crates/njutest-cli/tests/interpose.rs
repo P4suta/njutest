@@ -770,3 +770,56 @@ fn restating_a_status_worded_differently_hands_the_caller_something_else() {
     let _recorded = interposer.stop();
     let _joined = serving.join();
 }
+
+#[test]
+fn what_a_fault_run_drives_through_a_second_seam_is_not_that_seam_s_catalogue() {
+    let (upstream_at, serving) = upstream("[]", 14);
+    let seams = njutest_cli::assure::wire::Seams {
+        environment: Vec::new(),
+        watching: vec![seam("api", upstream_at), seam("db", upstream_at)],
+    };
+    let _baseline = ask(seams.watching[0].interposer.address(), "/orders");
+
+    let held = (
+        rust_mutants::runner::Cancel::new(),
+        njutest_cli::trace::Recorder::disabled(),
+    );
+    let runs = std::cell::Cell::new(0_u32);
+    let done = njutest_cli::assure::wire::asking(
+        &seams,
+        || {
+            runs.set(runs.get().saturating_add(1));
+            let _api = ask(seams.watching[0].interposer.address(), "/orders");
+            let _db = ask(seams.watching[1].interposer.address(), "/rows");
+            vec![njutest_cli::wire::settle::Answered {
+                target: "pkg/test/it".to_owned(),
+                passed: true,
+            }]
+        },
+        njutest_cli::watch::Watch::new(&held.0, &held.1),
+    );
+
+    assert_eq!(
+        runs.get(),
+        6,
+        "the db seam was silent when the run began, so it licensed nothing. The \
+         traffic the api seam's own fault runs drove through it is a program already \
+         being perturbed, and deriving a catalogue from that measures the run rather \
+         than the system: {:?}",
+        done.seams.len()
+    );
+    assert!(
+        done.seams.iter().all(|one| one.capability == "api"),
+        "and every question is about the seam that was dialled before anything was \
+         put: {:?}",
+        done.seams
+            .iter()
+            .map(|one| one.capability.clone())
+            .collect::<Vec<_>>()
+    );
+
+    for one in seams.watching {
+        let _stopped = one.interposer.stop();
+    }
+    let _joined = serving.join();
+}
