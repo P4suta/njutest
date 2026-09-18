@@ -11,8 +11,8 @@
 
 use njutest_cli::report::across::configured;
 use njutest_cli::report::{
-    Blind, BlindIn, MutantAccounting, MutantRecord, ObserverAccounting, Outcome, Position, Report,
-    RunKind, Verdict,
+    Blind, BlindIn, Decided, MutantAccounting, MutantRecord, ObserverAccounting, Outcome, Position,
+    Report, RunKind, Verdict,
 };
 
 fn report(run: &str, outcomes: &[(&str, &str)]) -> Report {
@@ -37,8 +37,12 @@ fn report(run: &str, outcomes: &[(&str, &str)]) -> Report {
             item: "sign".to_owned(),
             original: ">".to_owned(),
             replacement: ">=".to_owned(),
-            outcome: Outcome::parse(outcome).unwrap_or(Outcome::Errored),
-            killed_by: None,
+            outcome: Decided::of(
+                Outcome::parse(outcome).unwrap_or(Outcome::Errored),
+                Some("pkg/lib/pkg".to_owned()),
+            )
+            .or_else(|| Decided::of(Outcome::parse(outcome).unwrap_or(Outcome::Errored), None))
+            .unwrap_or(Decided::Survived),
             reused: false,
             source_run_id: None,
             blind_in: Vec::new(),

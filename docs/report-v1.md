@@ -123,6 +123,19 @@ takes a second for one test and a second for a hundred is two facts about
 process starts and one fact about the tests. An estimate built from it may
 decide an order and never a budget.
 
+`outcome` and `killed_by` travel together and are one thing in the model. A
+kill names the target that noticed; a timeout, a pair that did not agree and a
+harness that would not start name the target they happened on; and the four
+that happen to no target — `compile-rejected`, `survived`, `unreached`,
+`equivalent` — name none. The schema is one closed shape per outcome, so a
+document that says a mutation survived and then names a killer is not one this
+release reads, and neither is one that says a test noticed and names nobody.
+
+The field keeps its name for the documents already written, and it is the wrong
+name three times out of four: the target a timeout expired on killed nothing.
+Reading it as *the target this was established against* is what it has always
+meant.
+
 `targets` is canonically ordered by descending duration, then ascending target
 ID. A mutant disposition may say `reused: true` with a `source_run_id`; the
 accounting carries `reused_killed` and `reused_survived`, each part of

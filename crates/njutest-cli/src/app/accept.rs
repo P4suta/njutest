@@ -160,7 +160,7 @@ fn resolve(
     match matching.as_slice() {
         [only]
             if matches!(
-                only.outcome,
+                only.outcome.outcome(),
                 crate::report::Outcome::Survived | crate::report::Outcome::Unreached
             ) =>
         {

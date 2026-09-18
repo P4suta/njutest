@@ -8,6 +8,7 @@
     reason = "a test asserts with panics and reads as a table; no finding where this reads one is the failure it is here to report"
 )]
 
+use njutest_cli::report::Decided;
 use njutest_cli::report::Outcome;
 use njutest_cli::report::{Answered, FindingKind, MutantRecord, Position, Routing, hollow::found};
 
@@ -25,7 +26,12 @@ fn record(id: &str, outcome: &str, answered: &[(&str, &str)]) -> MutantRecord {
         item: "sign".to_owned(),
         original: ">".to_owned(),
         replacement: ">=".to_owned(),
-        outcome: Outcome::parse(outcome).unwrap_or(Outcome::Errored),
+        outcome: Decided::of(
+            Outcome::parse(outcome).unwrap_or(Outcome::Errored),
+            Some("pkg/lib/pkg".to_owned()),
+        )
+        .or_else(|| Decided::of(Outcome::parse(outcome).unwrap_or(Outcome::Errored), None))
+        .unwrap_or(Decided::Survived),
         blind_in: Vec::new(),
         routing: Some(Routing {
             granularity: rust_mutants::session::Granularity::Block,
@@ -43,7 +49,6 @@ fn record(id: &str, outcome: &str, answered: &[(&str, &str)]) -> MutantRecord {
                 })
                 .collect(),
         }),
-        killed_by: None,
         reused: false,
         source_run_id: None,
     }

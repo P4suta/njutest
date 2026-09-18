@@ -197,7 +197,13 @@ pub fn every_payload() -> Vec<crate::trace::Payload> {
             exchange: WireExchangeRecord::default(),
         },
         Payload::WireExec {
-            wire: WireExecRecord::default(),
+            wire: WireExecRecord {
+                fault: String::new(),
+                capability: String::new(),
+                seq: 0,
+                rule: crate::wire::rule::Rule::DropConnection,
+                decision: crate::report::SeamDecision::Unnoticed,
+            },
         },
         Payload::Note {
             note: NoteRecord {

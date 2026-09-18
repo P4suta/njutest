@@ -162,9 +162,9 @@ fn populated() -> Report {
             item: "demo".to_owned(),
             original: ">".to_owned(),
             replacement: String::new(),
-            outcome: njutest_cli::report::Outcome::parse("killed")
-                .unwrap_or(njutest_cli::report::Outcome::Errored),
-            killed_by: Some("0123456789abcdef".to_owned()),
+            outcome: njutest_cli::report::Decided::Killed {
+                by: "0123456789abcdef".to_owned(),
+            },
             reused: true,
             source_run_id: Some("20260904T101500Z-123456".to_owned()),
             blind_in: vec![njutest_cli::report::BlindIn {
@@ -364,4 +364,61 @@ fn every_object_in_the_schema_is_closed_and_requires_all_it_declares() {
     let mut faults = Vec::new();
     walk(&schema(), "#", &mut faults);
     assert!(faults.is_empty(), "{faults:#?}");
+}
+
+/// One mutant object of the populated document, with `changed` folded over it.
+fn a_mutant_saying(changed: &serde_json::Value) -> serde_json::Value {
+    let text = json::document(&populated()).expect("an audited document");
+    let mut document: serde_json::Value = serde_json::from_str(&text).expect("JSON");
+    let held = document
+        .get_mut("mutants")
+        .and_then(serde_json::Value::as_array_mut)
+        .and_then(|mutants| mutants.first_mut())
+        .expect("a mutant");
+    for (key, value) in changed.as_object().expect("an object") {
+        held[key] = value.clone();
+    }
+    document
+}
+
+#[test]
+fn a_mutation_that_nothing_noticed_and_names_a_noticer_is_not_a_document_this_reads() {
+    let document = a_mutant_saying(&serde_json::json!({ "outcome": "survived" }));
+    let read = serde_json::from_value::<Report>(document.clone());
+    assert!(
+        read.is_err(),
+        "the record says nothing noticed it and then names the target that did. \
+         Carrying that inward and letting a reader meet it is what the pairing being \
+         a type prevents, and refusing it at the boundary is where a document written \
+         by something else gets caught"
+    );
+    assert!(
+        !problems(&document).is_empty(),
+        "and the published schema refuses the same document, because the two say the \
+         same thing rather than because somebody checked they agreed"
+    );
+}
+
+#[test]
+fn a_mutation_a_test_noticed_and_names_nobody_is_not_a_document_this_reads() {
+    let document = a_mutant_saying(&serde_json::json!({ "killed_by": serde_json::Value::Null }));
+    assert!(
+        serde_json::from_value::<Report>(document.clone()).is_err(),
+        "a kill nobody is named for is the other half of the same defect: a reader \
+         is told a test noticed and has nowhere to go"
+    );
+    assert!(!problems(&document).is_empty());
+}
+
+#[test]
+fn the_document_a_run_writes_is_the_two_fields_it_always_wrote() {
+    let text = json::document(&populated()).expect("an audited document");
+    let document: serde_json::Value = serde_json::from_str(&text).expect("JSON");
+    let held = &document["mutants"][0];
+    assert_eq!(held["outcome"], "killed");
+    assert_eq!(
+        held["killed_by"], "0123456789abcdef",
+        "the pairing is a type inside the program and two fields on the wire, so a \
+         document written before it existed still reads: {held}"
+    );
 }

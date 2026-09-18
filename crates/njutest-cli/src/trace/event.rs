@@ -357,7 +357,13 @@ pub struct WireExchangeRecord {
 }
 
 /// One fault put to the suite, and what the suite did with it.
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+///
+/// The rule and the decision are the sets the run holds them as, not their
+/// names: a doc comment listing the legal values beside a `String` is a closed
+/// set written in prose, which is the shape the compiler cannot check. The
+/// recording reads the same as it did, because the names are where the naming
+/// belongs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WireExecRecord {
     /// The fault's identity.
     pub fault: String,
@@ -366,11 +372,10 @@ pub struct WireExecRecord {
     /// The exchange it names, by its place in the order.
     pub seq: u64,
     /// What it asked the seam to do.
-    pub rule: String,
-    /// Who decided it: `tests`, `unnoticed`, `unreached`, or `proved`.
-    pub decision: String,
-    /// The target that noticed, where one did.
-    pub noticed_by: Option<String>,
+    pub rule: crate::wire::rule::Rule,
+    /// Who decided it, and — where somebody did — who that was.
+    #[serde(flatten)]
+    pub decision: crate::report::SeamDecision,
 }
 
 /// A free-form note, for what has no shape of its own yet.

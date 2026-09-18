@@ -251,7 +251,7 @@ fn counted(parts: &[Report], mutants: &[super::MutantRecord]) -> MutantAccountin
     for mutant in mutants {
         counts.observers.counted(mutant.outcome.decision());
         let executed = &mut counts.executed;
-        match mutant.outcome {
+        match mutant.outcome.outcome() {
             Outcome::CompileRejected => counts.rejected = counts.rejected.saturating_add(1),
             Outcome::Killed => {
                 *executed = executed.saturating_add(1);

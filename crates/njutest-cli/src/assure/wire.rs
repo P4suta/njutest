@@ -66,9 +66,8 @@ where
             fault: fault.id.clone(),
             capability: fault.capability.clone(),
             seq: fault.seq,
-            rule: fault.rule.name().to_owned(),
-            decision: decision.name().to_owned(),
-            noticed_by: decision.by().map(ToOwned::to_owned),
+            rule: fault.rule,
+            decision: decision.clone(),
         });
         match &decision {
             SeamDecision::Tests { .. } | SeamDecision::Proved { .. } => {}

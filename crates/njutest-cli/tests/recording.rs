@@ -145,7 +145,7 @@ fn every_mutation_judged_is_a_row_that_says_what_became_of_it() {
     assert_eq!(killed.display_id, "aaaa");
     assert_eq!(killed.outcome.name(), "killed");
     assert_eq!(
-        killed.killed_by.as_deref(),
+        killed.outcome.decided_by(),
         Some("one"),
         "a kill names the target that noticed, which is the one thing a reader cannot \
          work out afterwards"
@@ -158,7 +158,7 @@ fn every_mutation_judged_is_a_row_that_says_what_became_of_it() {
 
     let survived = rows.get(1).expect("the survivor");
     assert_eq!(survived.outcome.name(), "survived");
-    assert_eq!(survived.killed_by, None);
+    assert_eq!(survived.outcome.decided_by(), None);
     assert!(!survived.reused);
     assert_eq!(
         survived.position.line, 1,

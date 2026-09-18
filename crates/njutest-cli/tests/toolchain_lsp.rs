@@ -14,7 +14,6 @@ use std::process::{Command, Stdio};
 
 use njutest_cli::app::lsp::{framed, message};
 use njutest_cli::config::Contract;
-use njutest_cli::report::Outcome;
 use njutest_cli::report::{Finding, FindingKind, MutantRecord, Position, Report, RunKind};
 use serde_json::{Value, json};
 
@@ -38,8 +37,7 @@ fn verified(root: &std::path::Path) -> String {
         item: "demo".to_owned(),
         original: ">".to_owned(),
         replacement: String::new(),
-        outcome: Outcome::Survived,
-        killed_by: None,
+        outcome: njutest_cli::report::Decided::Survived,
         reused: false,
         source_run_id: None,
         blind_in: Vec::new(),

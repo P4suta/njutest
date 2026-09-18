@@ -68,9 +68,7 @@ fn report() -> Report {
         item: "demo".to_owned(),
         original: ">".to_owned(),
         replacement: ">=".to_owned(),
-        outcome: njutest_cli::report::Outcome::parse("survived")
-            .unwrap_or(njutest_cli::report::Outcome::Errored),
-        killed_by: None,
+        outcome: njutest_cli::report::Decided::Survived,
         reused: false,
         source_run_id: None,
         blind_in: Vec::new(),

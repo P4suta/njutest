@@ -639,6 +639,151 @@ impl SeamDecision {
     }
 }
 
+/// What a run established about one mutation, together with whoever established it.
+///
+/// `outcome` and `killed_by` used to sit beside each other, so a record could
+/// say a mutation survived and name the target that killed it, or say a test
+/// noticed and name nobody. Worse, the name was wrong three times in four: a
+/// timeout, a pair that did not agree and a harness that would not start all
+/// filled a field called `killed_by` with a target that killed nothing.
+///
+/// Each way of being decided names its own payload, so the pairing is a thing
+/// the compiler holds and the naming comes out right as a consequence. The
+/// wire is unchanged: this writes and reads the same two fields it always did,
+/// and refuses a document that pairs them in a way no run could mean.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Decided {
+    /// The compiler refused the mutated program.
+    CompileRejected,
+    /// A test noticed, and this is the one that did.
+    Killed {
+        /// The target that noticed.
+        by: String,
+    },
+    /// A bound expired before anything finished, on this target.
+    TimedOut {
+        /// The target it was running against.
+        on: String,
+    },
+    /// Every test that could notice ran and none did.
+    Survived,
+    /// Nothing ran it.
+    Unreached,
+    /// The compiler rendered it identically, so no observer could tell.
+    Equivalent,
+    /// A pair did not agree, on this target.
+    Unconfirmed {
+        /// The target it was running against.
+        on: String,
+    },
+    /// Nothing could be measured, on this target.
+    Errored {
+        /// The target it was running against.
+        on: String,
+    },
+}
+
+impl Decided {
+    /// Which of the eight this is, without who it was.
+    #[must_use]
+    pub const fn outcome(&self) -> Outcome {
+        match self {
+            Self::CompileRejected => Outcome::CompileRejected,
+            Self::Killed { .. } => Outcome::Killed,
+            Self::TimedOut { .. } => Outcome::TimedOut,
+            Self::Survived => Outcome::Survived,
+            Self::Unreached => Outcome::Unreached,
+            Self::Equivalent => Outcome::Equivalent,
+            Self::Unconfirmed { .. } => Outcome::Unconfirmed,
+            Self::Errored { .. } => Outcome::Errored,
+        }
+    }
+
+    /// The name a report records.
+    #[must_use]
+    pub const fn name(&self) -> &'static str {
+        self.outcome().name()
+    }
+
+    /// Who decided a mutation this outcome is recorded for.
+    #[must_use]
+    pub const fn decision(&self) -> Decision {
+        self.outcome().decision()
+    }
+
+    /// The target this was established against, where it was established against one.
+    #[must_use]
+    pub fn decided_by(&self) -> Option<&str> {
+        match self {
+            Self::Killed { by } => Some(by),
+            Self::TimedOut { on } | Self::Unconfirmed { on } | Self::Errored { on } => Some(on),
+            Self::CompileRejected | Self::Survived | Self::Unreached | Self::Equivalent => None,
+        }
+    }
+
+    /// What `outcome` and `decided_by` name together, or nothing where no run could mean the pair.
+    ///
+    /// # Errors
+    /// Nothing, as an `Option`: an outcome no run spells, an outcome that is
+    /// established against a target with none named, or one that is not with a
+    /// target named anyway.
+    #[must_use]
+    pub fn of(outcome: Outcome, decided_by: Option<String>) -> Option<Self> {
+        match (outcome, decided_by) {
+            (Outcome::Killed, Some(by)) => Some(Self::Killed { by }),
+            (Outcome::TimedOut, Some(on)) => Some(Self::TimedOut { on }),
+            (Outcome::Unconfirmed, Some(on)) => Some(Self::Unconfirmed { on }),
+            (Outcome::Errored, Some(on)) => Some(Self::Errored { on }),
+            (Outcome::CompileRejected, None) => Some(Self::CompileRejected),
+            (Outcome::Survived, None) => Some(Self::Survived),
+            (Outcome::Unreached, None) => Some(Self::Unreached),
+            (Outcome::Equivalent, None) => Some(Self::Equivalent),
+            (
+                Outcome::Killed
+                | Outcome::TimedOut
+                | Outcome::Unconfirmed
+                | Outcome::Errored
+                | Outcome::CompileRejected
+                | Outcome::Survived
+                | Outcome::Unreached
+                | Outcome::Equivalent,
+                _,
+            ) => None,
+        }
+    }
+}
+
+/// The two fields a report has always written, which is what [`Decided`] is carried as.
+#[derive(Serialize, Deserialize)]
+struct Paired {
+    outcome: Outcome,
+    killed_by: Option<String>,
+}
+
+impl Serialize for Decided {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        Paired {
+            outcome: self.outcome(),
+            killed_by: self.decided_by().map(ToOwned::to_owned),
+        }
+        .serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for Decided {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let held = Paired::deserialize(deserializer)?;
+        let said = held.outcome.name();
+        Self::of(held.outcome, held.killed_by).ok_or_else(|| {
+            serde::de::Error::custom(format!(
+                "a mutation recorded as {said} is paired with a target it could not have \
+                 been established against, or with none where it was"
+            ))
+        })
+    }
+}
+
 /// The ways a mutation can be a hole, which is every way short of somebody answering for it.
 ///
 /// A closed set of exactly the decisions that leave a hole. `blind_in` carries
@@ -850,8 +995,12 @@ pub struct TargetRecord {
 }
 
 /// What became of one mutant.
+///
+/// Not `deny_unknown_fields`: serde cannot refuse an unknown field and flatten
+/// one in the same breath, and what the run established has to be two fields of
+/// the record rather than a table under it. The published schema is what
+/// refuses a document with something extra in it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct MutantRecord {
     /// The full identity.
     pub id: String,
@@ -872,16 +1021,15 @@ pub struct MutantRecord {
     /// The bytes it puts there instead, which is what a reader has to see to know what was asked of their tests.
     #[serde(default)]
     pub replacement: String,
-    /// What the run established.
-    pub outcome: Outcome,
+    /// What the run established, and the target it was established against where there was one.
+    #[serde(flatten)]
+    pub outcome: Decided,
     /// The builds it is a hole in, each with what that build established. Empty when the run measured one build or every build answered for it.
     #[serde(default)]
     pub blind_in: Vec<BlindIn>,
     /// Which targets could have noticed it, and what removed the rest. `null` where the run never asked.
     #[serde(default)]
     pub routing: Option<Routing>,
-    /// The target that noticed it, when one did.
-    pub killed_by: Option<String>,
     /// Whether this came from a previous run.
     pub reused: bool,
     /// Which run it came from.

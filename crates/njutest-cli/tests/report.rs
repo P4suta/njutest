@@ -396,8 +396,9 @@ fn mutant(id: &str) -> njutest_cli::report::MutantRecord {
         item: "demo".to_owned(),
         original: ">".to_owned(),
         replacement: ">=".to_owned(),
-        outcome: njutest_cli::report::Outcome::Killed,
-        killed_by: Some("core/lib/core one".to_owned()),
+        outcome: njutest_cli::report::Decided::Killed {
+            by: "core/lib/core one".to_owned(),
+        },
         reused: false,
         source_run_id: None,
         blind_in: Vec::new(),

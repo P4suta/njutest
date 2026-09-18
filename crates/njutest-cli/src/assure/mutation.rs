@@ -129,6 +129,21 @@ impl Disposition {
         self.outcome().name()
     }
 
+    /// What the run established, with the target it was established against.
+    #[must_use]
+    pub fn decided(&self) -> crate::report::Decided {
+        match self {
+            Self::Rejected { .. } => crate::report::Decided::CompileRejected,
+            Self::Killed { by } => crate::report::Decided::Killed { by: by.clone() },
+            Self::TimedOut { on } => crate::report::Decided::TimedOut { on: on.clone() },
+            Self::Survived { .. } => crate::report::Decided::Survived,
+            Self::Unreached => crate::report::Decided::Unreached,
+            Self::Equivalent { .. } => crate::report::Decided::Equivalent,
+            Self::Unconfirmed { on, .. } => crate::report::Decided::Unconfirmed { on: on.clone() },
+            Self::Errored { on, .. } => crate::report::Decided::Errored { on: on.clone() },
+        }
+    }
+
     /// Who decided it, which is what stands behind the verdict it feeds.
     ///
     /// Read through the outcome rather than spelled again here. This mapping

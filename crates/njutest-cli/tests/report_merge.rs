@@ -11,6 +11,19 @@ use njutest_cli::report::{
     TargetRecord, TargetStatus, Timing, Verdict,
 };
 
+/// What a run established under `outcome`, against `by` where the outcome has a target.
+///
+/// The target is supplied where the outcome needs one, because the pairing is
+/// the thing under test everywhere else and a fixture that could not build a
+/// valid one would be testing the fixture.
+fn decided(outcome: &str, by: Option<&str>) -> njutest_cli::report::Decided {
+    let held = Outcome::parse(outcome).unwrap_or(Outcome::Errored);
+    let named = by.unwrap_or("pkg/lib/pkg").to_owned();
+    njutest_cli::report::Decided::of(held, Some(named))
+        .or_else(|| njutest_cli::report::Decided::of(held, None))
+        .unwrap_or(njutest_cli::report::Decided::Survived)
+}
+
 fn part(shard: &str, mutants: &[(&str, &str)]) -> Report {
     let mut report = Report::new(
         "20260908T000000Z-000001",
@@ -42,8 +55,7 @@ fn part(shard: &str, mutants: &[(&str, &str)]) -> Report {
                 column: 1,
                 character_column: 1,
             },
-            outcome: Outcome::parse(outcome).unwrap_or(Outcome::Errored),
-            killed_by: Some("pkg/lib/pkg".to_owned()),
+            outcome: decided(outcome, Some("pkg/lib/pkg")),
             reused: false,
             source_run_id: None,
             blind_in: Vec::new(),
@@ -242,8 +254,7 @@ fn disposed(id: &str, outcome: &str, reused: bool) -> MutantRecord {
             column: 1,
             character_column: 1,
         },
-        outcome: Outcome::parse(outcome).unwrap_or(Outcome::Errored),
-        killed_by: None,
+        outcome: decided(outcome, None),
         reused,
         source_run_id: reused.then(|| "an earlier run".to_owned()),
         blind_in: Vec::new(),
@@ -264,7 +275,7 @@ fn the_whole_counts_every_disposition_its_parts_held() {
         disposed(&"d".repeat(64), "timed_out", false),
         disposed(&"e".repeat(64), "unreached", false),
         disposed(&"f".repeat(64), "equivalent", false),
-        disposed(&"g".repeat(64), "inconclusive", false),
+        disposed(&"g".repeat(64), "unconfirmed", false),
     ];
 
     let counts = merge(&[one, two]).expect("two parts").accounting.mutants;
@@ -479,7 +490,6 @@ fn the_acceptances_of_the_whole_are_the_ones_its_parts_recorded_and_no_others() 
 /// `report` with `target` recorded as having answered `outcome` about its one mutation.
 fn answered_by(mut report: Report, target: &str, outcome: &str) -> Report {
     for record in &mut report.mutants {
-        record.killed_by = None;
         record.routing = Some(njutest_cli::report::Routing {
             granularity: rust_mutants::session::Granularity::Block,
             reaching: vec![target.to_owned()],

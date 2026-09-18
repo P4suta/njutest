@@ -122,7 +122,7 @@ fn mutants(report: &Report) -> String {
             path = escape(&mutant.path),
             line = mutant.position.line,
             rule = escape(&mutant.rule),
-            by = escape(mutant.killed_by.as_deref().unwrap_or_default()),
+            by = escape(mutant.outcome.decided_by().unwrap_or_default()),
         )
     });
     table(&["Outcome", "Mutant", "Where", "Rule", "Noticed by"], rows)

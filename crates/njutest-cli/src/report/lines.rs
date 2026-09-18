@@ -55,7 +55,7 @@ fn written(report: &Report, document: Option<&str>) -> String {
                 &mutant.rule,
             ],
         );
-        if let Some(killed_by) = mutant.killed_by.as_deref() {
+        if let Some(killed_by) = mutant.outcome.decided_by() {
             append(&mut out, &format!("killed_by={killed_by}"));
         }
         if let Some(provenance) = mutant.source_run_id.as_deref() {
@@ -99,7 +99,7 @@ fn onward(report: &Report, out: &mut String) {
     let Some(first) = report
         .mutants
         .iter()
-        .find(|one| one.outcome == super::Outcome::Survived)
+        .find(|one| one.outcome.outcome() == super::Outcome::Survived)
     else {
         return;
     };
