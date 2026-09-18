@@ -56,8 +56,7 @@ fn part(shard: &str, mutants: &[(&str, &str)]) -> Report {
                 character_column: 1,
             },
             outcome: decided(outcome, Some("pkg/lib/pkg")),
-            reused: false,
-            source_run_id: None,
+            reuse: njutest_cli::report::Reuse(njutest_cli::report::Established::Here),
             blind_in: Vec::new(),
             routing: None,
         });
@@ -255,8 +254,11 @@ fn disposed(id: &str, outcome: &str, reused: bool) -> MutantRecord {
             character_column: 1,
         },
         outcome: decided(outcome, None),
-        reused,
-        source_run_id: reused.then(|| "an earlier run".to_owned()),
+        reuse: njutest_cli::report::Reuse(if reused {
+            njutest_cli::report::Established::ReadBackFrom("an earlier run".to_owned())
+        } else {
+            njutest_cli::report::Established::Here
+        }),
         blind_in: Vec::new(),
         routing: None,
     }

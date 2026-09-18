@@ -15,12 +15,10 @@ use njutest_cli::report::{
     Verdict,
 };
 
-/// A report that satisfies every invariant, for a test to break one thing in. One field of a report, and how to leave it saying nothing.
+/// One field of a report, and how to leave it saying nothing.
 type Blank = (&'static str, fn(&mut Report));
 
-/// One fact about git, and how to make a report claim it.
-type Claim = (&'static str, fn(&mut Git));
-
+/// A report that satisfies every invariant, for a test to break one thing in.
 fn sound() -> Report {
     let mut report = Report::new(
         "20260905T081500Z-abcdef",
@@ -28,14 +26,12 @@ fn sound() -> Report {
         njutest_cli::config::Contract::StandardV1,
     );
     report.verdict = Verdict::Assured;
-    report.repository.git = Git {
-        available: true,
+    report.repository.git = Git::Said(njutest_cli::report::Said {
         commit: "0123456789abcdef0123456789abcdef01234567".to_owned(),
         branch: "main".to_owned(),
         dirty: false,
-        merge_base: None,
-        changed_files: Vec::new(),
-    };
+        against: None,
+    });
     report.accounting.targets = TargetAccounting {
         selected: 3,
         passed: 2,
@@ -132,21 +128,34 @@ fn a_position_carries_both_columns_because_one_toolchain_uses_both() {
 
 #[test]
 fn git_is_either_available_with_its_facts_or_explicitly_not() {
-    let unavailable = Git::unavailable();
-    assert!(!unavailable.available);
-    assert_eq!(unavailable.commit, "unavailable");
-    assert_eq!(unavailable.branch, "unavailable");
-    assert!(!unavailable.dirty);
+    let unavailable = Git::Unavailable;
+    assert!(unavailable.said().is_none());
+    assert_eq!(unavailable.commit(), "unavailable");
+    assert_eq!(unavailable.branch(), "unavailable");
+    assert!(!unavailable.dirty());
+    assert!(
+        unavailable.against().is_none(),
+        "the word a reader sees for a tree nobody could ask about is made where it is \
+         read rather than stored, so nothing can hold a commit and say it was never \
+         asked for one"
+    );
 
-    let available = Git {
-        available: true,
+    let available = Git::Said(njutest_cli::report::Said {
         commit: "0123456789abcdef0123456789abcdef01234567".to_owned(),
         branch: "main".to_owned(),
         dirty: true,
-        merge_base: Some("fedcba98".to_owned()),
-        changed_files: vec!["src/lib.rs".to_owned()],
-    };
-    assert!(available.available);
+        against: Some(njutest_cli::report::Against {
+            merge_base: "fedcba98".to_owned(),
+            changed_files: vec!["src/lib.rs".to_owned()],
+        }),
+    });
+    assert!(available.said().is_some());
+    assert_eq!(
+        available.against().map(|taken| taken.merge_base.as_str()),
+        Some("fedcba98"),
+        "and a base travels with the files taken against it, because either alone is \
+         half a fact a reader cannot act on"
+    );
 }
 
 #[test]
@@ -288,7 +297,12 @@ fn a_report_that_put_no_mutation_to_a_test_cannot_say_it_is_assured() {
 #[test]
 fn an_unavailable_fact_is_a_sentinel_and_never_an_empty_string() {
     let mut report = sound();
-    report.repository.git.commit = String::new();
+    report.repository.git = Git::Said(njutest_cli::report::Said {
+        commit: String::new(),
+        branch: "main".to_owned(),
+        dirty: false,
+        against: None,
+    });
     let violations = validate_for_persistence(&report);
     assert!(
         violations
@@ -298,18 +312,7 @@ fn an_unavailable_fact_is_a_sentinel_and_never_an_empty_string() {
     );
 
     let mut report = sound();
-    report.repository.git.available = false;
-    report.repository.git.commit = "0123456789abcdef".to_owned();
-    let violations = validate_for_persistence(&report);
-    assert!(
-        violations
-            .iter()
-            .any(|violation| matches!(violation, Violation::UnavailableWithFacts { .. })),
-        "an unavailable git cannot also have a commit: {violations:?}"
-    );
-
-    let mut report = sound();
-    report.repository.git = Git::unavailable();
+    report.repository.git = Git::Unavailable;
     let violations = validate_for_persistence(&report);
     assert!(
         violations
@@ -399,8 +402,7 @@ fn mutant(id: &str) -> njutest_cli::report::MutantRecord {
         outcome: njutest_cli::report::Decided::Killed {
             by: "core/lib/core one".to_owned(),
         },
-        reused: false,
-        source_run_id: None,
+        reuse: njutest_cli::report::Reuse(njutest_cli::report::Established::Here),
         blind_in: Vec::new(),
         routing: None,
     }
@@ -553,10 +555,14 @@ fn a_field_a_report_leaves_empty_is_named_by_the_violation_that_refuses_it() {
             report.repository.configuration_digest.clear();
         }),
         ("repository.git.commit", |report: &mut Report| {
-            report.repository.git.commit.clear();
+            if let Git::Said(said) = &mut report.repository.git {
+                said.commit.clear();
+            }
         }),
         ("repository.git.branch", |report: &mut Report| {
-            report.repository.git.branch.clear();
+            if let Git::Said(said) = &mut report.repository.git {
+                said.branch.clear();
+            }
         }),
         ("toolchain.rustc", |report: &mut Report| {
             report.toolchain.rustc.clear();
@@ -585,7 +591,7 @@ fn a_field_a_report_leaves_empty_is_named_by_the_violation_that_refuses_it() {
 #[test]
 fn a_run_that_could_not_ask_git_says_so_and_claims_none_of_its_facts() {
     let mut report = sound();
-    report.repository.git = Git::unavailable();
+    report.repository.git = Git::Unavailable;
     let stated = validate_for_persistence(&report);
     assert!(
         stated.iter().any(|violation| matches!(
@@ -596,40 +602,63 @@ fn a_run_that_could_not_ask_git_says_so_and_claims_none_of_its_facts() {
          comparing two reports has no way to know which tree either was about: {stated:?}"
     );
 
-    let claiming: [Claim; 5] = [
-        ("repository.git.commit", |git: &mut Git| {
-            git.commit = "0123456789abcdef0123456789abcdef01234567".to_owned();
-        }),
-        ("repository.git.branch", |git: &mut Git| {
-            git.branch = "main".to_owned();
-        }),
-        ("repository.git.dirty", |git: &mut Git| {
-            git.dirty = true;
-        }),
-        ("repository.git.merge_base", |git: &mut Git| {
-            git.merge_base = Some("fedcba98".to_owned());
-        }),
-        ("repository.git.changed_files", |git: &mut Git| {
-            git.changed_files = vec!["src/lib.rs".to_owned()];
-        }),
-    ];
-
-    for (field, claim) in claiming {
-        let mut report = sound();
-        report.repository.git = Git::unavailable();
-        report.limitations = vec![Limitation::new(
-            "git-metadata-unavailable",
-            "git said nothing",
-        )];
-        claim(&mut report.repository.git);
-        let violations = validate_for_persistence(&report);
+    for (what, available, commit, branch, dirty, merge_base, changed) in [
+        (
+            "a commit",
+            "false",
+            r#""0123456789abcdef0123456789abcdef01234567""#,
+            r#""unavailable""#,
+            "false",
+            "null",
+            "[]",
+        ),
+        (
+            "a branch",
+            "false",
+            r#""unavailable""#,
+            r#""main""#,
+            "false",
+            "null",
+            "[]",
+        ),
+        (
+            "uncommitted changes",
+            "false",
+            r#""unavailable""#,
+            r#""unavailable""#,
+            "true",
+            "null",
+            "[]",
+        ),
+        (
+            "a base it was taken against",
+            "false",
+            r#""unavailable""#,
+            r#""unavailable""#,
+            "false",
+            r#""fedcba98""#,
+            "[]",
+        ),
+        (
+            "a list of files that differ from a base it does not name",
+            "true",
+            r#""0123456789abcdef0123456789abcdef01234567""#,
+            r#""main""#,
+            "false",
+            "null",
+            r#"["src/lib.rs"]"#,
+        ),
+    ] {
+        let written = format!(
+            r#"{{"available":{available},"commit":{commit},"branch":{branch},"dirty":{dirty},"merge_base":{merge_base},"changed_files":{changed}}}"#
+        );
+        let read: Result<Git, serde_json::Error> = serde_json::from_str(&written);
         assert!(
-            violations.iter().any(|violation| matches!(
-                violation,
-                Violation::UnavailableWithFacts { field: named } if named == field
-            )),
-            "git was not available and {field} says otherwise; one of the two is untrue \
-             and a report may not carry both: {violations:?}"
+            read.is_err(),
+            "a tree nobody could ask git about that nonetheless has {what} is a document \
+             where one of the two halves is untrue and a reader cannot tell which. This \
+             used to be five refusals a run made when it wrote a report, which left a \
+             reader of an already-written one to notice for themselves"
         );
     }
 }
@@ -680,44 +709,50 @@ fn targets_that_took_the_same_time_are_ordered_by_name_and_the_place_is_named() 
 }
 
 #[test]
-fn a_report_that_says_where_its_facts_came_from_says_one_thing_about_it() {
-    let mut established = sound();
-    established.provenance.cached = false;
-    established.provenance.source_run_id = Some("20260905T081500Z-000000".to_owned());
-
-    let mut anonymous = sound();
-    anonymous.provenance.cached = true;
-    anonymous.provenance.source_run_id = None;
-
-    let mut itself = sound();
-    itself.provenance.cached = true;
-    itself.provenance.source_run_id = Some(itself.run_id.clone());
-
-    let mut nameless = sound();
-    nameless.provenance.cached = true;
-    nameless.provenance.source_run_id = Some(String::new());
-
-    for (what, report) in [
+fn a_document_that_pairs_the_flag_with_a_name_it_cannot_go_with_is_not_read() {
+    let sound = serde_json::to_string(&sound()).expect("a report is a document");
+    for (what, cached, source) in [
         (
             "a run that established its own facts and also names another",
-            &established,
+            "false",
+            r#""20260905T081500Z-000000""#,
         ),
         (
             "a report read back from an earlier run that names no run",
-            &anonymous,
+            "true",
+            "null",
         ),
-        ("a run that read its own answer back", &itself),
-        ("a source run with no name", &nameless),
+        ("a source run with no name", "true", r#""""#),
     ] {
-        let violations = validate_for_persistence(report);
+        let written = sound.replace(
+            r#""cached":false,"source_run_id":null"#,
+            &format!(r#""cached":{cached},"source_run_id":{source}"#),
+        );
+        assert_ne!(written, sound, "the document under test was composed");
+        let read: Result<Report, serde_json::Error> = serde_json::from_str(&written);
         assert!(
-            violations
-                .iter()
-                .any(|violation| matches!(violation, Violation::ProvenanceIncoherent { .. })),
-            "{what} is a report that cannot be checked against the run it points at, \
-             which is the whole of what provenance is for: {violations:?}"
+            read.is_err(),
+            "{what} is a document a reader cannot check against the run it points at, \
+             which is the whole of what provenance is for. It used to be refused when a \
+             report was written, which left every reader of an already-written one to \
+             notice for themselves"
         );
     }
+}
+
+#[test]
+fn a_run_that_read_its_own_answer_back_is_refused_when_it_is_written() {
+    let mut itself = sound();
+    itself.provenance.facts = njutest_cli::report::Established::ReadBackFrom(itself.run_id.clone());
+
+    let violations = validate_for_persistence(&itself);
+    assert!(
+        violations
+            .iter()
+            .any(|violation| matches!(violation, Violation::ProvenanceIncoherent { .. })),
+        "this is the one a type cannot refuse, because telling it apart needs the run's \
+         own identity and the value holds only the source's: {violations:?}"
+    );
 }
 
 /// Every report this audit refuses, one for each way it refuses one.
@@ -746,30 +781,14 @@ fn refused() -> Vec<Report> {
     let mut silent = sound();
     silent.verdict = Verdict::Defect;
 
-    let mut anonymous = sound();
-    anonymous.provenance.cached = true;
-
     let mut itself = sound();
-    itself.provenance.cached = true;
-    itself.provenance.source_run_id = Some(itself.run_id.clone());
+    itself.provenance.facts = njutest_cli::report::Established::ReadBackFrom(itself.run_id.clone());
 
     let mut nameless = sound();
-    nameless.provenance.cached = true;
-    nameless.provenance.source_run_id = Some(String::new());
-
-    let mut established = sound();
-    established.provenance.source_run_id = Some("20260905T081500Z-000000".to_owned());
+    nameless.provenance.facts = njutest_cli::report::Established::ReadBackFrom(String::new());
 
     let mut unasked = sound();
-    unasked.repository.git = Git::unavailable();
-
-    let mut claiming = sound();
-    claiming.repository.git = Git::unavailable();
-    claiming.repository.git.dirty = true;
-    claiming.limitations = vec![Limitation::new(
-        "git-metadata-unavailable",
-        "git said nothing",
-    )];
+    unasked.repository.git = Git::Unavailable;
 
     let mut backwards = sound();
     backwards.targets.reverse();
@@ -785,12 +804,9 @@ fn refused() -> Vec<Report> {
         disagreeing,
         found,
         silent,
-        anonymous,
         itself,
         nameless,
-        established,
         unasked,
-        claiming,
         backwards,
         empty,
     ]
@@ -799,8 +815,8 @@ fn refused() -> Vec<Report> {
 #[test]
 fn a_report_that_says_it_was_read_back_from_a_run_that_is_not_itself_is_coherent() {
     let mut cached = sound();
-    cached.provenance.cached = true;
-    cached.provenance.source_run_id = Some("20260905T081500Z-000000".to_owned());
+    cached.provenance.facts =
+        njutest_cli::report::Established::ReadBackFrom("20260905T081500Z-000000".to_owned());
 
     assert_eq!(
         validate_for_persistence(&cached),
@@ -867,9 +883,13 @@ fn every_refusal_is_a_finished_sentence() {
         }
     }
     assert!(
-        kinds >= 14,
+        kinds >= 11,
         "one report for each way this refuses one, and every way says something \
-         different: {kinds} refusals, {} of them distinct",
+         different: {kinds} refusals, {} of them distinct. This number went down \
+         when `report::Established` and `report::Git` made seven of the refusals \
+         unwritable, and down is the direction to want it: a refusal a type has taken over is one no \
+         reader has to be told about. What it must not do is go down because a \
+         refusal stopped being made",
         seen.len()
     );
 }

@@ -146,7 +146,35 @@
           ],
           "description": "The run that established the facts, present exactly when cached is true."
         }
-      }
+      },
+      "allOf": [
+        {
+          "description": "A report read back from an earlier run names it, and one this run established names nobody. Neither of the other combinations is a document this schema accepts.",
+          "oneOf": [
+            {
+              "properties": {
+                "cached": {
+                  "const": false
+                },
+                "source_run_id": {
+                  "type": "null"
+                }
+              }
+            },
+            {
+              "properties": {
+                "cached": {
+                  "const": true
+                },
+                "source_run_id": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          ]
+        }
+      ]
     },
     "repository": {
       "type": "object",
@@ -176,7 +204,80 @@
           "$ref": "#/$defs/opaque"
         },
         "git": {
-          "$ref": "#/$defs/git"
+          "$ref": "#/$defs/git",
+          "allOf": [
+            {
+              "description": "A tree git could not be asked about carries none of the facts only git could have said, and a list of files that differ from a base names the base. Neither half of either pair is a document this schema accepts without the other, because a reader meeting one cannot tell which half to believe.",
+              "oneOf": [
+                {
+                  "properties": {
+                    "available": {
+                      "const": false
+                    },
+                    "commit": {
+                      "const": "unavailable"
+                    },
+                    "branch": {
+                      "const": "unavailable"
+                    },
+                    "dirty": {
+                      "const": false
+                    },
+                    "merge_base": {
+                      "type": "null"
+                    },
+                    "changed_files": {
+                      "maxItems": 0
+                    }
+                  }
+                },
+                {
+                  "properties": {
+                    "available": {
+                      "const": true
+                    },
+                    "commit": {
+                      "type": "string",
+                      "minLength": 1,
+                      "not": {
+                        "const": "unavailable"
+                      }
+                    },
+                    "branch": {
+                      "type": "string",
+                      "minLength": 1,
+                      "not": {
+                        "const": "unavailable"
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "description": "A base and the files taken against it travel together: either alone is half a fact.",
+              "oneOf": [
+                {
+                  "properties": {
+                    "merge_base": {
+                      "type": "null"
+                    },
+                    "changed_files": {
+                      "maxItems": 0
+                    }
+                  }
+                },
+                {
+                  "properties": {
+                    "merge_base": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  }
+                }
+              ]
+            }
+          ]
         }
       }
     },
@@ -2302,6 +2403,34 @@
               "type": "null"
             }
           }
+        }
+      ],
+      "allOf": [
+        {
+          "description": "Whether this run established the disposition or read it back, and from where. The two travel together: a disposition read back names the run it came from, and one this run established names nobody. Neither of the other combinations is a document this schema accepts, because a reader meeting one cannot tell which half to believe.",
+          "oneOf": [
+            {
+              "properties": {
+                "reused": {
+                  "const": false
+                },
+                "source_run_id": {
+                  "type": "null"
+                }
+              }
+            },
+            {
+              "properties": {
+                "reused": {
+                  "const": true
+                },
+                "source_run_id": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          ]
         }
       ]
     },

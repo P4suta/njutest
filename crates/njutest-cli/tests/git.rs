@@ -85,15 +85,15 @@ fn a_clean_repository_names_its_commit_and_its_branch() {
     let dir = repository();
     let facts = ask(dir.path());
 
-    assert!(facts.available);
-    assert_eq!(facts.commit.len(), 40, "{}", facts.commit);
+    let said = facts.said().expect("git was asked and answered");
+    assert_eq!(said.commit.len(), 40, "{}", said.commit);
     assert!(
-        facts.commit.chars().all(|c| c.is_ascii_hexdigit()),
+        said.commit.chars().all(|c| c.is_ascii_hexdigit()),
         "{}",
-        facts.commit
+        said.commit
     );
-    assert_eq!(facts.branch, "main");
-    assert!(!facts.dirty, "nothing was changed after the commit");
+    assert_eq!(said.branch, "main");
+    assert!(!said.dirty, "nothing was changed after the commit");
 }
 
 #[test]
@@ -101,7 +101,7 @@ fn a_tree_with_uncommitted_work_says_so() {
     let dir = repository();
     std::fs::write(dir.path().join("a.txt"), b"two\n").expect("a change");
     assert!(
-        ask(dir.path()).dirty,
+        ask(dir.path()).dirty(),
         "a report that named the commit without saying the tree differed \
          would name code that was never verified"
     );
@@ -112,7 +112,7 @@ fn an_untracked_file_makes_the_tree_dirty_too() {
     let dir = repository();
     std::fs::write(dir.path().join("b.txt"), b"new\n").expect("a new file");
     assert!(
-        ask(dir.path()).dirty,
+        ask(dir.path()).dirty(),
         "a file git has never seen is still part of what was built"
     );
 }
@@ -122,12 +122,11 @@ fn a_directory_that_is_not_a_repository_is_unavailable_and_not_empty() {
     let dir = tempfile::tempdir().expect("a temporary directory");
     let facts = ask(dir.path());
 
-    assert!(!facts.available);
-    assert_eq!(facts.commit, UNAVAILABLE);
-    assert_eq!(facts.branch, UNAVAILABLE);
-    assert!(!facts.dirty);
-    assert!(facts.merge_base.is_none());
-    assert!(facts.changed_files.is_empty());
+    assert!(facts.said().is_none());
+    assert_eq!(facts.commit(), UNAVAILABLE);
+    assert_eq!(facts.branch(), UNAVAILABLE);
+    assert!(!facts.dirty());
+    assert!(facts.against().is_none());
 }
 
 #[test]
@@ -141,6 +140,6 @@ fn a_machine_without_git_is_unavailable_rather_than_a_failure() {
         excluded: &excluded(),
         watch: Watch::new(&cancel, &trace),
     });
-    assert!(!facts.available);
-    assert_eq!(facts.commit, UNAVAILABLE);
+    assert!(facts.said().is_none());
+    assert_eq!(facts.commit(), UNAVAILABLE);
 }

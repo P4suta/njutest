@@ -25,8 +25,7 @@ fn populated() -> Report {
         run_id: "20260905T081500Z-abcdef".to_owned(),
         provenance: njutest_cli::report::Provenance {
             identity: "f".repeat(64),
-            cached: false,
-            source_run_id: None,
+            facts: njutest_cli::report::Established::Here,
         },
         run_kind: RunKind::Changed,
         candidates: vec![njutest_cli::report::CandidateRecord {
@@ -73,14 +72,15 @@ fn populated() -> Report {
             packages: vec!["app".to_owned(), "core".to_owned()],
             workspace_digest: "a".repeat(64),
             configuration_digest: "b".repeat(64),
-            git: Git {
-                available: true,
+            git: Git::Said(njutest_cli::report::Said {
                 commit: "0123456789abcdef0123456789abcdef01234567".to_owned(),
                 branch: "main".to_owned(),
                 dirty: true,
-                merge_base: Some("fedcba9876543210fedcba9876543210fedcba98".to_owned()),
-                changed_files: vec!["crates/core/src/lib.rs".to_owned()],
-            },
+                against: Some(njutest_cli::report::Against {
+                    merge_base: "fedcba9876543210fedcba9876543210fedcba98".to_owned(),
+                    changed_files: vec!["crates/core/src/lib.rs".to_owned()],
+                }),
+            }),
         },
         scope: Scope {
             requested_packages: vec!["core".to_owned()],
@@ -165,8 +165,9 @@ fn populated() -> Report {
             outcome: njutest_cli::report::Decided::Killed {
                 by: "0123456789abcdef".to_owned(),
             },
-            reused: true,
-            source_run_id: Some("20260904T101500Z-123456".to_owned()),
+            reuse: njutest_cli::report::Reuse(njutest_cli::report::Established::ReadBackFrom(
+                "20260904T101500Z-123456".to_owned(),
+            )),
             blind_in: vec![njutest_cli::report::BlindIn {
                 build: "release".to_owned(),
                 decision: njutest_cli::report::Blind::Unnoticed,
@@ -258,6 +259,43 @@ fn a_report_that_fails_its_own_audit_is_not_written() {
         rendered.contains("selected 9 targets"),
         "names what is wrong: {rendered}"
     );
+}
+
+#[test]
+fn a_mutation_that_says_it_was_read_back_from_nobody_is_not_read() {
+    let sound = serde_json::to_string(&populated()).expect("a report is a document");
+    let read_back = r#""reused":true,"source_run_id":"20260904T101500Z-123456""#;
+    for (what, reused, source) in [
+        (
+            "a disposition read back from an earlier run that names no run",
+            "true",
+            "null",
+        ),
+        (
+            "a disposition this run established that also names where it came from",
+            "false",
+            r#""20260904T101500Z-123456""#,
+        ),
+        (
+            "a source run with no name, which is no source at all",
+            "true",
+            r#""""#,
+        ),
+    ] {
+        let written = sound.replace(
+            read_back,
+            &format!(r#""reused":{reused},"source_run_id":{source}"#),
+        );
+        assert_ne!(written, sound, "the document under test was composed");
+        let read: Result<Report, serde_json::Error> = serde_json::from_str(&written);
+        assert!(
+            read.is_err(),
+            "{what} is a row where one of the two halves is wrong and a reader cannot \
+             tell which. `xtask proofaudit` refuses it too, and keeps doing so on \
+             purpose: an audit that stopped checking because the producer's types \
+             forbid it would be an audit trusting the producer"
+        );
+    }
 }
 
 #[test]

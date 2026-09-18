@@ -43,8 +43,7 @@ fn report(run: &str, outcomes: &[(&str, &str)]) -> Report {
             )
             .or_else(|| Decided::of(Outcome::parse(outcome).unwrap_or(Outcome::Errored), None))
             .unwrap_or(Decided::Survived),
-            reused: false,
-            source_run_id: None,
+            reuse: njutest_cli::report::Reuse(njutest_cli::report::Established::Here),
             blind_in: Vec::new(),
             routing: None,
         })

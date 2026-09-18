@@ -59,7 +59,15 @@ A durable report must include:
 
 If Git is unavailable, the report uses the explicit `available=false` state
 and `unavailable` sentinels together with `git-metadata-unavailable`; an empty
-value is invalid.
+value is invalid. The six fields are one value in the model, so a document
+that says git could not be asked and nonetheless names a commit, a branch,
+uncommitted changes or a base is refused when it is read rather than when it
+is written; the same goes for a list of changed files that names no base to
+have changed from. `provenance` and a mutation's `reused`/`source_run_id` are
+the same story: read back from nobody, and established here and also
+somewhere else, are both unreadable. The schema states each pairing too, so a
+document is held to it by the reader and by the published contract
+separately.
 
 The JSON Schema is published at `schema/njutest-assurance-report-v1.json`
 and copied into each run directory. Every object is closed with
@@ -68,9 +76,12 @@ what holds it to the model in both directions: a field the model gained and
 the schema never heard of fails validation of a populated document, and a
 field the schema declares and the model never writes fails because it is
 required and absent. Rust validation
-additionally enforces arithmetic, scope/verdict, acceptance, cache, and
-unavailable-metadata invariants that JSON Schema alone cannot express
-(`report::audit::validate_for_persistence`).
+additionally enforces arithmetic, scope/verdict, acceptance, and cache
+invariants that JSON Schema alone cannot express
+(`report::audit::validate_for_persistence`). What it no longer enforces is
+anything a type now carries: a run still may not name itself as the run it
+read its answer back from, because telling that apart needs the run's own
+identity and the value holds only the source's.
 
 A **finding** is an actionable problem in the project or its verification
 configuration. There are ten kinds, and a report carries the name rather
