@@ -144,6 +144,8 @@ pub enum Command {
     Explain(Explain),
     /// Record that a reviewer looked at a surviving mutant.
     Accept(Accept),
+    /// Go through one run's gaps, one at a time, deciding as you read.
+    Review(Review),
     /// Say what repairs a run was offered, and write the ones that hold up.
     Fix(Fix),
     /// Put one finding back to the tests and say whether it is still there.
@@ -341,6 +343,14 @@ pub struct Replay {
     /// Pass `--locked` to cargo.
     #[arg(long)]
     pub locked: bool,
+}
+
+/// `njutest review`.
+#[derive(Debug, Clone, clap::Args)]
+pub struct Review {
+    /// The run to go through. The latest by default.
+    #[arg(long, value_name = "RUN")]
+    pub run: Option<String>,
 }
 
 /// `njutest accept`.
