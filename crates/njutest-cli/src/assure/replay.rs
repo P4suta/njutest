@@ -136,7 +136,15 @@ pub fn replay(
 fn observed(kind: FindingKind, outcome: rust_mutants::outcome::Outcome) -> Outcome {
     let still = match kind {
         FindingKind::Timeout => outcome == rust_mutants::outcome::Outcome::TimedOut,
-        _ => !outcome.detected(),
+        FindingKind::BuildFailure
+        | FindingKind::FailingTest
+        | FindingKind::TargetMissing
+        | FindingKind::SurvivingMutant
+        | FindingKind::NotMeasured
+        | FindingKind::UnmatchedAcceptance
+        | FindingKind::UndefinedBehaviour
+        | FindingKind::HollowTarget
+        | FindingKind::WireUnnoticed => !outcome.detected(),
     };
     if still {
         Outcome::Reproduced
