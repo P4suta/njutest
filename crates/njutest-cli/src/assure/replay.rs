@@ -17,7 +17,6 @@ use crate::watch::Watch;
 
 /// What a replay established about the finding it was given.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
 pub enum Outcome {
     /// The finding is still there.
     Reproduced,

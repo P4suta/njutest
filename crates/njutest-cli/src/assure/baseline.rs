@@ -244,7 +244,7 @@ pub fn status_of(outcome: Outcome, ignored: u32, output: &str) -> (TargetStatus,
             TargetStatus::Missing,
             Some("the target was not run, so nothing was observed".to_owned()),
         ),
-        _ => (
+        Outcome::Errored => (
             TargetStatus::Missing,
             Some(failure(output).unwrap_or_else(|| {
                 "the target could not be started, so nothing was observed".to_owned()
