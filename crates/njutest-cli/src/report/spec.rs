@@ -34,6 +34,17 @@ impl Sentence {
         !self.guarded_by.is_empty()
     }
 
+    /// Whether the run put a question about this exchange that anybody could answer.
+    ///
+    /// A sentence nothing was asked about is neither held up nor a gap. The
+    /// tests were never given the chance, so counting it among the ones
+    /// nothing would notice changing would tell a reviewer the suite is blind
+    /// where the run established nothing at all.
+    #[must_use]
+    pub const fn was_asked(&self) -> bool {
+        self.unguarded > 0 || !self.guarded_by.is_empty()
+    }
+
     /// What a person reads.
     #[must_use]
     pub fn worded(&self) -> String {
@@ -89,7 +100,11 @@ pub fn page(report: &Report) -> String {
                 doing.\n"
             .to_owned();
     }
-    let unguarded = sentences.iter().filter(|one| !one.is_guarded()).count();
+    let unguarded = sentences
+        .iter()
+        .filter(|one| one.was_asked() && !one.is_guarded())
+        .count();
+    let unasked = sentences.iter().filter(|one| !one.was_asked()).count();
     let mut out = format!(
         "What {} did, as the seams this run watched saw it.\n\n",
         report.run_id
@@ -97,11 +112,15 @@ pub fn page(report: &Report) -> String {
     for sentence in &sentences {
         let _written = writeln!(out, "  {}", sentence.worded());
     }
-    let _written = writeln!(
+    let _written = write!(
         out,
-        "\n{} observed, {unguarded} that nothing would notice changing.",
+        "\n{} observed, {unguarded} that nothing would notice changing",
         sentences.len()
     );
+    if unasked > 0 {
+        let _written = write!(out, ", {unasked} this run established nothing about");
+    }
+    let _written = writeln!(out, ".");
     out
 }
 

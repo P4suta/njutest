@@ -102,18 +102,7 @@ fn asked_about(
         .observed
         .iter()
         .find(|one| one.capability == fault.capability && one.seq == fault.seq);
-    let (asked, answered) = named.map_or_else(
-        || (String::new(), None),
-        |one| match &one.spoken {
-            crate::wire::Spoken::Http {
-                method,
-                path,
-                status,
-                ..
-            } => (format!("{method} {path}"), Some(*status)),
-            crate::wire::Spoken::Raw { .. } => (String::new(), None),
-        },
-    );
+    let (asked, answered) = named.map_or_else(|| (String::new(), None), |one| one.spoken.asked());
     done.seams.push(crate::report::SeamRecord {
         id: fault.id.clone(),
         capability: fault.capability.clone(),
