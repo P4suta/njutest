@@ -61,6 +61,7 @@ pub struct Interposer {
     address: SocketAddr,
     recorded: Arc<Mutex<Vec<Exchange>>>,
     sealed: Arc<AtomicBool>,
+    carrying: Arc<AtomicBool>,
     running: Arc<Mutex<Option<String>>>,
     putting: Arc<Mutex<Option<super::derive::Fault>>>,
     seq: Arc<std::sync::atomic::AtomicU64>,
@@ -89,6 +90,7 @@ impl Interposer {
             })?;
         let recorded = Arc::new(Mutex::new(Vec::new()));
         let sealed = Arc::new(AtomicBool::new(false));
+        let carrying = Arc::new(AtomicBool::new(false));
         let running = Arc::new(Mutex::new(None));
         let putting = Arc::new(Mutex::new(interposing.injecting.clone()));
         let seq = Arc::new(std::sync::atomic::AtomicU64::new(0));
@@ -100,6 +102,7 @@ impl Interposer {
                 interposing: interposing.clone(),
                 recorded: Arc::clone(&recorded),
                 sealed: Arc::clone(&sealed),
+                carrying: Arc::clone(&carrying),
                 running: Arc::clone(&running),
                 putting: Arc::clone(&putting),
                 seq: Arc::clone(&seq),
@@ -113,6 +116,7 @@ impl Interposer {
             address,
             recorded,
             sealed,
+            carrying,
             running,
             putting,
             seq,
@@ -172,6 +176,29 @@ impl Interposer {
             .unwrap_or_default()
     }
 
+    /// How long a boundary waits for an exchange already being carried to finish.
+    ///
+    /// Long enough for the last few instructions of a round trip under a
+    /// profiler, and short enough that waiting the whole of it and carrying on
+    /// is not something anybody would mistake for a hang.
+    const SETTLING: std::time::Duration = std::time::Duration::from_millis(500);
+
+    /// Waits for the exchange being carried, if there is one, so it lands on the side of the boundary it happened on.
+    ///
+    /// A caller's request returns when the answer has been written to it, and
+    /// the exchange is written down after that. So a run that cleared the
+    /// recording the instant its last caller was answered could have the
+    /// exchange before the boundary land after it — the contamination this
+    /// whole mechanism is against, arriving through the one door left open.
+    /// Serving one connection at a time is what makes this a single flag
+    /// rather than a count.
+    fn settled(&self) {
+        let since = std::time::Instant::now();
+        while self.carrying.load(Ordering::Acquire) && since.elapsed() < Self::SETTLING {
+            std::thread::yield_now();
+        }
+    }
+
     /// Forgets everything recorded and starts recording again, from exchange zero.
     ///
     /// Everything `putting` resets is reset here for the same reason: a
@@ -179,6 +206,7 @@ impl Interposer {
     /// that carried a count over from an earlier run of the suite would name
     /// exchanges no single run reaches.
     pub fn restart(&self) {
+        self.settled();
         self.sealed.store(false, Ordering::Relaxed);
         if let Ok(mut held) = self.recorded.lock() {
             held.clear();
@@ -197,6 +225,7 @@ impl Interposer {
     /// stops adding to what a catalogue can be made of.
     #[must_use]
     pub fn seal(&self) -> Vec<Exchange> {
+        self.settled();
         self.sealed.store(true, Ordering::Relaxed);
         self.recorded
             .lock()
@@ -230,6 +259,7 @@ struct Serving {
     interposing: Interposing,
     recorded: Arc<Mutex<Vec<Exchange>>>,
     sealed: Arc<AtomicBool>,
+    carrying: Arc<AtomicBool>,
     running: Arc<Mutex<Option<String>>>,
     putting: Arc<Mutex<Option<super::derive::Fault>>>,
     seq: Arc<std::sync::atomic::AtomicU64>,
@@ -247,6 +277,7 @@ fn serve(listener: &TcpListener, serving: &Serving) {
         if serving.stopping.load(Ordering::Relaxed) {
             return;
         }
+        serving.carrying.store(true, Ordering::Release);
         let seq = serving.seq.load(Ordering::Relaxed);
         let during = serving.running.lock().ok().and_then(|held| held.clone());
         let putting = serving.putting.lock().ok().and_then(|held| held.clone());
@@ -275,6 +306,7 @@ fn serve(listener: &TcpListener, serving: &Serving) {
             }
             serving.seq.store(seq.saturating_add(1), Ordering::Relaxed);
         }
+        serving.carrying.store(false, Ordering::Release);
     }
 }
 
