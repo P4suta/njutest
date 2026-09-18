@@ -107,6 +107,7 @@ fn one(out: &mut String, spot: &Spot) {
         spot.line,
         came(spot.standing)
     );
+    disagreed(out, spot);
     let _written = write!(
         out,
         "{}",
@@ -114,6 +115,31 @@ fn one(out: &mut String, spot: &Spot) {
             Standing::Blind(blindness) => close(blindness, named),
             Standing::Unsettled(unsettled) => settle(unsettled, named),
         }
+    );
+}
+
+/// What each build established, where they did not all establish the same thing.
+///
+/// The instruction below is the one the weakest build earns, and acting on it
+/// closes nothing in a build that established nothing. Saying which build is
+/// which is the difference between "write a test" and "write a test, and find
+/// out separately why release never answered" (ADR 0023).
+fn disagreed(out: &mut String, spot: &Spot) {
+    let mut kinds = spot.blind_in.iter().map(|one| one.standing);
+    let Some(first) = kinds.next() else {
+        return;
+    };
+    if kinds.all(|standing| standing == first) {
+        return;
+    }
+    let _written = writeln!(
+        out,
+        "The builds did not agree about it. {}.\n",
+        spot.blind_in
+            .iter()
+            .map(|one| format!("`{}`: {}", one.build, one.standing.asks()))
+            .collect::<Vec<String>>()
+            .join("; ")
     );
 }
 

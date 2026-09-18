@@ -20,9 +20,22 @@ use std::fmt::Write as _;
 use std::path::Path;
 
 use njutest_cli::presentation::{
-    Action, Blindness, Diagnostic, Excerpt, Headline, Missing, Place, Severity, Site, Spot,
+    Across, Action, Blindness, Diagnostic, Excerpt, Headline, Missing, Place, Severity, Site, Spot,
     Standing, Stated, Terminal, Told, Unsettled, human,
 };
+
+/// The same spot, in a project whose builds did not agree about it.
+fn across(mut spot: Spot, builds: &[(&str, Standing)]) -> Spot {
+    spot.blind_in = builds
+        .iter()
+        .map(|(build, standing)| Across {
+            build: (*build).to_owned(),
+            standing: *standing,
+        })
+        .collect();
+    spot.said = spot.standing.worded(&spot.blind_in);
+    spot
+}
 use njutest_cli::report::Verdict;
 
 /// The terminals every rendering has to answer for.
@@ -130,6 +143,7 @@ fn spot(at: (u32, u32), change: (&str, &str), standing: Standing, locator: &str)
         now: change.1.to_owned(),
         said: standing.word().to_owned(),
         standing,
+        blind_in: Vec::new(),
         locator: locator.to_owned(),
     }
 }
@@ -399,6 +413,30 @@ fn cases() -> Vec<(&'static str, Told)> {
                     ],
                 )],
                 headline(Verdict::Insufficient, 24, 6, 1),
+                Vec::new(),
+            ),
+        ),
+        (
+            "one item a project's builds did not agree about",
+            told(
+                vec![place(
+                    "sign",
+                    7,
+                    &SIGN[..3],
+                    vec![across(
+                        spot(
+                            (8, 10),
+                            (">", ">="),
+                            Standing::Blind(Blindness::Ran),
+                            "src/lib.rs:sign:gt-to-ge@8",
+                        ),
+                        &[
+                            ("debug", Standing::Blind(Blindness::Ran)),
+                            ("release", Standing::Unsettled(Unsettled::Errored)),
+                        ],
+                    )],
+                )],
+                headline(Verdict::Insufficient, 7, 1, 0),
                 Vec::new(),
             ),
         ),

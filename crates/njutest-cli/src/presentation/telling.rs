@@ -140,13 +140,22 @@ fn spot(mutant: &MutantRecord, finding: &Finding) -> Spot {
         .then_some(Blind::Waited)
         .or_else(|| mutant.outcome.decision().blind())
         .map_or(Standing::Unsettled(Unsettled::Errored), Standing::of);
+    let across: Vec<super::Across> = mutant
+        .blind_in
+        .iter()
+        .map(|one| super::Across {
+            build: one.build.clone(),
+            standing: Standing::of(one.decision),
+        })
+        .collect();
     Spot {
         line: mutant.position.line,
         column: mutant.position.column,
         was: mutant.original.clone(),
         now: mutant.replacement.clone(),
-        said: standing.word().to_owned(),
+        said: standing.worded(&across),
         standing,
+        blind_in: across,
         locator: locator(mutant),
     }
 }

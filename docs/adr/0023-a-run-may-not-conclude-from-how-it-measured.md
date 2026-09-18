@@ -114,6 +114,23 @@ unrepresentable.
    them sound. A framing that cannot be made honest is retracted rather than
    qualified.
 
+**Closing a set makes a match total, not honest.** Both halves of this have
+now been shipped by somebody applying the rule correctly. `telling::spot` was
+converted to an exhaustive match over a closed `Outcome` and mapped
+`Unconfirmed` and `Errored` onto the arm that says *the tests ran this line
+and passed anyway* — a sentence about a mutation nothing could be measured
+for. No arm was missing. The rule catches "somebody forgot a case"; it does
+not catch "somebody wrote the wrong one", and the second is the more expensive
+because the match looks finished.
+
+What catches the second is matching over the right type. Reading through
+`Blind` rather than `Outcome` means the outcomes that are not holes have no
+spot to be, so there is no arm to give them the wrong sentence; binding a
+payload per variant — `Killed { by }`, `TimedOut { on }` — means the name and
+the sentence about it cannot come from two places and disagree. **A type is
+chosen so that the wrong arm has nothing to be written about, not so that
+every arm is written.**
+
 **A catch-all is wrong over a set this workspace closes and right over one it
 does not.** The test is whether the values can be listed from this repository's
 own source. A mutation's outcome, a build's decision, a fault's rule, a thing
@@ -141,7 +158,9 @@ these: the premise fell apart in the first three lines of writing the fixture
 that was meant to exercise it. A gate that makes somebody demonstrate a
 finding is worth more than one that checks they spelled it consistently.
 
-**A test that names what it is about survives a bad merge.** Two branches
+**A test that names what it is about survives a bad merge.** The mechanism is
+that the name is a claim, so the test fails when the claim stops holding —
+whoever stopped it holding and however.  Two branches
 that both changed `verify.rs` were resolved by taking one side whole, which
 dropped the loop that measures every build a project names. Nothing in the
 conflict markers said so; a resolution is the one place in this workflow where

@@ -98,6 +98,12 @@ pub const ENGINE_DIRECTORY: &str = "engine";
 /// so a summary of what made a run long named the builds and not the thing a
 /// run spends most of itself doing. A kind that gains a duration later is one
 /// the compiler makes somebody place (ADR 0023).
+///
+/// A `WireExchange` carries a duration and is deliberately not one of these.
+/// It is a round trip inside a process this list already counts, so adding it
+/// would count the same seconds twice, and five hundred exchanges of twenty
+/// milliseconds would fill a list of five with nothing anybody can act on
+/// while hiding the measurement that took twelve seconds.
 #[must_use]
 pub fn slowest(events: &[Event]) -> Vec<(u64, String)> {
     let mut timed: Vec<(u64, String)> = events
@@ -115,6 +121,8 @@ pub fn slowest(events: &[Event]) -> Vec<(u64, String)> {
             | Payload::Artifact { .. }
             | Payload::Route { .. }
             | Payload::ProbeExec { .. }
+            | Payload::WireExchange { .. }
+            | Payload::WireExec { .. }
             | Payload::Note { .. }
             | Payload::RunEnd { .. } => None,
         })

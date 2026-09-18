@@ -140,6 +140,8 @@ pub struct Spot {
     pub said: String,
     /// What the run established about it, which is what a reader does something different about.
     pub standing: Standing,
+    /// The builds it is a hole in, each with what that build established. Empty when a run measured one build, because which build is not a question it has.
+    pub blind_in: Vec<Across>,
     /// How a reader names it again after they have edited the file.
     pub locator: String,
 }
@@ -206,6 +208,32 @@ impl Standing {
         }
     }
 
+    /// What a reader is told about this, naming the builds when a run measured more than one.
+    ///
+    /// One clause per way of being a hole rather than one list of names, so a
+    /// build that established nothing is never folded in under a word about
+    /// the tests.
+    #[must_use]
+    pub fn worded(self, across: &[Across]) -> String {
+        if across.is_empty() {
+            return self.word().to_owned();
+        }
+        let mut said: Vec<(Self, Vec<&str>)> = Vec::new();
+        for one in across {
+            match said
+                .iter_mut()
+                .find(|(standing, _)| *standing == one.standing)
+            {
+                Some((_, builds)) => builds.push(one.build.as_str()),
+                None => said.push((one.standing, vec![one.build.as_str()])),
+            }
+        }
+        said.into_iter()
+            .map(|(standing, builds)| format!("{} in {}", standing.word(), builds.join(", ")))
+            .collect::<Vec<String>>()
+            .join("; ")
+    }
+
     /// Whether this is one of the gaps a verdict is about.
     ///
     /// A run that could not finish a measurement has not found a gap; it has
@@ -215,6 +243,21 @@ impl Standing {
     pub const fn is_a_gap(self) -> bool {
         matches!(self, Self::Blind(_))
     }
+}
+
+/// One build a mutation is a hole in, and what that build established about it.
+///
+/// The decision travels with the name. A list of names alone would make a
+/// reader believe the same thing happened in every build it lists, and
+/// "ran, not noticed in debug, release" about a release that never answered
+/// sends somebody looking for an assertion that is not what is missing
+/// (ADR 0023).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Across {
+    /// The build, as the project names it.
+    pub build: String,
+    /// What that build established.
+    pub standing: Standing,
 }
 
 /// A gap in the tests: what somebody writes a test to close.

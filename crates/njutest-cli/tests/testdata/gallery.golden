@@ -589,6 +589,60 @@ refused[NJ5001]: the workspace does not compile before anything is instrumented
   ✗ INSUFFICIENT   24 killed  6 survived  1 unreached  1.9s
   7 gaps in 1 file   reports/runs/20260101T000000Z-aaaaaa
 
+=== one item a project's builds did not agree about — eighty columns, no colour
+
+  --> sign   src/lib.rs:8   1 not noticed
+7 | pub fn sign(n: i32) -> &'static str {
+8 |     if n > 0 {
+  |          ^ > => >=   ran, not noticed in debug; not measured in release
+9 |         "positive"
+  = write a test that notices it  njutest explain src/lib.rs:sign:gt-to-ge@8
+
+  INSUFFICIENT   7 killed  1 survived  0 unreached  1.9s
+  1 gap in 1 file   reports/runs/20260101T000000Z-aaaaaa
+
+=== one item a project's builds did not agree about — forty columns, no colour
+
+  --> sign   src/lib.rs:8
+      1 not noticed
+7 | pub fn sign(n: i32) -> &'static str {
+8 |     if n > 0 {
+  |          ^ > => >=   ran, not
+  |            noticed in debug; not
+  |            measured in release
+9 |         "positive"
+  = write a test that notices it
+    njutest explain src/lib.rs:sign:gt-to-ge@8
+
+  INSUFFICIENT   7 killed  1 survived  0
+    unreached  1.9s
+  1 gap in 1 file
+    reports/runs/20260101T000000Z-aaaaaa
+
+=== one item a project's builds did not agree about — eighty columns, colour
+
+  [38;5;244m-->[0m [1;38;5;253msign[0m   [38;5;244m]8;;file://src/lib.rssrc/lib.rs:8]8;;[0m   [1;38;5;214m1 not noticed[0m
+[38;5;244m7[0m [38;5;244m|[0m [38;5;176mpub[0m[38;5;250m [0m[38;5;176mfn[0m[38;5;250m [0m[38;5;111msign[0m[38;5;250m([0m[38;5;250mn[0m[38;5;250m: [0m[38;5;250mi32[0m[38;5;250m) -> &[0m[38;5;139m'static[0m[38;5;250m [0m[38;5;250mstr[0m[38;5;250m {[0m
+[38;5;244m8[0m [38;5;244m|[0m [38;5;250m    [0m[38;5;176mif[0m[38;5;250m [0m[38;5;250mn[0m[38;5;250m [0m[1;4;38;5;204m>[0m[38;5;250m [0m[38;5;179m0[0m[38;5;250m {[0m
+  [38;5;244m|[0m          [1;38;5;214m^[0m [38;5;250m>[0m [1;38;5;214m=>[0m [38;5;250m>=[0m   [1;38;5;214mran, not noticed in debug; not measured in release[0m
+[38;5;244m9[0m [38;5;244m|[0m [38;5;250m        [0m[38;5;150m"positive"[0m
+  [38;5;244m=[0m [1;38;5;214mwrite a test that notices it[0m  [38;5;252mnjutest explain src/lib.rs:sign:gt-to-ge@8[0m
+
+  [1;38;5;214mINSUFFICIENT[0m   [38;5;244m7 killed  1 survived  0 unreached  1.9s[0m
+  [1;38;5;214m1 gap in 1 file[0m   [38;5;244mreports/runs/20260101T000000Z-aaaaaa[0m
+
+=== one item a project's builds did not agree about — eighty columns, unicode
+
+  ╭─ sign   src/lib.rs:8   1 not noticed
+7 │ pub fn sign(n: i32) -> &'static str {
+8 │     if n > 0 {
+  ·          ▲ > ⇢ >=   ran, not noticed in debug; not measured in release
+9 │         "positive"
+  ╰─ write a test that notices it  njutest explain src/lib.rs:sign:gt-to-ge@8
+
+  ✗ INSUFFICIENT   7 killed  1 survived  0 unreached  1.9s
+  1 gap in 1 file   reports/runs/20260101T000000Z-aaaaaa
+
 === a part of a catalog — eighty columns, no colour
 
   |PARTIAL   3 killed  0 survived  0 unreached  1.9s
@@ -978,6 +1032,42 @@ njutest replay  src/lib.rs:settle:return-ok-default@28   # after your test: `REP
 ```
 
 If the change cannot affect anything a caller can observe, record that instead: `njutest accept src/lib.rs:settle:return-ok-default@28 --reason "..."`.
+
+=== one item a project's builds did not agree about — as a briefing
+
+# njutest: INSUFFICIENT — 1 place the tests do not see
+
+A mutation run changed the code in 8 places and ran the tests each time. 7 of those changes were noticed and 1 were not.
+
+For each place below, do one of two things:
+
+1. **Write a test that notices the change.** The change is shown; a test that would fail with it in place is a test the suite is missing.
+2. **Record why it is not a gap**, with `njutest accept <name> --reason "..."`, if the change cannot affect anything a caller can observe.
+
+Each place says which of the two it wants; they are not interchangeable. Where a `replay` command is given, run it after your change: it puts that one change back to the tests and says whether they notice it now. Where none is given, the run established nothing there and there is nothing for a replay to prove.
+
+## 1. `sign` in `src/lib.rs`
+
+```rust
+   7 | pub fn sign(n: i32) -> &'static str {
+   8 |     if n > 0 {
+   9 |         "positive"
+```
+
+### `src/lib.rs:sign:gt-to-ge@8` at line 8
+
+On line 8, `>` became `>=`, and the tests ran this line and passed anyway, so nothing asserts what it decides.
+
+The builds did not agree about it. `debug`: write a test that notices it; `release`: find out why nothing could be measured.
+
+**Write a test that fails with this change in place.** The tests already run this line; what is missing is an assertion about what it decides.
+
+```console
+njutest explain src/lib.rs:sign:gt-to-ge@8   # which targets reached it, and what each did
+njutest replay  src/lib.rs:sign:gt-to-ge@8   # after your test: `REPRODUCED` means the gap is still open
+```
+
+If the change cannot affect anything a caller can observe, record that instead: `njutest accept src/lib.rs:sign:gt-to-ge@8 --reason "..."`.
 
 === a part of a catalog — as a briefing
 
