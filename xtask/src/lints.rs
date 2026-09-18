@@ -118,9 +118,13 @@ impl Kind {
                  is the promise not to; one file cannot hold both. What the attribute \
                  costs is not theoretical: a caller outside the crate is made to write \
                  an arm for a case the list says cannot exist, and the arm it writes \
-                 counts the next variant as whatever was nearest. Keep it on an error a \
-                 caller branches on, which publishes no list and where a caller must \
-                 already handle one it does not know"
+                 counts the next variant as whatever was nearest. It costs more than \
+                 that: `clippy::match_wildcard_for_single_variants` cannot fire on a \
+                 `#[non_exhaustive]` type, so the attribute also switches off the lint \
+                 that would have named the arm. Dropping it turns a lint this repository \
+                 already denies back on over the whole type. Keep it on an error a caller \
+                 branches on, which publishes no list and where a caller must already \
+                 handle one it does not know"
             }
         }
     }
