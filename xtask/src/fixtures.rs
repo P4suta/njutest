@@ -12,10 +12,14 @@ pub const RULE: &str = "A fixture is an independent cargo project: its Cargo.tom
     [workspace] table so cargo does not look upwards, its Cargo.lock is committed, its only \
     dependencies are paths inside itself (fixtures build offline against no registry), every \
     .rs and Cargo.toml starts with the SPDX header, and its README.md states what a run of it \
-    establishes in a ```fates block. See fixtures/README.md.";
+    establishes in a ```fates block, and in a ```seams block as well where it interposes on a \
+    seam. See fixtures/README.md.";
 
 /// The fence that opens the block of a README stating what a run of the fixture establishes.
 pub const FATES_FENCE: &str = "```fates";
+
+/// The fence that opens the block stating what a run established about a fixture's seams.
+pub const SEAMS_FENCE: &str = "```seams";
 
 const SPDX_HEADER: [&str; 2] = [
     "SPDX-FileCopyrightText: 2026 njutest contributors",
@@ -67,18 +71,47 @@ pub fn check_fixture(dir: &Path) -> Vec<String> {
     problems
 }
 
-/// The README, and the ledger of fates a fixture with mutable code has to keep.
+/// The README, and the ledgers of fates a fixture has to keep.
 fn check_readme(dir: &Path) -> Vec<String> {
     let Ok(readme) = std::fs::read_to_string(dir.join("README.md")) else {
         return vec!["README.md is missing (it is where a fixture says what it is for)".to_owned()];
     };
-    if readme.contains(FATES_FENCE) {
-        return Vec::new();
+    let mut problems = Vec::new();
+    if !readme.contains(FATES_FENCE) {
+        problems.push(format!(
+            "README.md has no {FATES_FENCE} block; a fixture whose fates nothing states is one \
+             a change can quietly re-decide"
+        ));
     }
-    vec![format!(
-        "README.md has no {FATES_FENCE} block; a fixture whose fates nothing states is one a \
-         change can quietly re-decide"
-    )]
+    if interposes(dir) && !readme.contains(SEAMS_FENCE) {
+        problems.push(format!(
+            "README.md has no {SEAMS_FENCE} block, and .njutest.toml puts an interposer in \
+             front of a seam; what a run establishes about that seam is a ledger for the same \
+             reason the mutation fates are one, and a fixture that stated only half of what it \
+             decides would let the other half move without anybody reading a diff"
+        ));
+    }
+    problems
+}
+
+/// Whether the fixture's configuration puts an interposer in front of anything.
+fn interposes(dir: &Path) -> bool {
+    let Ok(text) = std::fs::read_to_string(dir.join(".njutest.toml")) else {
+        return false;
+    };
+    let Ok(table) = text.parse::<toml::Table>() else {
+        return false;
+    };
+    let Some(toml::Value::Table(resources)) = table.get("resources") else {
+        return false;
+    };
+    resources.values().any(|value| match value {
+        toml::Value::Table(resource) => matches!(
+            resource.get("interpose"),
+            Some(toml::Value::String(named)) if !named.is_empty()
+        ),
+        _ => false,
+    })
 }
 
 fn has_spdx_header(text: &str) -> bool {

@@ -450,6 +450,7 @@ fn only_the_seams_the_configuration_names_are_watched() {
             environment: Vec::new(),
             interpose: "BASE_URL".to_owned(),
             wire: Wire::Http,
+            hold: BRIEFLY,
         },
     );
 
@@ -545,15 +546,17 @@ fn every_question_a_seam_licensed_is_put_to_the_suite_one_at_a_time() {
         environment: Vec::new(),
         watching: vec![seam("api", upstream_at), seam("db", upstream_at)],
     };
-    let _recorded = ask(seams.watching[0].interposer.address(), "/orders");
-
     let held = (
         rust_mutants::runner::Cancel::new(),
         njutest_cli::trace::Recorder::disabled(),
     );
     let seen = std::cell::RefCell::new(Vec::new());
+    let went_past = seams.observing(|| {
+        let _recorded = ask(seams.watching[0].interposer.address(), "/orders");
+    });
     let done = njutest_cli::assure::wire::asking(
         &seams,
+        &went_past,
         || {
             let api = ask(seams.watching[0].interposer.address(), "/orders");
             let db = ask(seams.watching[1].interposer.address(), "/rows");
@@ -650,14 +653,16 @@ fn a_question_the_seam_never_reached_is_reported_as_a_hole_and_never_as_a_surviv
         environment: Vec::new(),
         watching: vec![seam("api", upstream_at)],
     };
-    let _recorded = ask(seams.watching[0].interposer.address(), "/orders");
-
     let held = (
         rust_mutants::runner::Cancel::new(),
         njutest_cli::trace::Recorder::disabled(),
     );
+    let went_past = seams.observing(|| {
+        let _recorded = ask(seams.watching[0].interposer.address(), "/orders");
+    });
     let done = njutest_cli::assure::wire::asking(
         &seams,
+        &went_past,
         || {
             vec![njutest_cli::wire::settle::Answered {
                 target: "pkg/test/it".to_owned(),
@@ -791,6 +796,46 @@ fn restating_a_status_worded_differently_hands_the_caller_something_else() {
 }
 
 #[test]
+fn a_catalogue_holds_one_run_of_the_suite_and_never_the_runs_around_it() {
+    let up = upstream("[]");
+    let seams = njutest_cli::assure::wire::Seams {
+        environment: Vec::new(),
+        watching: vec![seam("api", up.address())],
+    };
+    let at = seams.watching[0].interposer.address();
+    for _verifying in 0..2 {
+        let _before = ask(at, "/orders");
+    }
+
+    let went_past = seams.observing(|| {
+        let _measured = ask(at, "/orders");
+    });
+    for _mutation in 0..4 {
+        let _after = ask(at, "/orders");
+    }
+
+    assert_eq!(
+        went_past.all().len(),
+        1,
+        "the suite makes one exchange, and the phases around this one ran it six more \
+         times. A fault names an exchange by its place in the order and is put by \
+         running the suite once, so every exchange but the observed run's is one no \
+         run can reach and the report would state each as a question nobody put: {:?}",
+        went_past.all()
+    );
+    assert_eq!(
+        went_past.all().first().map(|one| one.seq),
+        Some(0),
+        "and it is numbered from zero, because a count carried over from the runs \
+         before would name an exchange the answering run never reaches"
+    );
+
+    for one in seams.watching {
+        let _stopped = one.interposer.stop();
+    }
+}
+
+#[test]
 fn what_a_fault_run_drives_through_a_second_seam_is_not_that_seam_s_catalogue() {
     let up = upstream("[]");
     let upstream_at = up.address();
@@ -798,15 +843,17 @@ fn what_a_fault_run_drives_through_a_second_seam_is_not_that_seam_s_catalogue() 
         environment: Vec::new(),
         watching: vec![seam("api", upstream_at), seam("db", upstream_at)],
     };
-    let _baseline = ask(seams.watching[0].interposer.address(), "/orders");
-
     let held = (
         rust_mutants::runner::Cancel::new(),
         njutest_cli::trace::Recorder::disabled(),
     );
     let runs = std::cell::Cell::new(0_u32);
+    let went_past = seams.observing(|| {
+        let _baseline = ask(seams.watching[0].interposer.address(), "/orders");
+    });
     let done = njutest_cli::assure::wire::asking(
         &seams,
+        &went_past,
         || {
             runs.set(runs.get().saturating_add(1));
             let _api = ask(seams.watching[0].interposer.address(), "/orders");

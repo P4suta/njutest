@@ -60,6 +60,7 @@ impl InterposeError {
 pub struct Interposer {
     address: SocketAddr,
     recorded: Arc<Mutex<Vec<Exchange>>>,
+    sealed: Arc<AtomicBool>,
     running: Arc<Mutex<Option<String>>>,
     putting: Arc<Mutex<Option<super::derive::Fault>>>,
     seq: Arc<std::sync::atomic::AtomicU64>,
@@ -87,6 +88,7 @@ impl Interposer {
                 source,
             })?;
         let recorded = Arc::new(Mutex::new(Vec::new()));
+        let sealed = Arc::new(AtomicBool::new(false));
         let running = Arc::new(Mutex::new(None));
         let putting = Arc::new(Mutex::new(interposing.injecting.clone()));
         let seq = Arc::new(std::sync::atomic::AtomicU64::new(0));
@@ -97,6 +99,7 @@ impl Interposer {
             let serving = Serving {
                 interposing: interposing.clone(),
                 recorded: Arc::clone(&recorded),
+                sealed: Arc::clone(&sealed),
                 running: Arc::clone(&running),
                 putting: Arc::clone(&putting),
                 seq: Arc::clone(&seq),
@@ -109,6 +112,7 @@ impl Interposer {
         Ok(Self {
             address,
             recorded,
+            sealed,
             running,
             putting,
             seq,
@@ -168,6 +172,38 @@ impl Interposer {
             .unwrap_or_default()
     }
 
+    /// Forgets everything recorded and starts recording again, from exchange zero.
+    ///
+    /// Everything `putting` resets is reset here for the same reason: a
+    /// catalogue names an exchange by its place in the order, so a recording
+    /// that carried a count over from an earlier run of the suite would name
+    /// exchanges no single run reaches.
+    pub fn restart(&self) {
+        self.sealed.store(false, Ordering::Relaxed);
+        if let Ok(mut held) = self.recorded.lock() {
+            held.clear();
+        }
+        self.putting(None);
+    }
+
+    /// Stops recording and hands back what went past up to this point, keeping it.
+    ///
+    /// Everything downstream of a recording derives a catalogue from it, and a
+    /// catalogue is a set of questions about the program the tests are about.
+    /// Traffic from a run of a mutated program, or from a run with a fault
+    /// already in place, is traffic from a different program, and a question
+    /// derived from it is a question about a program nobody asked after. The
+    /// interposer keeps carrying, counting and applying after this; it only
+    /// stops adding to what a catalogue can be made of.
+    #[must_use]
+    pub fn seal(&self) -> Vec<Exchange> {
+        self.sealed.store(true, Ordering::Relaxed);
+        self.recorded
+            .lock()
+            .map(|held| held.clone())
+            .unwrap_or_default()
+    }
+
     /// Where a test is told to dial.
     #[must_use]
     pub const fn address(&self) -> SocketAddr {
@@ -193,6 +229,7 @@ impl Interposer {
 struct Serving {
     interposing: Interposing,
     recorded: Arc<Mutex<Vec<Exchange>>>,
+    sealed: Arc<AtomicBool>,
     running: Arc<Mutex<Option<String>>>,
     putting: Arc<Mutex<Option<super::derive::Fault>>>,
     seq: Arc<std::sync::atomic::AtomicU64>,
@@ -228,7 +265,9 @@ fn serve(listener: &TcpListener, serving: &Serving) {
             serving.applied.store(true, Ordering::Relaxed);
         }
         if let Some(exchange) = carried.exchange {
-            if let Ok(mut held) = serving.recorded.lock() {
+            if !serving.sealed.load(Ordering::Relaxed)
+                && let Ok(mut held) = serving.recorded.lock()
+            {
                 held.push(exchange);
             }
             if let Ok(mut held) = serving.previous.lock() {

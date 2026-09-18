@@ -1,0 +1,15 @@
+version = 1
+
+[resources.orders]
+command = ["UPSTREAM", "orders"]
+timeout = "10s"
+interpose = "ORDERS_URL"
+wire = "http"
+hold = "300ms"
+
+[resources.health]
+command = ["UPSTREAM", "health"]
+timeout = "10s"
+interpose = "HEALTH_URL"
+wire = "http"
+hold = "300ms"

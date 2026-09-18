@@ -15,7 +15,6 @@ crates/njutest-cli/src/assure/mutation.rs:732
 crates/njutest-cli/src/assure/mutation.rs:862
 crates/njutest-cli/src/assure/replay.rs:140
 crates/njutest-cli/src/assure/route.rs:58
-crates/njutest-cli/src/assure/run.rs:756
 crates/njutest-cli/src/build.rs:169
 crates/njutest-cli/src/targets.rs:86
 crates/njutest-cli/tests/deep.rs:206
