@@ -261,7 +261,11 @@ fn every_mutant_is_routed_to_the_tests_that_reach_it_and_no_others() {
         .collect();
     assert_eq!(routes.len(), 4, "one route per mutant: {routes:?}");
     for route in &routes {
-        assert_eq!(route.granularity, "block", "{route:?}");
+        assert_eq!(
+            route.granularity,
+            rust_mutants::session::Granularity::Block,
+            "{route:?}"
+        );
         assert_eq!(
             route.reaching.len(),
             1,

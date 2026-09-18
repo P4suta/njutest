@@ -597,7 +597,7 @@ fn one_of_each_execution(recorder: &Recorder) {
     recorder.route(RouteRecord {
         mutant: "b".repeat(20),
         index: 1,
-        granularity: "block".to_owned(),
+        granularity: rust_mutants::session::Granularity::Block,
         fallback: None,
         reaching: vec!["demo/lib/demo".to_owned()],
         considered: Vec::new(),

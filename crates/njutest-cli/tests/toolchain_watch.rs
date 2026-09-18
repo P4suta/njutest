@@ -400,7 +400,7 @@ fn judged(events: &[njutest_cli::trace::Event]) {
         .collect();
     let placed = routes
         .iter()
-        .find(|route| route.granularity == "block")
+        .find(|route| route.granularity == rust_mutants::session::Granularity::Block)
         .expect("a mutation the measurement placed");
     assert!(
         placed.fallback.is_none() && !placed.reaching.is_empty(),

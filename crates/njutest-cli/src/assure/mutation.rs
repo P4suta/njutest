@@ -606,8 +606,8 @@ fn record_probe(watch: Watch<'_>, session: &Session, baseline: &[Measured]) {
 fn record_route(watch: Watch<'_>, mutant: &Mutant, route: &Route, consulted: &Consulted) {
     watch.trace.route(crate::trace::RouteRecord {
         mutant: mutant.display_id.clone(),
-        granularity: route.granularity().name().to_owned(),
-        fallback: route.fallback().map(|one| one.name().to_owned()),
+        granularity: route.granularity(),
+        fallback: route.fallback(),
         reaching: route
             .reaching()
             .into_iter()
