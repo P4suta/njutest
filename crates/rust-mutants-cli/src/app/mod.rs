@@ -101,7 +101,19 @@ pub fn dispatch(
             environment,
             stdout,
         ),
-        _ => kept_command(
+        cli::Command::List { .. }
+        | cli::Command::Equivalence { .. }
+        | cli::Command::Catalog { .. }
+        | cli::Command::Run { .. }
+        | cli::Command::Explain { .. }
+        | cli::Command::Instrument { .. }
+        | cli::Command::WhySkipped { .. }
+        | cli::Command::Replay { .. }
+        | cli::Command::Merge { .. }
+        | cli::Command::Trace { .. }
+        | cli::Command::Rules { .. }
+        | cli::Command::Diagnostics { .. }
+        | cli::Command::Cache { .. } => kept_command(
             command,
             environment,
             crate::Streams {
@@ -166,7 +178,17 @@ fn kept_command(
             stdout,
             cancel,
         ),
-        _ => workspace_command(
+        cli::Command::List { .. }
+        | cli::Command::Equivalence { .. }
+        | cli::Command::Catalog { .. }
+        | cli::Command::Run { .. }
+        | cli::Command::Explain { .. }
+        | cli::Command::Instrument { .. }
+        | cli::Command::WhySkipped { .. }
+        | cli::Command::Init { .. }
+        | cli::Command::Replay { .. }
+        | cli::Command::Doctor { .. }
+        | cli::Command::Report { .. } => workspace_command(
             command,
             environment,
             crate::Streams {
@@ -410,6 +432,12 @@ fn preparation_options(
     Ok((options, validation_filter))
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "the length is the size of a closed set named in full, not a function doing \
+              several things: a command added to the engine is a question the compiler puts \
+              to these arms rather than a line that silently inherits somebody else's answer"
+)]
 fn measured(
     command: &cli::Command,
     running: &Running<'_>,
@@ -456,7 +484,18 @@ fn measured(
             workspace.close()?;
             Ok(0)
         }
-        _ => {
+        cli::Command::Catalog { .. }
+        | cli::Command::Run { .. }
+        | cli::Command::Explain { .. }
+        | cli::Command::Init { .. }
+        | cli::Command::Replay { .. }
+        | cli::Command::Doctor { .. }
+        | cli::Command::Merge { .. }
+        | cli::Command::Trace { .. }
+        | cli::Command::Report { .. }
+        | cli::Command::Rules { .. }
+        | cli::Command::Diagnostics { .. }
+        | cli::Command::Cache { .. } => {
             if streaming(command) {
                 crate::stream::started(
                     stdout,
@@ -656,7 +695,19 @@ fn previewed(
             narrowed(&considered, std::slice::from_ref(file))?;
             instrumented(workspace, discovery, (file, mutant.as_deref()))
         }
-        _ => Ok(String::new()),
+        cli::Command::Equivalence { .. }
+        | cli::Command::Catalog { .. }
+        | cli::Command::Run { .. }
+        | cli::Command::Explain { .. }
+        | cli::Command::Init { .. }
+        | cli::Command::Replay { .. }
+        | cli::Command::Doctor { .. }
+        | cli::Command::Merge { .. }
+        | cli::Command::Trace { .. }
+        | cli::Command::Report { .. }
+        | cli::Command::Rules { .. }
+        | cli::Command::Diagnostics { .. }
+        | cli::Command::Cache { .. } => Ok(String::new()),
     }
 }
 
@@ -691,6 +742,12 @@ fn request(
 }
 
 /// What a command that needs a prepared session does.
+#[expect(
+    clippy::too_many_lines,
+    reason = "the length is the size of a closed set named in full, not a function doing \
+              several things: a command added to the engine is a question the compiler puts \
+              to these arms rather than a line that silently inherits somebody else's answer"
+)]
 fn prepared(
     command: &cli::Command,
     prepared: &Prepared<'_>,
@@ -773,7 +830,18 @@ fn prepared(
                 stdout,
             ),
         },
-        _ => Ok(0),
+        cli::Command::List { .. }
+        | cli::Command::Equivalence { .. }
+        | cli::Command::Instrument { .. }
+        | cli::Command::WhySkipped { .. }
+        | cli::Command::Init { .. }
+        | cli::Command::Doctor { .. }
+        | cli::Command::Merge { .. }
+        | cli::Command::Trace { .. }
+        | cli::Command::Report { .. }
+        | cli::Command::Rules { .. }
+        | cli::Command::Diagnostics { .. }
+        | cli::Command::Cache { .. } => Ok(0),
     }
 }
 
@@ -1164,7 +1232,21 @@ fn validation_filter(
         cli::Command::Run { mutant: None, .. } => {
             Ok(Some(filter_before_preparation(command, settings)?))
         }
-        _ => Ok(None),
+        cli::Command::List { .. }
+        | cli::Command::Equivalence { .. }
+        | cli::Command::Catalog { .. }
+        | cli::Command::Explain { .. }
+        | cli::Command::Instrument { .. }
+        | cli::Command::WhySkipped { .. }
+        | cli::Command::Init { .. }
+        | cli::Command::Replay { .. }
+        | cli::Command::Doctor { .. }
+        | cli::Command::Merge { .. }
+        | cli::Command::Trace { .. }
+        | cli::Command::Report { .. }
+        | cli::Command::Rules { .. }
+        | cli::Command::Diagnostics { .. }
+        | cli::Command::Cache { .. } => Ok(None),
     }
 }
 
@@ -1955,6 +2037,6 @@ fn rendered(said: &[Rendered], cataloged: usize) -> String {
 const fn resolved(ui: crate::ui::Ui) -> crate::ui::Ui {
     match ui {
         crate::ui::Ui::Auto => crate::ui::Ui::Plain,
-        other => other,
+        held @ (crate::ui::Ui::Plain | crate::ui::Ui::Quiet) => held,
     }
 }

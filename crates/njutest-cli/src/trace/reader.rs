@@ -63,7 +63,6 @@ pub fn read_events(reader: impl BufRead) -> Result<Vec<Event>, ReadError> {
 
 /// One thing wrong with a recording as read.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
 pub enum Problem {
     /// The first event is not `run-start`: the beginning was lost.
     MissingRunStart,

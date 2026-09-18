@@ -317,7 +317,6 @@ fn describe(problem: &Problem) -> String {
         Problem::UnbalancedPhase { name } => {
             format!("the phase {name} began and ended a different number of times")
         }
-        _ => "the recording is not one this release understands".to_owned(),
     }
 }
 

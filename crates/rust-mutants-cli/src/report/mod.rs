@@ -409,7 +409,7 @@ pub const fn exit_code(outcome: rust_mutants::outcome::Outcome) -> u8 {
     match outcome {
         Outcome::Killed | Outcome::TimedOut => 0,
         Outcome::Survived => 1,
-        _ => crate::EXIT_USAGE,
+        Outcome::NotRun | Outcome::Inconclusive | Outcome::Errored => crate::EXIT_USAGE,
     }
 }
 
