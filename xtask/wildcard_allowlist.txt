@@ -14,9 +14,7 @@ crates/njutest-cli/src/assure/baseline.rs:247
 crates/njutest-cli/src/assure/mutation.rs:732
 crates/njutest-cli/src/assure/mutation.rs:862
 crates/njutest-cli/src/assure/replay.rs:140
-crates/njutest-cli/src/assure/route.rs:58
 crates/njutest-cli/src/build.rs:169
-crates/njutest-cli/src/targets.rs:86
 crates/njutest-cli/tests/deep.rs:206
 crates/njutest-cli/tests/deep.rs:260
 crates/njutest-cli/tests/equivalence.rs:192
@@ -58,12 +56,6 @@ crates/rust-mutants-cli/src/ui.rs:234
 crates/rust-mutants-cli/src/ui.rs:92
 crates/rust-mutants/src/cargo/compile.rs:214
 crates/rust-mutants/src/reach.rs:249
-crates/rust-mutants/src/run.rs:1148
-crates/rust-mutants/src/run.rs:1161
-crates/rust-mutants/src/run.rs:1305
-crates/rust-mutants/src/run.rs:320
-crates/rust-mutants/src/run.rs:376
-crates/rust-mutants/src/run.rs:820
 crates/rust-mutants/src/snapshot/mod.rs:745
 crates/rust-mutants/src/trace/reader.rs:136
 crates/rust-mutants/src/trace/summary.rs:128
@@ -74,7 +66,6 @@ crates/rust-mutants/tests/snapshot.rs:575
 crates/rust-mutants/tests/snapshot.rs:579
 crates/rust-mutants/tests/snapshot.rs:583
 crates/rust-mutants/tests/splice.rs:78
-crates/rust-mutants/tests/syntax.rs:438
 crates/rust-mutants/tests/toolchain_discover.rs:397
 crates/rust-mutants/tests/toolchain_discover.rs:484
 crates/rust-mutants/tests/toolchain_pool.rs:266

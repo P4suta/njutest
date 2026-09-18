@@ -117,7 +117,6 @@ pub struct Judged {
 
 /// Whether a reviewer's claim about one mutant held.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
 pub enum Standing {
     /// The run confirmed it.
     Met,
@@ -161,7 +160,6 @@ pub struct Verified {
 
 /// What kind of hole a finding names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
 pub enum FindingKind {
     /// Every test passed with the mutant active.
     SurvivingMutant,
@@ -317,7 +315,7 @@ impl Run {
                 Outcome::TimedOut => &mut tally.timed_out,
                 Outcome::Inconclusive => &mut tally.inconclusive,
                 Outcome::NotRun => &mut tally.not_run,
-                _ => &mut tally.errored,
+                Outcome::Errored => &mut tally.errored,
             };
             *slot = slot.saturating_add(1);
             if one.not_run_reason == Some(NotRunReason::Unreached) {
@@ -373,7 +371,7 @@ impl Run {
                 Outcome::NotRun if self.interrupted => continue,
                 Outcome::NotRun => FindingKind::NotRunMutant,
                 Outcome::Killed | Outcome::TimedOut => continue,
-                _ => FindingKind::ErroredMutant,
+                Outcome::Errored => FindingKind::ErroredMutant,
             };
             findings.push(Finding {
                 kind,
@@ -817,7 +815,8 @@ fn equivalence(
                 crate::equivalence::artifacts::Identity::NotEstablished(why) => {
                     Some(why.to_owned())
                 }
-                _ => None,
+                crate::equivalence::artifacts::Identity::Identical
+                | crate::equivalence::artifacts::Identity::Differs => None,
             },
         });
         if let Some(one) = judged.get_mut(at) {
@@ -1062,7 +1061,6 @@ impl Observer for Silent {}
 
 /// Why a mutant was never executed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
 pub enum NotRunReason {
     /// The coverage measurement proved no target reaches it.
     Unreached,
@@ -1145,7 +1143,9 @@ fn not_run_because(outcome: Outcome, route: &crate::session::Route) -> Option<No
     match route {
         crate::session::Route::Unreached { .. } => Some(NotRunReason::Unreached),
         crate::session::Route::Discharged { .. } => Some(NotRunReason::Discharged),
-        _ => Some(NotRunReason::Interrupted),
+        crate::session::Route::All { .. } | crate::session::Route::Block { .. } => {
+            Some(NotRunReason::Interrupted)
+        }
     }
 }
 
@@ -1158,7 +1158,7 @@ const fn stops(one: &Judged) -> bool {
             one.not_run_reason,
             Some(NotRunReason::Unreached | NotRunReason::Discharged)
         ),
-        _ => true,
+        Outcome::Inconclusive | Outcome::Errored => true,
     }
 }
 
@@ -1302,7 +1302,9 @@ pub fn verify(
                     let (named, standing) = standing_of(judged, expectation.outcome, &ids);
                     let standing = match standing {
                         Standing::Met => moved.unwrap_or(Standing::Met),
-                        other => other,
+                        held @ (Standing::Moved { .. }
+                        | Standing::Stale { .. }
+                        | Standing::Unmatched { .. }) => held,
                     };
                     if matches!(standing, Standing::Met | Standing::Moved { .. }) {
                         for one in judged.iter_mut().filter(|one| ids.contains(&one.id)) {

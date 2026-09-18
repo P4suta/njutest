@@ -9,7 +9,6 @@ use crate::catalog::Mutant;
 
 /// Which targets could notice a mutation, and what the route rests on.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
 pub enum Route {
     /// Every target, because the measurement says nothing about this place.
     All {
@@ -48,7 +47,6 @@ pub enum Route {
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
 )]
 #[serde(rename_all = "kebab-case")]
-#[non_exhaustive]
 pub enum Proof {
     /// The target never ran the body of the branch the mutation sits in.
     BranchNeverTaken,
@@ -87,7 +85,6 @@ pub const NEVER_INFECTED: Proof = Proof::NeverInfected;
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
 )]
 #[serde(rename_all = "kebab-case")]
-#[non_exhaustive]
 pub enum Granularity {
     /// Every target, because the measurement says nothing about this place.
     All,
@@ -129,7 +126,6 @@ impl Granularity {
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
 )]
 #[serde(rename_all = "kebab-case")]
-#[non_exhaustive]
 pub enum Fallback {
     /// Nothing was measured at all.
     NotMeasured,

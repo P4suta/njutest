@@ -7,7 +7,6 @@ use std::fmt;
 
 /// A profile level.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-#[non_exhaustive]
 pub enum Tier {
     /// The default profile: operators whose survivors almost always point at a real gap in the tests.
     Balanced,
@@ -52,7 +51,6 @@ impl fmt::Display for Tier {
 
 /// An operator family: the unit of selection for `--operator`, and, through its position in the canonical table, the deduplication tiebreak — an earlier family is the more local edit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
 pub enum Family {
     /// `true` ↔ `false`.
     BooleanLiteral,
