@@ -53,7 +53,11 @@ pub struct Event {
 /// The typed record of an event, tagged by `type` on the wire.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
-#[non_exhaustive]
+/// What one event of a recording says.
+///
+/// Closed, because both CLIs render it and one of them had a waiver in
+/// `xtask/wildcard_allowlist.txt` for the arm this type once forced on it. A
+/// ledger entry is what paying the cost looks like (ADR 0023).
 pub enum Payload {
     /// The first event of every recording.
     RunStart {

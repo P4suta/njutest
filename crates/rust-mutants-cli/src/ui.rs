@@ -237,7 +237,28 @@ pub fn phase_line(event: &Event) -> Option<String> {
                 format!("{}.{:02}s", milliseconds / 1000, milliseconds % 1000 / 10)
             ))
         }
-        _ => None,
+        Payload::RunStart { .. }
+        | Payload::Open { .. }
+        | Payload::Snapshot { .. }
+        | Payload::Exec { .. }
+        | Payload::DiscoverFile { .. }
+        | Payload::Instrument { .. }
+        | Payload::ValidateRound { .. }
+        | Payload::Bisect { .. }
+        | Payload::Build { .. }
+        | Payload::Verify { .. }
+        | Payload::Touch { .. }
+        | Payload::Witness { .. }
+        | Payload::SkipClaim { .. }
+        | Payload::Kept { .. }
+        | Payload::Route { .. }
+        | Payload::Cache { .. }
+        | Payload::Select { .. }
+        | Payload::Identical { .. }
+        | Payload::Evidence { .. }
+        | Payload::MutantExec { .. }
+        | Payload::Note { .. }
+        | Payload::RunEnd { .. } => None,
     }
 }
 

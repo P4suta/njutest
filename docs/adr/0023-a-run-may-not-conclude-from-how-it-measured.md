@@ -246,6 +246,41 @@ outranked every time is not accused, a run that reused every answer accuses
 nobody. The happy path is the cheap one to write and the one that was never in
 doubt.
 
+**A zero value that means "no answer" is the shape this keeps taking.** Five
+layers, one remedy. `Blind` had `Undecided` among the ways a build is a hole,
+so a build that established nothing read as one the tests were blind in.
+`RouteRecord` derived `Default` while `Granularity` has none — correctly,
+because there is no granularity a route is decided at when nobody decided it
+— so a routing that did not happen read as one that did. `Why` would have
+collapsed *no recording* into *nothing stands behind this*, in the command
+whose entire job is explaining why. And a review loop that offered `Accept`
+over an unsettled place would let somebody decide a measurement that never
+happened may stand.
+
+`Provenance` was the fifth: `cached: false` beside `source_run_id: None` is a
+zero value meaning *nobody said*, and `Established::Here` is the same move.
+
+Every one of them was fixed the same way: **make the absence a case rather
+than a value.** The reason it keeps working is exact rather than stylistic: a
+zero value is indistinguishable from a real answer that happens to be zero,
+and a case is not. A default, a sentinel, a zero and an empty list are all a
+program saying *nothing* in the grammar it uses for *something*, and every
+reader downstream has to remember which one they are holding. A variant does
+the remembering.
+
+The tell is a type whose `Default` is reachable in a path where the thing it
+defaults to was never asked. If you cannot name what the default means
+without the word "not", it is a case.
+
+**And `#[derive(Default)]` on a struct is where the compiler stops helping.**
+A derived default is a claim about every field, checked field by field, with
+no view of whether the whole means anything: `RouteRecord` derived one while
+`Granularity` has none — correctly, since there is no granularity a route is
+decided at when nobody decided it — and the result was a routing that did not
+happen, synthesised out of fields that were each individually fine. That is
+the paired-field defect at the level of a whole record, and the only defence
+is not deriving it.
+
 **A workaround looks like design.** `#[non_exhaustive]` on a type whose
 callers render it forces a `_` arm outside the crate. One author, having put
 the attribute there, later wrote an accessor whose only job was to answer the
