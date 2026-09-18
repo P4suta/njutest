@@ -16,7 +16,8 @@ use crate::assure::baseline::Measured;
 use crate::assure::route::Route;
 use crate::assure::schedule;
 use crate::evidence::store;
-use crate::report::{Finding, FindingKind, MutantAccounting};
+use crate::report::Outcome as Recorded;
+use crate::report::{Decision, Finding, FindingKind, MutantAccounting};
 use crate::watch::Watch;
 
 /// Why a kill could not be believed.
@@ -107,19 +108,51 @@ pub enum Disposition {
 }
 
 impl Disposition {
+    /// What the run established, which is the one thing a report records this as.
+    #[must_use]
+    pub const fn outcome(&self) -> Recorded {
+        match self {
+            Self::Rejected { .. } => Recorded::CompileRejected,
+            Self::Killed { .. } => Recorded::Killed,
+            Self::TimedOut { .. } => Recorded::TimedOut,
+            Self::Survived { .. } => Recorded::Survived,
+            Self::Unreached => Recorded::Unreached,
+            Self::Equivalent { .. } => Recorded::Equivalent,
+            Self::Unconfirmed { .. } => Recorded::Unconfirmed,
+            Self::Errored { .. } => Recorded::Errored,
+        }
+    }
+
     /// The wire name a report records.
     #[must_use]
     pub const fn name(&self) -> &'static str {
+        self.outcome().name()
+    }
+
+    /// What the run established, with the target it was established against.
+    #[must_use]
+    pub fn decided(&self) -> crate::report::Decided {
         match self {
-            Self::Rejected { .. } => "compile-rejected",
-            Self::Killed { .. } => "killed",
-            Self::TimedOut { .. } => "timed_out",
-            Self::Survived { .. } => "survived",
-            Self::Unreached => "unreached",
-            Self::Equivalent { .. } => "equivalent",
-            Self::Unconfirmed { .. } => "unconfirmed",
-            Self::Errored { .. } => "errored",
+            Self::Rejected { .. } => crate::report::Decided::CompileRejected,
+            Self::Killed { by } => crate::report::Decided::Killed { by: by.clone() },
+            Self::TimedOut { on } => crate::report::Decided::TimedOut { on: on.clone() },
+            Self::Survived { .. } => crate::report::Decided::Survived,
+            Self::Unreached => crate::report::Decided::Unreached,
+            Self::Equivalent { .. } => crate::report::Decided::Equivalent,
+            Self::Unconfirmed { on, .. } => crate::report::Decided::Unconfirmed { on: on.clone() },
+            Self::Errored { on, .. } => crate::report::Decided::Errored { on: on.clone() },
         }
+    }
+
+    /// Who decided it, which is what stands behind the verdict it feeds.
+    ///
+    /// Read through the outcome rather than spelled again here. This mapping
+    /// used to exist three times, and they disagreed: two of them called a
+    /// timeout a detection while the finding beside them said an expired
+    /// budget establishes nothing about the mutation.
+    #[must_use]
+    pub const fn decision(&self) -> Decision {
+        self.outcome().decision()
     }
 
     /// The test that decided it, when one did.
@@ -159,6 +192,8 @@ pub struct Judged {
     pub position: Option<crate::report::Position>,
     /// What was established.
     pub disposition: Disposition,
+    /// Which targets could have noticed it, and what removed the rest. `None` where the run never asked, which is a mutation the compiler refused.
+    pub routing: Option<crate::report::Routing>,
     /// The run that established it, when it was not this one.
     pub source_run_id: Option<String>,
 }
@@ -181,6 +216,7 @@ impl Mutation {
             ..MutantAccounting::default()
         };
         for judged in &self.judged {
+            counts.observers.counted(judged.disposition.decision());
             match &judged.disposition {
                 Disposition::Rejected { .. } => {
                     counts.rejected = counts.rejected.saturating_add(1);
@@ -271,7 +307,7 @@ fn survived(judged: &Judged, route: &Route) -> String {
     );
     let discharged = route.discharged();
     if route.reaching().is_empty() && !discharged.is_empty() {
-        let mut proofs: Vec<&str> = discharged.iter().map(|one| one.proof).collect();
+        let mut proofs: Vec<&str> = discharged.iter().map(|one| one.proof.name()).collect();
         proofs.sort_unstable();
         proofs.dedup();
         return format!(
@@ -486,6 +522,7 @@ fn establish(
         character_column: at.char_column,
     });
     let mut source: Option<String> = None;
+    let mut routing: Option<crate::report::Routing> = None;
     let disposition = if let Some(saved) = state
         .and_then(|state| state.mutant(&mutant.id))
         .and_then(inherited)
@@ -497,6 +534,7 @@ fn establish(
         }
     } else {
         let route = session.route(mutant);
+        routing = Some(crate::report::Routing::of(&route));
         let consulted = reuse(options, &route, &mutant.id);
         record_route(watch, mutant, &route, &consulted);
         if let Consulted::Believed {
@@ -507,7 +545,10 @@ fn establish(
             source = Some(run_id);
             disposition
         } else {
-            let established = judge(judging, mutant, route.clone())?;
+            let (established, asked) = judge(judging, mutant, route.clone())?;
+            if let Some(routed) = routing.as_mut() {
+                routed.answered = asked;
+            }
             keep(options, &mutant.id, &route, &established);
             established
         }
@@ -527,6 +568,7 @@ fn establish(
         replacement: String::from_utf8_lossy(&mutant.candidate.replacement).into_owned(),
         position,
         disposition,
+        routing,
         source_run_id: source,
     })
 }
@@ -564,8 +606,8 @@ fn record_probe(watch: Watch<'_>, session: &Session, baseline: &[Measured]) {
 fn record_route(watch: Watch<'_>, mutant: &Mutant, route: &Route, consulted: &Consulted) {
     watch.trace.route(crate::trace::RouteRecord {
         mutant: mutant.display_id.clone(),
-        granularity: route.granularity().to_owned(),
-        fallback: route.fallback().map(ToOwned::to_owned),
+        granularity: route.granularity().name().to_owned(),
+        fallback: route.fallback().map(|one| one.name().to_owned()),
         reaching: route
             .reaching()
             .into_iter()
@@ -581,7 +623,7 @@ fn record_route(watch: Watch<'_>, mutant: &Mutant, route: &Route, consulted: &Co
             .iter()
             .map(|one| crate::trace::DischargeRecord {
                 target: one.target.clone(),
-                proof: one.proof.to_owned(),
+                proof: one.proof.name().to_owned(),
             })
             .collect(),
         considered: route.considered().to_vec(),
@@ -727,13 +769,14 @@ fn judge(
     judging: &Judging<'_>,
     mutant: &Mutant,
     route: Route,
-) -> Result<Disposition, crate::error::RunnerError> {
+) -> Result<(Disposition, Vec<crate::report::Answered>), crate::error::RunnerError> {
     let baseline = judging.subject.baseline;
+    let mut answered: Vec<crate::report::Answered> = Vec::new();
     if let Route::Discharged { .. } = route {
-        return Ok(Disposition::Survived { route });
+        return Ok((Disposition::Survived { route }, answered));
     }
     if route.reaching().is_empty() {
-        return Ok(Disposition::Unreached);
+        return Ok((Disposition::Unreached, answered));
     }
     for target in route.reaching() {
         let Some(measured) = baseline
@@ -742,11 +785,18 @@ fn judge(
         else {
             continue;
         };
-        if let Some(disposition) = against(judging, mutant, Some(measured))? {
-            return Ok(disposition);
+        let established = against(judging, mutant, Some(measured))?;
+        answered.push(crate::report::Answered {
+            target: target.to_owned(),
+            outcome: established
+                .as_ref()
+                .map_or(Recorded::Survived, Disposition::outcome),
+        });
+        if let Some(disposition) = established {
+            return Ok((disposition, answered));
         }
     }
-    Ok(Disposition::Survived { route })
+    Ok((Disposition::Survived { route }, answered))
 }
 
 /// What one mutation comes to against one test, or against every test in the package when no proof says which could notice it. Nothing at all means it ran and nobody noticed, which the caller folds into the route's own answer.

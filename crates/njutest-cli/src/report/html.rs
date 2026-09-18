@@ -117,12 +117,12 @@ fn mutants(report: &Report) -> String {
         format!(
             "<tr><td class=\"{outcome}\">{outcome}</td><td><code>{id}</code></td>\
              <td><code>{path}:{line}</code></td><td>{rule}</td><td>{by}</td></tr>",
-            outcome = escape(&mutant.outcome),
+            outcome = escape(mutant.outcome.name()),
             id = escape(&mutant.display_id),
             path = escape(&mutant.path),
             line = mutant.position.line,
             rule = escape(&mutant.rule),
-            by = escape(mutant.killed_by.as_deref().unwrap_or_default()),
+            by = escape(mutant.outcome.decided_by().unwrap_or_default()),
         )
     });
     table(&["Outcome", "Mutant", "Where", "Rule", "Noticed by"], rows)

@@ -31,6 +31,7 @@ CLI/config
    ├─ rust-mutants catalog + infection probe pass
    ├─ region-routed mutant execution + paired confirmation
    ├─ targeted fuzzing / generation candidate validation
+   ├─ wire: seam recording + derived fault catalogue + fault execution
    └─ report v1 + exact cache/checkpoint
 ```
 

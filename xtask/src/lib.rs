@@ -16,6 +16,7 @@ pub mod release;
 pub mod reportdiff;
 pub mod route;
 pub mod sbom;
+pub mod wire;
 
 use std::ffi::OsString;
 use std::io::Write;

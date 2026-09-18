@@ -700,7 +700,8 @@ fn the_trace_of_a_covered_run_names_every_layer() {
     let mutant = session.catalog().at(0).expect("a mutant");
     let route = session.route(mutant);
     assert!(
-        !route.reaching().is_empty() || route.granularity() == "unreached",
+        !route.reaching().is_empty()
+            || route.granularity() == rust_mutants::session::Granularity::Unreached,
         "a route either names targets or says nothing reaches it: {route:?}"
     );
     session.close().expect("close");

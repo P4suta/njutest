@@ -75,6 +75,16 @@ pub enum Payload {
         /// The record.
         probe: ProbeExecRecord,
     },
+    /// One exchange that went past a seam the run was watching.
+    WireExchange {
+        /// The record.
+        exchange: WireExchangeRecord,
+    },
+    /// One fault a recording licensed, put to the suite, and what came of it.
+    WireExec {
+        /// The record.
+        wire: WireExecRecord,
+    },
     /// Something worth writing down that has no shape of its own yet.
     Note {
         /// The record.
@@ -101,6 +111,8 @@ impl Payload {
             Self::Route { .. } => "route",
             Self::MutantExec { .. } => "mutant-exec",
             Self::ProbeExec { .. } => "probe-exec",
+            Self::WireExchange { .. } => "wire-exchange",
+            Self::WireExec { .. } => "wire-exec",
             Self::Note { .. } => "note",
             Self::RunEnd { .. } => "run-end",
         }
@@ -317,6 +329,53 @@ pub struct ProbeExecRecord {
     pub outcome: String,
     /// How many mutants the target infected. A target the pass did not measure carries no facts, and none is not zero.
     pub infected: Option<u64>,
+}
+
+/// One exchange that went past a seam, as much of it as the wire says to read.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct WireExchangeRecord {
+    /// The capability the seam serves.
+    pub capability: String,
+    /// Where it fell in the order on that seam, from zero.
+    pub seq: u64,
+    /// What the run had running, where it could tell.
+    pub during: Option<String>,
+    /// How long the round trip took.
+    pub duration_ms: u64,
+    /// How much of it was read: `raw` or `http`.
+    pub wire: String,
+    /// What was asked for, where the wire says how to read one.
+    pub method: Option<String>,
+    /// Where it was asked of, where the wire says how to read one.
+    pub path: Option<String>,
+    /// What the upstream answered, where the wire says how to read one.
+    pub status: Option<u16>,
+    /// How many bytes went up.
+    pub request_bytes: u64,
+    /// How many came back.
+    pub response_bytes: u64,
+}
+
+/// One fault put to the suite, and what the suite did with it.
+///
+/// The rule and the decision are the sets the run holds them as, not their
+/// names: a doc comment listing the legal values beside a `String` is a closed
+/// set written in prose, which is the shape the compiler cannot check. The
+/// recording reads the same as it did, because the names are where the naming
+/// belongs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WireExecRecord {
+    /// The fault's identity.
+    pub fault: String,
+    /// The seam it names.
+    pub capability: String,
+    /// The exchange it names, by its place in the order.
+    pub seq: u64,
+    /// What it asked the seam to do.
+    pub rule: crate::wire::rule::Rule,
+    /// Who decided it, and — where somebody did — who that was.
+    #[serde(flatten)]
+    pub decision: crate::report::SeamDecision,
 }
 
 /// A free-form note, for what has no shape of its own yet.

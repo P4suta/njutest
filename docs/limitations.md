@@ -124,6 +124,70 @@ below is stated fail-closed.
   sanitizer the configuration asks for and the toolchain will not run is
   `sanitizer-unavailable`; every sanitizer run also carries
   `sanitizer-standard-library-not-instrumented`.
+- A question about a seam that hands the caller the bytes it was handed
+  already is `proved` and never run. Cutting an answer with no body short keeps
+  everything up to and including the blank line that ends the head, so what
+  comes back is identical; asking for the status the upstream already gave,
+  worded the way a run words it, writes the line that is already there. Nothing
+  that reads bytes can tell either pair apart, which is a stronger answer than
+  a run — not that no test noticed, but that no observer could. Both checks are
+  asked of the code that would have done the injecting, so a proof is a check
+  on the injection rather than a second opinion about it. A 500 whose reason
+  phrase differs from the one a run writes is a different answer and is still
+  put: a proof that held only most of the time would not be a proof. Every
+  other question changes what the caller is handed or when, so every other
+  question is put.
+- `replay-request` delivers the same request to the dependency a second time
+  and hands the caller the first answer, which is what a retry after a lost
+  answer leaves behind. What could notice is whatever holds the dependency's
+  state, so a suite that notices nothing here is one that would not notice a
+  double charge. The run does not undo the second delivery: a resource the
+  configuration leases is the run's to spend, and a seam nobody named is never
+  watched in the first place.
+- `stale-response` answers one exchange with what the exchange before it on the
+  same seam got, which is what reading a replica the writer has outrun looks
+  like from inside the program. The first exchange on a seam licenses no such
+  question, because nothing came before it to be answered with.
+- A run told to measure only what changed re-measures every seam question it
+  licenses, because nothing attributes an exchange to the code that caused it.
+  The baseline runs the targets together, so the interposer is told nothing
+  about who is running and records `None` rather than the last name it happened
+  to know — naming the wrong one would route a question to tests that were not
+  there. Until a recording can say which target caused which exchange, a
+  changed-run has no sound way to decide that a question it asked before is
+  still answered, and asking it again is the answer that cannot be wrong.
+- Two answers arriving in the other order is not a question this release can
+  put, and will not become one while the catalogue names exchanges by their
+  place in the order. An interposer that served connections concurrently could
+  hold one answer back past another, but then which exchange is the second one
+  would depend on how the threads were scheduled, and every fault identity
+  would move between runs of the same suite. Serving one connection at a time
+  is what makes the recording reproducible, and reproducible identities are
+  what let a fault be named, stored, compared and re-derived at all. The
+  question a sequential caller can still be asked — an answer belonging to a
+  moment that has passed — is `stale-response`.
+- A clock the program reads is not a seam an interposer sits in front of, so
+  skew and TTL boundaries are not asked here. What the seam can ask is how
+  long the caller waits, which is `delay-response`.
+- An answer of a different shape — a field gone, a value of another type, an
+  enum from a later release — is not proposed, because the recording keeps no
+  bodies to derive one from. Inventing a shape would be guessing at a program
+  this run never saw, and the catalogue is derived from what went past or it
+  is not derived at all.
+- A rule this release has no injection for is `not-measured` and never a
+  survivor. A catalogue that grew a name before the interposer did would
+  otherwise pass the answer along quietly and come back as a gap where no
+  question was ever asked.
+- A question the exchange it names never came past is `not-measured`, whatever
+  the tests did. A suite that took a different path this time and passed
+  throughout was asked nothing, and reading that as nothing noticing would
+  report a gap the tests could close where nobody was asked at all.
+- A seam the configuration names with `interpose` is recorded, and every fault
+  the recording licenses is put back to the suite with nothing mutated. A run
+  that recorded a seam and could not put its questions — the workspace did not
+  build, or the run was cancelled — says `wire-fault-not-put` and counts none
+  of them as survivors: a question nobody was asked establishes nothing, and
+  reporting it as a gap would put something in the report no test could close.
 - Repository reads are not observed at run time. A package that names a
   directory-reading crate keys the whole snapshot for evidence reuse; nothing
   is excluded from testing. The names searched for are the paths those crates

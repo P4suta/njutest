@@ -12,9 +12,9 @@
 use std::path::{Path, PathBuf};
 
 use njutest_cli::report::{
-    Accounting, Finding, FindingKind, Git, Limitation, MutantAccounting, MutantRecord, Position,
-    Report, Repository, RunKind, SCHEMA, Scope, SoundnessAccounting, TargetAccounting,
-    TargetRecord, TargetStatus, Timing, Tool, Toolchain, Verdict, json,
+    Accounting, Finding, FindingKind, Git, Limitation, MutantAccounting, MutantRecord,
+    ObserverAccounting, Position, Report, Repository, RunKind, SCHEMA, Scope, SoundnessAccounting,
+    TargetAccounting, TargetRecord, TargetStatus, Timing, Tool, Toolchain, Verdict, json,
 };
 
 /// A report with something in every field, so the schema is exercised whole.
@@ -40,6 +40,15 @@ fn populated() -> Report {
             kill_runs: 2,
             accepted: true,
             why: None,
+        }],
+        seams: vec![njutest_cli::report::SeamRecord {
+            id: "c".repeat(64),
+            capability: "api".to_owned(),
+            seq: 3,
+            asked: "GET /orders".to_owned(),
+            answered: Some(200),
+            rule: njutest_cli::wire::rule::Rule::StatusServerError,
+            decision: njutest_cli::report::SeamDecision::Unnoticed,
         }],
         resources: vec![njutest_cli::report::ResourceRecord {
             capability: "postgres".to_owned(),
@@ -106,6 +115,15 @@ fn populated() -> Report {
                 accepted: 1,
                 reused_killed: 2,
                 reused_survived: 0,
+                observers: ObserverAccounting {
+                    types: 1,
+                    tests: 7,
+                    proved: 0,
+                    unnoticed: 1,
+                    unreached: 0,
+                    waited: 0,
+                    errored: 0,
+                },
             },
             soundness: SoundnessAccounting {
                 unsafe_items: 3,
@@ -144,10 +162,29 @@ fn populated() -> Report {
             item: "demo".to_owned(),
             original: ">".to_owned(),
             replacement: String::new(),
-            outcome: "killed".to_owned(),
-            killed_by: Some("0123456789abcdef".to_owned()),
+            outcome: njutest_cli::report::Decided::Killed {
+                by: "0123456789abcdef".to_owned(),
+            },
             reused: true,
             source_run_id: Some("20260904T101500Z-123456".to_owned()),
+            blind_in: vec![njutest_cli::report::BlindIn {
+                build: "release".to_owned(),
+                decision: njutest_cli::report::Blind::Unnoticed,
+            }],
+            routing: Some(njutest_cli::report::Routing {
+                granularity: rust_mutants::session::Granularity::Block,
+                reaching: vec!["0123456789abcdef".to_owned()],
+                discharged: vec![njutest_cli::report::Discharged {
+                    target: "fedcba9876543210".to_owned(),
+                    proof: rust_mutants::session::Proof::NeverInfected,
+                }],
+                fallback: None,
+                answered: vec![njutest_cli::report::Answered {
+                    target: "0123456789abcdef".to_owned(),
+                    outcome: njutest_cli::report::Outcome::parse("killed")
+                        .unwrap_or(njutest_cli::report::Outcome::Errored),
+                }],
+            }),
         }],
         findings: Vec::new(),
         limitations: vec![Limitation::new(
@@ -327,4 +364,61 @@ fn every_object_in_the_schema_is_closed_and_requires_all_it_declares() {
     let mut faults = Vec::new();
     walk(&schema(), "#", &mut faults);
     assert!(faults.is_empty(), "{faults:#?}");
+}
+
+/// One mutant object of the populated document, with `changed` folded over it.
+fn a_mutant_saying(changed: &serde_json::Value) -> serde_json::Value {
+    let text = json::document(&populated()).expect("an audited document");
+    let mut document: serde_json::Value = serde_json::from_str(&text).expect("JSON");
+    let held = document
+        .get_mut("mutants")
+        .and_then(serde_json::Value::as_array_mut)
+        .and_then(|mutants| mutants.first_mut())
+        .expect("a mutant");
+    for (key, value) in changed.as_object().expect("an object") {
+        held[key] = value.clone();
+    }
+    document
+}
+
+#[test]
+fn a_mutation_that_nothing_noticed_and_names_a_noticer_is_not_a_document_this_reads() {
+    let document = a_mutant_saying(&serde_json::json!({ "outcome": "survived" }));
+    let read = serde_json::from_value::<Report>(document.clone());
+    assert!(
+        read.is_err(),
+        "the record says nothing noticed it and then names the target that did. \
+         Carrying that inward and letting a reader meet it is what the pairing being \
+         a type prevents, and refusing it at the boundary is where a document written \
+         by something else gets caught"
+    );
+    assert!(
+        !problems(&document).is_empty(),
+        "and the published schema refuses the same document, because the two say the \
+         same thing rather than because somebody checked they agreed"
+    );
+}
+
+#[test]
+fn a_mutation_a_test_noticed_and_names_nobody_is_not_a_document_this_reads() {
+    let document = a_mutant_saying(&serde_json::json!({ "killed_by": serde_json::Value::Null }));
+    assert!(
+        serde_json::from_value::<Report>(document.clone()).is_err(),
+        "a kill nobody is named for is the other half of the same defect: a reader \
+         is told a test noticed and has nowhere to go"
+    );
+    assert!(!problems(&document).is_empty());
+}
+
+#[test]
+fn the_document_a_run_writes_is_the_two_fields_it_always_wrote() {
+    let text = json::document(&populated()).expect("an audited document");
+    let document: serde_json::Value = serde_json::from_str(&text).expect("JSON");
+    let held = &document["mutants"][0];
+    assert_eq!(held["outcome"], "killed");
+    assert_eq!(
+        held["killed_by"], "0123456789abcdef",
+        "the pairing is a type inside the program and two fields on the wire, so a \
+         document written before it existed still reads: {held}"
+    );
 }

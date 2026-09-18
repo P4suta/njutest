@@ -5,7 +5,7 @@
 
 use std::fmt::Write as _;
 
-use super::{Blindness, Place, Spot, Told};
+use super::{Blindness, Place, Spot, Standing, Told, Unsettled};
 
 /// What a run found, as a briefing something can act on.
 ///
@@ -74,15 +74,7 @@ fn heading(out: &mut String, told: &Told) {
 fn gap(out: &mut String, place: &Place, at: usize) {
     let _written = writeln!(out, "\n## {at}. `{}` in `{}`\n", place.item, place.path);
     if let Some(instead) = &place.instead {
-        let _written = writeln!(
-            out,
-            "The source cannot be shown: {}\n",
-            match instead {
-                super::Excerpt::Moved =>
-                    "the file has changed since the run, so read it yourself before acting",
-                _ => "the file could not be read",
-            }
-        );
+        let _written = writeln!(out, "The source cannot be shown: {}\n", instead.told());
     } else {
         out.push_str("```rust\n");
         for (line, text) in &place.excerpt {
@@ -113,55 +105,127 @@ fn one(out: &mut String, spot: &Spot) {
         "\n### `{named}` at line {}\n\nOn line {}, {asked}, and {}.\n",
         spot.line,
         spot.line,
-        came(spot.blindness)
+        came(spot.standing)
     );
+    disagreed(out, spot);
     let _written = write!(
         out,
         "{}",
-        match spot.blindness {
-            Blindness::Ran => format!(
-                "**Write a test that fails with this change in place.** The tests already run \
-             this line; what is missing is an assertion about what it decides.\n\n\
-             ```console\n\
-             njutest explain {named}   # which targets reached it, and what each did\n\
-             njutest replay  {named}   # after your test: `REPRODUCED` means the gap is still open\n\
-             ```\n\n\
-             If the change cannot affect anything a caller can observe, record that instead: \
-             `njutest accept {named} --reason \"...\"`.\n"
-            ),
-            Blindness::Never => format!(
-                "**Write a test that reaches this line at all.** Asserting harder elsewhere \
-             will not close this: nothing executes the line, so nothing can notice \
-             anything about it.\n\n\
-             ```console\n\
-             njutest explain {named}   # why every measured target answered that it does not reach it\n\
-             njutest replay  {named}   # after your test: `REPRODUCED` means it is still unreached\n\
-             ```\n\n\
-             If the line is unreachable by construction, record that instead: \
-             `njutest accept {named} --reason \"...\"`.\n"
-            ),
-            Blindness::Waited => format!(
-                "**Do not write a test for this yet.** The run established nothing here, so \
-             there is no gap to close and no way to tell whether one exists. `replay` can \
-             pass without proving anything, which would say a fix worked when nothing was \
-             fixed.\n\n\
-             ```console\n\
-             njutest explain {named}   # what ran, and how long it ran for\n\
-             ```\n\n\
-             Find out why nothing finished — a mutation that does not terminate, a bound \
-             that is too tight, a machine that was busy — and run the verification again.\n"
-            ),
+        match spot.standing {
+            Standing::Blind(blindness) => close(blindness, named),
+            Standing::Unsettled(unsettled) => settle(unsettled, named),
         }
     );
 }
 
-/// What came of changing the code there, in the fewest words that are true.
-const fn came(blindness: Blindness) -> &'static str {
-    match blindness {
+/// What each build established, where they did not all establish the same thing.
+///
+/// The instruction below is the one the weakest build earns, and acting on it
+/// closes nothing in a build that established nothing. Saying which build is
+/// which is the difference between "write a test" and "write a test, and find
+/// out separately why release never answered" (ADR 0023).
+fn disagreed(out: &mut String, spot: &Spot) {
+    let mut kinds = spot.blind_in.iter().map(|one| one.standing);
+    let Some(first) = kinds.next() else {
+        return;
+    };
+    if kinds.all(|standing| standing == first) {
+        return;
+    }
+    let _written = writeln!(
+        out,
+        "The builds did not agree about it. {}.\n",
+        spot.blind_in
+            .iter()
+            .map(|one| format!("`{}`: {}", one.build, one.standing.asks()))
+            .collect::<Vec<String>>()
+            .join("; ")
+    );
+}
+
+/// What closes a gap in the tests: the test to write, and the command that proves it closed.
+///
+/// Every branch here offers `replay`, and it is the only function that does.
+/// `replay` puts one change back and says whether the suite notices it now,
+/// which is a proof only where the run established something to reproduce.
+/// Taking `Blindness` rather than `Standing` is what makes that a fact about
+/// the program rather than a note for whoever adds the next case (ADR 0023).
+fn close(blindness: Blindness, named: &str) -> String {
+    let (work, why, explains) = match blindness {
+        Blindness::Ran => (
+            "**Write a test that fails with this change in place.**",
+            "The tests already run this line; what is missing is an assertion about what it \
+             decides.",
+            "which targets reached it, and what each did",
+        ),
+        Blindness::Never => (
+            "**Write a test that reaches this line at all.**",
+            "Asserting harder elsewhere will not close this: nothing executes the line, so \
+             nothing can notice anything about it.",
+            "why every measured target answered that it does not reach it",
+        ),
+    };
+    let instead = match blindness {
         Blindness::Ran => {
+            "If the change cannot affect anything a caller can observe, record that instead"
+        }
+        Blindness::Never => "If the line is unreachable by construction, record that instead",
+    };
+    format!(
+        "{work} {why}\n\n\
+         ```console\n\
+         njutest explain {named}   # {explains}\n\
+         njutest replay  {named}   # after your test: {}\n\
+         ```\n\n\
+         {instead}: `njutest accept {named} --reason \"...\"`.\n",
+        blindness.replay_proves()
+    )
+}
+
+/// What a claim nothing decided asks for, which is an investigation and never a test.
+///
+/// No `replay` anywhere in it, and none available: `Unsettled` has no
+/// `replay_proves`, so a branch added here cannot offer one by forgetting not
+/// to. Telling something to write a test and then run `replay`, where
+/// `replay` can pass without proving anything, is telling it that it
+/// succeeded at something it did not do.
+fn settle(unsettled: Unsettled, named: &str) -> String {
+    let (explains, look) = match unsettled {
+        Unsettled::Waited => (
+            "what ran, and how long it ran for",
+            "Find out why nothing finished — a mutation that does not terminate, a bound that \
+             is too tight, a machine that was busy — and run the verification again.",
+        ),
+        Unsettled::Errored => (
+            "what was attempted, and what the harness said",
+            "Find out why nothing could be measured — a target that does not build, a harness \
+             that did not start — and run the verification again.",
+        ),
+    };
+    format!(
+        "**Do not write a test for this yet.** The run established nothing here, so there is \
+         no gap to close and no way to tell whether one exists.\n\n\
+         ```console\n\
+         njutest explain {named}   # {explains}\n\
+         ```\n\n\
+         {look}\n"
+    )
+}
+
+/// What came of changing the code there, in the fewest words that are true.
+const fn came(standing: Standing) -> &'static str {
+    match standing {
+        Standing::Blind(Blindness::Ran) => {
             "the tests ran this line and passed anyway, so nothing asserts what it decides"
         }
-        Blindness::Never => "no test executes this line at all, so nothing could have noticed",
-        Blindness::Waited => "nothing finished, so the run established nothing about it",
+        Standing::Blind(Blindness::Never) => {
+            "no test executes this line at all, so nothing could have noticed"
+        }
+        Standing::Unsettled(Unsettled::Waited) => {
+            "nothing finished, so the run established nothing about it"
+        }
+        Standing::Unsettled(Unsettled::Errored) => {
+            "nothing could be measured, so the run established nothing about it"
+        }
     }
 }

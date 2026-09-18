@@ -74,7 +74,7 @@ pub fn estimate(session: &Session, filter: &run::Filter) -> String {
             mutant.candidate.rule.name,
             mutant.candidate.path,
             line,
-            route.granularity(),
+            route.granularity().name(),
             reaching
         );
         debug_assert!(written.is_ok(), "writing to a String cannot fail");

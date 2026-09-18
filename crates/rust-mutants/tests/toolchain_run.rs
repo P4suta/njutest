@@ -118,6 +118,40 @@ fn a_timeout_that_does_not_repeat_is_inconclusive_and_one_that_does_is_timed_out
 }
 
 #[test]
+fn a_judgement_names_every_target_it_asked_and_what_each_answered() {
+    let fixture = Fixture::copy("fixture-hang");
+    let session = prepared(&fixture, &[]);
+    let ordinary = mutant(&session, "delete-compound-assignment", 12);
+    let judged = session
+        .judge(&Request::new(ordinary), &Quiet::default(), &Cancel::new())
+        .expect("judge");
+
+    assert!(
+        !judged.asked.is_empty(),
+        "a run that establishes something about a mutation asked somebody, and a \
+         judgement that cannot say who was asked leaves a reader unable to tell a \
+         target that passed from one that was never given the chance: {judged:?}"
+    );
+    assert!(
+        judged
+            .asked
+            .iter()
+            .any(|one| one.target == judged.result.target),
+        "the target whose answer the run took is one of the targets it asked"
+    );
+    assert!(
+        judged.asked.iter().all(|one| !one.target.is_empty()),
+        "and every one of them is named: {:?}",
+        judged
+            .asked
+            .iter()
+            .map(|one| &one.target)
+            .collect::<Vec<_>>()
+    );
+    session.close().expect("close");
+}
+
+#[test]
 fn a_mutant_nothing_delays_is_judged_once() {
     let fixture = Fixture::copy("fixture-hang");
     let session = prepared(&fixture, &[]);

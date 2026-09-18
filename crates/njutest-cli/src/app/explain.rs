@@ -53,8 +53,11 @@ pub fn run(
         ),
     );
     super::say(stdout, &format!("RULE\t{}", escape(&mutant.rule)));
-    super::say(stdout, &format!("OUTCOME\t{}", escape(&mutant.outcome)));
-    if let Some(by) = &mutant.killed_by {
+    super::say(
+        stdout,
+        &format!("OUTCOME\t{}", escape(mutant.outcome.name())),
+    );
+    if let Some(by) = mutant.outcome.decided_by() {
         super::say(stdout, &format!("DECIDED-BY\t{}", escape(by)));
     }
     if let Some(provenance) = &mutant.source_run_id {
@@ -74,7 +77,7 @@ pub fn run(
             ),
         );
     }
-    if mutant.outcome == "survived" {
+    if mutant.outcome.outcome() == crate::report::Outcome::Survived {
         super::say(stdout, &acceptance(root, mutant));
     }
     EXIT_ASSURED

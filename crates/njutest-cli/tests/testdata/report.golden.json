@@ -78,7 +78,16 @@
       "equivalent": 0,
       "accepted": 1,
       "reused_killed": 2,
-      "reused_survived": 0
+      "reused_survived": 0,
+      "observers": {
+        "types": 1,
+        "tests": 7,
+        "proved": 0,
+        "unnoticed": 1,
+        "unreached": 0,
+        "waited": 0,
+        "errored": 0
+      }
     },
     "soundness": {
       "unsafe_items": 3,
@@ -107,6 +116,17 @@
       "kill_runs": 2,
       "accepted": true,
       "why": null
+    }
+  ],
+  "seams": [
+    {
+      "id": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "capability": "api",
+      "seq": 3,
+      "asked": "GET /orders",
+      "answered": 200,
+      "rule": "status-server-error",
+      "decision": "unnoticed"
     }
   ],
   "targets": [
@@ -143,6 +163,31 @@
       "replacement": "",
       "outcome": "killed",
       "killed_by": "0123456789abcdef",
+      "blind_in": [
+        {
+          "build": "release",
+          "decision": "unnoticed"
+        }
+      ],
+      "routing": {
+        "granularity": "block",
+        "reaching": [
+          "0123456789abcdef"
+        ],
+        "discharged": [
+          {
+            "target": "fedcba9876543210",
+            "proof": "never-infected"
+          }
+        ],
+        "fallback": null,
+        "answered": [
+          {
+            "target": "0123456789abcdef",
+            "outcome": "killed"
+          }
+        ]
+      },
       "reused": true,
       "source_run_id": "20260904T101500Z-123456"
     }

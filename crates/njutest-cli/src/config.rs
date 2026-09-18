@@ -82,6 +82,8 @@ pub struct Config {
     pub generation: Option<Generation>,
     /// The surviving mutants a reviewer accepted, with reasons.
     pub acceptance: Vec<Acceptance>,
+    /// The builds to measure beyond the one `[execution]` describes.
+    pub configuration: Vec<Configuration>,
 }
 
 impl Default for Config {
@@ -99,6 +101,7 @@ impl Default for Config {
             resources: BTreeMap::new(),
             generation: None,
             acceptance: Vec::new(),
+            configuration: Vec::new(),
         }
     }
 }
@@ -300,6 +303,12 @@ pub struct Resource {
     /// Environment variable names the provider may see.
     #[serde(default)]
     pub environment: Vec<String>,
+    /// The variable of the provider's answer that names where the tests dial, which is the seam an interposer sits in front of. Empty watches nothing.
+    #[serde(default)]
+    pub interpose: String,
+    /// How much of what goes past that seam is read.
+    #[serde(default)]
+    pub wire: crate::wire::Wire,
 }
 
 const fn default_resource_timeout() -> Duration {
@@ -318,6 +327,72 @@ pub struct Generation {
     /// Environment variable names it may see.
     #[serde(default)]
     pub environment: Vec<String>,
+}
+
+/// What the report calls the build `[execution]` describes.
+pub const DEFAULT_CONFIGURATION: &str = "default";
+
+/// One further build of the project to measure, beyond the one `[execution]` describes.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct Configuration {
+    /// What a report calls it, which must be unique and not [`DEFAULT_CONFIGURATION`].
+    pub name: String,
+    /// Cargo features to enable instead of `[execution] features`.
+    pub features: Vec<String>,
+    /// Pass `--all-features`.
+    pub all_features: bool,
+    /// Pass `--no-default-features`.
+    pub no_default_features: bool,
+    /// The cargo profile to compile with. `None` is the command's own default.
+    pub profile: Option<String>,
+    /// The target triple to compile for. `None` is the host.
+    pub target: Option<String>,
+}
+
+impl Configuration {
+    /// What a build of the project under this configuration is.
+    #[must_use]
+    pub fn build(&self) -> rust_mutants::cargo::BuildConfig {
+        rust_mutants::cargo::BuildConfig {
+            features: self.features.clone(),
+            all_features: self.all_features,
+            no_default_features: self.no_default_features,
+            profile: self.profile.clone(),
+            target: self.target.clone(),
+            ..rust_mutants::cargo::BuildConfig::default()
+        }
+    }
+}
+
+/// Whether every configuration carries a name a report can tell from the others'.
+fn named_once(configurations: &[Configuration], path: &Path) -> Result<(), ConfigError> {
+    let invalid = |message: String| ConfigError::new(ConfigErrorKind::Invalid, path, message);
+    let mut named: Vec<&str> = Vec::new();
+    for configuration in configurations {
+        let name = configuration.name.trim();
+        if name.is_empty() {
+            return Err(invalid(
+                "a configuration is named, because a report says which build each \
+                 answer came from"
+                    .to_owned(),
+            ));
+        }
+        if name == DEFAULT_CONFIGURATION {
+            return Err(invalid(format!(
+                "{DEFAULT_CONFIGURATION:?} is what a report calls the build [execution] \
+                 describes, so a configuration cannot take it"
+            )));
+        }
+        if named.contains(&name) {
+            return Err(invalid(format!(
+                "two configurations are named {name:?}, and a report could not tell \
+                 their answers apart"
+            )));
+        }
+        named.push(name);
+    }
+    Ok(())
 }
 
 /// One surviving mutant a reviewer accepted.
@@ -504,6 +579,7 @@ impl Config {
                 ),
             ));
         }
+        named_once(&self.configuration, path)?;
         for pattern in &self.project.include {
             rust_mutants::glob::Pattern::compile(pattern)
                 .map_err(|error| invalid(format!("include names an {error}")))?;
@@ -645,6 +721,14 @@ contract = \"standard-v1\"        # \"standard-v1\" | \"deep-v1\"
 # jobs = 0                       # mutation workers; 0 = logical CPUs, capped
 # skip_targets = []              # target ids never to start; reported as a limitation
 
+#[[configuration]]              # a further build to measure; none by default
+# name = \"all-features\"         # what the report calls it; not \"default\", and unique
+# features = []
+# all_features = true
+# no_default_features = false
+# profile = \"\"                  # cargo profile; empty = the command's own default
+# target = \"\"                   # target triple; empty = the host
+
 [mutation]
 # equivalence = false            # ask the compiler about every survivor
 
@@ -672,6 +756,8 @@ contract = \"standard-v1\"        # \"standard-v1\" | \"deep-v1\"
 # timeout = \"30s\"
 # shared = true                  # or exclusive = true (forces jobs = 1)
 # environment = [\"POSTGRES_IMAGE\"]
+# interpose = \"\"                 # the variable of the answer naming where the tests dial
+# wire = \"raw\"                   # how much of what goes past that seam is read: raw | http
 
 # [generation]
 # command = [\"./tools/test-generator\"]

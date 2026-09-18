@@ -7,7 +7,7 @@ use std::path::Path;
 
 use rust_mutants::coverage::{Block, Point};
 use rust_mutants::reach::{Reached, UNMEASURED};
-use rust_mutants::session::{Route, Routing};
+use rust_mutants::session::{Fallback, Granularity, Route, Routing};
 
 /// A measurement in which `covered` ran and `instrumented` was built, over one file.
 fn measured(instrumented: &[(&str, u32)], covered: &[(&str, &[u32])]) -> Reached {
@@ -52,8 +52,8 @@ fn a_route_without_a_measurement_is_every_target_and_says_why() {
             also_reaching: &[],
         },
     );
-    assert_eq!(route.granularity(), "all");
-    assert_eq!(route.fallback(), Some("not-measured"));
+    assert_eq!(route.granularity(), Granularity::All);
+    assert_eq!(route.fallback(), Some(Fallback::NotMeasured));
     assert_eq!(route.reaching(), TARGETS.to_vec());
 }
 
@@ -72,10 +72,10 @@ fn a_position_no_measurement_instrumented_is_one_nothing_is_known_about() {
     );
     assert_eq!(
         route.granularity(),
-        "all",
+        Granularity::All,
         "a place the build never instrumented is a place the measurement says nothing about"
     );
-    assert_eq!(route.fallback(), Some("outside-blocks"));
+    assert_eq!(route.fallback(), Some(Fallback::OutsideBlocks));
 }
 
 #[test]
@@ -98,7 +98,7 @@ fn a_measured_position_is_routed_to_the_targets_that_ran_it() {
             also_reaching: &[],
         },
     );
-    assert_eq!(route.granularity(), "block");
+    assert_eq!(route.granularity(), Granularity::Block);
     assert_eq!(
         route.fallback(),
         None,
@@ -127,7 +127,7 @@ fn a_measured_position_no_target_ran_is_unreached() {
             also_reaching: &[],
         },
     );
-    assert_eq!(route.granularity(), "unreached");
+    assert_eq!(route.granularity(), Granularity::Unreached);
     assert!(route.reaching().is_empty());
 }
 
@@ -151,7 +151,7 @@ fn a_measurement_that_names_only_some_of_the_targets_narrows_to_none_of_them() {
          named and did not is one nothing is known about. The documented examples are not \
          missing from the measurement, they are not what it is about."
     );
-    assert_eq!(route.fallback(), Some("coverage-incomplete"));
+    assert_eq!(route.fallback(), Some(Fallback::CoverageIncomplete));
 }
 
 #[test]
@@ -183,8 +183,8 @@ fn a_target_the_measurement_could_not_read_is_kept_in_every_route() {
         "a target whose profile could not be read is a target the measurement says nothing about, \
          and what nothing is known about is run"
     );
-    assert_eq!(route.granularity(), "block");
-    assert_eq!(route.fallback(), Some("coverage-incomplete"));
+    assert_eq!(route.granularity(), Granularity::Block);
+    assert_eq!(route.fallback(), Some(Fallback::CoverageIncomplete));
 }
 
 #[test]
@@ -207,7 +207,7 @@ fn a_target_a_measurement_says_nothing_about_reaches_by_being_named() {
             also_reaching: &[TARGETS[2]],
         },
     );
-    assert_eq!(route.granularity(), "block");
+    assert_eq!(route.granularity(), Granularity::Block);
     assert!(
         route.reaching().contains(&TARGETS[2]),
         "a library's documented examples are compiled by rustdoc while cargo runs them, so no \

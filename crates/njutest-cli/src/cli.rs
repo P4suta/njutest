@@ -424,6 +424,8 @@ pub enum Format {
     Lines,
     /// The canonical document, exactly as the run wrote it.
     Json,
+    /// What the seams the run watched observed the system doing, and who holds each sentence up.
+    Spec,
     /// What a person reads: the source, with every place the tests do not see marked on it.
     Human,
     /// A briefing for something that will act on this without a screen, as Markdown.

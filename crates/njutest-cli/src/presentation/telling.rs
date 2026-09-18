@@ -4,9 +4,10 @@
 //! A report, read as what a person is told about it.
 
 use super::{
-    Action, Blindness, Diagnostic, Headline, Place, Severity, Site, Sources, Spot, Stated, Told,
+    Action, Diagnostic, Headline, Place, Severity, Site, Sources, Spot, Standing, Stated, Told,
+    Unsettled,
 };
-use crate::report::{Finding, FindingKind, MutantRecord, Report};
+use crate::report::{Blind, Finding, FindingKind, MutantRecord, Outcome, Report};
 
 impl Told {
     /// What `report` has to say, with the lines it is about taken from `sources`.
@@ -20,6 +21,7 @@ impl Told {
                 killed: report.accounting.mutants.killed,
                 survived: report.accounting.mutants.survived,
                 unreached: report.accounting.mutants.unreached,
+                timed_out: report.accounting.mutants.timed_out,
                 duration_ms: report.timing.duration_ms,
                 kept: kept.to_owned(),
             },
@@ -103,9 +105,9 @@ fn drawn(path: &str, item: &str, spots: Vec<Spot>, sources: &Sources) -> Place {
                 .any(|(line, text)| *line == spot.line && text.contains(&spot.was))
     });
     let instead = if excerpt.is_empty() {
-        Some(super::Excerpt::Unreadable)
+        Some(super::Missing::Unreadable)
     } else if moved {
-        Some(super::Excerpt::Moved)
+        Some(super::Missing::Moved)
     } else {
         None
     };
@@ -123,19 +125,37 @@ fn drawn(path: &str, item: &str, spots: Vec<Spot>, sources: &Sources) -> Place {
 }
 
 /// One blind spot: what the run changed, and what it established by changing it.
+///
+/// Read through `Blind`, so the only outcomes that reach a spot are the four
+/// that leave a hole and each of them arrives as itself. An outcome that is
+/// not a hole has no spot to be, and one this layer could somehow be handed
+/// anyway says nothing was established rather than that the tests ran the
+/// line and missed it — which is the expensive way to be wrong, because
+/// somebody goes looking for the assertion they are missing and the run never
+/// got an answer at all (ADR 0023).
 fn spot(mutant: &MutantRecord, finding: &Finding) -> Spot {
-    let blindness = match (mutant.outcome.as_str(), finding.kind) {
-        (_, FindingKind::Timeout) => Blindness::Waited,
-        ("unreached", _) => Blindness::Never,
-        _ => Blindness::Ran,
-    };
+    let standing = finding
+        .kind
+        .eq(&FindingKind::Timeout)
+        .then_some(Blind::Waited)
+        .or_else(|| mutant.outcome.decision().blind())
+        .map_or(Standing::Unsettled(Unsettled::Errored), Standing::of);
+    let across: Vec<super::Across> = mutant
+        .blind_in
+        .iter()
+        .map(|one| super::Across {
+            build: one.build.clone(),
+            standing: Standing::of(one.decision),
+        })
+        .collect();
     Spot {
         line: mutant.position.line,
         column: mutant.position.column,
         was: mutant.original.clone(),
         now: mutant.replacement.clone(),
-        said: blindness.word().to_owned(),
-        blindness,
+        said: standing.worded(&across),
+        standing,
+        blind_in: across,
         locator: locator(mutant),
     }
 }
@@ -146,7 +166,7 @@ fn said(finding: &Finding, report: &Report, sources: &Sources) -> Diagnostic {
         .mutants
         .iter()
         .find(|one| one.display_id == finding.subject || one.id == finding.subject);
-    let unreached = mutant.is_some_and(|one| one.outcome == "unreached");
+    let unreached = mutant.is_some_and(|one| one.outcome.outcome() == Outcome::Unreached);
     let (severity, code, title) = about(finding.kind, unreached);
     Diagnostic {
         severity,
@@ -192,12 +212,7 @@ fn site(mutant: &MutantRecord, sources: &Sources) -> Site {
 
 /// What to say under the mark: what the run changed, and what noticed.
 fn labelled(mutant: &MutantRecord) -> String {
-    let rule = &mutant.rule;
-    match (mutant.outcome.as_str(), mutant.killed_by.as_deref()) {
-        ("unreached", _) => format!("{rule} here, and nothing executed it"),
-        (_, Some(target)) => format!("{rule} here, and {target} noticed"),
-        (_, None) => format!("{rule} here, and nothing noticed"),
-    }
+    super::label(&mutant.rule, &mutant.outcome)
 }
 
 /// What a reader can do about one mutation, as commands that work when they are typed.
@@ -237,6 +252,16 @@ fn locator(mutant: &MutantRecord) -> String {
 /// reads as "the run found something".
 const fn about(kind: FindingKind, unreached: bool) -> (Severity, &'static str, &'static str) {
     match kind {
+        FindingKind::WireUnnoticed => (
+            Severity::Gap,
+            "NJ-WIRE",
+            "the suite carried on through what a seam was asked",
+        ),
+        FindingKind::HollowTarget => (
+            Severity::Gap,
+            "NJ-HOLLOW-TARGET",
+            "this test target noticed none of the changes it was put to",
+        ),
         FindingKind::SurvivingMutant if unreached => (
             Severity::Gap,
             "NJ-UNREACHED",

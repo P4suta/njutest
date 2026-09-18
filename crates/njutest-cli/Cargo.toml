@@ -19,25 +19,19 @@ readme.workspace = true
 [[bin]]
 name = "njutest"
 path = "src/main.rs"
-# The binary is one function; its documentation is the library's.
 doc = false
 
 [[bin]]
 name = "cargo-njutest"
 path = "src/bin/cargo-njutest/main.rs"
-# The same program under the name cargo looks for; its documentation is the library's.
 doc = false
 
 [package.metadata.binstall]
-# The archive `release.yml` builds, so `cargo binstall njutest` finds what the
-# release published rather than compiling the workspace again.
 pkg-url = "{ repo }/releases/download/v{ version }/njutest-{ version }-{ target }.tar.gz"
 pkg-fmt = "tgz"
 bin-dir = "njutest-{ version }-{ target }/{ bin }{ binary-ext }"
 
 [features]
-# Test support (fixture builders, scripted fakes) that a sibling crate's tests
-# may enable. Never enabled by a production dependency: `xtask devgates`.
 testkit = []
 
 [dependencies]

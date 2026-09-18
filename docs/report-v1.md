@@ -73,7 +73,7 @@ unavailable-metadata invariants that JSON Schema alone cannot express
 (`report::audit::validate_for_persistence`).
 
 A **finding** is an actionable problem in the project or its verification
-configuration. There are eight kinds, and a report carries the name rather
+configuration. There are ten kinds, and a report carries the name rather
 than a number, because the name is what a person greps for and what a
 projection shows:
 
@@ -87,6 +87,8 @@ projection shows:
 | `timeout` | a target, or a mutation of one, ran out of the time it was given | no |
 | `not-measured` | something a run could not measure, so it claims nothing about it | no |
 | `unmatched-acceptance` | an unexpired acceptance does not name exactly one mutant in this catalog | no |
+| `hollow-target` | a test target was put to mutations and noticed none of them | no |
+| `wire-unnoticed` | the suite carried on through a question a seam licensed: a fault nothing noticed | no |
 
 The last column is the one a reader acts on first: a defect is a fault in the
 code under test, and the rest are gaps in what was established. Both are
@@ -121,10 +123,217 @@ takes a second for one test and a second for a hundred is two facts about
 process starts and one fact about the tests. An estimate built from it may
 decide an order and never a budget.
 
+`outcome` and `killed_by` travel together and are one thing in the model. A
+kill names the target that noticed; a timeout, a pair that did not agree and a
+harness that would not start name the target they happened on; and the four
+that happen to no target — `compile-rejected`, `survived`, `unreached`,
+`equivalent` — name none. The schema is one closed shape per outcome, so a
+document that says a mutation survived and then names a killer is not one this
+release reads, and neither is one that says a test noticed and names nobody.
+
+The field keeps its name for the documents already written, and it is the wrong
+name three times out of four: the target a timeout expired on killed nothing.
+Reading it as *the target this was established against* is what it has always
+meant.
+
 `targets` is canonically ordered by descending duration, then ascending target
 ID. A mutant disposition may say `reused: true` with a `source_run_id`; the
 accounting carries `reused_killed` and `reused_survived`, each part of
 `killed` and `survived`.
+
+## Which build a hole is in
+
+`blind_in` names every build a mutation is a hole in, and what that build
+established about it:
+
+```json
+"blind_in": [
+  { "build": "default",  "decision": "unnoticed" },
+  { "build": "release",  "decision": "errored" }
+]
+```
+
+The names alone would make a reader believe the same thing happened in both. It
+did not. `unnoticed` is a build whose tests ran and noticed nothing, and wants a
+test written. `errored` is a build that established nothing — a harness that
+would not start, a pair that did not agree — and wants somebody to find out why
+first; telling them to write a test sends them looking for an assertion where
+what is missing is an answer. `waited` is a build where a bound expired before
+anything finished, which asks why nothing finished rather than why nothing
+could be measured. `unreached` is a build where nothing ran it at all.
+
+Only those three ever appear. A build that answered for a mutation is not one
+anybody is blind in, and the audit refuses to persist a report that lists one.
+
+Across builds the quantifiers invert: a mutation stands on the *weakest* thing
+any build established, because two builds are two programs and a run that took
+the strongest would report a release-only gap as closed. Builds that catalogued
+different mutations are not builds of one catalog and the run refuses to
+reconcile them, rather than reading one build's silence as agreement — a
+project whose features change what exists cannot be measured across builds by
+this design, and that is a refusal rather than a defect.
+
+## What a seam was asked
+
+`seams` holds every question a watched seam's recording licensed and what
+became of it: the question's `id`, the `capability` and the `seq` of the
+exchange it is about, what was `asked` and what the upstream `answered` where
+the wire says how to read one, the `rule` it applies, and the `decision`.
+
+Who decided a question and who that was travel together. A question the tests
+noticed carries `noticed_by`, the target that did; one a proof discharged
+carries `proof`; and one nothing decided carries neither. The schema is four
+closed shapes rather than one with optional fields, so a document that says
+nothing noticed and then names a noticer is not a document it accepts, and
+neither is one that says the tests noticed and names nobody.
+
+A `wire-unnoticed` finding names a question by its `id` and nothing else. A
+reader handed a sixty-four character name with nothing to look it up in has
+been told nothing they can act on, and [ADR 0002](adr/0002-trace-is-not-evidence.md)
+keeps the thing it stands for off the recording, so it is here. The audit
+refuses to persist a report whose seam finding names a question the report does
+not hold.
+
+`decision` is the same six-way partition the mutations use. `proved` is a
+question no observer could have answered — cutting an answer with no body short,
+or asking for the status the upstream already gave, hands the caller the bytes
+it had — and `unreached` is a question the run could
+not put, which is stated as a `not-measured` finding and never as a survivor.
+
+## What the run observed the system doing
+
+`njutest report --format spec` reads `seams` back as one sentence per exchange
+and says who is holding each one up:
+
+```text
+POST /orders on payments answers 201 — held up by pkg/test/orders
+GET /orders/1 on payments answers 200 — nobody holds this up; 5 question(s) nothing noticed
+```
+
+The sentences are made of what went past and nothing else, so they are always
+true of the system as it ran. That is what makes the annotation the useful half:
+the question is never whether the behaviour is real, only whether anybody would
+notice it changing. A reviewer can be told, about a change to the second line,
+that nobody was holding it up.
+
+A question a proof discharged holds nothing up and leaves nothing wanting —
+nobody could have noticed it, so counting it against the tests would ask them
+for something no test can give. A question the run could not put is counted
+apart from one nothing noticed, because writing a test is what closes the first
+and there is nothing to write for the second.
+
+## Who decided each mutation
+
+The counts beside each other overlap — `executed` holds `killed` and
+`survived` both, and `reused_killed` is part of `killed` — so they answer how
+much of each kind of work a run did. `accounting.mutants.observers` answers a
+different question, and its six columns **partition the catalog**: every
+catalogued mutation is in exactly one of them, and
+`report::audit::validate_for_persistence` refuses a report where they do not
+add up to `cataloged`.
+
+| column | what decided it | the outcome it comes from |
+| --- | --- | --- |
+| `types` | the compiler refused the program | `compile-rejected` |
+| `tests` | a test noticed | `killed` |
+| `proved` | no test of any kind could have noticed | `equivalent` |
+| `unnoticed` | it ran and nothing noticed | `survived` |
+| `unreached` | nothing ran at all | `unreached` |
+| `waited` | a bound expired before anything finished | `timed_out` |
+| `errored` | nothing could be measured | `unconfirmed`, `errored` |
+
+`types` is the same number as `rejected`, said as what it is. A mutation the
+compiler refuses is a program the type system would not let anybody have,
+which is the same kind of event a failing test is: something noticed. Counted
+only as work the run did not do, it is the one measurement nothing else in
+the toolchain makes and this report used to discard. It changes no
+denominator: `rejected` keeps its place in
+`cataloged = rejected + executed + unreached + equivalent`.
+
+`waited` and `errored` are gaps in the verification rather than in the
+project, and neither is ever silent: a run that could not decide a mutation
+says so here and carries the finding that explains it.
+
+A timeout is `waited` and not `tests`. The engine is right to call it a
+detection — the process hung with the mutant active — but njutest measures
+something else. A bound is a budget, [ADR 0004](adr/0004-proof-layers-not-budgets.md)
+says a result resting on a budget is not a proof, and this report already gave
+a timeout its own column and a finding reading *an expired budget establishes
+nothing about the mutation*. Calling it a detection here contradicted both, and
+hid a build that timed out from `blind_in` entirely. The mapping from an
+outcome to who decided it now exists once, on `Outcome::decision`, because the
+reason it could disagree at all was that it existed three times.
+
+## Who could have noticed
+
+`mutants[].routing` is what a survivor is a claim about. The assurance
+contract's predicate — a mutation goes to the targets that reached it, less
+the ones a proof discharged — decided every execution, and until now it was
+visible only in the trace. [ADR 0002](adr/0002-trace-is-not-evidence.md) says
+a trace is never evidence, so a reader holding a survivor to that predicate
+was holding it to something the run does not answer for. The record answers
+for it now.
+
+| field | what it says |
+| --- | --- |
+| `granularity` | how narrowly the run chose: `all`, `block`, `test`, `discharged`, `unreached` |
+| `reaching` | the targets that could have noticed it |
+| `discharged` | the targets a proof removed, each with the proof that removed it |
+| `fallback` | what widened the question, when the run could not narrow it: `not-measured`, `position-unknown`, `outside-blocks`, `coverage-incomplete`, `touch-incomplete` |
+| `answered` | the targets the run actually asked, in order, each with what it said |
+
+`routing` is `null` where the run never asked, which is a mutation the
+compiler refused: a program that does not exist is not one any test could
+have noticed.
+
+The difference between an empty `reaching` with a `discharged` list and an
+empty one without is the difference a reader acts on. The first is a proof —
+nothing could have noticed. The second is a hole — nothing looked.
+
+`answered` is who was actually asked, in the order they were asked, and what
+each said. `reaching` is who *could* have noticed; the two differ because a
+run stops at the first detection and asks the cheapest targets first. A
+target in `reaching` and absent from `answered` reached the mutation and was
+never given the chance.
+
+That distinction is the whole of why `answered` is recorded, and it is what
+makes `hollow-target` sound. A target is executed against a mutation only
+when every target earlier in the route already survived it — so every
+execution that happened is one where that target had its chance and did not
+take it. The early return is not an obstacle the finding works around; it is
+the reason the finding is true.
+
+A target absent from every `killed_by` is a different thing entirely and
+proves nothing: a run records the first detection, so a target that is
+outranked every time never appears there however sharp it is. A reader
+settling "was this target put to mutations and did it notice none" from
+`killed_by` would get it wrong; from `answered` they get it right.
+
+## More than one build
+
+`[[configuration]]` names further builds beyond the one `[execution]`
+describes, which a report calls `default`. Two builds of a project are two
+programs, so [ADR 0007](adr/0007-survived-evidence-is-universal.md)'s rule
+that a kill is existential does not carry across them — that rule is about
+one program measured twice. Across builds the quantifiers turn over: a
+mutation nothing noticed in the release build is one nothing noticed,
+whatever the debug build said, because the release build is a program
+somebody ships.
+
+So each mutation stands on **the weakest thing any build established**, in
+the order `errored`, `waited`, `unnoticed`, `unreached`, `types`, `tests`,
+`proved` — the first four being holes and the last three not. A run cannot come
+out better for having looked at more.
+
+`mutants[].blind_in` names the builds that are blind to a mutation: the ones
+where nothing noticed it, nothing ran it, a bound expired, or nothing could be
+measured. A gap under
+one build and a gap everywhere are different things to act on. A run that
+measured one build names none, because which build is not a question it has.
+
+Builds that catalogued different mutations are refused rather than
+reconciled. Taking the answers there are would report one build's silence as
+agreement.
 
 ## What a finding is about
 

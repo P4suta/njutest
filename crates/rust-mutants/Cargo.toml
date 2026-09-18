@@ -16,7 +16,6 @@ authors.workspace = true
 readme.workspace = true
 
 [features]
-# Fakes and generators the suites drive the engine's own seams with. Never on for a product.
 testkit = []
 
 [dependencies]
@@ -26,12 +25,8 @@ proc-macro2 = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
-# `printing` is for `Spanned` alone (joined byte ranges of whole nodes);
-# the engine never turns a syntax tree back into text.
 syn = { workspace = true, features = ["printing"] }
 thiserror = { workspace = true }
-# The `[patch]` table, which `cargo metadata` does not report: a patch that
-# points outside the tree points at nothing once the tree is copied.
 toml = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]

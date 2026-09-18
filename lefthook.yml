@@ -34,6 +34,8 @@ pre-commit:
       run: cargo clippy --workspace --all-targets -- -D warnings
     typos:
       run: typos
+    ocomment:
+      run: command -v ocomment >/dev/null 2>&1 \&\& ocomment check
     taplo:
       glob: "*.toml"
       run: command -v taplo >/dev/null 2>&1 && taplo fmt {staged_files} || true

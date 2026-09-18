@@ -147,7 +147,8 @@ pub fn every_refusal() -> Vec<crate::evidence::store::Refusal> {
 pub fn every_payload() -> Vec<crate::trace::Payload> {
     use crate::trace::{
         ArtifactRecord, ExecRecord, MutantExecRecord, NoteRecord, Payload, PhaseRecord,
-        ProbeExecRecord, ProgressRecord, RouteRecord, RunRecord, StartRecord,
+        ProbeExecRecord, ProgressRecord, RouteRecord, RunRecord, StartRecord, WireExchangeRecord,
+        WireExecRecord,
     };
     let phase = PhaseRecord {
         name: "baseline".to_owned(),
@@ -192,6 +193,18 @@ pub fn every_payload() -> Vec<crate::trace::Payload> {
         Payload::ProbeExec {
             probe: ProbeExecRecord::default(),
         },
+        Payload::WireExchange {
+            exchange: WireExchangeRecord::default(),
+        },
+        Payload::WireExec {
+            wire: WireExecRecord {
+                fault: String::new(),
+                capability: String::new(),
+                seq: 0,
+                rule: crate::wire::rule::Rule::DropConnection,
+                decision: crate::report::SeamDecision::Unnoticed,
+            },
+        },
         Payload::Note {
             note: NoteRecord {
                 kind: "a".to_owned(),
@@ -208,7 +221,14 @@ pub fn every_payload() -> Vec<crate::trace::Payload> {
             },
         },
     ];
-    for one in &payloads {
+    exhaustive(&payloads);
+    payloads
+}
+
+/// Refuses to compile where a shape is added and this list is not, which is what makes it a ledger.
+fn exhaustive(payloads: &[crate::trace::Payload]) {
+    use crate::trace::Payload;
+    for one in payloads {
         match one {
             Payload::RunStart { .. }
             | Payload::PhaseStart { .. }
@@ -219,9 +239,10 @@ pub fn every_payload() -> Vec<crate::trace::Payload> {
             | Payload::Route { .. }
             | Payload::MutantExec { .. }
             | Payload::ProbeExec { .. }
+            | Payload::WireExchange { .. }
+            | Payload::WireExec { .. }
             | Payload::Note { .. }
             | Payload::RunEnd { .. } => {}
         }
     }
-    payloads
 }

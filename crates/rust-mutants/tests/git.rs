@@ -209,3 +209,50 @@ fn a_change_set_narrows_what_the_caller_already_selected_rather_than_widening_it
     assert!(within.iter().any(|pattern| pattern.matches("src/lib.rs")));
     assert!(!within.iter().any(|pattern| pattern.matches("other/lib.rs")));
 }
+
+#[test]
+fn a_run_asks_about_the_tree_it_was_given_and_not_the_one_its_caller_was_in() {
+    let elsewhere = Repo::new();
+    elsewhere.write("src/lib.rs", "pub fn one() {}\n");
+    elsewhere.commit();
+
+    let here = Repo::new();
+    here.write("src/lib.rs", "pub fn two() {}\n");
+    here.commit();
+
+    let mut env = environment();
+    env.push((
+        OsString::from("GIT_DIR"),
+        OsString::from(elsewhere.root().join(".git")),
+    ));
+    env.push((
+        OsString::from("GIT_WORK_TREE"),
+        OsString::from(elsewhere.root()),
+    ));
+
+    let watch = Watched::new(cancel(), recorder());
+    let asked = facts(&Asking {
+        root: here.root(),
+        env: &env,
+        excluded: &[],
+        watch: &watch,
+    })
+    .expect("git has something to say about a repository");
+
+    let mine = facts(&Asking {
+        root: here.root(),
+        env: &environment(),
+        excluded: &[],
+        watch: &watch,
+    })
+    .expect("git has something to say about a repository");
+
+    assert_eq!(
+        asked.commit, mine.commit,
+        "a run names the commit of the tree it verified. `GIT_DIR` in the environment \
+         it happened to be started with points git somewhere else, and a report that \
+         followed it would name another repository's commit as the thing it \
+         established something about — which is a conclusion drawn from how the run \
+         was invoked rather than from what it looked at"
+    );
+}

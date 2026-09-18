@@ -169,6 +169,44 @@ fn porcelain_path(line: &str) -> Option<String> {
 }
 
 /// The output of one git command, or nothing when it could not be run or did not succeed.
+/// Every variable that tells git to answer about a repository other than the one it is standing in.
+///
+/// A closed set, because leaving one out is the defect rather than a smaller
+/// version of it: each of these is enough on its own to make git answer about
+/// somewhere else.
+const REDIRECTING: [&str; 10] = [
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_COMMON_DIR",
+    "GIT_INDEX_FILE",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_NAMESPACE",
+    "GIT_PREFIX",
+    "GIT_CEILING_DIRECTORIES",
+    "GIT_DISCOVERY_ACROSS_FILESYSTEM",
+];
+
+/// `env` with the variables that would point git somewhere else taken out.
+///
+/// A run names the repository it verified. `GIT_DIR` in the environment it
+/// happened to be started with — which is what a git hook sets, and what any
+/// wrapper may — makes git answer about that one instead, and the report then
+/// names another repository's commit as the thing it established something
+/// about. That is a conclusion drawn from how the run was invoked rather than
+/// from what it looked at, so the invocation is not allowed to reach the
+/// question.
+fn about_the_tree(env: &[(OsString, OsString)]) -> Vec<(OsString, OsString)> {
+    env.iter()
+        .filter(|(name, _value)| {
+            !REDIRECTING
+                .iter()
+                .any(|pointed| crate::vars::same_name(name, std::ffi::OsStr::new(pointed)))
+        })
+        .cloned()
+        .collect()
+}
+
 fn ask<W: Watch>(
     asking: &Asking<'_, W>,
     empty: Empty,
@@ -179,7 +217,7 @@ fn ask<W: Watch>(
     argv.extend(arguments.iter().map(OsString::from));
     let mut spec = Spec::new(argv, Bound::After(crate::runner::PROBE));
     spec.dir = Some(asking.root.to_path_buf());
-    spec.env = Some(asking.env.to_vec());
+    spec.env = Some(about_the_tree(asking.env));
     spec.structured_stdout = Some(1 << 20);
 
     let asked = run(&spec, asking.watch.cancel());
