@@ -22,8 +22,6 @@ crates/njutest-cli/tests/deep.rs:206
 crates/njutest-cli/tests/deep.rs:260
 crates/njutest-cli/tests/equivalence.rs:192
 crates/njutest-cli/tests/fuzz.rs:318
-crates/njutest-cli/tests/interpose.rs:100
-crates/njutest-cli/tests/interpose.rs:125
 crates/njutest-cli/tests/mutation_evidence.rs:54
 crates/njutest-cli/tests/plan_failures.rs:594
 crates/njutest-cli/tests/sanitize.rs:206
