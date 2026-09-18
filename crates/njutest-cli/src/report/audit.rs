@@ -2,6 +2,30 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! What a durable report must satisfy, beyond being well-formed.
+//!
+//! This shrinks as types take its work, and the shrinking is not evidence
+//! that it is on its way out. `Decided`, `Established` and `Git` each took a
+//! handful of refusals by making the states unwritable, and what is left
+//! after every such move is the part no Rust type checks:
+//!
+//! - **Arithmetic over collections.** That the terminal states of the targets
+//!   sum to the number selected, that the seven decisions cover the catalogue
+//!   exactly once, that a shard's accounting adds up to the whole. A type can
+//!   make a decision be one of seven things; it cannot make seven counters
+//!   agree with a list somewhere else in the document.
+//! - **Agreement between two parts of one report.** A finding that names a
+//!   question the report does not hold; a verdict that says one thing while
+//!   the findings say another. Each half is well-formed on its own.
+//! - **Constraints on the content of a value rather than on which fields go
+//!   together.** A run naming itself as the run it read its answer back from
+//!   needs the run's own identity, which the value holding the source does
+//!   not have.
+//!
+//! None of those is reachable by making illegal states unrepresentable,
+//! because none of them is a state — they are relations between values a type
+//! cannot see at once. So a smaller `audit` is a sharper one rather than a
+//! vestigial one, and a refusal that leaves here should leave because
+//! something else now makes it impossible, never because nobody was looking.
 
 use std::fmt;
 

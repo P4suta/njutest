@@ -15,7 +15,6 @@ use serde::{Deserialize, Serialize};
 /// How much of what goes past an interposer is read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
-#[non_exhaustive]
 pub enum Wire {
     /// Read nothing but what needs no parsing, which is what a seam nobody named the protocol of gets.
     #[default]
@@ -36,7 +35,6 @@ pub const SCHEMA: &str = "njutest-wire-v1";
 /// cut it short, or drop it, and not enough to invent a status for.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "wire", rename_all = "kebab-case")]
-#[non_exhaustive]
 pub enum Spoken {
     /// One HTTP request and the response it got.
     Http {
