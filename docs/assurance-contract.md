@@ -457,6 +457,21 @@ a comment would go on exempting a mutation on the strength of a decision its
 author had already put an end to. One that names no date never lapses, which
 is what a reviewer who wrote none asked for.
 
+`njutest review` goes through one run's gaps a place at a time, drawn the way
+the run drew them, and prints the `njutest accept` lines for whatever the
+reviewer decided. It prints rather than writes: a review is somebody
+deciding, and a change to their project is a separate act they make with the
+command every other surface already hands them.
+
+What the run **established nothing about** — a bound that expired, a harness
+that never started — is shown and cannot be accepted. An acceptance says a
+reviewer looked at what a run found and decided it may stand; where nothing
+was found there is nothing to have looked at, and recording one would be a
+decision about a measurement that never happened. The loop asks a different
+question there, with an answer type that has no such arm, so the wrong
+acceptance is not a thing the program can express
+([ADR 0023](adr/0023-a-run-may-not-conclude-from-how-it-measured.md)).
+
 ## Parts of one catalog
 
 `njutest verify --shard K/N` divides the judging. Every part measures the whole

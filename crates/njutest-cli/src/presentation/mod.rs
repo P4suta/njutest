@@ -5,6 +5,7 @@
 
 pub mod agent;
 pub mod human;
+pub mod review;
 mod telling;
 pub mod tint;
 
@@ -575,6 +576,12 @@ pub struct Telling {
 }
 
 impl Telling {
+    /// What it was told to write for.
+    #[must_use]
+    pub const fn terminal(self) -> Terminal {
+        self.terminal
+    }
+
     /// How to write for `terminal`.
     #[must_use]
     pub const fn of(terminal: Terminal) -> Self {
