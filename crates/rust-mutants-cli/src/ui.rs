@@ -89,7 +89,7 @@ impl Tally {
             rust_mutants::outcome::Outcome::TimedOut => &mut self.timed_out,
             rust_mutants::outcome::Outcome::Inconclusive => &mut self.inconclusive,
             rust_mutants::outcome::Outcome::NotRun => &mut self.not_run,
-            _ => &mut self.errored,
+            rust_mutants::outcome::Outcome::Errored => &mut self.errored,
         };
         *slot = slot.saturating_add(1);
     }

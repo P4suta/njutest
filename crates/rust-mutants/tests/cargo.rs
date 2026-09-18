@@ -242,17 +242,17 @@ fn the_dep_info_file_sits_beside_the_artifact_without_the_lib_prefix() {
 }
 
 fn artifact_of(message: &Message) -> &rust_mutants::cargo::Artifact {
-    match message {
-        Message::CompilerArtifact(artifact) => artifact,
-        other => panic!("not an artifact: {other:?}"),
-    }
+    let Message::CompilerArtifact(artifact) = message else {
+        panic!("not an artifact: {message:?}");
+    };
+    artifact
 }
 
 fn diagnostic_of(message: &Message) -> &Diagnostic {
-    match message {
-        Message::CompilerMessage(message) => &message.message,
-        other => panic!("not a compiler message: {other:?}"),
-    }
+    let Message::CompilerMessage(message) = message else {
+        panic!("not a compiler message: {message:?}");
+    };
+    &message.message
 }
 
 #[test]

@@ -323,6 +323,44 @@ impl fmt::Display for SnapshotError {
     }
 }
 
+/// The three ways a tree entry can fail to be a regular file or a directory.
+///
+/// Its own set rather than a `SnapshotErrorKind`, because only three of that
+/// enum's eleven can reach the walk, and the sentence a reader is given here
+/// is only true of those three. Passing the wider type meant a catch-all
+/// handing eight other kinds a description of a thing they are not — wrong
+/// the moment any of them arrived, and unable to arrive only by an argument
+/// nothing in the code made.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NotARegularFile {
+    /// A symbolic link.
+    Symlink,
+    /// A junction or mount point.
+    ReparsePoint,
+    /// A socket, a device, a fifo, or whatever else the platform has.
+    Irregular,
+}
+
+impl NotARegularFile {
+    /// The kind a rejection carries.
+    const fn kind(self) -> SnapshotErrorKind {
+        match self {
+            Self::Symlink => SnapshotErrorKind::Symlink,
+            Self::ReparsePoint => SnapshotErrorKind::ReparsePoint,
+            Self::Irregular => SnapshotErrorKind::Irregular,
+        }
+    }
+
+    /// What a reader is told the snapshot would not do.
+    const fn refusal(self) -> &'static str {
+        match self {
+            Self::Symlink => "refuses to follow a symbolic link",
+            Self::ReparsePoint => "refuses to follow a reparse point (junction or mount point)",
+            Self::Irregular => "refuses a file that is neither a directory nor a regular file",
+        }
+    }
+}
+
 impl std::error::Error for SnapshotError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         self.source
@@ -679,9 +717,9 @@ impl<'a> Walker<'a> {
                 let target = fs::read_link(&abs)
                     .ok()
                     .map(|path| path.to_string_lossy().into_owned());
-                self.pass_over(SnapshotErrorKind::Symlink, rel, target);
+                self.pass_over(NotARegularFile::Symlink, rel, target);
             } else if platform::is_reparse_point(&meta) {
-                self.pass_over(SnapshotErrorKind::ReparsePoint, rel, None);
+                self.pass_over(NotARegularFile::ReparsePoint, rel, None);
             } else if file_type.is_dir() {
                 if is_cache_directory(&abs) {
                     return Ok(());
@@ -696,7 +734,7 @@ impl<'a> Walker<'a> {
                 self.files.push(Record { rel, abs, meta });
             } else {
                 let what = platform::describe(&meta);
-                self.pass_over(SnapshotErrorKind::Irregular, rel, Some(what.to_owned()));
+                self.pass_over(NotARegularFile::Irregular, rel, Some(what.to_owned()));
             }
         }
         Ok(())
@@ -728,23 +766,16 @@ impl<'a> Walker<'a> {
     }
 
     /// Records an entry that is not a regular file, which the snapshot does not copy, or refuses it where it can only have appeared during measurement.
-    fn pass_over(&mut self, kind: SnapshotErrorKind, rel: String, target: Option<String>) {
+    fn pass_over(&mut self, kind: NotARegularFile, rel: String, target: Option<String>) {
         if self.forgiving {
             self.passed_over.push(PassedOver {
                 rel_path: rel,
-                kind,
+                kind: kind.kind(),
                 target,
             });
             return;
         }
-        let what = match kind {
-            SnapshotErrorKind::Symlink => "refuses to follow a symbolic link",
-            SnapshotErrorKind::ReparsePoint => {
-                "refuses to follow a reparse point (junction or mount point)"
-            }
-            _ => "refuses a file that is neither a directory nor a regular file",
-        };
-        self.reject(kind, rel, what);
+        self.reject(kind.kind(), rel, kind.refusal());
     }
 
     /// Fails with the refused entry that sorts first by relative path, if any. Reporting the first in path order rather than in visit order means a user who fixes it and runs again is told about the next one, in an order that does not depend on how the filesystem laid the directory out.

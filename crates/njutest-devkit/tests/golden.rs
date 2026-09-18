@@ -94,13 +94,11 @@ fn binary_mismatch_reports_the_first_differing_offset() {
 
     let error = compare_golden(&path, &[0u8, 1, 2, 0xfe, 4], false).expect_err("differs");
 
-    match error {
-        GoldenError::Mismatch { diff, .. } => {
-            assert!(
-                diff.contains("offset 3"),
-                "names the first differing byte: {diff}"
-            );
-        }
-        other => panic!("expected a mismatch, got {other:?}"),
-    }
+    let GoldenError::Mismatch { diff, .. } = error else {
+        panic!("expected a mismatch, got {error:?}");
+    };
+    assert!(
+        diff.contains("offset 3"),
+        "names the first differing byte: {diff}"
+    );
 }

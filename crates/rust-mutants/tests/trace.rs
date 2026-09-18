@@ -79,22 +79,18 @@ fn a_recording_starts_with_run_start_and_ends_with_run_end_carrying_the_accounti
     assert_eq!(events[3].timestamp, "2027-01-15T08:00:03Z");
     let elapsed: Vec<u64> = events.iter().map(|e| e.elapsed_ms).collect();
     assert_eq!(elapsed, [0, 1000, 2000, 3000]);
-    match &events[0].payload {
-        Payload::RunStart { schema, engine } => {
-            assert_eq!(schema, SCHEMA);
-            assert_eq!(engine, rust_mutants::VERSION);
-        }
-        other => panic!("{other:?}"),
-    }
-    match &events[3].payload {
-        Payload::RunEnd { run } => {
-            assert_eq!(run.outcome, "prepared");
-            assert_eq!(run.error, None);
-            assert_eq!(run.events_emitted, 3, "run-start and two notes");
-            assert_eq!(run.events_dropped, 0);
-        }
-        other => panic!("{other:?}"),
-    }
+    let Payload::RunStart { schema, engine } = &events[0].payload else {
+        panic!("{:?}", events[0].payload);
+    };
+    assert_eq!(schema, SCHEMA);
+    assert_eq!(engine, rust_mutants::VERSION);
+    let Payload::RunEnd { run } = &events[3].payload else {
+        panic!("{:?}", events[3].payload);
+    };
+    assert_eq!(run.outcome, "prepared");
+    assert_eq!(run.error, None);
+    assert_eq!(run.events_emitted, 3, "run-start and two notes");
+    assert_eq!(run.events_dropped, 0);
 }
 
 #[test]
@@ -105,10 +101,10 @@ fn run_end_happens_once_and_nothing_is_recorded_afterwards() {
     recorder.run_end("ok", None);
     let events = recorder.events();
     assert_eq!(type_names(&events), ["run-start", "run-end"]);
-    match &events[1].payload {
-        Payload::RunEnd { run } => assert_eq!(run.error.as_deref(), Some("boom")),
-        other => panic!("{other:?}"),
-    }
+    let Payload::RunEnd { run } = &events[1].payload else {
+        panic!("{:?}", events[1].payload);
+    };
+    assert_eq!(run.error.as_deref(), Some("boom"));
     assert!(
         recorder.is_closed(),
         "run-end closes the sink so the stream is complete on disk"
@@ -249,13 +245,13 @@ fn one_sink_failing_costs_that_sink_the_event_and_not_the_others() {
 
     let events = recorder.events();
     assert_eq!(type_names(&events), ["run-start", "note", "run-end"]);
-    match &events[2].payload {
-        Payload::RunEnd { run } => assert_eq!(
-            run.events_dropped, 0,
-            "the recording lost nothing: one sink kept every event"
-        ),
-        other => panic!("{other:?}"),
-    }
+    let Payload::RunEnd { run } = &events[2].payload else {
+        panic!("{:?}", events[2].payload);
+    };
+    assert_eq!(
+        run.events_dropped, 0,
+        "the recording lost nothing: one sink kept every event"
+    );
 }
 
 #[test]
@@ -268,13 +264,11 @@ fn a_sink_that_counts_its_own_drops_is_the_authority() {
     let events = recorder.events();
     assert_eq!(events.len(), 4, "the ring keeps the newest four");
     assert_eq!(type_names(&events), ["note", "note", "note", "run-end"]);
-    match &events[3].payload {
-        Payload::RunEnd { run } => {
-            assert_eq!(run.events_dropped, 2);
-            assert_eq!(run.events_emitted, 4);
-        }
-        other => panic!("{other:?}"),
-    }
+    let Payload::RunEnd { run } = &events[3].payload else {
+        panic!("{:?}", events[3].payload);
+    };
+    assert_eq!(run.events_dropped, 2);
+    assert_eq!(run.events_emitted, 4);
 }
 
 #[test]
