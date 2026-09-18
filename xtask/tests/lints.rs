@@ -333,3 +333,56 @@ fn a_colour_spelled_by_hand_is_refused_wherever_it_is_not_the_one_place_that_pai
          is not what this refuses"
     );
 }
+
+#[test]
+fn a_type_that_publishes_its_whole_list_may_not_also_say_the_list_is_open() {
+    let both = r"
+        /// Every way a thing can go.
+        #[non_exhaustive]
+        pub enum Outcome {
+            /// One.
+            Killed,
+            /// Another.
+            Survived,
+        }
+
+        impl Outcome {
+            /// Every outcome, in declaration order.
+            pub const ALL: [Self; 2] = [Self::Killed, Self::Survived];
+        }
+    ";
+    let found = scan_source("crates/demo/src/outcome.rs", both).expect("it parses");
+    assert!(
+        found.iter().any(|one| one.kind == Kind::OpenAndClosed),
+        "`ALL` promises this is every one of them and `#[non_exhaustive]` promises it is \
+         not, so a caller outside the crate is made to write an arm for a case the list \
+         says cannot exist — and the arm it writes counts the next variant as whatever \
+         was nearest. A tally reached one of those and reported every future outcome as \
+         a harness failure: {found:?}"
+    );
+
+    let closed = r"
+        pub enum Outcome { Killed, Survived }
+        impl Outcome {
+            pub const ALL: [Self; 2] = [Self::Killed, Self::Survived];
+        }
+    ";
+    assert!(
+        scan_source("crates/demo/src/outcome.rs", closed)
+            .expect("it parses")
+            .is_empty(),
+        "a closed set that says so is the whole point"
+    );
+
+    let open = r"
+        #[non_exhaustive]
+        pub enum RunError { Refused, Stopped }
+    ";
+    assert!(
+        scan_source("crates/demo/src/error.rs", open)
+            .expect("it parses")
+            .is_empty(),
+        "and an error a caller branches on must already handle one it does not know, so \
+         the attribute costs nothing where no list was promised"
+    );
+}
