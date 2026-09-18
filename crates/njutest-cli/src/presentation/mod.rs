@@ -556,77 +556,13 @@ impl Terminal {
     }
 }
 
-/// How one thing is set apart from the things around it.
+/// What a piece of text is, which is how it is painted.
 ///
-/// Named by what it is for rather than by the colour it happens to be, so a
-/// palette is one table to read rather than a number at every call site.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Style {
-    /// A gap in the tests: the thing a run is for.
-    Gap,
-    /// Something the run could not establish.
-    Limitation,
-    /// Something that stopped the run.
-    Refusal,
-    /// A run that found nothing.
-    Well,
-    /// A part of a catalog, which assures nothing on its own.
-    Partial,
-    /// The rules and gutters a drawing is made of, which the eye should pass over.
-    Frame,
-    /// A command a reader is meant to type.
-    Command,
-    /// A name a reader is meant to notice.
-    Subject,
-    /// The bytes a run replaced, lit where they are in the code.
-    Changed,
-    /// A word the language reserves.
-    Keyword,
-    /// A type, which in Rust begins with a capital.
-    Type,
-    /// A string or a character.
-    Text,
-    /// A number.
-    Number,
-    /// A comment.
-    Aside,
-    /// A name being called.
-    Call,
-    /// A lifetime or an attribute.
-    Marker,
-    /// Code that is none of the above.
-    Code,
-}
-
-impl Style {
-    /// What to write before the text, as the parameters of one escape.
-    ///
-    /// Amber, teal and rose rather than the sixteen a theme redefines: a
-    /// palette chosen once and read the same on every terminal that has 256
-    /// colours, which is every terminal anybody has used this decade.
-    #[must_use]
-    pub const fn code(self) -> &'static str {
-        match self {
-            Self::Gap => "1;38;5;214",
-            Self::Limitation => "38;5;73",
-            Self::Refusal => "1;38;5;203",
-            Self::Well => "1;38;5;114",
-            Self::Partial => "38;5;110",
-            Self::Frame => "38;5;244",
-            Self::Command => "38;5;252",
-            Self::Subject => "1;38;5;253",
-            Self::Changed => "1;4;38;5;204",
-            Self::Keyword => "38;5;176",
-            Self::Type => "38;5;79",
-            Self::Text => "38;5;150",
-            Self::Number => "38;5;179",
-            Self::Aside => "3;38;5;243",
-            Self::Call => "38;5;111",
-            Self::Marker => "38;5;139",
-            Self::Code => "38;5;250",
-        }
-    }
-}
+/// The engine's, and re-exported rather than re-declared: two products that
+/// each named their own colours are two tools wearing one name, which is what
+/// they looked like until a timed-out mutation turned out to be amber on one
+/// screen and green on another.
+pub use rust_mutants::telling::Style;
 
 /// How a terminal's capabilities turn into the characters written to it.
 ///
@@ -657,10 +593,7 @@ impl Telling {
     /// redefines, so amber is amber on a terminal somebody has made their own.
     #[must_use]
     pub fn painted(self, style: Style, text: &str) -> String {
-        if !self.terminal.colour {
-            return text.to_owned();
-        }
-        format!("\u{1b}[{}m{text}\u{1b}[0m", style.code())
+        style.painted(text, self.terminal.colour)
     }
 
     /// `text` as a link to `target`, where the terminal follows one.
@@ -670,10 +603,7 @@ impl Telling {
     /// rest, so this costs nothing where it does nothing.
     #[must_use]
     pub fn linked(self, target: &str, text: &str) -> String {
-        if !self.terminal.colour {
-            return text.to_owned();
-        }
-        format!("\u{1b}]8;;{target}\u{7}{text}\u{1b}]8;;\u{7}")
+        rust_mutants::telling::linked(target, text, self.terminal.colour)
     }
 
     /// What a diagnostic's first line begins with.

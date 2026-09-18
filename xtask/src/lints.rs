@@ -23,17 +23,20 @@ pub enum Kind {
     PerishableHandle,
     /// An exported constant that spells a directory structure rather than one name.
     LooseLayout,
+    /// A terminal escape written out by hand, outside the one module that turns a style into bytes.
+    HandPainted,
 }
 
 impl Kind {
     /// Every kind, in the order a report lists them.
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::AllowAttribute,
         Self::BoxedTraitObject,
         Self::Comment,
         Self::UnboundedRemoval,
         Self::PerishableHandle,
         Self::LooseLayout,
+        Self::HandPainted,
     ];
 
     /// What to write in a report.
@@ -46,6 +49,7 @@ impl Kind {
             Self::UnboundedRemoval => "unbounded-removal",
             Self::PerishableHandle => "perishable-handle",
             Self::LooseLayout => "loose-layout",
+            Self::HandPainted => "hand-painted",
         }
     }
 
@@ -85,6 +89,14 @@ impl Kind {
                  place. Ask the type that owns the layout for the path, the way the code \
                  under test does, and let the default live in the configuration alone"
             }
+            Self::HandPainted => {
+                "ask for what the thing is rather than for a colour: `Style::Gap`, \
+                 `Style::Command`, `Style::Limitation`. A module that spells an escape \
+                 decides for itself what green means, whether the reader's terminal can \
+                 take one, and whether to paint at all — and two of those in one \
+                 workspace is two tools wearing one name. One module turns a style into \
+                 bytes; everything else names a meaning"
+            }
         }
     }
 }
@@ -103,6 +115,22 @@ const PERISHABLE: [&str; 2] = ["display_id", ".id"];
 
 /// The call this repository does not write directly, because every place that did lost what it could not remove.
 const RAW_REMOVAL: &str = "remove_dir_all";
+
+/// What writing a terminal sequence looks like: the introducer and what must follow it, spelled either way.
+///
+/// The introducer alone is not enough. A renderer that measures how wide a
+/// painted line is has to *read* one to skip it, and refusing that would
+/// refuse the one function that makes a caret land under the right column.
+/// What is refused is putting a sequence together.
+const ESCAPES: [&str; 6] = [
+    "\u{1b}[", "\u{1b}]", "\\u{1b}[", "\\u{1b}]", "\\x1b[", "\\x1b]",
+];
+
+/// The one module that turns a style into bytes, for the whole workspace.
+const PAINTER: &str = "rust-mutants/src/telling.rs";
+
+/// Where the rule itself is written, which has to spell what it refuses in order to refuse it.
+const PAINT_RULE: [&str; 2] = ["xtask/src/lints.rs", "xtask/tests/lints.rs"];
 
 /// The module that is allowed to make it in a loop, being the one that bounds it.
 ///
@@ -149,8 +177,38 @@ pub fn scan_source(file: &str, source: &str) -> Result<Vec<Finding>, syn::Error>
     scan.visit_file(&parsed);
     scan.found.extend(comments(file, source));
     scan.found.extend(handles(file, source));
+    scan.found.extend(painted(file, source));
     scan.found.sort();
     Ok(scan.found)
+}
+
+/// Every place `source` writes a terminal escape out by hand.
+///
+/// Spelled rather than parsed, because the thing being refused is a sequence
+/// of bytes and a program that meant to write one can reach it through a
+/// literal, a constant, a macro argument or a format string. What matters is
+/// that the bytes are in the file at all.
+///
+/// A test may spell one: what it is doing is reading what the painter wrote,
+/// and a test that asserted on a style rather than on the bytes would be
+/// asserting that the code does what it does.
+fn painted(file: &str, source: &str) -> Vec<Finding> {
+    if file.contains(PAINTER)
+        || file.contains("/tests/")
+        || PAINT_RULE.iter().any(|one| file.ends_with(one))
+    {
+        return Vec::new();
+    }
+    source
+        .lines()
+        .enumerate()
+        .filter(|(_at, line)| ESCAPES.iter().any(|escape| line.contains(escape)))
+        .map(|(at, _line)| Finding {
+            kind: Kind::HandPainted,
+            file: file.to_owned(),
+            line: at.saturating_add(1),
+        })
+        .collect()
 }
 
 /// Every exported `&str` constant of `source`, by name, with the line it is on.

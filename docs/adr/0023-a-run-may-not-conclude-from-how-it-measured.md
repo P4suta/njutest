@@ -158,6 +158,28 @@ these: the premise fell apart in the first three lines of writing the fixture
 that was meant to exercise it. A gate that makes somebody demonstrate a
 finding is worth more than one that checks they spelled it consistently.
 
+**Some of it is a claim about the apparatus, and only a test reaches that.**
+Two defects in the seam layer were of a kind none of the ways out above
+touches. A fault run on one seam drove traffic through another, and that
+traffic became the second seam's baseline — a catalogue derived from a
+program already being perturbed, which is the contamination this whole
+product exists to find in other people's suites, happening inside ours. And a
+test helper took a connection count as an argument, so a number that was
+wrong about the world outside the program hung for sixty seconds instead of
+failing.
+
+Neither is a type error: every `usize` is a valid count, and no signature
+distinguishes a clean baseline from a contaminated one. Neither is a
+catch-all, a wrong arm, or a sentence a stranger would catch by reading the
+output. What they have in common is that the claim is about the **measuring
+apparatus** rather than about the subject — and the only thing that reaches
+that is somebody who understands the measurement writing down what must
+remain true of it, as a test whose subject is the apparatus.
+
+Both were caught that way, and the order is the part to keep: the test naming
+the contamination was written after the defect existed and before it was
+fixed, so it says what must be true rather than what the code does.
+
 **A test that names what it is about survives a bad merge.** The mechanism is
 that the name is a claim, so the test fails when the claim stops holding —
 whoever stopped it holding and however.  Two branches
@@ -176,6 +198,19 @@ answering one of its questions.
 outranked every time is not accused, a run that reused every answer accuses
 nobody. The happy path is the cheap one to write and the one that was never in
 doubt.
+
+**A ledger that names line numbers asks the question at the right moment, and
+that is worth the friction it looks like.** A shrink-only waiver file keyed by
+line — `xtask/seam_allowlist.txt`, `wildcard_allowlist.txt` — makes every
+refactor that moves a line ask *is this waiver still needed?* of somebody who
+is already looking at the code. Two waivers went away rather than being
+renumbered the first time this happened, because the answer turned out to be
+no and nobody would have gone to ask otherwise.
+
+It was not designed in; the renumbering was expected to be pure friction. It
+is written down here because the obvious improvement — match the waiver on
+content so it survives a move — would delete the property, and somebody
+proposing that should have to argue with this paragraph first.
 
 **An audit that copies the defect is worse than no audit.** `xtask`'s
 independent re-implementation of the hollow-target question carried both holes
