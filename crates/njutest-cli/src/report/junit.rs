@@ -110,7 +110,10 @@ fn properties(report: &Report) -> Vec<(String, String)> {
         ("schema".to_owned(), report.schema.clone()),
         ("run_id".to_owned(), report.run_id.clone()),
         ("verdict".to_owned(), format!("{:?}", report.verdict)),
-        ("commit".to_owned(), report.repository.git.commit.clone()),
+        (
+            "commit".to_owned(),
+            report.repository.git.commit().to_owned(),
+        ),
         ("rustc".to_owned(), report.toolchain.rustc.clone()),
         (
             "mutants_killed".to_owned(),

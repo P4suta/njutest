@@ -102,18 +102,7 @@ fn asked_about(
         .observed
         .iter()
         .find(|one| one.capability == fault.capability && one.seq == fault.seq);
-    let (asked, answered) = named.map_or_else(
-        || (String::new(), None),
-        |one| match &one.spoken {
-            crate::wire::Spoken::Http {
-                method,
-                path,
-                status,
-                ..
-            } => (format!("{method} {path}"), Some(*status)),
-            crate::wire::Spoken::Raw { .. } => (String::new(), None),
-        },
-    );
+    let (asked, answered) = named.map_or_else(|| (String::new(), None), |one| one.spoken.asked());
     done.seams.push(crate::report::SeamRecord {
         id: fault.id.clone(),
         capability: fault.capability.clone(),
@@ -164,53 +153,58 @@ fn unnoticed(fault: &Fault, observed: &[Exchange]) -> Finding {
 /// did. The suite may take a different path this time and pass throughout, and
 /// reading that as nothing noticing would report a gap the tests could close
 /// where nobody was asked anything.
+///
+/// Every seam is drained before any fault is put, and only then are they
+/// measured one at a time. Draining a seam after another seam's fault runs
+/// would take the traffic those runs drove through it for the baseline, and
+/// derive a catalogue from a program that was already being perturbed.
+///
+/// One seam at a time, so the seam a question is about is the one that
+/// derived it rather than one looked up by name afterwards. A lookup can
+/// fail, and a failed lookup returning no answers would report *the run could
+/// not put this question* about a run that had lost track of its own seam —
+/// two facts under one sentence, and the one a reader would act on is the
+/// wrong one.
 #[must_use]
-pub fn asking<R>(seams: &Seams, mut run: R, watch: Watch<'_>) -> Measured
+pub fn asking<R>(seams: &Seams, baseline: &Baseline, mut run: R, watch: Watch<'_>) -> Measured
 where
     R: FnMut() -> Vec<Answered>,
 {
-    let observed: Vec<Exchange> = seams
-        .watching
-        .iter()
-        .flat_map(|one| one.interposer.taken())
-        .collect();
-    for exchange in &observed {
-        watch.trace.wire_exchange(recorded(exchange));
+    let mut done = Measured::default();
+    for (at, observed) in seams.watching.iter().zip(&baseline.per_seam) {
+        for exchange in observed {
+            watch.trace.wire_exchange(recorded(exchange));
+        }
+        let measured = measure(
+            &Measuring { observed },
+            |fault| {
+                for one in &seams.watching {
+                    one.interposer.putting(None);
+                }
+                at.interposer.putting(Some(fault.clone()));
+                let answered = run();
+                if at.interposer.was_put() {
+                    answered
+                } else {
+                    Vec::new()
+                }
+            },
+            watch,
+        );
+        done.executed |= measured.executed;
+        done.findings.extend(measured.findings);
+        done.limitations.extend(measured.limitations);
+        done.seams.extend(measured.seams);
     }
-    let measured = measure(
-        &Measuring {
-            observed: &observed,
-        },
-        |fault| {
-            for one in &seams.watching {
-                one.interposer.putting(None);
-            }
-            let Some(at) = seams
-                .watching
-                .iter()
-                .find(|one| one.capability == fault.capability)
-            else {
-                return Vec::new();
-            };
-            at.interposer.putting(Some(fault.clone()));
-            let answered = run();
-            if at.interposer.was_put() {
-                answered
-            } else {
-                Vec::new()
-            }
-        },
-        watch,
-    );
     for one in &seams.watching {
         one.interposer.putting(None);
     }
-    measured
+    done
 }
 
 /// One exchange as the recording writes it down, which is what an audit re-derives the catalogue from.
 fn recorded(exchange: &Exchange) -> crate::trace::WireExchangeRecord {
-    let read = match &exchange.spoken {
+    let (read, request_bytes, response_bytes) = match &exchange.spoken {
         crate::wire::Spoken::Http {
             method,
             path,
@@ -219,31 +213,28 @@ fn recorded(exchange: &Exchange) -> crate::trace::WireExchangeRecord {
             response_bytes,
             body_bytes: _,
             status_line: _,
-        } => crate::trace::WireExchangeRecord {
-            wire: "http".to_owned(),
-            method: Some(method.clone()),
-            path: Some(path.clone()),
-            status: Some(*status),
-            request_bytes: *request_bytes,
-            response_bytes: *response_bytes,
-            ..crate::trace::WireExchangeRecord::default()
-        },
+        } => (
+            crate::trace::Read::Http {
+                method: method.clone(),
+                path: path.clone(),
+                status: *status,
+            },
+            *request_bytes,
+            *response_bytes,
+        ),
         crate::wire::Spoken::Raw {
             request_bytes,
             response_bytes,
-        } => crate::trace::WireExchangeRecord {
-            wire: "raw".to_owned(),
-            request_bytes: *request_bytes,
-            response_bytes: *response_bytes,
-            ..crate::trace::WireExchangeRecord::default()
-        },
+        } => (crate::trace::Read::Raw, *request_bytes, *response_bytes),
     };
     crate::trace::WireExchangeRecord {
         capability: exchange.capability.clone(),
         seq: exchange.seq,
         during: exchange.during.clone(),
         duration_ms: exchange.duration_ms,
-        ..read
+        read,
+        request_bytes,
+        response_bytes,
     }
 }
 
@@ -269,6 +260,29 @@ pub fn licensing(observed: &[Exchange]) -> Option<Limitation> {
     ))
 }
 
+/// What went past every watched seam while the program was the one the tests are about.
+///
+/// `Seams::sealed` is the only thing that makes one, and it stops the seams
+/// recording as it takes it. So there is no later moment at which a recording
+/// with a perturbed program's traffic in it can be obtained: not after the
+/// mutation phase, which runs the suite once per mutation, and not during the
+/// seam phase, which runs it once per question with a fault in place. A
+/// catalogue is a set of questions about a program, and every one of those
+/// runs is a different program from the one a reader is being told about.
+#[derive(Debug, Default)]
+pub struct Baseline {
+    /// One recording per seam, in the order the seams were started.
+    per_seam: Vec<Vec<Exchange>>,
+}
+
+impl Baseline {
+    /// Every exchange every seam saw, in the order the seams were started.
+    #[must_use]
+    pub fn all(&self) -> Vec<Exchange> {
+        self.per_seam.concat()
+    }
+}
+
 /// Every seam a run is watching, and what the tests are told instead.
 #[derive(Debug, Default)]
 pub struct Seams {
@@ -279,6 +293,40 @@ pub struct Seams {
 }
 
 impl Seams {
+    /// Records one run of the suite and stops recording: the catalogue is what that run did.
+    ///
+    /// The run is made here rather than taken from whatever else happened to
+    /// go past. A fault names an exchange by its place in the order and is put
+    /// by running the suite once, so a catalogue has to come from one run of
+    /// the suite to hold questions that one run can reach.
+    ///
+    /// What is being ruled out is a catalogue assembled from several
+    /// programs. A phase that builds and verifies before it measures runs the
+    /// suite more than once, and the second run's exchanges are the same
+    /// exchanges counted again — a fault naming one of them is unreachable by
+    /// construction, and the report states it as a question nobody put. The
+    /// mutation phase is worse: it runs the suite once per mutation, so the
+    /// catalogue grows a copy of every exchange per mutation, every one of
+    /// them a hole the run invented by measuring. Recording stops when this
+    /// returns, so neither can happen however late anything else reads.
+    #[must_use]
+    pub fn observing<R>(&self, mut run: R) -> Baseline
+    where
+        R: FnMut(),
+    {
+        for one in &self.watching {
+            one.interposer.restart();
+        }
+        run();
+        Baseline {
+            per_seam: self
+                .watching
+                .iter()
+                .map(|one| one.interposer.seal())
+                .collect(),
+        }
+    }
+
     /// Stops every interposer and hands back everything that went past, seam by seam.
     #[must_use]
     pub fn recorded(self) -> Vec<Exchange> {
@@ -312,7 +360,7 @@ pub fn watched(
         match crate::wire::dialled::interposed(
             lease,
             &resource.interpose,
-            (resource.wire, crate::wire::interpose::HELD_UP),
+            (resource.wire, resource.hold),
         ) {
             Some(one) => {
                 seams.environment.extend(one.environment.iter().cloned());

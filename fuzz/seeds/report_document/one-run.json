@@ -7,13 +7,13 @@
       "executed": 9,
       "killed": 7,
       "observers": {
+        "errored": 0,
         "proved": 0,
         "tests": 7,
         "types": 0,
         "unnoticed": 2,
         "unreached": 1,
-        "waited": 0,
-        "errored": 0
+        "waited": 0
       },
       "rejected": 0,
       "reused_killed": 0,
@@ -88,6 +88,7 @@
   ],
   "mutants": [
     {
+      "blind_in": [],
       "display_id": "0cb3400e6fea6d01b5b0",
       "id": "0cb3400e6fea6d01b5b03bb8184b305aedbe265b49c32cb61560a7afa2ae6d65",
       "killed_by": "fixture-baseline/lib/fixture_baseline",
@@ -100,10 +101,10 @@
       },
       "reused": false,
       "rule": "return-default@1",
-      "source_run_id": null,
-      "blind_in": []
+      "source_run_id": null
     },
     {
+      "blind_in": [],
       "display_id": "2bcb6eb7d96056277fa1",
       "id": "2bcb6eb7d96056277fa103492ff96c0d2aac9bdbcb6631aa89793025fc77c4a0",
       "killed_by": null,
@@ -116,10 +117,10 @@
       },
       "reused": false,
       "rule": "lt-to-le@1",
-      "source_run_id": null,
-      "blind_in": []
+      "source_run_id": null
     },
     {
+      "blind_in": [],
       "display_id": "366948fbe36bfd19786d",
       "id": "366948fbe36bfd19786d81fbae6446524d338a866fb8e99a17def9f50fd3485d",
       "killed_by": null,
@@ -132,10 +133,10 @@
       },
       "reused": false,
       "rule": "gt-to-ge@1",
-      "source_run_id": null,
-      "blind_in": []
+      "source_run_id": null
     },
     {
+      "blind_in": [],
       "display_id": "9618aa1c71c281ae9835",
       "id": "9618aa1c71c281ae983584d26d09b1411bae1974fad571eb0a814eb4b44a2f17",
       "killed_by": "fixture-baseline/lib/fixture_baseline",
@@ -148,10 +149,10 @@
       },
       "reused": false,
       "rule": "negate-condition@1",
-      "source_run_id": null,
-      "blind_in": []
+      "source_run_id": null
     },
     {
+      "blind_in": [],
       "display_id": "97b5a75a9e1efeeff233",
       "id": "97b5a75a9e1efeeff23366ed26389245afc47b6091c7a2595eca2eb5cd052886",
       "killed_by": null,
@@ -164,10 +165,10 @@
       },
       "reused": false,
       "rule": "return-default@1",
-      "source_run_id": null,
-      "blind_in": []
+      "source_run_id": null
     },
     {
+      "blind_in": [],
       "display_id": "ae6162ece39e3389335d",
       "id": "ae6162ece39e3389335db4344482a86f8b7e93863b0b492fdf8868cea5b12c7b",
       "killed_by": "fixture-baseline/lib/fixture_baseline",
@@ -180,10 +181,10 @@
       },
       "reused": false,
       "rule": "negate-condition@1",
-      "source_run_id": null,
-      "blind_in": []
+      "source_run_id": null
     },
     {
+      "blind_in": [],
       "display_id": "b6f6f7454e99e11dfd80",
       "id": "b6f6f7454e99e11dfd807eeea7e2e121461d68b588ccb1a0015d6e75d32adfb1",
       "killed_by": "fixture-baseline/lib/fixture_baseline",
@@ -196,10 +197,10 @@
       },
       "reused": false,
       "rule": "return-default@1",
-      "source_run_id": null,
-      "blind_in": []
+      "source_run_id": null
     },
     {
+      "blind_in": [],
       "display_id": "d0f665a548910bd9ed45",
       "id": "d0f665a548910bd9ed45eae5a3c02fa1e5b826af1bf0ed2ae01a52d493a3961e",
       "killed_by": "fixture-baseline/test/doubling",
@@ -212,10 +213,10 @@
       },
       "reused": false,
       "rule": "mul-to-div@1",
-      "source_run_id": null,
-      "blind_in": []
+      "source_run_id": null
     },
     {
+      "blind_in": [],
       "display_id": "ee0a61bc9f91d9acc4cf",
       "id": "ee0a61bc9f91d9acc4cf69d15879a1df1d4f7892ef853789a1d98cff5979cd4e",
       "killed_by": "fixture-baseline/lib/fixture_baseline",
@@ -228,10 +229,10 @@
       },
       "reused": false,
       "rule": "return-default@1",
-      "source_run_id": null,
-      "blind_in": []
+      "source_run_id": null
     },
     {
+      "blind_in": [],
       "display_id": "f0bd7961d77aed7f5cba",
       "id": "f0bd7961d77aed7f5cbad88497803bfdca9aec313cb41c9f0e970f7861d756a2",
       "killed_by": "fixture-baseline/test/doubling",
@@ -244,8 +245,7 @@
       },
       "reused": false,
       "rule": "return-default@1",
-      "source_run_id": null,
-      "blind_in": []
+      "source_run_id": null
     }
   ],
   "provenance": {
@@ -257,9 +257,9 @@
     "configuration_digest": "<volatile>",
     "git": {
       "available": false,
-      "branch": "<volatile>",
+      "branch": "unavailable",
       "changed_files": [],
-      "commit": "<volatile>",
+      "commit": "unavailable",
       "dirty": false,
       "merge_base": null
     },

@@ -151,7 +151,7 @@ fn every_mutation_judged_is_a_row_that_says_what_became_of_it() {
          work out afterwards"
     );
     assert!(
-        killed.reused,
+        killed.reuse.0.read_back().is_some(),
         "and says whether this run established it or read it back"
     );
     assert_eq!(killed.position.line, 12);
@@ -159,7 +159,7 @@ fn every_mutation_judged_is_a_row_that_says_what_became_of_it() {
     let survived = rows.get(1).expect("the survivor");
     assert_eq!(survived.outcome.name(), "survived");
     assert_eq!(survived.outcome.decided_by(), None);
-    assert!(!survived.reused);
+    assert!(survived.reuse.0.read_back().is_none());
     assert_eq!(
         survived.position.line, 1,
         "a mutation whose position nothing recorded is placed at the first line rather \

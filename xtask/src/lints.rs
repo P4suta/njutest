@@ -23,18 +23,21 @@ pub enum Kind {
     PerishableHandle,
     /// An exported constant that spells a directory structure rather than one name.
     LooseLayout,
+    /// A catch-all arm over a set this repository closes.
+    WildcardOverOurOwn,
     /// A terminal escape written out by hand, outside the one module that turns a style into bytes.
     HandPainted,
 }
 
 impl Kind {
     /// Every kind, in the order a report lists them.
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::AllowAttribute,
         Self::BoxedTraitObject,
         Self::Comment,
         Self::UnboundedRemoval,
         Self::PerishableHandle,
+        Self::WildcardOverOurOwn,
         Self::LooseLayout,
         Self::HandPainted,
     ];
@@ -49,6 +52,7 @@ impl Kind {
             Self::UnboundedRemoval => "unbounded-removal",
             Self::PerishableHandle => "perishable-handle",
             Self::LooseLayout => "loose-layout",
+            Self::WildcardOverOurOwn => "wildcard-over-our-own",
             Self::HandPainted => "hand-painted",
         }
     }
@@ -88,6 +92,14 @@ impl Kind {
                  directory stayed unconfigurable while four commands read the wrong \
                  place. Ask the type that owns the layout for the path, the way the code \
                  under test does, and let the default live in the configuration alone"
+            }
+            Self::WildcardOverOurOwn => {
+                "a catch-all over a set this repository closes is the arm that absorbs \
+                 the next variant silently, and every defect of that shape reads as \
+                 English until somebody compares two outputs. Name the remaining \
+                 variants: the compiler then makes whoever adds one decide where it \
+                 goes, which is the whole reason the set is closed. A foreign enum is \
+                 not this — a catch-all over somebody else's open set is the handling"
             }
             Self::HandPainted => {
                 "ask for what the thing is rather than for a colour: `Style::Gap`, \
@@ -180,6 +192,105 @@ pub fn scan_source(file: &str, source: &str) -> Result<Vec<Finding>, syn::Error>
     scan.found.extend(painted(file, source));
     scan.found.sort();
     Ok(scan.found)
+}
+
+/// Every enum `source` declares, by name.
+///
+/// The question a catch-all has to answer is whether the values can be listed
+/// from this repository's own source. An enum declared here can; `syn::Expr`
+/// and `toml::Value` cannot, and a catch-all over one of those is the
+/// handling rather than a default. So the gate is told what is ours before it
+/// is asked what is refused.
+#[must_use]
+pub fn declared_enums(source: &str) -> Vec<String> {
+    let Ok(parsed) = syn::parse_file(source) else {
+        return Vec::new();
+    };
+    let mut found = Vec::new();
+    let mut named = Named { found: &mut found };
+    named.visit_file(&parsed);
+    found
+}
+
+/// The visitor that collects enum names, including the ones nested in a module or a function.
+struct Named<'a> {
+    found: &'a mut Vec<String>,
+}
+
+impl<'ast> Visit<'ast> for Named<'_> {
+    fn visit_item_enum(&mut self, item: &'ast syn::ItemEnum) {
+        self.found.push(item.ident.to_string());
+        syn::visit::visit_item_enum(self, item);
+    }
+}
+
+/// Every line of `source` where a match over one of `ours` ends in a catch-all.
+///
+/// Read from the arms rather than from the scrutinee, because the scrutinee is
+/// an expression whose type this gate cannot know: an arm spelling
+/// `Decision::Tests` says what is being matched, and nothing else has to be
+/// resolved to know it.
+#[must_use]
+pub fn wildcards(source: &str, ours: &[String]) -> Vec<usize> {
+    let Ok(parsed) = syn::parse_file(source) else {
+        return Vec::new();
+    };
+    let mut found = Vec::new();
+    let mut scan = Catching {
+        ours,
+        found: &mut found,
+    };
+    scan.visit_file(&parsed);
+    found.sort_unstable();
+    found.dedup();
+    found
+}
+
+/// The visitor that refuses a catch-all where the arms name a set this repository closes.
+struct Catching<'a> {
+    ours: &'a [String],
+    found: &'a mut Vec<usize>,
+}
+
+impl Catching<'_> {
+    /// The enum an arm names, where the pattern is a path with one before the variant.
+    fn named(pattern: &syn::Pat) -> Option<String> {
+        let path = match pattern {
+            syn::Pat::Path(held) => &held.path,
+            syn::Pat::TupleStruct(held) => &held.path,
+            syn::Pat::Struct(held) => &held.path,
+            _ => return None,
+        };
+        let mut segments = path.segments.iter().rev();
+        let _variant = segments.next()?;
+        Some(segments.next()?.ident.to_string())
+    }
+
+    /// Where an arm catches everything left, which is a bare `_` or a name bound to the whole.
+    fn catches_all(pattern: &syn::Pat) -> Option<proc_macro2::Span> {
+        match pattern {
+            syn::Pat::Wild(held) => Some(held.underscore_token.span),
+            syn::Pat::Ident(held) if held.subpat.is_none() => Some(held.ident.span()),
+            _ => None,
+        }
+    }
+}
+
+impl<'ast> Visit<'ast> for Catching<'_> {
+    fn visit_expr_match(&mut self, matching: &'ast syn::ExprMatch) {
+        let closes = matching
+            .arms
+            .iter()
+            .any(|arm| Self::named(&arm.pat).is_some_and(|name| self.ours.contains(&name)));
+        if closes {
+            for arm in &matching.arms {
+                if let Some(span) = Self::catches_all(&arm.pat) {
+                    self.found.push(span.start().line);
+                }
+            }
+        }
+        syn::visit::visit_expr_match(self, matching);
+    }
 }
 
 /// Every place `source` writes a terminal escape out by hand.

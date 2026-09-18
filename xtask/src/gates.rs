@@ -65,6 +65,7 @@ pub fn lints(root: &Path) -> Result<String, GateFailure> {
         );
     }
     found.extend(loose_layouts(root, &files)?);
+    found.extend(wildcards(root, &files)?);
     found.sort();
     if found.is_empty() {
         return Ok(format!(
@@ -88,6 +89,73 @@ pub fn lints(root: &Path) -> Result<String, GateFailure> {
 /// it and moving it meant moving all of them. One module joining its own
 /// constant is not that — it is a name it happens to have written down — and a
 /// document type or a URL is not a path at all, which is why this counts the
+/// Every catch-all over a set this repository closes, over the whole tree at once.
+///
+/// Two passes, because whether an arm may catch everything depends on who owns
+/// the enum, and that is a fact about the workspace rather than about the file
+/// being read. A foreign enum keeps its catch-all: the values of `syn::Expr`
+/// are not ours to list, so an arm that stands for the rest is the handling.
+fn wildcards(root: &Path, files: &[PathBuf]) -> Result<Vec<lint_scan::Finding>, GateFailure> {
+    let mut ours: Vec<String> = Vec::new();
+    for path in files {
+        let source = std::fs::read_to_string(path)
+            .map_err(|error| GateFailure(format!("{}: {error}", path.display())))?;
+        ours.extend(lint_scan::declared_enums(&source));
+    }
+    ours.sort();
+    ours.dedup();
+    let mut standing: Vec<String> = Vec::new();
+    for path in files {
+        let source = std::fs::read_to_string(path)
+            .map_err(|error| GateFailure(format!("{}: {error}", path.display())))?;
+        let label = relative_slash(root, path);
+        for line in lint_scan::wildcards(&source, &ours) {
+            standing.push(format!("{label}:{line}"));
+        }
+    }
+    standing.sort();
+    ratcheted(root, &standing)
+}
+
+/// Which of these the ledger still waives, and which nobody has reviewed.
+///
+/// The ledger may shrink and never grow. A line that is still there is
+/// reported as nothing; a catch-all that is not on it is refused, so writing
+/// one is not a thing anybody decides while writing — it is a line somebody
+/// else reads.
+fn ratcheted(root: &Path, standing: &[String]) -> Result<Vec<lint_scan::Finding>, GateFailure> {
+    let path = root.join("xtask/wildcard_allowlist.txt");
+    let ledger = std::fs::read_to_string(&path)
+        .map_err(|error| GateFailure(format!("{}: {error}", path.display())))?;
+    let allowed: Vec<&str> = ledger
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .collect();
+    let mut found = Vec::new();
+    for one in standing {
+        if allowed.iter().any(|line| line == one) {
+            continue;
+        }
+        let (file, line) = one.rsplit_once(':').unwrap_or((one.as_str(), "0"));
+        found.push(lint_scan::Finding {
+            kind: lint_scan::Kind::WildcardOverOurOwn,
+            file: file.to_owned(),
+            line: line.parse().unwrap_or(0),
+        });
+    }
+    for line in &allowed {
+        if !standing.iter().any(|one| one == line) {
+            return Err(GateFailure(format!(
+                "lints: xtask/wildcard_allowlist.txt names {line}, which is no longer a \
+                 catch-all over a set this repository closes. Take the line out: a \
+                 ledger that keeps a waiver nobody needs is one nobody reads."
+            )));
+        }
+    }
+    Ok(found)
+}
+
 /// joiners rather than reading the spelling.
 fn loose_layouts(root: &Path, files: &[PathBuf]) -> Result<Vec<lint_scan::Finding>, GateFailure> {
     let mut layouts = Vec::new();

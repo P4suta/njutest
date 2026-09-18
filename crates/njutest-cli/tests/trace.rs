@@ -55,6 +55,46 @@ fn types(events: &[Event]) -> Vec<String> {
 }
 
 #[test]
+fn an_exchange_read_as_one_protocol_and_carrying_another_is_not_read_back() {
+    let raw = njutest_cli::trace::Read::Raw;
+    let http = njutest_cli::trace::Read::Http {
+        method: "GET".to_owned(),
+        path: "/orders".to_owned(),
+        status: 200,
+    };
+    for one in [&raw, &http] {
+        let written = serde_json::to_string(one).expect("a record is a document");
+        let read: njutest_cli::trace::Read =
+            serde_json::from_str(&written).expect("and one it can read back");
+        assert_eq!(&read, one, "the recording is unchanged: {written}");
+    }
+
+    for (what, written) in [
+        (
+            "read as http and missing the path",
+            r#"{"wire":"http","method":"GET","path":null,"status":200}"#,
+        ),
+        (
+            "read as raw and carrying a status anyway",
+            r#"{"wire":"raw","method":null,"path":null,"status":200}"#,
+        ),
+        (
+            "read as something this run has never read",
+            r#"{"wire":"grpc","method":null,"path":null,"status":null}"#,
+        ),
+    ] {
+        let read: Result<njutest_cli::trace::Read, serde_json::Error> =
+            serde_json::from_str(written);
+        assert!(
+            read.is_err(),
+            "an exchange {what} is one an audit re-mints a fault identity from, so the run \
+             and the audit would name the same exchange differently and neither could say \
+             which was wrong"
+        );
+    }
+}
+
+#[test]
 fn the_disabled_recorder_keeps_nothing_and_says_so() {
     let trace = Recorder::disabled();
     assert!(!trace.is_enabled());

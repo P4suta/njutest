@@ -559,9 +559,9 @@
     "configuration_digest": "<volatile>",
     "git": {
       "available": false,
-      "branch": "<volatile>",
+      "branch": "unavailable",
       "changed_files": [],
-      "commit": "<volatile>",
+      "commit": "unavailable",
       "dirty": false,
       "merge_base": null
     },

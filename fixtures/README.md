@@ -22,5 +22,11 @@ enforced by `cargo xtask fixtures`:
   and test data at once: `cargo test -p rust-mutants-cli --test
   toolchain_fates` runs every fixture and refuses a difference, and
   `UPDATE_FATES=1` rewrites the blocks so the diff is the review.
+- A fixture whose `.njutest.toml` puts an interposer in front of a seam ends
+  with a ```` ```seams ```` block as well: one line per question the recording
+  licensed, as `capability:seq rule decision [who decided it]`. What a run
+  establishes about a seam is a ledger for the same reason its mutation fates
+  are one. `cargo test -p njutest-cli --test toolchain_wire_fixture` runs it
+  again and refuses a difference, and `UPDATE_FATES=1` rewrites the block.
 - Every fixture is named by at least one test. A fixture nothing drives is one
   nothing keeps honest, and the same suite refuses it.

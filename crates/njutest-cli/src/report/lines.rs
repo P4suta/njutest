@@ -58,7 +58,7 @@ fn written(report: &Report, document: Option<&str>) -> String {
         if let Some(killed_by) = mutant.outcome.decided_by() {
             append(&mut out, &format!("killed_by={killed_by}"));
         }
-        if let Some(provenance) = mutant.source_run_id.as_deref() {
+        if let Some(provenance) = mutant.reuse.0.read_back() {
             append(&mut out, &format!("reused={provenance}"));
         }
         out.push('\n');
@@ -150,9 +150,9 @@ fn identity(report: &Report, out: &mut String) {
         &[
             &format!("root={}", report.repository.root_name),
             &format!("packages={}", report.repository.packages.len()),
-            &format!("commit={}", git.commit),
-            &format!("branch={}", git.branch),
-            &format!("dirty={}", git.dirty),
+            &format!("commit={}", git.commit()),
+            &format!("branch={}", git.branch()),
+            &format!("dirty={}", git.dirty()),
         ],
     );
     out.push('\n');

@@ -169,3 +169,17 @@ fn the_page_says_how_many_of_the_sentences_nothing_would_notice_changing() {
         "the number a reviewer acts on is the second one: {said}"
     );
 }
+
+#[test]
+fn an_exchange_nothing_was_asked_about_is_not_counted_among_the_ones_nothing_noticed() {
+    let report = watched(vec![question(0, "stale-response", SeamDecision::Unreached)]);
+    let said = page(&report);
+    assert!(
+        said.contains("0 that nothing would notice changing")
+            && said.contains("1 this run established nothing about"),
+        "the run put no question anybody could answer, so the tests were never given \
+         the chance. Counting it among the gaps tells a reviewer the suite is blind \
+         where the run established nothing at all, which is the one reading this page \
+         must never invite: {said}"
+    );
+}

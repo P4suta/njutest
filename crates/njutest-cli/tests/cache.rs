@@ -40,8 +40,7 @@ fn report(run_id: &str, identity: &str) -> Report {
     );
     report.provenance = Provenance {
         identity: identity.to_owned(),
-        cached: false,
-        source_run_id: None,
+        facts: njutest_cli::report::Established::Here,
     };
     "demo".clone_into(&mut report.repository.root_name);
     report.repository.workspace_digest = "a".repeat(64);
@@ -146,8 +145,7 @@ fn a_report_that_answers_for_no_inputs_or_was_itself_read_back_is_refused() {
     assert!(matches!(error, CacheError::Refused { .. }), "{error}");
 
     let mut copied = report("run-2", &"c".repeat(64));
-    copied.provenance.cached = true;
-    copied.provenance.source_run_id = Some("run-1".to_owned());
+    copied.provenance.facts = njutest_cli::report::Established::ReadBackFrom("run-1".to_owned());
     let error = store.put(&copied).expect_err("already stored elsewhere");
     assert!(
         error.to_string().contains("read back"),
@@ -473,8 +471,8 @@ fn a_report_the_store_may_not_keep_says_which_of_the_three_reasons_it_is() {
     let mut nameless = keepable();
     nameless.provenance.identity = njutest_cli::report::UNAVAILABLE.to_owned();
     let mut copied = keepable();
-    copied.provenance.cached = true;
-    copied.provenance.source_run_id = Some("20260905T081500Z-000000".to_owned());
+    copied.provenance.facts =
+        njutest_cli::report::Established::ReadBackFrom("20260905T081500Z-000000".to_owned());
     let mut unsound = keepable();
     unsound.accounting.targets.passed = 99;
     if let Some(first) = unsound.targets.first_mut() {

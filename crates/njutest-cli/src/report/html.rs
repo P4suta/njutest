@@ -144,9 +144,9 @@ fn limitations(report: &Report) -> String {
 
 fn identity(report: &Report) -> String {
     let rows = [
-        ("commit", report.repository.git.commit.clone()),
-        ("branch", report.repository.git.branch.clone()),
-        ("dirty", report.repository.git.dirty.to_string()),
+        ("commit", report.repository.git.commit().to_owned()),
+        ("branch", report.repository.git.branch().to_owned()),
+        ("dirty", report.repository.git.dirty().to_string()),
         ("rustc", report.toolchain.rustc.clone()),
         ("target", report.toolchain.target.clone()),
         ("started", report.timing.started.clone()),

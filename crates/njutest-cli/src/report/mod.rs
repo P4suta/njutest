@@ -200,54 +200,305 @@ pub struct Repository {
     pub git: Git,
 }
 
-/// Where a report's facts came from. A run that read an earlier run's answer says so, names the run that established it, and carries the identity both were computed under, so a reader can check the claim rather than take it.
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+/// Whether facts were established by the run that wrote them down, or read back from another.
+///
+/// The wire carries a flag beside a name, which can spell two things nothing
+/// means: read back from nobody, and established here and also somewhere
+/// else. A reader who met either could not tell which half to believe, so
+/// both were refused when a report was written and both are now unwritable.
+/// The name of a source is never empty for the same reason: a source run with
+/// no name is no source at all.
+///
+/// One thing this cannot refuse is a report naming its own run as the one it
+/// read back from, because that needs the run's identity and this holds only
+/// the source's. `report::audit` still says so.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum Established {
+    /// This run established them.
+    #[default]
+    Here,
+    /// They were read back from the run named.
+    ReadBackFrom(String),
+}
+
+impl Established {
+    /// The run these were read back from, where they were read back at all.
+    #[must_use]
+    pub const fn read_back(&self) -> Option<&String> {
+        match self {
+            Self::Here => None,
+            Self::ReadBackFrom(run) => Some(run),
+        }
+    }
+
+    /// The pair the wire carries: whether it was read back, and from where.
+    #[must_use]
+    pub fn pair(&self) -> (bool, Option<String>) {
+        match self {
+            Self::Here => (false, None),
+            Self::ReadBackFrom(run) => (true, Some(run.clone())),
+        }
+    }
+
+    /// The one thing that pair can mean, where it means anything at all.
+    #[must_use]
+    pub fn of(read_back: bool, source: Option<String>) -> Option<Self> {
+        match (read_back, source) {
+            (false, None) => Some(Self::Here),
+            (true, Some(run)) if !run.is_empty() => Some(Self::ReadBackFrom(run)),
+            (true, None | Some(_)) | (false, Some(_)) => None,
+        }
+    }
+
+    /// What a reader is told when a document pairs the flag with a name that cannot go with it.
+    #[must_use]
+    pub fn unreadable(what: &str) -> String {
+        format!(
+            "{what} says it was read back from an earlier run and names no run, or names one \
+             and says it was established here, or names one with no name at all. A reader \
+             meeting any of those cannot tell which half to believe"
+        )
+    }
+}
+
+/// Where one mutation's disposition came from, spelled the way a mutation row spells it.
+///
+/// The same two facts as [`Provenance`] carries about a whole report, under
+/// the names the wire has always used here. One type so that the pair can
+/// only ever mean one thing in either place, and one place to look when a
+/// third spelling of it turns up.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Reuse(pub Established);
+
+/// The shape the wire has always carried on a mutation row.
+#[derive(Serialize, Deserialize)]
+struct PairedReuse {
+    reused: bool,
+    source_run_id: Option<String>,
+}
+
+impl Serialize for Reuse {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let (reused, source_run_id) = self.0.pair();
+        PairedReuse {
+            reused,
+            source_run_id,
+        }
+        .serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for Reuse {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let held = PairedReuse::deserialize(deserializer)?;
+        Established::of(held.reused, held.source_run_id)
+            .map(Self)
+            .ok_or_else(|| serde::de::Error::custom(Established::unreadable("a mutation")))
+    }
+}
+
+/// Where a report's facts came from, and the identity they were computed under, so a reader can check the claim rather than take it.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Provenance {
     /// The evidence identity of the inputs, which is what a cached answer is keyed on.
     pub identity: String,
-    /// Whether every fact here was read back rather than established.
-    pub cached: bool,
-    /// The run that established them, when it was not this one.
-    pub source_run_id: Option<String>,
+    /// Whether this run established them, or read them back from another.
+    pub facts: Established,
+}
+
+/// The shape the wire has always carried, which is the pair rather than what it means.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PairedProvenance {
+    identity: String,
+    cached: bool,
+    source_run_id: Option<String>,
+}
+
+impl Serialize for Provenance {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let (cached, source_run_id) = self.facts.pair();
+        PairedProvenance {
+            identity: self.identity.clone(),
+            cached,
+            source_run_id,
+        }
+        .serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for Provenance {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let held = PairedProvenance::deserialize(deserializer)?;
+        let facts = Established::of(held.cached, held.source_run_id)
+            .ok_or_else(|| serde::de::Error::custom(Established::unreadable("a report")))?;
+        Ok(Self {
+            identity: held.identity,
+            facts,
+        })
+    }
 }
 
 /// What git said about the tree, or that it could not be asked.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Git {
-    /// Whether git could be asked at all.
-    pub available: bool,
-    /// The commit, or [`UNAVAILABLE`].
+///
+/// This was six fields with a flag over them and a sentinel string inside.
+/// Between them they could spell a tree git could not be asked about that
+/// nonetheless has a commit, a branch, uncommitted changes, a list of changed
+/// files and a base those were taken against. `report::audit` walked all five
+/// and refused each in turn, which meant a reader of an already-written
+/// document had to run the audit to find out whether the five agreed. None of
+/// the five is writable now.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum Git {
+    /// Git could not be asked, so the run cannot name the commit it verified.
+    #[default]
+    Unavailable,
+    /// What git said about a tree it could be asked about.
+    Said(Said),
+}
+
+/// What git said about a tree it could be asked about.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Said {
+    /// The commit, which is never [`UNAVAILABLE`] and never empty.
     pub commit: String,
-    /// The branch, or [`UNAVAILABLE`].
+    /// The branch, which is never [`UNAVAILABLE`] and never empty.
     pub branch: String,
     /// Whether the tree had uncommitted changes.
     pub dirty: bool,
-    /// The merge base a changed-scope run was taken against.
-    pub merge_base: Option<String>,
-    /// The files a changed-scope run found.
+    /// What a changed-scope run was taken against, where the run was one.
+    pub against: Option<Against>,
+}
+
+/// The revision a changed-scope run was taken against, and the files it found.
+///
+/// One value, because a base with no list and a list with no base are each
+/// half a fact and a reader cannot act on either. A run taken against a base
+/// that found nothing changed has a base and an empty list, which is whole.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Against {
+    /// The merge base.
+    pub merge_base: String,
+    /// The files that differ from it.
     pub changed_files: Vec<String>,
 }
 
 impl Git {
-    /// The state of a tree git could not be asked about.
+    /// What git said, where it was asked.
     #[must_use]
-    pub fn unavailable() -> Self {
-        Self {
-            available: false,
-            commit: UNAVAILABLE.to_owned(),
-            branch: UNAVAILABLE.to_owned(),
-            dirty: false,
-            merge_base: None,
-            changed_files: Vec::new(),
+    pub const fn said(&self) -> Option<&Said> {
+        match self {
+            Self::Unavailable => None,
+            Self::Said(said) => Some(said),
         }
+    }
+
+    /// The commit, or [`UNAVAILABLE`] where git was not asked.
+    ///
+    /// The word is made here rather than stored, so nothing can hold a commit
+    /// and say it was not asked at the same time.
+    #[must_use]
+    pub fn commit(&self) -> &str {
+        self.said().map_or(UNAVAILABLE, |said| said.commit.as_str())
+    }
+
+    /// The branch, or [`UNAVAILABLE`] where git was not asked.
+    #[must_use]
+    pub fn branch(&self) -> &str {
+        self.said().map_or(UNAVAILABLE, |said| said.branch.as_str())
+    }
+
+    /// Whether the tree had uncommitted changes, which a tree nobody could ask about does not.
+    #[must_use]
+    pub fn dirty(&self) -> bool {
+        self.said().is_some_and(|said| said.dirty)
+    }
+
+    /// What a changed-scope run was taken against, where git was asked and the run was one.
+    #[must_use]
+    pub fn against(&self) -> Option<&Against> {
+        self.said().and_then(|said| said.against.as_ref())
     }
 }
 
-impl Default for Git {
-    fn default() -> Self {
-        Self::unavailable()
+/// The six fields the wire has always carried, which is the shape rather than what it means.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PairedGit {
+    available: bool,
+    commit: String,
+    branch: String,
+    dirty: bool,
+    merge_base: Option<String>,
+    changed_files: Vec<String>,
+}
+
+impl Serialize for Git {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let against = self.against();
+        PairedGit {
+            available: self.said().is_some(),
+            commit: self.commit().to_owned(),
+            branch: self.branch().to_owned(),
+            dirty: self.dirty(),
+            merge_base: against.map(|taken| taken.merge_base.clone()),
+            changed_files: against.map_or_else(Vec::new, |taken| taken.changed_files.clone()),
+        }
+        .serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for Git {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let held = PairedGit::deserialize(deserializer)?;
+        let refuse = |because: &str| serde::de::Error::custom(because.to_owned());
+        let against = match (held.merge_base, held.changed_files) {
+            (None, files) if files.is_empty() => None,
+            (None, _) => {
+                return Err(refuse(
+                    "a tree says which files differ from a base and names no base; which \
+                     revision they differ from is the half a reader would act on",
+                ));
+            }
+            (Some(base), _) if base.is_empty() => {
+                return Err(refuse("a base with no name is no base at all"));
+            }
+            (Some(merge_base), changed_files) => Some(Against {
+                merge_base,
+                changed_files,
+            }),
+        };
+        if !held.available {
+            if held.commit != UNAVAILABLE
+                || held.branch != UNAVAILABLE
+                || held.dirty
+                || against.is_some()
+            {
+                return Err(refuse(
+                    "a tree git could not be asked about carries a fact only git could have \
+                     said; a reader cannot tell whether the fact or the refusal is the true \
+                     half",
+                ));
+            }
+            return Ok(Self::Unavailable);
+        }
+        if held.commit.trim().is_empty()
+            || held.branch.trim().is_empty()
+            || held.commit == UNAVAILABLE
+            || held.branch == UNAVAILABLE
+        {
+            return Err(refuse(
+                "a tree git was asked about names the commit and the branch it was asked \
+                 about; a run that cannot say which commit it verified has verified nothing \
+                 anybody can go and look at",
+            ));
+        }
+        Ok(Self::Said(Said {
+            commit: held.commit,
+            branch: held.branch,
+            dirty: held.dirty,
+            against,
+        }))
     }
 }
 
@@ -1088,10 +1339,9 @@ pub struct MutantRecord {
     /// Which targets could have noticed it, and what removed the rest. `null` where the run never asked.
     #[serde(default)]
     pub routing: Option<Routing>,
-    /// Whether this came from a previous run.
-    pub reused: bool,
-    /// Which run it came from.
-    pub source_run_id: Option<String>,
+    /// Whether this run established the disposition, or read it back from another.
+    #[serde(flatten)]
+    pub reuse: Reuse,
 }
 
 /// What kind of thing a run found.
@@ -1347,12 +1597,11 @@ impl Report {
                 packages: Vec::new(),
                 workspace_digest: UNAVAILABLE.to_owned(),
                 configuration_digest: UNAVAILABLE.to_owned(),
-                git: Git::unavailable(),
+                git: Git::Unavailable,
             },
             provenance: Provenance {
                 identity: UNAVAILABLE.to_owned(),
-                cached: false,
-                source_run_id: None,
+                facts: Established::Here,
             },
             scope: Scope::default(),
             timing: Timing::default(),

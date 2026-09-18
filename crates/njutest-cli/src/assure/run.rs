@@ -186,24 +186,21 @@ fn wired(
     notes.phase("wire");
     watch.trace.stage("wire");
     let timeout = session.slowest_baseline().saturating_mul(2);
-    let measured = super::wire::asking(
-        seams,
-        || {
-            let asked =
-                rust_mutants::session::Request::new(String::new()).with_timeout(Some(timeout));
-            session
-                .control(&asked, watch.cancel)
-                .ok()
-                .map(|ran| {
-                    vec![crate::wire::settle::Answered {
-                        passed: ran.outcome == rust_mutants::outcome::Outcome::Survived,
-                        target: ran.target,
-                    }]
-                })
-                .unwrap_or_default()
-        },
-        watch,
-    );
+    let once = || {
+        let asked = rust_mutants::session::Request::new(String::new()).with_timeout(Some(timeout));
+        session
+            .control(&asked, watch.cancel)
+            .ok()
+            .map(|ran| {
+                vec![crate::wire::settle::Answered {
+                    passed: ran.outcome == rust_mutants::outcome::Outcome::Survived,
+                    target: ran.target,
+                }]
+            })
+            .unwrap_or_default()
+    };
+    let went_past = seams.observing(|| drop(once()));
+    let measured = super::wire::asking(seams, &went_past, once, watch);
     report.findings.extend(measured.findings);
     report.limitations.extend(measured.limitations);
     report.seams.extend(measured.seams);
@@ -305,7 +302,7 @@ pub fn opened(
         },
         watch,
     );
-    if !report.repository.git.available {
+    if report.repository.git.said().is_none() {
         report.limitations.push(Limitation::new(
             crate::limitation::GIT_METADATA_UNAVAILABLE,
             "git could not be asked, so the run cannot name the commit it verified",
@@ -753,7 +750,12 @@ impl Journal {
         let (disposition, by) = match &judged.disposition {
             mutation::Disposition::Killed { by } => ("killed", by.clone()),
             mutation::Disposition::TimedOut { on } => ("timed_out", on.clone()),
-            _ => return,
+            mutation::Disposition::Rejected { .. }
+            | mutation::Disposition::Survived { .. }
+            | mutation::Disposition::Unreached
+            | mutation::Disposition::Equivalent { .. }
+            | mutation::Disposition::Unconfirmed { .. }
+            | mutation::Disposition::Errored { .. } => return,
         };
         self.state.record_mutant(crate::checkpoint::SavedMutant {
             id: judged.id.clone(),
@@ -816,16 +818,16 @@ fn open_phase(report: &mut Report, opening: &Opening<'_>, watch: Watch<'_>) {
     let Some(change) = &request.changed else {
         return;
     };
-    report
-        .repository
-        .git
+    let crate::report::Git::Said(said) = &mut report.repository.git else {
+        return;
+    };
+    said.against = change
         .merge_base
-        .clone_from(&change.merge_base);
-    report
-        .repository
-        .git
-        .changed_files
-        .clone_from(&change.files);
+        .clone()
+        .map(|merge_base| crate::report::Against {
+            merge_base,
+            changed_files: change.files.clone(),
+        });
 }
 
 /// Counts every place a selected package steps outside what the compiler guarantees.
@@ -1287,8 +1289,10 @@ pub fn record(report: &mut Report, mutation: &mutation::Mutation, accepted: &BTr
             original: judged.original.clone(),
             replacement: judged.replacement.clone(),
             outcome: judged.disposition.decided(),
-            reused: judged.source_run_id.is_some(),
-            source_run_id: judged.source_run_id.clone(),
+            reuse: crate::report::Reuse(judged.source_run_id.clone().map_or(
+                crate::report::Established::Here,
+                crate::report::Established::ReadBackFrom,
+            )),
             blind_in: Vec::new(),
             routing: judged.routing.clone(),
         })

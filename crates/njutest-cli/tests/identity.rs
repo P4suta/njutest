@@ -197,7 +197,7 @@ fn a_run_that_could_not_ask_git_says_so_before_it_compiles_anything() {
     );
 
     assert!(
-        !report.repository.git.available,
+        report.repository.git.said().is_none(),
         "a directory that is not a repository is one git has nothing to say about"
     );
     assert!(
@@ -230,7 +230,7 @@ fn a_run_that_could_not_ask_git_says_so_before_it_compiles_anything() {
     );
 
     assert!(
-        committed.repository.git.available,
+        committed.repository.git.said().is_some(),
         "and a directory that is a repository is one git answers about, so the report \
          carries what it said rather than the sentinel it started with"
     );
