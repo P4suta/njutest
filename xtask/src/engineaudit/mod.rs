@@ -90,7 +90,6 @@ pub enum AuditError {
 
 /// What the re-decision was able to conclude about one thing it looked at.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-#[non_exhaustive]
 pub enum Standing {
     /// The report contradicts itself, or rests a verdict on evidence it does not hold.
     Violated,
@@ -111,7 +110,6 @@ impl Standing {
 
 /// The part of a run one re-decision was about.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-#[non_exhaustive]
 pub enum Layer {
     /// Each row's identity, re-minted from the row's own fields.
     Identity,

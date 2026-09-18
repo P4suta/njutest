@@ -430,13 +430,11 @@ fn closures_and_async_blocks_have_no_known_return_type_unless_spelled() {
 fn a_file_that_does_not_parse_is_an_error_naming_the_line() {
     let selection = Selection::tier(registry(), Tier::All);
     let error = discover_file("src/bad.rs", b"fn f( {", &selection).unwrap_err();
-    match &error {
-        SyntaxError::Parse { path, line, .. } => {
-            assert_eq!(path, "src/bad.rs");
-            assert_eq!(*line, 1);
-        }
-        other => panic!("{other:?}"),
-    }
+    let SyntaxError::Parse { path, line, .. } = &error else {
+        panic!("{error:?}");
+    };
+    assert_eq!(path, "src/bad.rs");
+    assert_eq!(*line, 1);
     let error = discover_file("src/bin.rs", &[0xff, 0xfe], &selection).unwrap_err();
     assert!(matches!(error, SyntaxError::NotUtf8 { .. }), "{error:?}");
 }

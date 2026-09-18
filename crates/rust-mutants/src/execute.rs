@@ -33,7 +33,6 @@ pub const SPILLED_PROFILE: &str = "spilled-coverage-%p-%m.profraw";
 
 /// The kinds of target that carry tests the engine runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[non_exhaustive]
 pub enum TargetKind {
     /// The library's own unit tests.
     Lib,

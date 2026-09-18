@@ -83,7 +83,7 @@ impl UnitKind {
             TargetKind::Example => Self::Example,
             TargetKind::ProcMacro => Self::ProcMacro,
             TargetKind::Doc => Self::Doc,
-            _ => Self::Bin,
+            TargetKind::Bin => Self::Bin,
         }
     }
 }

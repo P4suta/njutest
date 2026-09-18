@@ -55,6 +55,6 @@ pub const fn nothing_ran(route: &Route) -> bool {
     match route {
         Route::Block { reaching, .. } => reaching.is_empty(),
         Route::Discharged { .. } | Route::Unreached { .. } => true,
-        _ => false,
+        Route::All { .. } => false,
     }
 }

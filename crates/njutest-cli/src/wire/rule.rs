@@ -14,7 +14,6 @@ use serde::{Deserialize, Serialize};
 /// that caught it is gone, because the state it caught cannot be written.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
-#[non_exhaustive]
 pub enum Rule {
     /// Cut the answer short, as a connection that died mid-body does.
     TruncateResponse,
