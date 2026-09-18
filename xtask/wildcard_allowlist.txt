@@ -58,7 +58,6 @@ crates/rust-mutants/src/cargo/compile.rs:214
 crates/rust-mutants/src/reach.rs:249
 crates/rust-mutants/src/snapshot/mod.rs:745
 crates/rust-mutants/src/trace/reader.rs:136
-crates/rust-mutants/src/trace/summary.rs:128
 crates/rust-mutants/tests/cargo.rs:247
 crates/rust-mutants/tests/cargo.rs:254
 crates/rust-mutants/tests/catalog.rs:299

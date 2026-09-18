@@ -35,7 +35,7 @@ fn discharging(seq: u64, proofs: &[&str]) -> Event {
         Payload::Route {
             route: RouteRecord {
                 mutant: format!("m{seq}"),
-                granularity: "block".to_owned(),
+                granularity: rust_mutants::session::Granularity::Block,
                 discharged: proofs
                     .iter()
                     .map(|proof| DischargeRecord {
@@ -43,7 +43,12 @@ fn discharging(seq: u64, proofs: &[&str]) -> Event {
                         proof: (*proof).to_owned(),
                     })
                     .collect(),
-                ..RouteRecord::default()
+                fallback: None,
+                reaching: Vec::new(),
+                tests: Vec::new(),
+                considered: Vec::new(),
+                reused: None,
+                refused: None,
             },
         },
     )

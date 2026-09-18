@@ -541,8 +541,8 @@ impl Route {
         crate::trace::RouteRecord {
             mutant: mutant.display_id.clone(),
             index: mutant.index,
-            granularity: self.granularity().name().to_owned(),
-            fallback: self.fallback().map(|one| one.name().to_owned()),
+            granularity: self.granularity(),
+            fallback: self.fallback(),
             reaching: self.reaching().into_iter().map(str::to_owned).collect(),
             considered: self.considered().to_vec(),
             discharged: self

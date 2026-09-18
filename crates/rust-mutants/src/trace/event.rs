@@ -533,11 +533,11 @@ pub struct RouteRecord {
     pub mutant: String,
     /// Its dense catalog index.
     pub index: u32,
-    /// `all`, `block`, `discharged`, or `unreached`.
-    pub granularity: String,
+    /// How the route was decided.
+    pub granularity: crate::session::Granularity,
     /// What widened the route back to everything, when something did.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub fallback: Option<String>,
+    pub fallback: Option<crate::session::Fallback>,
     /// The targets that could notice the mutation.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub reaching: Vec<String>,

@@ -530,7 +530,7 @@ fn a_recording_that_lost_one_event_says_so_like_any_other() {
 fn a_route() -> RouteRecord {
     RouteRecord {
         mutant: "9e5cc4f98f8e".to_owned(),
-        granularity: "block".to_owned(),
+        granularity: rust_mutants::session::Granularity::Block,
         fallback: None,
         reaching: vec!["core/test/lib fast".to_owned()],
         discharged: vec![

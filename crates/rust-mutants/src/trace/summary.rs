@@ -67,6 +67,85 @@ pub struct Summary {
     pub bisections: u64,
 }
 
+/// Folds one event into the numbers, which is every kind of event a recording holds.
+///
+/// Every payload the summary does not count is named rather than swept up,
+/// because a kind nobody counted reads exactly like a kind that happened
+/// nought times. Naming them makes the next one somebody adds a question the
+/// compiler asks here.
+fn counted(
+    summary: &mut Summary,
+    open: &mut Vec<String>,
+    commands: &mut Vec<CommandTiming>,
+    event: &Event,
+) {
+    match &event.payload {
+        Payload::PhaseStart { phase } => open.push(phase.name.clone()),
+        Payload::PhaseEnd { phase } => {
+            let path = path_of(open, &phase.name);
+            if let Some(at) = open.iter().rposition(|name| *name == phase.name) {
+                let _closed = open.remove(at);
+            }
+            summary.phases.push(PhaseTiming {
+                path,
+                duration_ms: phase.duration_ms.unwrap_or_default(),
+            });
+        }
+        Payload::Exec { exec } => {
+            let command = said(&exec.argv);
+            let program = program_of(&exec.argv);
+            let spent = summary.programs.entry(program.clone()).or_default();
+            *spent = spent.saturating_add(exec.duration_ms);
+            let started = summary.invocations.entry(program).or_default();
+            *started = started.saturating_add(1);
+            commands.push(CommandTiming {
+                command,
+                duration_ms: exec.duration_ms,
+            });
+        }
+        Payload::MutantExec { mutant } => {
+            let count = summary
+                .executions
+                .entry(mutant.outcome.clone())
+                .or_default();
+            *count = count.saturating_add(1);
+        }
+        Payload::Route { route } => {
+            let count = summary
+                .routes
+                .entry(route.granularity.name().to_owned())
+                .or_default();
+            *count = count.saturating_add(1);
+        }
+        Payload::ValidateRound { .. } => summary.rounds = summary.rounds.saturating_add(1),
+        Payload::Bisect { bisect } => {
+            summary.bisections = summary
+                .bisections
+                .saturating_add(u64::from(bisect.attempts));
+        }
+        Payload::RunEnd { run } => {
+            summary.outcome.clone_from(&run.outcome);
+            summary.dropped = run.events_dropped;
+        }
+        Payload::RunStart { .. }
+        | Payload::Open { .. }
+        | Payload::Snapshot { .. }
+        | Payload::DiscoverFile { .. }
+        | Payload::Instrument { .. }
+        | Payload::Build { .. }
+        | Payload::Verify { .. }
+        | Payload::Touch { .. }
+        | Payload::Witness { .. }
+        | Payload::SkipClaim { .. }
+        | Payload::Kept { .. }
+        | Payload::Cache { .. }
+        | Payload::Select { .. }
+        | Payload::Identical { .. }
+        | Payload::Evidence { .. }
+        | Payload::Note { .. } => {}
+    }
+}
+
 /// Reads a recording as numbers, keeping the `slowest` longest commands.
 #[must_use]
 pub fn summarize(events: &[Event], slowest: usize) -> Summary {
@@ -80,53 +159,7 @@ pub fn summarize(events: &[Event], slowest: usize) -> Summary {
         let name = event.payload.type_name();
         let count = summary.counts.entry(name.to_owned()).or_default();
         *count = count.saturating_add(1);
-        match &event.payload {
-            Payload::PhaseStart { phase } => open.push(phase.name.clone()),
-            Payload::PhaseEnd { phase } => {
-                let path = path_of(&open, &phase.name);
-                if let Some(at) = open.iter().rposition(|name| *name == phase.name) {
-                    let _closed = open.remove(at);
-                }
-                summary.phases.push(PhaseTiming {
-                    path,
-                    duration_ms: phase.duration_ms.unwrap_or_default(),
-                });
-            }
-            Payload::Exec { exec } => {
-                let command = said(&exec.argv);
-                let program = program_of(&exec.argv);
-                let spent = summary.programs.entry(program.clone()).or_default();
-                *spent = spent.saturating_add(exec.duration_ms);
-                let started = summary.invocations.entry(program).or_default();
-                *started = started.saturating_add(1);
-                commands.push(CommandTiming {
-                    command,
-                    duration_ms: exec.duration_ms,
-                });
-            }
-            Payload::MutantExec { mutant } => {
-                let count = summary
-                    .executions
-                    .entry(mutant.outcome.clone())
-                    .or_default();
-                *count = count.saturating_add(1);
-            }
-            Payload::Route { route } => {
-                let count = summary.routes.entry(route.granularity.clone()).or_default();
-                *count = count.saturating_add(1);
-            }
-            Payload::ValidateRound { .. } => summary.rounds = summary.rounds.saturating_add(1),
-            Payload::Bisect { bisect } => {
-                summary.bisections = summary
-                    .bisections
-                    .saturating_add(u64::from(bisect.attempts));
-            }
-            Payload::RunEnd { run } => {
-                summary.outcome.clone_from(&run.outcome);
-                summary.dropped = run.events_dropped;
-            }
-            _ => {}
-        }
+        counted(&mut summary, &mut open, &mut commands, event);
     }
     summary.phases.sort_by(|a, b| a.path.cmp(&b.path));
     commands.sort_by(|a, b| {

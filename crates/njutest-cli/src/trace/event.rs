@@ -271,14 +271,18 @@ pub struct DischargeRecord {
 }
 
 /// How one mutant's tests were chosen, and what narrowed the choice.
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+///
+/// No `Default`, because there is no granularity a route is decided at when
+/// nobody decided it. A record standing for a routing that did not happen
+/// would read as one that did.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RouteRecord {
     /// The mutant a person types.
     pub mutant: String,
-    /// `all`, `block`, `test`, `discharged`, or `unreached`.
-    pub granularity: String,
+    /// How the route was decided.
+    pub granularity: rust_mutants::session::Granularity,
     /// What the measurement could not support, on a route it did not decide on its own. Every one of these widened the route.
-    pub fallback: Option<String>,
+    pub fallback: Option<rust_mutants::session::Fallback>,
     /// The targets to run, cheapest first.
     pub reaching: Vec<String>,
     /// Which tests of a target the mutation is put to, for each target a measurement narrowed. A target that is not named here runs every test it has.

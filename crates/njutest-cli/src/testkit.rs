@@ -142,12 +142,31 @@ pub fn every_refusal() -> Vec<crate::evidence::store::Refusal> {
     refusals
 }
 
+/// A routing that decided nothing, for a sample of every payload to carry.
+///
+/// Written out rather than defaulted, because there is no granularity a route
+/// is decided at when nobody decided it, and `RouteRecord` has no `Default`
+/// for that reason.
+const fn nothing_routed() -> crate::trace::RouteRecord {
+    crate::trace::RouteRecord {
+        mutant: String::new(),
+        granularity: rust_mutants::session::Granularity::All,
+        fallback: None,
+        reaching: Vec::new(),
+        tests: Vec::new(),
+        discharged: Vec::new(),
+        considered: Vec::new(),
+        reused: None,
+        refused: None,
+    }
+}
+
 /// One event of every shape a recording can hold.
 #[must_use]
 pub fn every_payload() -> Vec<crate::trace::Payload> {
     use crate::trace::{
         ArtifactRecord, ExecRecord, MutantExecRecord, NoteRecord, Payload, PhaseRecord,
-        ProbeExecRecord, ProgressRecord, RouteRecord, RunRecord, StartRecord, WireExchangeRecord,
+        ProbeExecRecord, ProgressRecord, RunRecord, StartRecord, WireExchangeRecord,
         WireExecRecord,
     };
     let phase = PhaseRecord {
@@ -185,7 +204,7 @@ pub fn every_payload() -> Vec<crate::trace::Payload> {
             },
         },
         Payload::Route {
-            route: RouteRecord::default(),
+            route: nothing_routed(),
         },
         Payload::MutantExec {
             mutant: MutantExecRecord::default(),
