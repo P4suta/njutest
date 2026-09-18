@@ -164,12 +164,14 @@ impl Interposer {
     /// asked them anything at all.
     #[must_use]
     pub fn was_put(&self) -> bool {
+        self.settled();
         self.applied.load(Ordering::Relaxed)
     }
 
     /// Hands back everything that has gone past so far and forgets it, without stopping.
     #[must_use]
     pub fn taken(&self) -> Vec<Exchange> {
+        self.settled();
         self.recorded
             .lock()
             .map(|mut held| std::mem::take(&mut *held))
@@ -183,13 +185,18 @@ impl Interposer {
     /// is not something anybody would mistake for a hang.
     const SETTLING: std::time::Duration = std::time::Duration::from_millis(500);
 
-    /// Waits for the exchange being carried, if there is one, so it lands on the side of the boundary it happened on.
+    /// Waits for the exchange being carried, if there is one, before answering anything about what has gone past.
     ///
     /// A caller's request returns when the answer has been written to it, and
-    /// the exchange is written down after that. So a run that cleared the
-    /// recording the instant its last caller was answered could have the
-    /// exchange before the boundary land after it — the contamination this
-    /// whole mechanism is against, arriving through the one door left open.
+    /// everything the run reads afterwards — the exchange itself, and whether
+    /// the fault was put — is written down after that. So a question asked
+    /// the instant the last caller was answered can be answered from a state
+    /// the run has already left behind: a recording cleared before the
+    /// exchange before it landed, or a fault reported as never put when it
+    /// was put half a microsecond ago. Every observer here waits first, and
+    /// that is the whole rule — a question about what an interposer has seen
+    /// is only answerable once it has finished seeing it.
+    ///
     /// Serving one connection at a time is what makes this a single flag
     /// rather than a count.
     fn settled(&self) {
