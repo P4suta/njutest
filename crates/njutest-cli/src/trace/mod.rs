@@ -16,7 +16,7 @@ use sha2::{Digest as _, Sha256};
 
 pub use event::{
     ArtifactRecord, AskedRecord, DischargeRecord, Event, ExecRecord, MutantExecRecord, NoteRecord,
-    Payload, PhaseRecord, ProbeExecRecord, ProgressRecord, RouteRecord, RunRecord, SCHEMA,
+    Payload, PhaseRecord, ProbeExecRecord, ProgressRecord, Read, RouteRecord, RunRecord, SCHEMA,
     StartRecord, WireExchangeRecord, WireExecRecord,
 };
 pub use reader::{Problem, ReadError, check, read_events};

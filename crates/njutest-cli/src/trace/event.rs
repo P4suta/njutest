@@ -331,6 +331,92 @@ pub struct ProbeExecRecord {
     pub infected: Option<u64>,
 }
 
+/// How much of one exchange the wire said to read, and what that reading found.
+///
+/// Was a string whose legal values a doc comment listed, beside three fields
+/// each free to be absent when it said `http` and present when it said `raw`.
+/// Sixteen shapes for two facts, and an audit re-mints a fault identity from
+/// exactly these, so a recording that spelled one of the other fourteen would
+/// have the audit and the run name the same exchange differently and neither
+/// able to say which was wrong.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum Read {
+    /// Nothing but the byte counts, because the seam was watched as bytes.
+    #[default]
+    Raw,
+    /// One HTTP round trip.
+    Http {
+        /// What was asked for.
+        method: String,
+        /// Where it was asked of.
+        path: String,
+        /// What the upstream answered.
+        status: u16,
+    },
+}
+
+/// The four fields the recording has always carried, which is the shape rather than what it means.
+#[derive(Serialize, Deserialize)]
+struct PairedRead {
+    wire: String,
+    method: Option<String>,
+    path: Option<String>,
+    status: Option<u16>,
+}
+
+/// What the recording calls a seam nothing parsed.
+const RAW: &str = "raw";
+
+/// What it calls one read as HTTP.
+const HTTP: &str = "http";
+
+impl Serialize for Read {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let paired = match self {
+            Self::Raw => PairedRead {
+                wire: RAW.to_owned(),
+                method: None,
+                path: None,
+                status: None,
+            },
+            Self::Http {
+                method,
+                path,
+                status,
+            } => PairedRead {
+                wire: HTTP.to_owned(),
+                method: Some(method.clone()),
+                path: Some(path.clone()),
+                status: Some(*status),
+            },
+        };
+        paired.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for Read {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let held = PairedRead::deserialize(deserializer)?;
+        match (held.wire.as_str(), held.method, held.path, held.status) {
+            (RAW, None, None, None) => Ok(Self::Raw),
+            (HTTP, Some(method), Some(path), Some(status)) => Ok(Self::Http {
+                method,
+                path,
+                status,
+            }),
+            (RAW | HTTP, _, _, _) => Err(serde::de::Error::custom(
+                "an exchange says how much of it was read and carries some other amount of \
+                 it; an audit re-mints the fault identities from these fields, so a reader \
+                 cannot tell whether the protocol or what was read from it is the wrong half",
+            )),
+            (said, _, _, _) => Err(serde::de::Error::custom(format!(
+                "an exchange says it was read as {said:?}, which is not something this run \
+                 knows how to read"
+            ))),
+        }
+    }
+}
+
 /// One exchange that went past a seam, as much of it as the wire says to read.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct WireExchangeRecord {
@@ -342,14 +428,9 @@ pub struct WireExchangeRecord {
     pub during: Option<String>,
     /// How long the round trip took.
     pub duration_ms: u64,
-    /// How much of it was read: `raw` or `http`.
-    pub wire: String,
-    /// What was asked for, where the wire says how to read one.
-    pub method: Option<String>,
-    /// Where it was asked of, where the wire says how to read one.
-    pub path: Option<String>,
-    /// What the upstream answered, where the wire says how to read one.
-    pub status: Option<u16>,
+    /// How much of it was read, and what that reading found.
+    #[serde(flatten)]
+    pub read: Read,
     /// How many bytes went up.
     pub request_bytes: u64,
     /// How many came back.

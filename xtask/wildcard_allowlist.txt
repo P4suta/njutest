@@ -40,7 +40,7 @@ crates/njutest-cli/tests/toolchain_watch.rs:416
 crates/njutest-cli/tests/toolchain_watch.rs:492
 crates/njutest-cli/tests/toolchain_watch.rs:505
 crates/njutest-cli/tests/toolchain_watch.rs:516
-crates/njutest-cli/tests/trace.rs:170
+crates/njutest-cli/tests/trace.rs:210
 crates/njutest-devkit/tests/golden.rs:104
 crates/njutest-devkit/tests/golden.rs:55
 crates/rust-mutants-cli/src/app/mod.rs:104

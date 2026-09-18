@@ -204,7 +204,7 @@ where
 
 /// One exchange as the recording writes it down, which is what an audit re-derives the catalogue from.
 fn recorded(exchange: &Exchange) -> crate::trace::WireExchangeRecord {
-    let read = match &exchange.spoken {
+    let (read, request_bytes, response_bytes) = match &exchange.spoken {
         crate::wire::Spoken::Http {
             method,
             path,
@@ -213,31 +213,28 @@ fn recorded(exchange: &Exchange) -> crate::trace::WireExchangeRecord {
             response_bytes,
             body_bytes: _,
             status_line: _,
-        } => crate::trace::WireExchangeRecord {
-            wire: "http".to_owned(),
-            method: Some(method.clone()),
-            path: Some(path.clone()),
-            status: Some(*status),
-            request_bytes: *request_bytes,
-            response_bytes: *response_bytes,
-            ..crate::trace::WireExchangeRecord::default()
-        },
+        } => (
+            crate::trace::Read::Http {
+                method: method.clone(),
+                path: path.clone(),
+                status: *status,
+            },
+            *request_bytes,
+            *response_bytes,
+        ),
         crate::wire::Spoken::Raw {
             request_bytes,
             response_bytes,
-        } => crate::trace::WireExchangeRecord {
-            wire: "raw".to_owned(),
-            request_bytes: *request_bytes,
-            response_bytes: *response_bytes,
-            ..crate::trace::WireExchangeRecord::default()
-        },
+        } => (crate::trace::Read::Raw, *request_bytes, *response_bytes),
     };
     crate::trace::WireExchangeRecord {
         capability: exchange.capability.clone(),
         seq: exchange.seq,
         during: exchange.during.clone(),
         duration_ms: exchange.duration_ms,
-        ..read
+        read,
+        request_bytes,
+        response_bytes,
     }
 }
 
