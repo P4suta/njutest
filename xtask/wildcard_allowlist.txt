@@ -54,9 +54,8 @@ crates/rust-mutants-cli/src/app/trace.rs:320
 crates/rust-mutants-cli/src/report/mod.rs:412
 crates/rust-mutants-cli/src/stream.rs:107
 crates/rust-mutants-cli/src/stream.rs:76
-crates/rust-mutants-cli/src/ui.rs:240
-crates/rust-mutants-cli/src/ui.rs:65
-crates/rust-mutants-cli/src/ui.rs:94
+crates/rust-mutants-cli/src/ui.rs:234
+crates/rust-mutants-cli/src/ui.rs:92
 crates/rust-mutants/src/cargo/compile.rs:214
 crates/rust-mutants/src/reach.rs:249
 crates/rust-mutants/src/run.rs:1148
