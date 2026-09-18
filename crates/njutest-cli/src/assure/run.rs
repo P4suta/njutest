@@ -186,24 +186,21 @@ fn wired(
     notes.phase("wire");
     watch.trace.stage("wire");
     let timeout = session.slowest_baseline().saturating_mul(2);
-    let measured = super::wire::asking(
-        seams,
-        || {
-            let asked =
-                rust_mutants::session::Request::new(String::new()).with_timeout(Some(timeout));
-            session
-                .control(&asked, watch.cancel)
-                .ok()
-                .map(|ran| {
-                    vec![crate::wire::settle::Answered {
-                        passed: ran.outcome == rust_mutants::outcome::Outcome::Survived,
-                        target: ran.target,
-                    }]
-                })
-                .unwrap_or_default()
-        },
-        watch,
-    );
+    let once = || {
+        let asked = rust_mutants::session::Request::new(String::new()).with_timeout(Some(timeout));
+        session
+            .control(&asked, watch.cancel)
+            .ok()
+            .map(|ran| {
+                vec![crate::wire::settle::Answered {
+                    passed: ran.outcome == rust_mutants::outcome::Outcome::Survived,
+                    target: ran.target,
+                }]
+            })
+            .unwrap_or_default()
+    };
+    let went_past = seams.observing(|| drop(once()));
+    let measured = super::wire::asking(seams, &went_past, once, watch);
     report.findings.extend(measured.findings);
     report.limitations.extend(measured.limitations);
     report.seams.extend(measured.seams);
@@ -753,7 +750,12 @@ impl Journal {
         let (disposition, by) = match &judged.disposition {
             mutation::Disposition::Killed { by } => ("killed", by.clone()),
             mutation::Disposition::TimedOut { on } => ("timed_out", on.clone()),
-            _ => return,
+            mutation::Disposition::Rejected { .. }
+            | mutation::Disposition::Survived { .. }
+            | mutation::Disposition::Unreached
+            | mutation::Disposition::Equivalent { .. }
+            | mutation::Disposition::Unconfirmed { .. }
+            | mutation::Disposition::Errored { .. } => return,
         };
         self.state.record_mutant(crate::checkpoint::SavedMutant {
             id: judged.id.clone(),

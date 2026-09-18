@@ -268,19 +268,89 @@ fn fate(line: &str) -> Option<Fate> {
     })
 }
 
+/// The fence that opens the block of a fixture's README stating what its seams established.
+pub const SEAMS_FENCE: &str = "```seams";
+
+/// One question a fixture's seam licensed, and what a run of it establishes.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Seam {
+    /// The capability the seam serves.
+    pub capability: String,
+    /// Which exchange on that seam the question is about.
+    pub seq: u64,
+    /// The rule that asked it.
+    pub rule: String,
+    /// What the run established: `tests`, `proved`, `unnoticed`, or `unreached`.
+    pub decision: String,
+    /// Who decided it, where anybody did: the target that noticed, or the proof that discharged it.
+    pub by: Option<String>,
+}
+
+impl std::fmt::Display for Seam {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}:{} {} {}",
+            self.capability, self.seq, self.rule, self.decision
+        )?;
+        self.by.as_ref().map_or(Ok(()), |who| write!(f, " {who}"))
+    }
+}
+
+/// Every seam fate the `seams` block of `readme` states, in the order it states them.
+#[must_use]
+pub fn seams(readme: &str) -> Vec<Seam> {
+    let Some(after) = readme.split_once(SEAMS_FENCE).map(|(_, rest)| rest) else {
+        return Vec::new();
+    };
+    let (_fence, rest) = after.split_once('\n').unwrap_or((after, ""));
+    let block = rest.split_once("```").map_or(rest, |(block, _)| block);
+    block.lines().filter_map(seam).collect()
+}
+
+/// One line of a seams block: `capability:seq rule decision [by]`.
+fn seam(line: &str) -> Option<Seam> {
+    let mut parts = line.split_whitespace();
+    let (place, rule, decision) = (parts.next()?, parts.next()?, parts.next()?);
+    let by = parts.next().map(str::to_owned);
+    if parts.next().is_some() {
+        return None;
+    }
+    let (capability, seq) = place.rsplit_once(':')?;
+    Some(Seam {
+        capability: capability.to_owned(),
+        seq: seq.parse().ok()?,
+        rule: rule.to_owned(),
+        decision: decision.to_owned(),
+        by,
+    })
+}
+
+/// Every seam fate the committed README of the fixture named states.
+///
+/// # Panics
+/// When the fixture has no README, which `cargo xtask fixtures` refuses.
+#[must_use]
+pub fn stated_seams(name: &str) -> Vec<Seam> {
+    seams(&readme_of(name))
+}
+
 /// Every fate the committed README of the fixture named states.
 ///
 /// # Panics
 /// When the fixture has no README, which `cargo xtask fixtures` refuses.
 #[must_use]
 pub fn stated_fates(name: &str) -> Fates {
+    fates(&readme_of(name))
+}
+
+/// The committed README of the fixture named.
+fn readme_of(name: &str) -> String {
     let path = crate::paths::workspace_root()
         .join("fixtures")
         .join(name)
         .join("README.md");
-    let readme = std::fs::read_to_string(&path)
-        .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
-    fates(&readme)
+    std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display()))
 }
 
 /// The directory of the newest stored run under `reports`, followed from the pointer a run writes.

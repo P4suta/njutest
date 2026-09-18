@@ -309,10 +309,26 @@ pub struct Resource {
     /// How much of what goes past that seam is read.
     #[serde(default)]
     pub wire: crate::wire::Wire,
+    /// How long `delay-response` holds an answer up for, which is the question being asked of this dependency.
+    ///
+    /// How slow is too slow is a property of the system under test and not of
+    /// this tool: a service with a one-second budget and a nightly batch job
+    /// are asking different questions of the same seam, and a run that picked
+    /// for them would be reporting an answer to a question nobody put.
+    #[serde(
+        default = "default_resource_hold",
+        deserialize_with = "duration",
+        serialize_with = "as_millis"
+    )]
+    pub hold: Duration,
 }
 
 const fn default_resource_timeout() -> Duration {
     Duration::from_secs(30)
+}
+
+const fn default_resource_hold() -> Duration {
+    crate::wire::interpose::HELD_UP
 }
 
 /// The provider that writes candidate tests.
@@ -758,6 +774,7 @@ contract = \"standard-v1\"        # \"standard-v1\" | \"deep-v1\"
 # environment = [\"POSTGRES_IMAGE\"]
 # interpose = \"\"                 # the variable of the answer naming where the tests dial
 # wire = \"raw\"                   # how much of what goes past that seam is read: raw | http
+# hold = \"30s\"                   # how long delay-response holds an answer up: how slow is too slow, here
 
 # [generation]
 # command = [\"./tools/test-generator\"]

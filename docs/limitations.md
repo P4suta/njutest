@@ -168,7 +168,23 @@ below is stated fail-closed.
   moment that has passed — is `stale-response`.
 - A clock the program reads is not a seam an interposer sits in front of, so
   skew and TTL boundaries are not asked here. What the seam can ask is how
-  long the caller waits, which is `delay-response`.
+  long the caller waits, which is `delay-response`, and for how long is the
+  `hold` of the resource rather than a number this tool picked. How slow is
+  too slow is a property of the system under test: a service with a
+  one-second budget and a nightly batch job put different questions to the
+  same seam, and a run that chose for them would report an answer to a
+  question nobody asked.
+- The catalogue is derived from one run of the suite that the seam phase makes
+  for the purpose, which costs one run more than reading what the phases
+  before it happened to do. It is not free and it is not optional. A fault
+  names an exchange by its place in the order and is put by running the suite
+  once, so a catalogue has to come from one run of the suite to hold questions
+  one run can reach. A phase that builds and verifies runs the suite more than
+  once and the repeats are the same exchanges counted again; the mutation
+  phase runs it once per mutation. Questions derived from either are
+  unreachable by construction and would be stated as questions nobody put —
+  holes a run invented by measuring. The seams record only during that one
+  run and nothing is recorded after it.
 - An answer of a different shape — a field gone, a value of another type, an
   enum from a later release — is not proposed, because the recording keeps no
   bodies to derive one from. Inventing a shape would be guessing at a program

@@ -292,6 +292,7 @@ fn resource(exclusive: bool) -> njutest_cli::config::Resource {
         environment: Vec::new(),
         interpose: String::new(),
         wire: njutest_cli::wire::Wire::Raw,
+        hold: std::time::Duration::from_secs(30),
     }
 }
 

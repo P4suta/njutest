@@ -74,6 +74,7 @@ shared = true                   # or exclusive = true (forces jobs = 1)
 environment = ["POSTGRES_IMAGE"]
 interpose = ""                  # the variable of the provider's answer naming where the tests dial
 wire = "raw"                    # how much of what goes past that seam is read: raw | http
+hold = "30s"                    # how long delay-response holds an answer up
 
 [generation]
 command = ["./tools/test-generator"]

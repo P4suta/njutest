@@ -166,24 +166,17 @@ fn unnoticed(fault: &Fault, observed: &[Exchange]) -> Finding {
 /// two facts under one sentence, and the one a reader would act on is the
 /// wrong one.
 #[must_use]
-pub fn asking<R>(seams: &Seams, mut run: R, watch: Watch<'_>) -> Measured
+pub fn asking<R>(seams: &Seams, baseline: &Baseline, mut run: R, watch: Watch<'_>) -> Measured
 where
     R: FnMut() -> Vec<Answered>,
 {
-    let baseline: Vec<Vec<Exchange>> = seams
-        .watching
-        .iter()
-        .map(|one| one.interposer.taken())
-        .collect();
     let mut done = Measured::default();
-    for (at, observed) in seams.watching.iter().zip(baseline) {
-        for exchange in &observed {
+    for (at, observed) in seams.watching.iter().zip(&baseline.per_seam) {
+        for exchange in observed {
             watch.trace.wire_exchange(recorded(exchange));
         }
         let measured = measure(
-            &Measuring {
-                observed: &observed,
-            },
+            &Measuring { observed },
             |fault| {
                 for one in &seams.watching {
                     one.interposer.putting(None);
@@ -270,6 +263,29 @@ pub fn licensing(observed: &[Exchange]) -> Option<Limitation> {
     ))
 }
 
+/// What went past every watched seam while the program was the one the tests are about.
+///
+/// `Seams::sealed` is the only thing that makes one, and it stops the seams
+/// recording as it takes it. So there is no later moment at which a recording
+/// with a perturbed program's traffic in it can be obtained: not after the
+/// mutation phase, which runs the suite once per mutation, and not during the
+/// seam phase, which runs it once per question with a fault in place. A
+/// catalogue is a set of questions about a program, and every one of those
+/// runs is a different program from the one a reader is being told about.
+#[derive(Debug, Default)]
+pub struct Baseline {
+    /// One recording per seam, in the order the seams were started.
+    per_seam: Vec<Vec<Exchange>>,
+}
+
+impl Baseline {
+    /// Every exchange every seam saw, in the order the seams were started.
+    #[must_use]
+    pub fn all(&self) -> Vec<Exchange> {
+        self.per_seam.concat()
+    }
+}
+
 /// Every seam a run is watching, and what the tests are told instead.
 #[derive(Debug, Default)]
 pub struct Seams {
@@ -280,6 +296,40 @@ pub struct Seams {
 }
 
 impl Seams {
+    /// Records one run of the suite and stops recording: the catalogue is what that run did.
+    ///
+    /// The run is made here rather than taken from whatever else happened to
+    /// go past. A fault names an exchange by its place in the order and is put
+    /// by running the suite once, so a catalogue has to come from one run of
+    /// the suite to hold questions that one run can reach.
+    ///
+    /// What is being ruled out is a catalogue assembled from several
+    /// programs. A phase that builds and verifies before it measures runs the
+    /// suite more than once, and the second run's exchanges are the same
+    /// exchanges counted again — a fault naming one of them is unreachable by
+    /// construction, and the report states it as a question nobody put. The
+    /// mutation phase is worse: it runs the suite once per mutation, so the
+    /// catalogue grows a copy of every exchange per mutation, every one of
+    /// them a hole the run invented by measuring. Recording stops when this
+    /// returns, so neither can happen however late anything else reads.
+    #[must_use]
+    pub fn observing<R>(&self, mut run: R) -> Baseline
+    where
+        R: FnMut(),
+    {
+        for one in &self.watching {
+            one.interposer.restart();
+        }
+        run();
+        Baseline {
+            per_seam: self
+                .watching
+                .iter()
+                .map(|one| one.interposer.seal())
+                .collect(),
+        }
+    }
+
     /// Stops every interposer and hands back everything that went past, seam by seam.
     #[must_use]
     pub fn recorded(self) -> Vec<Exchange> {
@@ -313,7 +363,7 @@ pub fn watched(
         match crate::wire::dialled::interposed(
             lease,
             &resource.interpose,
-            (resource.wire, crate::wire::interpose::HELD_UP),
+            (resource.wire, resource.hold),
         ) {
             Some(one) => {
                 seams.environment.extend(one.environment.iter().cloned());
