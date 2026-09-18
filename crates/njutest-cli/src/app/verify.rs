@@ -671,8 +671,7 @@ fn reuse(
     };
     let mut report = stored.clone();
     run_id.clone_into(&mut report.run_id);
-    report.provenance.cached = true;
-    report.provenance.source_run_id = Some(stored.run_id);
+    report.provenance.facts = crate::report::Established::ReadBackFrom(stored.run_id);
     report.timing.started = started.to_string();
     report.timing.finished = Timestamp::now().to_string();
     report.timing.duration_ms = 0;

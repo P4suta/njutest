@@ -83,11 +83,27 @@ fn walk(value: &serde_json::Value, volatile: &BTreeSet<&str>) -> serde_json::Val
 }
 
 /// The placeholder for one value, keeping `null` as `null`: "the run had no merge base" is a claim, not a moment.
+/// The word a report uses where a fact was not available, restated here.
+///
+/// `njutest-cli` states it as `report::UNAVAILABLE`, and the dependency
+/// direction `cargo xtask deps` holds keeps this crate below it rather than
+/// above, so the rule is stated again for the suites, the way `canonical` in
+/// `fixture` restates the path rule.
+const UNAVAILABLE: &str = "unavailable";
+
+/// A volatile field replaced, except where it is carrying the one thing that is not volatile.
+///
+/// A field is normalized because it differs between two runs of the same
+/// work. The word for a fact nobody could ask for does not differ, and it is
+/// half of a pair: a document saying git could not be asked and naming a
+/// commit is one where a reader cannot tell which half to believe, and
+/// `report::Git` refuses to be read from one. Blanking the sentinel made
+/// exactly that document.
 fn placeholder(value: &serde_json::Value) -> serde_json::Value {
-    if value.is_null() {
-        serde_json::Value::Null
-    } else {
-        serde_json::json!(PLACEHOLDER)
+    match value.as_str() {
+        None if value.is_null() => serde_json::Value::Null,
+        Some(UNAVAILABLE) => value.clone(),
+        None | Some(_) => serde_json::json!(PLACEHOLDER),
     }
 }
 

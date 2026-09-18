@@ -32,7 +32,7 @@ pub struct Asked<'a> {
 pub fn describe(asked: &Asked<'_>) -> Git {
     let names = asked.excluded.names();
     let Some(facts) = rust_mutants::git::facts(&asking(asked, &names)) else {
-        return Git::unavailable();
+        return Git::Unavailable;
     };
     let Facts {
         commit,
@@ -40,16 +40,14 @@ pub fn describe(asked: &Asked<'_>) -> Git {
         dirty,
     } = facts;
     if commit == UNAVAILABLE || branch == UNAVAILABLE {
-        return Git::unavailable();
+        return Git::Unavailable;
     }
-    Git {
-        available: true,
+    Git::Said(crate::report::Said {
         commit,
         branch,
         dirty,
-        merge_base: None,
-        changed_files: Vec::new(),
-    }
+        against: None,
+    })
 }
 
 /// Every file that differs from `base`, committed and not.

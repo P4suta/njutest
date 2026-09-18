@@ -189,7 +189,7 @@ impl Store {
                 message: "a report with no identity answers for no inputs".to_owned(),
             });
         }
-        if report.provenance.cached {
+        if report.provenance.facts.read_back().is_some() {
             return Err(CacheError::Refused {
                 message: "a report that was read back is already stored where it came from"
                     .to_owned(),

@@ -38,8 +38,7 @@ fn verified(root: &std::path::Path) -> String {
         original: ">".to_owned(),
         replacement: String::new(),
         outcome: njutest_cli::report::Decided::Survived,
-        reused: false,
-        source_run_id: None,
+        reuse: njutest_cli::report::Reuse(njutest_cli::report::Established::Here),
         blind_in: Vec::new(),
         routing: None,
     });

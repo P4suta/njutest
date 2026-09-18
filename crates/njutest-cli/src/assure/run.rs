@@ -302,7 +302,7 @@ pub fn opened(
         },
         watch,
     );
-    if !report.repository.git.available {
+    if report.repository.git.said().is_none() {
         report.limitations.push(Limitation::new(
             crate::limitation::GIT_METADATA_UNAVAILABLE,
             "git could not be asked, so the run cannot name the commit it verified",
@@ -818,16 +818,16 @@ fn open_phase(report: &mut Report, opening: &Opening<'_>, watch: Watch<'_>) {
     let Some(change) = &request.changed else {
         return;
     };
-    report
-        .repository
-        .git
+    let crate::report::Git::Said(said) = &mut report.repository.git else {
+        return;
+    };
+    said.against = change
         .merge_base
-        .clone_from(&change.merge_base);
-    report
-        .repository
-        .git
-        .changed_files
-        .clone_from(&change.files);
+        .clone()
+        .map(|merge_base| crate::report::Against {
+            merge_base,
+            changed_files: change.files.clone(),
+        });
 }
 
 /// Counts every place a selected package steps outside what the compiler guarantees.
@@ -1289,8 +1289,10 @@ pub fn record(report: &mut Report, mutation: &mutation::Mutation, accepted: &BTr
             original: judged.original.clone(),
             replacement: judged.replacement.clone(),
             outcome: judged.disposition.decided(),
-            reused: judged.source_run_id.is_some(),
-            source_run_id: judged.source_run_id.clone(),
+            reuse: crate::report::Reuse(judged.source_run_id.clone().map_or(
+                crate::report::Established::Here,
+                crate::report::Established::ReadBackFrom,
+            )),
             blind_in: Vec::new(),
             routing: judged.routing.clone(),
         })

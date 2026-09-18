@@ -21,9 +21,12 @@ fn report(targets: u32) -> Report {
     "workspace".clone_into(&mut report.repository.root_name);
     report.repository.workspace_digest = "a".repeat(64);
     report.repository.configuration_digest = "b".repeat(64);
-    report.repository.git.available = true;
-    report.repository.git.commit = "0".repeat(40);
-    "main".clone_into(&mut report.repository.git.branch);
+    report.repository.git = njutest_cli::report::Git::Said(njutest_cli::report::Said {
+        commit: "0".repeat(40),
+        branch: "main".to_owned(),
+        dirty: false,
+        against: None,
+    });
     "rustc 1.98.0".clone_into(&mut report.toolchain.rustc);
     report.accounting.targets = TargetAccounting {
         selected: targets,

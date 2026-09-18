@@ -56,11 +56,6 @@ pub enum Violation {
         /// Which field.
         field: String,
     },
-    /// Something recorded as unavailable also carries facts.
-    UnavailableWithFacts {
-        /// Which field.
-        field: String,
-    },
     /// A report says it was read back but does not say from where, or says it was not and does.
     ProvenanceIncoherent {
         /// Why the two do not agree.
@@ -140,11 +135,6 @@ impl fmt::Display for Violation {
                 f,
                 "{field} is empty; a fact that could not be established is the {UNAVAILABLE:?} \
                  sentinel, because an empty value reads as nothing to say"
-            ),
-            Self::UnavailableWithFacts { field } => write!(
-                f,
-                "{field} is recorded as unavailable and carries facts anyway; one of the two \
-                 is wrong, and a reader cannot tell which"
             ),
             Self::ProvenanceIncoherent { because } => write!(
                 f,
@@ -250,24 +240,28 @@ fn check_acceptances(report: &Report, violations: &mut Vec<Violation>) {
     }
 }
 
-/// A report that was read back names the run that established it; one that was not names nobody.
+/// The two things about where a report's facts came from that a type does not settle.
+///
+/// What this used to say and no longer needs to — read back from nobody, and
+/// established here and also somewhere else — is unwritable now that
+/// `report::Established` carries the pair rather than two fields that can
+/// disagree.
+///
+/// What is left is two constraints on the content of a name rather than on
+/// which fields go together, which is where making illegal states
+/// unrepresentable stops reaching. Naming itself needs the run's own
+/// identity, and the value holds only the source's. Naming nothing is refused
+/// where a document is read as well; the only thing that mints a run id is
+/// this tool, and a constructor that made every caller invent a behaviour for
+/// an id it cannot produce would be worse code than this line.
 fn check_provenance(report: &Report, violations: &mut Vec<Violation>) {
-    let source = report.provenance.source_run_id.as_deref();
-    match (report.provenance.cached, source) {
-        (true, None) => violations.push(Violation::ProvenanceIncoherent {
-            because: "a report read back from an earlier run names that run".to_owned(),
-        }),
-        (true, Some(run)) if run == report.run_id => {
-            violations.push(Violation::ProvenanceIncoherent {
-                because: "a run cannot have read its own answer back".to_owned(),
-            });
-        }
-        (false, Some(run)) => violations.push(Violation::ProvenanceIncoherent {
-            because: format!("this run established its own facts and also names {run:?}"),
-        }),
-        (true, Some(_)) | (false, None) => {}
+    let source = report.provenance.facts.read_back();
+    if source == Some(&report.run_id) {
+        violations.push(Violation::ProvenanceIncoherent {
+            because: "a run cannot have read its own answer back".to_owned(),
+        });
     }
-    if source.is_some_and(str::is_empty) {
+    if source.is_some_and(String::is_empty) {
         violations.push(Violation::ProvenanceIncoherent {
             because: "a source run with no name is no source at all".to_owned(),
         });
@@ -308,8 +302,8 @@ fn check_required(report: &Report, violations: &mut Vec<Violation>) {
             "repository.configuration_digest",
             &report.repository.configuration_digest,
         ),
-        ("repository.git.commit", &report.repository.git.commit),
-        ("repository.git.branch", &report.repository.git.branch),
+        ("repository.git.commit", report.repository.git.commit()),
+        ("repository.git.branch", report.repository.git.branch()),
         ("toolchain.rustc", &report.toolchain.rustc),
         ("provenance.identity", &report.provenance.identity),
     ];
@@ -421,25 +415,8 @@ fn check_verdict(report: &Report, violations: &mut Vec<Violation>) {
 
 /// Git is either available with its facts, or explicitly not and said so.
 fn check_git(report: &Report, violations: &mut Vec<Violation>) {
-    let git = &report.repository.git;
-    if git.available {
+    if report.repository.git.said().is_some() {
         return;
-    }
-    for (field, present) in [
-        ("repository.git.commit", git.commit != UNAVAILABLE),
-        ("repository.git.branch", git.branch != UNAVAILABLE),
-        ("repository.git.dirty", git.dirty),
-        ("repository.git.merge_base", git.merge_base.is_some()),
-        (
-            "repository.git.changed_files",
-            !git.changed_files.is_empty(),
-        ),
-    ] {
-        if present {
-            violations.push(Violation::UnavailableWithFacts {
-                field: field.to_owned(),
-            });
-        }
     }
     if !report.states("git-metadata-unavailable") {
         violations.push(Violation::MissingLimitation {

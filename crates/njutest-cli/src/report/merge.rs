@@ -256,7 +256,7 @@ fn counted(parts: &[Report], mutants: &[super::MutantRecord]) -> MutantAccountin
             Outcome::Killed => {
                 *executed = executed.saturating_add(1);
                 counts.killed = counts.killed.saturating_add(1);
-                if mutant.reused {
+                if mutant.reuse.0.read_back().is_some() {
                     counts.reused_killed = counts.reused_killed.saturating_add(1);
                 }
             }
@@ -267,7 +267,7 @@ fn counted(parts: &[Report], mutants: &[super::MutantRecord]) -> MutantAccountin
             Outcome::Survived => {
                 *executed = executed.saturating_add(1);
                 counts.survived = counts.survived.saturating_add(1);
-                if mutant.reused {
+                if mutant.reuse.0.read_back().is_some() {
                     counts.reused_survived = counts.reused_survived.saturating_add(1);
                 }
             }

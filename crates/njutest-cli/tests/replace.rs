@@ -106,8 +106,7 @@ fn put_report(root: &Path, round: u64) -> Option<String> {
     );
     report.provenance = Provenance {
         identity: "inputs-1".to_owned(),
-        cached: false,
-        source_run_id: None,
+        facts: njutest_cli::report::Established::Here,
     };
     "demo".clone_into(&mut report.repository.root_name);
     report.repository.workspace_digest = "a".repeat(64);

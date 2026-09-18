@@ -49,8 +49,7 @@ fn record(id: &str, outcome: &str, answered: &[(&str, &str)]) -> MutantRecord {
                 })
                 .collect(),
         }),
-        reused: false,
-        source_run_id: None,
+        reuse: njutest_cli::report::Reuse(njutest_cli::report::Established::Here),
     }
 }
 
@@ -114,7 +113,9 @@ fn a_target_outranked_every_time_is_never_called_hollow() {
 #[test]
 fn a_run_that_reused_every_answer_asked_nobody_and_accuses_nobody() {
     let mut reused = record("a", "survived", &[]);
-    reused.reused = true;
+    reused.reuse = njutest_cli::report::Reuse(njutest_cli::report::Established::ReadBackFrom(
+        "20260905T081500Z-000000".to_owned(),
+    ));
     assert!(
         found(&[reused]).is_empty(),
         "a run that read its answers back asked no target anything, and the empty \
