@@ -212,12 +212,7 @@ fn site(mutant: &MutantRecord, sources: &Sources) -> Site {
 
 /// What to say under the mark: what the run changed, and what noticed.
 fn labelled(mutant: &MutantRecord) -> String {
-    let rule = &mutant.rule;
-    match (mutant.outcome.outcome(), mutant.outcome.decided_by()) {
-        (Outcome::Unreached, _) => format!("{rule} here, and nothing executed it"),
-        (_, Some(target)) => format!("{rule} here, and {target} noticed"),
-        (_, None) => format!("{rule} here, and nothing noticed"),
-    }
+    super::label(&mutant.rule, &mutant.outcome)
 }
 
 /// What a reader can do about one mutation, as commands that work when they are typed.

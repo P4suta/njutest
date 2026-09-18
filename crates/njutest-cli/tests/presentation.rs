@@ -258,3 +258,49 @@ fn what_to_draw_for_is_decided_from_what_was_found_out_and_nothing_else() {
         "and a width nothing can be drawn in is one nobody meant, so it is not believed"
     );
 }
+
+#[test]
+fn the_label_under_a_mark_says_what_the_run_established_and_never_something_else() {
+    use njutest_cli::report::Decided;
+
+    let said = |decided: Decided| njutest_cli::presentation::label("gt-to-ge", &decided);
+    for (decided, wrong) in [
+        (
+            Decided::TimedOut {
+                on: "fixture/test/smoke".to_owned(),
+            },
+            "noticed",
+        ),
+        (
+            Decided::Unconfirmed {
+                on: "fixture/test/smoke".to_owned(),
+            },
+            "noticed",
+        ),
+        (
+            Decided::Errored {
+                on: "fixture/test/smoke".to_owned(),
+            },
+            "noticed",
+        ),
+    ] {
+        let label = said(decided.clone());
+        assert!(
+            !label.contains(wrong),
+            "`decided_by` answers with a target for four outcomes and only one of them is \
+             a detection. A label that reads the target out of it and says the target \
+             noticed tells somebody a test caught this, about a measurement that ran out \
+             of time or never happened: {label}"
+        );
+    }
+    assert!(
+        said(Decided::Equivalent).contains("proof"),
+        "and a mutation a proof settled is not one nothing noticed: {}",
+        said(Decided::Equivalent)
+    );
+    assert!(
+        said(Decided::CompileRejected).contains("compiler"),
+        "nor is one the compiler refused: {}",
+        said(Decided::CompileRejected)
+    );
+}

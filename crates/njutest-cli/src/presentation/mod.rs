@@ -245,6 +245,33 @@ impl Standing {
     }
 }
 
+/// What to say under a mark: the rule that was applied there, and what became of it.
+///
+/// One arm per thing a run can establish, with the target bound where the
+/// variant has one. The shape this replaces read the target out of
+/// `decided_by()` and said it noticed — a sentence four of the eight outcomes
+/// could reach and one of them meant, so a mutation that ran out of time was
+/// drawn as one a test had caught. A closed set made that match total; it did
+/// not make it true (ADR 0023).
+#[must_use]
+pub fn label(rule: &str, decided: &crate::report::Decided) -> String {
+    use crate::report::Decided;
+    match decided {
+        Decided::Killed { by } => format!("{rule} here, and {by} noticed"),
+        Decided::Survived => format!("{rule} here, and nothing noticed"),
+        Decided::Unreached => format!("{rule} here, and nothing executed it"),
+        Decided::Equivalent => {
+            format!("{rule} here, and a proof says no test could tell the difference")
+        }
+        Decided::CompileRejected => format!("{rule} here, and the compiler refused it"),
+        Decided::TimedOut { on } => format!("{rule} here, and {on} ran out of time"),
+        Decided::Unconfirmed { on } => {
+            format!("{rule} here, and {on} did not answer the same way twice")
+        }
+        Decided::Errored { on } => format!("{rule} here, and {on} could not be measured"),
+    }
+}
+
 /// One build a mutation is a hole in, and what that build established about it.
 ///
 /// The decision travels with the name. A list of names alone would make a
