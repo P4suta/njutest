@@ -82,6 +82,12 @@ struct Tally {
 }
 
 impl Tally {
+    /// Puts one judgement in its column.
+    ///
+    /// Named rather than defaulted: an outcome added later and left to a `_`
+    /// arm would be counted as a harness failure, which is a tally telling
+    /// somebody their machine is broken about a thing the run established
+    /// perfectly well (ADR 0023).
     const fn count(&mut self, judged: &Judged) {
         let slot = match judged.outcome {
             rust_mutants::outcome::Outcome::Killed => &mut self.killed,

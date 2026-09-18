@@ -158,6 +158,28 @@ these: the premise fell apart in the first three lines of writing the fixture
 that was meant to exercise it. A gate that makes somebody demonstrate a
 finding is worth more than one that checks they spelled it consistently.
 
+**A catalogue is derived from a run of the same shape as the runs that will
+answer it.** A seam catalogue was assembled from a recording read after the
+mutation phase, which runs the suite once per mutation — so a seam that saw
+one exchange had a catalogue of twenty, nineteen of them copies, and the
+report stated a hundred and thirty-three questions the run had established
+nothing about. Every one a hole the run invented by measuring.
+
+Reading the recording earlier does not fix it: the baseline builds and
+verifies before it measures, so it runs the suite more than once too, and the
+repeats are the same exchanges counted again. A fault names an exchange by its
+place in the order and is put by running the suite *once*, so a catalogue
+assembled from two runs holds questions that cannot be put by construction —
+and states each of them as a question nobody put.
+
+This is the apparatus class again, and it is the member of it worth stating
+separately: **it is provable rather than only assertable.** That a catalogue
+derived from more than one run holds questions a single run cannot answer is
+visible without running anything, which means it can be closed by
+construction rather than only guarded by a test. It is closed twice here: the
+phase takes a value that can only be made around a run, and recording stops
+when that run ends.
+
 **Some of it is a claim about the apparatus, and only a test reaches that.**
 Two defects in the seam layer were of a kind none of the ways out above
 touches. A fault run on one seam drove traffic through another, and that
@@ -180,6 +202,31 @@ Both were caught that way, and the order is the part to keep: the test naming
 the contamination was written after the defect existed and before it was
 fixed, so it says what must be true rather than what the code does.
 
+**And some of it needs an execution environment the author does not have.** A
+caller's request returns when the interposer closes the connection to it, and
+what the run reads afterwards is written down after that — so a question asked
+the instant the last caller was answered gets an answer from a state the run
+has already left, and reports a fault that was put half a microsecond ago as a
+question nobody asked. Fifteen clean local runs said nothing; CI found it
+twice, once in the coverage job and once on all three platforms at the same
+time, running the identical command somewhere slower.
+
+What made the fix trustworthy was not that it looked correct. Twenty
+milliseconds inserted between the carry and the store turned the exact test CI
+had named red; the fix turned it green; removing the fix with the window still
+wide turned it red again. Accepting a fix because it was obviously correct is
+the same mistake as sizing a hand-computed count correctly instead of removing
+it.
+
+So the class has three members with three different reaches, and knowing which
+one is in front of you is most of the work:
+
+| | Reached by |
+| --- | --- |
+| a catalogue derived from the wrong shape of run | proof, without running anything |
+| one measurement contaminating another | somebody writing down what must stay true |
+| a question answered from a state the run has left | **running it somewhere you are not** |
+
 **A test that names what it is about survives a bad merge.** The mechanism is
 that the name is a claim, so the test fails when the claim stops holding —
 whoever stopped it holding and however.  Two branches
@@ -199,6 +246,20 @@ outranked every time is not accused, a run that reused every answer accuses
 nobody. The happy path is the cheap one to write and the one that was never in
 doubt.
 
+**A workaround looks like design.** `#[non_exhaustive]` on a type whose
+callers render it forces a `_` arm outside the crate. One author, having put
+the attribute there, later wrote an accessor whose only job was to answer the
+question a `match` would have answered — sparing a reader the arm the
+attribute forced. Nothing about the result looks wrong: it is a small method
+with a reasonable name.
+
+That is the shape worth noticing, because it is the one case where the defect
+leaves no wound. A missing arm is visible; a method that exists only because a
+type would not let somebody match is a design decision to every later reader.
+The tell is a projection of `self` that the domain would never have asked for,
+and it is offered here as a thing to notice rather than a thing to gate: a
+rule broad enough to catch it would catch half of any presentation layer.
+
 **A ledger that names line numbers asks the question at the right moment, and
 that is worth the friction it looks like.** A shrink-only waiver file keyed by
 line — `xtask/seam_allowlist.txt`, `wildcard_allowlist.txt` — makes every
@@ -206,6 +267,10 @@ refactor that moves a line ask *is this waiver still needed?* of somebody who
 is already looking at the code. Two waivers went away rather than being
 renumbered the first time this happened, because the answer turned out to be
 no and nobody would have gone to ask otherwise.
+
+So far, every time the ledger has asked, the answer has been no: three waivers
+across two branches, all three deleted rather than renumbered. Two occasions
+is not proof, and it is better evidence than anybody expected this early.
 
 It was not designed in; the renumbering was expected to be pure friction. It
 is written down here because the obvious improvement — match the waiver on
