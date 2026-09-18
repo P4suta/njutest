@@ -9,7 +9,6 @@ use syn::visit::Visit;
 
 /// What kind of thing was found.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-#[non_exhaustive]
 pub enum Kind {
     /// An `#[allow(…)]` or `#![allow(…)]` attribute.
     AllowAttribute,
@@ -27,11 +26,13 @@ pub enum Kind {
     WildcardOverOurOwn,
     /// A terminal escape written out by hand, outside the one module that turns a style into bytes.
     HandPainted,
+    /// A type that publishes every one of its variants and also says there may be more.
+    OpenAndClosed,
 }
 
 impl Kind {
     /// Every kind, in the order a report lists them.
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::AllowAttribute,
         Self::BoxedTraitObject,
         Self::Comment,
@@ -40,6 +41,7 @@ impl Kind {
         Self::WildcardOverOurOwn,
         Self::LooseLayout,
         Self::HandPainted,
+        Self::OpenAndClosed,
     ];
 
     /// What to write in a report.
@@ -54,6 +56,7 @@ impl Kind {
             Self::LooseLayout => "loose-layout",
             Self::WildcardOverOurOwn => "wildcard-over-our-own",
             Self::HandPainted => "hand-painted",
+            Self::OpenAndClosed => "open-and-closed",
         }
     }
 
@@ -108,6 +111,20 @@ impl Kind {
                  take one, and whether to paint at all — and two of those in one \
                  workspace is two tools wearing one name. One module turns a style into \
                  bytes; everything else names a meaning"
+            }
+            Self::OpenAndClosed => {
+                "drop the `#[non_exhaustive]`. A type that publishes its whole list has \
+                 already promised to break its callers when it grows, and the attribute \
+                 is the promise not to; one file cannot hold both. What the attribute \
+                 costs is not theoretical: a caller outside the crate is made to write \
+                 an arm for a case the list says cannot exist, and the arm it writes \
+                 counts the next variant as whatever was nearest. It costs more than \
+                 that: `clippy::match_wildcard_for_single_variants` cannot fire on a \
+                 `#[non_exhaustive]` type, so the attribute also switches off the lint \
+                 that would have named the arm. Dropping it turns a lint this repository \
+                 already denies back on over the whole type. Keep it on an error a caller \
+                 branches on, which publishes no list and where a caller must already \
+                 handle one it does not know"
             }
         }
     }
@@ -190,6 +207,7 @@ pub fn scan_source(file: &str, source: &str) -> Result<Vec<Finding>, syn::Error>
     scan.found.extend(comments(file, source));
     scan.found.extend(handles(file, source));
     scan.found.extend(painted(file, source));
+    scan.found.extend(open_and_closed(&parsed, file));
     scan.found.sort();
     Ok(scan.found)
 }
@@ -292,6 +310,58 @@ impl<'ast> Visit<'ast> for Catching<'_> {
         syn::visit::visit_expr_match(self, matching);
     }
 }
+
+/// Every enum of `parsed` that publishes its whole list and also says the list is open.
+///
+/// Read from the syntax rather than spelled, because what makes this a
+/// contradiction is two declarations about one type rather than any text.
+fn open_and_closed(parsed: &syn::File, file: &str) -> Vec<Finding> {
+    let mut open: Vec<(String, usize)> = Vec::new();
+    let mut listed: Vec<String> = Vec::new();
+    for item in &parsed.items {
+        match item {
+            syn::Item::Enum(one) => {
+                if one.attrs.iter().any(|attr| attr.path().is_ident(OPEN)) {
+                    open.push((one.ident.to_string(), 0));
+                }
+            }
+            syn::Item::Impl(one) => {
+                let syn::Type::Path(path) = one.self_ty.as_ref() else {
+                    continue;
+                };
+                let Some(named) = path.path.segments.last() else {
+                    continue;
+                };
+                if one.items.iter().any(|held| {
+                    matches!(held, syn::ImplItem::Const(constant)
+                        if constant.ident == WHOLE_LIST
+                            && matches!(constant.vis, syn::Visibility::Public(_)))
+                }) {
+                    listed.push(named.ident.to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+    open.into_iter()
+        .filter(|(named, _at)| listed.contains(named))
+        .map(|(_named, line)| Finding {
+            kind: Kind::OpenAndClosed,
+            file: file.to_owned(),
+            line: line.saturating_add(1),
+        })
+        .collect()
+}
+
+/// The attribute that says a type may grow without breaking anybody.
+const OPEN: &str = "non_exhaustive";
+
+/// The constant by which a type publishes every one of its variants.
+///
+/// Public, because that is when the promise is made. A crate keeping its own
+/// list of its own enum has told nobody anything, and a gate that refused
+/// that would be refusing somebody for knowing what they wrote.
+const WHOLE_LIST: &str = "ALL";
 
 /// Every place `source` writes a terminal escape out by hand.
 ///

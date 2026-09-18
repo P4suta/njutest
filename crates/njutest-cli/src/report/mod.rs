@@ -98,6 +98,7 @@ impl Verdict {
 /// How much of the workspace a run looked at.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum RunKind {
     /// Everything in the workspace.
     #[default]
@@ -751,7 +752,6 @@ impl Decision {
 /// nothing. One table, read through one function, is what stops that.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
-#[non_exhaustive]
 pub enum Outcome {
     /// The compiler refused the mutated program.
     #[serde(rename = "compile-rejected")]
@@ -1274,6 +1274,7 @@ pub struct Accounting {
 /// What became of one target.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum TargetStatus {
     /// It ran and passed.
     Passed,
@@ -1347,7 +1348,6 @@ pub struct MutantRecord {
 /// What kind of thing a run found.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
-#[non_exhaustive]
 pub enum FindingKind {
     /// The workspace does not compile.
     BuildFailure,

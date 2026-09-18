@@ -6,8 +6,16 @@
 use std::fmt;
 
 /// The outcome of one mutant.
+///
+/// Closed, and deliberately: the type publishes `ALL` as every outcome there
+/// is, and a `#[non_exhaustive]` beside that promise says the opposite —
+/// downstream must write a `_` arm for a case the list says cannot exist. A
+/// tally that reached one counted every future outcome as a harness failure,
+/// which is a screen telling somebody their machine is broken about a thing
+/// the run established perfectly well. An outcome added here is a break for
+/// anything that renders one, and that is the honest shape of the change
+/// (ADR 0023).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-#[non_exhaustive]
 pub enum Outcome {
     /// Never executed: another shard owned it, a selection excluded it, the run was interrupted, or routing proved no test reaches it.
     #[default]
