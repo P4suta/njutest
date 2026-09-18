@@ -12,9 +12,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use njutest_cli::assure::mutation::{Disposition, Judged, Mutation, Unconfirmed, tail};
 use njutest_cli::assure::route::{BRANCH_NEVER_TAKEN, Discharge, NEVER_INFECTED, Reaches, Route};
-use njutest_cli::report::{FindingKind, Position};
+use njutest_cli::report::{Decision, FindingKind, Position};
 
-fn discharge(target: &str, proof: &'static str) -> Discharge {
+fn discharge(target: &str, proof: rust_mutants::session::Proof) -> Discharge {
     Discharge {
         target: target.to_owned(),
         proof,
@@ -35,6 +35,7 @@ fn judged(disposition: Disposition) -> Judged {
         position: None,
         disposition,
         source_run_id: None,
+        routing: None,
     }
 }
 
@@ -153,7 +154,7 @@ fn a_survivor_no_test_could_have_noticed_says_so_and_names_the_proofs() {
          that should have: {detail}"
     );
     assert!(
-        detail.contains(BRANCH_NEVER_TAKEN) && detail.contains(NEVER_INFECTED),
+        detail.contains(BRANCH_NEVER_TAKEN.name()) && detail.contains(NEVER_INFECTED.name()),
         "and the proofs are named, because a reader who cannot tell a discharge from an \
          oversight can act on neither: {detail}"
     );
@@ -332,6 +333,7 @@ fn of(display_id: &str, disposition: Disposition, reused: bool) -> Judged {
         position: None,
         disposition,
         source_run_id: reused.then(|| "20260905T081500Z-000000".to_owned()),
+        routing: None,
     }
 }
 
@@ -394,6 +396,107 @@ fn all_of_them() -> Mutation {
             ),
         ],
         skips: BTreeMap::new(),
+    }
+}
+
+#[test]
+fn a_record_says_who_could_have_noticed_a_mutation_and_what_removed_the_rest() {
+    let route = Route::Block {
+        reaching: vec![Reaches {
+            target: "pkg/lib/pkg".to_owned(),
+            tests: njutest_cli::assure::route::Asked::Every,
+        }],
+        discharged: vec![discharge("pkg/test/it", NEVER_INFECTED)],
+        fallback: None,
+    };
+    let routing = njutest_cli::report::Routing::of(&route);
+
+    assert_eq!(
+        routing.granularity,
+        rust_mutants::session::Granularity::Block,
+        "how narrowly a run chose is part of what a survivor rests on: a reader \
+         cannot weigh `nothing noticed` without knowing how many things looked"
+    );
+    assert_eq!(
+        routing.reaching,
+        vec!["pkg/lib/pkg".to_owned()],
+        "the targets that could have noticed are the ones a survivor is a claim about"
+    );
+    assert_eq!(
+        routing.discharged.len(),
+        1,
+        "and the ones a proof removed are named with the proof, because a reader \
+         who cannot tell a discharge from an oversight can act on neither: {routing:?}"
+    );
+    assert_eq!(routing.discharged[0].target, "pkg/test/it");
+    assert_eq!(routing.discharged[0].proof, NEVER_INFECTED);
+    assert_eq!(
+        routing.fallback, None,
+        "and nothing widened the question here"
+    );
+    assert!(
+        routing.answered.is_empty(),
+        "a route on its own says who could have noticed; who was actually asked is \
+         what running it establishes, and nothing has run here yet: {routing:?}"
+    );
+}
+
+#[test]
+fn a_target_that_never_appears_as_a_killer_is_not_a_target_that_noticed_nothing() {
+    let asked = njutest_cli::report::Routing {
+        granularity: rust_mutants::session::Granularity::Block,
+        reaching: vec!["fast".to_owned(), "slow".to_owned()],
+        discharged: Vec::new(),
+        fallback: None,
+        answered: vec![njutest_cli::report::Answered {
+            target: "fast".to_owned(),
+            outcome: njutest_cli::report::Outcome::Killed,
+        }],
+    };
+
+    assert_eq!(
+        asked.answered.len(),
+        1,
+        "targets are asked cheapest first and the run stops at the first detection, \
+         so `slow` reached this mutation and was never given the chance. A reader \
+         who took `killed_by` for the whole story would call it a target that \
+         notices nothing, which is the one thing this record exists to prevent: \
+         {asked:?}"
+    );
+    assert!(
+        !asked.answered.iter().any(|one| one.target == "slow"),
+        "and the record says so by leaving it out rather than by recording a pass \
+         it never gave"
+    );
+}
+
+#[test]
+fn the_outcome_a_disposition_records_is_one_the_report_can_say_who_decided() {
+    let mutation = all_of_them();
+    let mut seen: Vec<&str> = Vec::new();
+    for judged in &mutation.judged {
+        let outcome = judged.disposition.name();
+        let decided = Decision::of_outcome(outcome).unwrap_or_else(|| {
+            panic!(
+                "a run recorded the outcome {outcome:?} and nothing says who decided \
+                 it, so the report would count a mutation it cannot answer for"
+            )
+        });
+        assert_eq!(
+            decided,
+            judged.disposition.decision(),
+            "the outcome {outcome:?} and the disposition it came from disagree about \
+             who decided it; the two are read by different readers of the same run"
+        );
+        seen.push(outcome);
+    }
+    for outcome in njutest_cli::report::Outcome::ALL.map(njutest_cli::report::Outcome::name) {
+        assert!(
+            seen.contains(&outcome),
+            "every outcome the report can record is one this test exercises, and \
+             {outcome:?} is not among {seen:?}: an outcome no test reaches is one \
+             whose standing nothing holds"
+        );
     }
 }
 

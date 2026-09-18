@@ -21,6 +21,7 @@
     "accounting",
     "candidates",
     "resources",
+    "seams",
     "targets",
     "mutants",
     "findings",
@@ -306,7 +307,8 @@
             "equivalent",
             "accepted",
             "reused_killed",
-            "reused_survived"
+            "reused_survived",
+            "observers"
           ],
           "properties": {
             "cataloged": {
@@ -341,6 +343,43 @@
             },
             "reused_survived": {
               "$ref": "#/$defs/count"
+            },
+            "observers": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "Who decided each catalogued mutation. These partition the catalog; the counts beside them overlap.",
+              "required": [
+                "types",
+                "tests",
+                "proved",
+                "unnoticed",
+                "unreached",
+                "waited",
+                "errored"
+              ],
+              "properties": {
+                "types": {
+                  "$ref": "#/$defs/count"
+                },
+                "tests": {
+                  "$ref": "#/$defs/count"
+                },
+                "proved": {
+                  "$ref": "#/$defs/count"
+                },
+                "unnoticed": {
+                  "$ref": "#/$defs/count"
+                },
+                "unreached": {
+                  "$ref": "#/$defs/count"
+                },
+                "waited": {
+                  "$ref": "#/$defs/count"
+                },
+                "errored": {
+                  "$ref": "#/$defs/count"
+                }
+              }
             }
           }
         },
@@ -494,6 +533,236 @@
       "items": {
         "$ref": "#/$defs/limitation"
       }
+    },
+    "seams": {
+      "description": "Every question a watched seam's recording licensed, and what became of it. A wire-unnoticed finding names a question by its identity; this is what a reader looks that identity up in, so the finding rests on the report rather than on the recording. Who decided a question and who that was travel together, one closed shape per decision: a question the tests noticed names the target, a question a proof discharged names the proof, and one nothing decided names nobody. None of the other combinations is a document this schema accepts.",
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "capability",
+              "seq",
+              "asked",
+              "answered",
+              "rule",
+              "decision",
+              "noticed_by"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "capability": {
+                "type": "string",
+                "minLength": 1
+              },
+              "seq": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "asked": {
+                "type": "string"
+              },
+              "answered": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "minimum": 0,
+                "maximum": 599
+              },
+              "rule": {
+                "type": "string",
+                "enum": [
+                  "truncate-response",
+                  "delay-response",
+                  "drop-connection",
+                  "replay-request",
+                  "stale-response",
+                  "status-server-error",
+                  "status-not-found"
+                ]
+              },
+              "decision": {
+                "const": "tests"
+              },
+              "noticed_by": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "capability",
+              "seq",
+              "asked",
+              "answered",
+              "rule",
+              "decision",
+              "proof"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "capability": {
+                "type": "string",
+                "minLength": 1
+              },
+              "seq": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "asked": {
+                "type": "string"
+              },
+              "answered": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "minimum": 0,
+                "maximum": 599
+              },
+              "rule": {
+                "type": "string",
+                "enum": [
+                  "truncate-response",
+                  "delay-response",
+                  "drop-connection",
+                  "replay-request",
+                  "stale-response",
+                  "status-server-error",
+                  "status-not-found"
+                ]
+              },
+              "decision": {
+                "const": "proved"
+              },
+              "proof": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "capability",
+              "seq",
+              "asked",
+              "answered",
+              "rule",
+              "decision"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "capability": {
+                "type": "string",
+                "minLength": 1
+              },
+              "seq": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "asked": {
+                "type": "string"
+              },
+              "answered": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "minimum": 0,
+                "maximum": 599
+              },
+              "rule": {
+                "type": "string",
+                "enum": [
+                  "truncate-response",
+                  "delay-response",
+                  "drop-connection",
+                  "replay-request",
+                  "stale-response",
+                  "status-server-error",
+                  "status-not-found"
+                ]
+              },
+              "decision": {
+                "const": "unnoticed"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "capability",
+              "seq",
+              "asked",
+              "answered",
+              "rule",
+              "decision"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "capability": {
+                "type": "string",
+                "minLength": 1
+              },
+              "seq": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "asked": {
+                "type": "string"
+              },
+              "answered": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "minimum": 0,
+                "maximum": 599
+              },
+              "rule": {
+                "type": "string",
+                "enum": [
+                  "truncate-response",
+                  "delay-response",
+                  "drop-connection",
+                  "replay-request",
+                  "stale-response",
+                  "status-server-error",
+                  "status-not-found"
+                ]
+              },
+              "decision": {
+                "const": "unreached"
+              }
+            }
+          }
+        ]
+      }
     }
   },
   "$defs": {
@@ -616,73 +885,1425 @@
       }
     },
     "mutant": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "id",
-        "display_id",
-        "path",
-        "position",
-        "rule",
-        "item",
-        "original",
-        "replacement",
-        "outcome",
-        "killed_by",
-        "reused",
-        "source_run_id"
-      ],
-      "properties": {
-        "id": {
-          "type": "string",
-          "pattern": "^[0-9a-f]{64}$"
-        },
-        "display_id": {
-          "type": "string",
-          "minLength": 1
-        },
-        "path": {
-          "type": "string",
-          "minLength": 1
-        },
-        "position": {
-          "$ref": "#/$defs/position"
-        },
-        "rule": {
-          "type": "string",
-          "minLength": 1
-        },
-        "item": {
-          "type": "string"
-        },
-        "original": {
-          "type": "string"
-        },
-        "replacement": {
-          "type": "string"
-        },
-        "outcome": {
-          "type": "string",
-          "minLength": 1
-        },
-        "killed_by": {
-          "type": [
-            "string",
-            "null"
+      "description": "What became of one mutation, and the target it was established against where it was established against one. The two travel together, one closed shape per outcome: a kill names the target that noticed, a timeout, an unconfirmed pair and a harness failure name the target they happened on, and the four that happen to no target name none. A document that says a mutation survived and then names a killer is not one this schema accepts, and neither is one that says a test noticed and names nobody.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "display_id",
+            "path",
+            "position",
+            "rule",
+            "item",
+            "original",
+            "replacement",
+            "blind_in",
+            "routing",
+            "reused",
+            "source_run_id",
+            "outcome",
+            "killed_by"
           ],
-          "description": "The identity of the target that noticed it, when one did."
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "display_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "position": {
+              "$ref": "#/$defs/position"
+            },
+            "rule": {
+              "type": "string",
+              "minLength": 1
+            },
+            "item": {
+              "type": "string"
+            },
+            "original": {
+              "type": "string"
+            },
+            "replacement": {
+              "type": "string"
+            },
+            "blind_in": {
+              "description": "The builds this mutation is a hole in, each with what that build established. The name alone would make a reader believe the same thing happened in every build listed: a build whose tests ran and noticed nothing wants a test written, and a build that established nothing wants somebody to find out why first. Empty when the run measured one build, or when every build answered.",
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "build",
+                  "decision"
+                ],
+                "properties": {
+                  "build": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "decision": {
+                    "type": "string",
+                    "enum": [
+                      "unnoticed",
+                      "unreached",
+                      "waited",
+                      "errored"
+                    ]
+                  }
+                }
+              }
+            },
+            "routing": {
+              "type": [
+                "object",
+                "null"
+              ],
+              "additionalProperties": false,
+              "description": "Which targets could have noticed it, and what removed the rest. Null where the run never asked, which is a mutation the compiler refused.",
+              "required": [
+                "granularity",
+                "reaching",
+                "discharged",
+                "fallback",
+                "answered"
+              ],
+              "properties": {
+                "granularity": {
+                  "type": "string",
+                  "enum": [
+                    "all",
+                    "block",
+                    "test",
+                    "discharged",
+                    "unreached"
+                  ]
+                },
+                "reaching": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "discharged": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "target",
+                      "proof"
+                    ],
+                    "properties": {
+                      "target": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "proof": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    }
+                  }
+                },
+                "fallback": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "answered": {
+                  "type": "array",
+                  "description": "The targets the run actually asked, in the order it asked them. A target in reaching and not here reached the mutation and was never given the chance, because one asked before it noticed.",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "target",
+                      "outcome"
+                    ],
+                    "properties": {
+                      "target": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "outcome": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "reused": {
+              "type": "boolean"
+            },
+            "source_run_id": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "The run this disposition came from, when it was reused."
+            },
+            "outcome": {
+              "const": "killed"
+            },
+            "killed_by": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The target that noticed."
+            }
+          }
         },
-        "reused": {
-          "type": "boolean"
-        },
-        "source_run_id": {
-          "type": [
-            "string",
-            "null"
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "display_id",
+            "path",
+            "position",
+            "rule",
+            "item",
+            "original",
+            "replacement",
+            "blind_in",
+            "routing",
+            "reused",
+            "source_run_id",
+            "outcome",
+            "killed_by"
           ],
-          "description": "The run this disposition came from, when it was reused."
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "display_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "position": {
+              "$ref": "#/$defs/position"
+            },
+            "rule": {
+              "type": "string",
+              "minLength": 1
+            },
+            "item": {
+              "type": "string"
+            },
+            "original": {
+              "type": "string"
+            },
+            "replacement": {
+              "type": "string"
+            },
+            "blind_in": {
+              "description": "The builds this mutation is a hole in, each with what that build established. The name alone would make a reader believe the same thing happened in every build listed: a build whose tests ran and noticed nothing wants a test written, and a build that established nothing wants somebody to find out why first. Empty when the run measured one build, or when every build answered.",
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "build",
+                  "decision"
+                ],
+                "properties": {
+                  "build": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "decision": {
+                    "type": "string",
+                    "enum": [
+                      "unnoticed",
+                      "unreached",
+                      "waited",
+                      "errored"
+                    ]
+                  }
+                }
+              }
+            },
+            "routing": {
+              "type": [
+                "object",
+                "null"
+              ],
+              "additionalProperties": false,
+              "description": "Which targets could have noticed it, and what removed the rest. Null where the run never asked, which is a mutation the compiler refused.",
+              "required": [
+                "granularity",
+                "reaching",
+                "discharged",
+                "fallback",
+                "answered"
+              ],
+              "properties": {
+                "granularity": {
+                  "type": "string",
+                  "enum": [
+                    "all",
+                    "block",
+                    "test",
+                    "discharged",
+                    "unreached"
+                  ]
+                },
+                "reaching": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "discharged": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "target",
+                      "proof"
+                    ],
+                    "properties": {
+                      "target": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "proof": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    }
+                  }
+                },
+                "fallback": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "answered": {
+                  "type": "array",
+                  "description": "The targets the run actually asked, in the order it asked them. A target in reaching and not here reached the mutation and was never given the chance, because one asked before it noticed.",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "target",
+                      "outcome"
+                    ],
+                    "properties": {
+                      "target": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "outcome": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "reused": {
+              "type": "boolean"
+            },
+            "source_run_id": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "The run this disposition came from, when it was reused."
+            },
+            "outcome": {
+              "const": "timed_out"
+            },
+            "killed_by": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The target the bound expired on."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "display_id",
+            "path",
+            "position",
+            "rule",
+            "item",
+            "original",
+            "replacement",
+            "blind_in",
+            "routing",
+            "reused",
+            "source_run_id",
+            "outcome",
+            "killed_by"
+          ],
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "display_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "position": {
+              "$ref": "#/$defs/position"
+            },
+            "rule": {
+              "type": "string",
+              "minLength": 1
+            },
+            "item": {
+              "type": "string"
+            },
+            "original": {
+              "type": "string"
+            },
+            "replacement": {
+              "type": "string"
+            },
+            "blind_in": {
+              "description": "The builds this mutation is a hole in, each with what that build established. The name alone would make a reader believe the same thing happened in every build listed: a build whose tests ran and noticed nothing wants a test written, and a build that established nothing wants somebody to find out why first. Empty when the run measured one build, or when every build answered.",
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "build",
+                  "decision"
+                ],
+                "properties": {
+                  "build": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "decision": {
+                    "type": "string",
+                    "enum": [
+                      "unnoticed",
+                      "unreached",
+                      "waited",
+                      "errored"
+                    ]
+                  }
+                }
+              }
+            },
+            "routing": {
+              "type": [
+                "object",
+                "null"
+              ],
+              "additionalProperties": false,
+              "description": "Which targets could have noticed it, and what removed the rest. Null where the run never asked, which is a mutation the compiler refused.",
+              "required": [
+                "granularity",
+                "reaching",
+                "discharged",
+                "fallback",
+                "answered"
+              ],
+              "properties": {
+                "granularity": {
+                  "type": "string",
+                  "enum": [
+                    "all",
+                    "block",
+                    "test",
+                    "discharged",
+                    "unreached"
+                  ]
+                },
+                "reaching": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "discharged": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "target",
+                      "proof"
+                    ],
+                    "properties": {
+                      "target": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "proof": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    }
+                  }
+                },
+                "fallback": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "answered": {
+                  "type": "array",
+                  "description": "The targets the run actually asked, in the order it asked them. A target in reaching and not here reached the mutation and was never given the chance, because one asked before it noticed.",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "target",
+                      "outcome"
+                    ],
+                    "properties": {
+                      "target": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "outcome": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "reused": {
+              "type": "boolean"
+            },
+            "source_run_id": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "The run this disposition came from, when it was reused."
+            },
+            "outcome": {
+              "const": "unconfirmed"
+            },
+            "killed_by": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The target the pair disagreed on."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "display_id",
+            "path",
+            "position",
+            "rule",
+            "item",
+            "original",
+            "replacement",
+            "blind_in",
+            "routing",
+            "reused",
+            "source_run_id",
+            "outcome",
+            "killed_by"
+          ],
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "display_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "position": {
+              "$ref": "#/$defs/position"
+            },
+            "rule": {
+              "type": "string",
+              "minLength": 1
+            },
+            "item": {
+              "type": "string"
+            },
+            "original": {
+              "type": "string"
+            },
+            "replacement": {
+              "type": "string"
+            },
+            "blind_in": {
+              "description": "The builds this mutation is a hole in, each with what that build established. The name alone would make a reader believe the same thing happened in every build listed: a build whose tests ran and noticed nothing wants a test written, and a build that established nothing wants somebody to find out why first. Empty when the run measured one build, or when every build answered.",
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "build",
+                  "decision"
+                ],
+                "properties": {
+                  "build": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "decision": {
+                    "type": "string",
+                    "enum": [
+                      "unnoticed",
+                      "unreached",
+                      "waited",
+                      "errored"
+                    ]
+                  }
+                }
+              }
+            },
+            "routing": {
+              "type": [
+                "object",
+                "null"
+              ],
+              "additionalProperties": false,
+              "description": "Which targets could have noticed it, and what removed the rest. Null where the run never asked, which is a mutation the compiler refused.",
+              "required": [
+                "granularity",
+                "reaching",
+                "discharged",
+                "fallback",
+                "answered"
+              ],
+              "properties": {
+                "granularity": {
+                  "type": "string",
+                  "enum": [
+                    "all",
+                    "block",
+                    "test",
+                    "discharged",
+                    "unreached"
+                  ]
+                },
+                "reaching": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "discharged": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "target",
+                      "proof"
+                    ],
+                    "properties": {
+                      "target": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "proof": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    }
+                  }
+                },
+                "fallback": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "answered": {
+                  "type": "array",
+                  "description": "The targets the run actually asked, in the order it asked them. A target in reaching and not here reached the mutation and was never given the chance, because one asked before it noticed.",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "target",
+                      "outcome"
+                    ],
+                    "properties": {
+                      "target": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "outcome": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "reused": {
+              "type": "boolean"
+            },
+            "source_run_id": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "The run this disposition came from, when it was reused."
+            },
+            "outcome": {
+              "const": "errored"
+            },
+            "killed_by": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The target nothing could be measured on."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "display_id",
+            "path",
+            "position",
+            "rule",
+            "item",
+            "original",
+            "replacement",
+            "blind_in",
+            "routing",
+            "reused",
+            "source_run_id",
+            "outcome",
+            "killed_by"
+          ],
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "display_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "position": {
+              "$ref": "#/$defs/position"
+            },
+            "rule": {
+              "type": "string",
+              "minLength": 1
+            },
+            "item": {
+              "type": "string"
+            },
+            "original": {
+              "type": "string"
+            },
+            "replacement": {
+              "type": "string"
+            },
+            "blind_in": {
+              "description": "The builds this mutation is a hole in, each with what that build established. The name alone would make a reader believe the same thing happened in every build listed: a build whose tests ran and noticed nothing wants a test written, and a build that established nothing wants somebody to find out why first. Empty when the run measured one build, or when every build answered.",
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "build",
+                  "decision"
+                ],
+                "properties": {
+                  "build": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "decision": {
+                    "type": "string",
+                    "enum": [
+                      "unnoticed",
+                      "unreached",
+                      "waited",
+                      "errored"
+                    ]
+                  }
+                }
+              }
+            },
+            "routing": {
+              "type": [
+                "object",
+                "null"
+              ],
+              "additionalProperties": false,
+              "description": "Which targets could have noticed it, and what removed the rest. Null where the run never asked, which is a mutation the compiler refused.",
+              "required": [
+                "granularity",
+                "reaching",
+                "discharged",
+                "fallback",
+                "answered"
+              ],
+              "properties": {
+                "granularity": {
+                  "type": "string",
+                  "enum": [
+                    "all",
+                    "block",
+                    "test",
+                    "discharged",
+                    "unreached"
+                  ]
+                },
+                "reaching": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "discharged": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "target",
+                      "proof"
+                    ],
+                    "properties": {
+                      "target": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "proof": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    }
+                  }
+                },
+                "fallback": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "answered": {
+                  "type": "array",
+                  "description": "The targets the run actually asked, in the order it asked them. A target in reaching and not here reached the mutation and was never given the chance, because one asked before it noticed.",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "target",
+                      "outcome"
+                    ],
+                    "properties": {
+                      "target": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "outcome": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "reused": {
+              "type": "boolean"
+            },
+            "source_run_id": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "The run this disposition came from, when it was reused."
+            },
+            "outcome": {
+              "const": "compile-rejected"
+            },
+            "killed_by": {
+              "type": "null"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "display_id",
+            "path",
+            "position",
+            "rule",
+            "item",
+            "original",
+            "replacement",
+            "blind_in",
+            "routing",
+            "reused",
+            "source_run_id",
+            "outcome",
+            "killed_by"
+          ],
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "display_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "position": {
+              "$ref": "#/$defs/position"
+            },
+            "rule": {
+              "type": "string",
+              "minLength": 1
+            },
+            "item": {
+              "type": "string"
+            },
+            "original": {
+              "type": "string"
+            },
+            "replacement": {
+              "type": "string"
+            },
+            "blind_in": {
+              "description": "The builds this mutation is a hole in, each with what that build established. The name alone would make a reader believe the same thing happened in every build listed: a build whose tests ran and noticed nothing wants a test written, and a build that established nothing wants somebody to find out why first. Empty when the run measured one build, or when every build answered.",
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "build",
+                  "decision"
+                ],
+                "properties": {
+                  "build": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "decision": {
+                    "type": "string",
+                    "enum": [
+                      "unnoticed",
+                      "unreached",
+                      "waited",
+                      "errored"
+                    ]
+                  }
+                }
+              }
+            },
+            "routing": {
+              "type": [
+                "object",
+                "null"
+              ],
+              "additionalProperties": false,
+              "description": "Which targets could have noticed it, and what removed the rest. Null where the run never asked, which is a mutation the compiler refused.",
+              "required": [
+                "granularity",
+                "reaching",
+                "discharged",
+                "fallback",
+                "answered"
+              ],
+              "properties": {
+                "granularity": {
+                  "type": "string",
+                  "enum": [
+                    "all",
+                    "block",
+                    "test",
+                    "discharged",
+                    "unreached"
+                  ]
+                },
+                "reaching": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "discharged": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "target",
+                      "proof"
+                    ],
+                    "properties": {
+                      "target": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "proof": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    }
+                  }
+                },
+                "fallback": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "answered": {
+                  "type": "array",
+                  "description": "The targets the run actually asked, in the order it asked them. A target in reaching and not here reached the mutation and was never given the chance, because one asked before it noticed.",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "target",
+                      "outcome"
+                    ],
+                    "properties": {
+                      "target": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "outcome": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "reused": {
+              "type": "boolean"
+            },
+            "source_run_id": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "The run this disposition came from, when it was reused."
+            },
+            "outcome": {
+              "const": "survived"
+            },
+            "killed_by": {
+              "type": "null"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "display_id",
+            "path",
+            "position",
+            "rule",
+            "item",
+            "original",
+            "replacement",
+            "blind_in",
+            "routing",
+            "reused",
+            "source_run_id",
+            "outcome",
+            "killed_by"
+          ],
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "display_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "position": {
+              "$ref": "#/$defs/position"
+            },
+            "rule": {
+              "type": "string",
+              "minLength": 1
+            },
+            "item": {
+              "type": "string"
+            },
+            "original": {
+              "type": "string"
+            },
+            "replacement": {
+              "type": "string"
+            },
+            "blind_in": {
+              "description": "The builds this mutation is a hole in, each with what that build established. The name alone would make a reader believe the same thing happened in every build listed: a build whose tests ran and noticed nothing wants a test written, and a build that established nothing wants somebody to find out why first. Empty when the run measured one build, or when every build answered.",
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "build",
+                  "decision"
+                ],
+                "properties": {
+                  "build": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "decision": {
+                    "type": "string",
+                    "enum": [
+                      "unnoticed",
+                      "unreached",
+                      "waited",
+                      "errored"
+                    ]
+                  }
+                }
+              }
+            },
+            "routing": {
+              "type": [
+                "object",
+                "null"
+              ],
+              "additionalProperties": false,
+              "description": "Which targets could have noticed it, and what removed the rest. Null where the run never asked, which is a mutation the compiler refused.",
+              "required": [
+                "granularity",
+                "reaching",
+                "discharged",
+                "fallback",
+                "answered"
+              ],
+              "properties": {
+                "granularity": {
+                  "type": "string",
+                  "enum": [
+                    "all",
+                    "block",
+                    "test",
+                    "discharged",
+                    "unreached"
+                  ]
+                },
+                "reaching": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "discharged": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "target",
+                      "proof"
+                    ],
+                    "properties": {
+                      "target": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "proof": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    }
+                  }
+                },
+                "fallback": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "answered": {
+                  "type": "array",
+                  "description": "The targets the run actually asked, in the order it asked them. A target in reaching and not here reached the mutation and was never given the chance, because one asked before it noticed.",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "target",
+                      "outcome"
+                    ],
+                    "properties": {
+                      "target": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "outcome": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "reused": {
+              "type": "boolean"
+            },
+            "source_run_id": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "The run this disposition came from, when it was reused."
+            },
+            "outcome": {
+              "const": "unreached"
+            },
+            "killed_by": {
+              "type": "null"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "display_id",
+            "path",
+            "position",
+            "rule",
+            "item",
+            "original",
+            "replacement",
+            "blind_in",
+            "routing",
+            "reused",
+            "source_run_id",
+            "outcome",
+            "killed_by"
+          ],
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "display_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "position": {
+              "$ref": "#/$defs/position"
+            },
+            "rule": {
+              "type": "string",
+              "minLength": 1
+            },
+            "item": {
+              "type": "string"
+            },
+            "original": {
+              "type": "string"
+            },
+            "replacement": {
+              "type": "string"
+            },
+            "blind_in": {
+              "description": "The builds this mutation is a hole in, each with what that build established. The name alone would make a reader believe the same thing happened in every build listed: a build whose tests ran and noticed nothing wants a test written, and a build that established nothing wants somebody to find out why first. Empty when the run measured one build, or when every build answered.",
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "build",
+                  "decision"
+                ],
+                "properties": {
+                  "build": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "decision": {
+                    "type": "string",
+                    "enum": [
+                      "unnoticed",
+                      "unreached",
+                      "waited",
+                      "errored"
+                    ]
+                  }
+                }
+              }
+            },
+            "routing": {
+              "type": [
+                "object",
+                "null"
+              ],
+              "additionalProperties": false,
+              "description": "Which targets could have noticed it, and what removed the rest. Null where the run never asked, which is a mutation the compiler refused.",
+              "required": [
+                "granularity",
+                "reaching",
+                "discharged",
+                "fallback",
+                "answered"
+              ],
+              "properties": {
+                "granularity": {
+                  "type": "string",
+                  "enum": [
+                    "all",
+                    "block",
+                    "test",
+                    "discharged",
+                    "unreached"
+                  ]
+                },
+                "reaching": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "discharged": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "target",
+                      "proof"
+                    ],
+                    "properties": {
+                      "target": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "proof": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    }
+                  }
+                },
+                "fallback": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "answered": {
+                  "type": "array",
+                  "description": "The targets the run actually asked, in the order it asked them. A target in reaching and not here reached the mutation and was never given the chance, because one asked before it noticed.",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "target",
+                      "outcome"
+                    ],
+                    "properties": {
+                      "target": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "outcome": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "reused": {
+              "type": "boolean"
+            },
+            "source_run_id": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "The run this disposition came from, when it was reused."
+            },
+            "outcome": {
+              "const": "equivalent"
+            },
+            "killed_by": {
+              "type": "null"
+            }
+          }
         }
-      }
+      ]
     },
     "finding": {
       "type": "object",

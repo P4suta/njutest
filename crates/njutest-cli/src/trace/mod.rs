@@ -17,7 +17,7 @@ use sha2::{Digest as _, Sha256};
 pub use event::{
     ArtifactRecord, AskedRecord, DischargeRecord, Event, ExecRecord, MutantExecRecord, NoteRecord,
     Payload, PhaseRecord, ProbeExecRecord, ProgressRecord, RouteRecord, RunRecord, SCHEMA,
-    StartRecord,
+    StartRecord, WireExchangeRecord, WireExecRecord,
 };
 pub use reader::{Problem, ReadError, check, read_events};
 pub use sink::{
@@ -247,6 +247,16 @@ impl Recorder {
     /// Records what the probe pass measured for one target.
     pub fn probe_exec(&self, record: ProbeExecRecord) {
         self.emit(Payload::ProbeExec { probe: record });
+    }
+
+    /// Records one exchange that went past a seam.
+    pub fn wire_exchange(&self, record: WireExchangeRecord) {
+        self.emit(Payload::WireExchange { exchange: record });
+    }
+
+    /// Records one fault put to the suite, and what came of it.
+    pub fn wire_exec(&self, record: WireExecRecord) {
+        self.emit(Payload::WireExec { wire: record });
     }
 
     /// Records a free-form note.

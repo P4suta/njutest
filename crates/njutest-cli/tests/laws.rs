@@ -17,6 +17,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use njutest_cli::assure::mutation::{Disposition, Judged, Mutation, Unconfirmed};
 use njutest_cli::config::Contract;
 use njutest_cli::evidence::digest::{Inputs, Mode, identity};
+use njutest_cli::report::Decision;
+use njutest_cli::report::across::across;
 use proptest::prelude::*;
 use rust_mutants::session::{Fallback, Route};
 
@@ -50,6 +52,16 @@ fn disposition() -> impl Strategy<Value = Disposition> {
     ]
 }
 
+/// One way a mutation can be decided.
+fn decision_of() -> impl Strategy<Value = Decision> {
+    proptest::sample::select(Decision::ALL.to_vec())
+}
+
+/// What a handful of builds each decided about one mutation.
+fn decisions() -> impl Strategy<Value = Vec<Decision>> {
+    proptest::collection::vec(decision_of(), 0..5)
+}
+
 /// A run that judged these mutations, each under an identity of its own.
 fn judged_from(dispositions: Vec<Disposition>) -> Mutation {
     Mutation {
@@ -67,6 +79,7 @@ fn judged_from(dispositions: Vec<Disposition>) -> Mutation {
                 position: None,
                 disposition,
                 source_run_id: None,
+                routing: None,
             })
             .collect(),
         skips: BTreeMap::new(),
@@ -91,6 +104,117 @@ proptest! {
             counts.killed + counts.survived + counts.timed_out <= counts.executed,
             "and what ran is at least what the outcomes of running account for: {:?}",
             counts
+        );
+    }
+
+    /// Every mutation the run catalogued was decided by somebody, or is recorded as decided by nobody.
+    ///
+    /// Summed through `total()` rather than by naming the columns here: a
+    /// column added to one and not the other is the drift this law exists to
+    /// refuse, and a law that could drift is not one.
+    #[test]
+    fn every_mutation_is_in_exactly_one_of_the_columns_that_say_who_decided_it(
+        dispositions in proptest::collection::vec(disposition(), 0..24)
+    ) {
+        let counts = judged_from(dispositions).accounting(&BTreeSet::new());
+        let who = counts.observers;
+        prop_assert_eq!(
+            counts.cataloged,
+            who.total(),
+            "a verdict is what stands behind each mutation, so the ways one can be \
+             decided have to cover the catalog exactly once. A mutation in none of \
+             these columns is one the report counted and never answered for, and a \
+             mutation in two is one counted twice in whichever column a reader \
+             trusts: {:?}",
+            counts
+        );
+    }
+
+    /// The compiler refusing a mutation is the type system noticing it, and the report says so.
+    #[test]
+    fn what_the_compiler_refused_is_what_the_type_system_noticed(
+        dispositions in proptest::collection::vec(disposition(), 0..24)
+    ) {
+        let counts = judged_from(dispositions).accounting(&BTreeSet::new());
+        prop_assert_eq!(
+            counts.observers.types,
+            counts.rejected,
+            "a mutation the compiler refuses is a program the type system would not \
+             let anybody have, which is the same event a test failing is: something \
+             noticed. Counting it only as work the run did not do throws away the \
+             one measurement nothing else makes: {:?}",
+            counts
+        );
+    }
+
+    /// Measuring one more build of a project already measured never makes it look better.
+    ///
+    /// The precondition is real rather than tidy: going from no build to one
+    /// is not measuring more of the same thing, it is measuring at all, and a
+    /// mutation nothing looked at stands on less than one a build decided.
+    #[test]
+    fn a_further_build_can_only_leave_a_mutation_standing_where_it_was_or_worse(
+        first in proptest::collection::vec(decision_of(), 1..5),
+        second in decisions(),
+    ) {
+        let one: BTreeMap<String, Decision> = first
+            .iter()
+            .enumerate()
+            .map(|(at, decision)| (format!("build-{at}"), *decision))
+            .collect();
+        let mut both = one.clone();
+        both.extend(
+            second
+                .iter()
+                .enumerate()
+                .map(|(at, decision)| (format!("later-{at}"), *decision)),
+        );
+
+        let before = across(&one).decision.standing();
+        let after = across(&both).decision.standing();
+        prop_assert!(
+            after <= before,
+            "a run that measured a release build as well as a debug one cannot come \
+             out better for having looked: every build is a program of its own, so \
+             a mutation nothing noticed in one of them is one nothing noticed, and a \
+             rule that let the good build outvote the bad one would turn measuring \
+             more into a way of claiming more. before={before:?} after={after:?} \
+             one={one:?} both={both:?}"
+        );
+    }
+
+    /// What one build decided is what the run records, when there is only the one.
+    #[test]
+    fn a_single_build_is_answered_for_by_itself(one in decision_of()) {
+        let only = BTreeMap::from([("default".to_owned(), one)]);
+        prop_assert_eq!(across(&only).decision, one);
+    }
+
+    /// Every build with a hole here is named, because a reader has to know which.
+    #[test]
+    fn the_builds_that_are_blind_to_a_mutation_are_the_ones_the_run_names(decisions in decisions()) {
+        let by_build: BTreeMap<String, Decision> = decisions
+            .iter()
+            .enumerate()
+            .map(|(at, decision)| (format!("build-{at}"), *decision))
+            .collect();
+        let named = across(&by_build).blind_in;
+        let expected: Vec<njutest_cli::report::BlindIn> = by_build
+            .iter()
+            .filter_map(|(build, decision)| {
+                Some(njutest_cli::report::BlindIn {
+                    build: build.clone(),
+                    decision: decision.blind()?,
+                })
+            })
+            .collect();
+        prop_assert_eq!(
+            named,
+            expected,
+            "a gap under one build is a different thing to act on than one that is \
+             there everywhere, and the reader cannot tell them apart unless the run \
+             says which — nor can they tell a build whose tests noticed nothing from \
+             one that established nothing, unless the run says that too"
         );
     }
 
@@ -267,10 +391,11 @@ fn reported(findings: Vec<njutest_cli::report::Finding>) -> njutest_cli::report:
             item: "demo".to_owned(),
             original: ">".to_owned(),
             replacement: String::new(),
-            outcome: "survived".to_owned(),
-            killed_by: None,
+            outcome: njutest_cli::report::Decided::Survived,
             reused: false,
             source_run_id: None,
+            blind_in: Vec::new(),
+            routing: None,
         })
         .collect();
     report.findings = findings;

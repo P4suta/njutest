@@ -139,6 +139,7 @@ fn survivor(display_id: &str) -> Judged {
             route: block(&["core/lib/core"]),
         },
         source_run_id: None,
+        routing: None,
     }
 }
 

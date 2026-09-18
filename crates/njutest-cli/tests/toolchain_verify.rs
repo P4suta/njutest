@@ -125,6 +125,107 @@ fn document(fixture: &Fixture) -> serde_json::Value {
 }
 
 #[test]
+fn a_target_put_to_mutations_that_noticed_none_is_named_with_how_many() {
+    let fixture = fixture("fixture-hollow");
+    let output = verify(&fixture, &[]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let document = document(&fixture);
+    let hollow: Vec<&serde_json::Value> = document["findings"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the report lists findings: {document}\n{stderr}"))
+        .iter()
+        .filter(|one| one["kind"] == "hollow-target")
+        .collect();
+
+    assert_eq!(
+        hollow.len(),
+        1,
+        "`smoke` runs `double` and asserts nothing about what came back, so every \
+         mutation of `double` survives it; the library target noticed its own, so \
+         only one target is hollow here: {document}\n{stderr}"
+    );
+    let named = hollow[0]["subject"]
+        .as_str()
+        .unwrap_or_else(|| panic!("a finding names its subject: {}", hollow[0]));
+    assert!(
+        named.contains("smoke"),
+        "and it is the one that asserts nothing, not the one that does: {named}"
+    );
+    let detail = hollow[0]["detail"].as_str().unwrap_or_default();
+    assert!(
+        detail.contains('2'),
+        "the count is the claim, and it is what was asked rather than what the \
+         catalog holds: four mutations of `double` survive the engine on its own, \
+         and a proof discharged two of them here without an execution, so `smoke` \
+         was put to two. A finding that said only `noticed nothing` would read the \
+         same whether it was asked once or a hundred times: {detail}"
+    );
+}
+
+#[test]
+fn a_mutation_only_one_of_the_builds_notices_is_a_survivor_that_names_the_other() {
+    let fixture = fixture("fixture-features");
+    std::fs::write(
+        fixture.root.join(njutest_cli::config::FILE_NAME),
+        "[[configuration]]\nname = \"imperial\"\nfeatures = [\"imperial\"]\n",
+    )
+    .expect("the configuration is written");
+
+    let output = verify(&fixture, &[]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let document = document(&fixture);
+    let mutants = document["mutants"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the report lists mutations: {document}"));
+
+    let feet: Vec<&serde_json::Value> = mutants
+        .iter()
+        .filter(|one| {
+            one["item"]
+                .as_str()
+                .is_some_and(|item| item.contains("feet"))
+        })
+        .collect();
+    assert!(
+        !feet.is_empty(),
+        "the fixture mutates `feet`, and a run that catalogued none of them is \
+         measuring something else: {document}\n{stderr}"
+    );
+    for mutation in feet {
+        assert_eq!(
+            mutation["outcome"], "unreached",
+            "the default build compiles no test for `feet`, so nothing there even \
+             runs it; the run may not let the build that does outvote the one that \
+             does not: {mutation}"
+        );
+        assert_eq!(
+            mutation["blind_in"],
+            serde_json::json!([{ "build": "default", "decision": "unreached" }]),
+            "and the run names the build and what that build established, because a \
+             gap everywhere and a gap under the defaults are different things to act \
+             on — and so are a build whose tests noticed nothing and one where nothing \
+             ran it at all: {mutation}"
+        );
+    }
+
+    let metres: Vec<&serde_json::Value> = mutants
+        .iter()
+        .filter(|one| {
+            one["item"]
+                .as_str()
+                .is_some_and(|item| item.contains("metres"))
+        })
+        .collect();
+    assert!(!metres.is_empty(), "{document}");
+    for mutation in metres {
+        assert!(
+            mutation["blind_in"].as_array().is_some_and(Vec::is_empty),
+            "a mutation both builds noticed names no build: {mutation}"
+        );
+    }
+}
+
+#[test]
 fn a_suite_with_a_gap_it_cannot_see_is_insufficient() {
     let fixture = fixture("fixture-baseline");
     let output = verify(&fixture, &[]);

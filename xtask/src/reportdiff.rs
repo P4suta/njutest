@@ -168,25 +168,48 @@ fn compare_scalar(field: &str, pair: Pair<'_>, changes: &mut Vec<Change>) {
 /// One group of counts under `accounting`.
 fn compare_counts(group: &str, pair: Pair<'_>, changes: &mut Vec<Change>) {
     let at = |value: &serde_json::Value| {
-        value
+        let mut flat = BTreeMap::new();
+        if let Some(counts) = value
             .get("accounting")
             .and_then(|accounting| accounting.get(group))
-            .and_then(serde_json::Value::as_object)
-            .cloned()
-            .unwrap_or_default()
+        {
+            flatten("", counts, &mut flat);
+        }
+        flat
     };
     let (before, after) = (at(pair.before), at(pair.after));
-    let mut names: Vec<String> = before.keys().chain(after.keys()).cloned().collect();
+    let mut names: Vec<&String> = before.keys().chain(after.keys()).collect();
     names.sort();
     names.dedup();
     for name in names {
-        let (was, is) = (text_of(before.get(&name)), text_of(after.get(&name)));
+        let (was, is) = (before.get(name).cloned(), after.get(name).cloned());
         if was != is {
             changes.push(Change {
                 subject: format!("accounting.{group}.{name}"),
                 before: was,
                 after: is,
             });
+        }
+    }
+}
+
+/// Every count under `value`, by the dotted name a reader would use to find it.
+fn flatten(prefix: &str, value: &serde_json::Value, into: &mut BTreeMap<String, String>) {
+    match value {
+        serde_json::Value::Object(fields) => {
+            for (name, held) in fields {
+                let at = if prefix.is_empty() {
+                    name.clone()
+                } else {
+                    format!("{prefix}.{name}")
+                };
+                flatten(&at, held, into);
+            }
+        }
+        other => {
+            if let Some(text) = text_of(Some(other)) {
+                into.insert(prefix.to_owned(), text);
+            }
         }
     }
 }

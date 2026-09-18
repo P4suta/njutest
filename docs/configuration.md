@@ -39,6 +39,14 @@ build_timeout = ""              # upper bound for one build; empty = no bound
 jobs = 0                        # mutation workers; 0 = logical CPUs capped at four
 skip_targets = []               # stable target ids never to start; every one is reported
 
+[[configuration]]               # a further build to measure; none by default
+name = "all-features"           # what the report calls it; not "default", and unique
+features = []
+all_features = true
+no_default_features = false
+profile = ""                    # cargo profile; empty = the command's own default
+target = ""                     # target triple; empty = the host
+
 [mutation]
 equivalence = false             # ask the compiler whether it renders each survivor identically
 
@@ -64,6 +72,8 @@ command = ["./tools/postgres-provider"]
 timeout = "30s"
 shared = true                   # or exclusive = true (forces jobs = 1)
 environment = ["POSTGRES_IMAGE"]
+interpose = ""                  # the variable of the provider's answer naming where the tests dial
+wire = "raw"                    # how much of what goes past that seam is read: raw | http
 
 [generation]
 command = ["./tools/test-generator"]

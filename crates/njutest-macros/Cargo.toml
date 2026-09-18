@@ -19,9 +19,6 @@ readme.workspace = true
 proc-macro = true
 
 [dependencies]
-# A proc-macro crate is built on its own by consumers (trybuild included), so
-# it must ask for the compiler-bridge features itself instead of relying on
-# feature unification inside this workspace.
 proc-macro2 = { workspace = true, features = ["proc-macro"] }
 syn = { workspace = true, features = ["proc-macro"] }
 

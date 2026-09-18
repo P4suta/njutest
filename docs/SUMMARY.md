@@ -59,3 +59,6 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 - [0018 The assurance layer rides the standard interfaces](adr/0018-the-assurance-layer-rides-the-standard-interfaces.md)
 - [0019 The engine owns the compiled build cache](adr/0019-the-engine-owns-the-compiled-build-cache.md)
 - [0020 What a person is told is a value](adr/0020-what-a-person-is-told-is-a-value.md)
+- [0021 A claim is a perturbation, an observer, and a decision](adr/0021-a-claim-is-a-perturbation-an-observer-and-a-decision.md)
+- [0022 Composition needs two layers answering one question](adr/0022-composition-needs-two-layers-answering-one-question.md)
+- [0023 A run may not conclude from how it measured](adr/0023-a-run-may-not-conclude-from-how-it-measured.md)

@@ -5,7 +5,7 @@
 
 use std::fmt::Write as _;
 
-use super::{Diagnostic, Excerpt, Headline, Place, Site, Style, Telling, Terminal, Told};
+use super::{Diagnostic, Excerpt, Headline, Missing, Place, Site, Style, Telling, Terminal, Told};
 
 /// What a run has to say, drawn for `terminal`.
 #[must_use]
@@ -137,10 +137,7 @@ fn heads(out: &mut String, place: &Place, gutter: usize, telling: Telling) {
     let Some(instead) = &place.instead else {
         return;
     };
-    let why = match instead {
-        Excerpt::Moved => "the file has changed since the run, so the lines are not shown",
-        _ => "the file could not be read, so the lines are not shown",
-    };
+    let why = instead.why();
     let opening = gutter
         .saturating_add(1)
         .saturating_add(strokes.rule.chars().count());
@@ -204,11 +201,11 @@ fn wants(out: &mut String, place: &Place, gutter: usize, telling: Telling) {
 /// drawing, because they are in one item and a reader reads it once, and they
 /// are not one fact, because each kind asks for different work.
 fn counting(place: &Place) -> String {
-    let mut kinds: Vec<(super::Blindness, usize)> = Vec::new();
+    let mut kinds: Vec<(super::Standing, usize)> = Vec::new();
     for spot in &place.spots {
-        match kinds.iter_mut().find(|(kind, _)| *kind == spot.blindness) {
+        match kinds.iter_mut().find(|(kind, _)| *kind == spot.standing) {
             Some((_, count)) => *count = count.saturating_add(1),
-            None => kinds.push((spot.blindness, 1)),
+            None => kinds.push((spot.standing, 1)),
         }
     }
     kinds
@@ -222,7 +219,7 @@ fn counting(place: &Place) -> String {
 fn asked(place: &Place) -> Vec<(&'static str, &str)> {
     let mut found: Vec<(&'static str, &str)> = Vec::new();
     for spot in &place.spots {
-        let asks = spot.blindness.asks();
+        let asks = spot.standing.asks();
         if !found.iter().any(|(said, _)| *said == asks) {
             found.push((asks, spot.locator.as_str()));
         }
@@ -348,13 +345,13 @@ fn at(out: &mut String, site: &Site, gutter: usize, telling: Telling) {
                 let _written = writeln!(out, "{:gutter$} {beside} {caret}", "");
             }
         }
-        Excerpt::Moved => aside(
+        Excerpt::Instead(Missing::Moved) => aside(
             out,
             gutter,
             "the file has changed since the run, so the line is not shown",
             telling,
         ),
-        Excerpt::Unreadable => aside(
+        Excerpt::Instead(Missing::Unreadable) => aside(
             out,
             gutter,
             "the file could not be read, so the line is not shown",
@@ -382,14 +379,20 @@ fn headline(out: &mut String, told: &Told, terminal: Terminal) {
         killed,
         survived,
         unreached,
+        timed_out,
         duration_ms,
         kept,
         ..
     } = &told.headline;
     let seconds = as_secs(*duration_ms);
+    let waited = if *timed_out == 0 {
+        String::new()
+    } else {
+        format!("{timed_out} timed out  ")
+    };
     let counted = telling.painted(
         Style::Frame,
-        &format!("{killed} killed  {survived} survived  {unreached} unreached  {seconds}"),
+        &format!("{killed} killed  {survived} survived  {unreached} unreached  {waited}{seconds}"),
     );
     headed(
         out,
@@ -428,22 +431,35 @@ fn headed(out: &mut String, text: &str, telling: Telling) {
     }
 }
 
-/// How many gaps there are and how many files they are in, which is what a reader wants before the list.
+/// How many gaps there are, how many files they are in, and how much the run did not settle.
+///
+/// A place the run could not measure is not a gap in somebody's tests, and a
+/// headline that counted it as one would report a busy machine as a hole in
+/// their suite. `Standing` keeps the two apart, so this counts rather than
+/// remembers (ADR 0023).
 fn gaps(told: &Told) -> String {
     let count = told
         .places
         .iter()
-        .map(|place| place.spots.len())
-        .sum::<usize>()
+        .flat_map(|place| &place.spots)
+        .filter(|spot| spot.standing.is_a_gap())
+        .count()
         .saturating_add(
             told.diagnostics
                 .iter()
                 .filter(|one| one.severity == super::Severity::Gap)
                 .count(),
         );
+    let unsettled = told
+        .places
+        .iter()
+        .flat_map(|place| &place.spots)
+        .filter(|spot| !spot.standing.is_a_gap())
+        .count();
     let files: std::collections::BTreeSet<&str> = told
         .places
         .iter()
+        .filter(|place| place.spots.iter().any(|spot| spot.standing.is_a_gap()))
         .map(|place| place.path.as_str())
         .chain(
             told.diagnostics
@@ -453,12 +469,25 @@ fn gaps(told: &Told) -> String {
                 .map(|site| site.path.as_str()),
         )
         .collect();
-    let files = files.len().max(1);
-    format!(
-        "{count} gap{} in {files} file{}",
+    let unestablished = if unsettled == 0 {
+        String::new()
+    } else {
+        format!("{unsettled} not established")
+    };
+    if count == 0 {
+        return unestablished;
+    }
+    let found = format!(
+        "{count} gap{} in {} file{}",
         if count == 1 { "" } else { "s" },
-        if files == 1 { "" } else { "s" }
-    )
+        files.len().max(1),
+        if files.len() == 1 { "" } else { "s" }
+    );
+    if unsettled == 0 {
+        found
+    } else {
+        format!("{found}, {unestablished}")
+    }
 }
 
 /// A duration as a person reads one, to a tenth of a second.

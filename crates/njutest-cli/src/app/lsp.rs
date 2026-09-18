@@ -184,11 +184,7 @@ pub fn serve(input: &mut dyn BufRead, output: &mut dyn Write, root: &Path) -> u8
                 reply(output, id.as_ref(), &Value::Null);
             }
             "exit" => break,
-            _ => {
-                if id.is_some() {
-                    reply(output, id.as_ref(), &Value::Null);
-                }
-            }
+            unknown => answer_anyway(output, id.as_ref(), unknown),
         }
     }
     EXIT_ASSURED
@@ -204,6 +200,21 @@ fn capabilities(encoding: Encoding) -> Value {
         },
         "serverInfo": { "name": "njutest", "version": crate::VERSION },
     })
+}
+
+/// What to say about a method this server does not implement.
+///
+/// The one catch-all in the workspace that is kept on purpose. A closed set
+/// is matched exhaustively here as everywhere (ADR 0023), and the methods of
+/// this protocol are not a set this workspace closes: a client may send any
+/// of them, the set grows without us, and the protocol says a server answers
+/// an unknown request rather than refusing it. A catch-all over what somebody
+/// else's wire may carry is the handling; a catch-all over a set written in
+/// this repository is the defect.
+fn answer_anyway(output: &mut dyn Write, id: Option<&Value>, _method: &str) {
+    if id.is_some() {
+        reply(output, id, &Value::Null);
+    }
 }
 
 /// The acceptance a reviewer would record for each mutation the request's range holds.

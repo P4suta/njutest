@@ -6,6 +6,15 @@
       "equivalent": 0,
       "executed": 9,
       "killed": 7,
+      "observers": {
+        "proved": 0,
+        "tests": 7,
+        "types": 0,
+        "unnoticed": 2,
+        "unreached": 1,
+        "waited": 0,
+        "errored": 0
+      },
       "rejected": 0,
       "reused_killed": 0,
       "reused_survived": 0,
@@ -91,7 +100,8 @@
       },
       "reused": false,
       "rule": "return-default@1",
-      "source_run_id": null
+      "source_run_id": null,
+      "blind_in": []
     },
     {
       "display_id": "2bcb6eb7d96056277fa1",
@@ -106,7 +116,8 @@
       },
       "reused": false,
       "rule": "lt-to-le@1",
-      "source_run_id": null
+      "source_run_id": null,
+      "blind_in": []
     },
     {
       "display_id": "366948fbe36bfd19786d",
@@ -121,7 +132,8 @@
       },
       "reused": false,
       "rule": "gt-to-ge@1",
-      "source_run_id": null
+      "source_run_id": null,
+      "blind_in": []
     },
     {
       "display_id": "9618aa1c71c281ae9835",
@@ -136,7 +148,8 @@
       },
       "reused": false,
       "rule": "negate-condition@1",
-      "source_run_id": null
+      "source_run_id": null,
+      "blind_in": []
     },
     {
       "display_id": "97b5a75a9e1efeeff233",
@@ -151,7 +164,8 @@
       },
       "reused": false,
       "rule": "return-default@1",
-      "source_run_id": null
+      "source_run_id": null,
+      "blind_in": []
     },
     {
       "display_id": "ae6162ece39e3389335d",
@@ -166,7 +180,8 @@
       },
       "reused": false,
       "rule": "negate-condition@1",
-      "source_run_id": null
+      "source_run_id": null,
+      "blind_in": []
     },
     {
       "display_id": "b6f6f7454e99e11dfd80",
@@ -181,7 +196,8 @@
       },
       "reused": false,
       "rule": "return-default@1",
-      "source_run_id": null
+      "source_run_id": null,
+      "blind_in": []
     },
     {
       "display_id": "d0f665a548910bd9ed45",
@@ -196,7 +212,8 @@
       },
       "reused": false,
       "rule": "mul-to-div@1",
-      "source_run_id": null
+      "source_run_id": null,
+      "blind_in": []
     },
     {
       "display_id": "ee0a61bc9f91d9acc4cf",
@@ -211,7 +228,8 @@
       },
       "reused": false,
       "rule": "return-default@1",
-      "source_run_id": null
+      "source_run_id": null,
+      "blind_in": []
     },
     {
       "display_id": "f0bd7961d77aed7f5cba",
@@ -226,7 +244,8 @@
       },
       "reused": false,
       "rule": "return-default@1",
-      "source_run_id": null
+      "source_run_id": null,
+      "blind_in": []
     }
   ],
   "provenance": {

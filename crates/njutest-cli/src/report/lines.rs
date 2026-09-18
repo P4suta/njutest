@@ -46,7 +46,7 @@ fn written(report: &Report, document: Option<&str>) -> String {
             &mut out,
             "MUTANT",
             &[
-                &mutant.outcome,
+                mutant.outcome.name(),
                 &mutant.display_id,
                 &format!(
                     "{}:{}:{}",
@@ -55,7 +55,7 @@ fn written(report: &Report, document: Option<&str>) -> String {
                 &mutant.rule,
             ],
         );
-        if let Some(killed_by) = mutant.killed_by.as_deref() {
+        if let Some(killed_by) = mutant.outcome.decided_by() {
             append(&mut out, &format!("killed_by={killed_by}"));
         }
         if let Some(provenance) = mutant.source_run_id.as_deref() {
@@ -96,7 +96,11 @@ fn written(report: &Report, document: Option<&str>) -> String {
 /// here named either.
 /// How a reader names this mutation again, which has to hold after they have changed the file.
 fn onward(report: &Report, out: &mut String) {
-    let Some(first) = report.mutants.iter().find(|one| one.outcome == "survived") else {
+    let Some(first) = report
+        .mutants
+        .iter()
+        .find(|one| one.outcome.outcome() == super::Outcome::Survived)
+    else {
         return;
     };
     record(

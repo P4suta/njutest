@@ -92,13 +92,39 @@ pub fn proofs(events: &[Event]) -> Vec<(String, u64)> {
 pub const ENGINE_DIRECTORY: &str = "engine";
 
 /// The commands that took the longest, most first.
+///
+/// Every payload is named rather than defaulted away, which is how the
+/// measurements got in here: a `_` arm had been dropping every `MutantExec`,
+/// so a summary of what made a run long named the builds and not the thing a
+/// run spends most of itself doing. A kind that gains a duration later is one
+/// the compiler makes somebody place (ADR 0023).
+///
+/// A `WireExchange` carries a duration and is deliberately not one of these.
+/// It is a round trip inside a process this list already counts, so adding it
+/// would count the same seconds twice, and five hundred exchanges of twenty
+/// milliseconds would fill a list of five with nothing anybody can act on
+/// while hiding the measurement that took twelve seconds.
 #[must_use]
 pub fn slowest(events: &[Event]) -> Vec<(u64, String)> {
     let mut timed: Vec<(u64, String)> = events
         .iter()
         .filter_map(|event| match &event.payload {
             Payload::Exec { exec } => Some((exec.duration_ms, said(&exec.argv))),
-            _ => None,
+            Payload::MutantExec { mutant } => Some((
+                mutant.duration_ms,
+                format!("{} against {}", mutant.mutant, mutant.target),
+            )),
+            Payload::RunStart { .. }
+            | Payload::PhaseStart { .. }
+            | Payload::PhaseEnd { .. }
+            | Payload::Progress { .. }
+            | Payload::Artifact { .. }
+            | Payload::Route { .. }
+            | Payload::ProbeExec { .. }
+            | Payload::WireExchange { .. }
+            | Payload::WireExec { .. }
+            | Payload::Note { .. }
+            | Payload::RunEnd { .. } => None,
         })
         .collect();
     timed.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));

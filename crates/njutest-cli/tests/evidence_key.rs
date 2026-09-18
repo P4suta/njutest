@@ -24,11 +24,44 @@ fn common() -> Common {
         environment: vec![("RUSTFLAGS".to_owned(), "-Copt-level=1".to_owned())],
         contract: "standard-v1".to_owned(),
         test_args: vec!["--test-threads=1".to_owned()],
-        features: vec!["a".to_owned()],
+        build: vec!["--features".to_owned(), "a".to_owned()],
         timeout_ms: 600_000,
         versions: vec!["njutest 0.1.0".to_owned(), "rust-mutants 0.1.0".to_owned()],
         corpus: "c".repeat(64),
     }
+}
+
+#[test]
+fn the_key_is_over_the_build_cargo_was_told_to_make_and_not_over_how_fast() {
+    let config = njutest_cli::config::Configuration {
+        name: "release".to_owned(),
+        all_features: true,
+        no_default_features: true,
+        profile: Some("release".to_owned()),
+        target: Some("wasm32-unknown-unknown".to_owned()),
+        features: vec!["a".to_owned()],
+    };
+    let spelled = config.build().arguments();
+    for flag in [
+        "--all-features",
+        "--no-default-features",
+        "--features",
+        "--profile",
+        "--target",
+    ] {
+        assert!(
+            spelled.iter().any(|one| one == flag),
+            "everything that decides which program cargo produces is in the key, or \
+             two runs of two different programs read each other's answers back: \
+             {flag} is not in {spelled:?}"
+        );
+    }
+    assert!(
+        !spelled.iter().any(|one| one == "--jobs"),
+        "and how many jobs cargo may run at once decides nothing about the program, \
+         so it stays out: a key that moved with it would throw away every answer a \
+         busier machine had already established: {spelled:?}"
+    );
 }
 
 fn linked() -> Linked {
@@ -69,7 +102,7 @@ fn a_key_covers_everything_that_could_change_what_the_target_does() {
     one.dependencies = "e".repeat(64);
     cases.push(("what the lock file resolved", one, common()));
 
-    let changes: [Shared; 9] = [
+    let changes: [Shared; 13] = [
         ("the toolchain", |c| {
             c.toolchain = "rustc 1.99.0".to_owned();
         }),
@@ -81,7 +114,19 @@ fn a_key_covers_everything_that_could_change_what_the_target_does() {
         }),
         ("the contract", |c| c.contract = "deep-v1".to_owned()),
         ("the harness arguments", |c| c.test_args.clear()),
-        ("the features", |c| c.features.push("b".to_owned())),
+        ("the features", |c| c.build.push("--features=b".to_owned())),
+        ("all features", |c| {
+            c.build.push("--all-features".to_owned());
+        }),
+        ("no default features", |c| {
+            c.build.push("--no-default-features".to_owned());
+        }),
+        ("the profile", |c| {
+            c.build.push("--profile=release".to_owned());
+        }),
+        ("the target", |c| {
+            c.build.push("--target=wasm32-unknown-unknown".to_owned());
+        }),
         ("the timeout", |c| c.timeout_ms = 1),
         ("the versions", |c| {
             c.versions.push("something 9".to_owned());

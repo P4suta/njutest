@@ -10,7 +10,7 @@
 )]
 
 use njutest_cli::presentation::{
-    Action, Diagnostic, Excerpt, Headline, Severity, Site, Terminal, Told, human,
+    Action, Diagnostic, Excerpt, Headline, Missing, Severity, Site, Terminal, Told, human,
 };
 use njutest_cli::report::Verdict;
 
@@ -62,6 +62,7 @@ fn told() -> Told {
             killed: 7,
             survived: 2,
             unreached: 1,
+            timed_out: 0,
             duration_ms: 1911,
             kept: kept("20260101T000000Z-aaaaaa"),
         },
@@ -148,7 +149,7 @@ fn before(line: &str, mark: char) -> String {
 fn a_file_that_moved_under_the_run_is_said_rather_than_drawn() {
     let mut told = told();
     if let Some(site) = told.diagnostics[0].at.as_mut() {
-        site.excerpt = Excerpt::Moved;
+        site.excerpt = Excerpt::Instead(Missing::Moved);
     }
     let drawn = human::draw(&told, Terminal::plain(80));
     assert!(
@@ -171,6 +172,7 @@ fn a_run_with_nothing_to_say_says_that_and_stops() {
             killed: 4,
             survived: 0,
             unreached: 0,
+            timed_out: 0,
             duration_ms: 1388,
             kept: kept("20260101T000000Z-bbbbbb"),
         },
@@ -255,4 +257,86 @@ fn what_to_draw_for_is_decided_from_what_was_found_out_and_nothing_else() {
         ROOM,
         "and a width nothing can be drawn in is one nobody meant, so it is not believed"
     );
+}
+
+#[test]
+fn the_label_under_a_mark_says_what_the_run_established_and_never_something_else() {
+    use njutest_cli::report::Decided;
+
+    let said = |decided: Decided| njutest_cli::presentation::label("gt-to-ge", &decided);
+    for (decided, wrong) in [
+        (
+            Decided::TimedOut {
+                on: "fixture/test/smoke".to_owned(),
+            },
+            "noticed",
+        ),
+        (
+            Decided::Unconfirmed {
+                on: "fixture/test/smoke".to_owned(),
+            },
+            "noticed",
+        ),
+        (
+            Decided::Errored {
+                on: "fixture/test/smoke".to_owned(),
+            },
+            "noticed",
+        ),
+    ] {
+        let label = said(decided.clone());
+        assert!(
+            !label.contains(wrong),
+            "`decided_by` answers with a target for four outcomes and only one of them is \
+             a detection. A label that reads the target out of it and says the target \
+             noticed tells somebody a test caught this, about a measurement that ran out \
+             of time or never happened: {label}"
+        );
+    }
+    assert!(
+        said(Decided::Equivalent).contains("proof"),
+        "and a mutation a proof settled is not one nothing noticed: {}",
+        said(Decided::Equivalent)
+    );
+    assert!(
+        said(Decided::CompileRejected).contains("compiler"),
+        "nor is one the compiler refused: {}",
+        said(Decided::CompileRejected)
+    );
+}
+
+#[test]
+fn every_outcome_a_record_can_hold_reads_differently_from_the_others() {
+    let said: Vec<String> = njutest_cli::report::Decided::every_against("pkg/test/it")
+        .iter()
+        .map(|decided| njutest_cli::presentation::label("gt-to-ge@1", decided))
+        .collect();
+    let distinct: std::collections::BTreeSet<&String> = said.iter().collect();
+    assert_eq!(
+        distinct.len(),
+        said.len(),
+        "a reader has to be able to tell two things a run established apart, and two \
+         outcomes reading alike means they cannot. Exhaustiveness cannot catch this: \
+         a match over all eight can still send four of them to one sentence, which is \
+         what it did — and it stays uncaught if each arm is handed its own target, \
+         because two arms sharing a template then read apart on the name alone. \
+         Every arm is established against the same target here for that reason. \
+         {said:#?}"
+    );
+}
+
+#[test]
+fn an_outcome_that_happened_to_a_target_names_that_target_and_not_another() {
+    for decided in njutest_cli::report::Decided::every() {
+        let Some(against) = decided.decided_by() else {
+            continue;
+        };
+        let said = njutest_cli::presentation::label("gt-to-ge@1", &decided);
+        assert!(
+            said.contains(against),
+            "the sentence names the target the outcome was established against. A \
+             payload bound from the wrong arm still reads as English and names the \
+             wrong target, which nothing but this notices: {said}"
+        );
+    }
 }

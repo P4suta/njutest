@@ -142,7 +142,7 @@ fn a_mutant_is_routed_to_the_tests_that_reached_it_rather_than_to_the_whole_targ
     let route = session.route(one);
     assert_eq!(
         route.granularity(),
-        "test",
+        rust_mutants::session::Granularity::Test,
         "the measurement named tests, so the route does: {route:?}"
     );
     assert_eq!(

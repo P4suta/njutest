@@ -10,8 +10,9 @@
 
 use njutest_cli::report::audit::{Violation, validate_for_persistence};
 use njutest_cli::report::{
-    Finding, FindingKind, Git, Limitation, MutantAccounting, Position, Report, RunKind, SCHEMA,
-    TargetAccounting, TargetRecord, TargetStatus, UNAVAILABLE, Verdict,
+    Finding, FindingKind, Git, Limitation, MutantAccounting, ObserverAccounting, Position, Report,
+    RunKind, SCHEMA, SeamRecord, TargetAccounting, TargetRecord, TargetStatus, UNAVAILABLE,
+    Verdict,
 };
 
 /// A report that satisfies every invariant, for a test to break one thing in. One field of a report, and how to leave it saying nothing.
@@ -46,6 +47,10 @@ fn sound() -> Report {
         cataloged: 1,
         executed: 1,
         killed: 1,
+        observers: ObserverAccounting {
+            tests: 1,
+            ..ObserverAccounting::default()
+        },
         ..MutantAccounting::default()
     };
     report.targets = vec![
@@ -147,6 +152,32 @@ fn git_is_either_available_with_its_facts_or_explicitly_not() {
 #[test]
 fn a_sound_report_has_nothing_to_report() {
     assert_eq!(validate_for_persistence(&sound()), Vec::<Violation>::new());
+}
+
+#[test]
+fn a_report_says_who_decided_every_mutation_it_catalogued() {
+    let mut report = sound();
+    report.accounting.mutants.observers = ObserverAccounting::default();
+    let violations = validate_for_persistence(&report);
+    assert!(
+        violations
+            .iter()
+            .any(|violation| matches!(violation, Violation::DecisionsDoNotAddUp { .. })),
+        "a report that catalogued a mutation and names nobody who decided it is a \
+         verdict with nothing behind it, and there is no way for a reader to tell \
+         that from a run where everything was decided: {violations:?}"
+    );
+
+    let mut twice = sound();
+    twice.accounting.mutants.observers.types = 1;
+    let violations = validate_for_persistence(&twice);
+    assert!(
+        violations
+            .iter()
+            .any(|violation| matches!(violation, Violation::DecisionsDoNotAddUp { .. })),
+        "and one counted in two columns is one counted twice by whichever reader \
+         trusts the wrong column: {violations:?}"
+    );
 }
 
 #[test]
@@ -365,10 +396,13 @@ fn mutant(id: &str) -> njutest_cli::report::MutantRecord {
         item: "demo".to_owned(),
         original: ">".to_owned(),
         replacement: ">=".to_owned(),
-        outcome: "killed".to_owned(),
-        killed_by: Some("core/lib/core one".to_owned()),
+        outcome: njutest_cli::report::Decided::Killed {
+            by: "core/lib/core one".to_owned(),
+        },
         reused: false,
         source_run_id: None,
+        blind_in: Vec::new(),
+        routing: None,
     }
 }
 
@@ -837,5 +871,45 @@ fn every_refusal_is_a_finished_sentence() {
         "one report for each way this refuses one, and every way says something \
          different: {kinds} refusals, {} of them distinct",
         seen.len()
+    );
+}
+
+#[test]
+fn a_seam_finding_that_names_a_question_the_report_does_not_hold_is_refused() {
+    let mut report = Report::new(
+        "20260918T090000Z-aaaaaa",
+        RunKind::Full,
+        njutest_cli::config::Contract::StandardV1,
+    );
+    report.findings.push(Finding::new(
+        FindingKind::WireUnnoticed,
+        &"c".repeat(64),
+        "nothing noticed when the run was told to answer 500",
+    ));
+    let refused = validate_for_persistence(&report);
+    assert!(
+        refused
+            .iter()
+            .any(|one| matches!(one, Violation::SeamFindingNamesNothing { .. })),
+        "a reader handed a sixty-four character name with nothing in the report to \
+         look it up in has been told nothing they can act on, and ADR 0002 keeps the \
+         thing it stands for off the recording: {refused:?}"
+    );
+
+    report.seams.push(SeamRecord {
+        id: "c".repeat(64),
+        capability: "api".to_owned(),
+        seq: 3,
+        asked: "GET /orders".to_owned(),
+        answered: Some(200),
+        rule: njutest_cli::wire::rule::Rule::StatusServerError,
+        decision: njutest_cli::report::SeamDecision::Unnoticed,
+    });
+    let allowed = validate_for_persistence(&report);
+    assert!(
+        !allowed
+            .iter()
+            .any(|one| matches!(one, Violation::SeamFindingNamesNothing { .. })),
+        "and once the report holds the question, the finding resolves: {allowed:?}"
     );
 }

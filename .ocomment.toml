@@ -1,0 +1,9 @@
+version = 1
+
+[files]
+include = ["crates/**", "xtask/**"]
+exclude = ["**/testdata/**", "**/target/**", "fixtures/**", "**/*.proptest-regressions"]
+
+[policy]
+mode = "conservative"
+layout = "compact"

@@ -146,6 +146,12 @@ code!(
     "remove the store and let it be rebuilt: a stored answer that is not what it claims is never used"
 );
 code!(
+    WIRE_CANNOT_LISTEN,
+    "NJ8005",
+    "no port could be listened on in front of a seam, so nothing could be recorded about it",
+    "check this machine allows a listener on the loopback interface, and that nothing has taken every port"
+);
+code!(
     SCRATCH_UNUSABLE,
     "NJ8001",
     "the run has nowhere to work",
@@ -336,6 +342,7 @@ pub const fn error_codes() -> &'static [ErrorCode] {
         SCRATCH_UNUSABLE,
         CACHE_UNUSABLE,
         CACHE_CORRUPT,
+        WIRE_CANNOT_LISTEN,
         MERGE_REFUSED,
     ]
 }

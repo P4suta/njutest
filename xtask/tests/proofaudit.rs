@@ -1327,14 +1327,15 @@ fn a_column_the_audit_could_not_check_is_counted_as_one_it_could_not_check() {
 
     assert_eq!(
         audit.unaudited(),
-        4,
+        5,
         "one column that is not there leaves the column itself, the two equations it is \
-         a side of, and the routing this recording does not carry. A count of what could \
-         not be checked is what tells a reader how much of the report the audit is \
-         silent about, and one that is always zero says it checked everything: {audit}"
+         a side of, and the two layers this recording does not carry — the routing and \
+         the executions. A count of what could not be checked is what tells a reader how \
+         much of the report the audit is silent about, and one that is always zero says \
+         it checked everything: {audit}"
     );
     assert!(
-        audit.to_string().contains("4 unaudited"),
+        audit.to_string().contains("5 unaudited"),
         "and the summary says it: {audit}"
     );
 }
@@ -1734,5 +1735,295 @@ fn a_route_that_says_an_answer_was_both_read_back_and_refused_is_a_violation() {
         proven(&taken).is_empty() && proven(&refused).is_empty() && proven(&asked).is_empty(),
         "while a route that names one of the two, or neither because there was no store \
          to ask, is a route that says what happened: {taken}, {refused}, {asked}"
+    );
+}
+
+/// A recording where one target was asked twice and never noticed anything.
+fn never_noticed() -> Vec<serde_json::Value> {
+    let mut lines = routes();
+    for (seq, mutant) in [KILLED, SURVIVED].into_iter().enumerate() {
+        lines.push(serde_json::json!({
+            "seq": 100_usize.saturating_add(seq),
+            "timestamp": "2026-09-06T00:00:02Z",
+            "elapsed_ms": 2,
+            "type": "mutant-exec",
+            "mutant": {
+                "mutant": mutant, "target": "blunt", "args": [], "outcome": "survived",
+                "duration_ms": 5
+            }
+        }));
+    }
+    lines
+}
+
+#[test]
+fn a_hollow_target_the_report_does_not_name_is_a_violation() {
+    let audit = audited_with(&base(), &never_noticed());
+    let violated: Vec<String> = audit
+        .remarks
+        .iter()
+        .filter(|remark| remark.layer == Layer::Hollow && remark.standing == Standing::Violated)
+        .map(|remark| remark.subject.clone())
+        .collect();
+    assert_eq!(
+        violated,
+        vec!["blunt".to_owned()],
+        "the recording says `blunt` was put to two mutations and answered `survived` \
+         to both, so the report owes a hollow-target finding about it. A report that \
+         is silent there is one this audit exists to refuse: {:?}",
+        audit.remarks
+    );
+}
+
+#[test]
+fn a_target_that_noticed_something_is_not_owed_a_hollow_finding() {
+    let audit = audited_with(&base(), &routes());
+    assert!(
+        !audit
+            .remarks
+            .iter()
+            .any(|remark| remark.layer == Layer::Hollow && remark.standing == Standing::Violated),
+        "`t1` noticed one of the two, so nothing is owed about it: {:?}",
+        audit.remarks
+    );
+}
+
+#[test]
+fn a_run_that_kept_no_recording_says_the_hollow_layer_was_not_audited() {
+    let audit = audited(&base());
+    assert!(
+        audit
+            .remarks
+            .iter()
+            .any(|remark| remark.layer == Layer::Hollow && remark.standing == Standing::Unaudited),
+        "without a recording there is nothing to re-derive from, and saying so is not \
+         the same as agreeing: {:?}",
+        audit.remarks
+    );
+}
+
+/// The question about the status of the one exchange the recording below holds.
+const ASKED: &str = "f714f108a1ce93e4cae5d149115f5f2efc4d4ceb620ccecc762f1c4b914022ed";
+
+/// One exchange that went past the `api` seam, which licenses five questions.
+fn went_past() -> serde_json::Value {
+    serde_json::json!({
+        "type": "wire-exchange",
+        "exchange": {
+            "capability": "api",
+            "seq": 0,
+            "wire": "http",
+            "method": "GET",
+            "path": "/orders",
+            "status": 200
+        }
+    })
+}
+
+/// One fault put to the suite, decided as `decision` says.
+fn was_put(fault: &str, decision: &str) -> serde_json::Value {
+    serde_json::json!({
+        "type": "wire-exec",
+        "wire": {
+            "fault": fault,
+            "capability": "api",
+            "seq": 0,
+            "rule": "status-server-error",
+            "decision": decision,
+            "noticed_by": null
+        }
+    })
+}
+
+/// The report with one `wire-unnoticed` finding about `subject`.
+fn calling_it_a_gap(subject: &str) -> serde_json::Value {
+    let mut document = base();
+    document
+        .get_mut("findings")
+        .and_then(serde_json::Value::as_array_mut)
+        .expect("the findings")
+        .push(serde_json::json!({
+            "kind": "wire-unnoticed",
+            "subject": subject,
+            "detail": "nothing noticed when the run was told to answer 500",
+            "position": null
+        }));
+    document
+}
+
+/// What the wire layer said about a run, by standing.
+fn wire_remarks(audit: &Audit, standing: Standing) -> Vec<String> {
+    audit
+        .remarks
+        .iter()
+        .filter(|remark| remark.layer == Layer::Wire && remark.standing == standing)
+        .map(|remark| remark.subject.clone())
+        .collect()
+}
+
+#[test]
+fn a_run_that_recorded_a_seam_and_put_nothing_leaves_the_wire_layer_unaudited() {
+    let audit = audited_with(&base(), &[went_past()]);
+    assert!(
+        !wire_remarks(&audit, Standing::Unaudited).is_empty(),
+        "six questions were licensed and none was put, so what the suite would have \
+         done with them cannot be re-derived, and saying so is not the same as \
+         agreeing: {:?}",
+        audit.remarks
+    );
+    assert!(
+        wire_remarks(&audit, Standing::Violated).is_empty(),
+        "and not putting a question is not a contradiction: {:?}",
+        audit.remarks
+    );
+}
+
+#[test]
+fn a_question_nothing_noticed_that_the_report_does_not_name_is_a_violation() {
+    let audit = audited_with(&base(), &[went_past(), was_put(ASKED, "unnoticed")]);
+    assert!(
+        wire_remarks(&audit, Standing::Violated).contains(&ASKED.to_owned()),
+        "the recording has the suite carrying on through a 500 on the api seam, so \
+         the report owes a wire-unnoticed finding about it: {:?}",
+        audit.remarks
+    );
+}
+
+#[test]
+fn a_question_the_tests_noticed_that_the_report_calls_a_gap_is_a_violation() {
+    let audit = audited_with(
+        &calling_it_a_gap(ASKED),
+        &[went_past(), was_put(ASKED, "tests")],
+    );
+    assert!(
+        wire_remarks(&audit, Standing::Violated).contains(&ASKED.to_owned()),
+        "a report that calls a question nobody could close a gap, where the recording \
+         has a test closing it, is the one answer this product must never give: {:?}",
+        audit.remarks
+    );
+}
+
+/// The exchange above, as the audit reads one.
+fn as_read() -> xtask::wire::Exchange {
+    xtask::wire::Exchange {
+        capability: "api".to_owned(),
+        seq: 0,
+        wire: "http".to_owned(),
+        method: Some("GET".to_owned()),
+        path: Some("/orders".to_owned()),
+        status: Some(200),
+    }
+}
+
+/// Every question the exchange licenses, put and decided, with `unnoticed` for `gap`.
+fn all_put(gap: &str) -> Vec<serde_json::Value> {
+    let mut lines = vec![went_past()];
+    for (id, rule) in xtask::wire::licensed(&as_read()) {
+        let decision = if rule == gap { "unnoticed" } else { "tests" };
+        lines.push(serde_json::json!({
+            "type": "wire-exec",
+            "wire": {
+                "fault": id,
+                "capability": "api",
+                "seq": 0,
+                "rule": rule,
+                "decision": decision,
+                "noticed_by": if decision == "tests" { Some(TARGET) } else { None }
+            }
+        }));
+    }
+    lines
+}
+
+#[test]
+fn a_report_and_a_recording_that_agree_earn_no_remark_at_all() {
+    let audit = audited_with(&calling_it_a_gap(ASKED), &all_put("status-server-error"));
+    assert!(
+        wire_remarks(&audit, Standing::Violated).is_empty(),
+        "every question the recording licenses was put, one of them nothing noticed, \
+         and the report names that one: {:?}",
+        audit.remarks
+    );
+}
+
+#[test]
+fn a_question_the_run_put_and_left_out_of_the_report_is_a_violation_even_among_agreeing_ones() {
+    let audit = audited_with(&base(), &all_put("status-server-error"));
+    assert_eq!(
+        wire_remarks(&audit, Standing::Violated),
+        vec![ASKED.to_owned()],
+        "five of the six were noticed and the sixth was not, so exactly the sixth is \
+         owed a finding: {:?}",
+        audit.remarks
+    );
+}
+
+#[test]
+fn a_question_no_exchange_licenses_is_a_violation_however_the_run_decided_it() {
+    let audit = audited_with(&base(), &[went_past(), was_put(&"c".repeat(64), "tests")]);
+    assert!(
+        wire_remarks(&audit, Standing::Violated).contains(&"c".repeat(64)),
+        "every question comes from an exchange that happened; one that comes from \
+         nowhere is a fault the run invented, and a report resting on it rests on \
+         nothing: {:?}",
+        audit.remarks
+    );
+}
+
+/// A recording where `blunt` was put to two mutations and answered `outcome` to both.
+fn answering(outcome: &str) -> Vec<serde_json::Value> {
+    let mut lines = routes();
+    for (at, mutant) in [KILLED, SURVIVED].iter().enumerate() {
+        lines.push(serde_json::json!({
+            "type": "mutant-exec",
+            "mutant": {
+                "id": mutant,
+                "index": at,
+                "target": "blunt",
+                "outcome": outcome,
+                "duration_ms": 1
+            }
+        }));
+    }
+    lines
+}
+
+#[test]
+fn a_target_whose_executions_nobody_decided_is_not_one_the_audit_demands_a_finding_about() {
+    for outcome in ["errored", "unconfirmed"] {
+        let audit = audited_with(&base(), &answering(outcome));
+        assert!(
+            !audit
+                .remarks
+                .iter()
+                .any(|remark| remark.layer == Layer::Hollow
+                    && remark.standing == Standing::Violated
+                    && remark.subject == "blunt"),
+            "a target whose harness would not start did not notice nothing — the run \
+             established nothing about it, and an audit that demanded a finding here \
+             would demand that a broken harness be called a suite asserting nothing: \
+             {:?}",
+            audit.remarks
+        );
+    }
+}
+
+#[test]
+fn a_part_of_a_catalog_is_not_held_to_whether_a_target_noticed_anything() {
+    let mut document = base();
+    merge(
+        &mut document,
+        serde_json::json!({ "scope": { "shard": "1/2" } }),
+    );
+    let audit = audited_with(&document, &never_noticed());
+    assert!(
+        !audit
+            .remarks
+            .iter()
+            .any(|remark| remark.layer == Layer::Hollow),
+        "whether a target notices anything is a statement about the whole catalog, \
+         and a part has seen a slice: demanding a finding here would demand one the \
+         whole would contradict: {:?}",
+        audit.remarks
     );
 }

@@ -33,6 +33,10 @@ pub struct Request {
     pub root: PathBuf,
     /// The effective configuration.
     pub config: Config,
+    /// What cargo is told to build, which is what decides which program the run measures.
+    pub build: rust_mutants::cargo::BuildConfig,
+    /// What a report calls the build, which is [`crate::config::DEFAULT_CONFIGURATION`] for the one `[execution]` describes.
+    pub built_as: String,
     /// Packages the command line asked for, which narrow the configuration's.
     pub packages: Vec<String>,
     /// Arguments for the test binaries, after `--`.
@@ -102,7 +106,8 @@ pub fn run(
     deepened(&mut report, request, (&toolchain, environment), watch)?;
 
     let mut resources = holding(request, environment, &mut report, (notes, watch))?;
-    let held = with_resources(environment, &resources);
+    let seams = super::wire::watched(&resources.leases(), &request.config.resources);
+    let held = with_seams(environment, &seams);
     let environment = &held;
 
     notes.phase("baseline");
@@ -119,6 +124,7 @@ pub fn run(
             None
         }
     };
+    let mut asked = false;
     if let Some(session) = prepared {
         let baseline = baseline::observe(&session, baseline::Reporting { notes, watch });
         absorb(&mut report, &baseline);
@@ -139,9 +145,13 @@ pub fn run(
                 watch,
             )?;
         }
+        asked = wired(&mut report, &seams, &session, (notes, watch));
         for path in session.close()? {
             notes.note("kept", &path.display().to_string());
         }
+    }
+    if !asked {
+        licensed(&mut report, seams);
     }
     afterwards(
         &mut report,
@@ -157,6 +167,57 @@ pub fn run(
         scratch.close()
     };
     Ok(Outcome { report, kept })
+}
+
+/// Puts every question the seams recorded back to the suite, and says whether it put any.
+///
+/// The suite is run again with one fault in place and nothing mutated, which
+/// is what `control` is, so what a failure says is that a test noticed the
+/// seam answering differently rather than that the code changed.
+fn wired(
+    report: &mut Report,
+    seams: &super::wire::Seams,
+    session: &rust_mutants::session::Session,
+    (notes, watch): (&mut Notes<'_>, Watch<'_>),
+) -> bool {
+    if seams.watching.is_empty() {
+        return false;
+    }
+    notes.phase("wire");
+    watch.trace.stage("wire");
+    let timeout = session.slowest_baseline().saturating_mul(2);
+    let measured = super::wire::asking(
+        seams,
+        || {
+            let asked =
+                rust_mutants::session::Request::new(String::new()).with_timeout(Some(timeout));
+            session
+                .control(&asked, watch.cancel)
+                .ok()
+                .map(|ran| {
+                    vec![crate::wire::settle::Answered {
+                        passed: ran.outcome == rust_mutants::outcome::Outcome::Survived,
+                        target: ran.target,
+                    }]
+                })
+                .unwrap_or_default()
+        },
+        watch,
+    );
+    report.findings.extend(measured.findings);
+    report.limitations.extend(measured.limitations);
+    report.seams.extend(measured.seams);
+    measured.executed
+}
+
+/// States what the seams the run watched licensed it to ask, where it asked none of it.
+fn licensed(report: &mut Report, seams: super::wire::Seams) {
+    if seams.watching.is_empty() {
+        return;
+    }
+    report
+        .limitations
+        .extend(super::wire::licensing(&seams.recorded()));
 }
 
 /// What the toolchain and the workspace are, before anything is built.
@@ -463,7 +524,7 @@ fn considered(
             root: &request.root,
             environment,
             cargo: request.cargo,
-            build: request.config.execution.build(),
+            build: request.build.clone(),
             harness_args: request.test_args.clone(),
             skip_targets: request.config.execution.skip_targets.clone(),
             timeout: request.config.execution.timeout,
@@ -572,11 +633,11 @@ fn hold(
 }
 
 /// The environment every later phase runs with: this run's own, and what the resources it holds told it.
-fn with_resources(environment: &Environment, resources: &crate::resource::Manager) -> Environment {
+fn with_seams(environment: &Environment, seams: &super::wire::Seams) -> Environment {
     let mut held = environment.clone();
     let mut vars: BTreeMap<std::ffi::OsString, std::ffi::OsString> =
         held.vars.into_iter().collect();
-    for (name, value) in resources.environment() {
+    for (name, value) in seams.environment.iter().cloned() {
         let _replaced = vars.insert(
             std::ffi::OsString::from(name),
             std::ffi::OsString::from(value),
@@ -1084,7 +1145,7 @@ fn prove_equivalence(
                 locked: request.cargo.locked,
                 trace: rust_mutants::trace::Recorder::disabled(),
             },
-            build: request.config.execution.build(),
+            build: request.build.clone(),
             timeout: Some(request.config.execution.timeout),
             unsafe_packages: mutating.unsafe_packages.clone(),
             tree_written,
@@ -1129,7 +1190,7 @@ fn prepare(
             packages: request.packages.clone(),
             include: narrowing(request),
             exclude: request.config.project.excluded(),
-            build: request.config.execution.build(),
+            build: request.build.clone(),
             harness_args: request.test_args.clone(),
             verify: true,
             failing: rust_mutants::session::Failing::Exclude,
@@ -1225,13 +1286,19 @@ pub fn record(report: &mut Report, mutation: &mutation::Mutation, accepted: &BTr
             item: judged.item.clone(),
             original: judged.original.clone(),
             replacement: judged.replacement.clone(),
-            outcome: judged.disposition.name().to_owned(),
-            killed_by: judged.disposition.decided_by().map(ToOwned::to_owned),
+            outcome: judged.disposition.decided(),
             reused: judged.source_run_id.is_some(),
             source_run_id: judged.source_run_id.clone(),
+            blind_in: Vec::new(),
+            routing: judged.routing.clone(),
         })
         .collect();
     report.findings.extend(mutation.findings(accepted));
+    if report.scope.shard.is_none() {
+        report
+            .findings
+            .extend(crate::report::hollow::found(&report.mutants));
+    }
     for (reason, count) in &mutation.skips {
         report.limitations.push(Limitation::new(
             &format!("skipped-{reason}"),

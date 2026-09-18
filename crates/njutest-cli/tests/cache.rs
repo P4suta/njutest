@@ -59,6 +59,7 @@ fn report(run_id: &str, identity: &str) -> Report {
     report.accounting.mutants.cataloged = 1;
     report.accounting.mutants.executed = 1;
     report.accounting.mutants.killed = 1;
+    report.accounting.mutants.observers.tests = 1;
     report.targets.push(TargetRecord {
         id: "demo/lib/demo".to_owned(),
         package: "demo".to_owned(),

@@ -55,6 +55,8 @@ fn request(config: Config, packages: &[&str]) -> Request {
     Request {
         configuration: ".njutest.toml".to_owned(),
         root: std::path::PathBuf::from("/nowhere"),
+        build: config.execution.build(),
+        built_as: njutest_cli::config::DEFAULT_CONFIGURATION.to_owned(),
         config,
         packages: packages.iter().map(|name| (*name).to_owned()).collect(),
         test_args: Vec::new(),
@@ -288,6 +290,8 @@ fn resource(exclusive: bool) -> njutest_cli::config::Resource {
         shared: !exclusive,
         exclusive,
         environment: Vec::new(),
+        interpose: String::new(),
+        wire: njutest_cli::wire::Wire::Raw,
     }
 }
 

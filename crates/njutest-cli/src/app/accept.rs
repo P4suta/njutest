@@ -158,12 +158,19 @@ fn resolve(
     let every: Vec<&crate::report::MutantRecord> = report.mutants.iter().collect();
     let matching = crate::naming::matching(&every, &arguments.mutant);
     match matching.as_slice() {
-        [only] if matches!(only.outcome.as_str(), "survived" | "unreached") => Ok((*only).clone()),
+        [only]
+            if matches!(
+                only.outcome.outcome(),
+                crate::report::Outcome::Survived | crate::report::Outcome::Unreached
+            ) =>
+        {
+            Ok((*only).clone())
+        }
         [only] => Err(format!(
             "{}: {} is {}, and only a mutation nothing noticed is a decision to accept",
             crate::error::CONFIG_INVALID.code,
             only.display_id,
-            only.outcome
+            only.outcome.name()
         )),
         [] => Err(format!(
             "{}: no mutant of {run} starts with {}",

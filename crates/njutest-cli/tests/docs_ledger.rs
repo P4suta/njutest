@@ -10,11 +10,82 @@
 )]
 
 use njutest_cli::config::Config;
-use njutest_cli::report::FindingKind;
+use njutest_cli::report::{Decision, FindingKind};
 
 fn page(relative: &str) -> String {
     let path = njutest_devkit::paths::workspace_root().join(relative);
     std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display()))
+}
+
+#[test]
+fn every_way_a_run_can_choose_and_every_reason_it_widened_is_on_the_report_page() {
+    let text = page("docs/report-v1.md");
+    let mut words: Vec<&str> = rust_mutants::session::Route::GRANULARITIES.to_vec();
+    for fallback in rust_mutants::session::Fallback::ALL {
+        words.push(fallback.name());
+    }
+    let missing: Vec<&str> = words
+        .into_iter()
+        .filter(|word| !text.contains(&format!("`{word}`")))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "a survivor is a claim about the targets a run chose, so the page names \
+         every way it can choose and every reason it gave up narrowing. A word the \
+         page does not carry is one a reader finds in a record and cannot look up: \
+         {missing:?}"
+    );
+}
+
+#[test]
+fn the_ways_the_page_says_a_mutation_is_decided_are_the_ways_there_are() {
+    let text = page("docs/report-v1.md");
+    let listed: Vec<(String, Vec<String>)> = text
+        .lines()
+        .skip_while(|line| !line.starts_with("| column | what decided it |"))
+        .skip(2)
+        .take_while(|line| line.starts_with('|'))
+        .filter_map(|line| {
+            let mut cells = line.split('|').skip(1);
+            let column = cells.next()?.trim().trim_matches('`').to_owned();
+            let outcomes = cells
+                .nth(1)?
+                .split(',')
+                .map(|outcome| outcome.trim().trim_matches('`').to_owned())
+                .collect();
+            Some((column, outcomes))
+        })
+        .collect();
+
+    let columns: Vec<&str> = listed.iter().map(|(column, _)| column.as_str()).collect();
+    let ours: Vec<&str> = Decision::ALL.iter().map(|one| one.name()).collect();
+    assert_eq!(
+        columns, ours,
+        "the page's table is the one a reader adds up to check the verdict, so it \
+         holds one row per way a mutation can be decided, in the order the model \
+         lists them"
+    );
+
+    let mut paged: Vec<(String, String)> = listed
+        .iter()
+        .flat_map(|(column, outcomes)| {
+            outcomes
+                .iter()
+                .map(move |outcome| (outcome.clone(), column.clone()))
+        })
+        .collect();
+    paged.sort();
+    let mut ours: Vec<(String, String)> = njutest_cli::report::Outcome::ALL
+        .iter()
+        .map(|one| (one.name().to_owned(), one.decision().name().to_owned()))
+        .collect();
+    ours.sort();
+    assert_eq!(
+        paged, ours,
+        "and every outcome a report can record is on exactly one row of it: an \
+         outcome the page forgets is one a reader cannot tell the standing of, and \
+         one it puts on two rows is one they would count twice"
+    );
 }
 
 #[test]

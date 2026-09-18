@@ -39,6 +39,8 @@ fn resource(command: Vec<String>) -> Resource {
         shared: false,
         exclusive: false,
         environment: SPOKEN.map(str::to_owned).to_vec(),
+        interpose: String::new(),
+        wire: njutest_cli::wire::Wire::Raw,
     }
 }
 
