@@ -1,14 +1,14 @@
-# Catch-all ledger. One `path:line` per line, sorted.
 #
-# This file may shrink and never grow. A catch-all over a set this repository
-# closes is the arm that absorbs the next variant silently: the compiler stops
-# asking where it goes, and the defect reads as English until somebody
-# compares two outputs. Every line here is a place that has not been named out
-# yet, and adding one is a reviewed exception rather than a decision anybody
-# makes while writing.
 #
 # A foreign enum is not in scope. The values of `syn::Expr` are not ours to
+# Catch-all ledger. One `path:line` per line, sorted.
+# This file may shrink and never grow. A catch-all over a set this repository
+# asking where it goes, and the defect reads as English until somebody
+# closes is the arm that absorbs the next variant silently: the compiler stops
+# compares two outputs. Every line here is a place that has not been named out
 # list, so an arm standing for the rest is the handling rather than a default.
+# makes while writing.
+# yet, and adding one is a reviewed exception rather than a decision anybody
 crates/njutest-cli/src/app/show.rs:51
 crates/njutest-cli/src/assure/baseline.rs:247
 crates/njutest-cli/src/assure/mutation.rs:732
@@ -54,9 +54,8 @@ crates/rust-mutants-cli/src/app/trace.rs:320
 crates/rust-mutants-cli/src/report/mod.rs:412
 crates/rust-mutants-cli/src/stream.rs:107
 crates/rust-mutants-cli/src/stream.rs:76
-crates/rust-mutants-cli/src/ui.rs:240
-crates/rust-mutants-cli/src/ui.rs:65
-crates/rust-mutants-cli/src/ui.rs:94
+crates/rust-mutants-cli/src/ui.rs:234
+crates/rust-mutants-cli/src/ui.rs:92
 crates/rust-mutants/src/cargo/compile.rs:214
 crates/rust-mutants/src/reach.rs:249
 crates/rust-mutants/src/run.rs:1148

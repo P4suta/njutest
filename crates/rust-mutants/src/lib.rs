@@ -39,6 +39,7 @@ pub mod snapshot;
 pub mod span;
 pub mod splice;
 pub mod syntax;
+pub mod telling;
 pub mod tempowner;
 #[cfg(any(test, feature = "testkit"))]
 pub mod testkit;

@@ -10,6 +10,7 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap};
+use rust_mutants::telling::Hue;
 
 use crate::report::run::{RunDocument, RunMutantDocument};
 use crate::report::sources::Held;
@@ -609,12 +610,23 @@ fn short(outcome: &str) -> &str {
     }
 }
 
-/// What an outcome is coloured.
-const fn colour(outcome: &str) -> Color {
-    match outcome.as_bytes() {
-        b"killed" | b"timed_out" => Color::Green,
-        b"survived" => Color::Red,
-        b"not_run" => Color::Yellow,
-        _ => Color::Magenta,
+/// What an outcome is coloured, from the one place that decides what anything is coloured.
+///
+/// This used to be its own table over the outcome's *spelling*, with a
+/// catch-all under it, and it disagreed with the progress line about what a
+/// timeout was worth. `rust_mutants::telling::Style` answers for both now, and
+/// this turns a style into the palette a terminal library understands — which
+/// is the only thing about drawing that a screen program decides for itself.
+fn colour(outcome: &str) -> Color {
+    let Some(outcome) = rust_mutants::outcome::Outcome::parse(outcome) else {
+        return Color::DarkGray;
+    };
+    match rust_mutants::telling::Style::of(outcome).hue() {
+        Hue::Settled => Color::Green,
+        Hue::Alarm => Color::Red,
+        Hue::Caution => Color::Yellow,
+        Hue::Refusal => Color::LightRed,
+        Hue::Named => Color::Cyan,
+        Hue::Quiet => Color::DarkGray,
     }
 }

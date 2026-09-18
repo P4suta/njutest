@@ -91,9 +91,14 @@ fn colour_is_off_unless_it_is_asked_for_and_the_stream_can_take_it() {
         "a pipe is not a terminal, and NO_COLOR is set besides: {plain:?}"
     );
     let painted = said(&run(&fixture, &["--ui", "plain", "--color", "always"]));
+    let killed = rust_mutants::telling::Style::of(rust_mutants::outcome::Outcome::Killed)
+        .painted("killed", true);
     assert!(
-        painted.contains("\u{1b}[32mkilled\u{1b}[0m"),
-        "asked for, it paints what a reader is scanning for: {painted:?}"
+        painted.contains(&killed),
+        "asked for, it paints what a reader is scanning for — and in the style the \
+         workspace gives a kill rather than a colour this command chose for itself, \
+         because the two halves of one tool that each picked a green drew the same \
+         timeout two colours: {painted:?}"
     );
     let never = said(&run(&fixture, &["--ui", "plain", "--color", "never"]));
     assert!(!never.contains('\u{1b}'), "{never:?}");

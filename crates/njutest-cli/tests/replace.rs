@@ -16,6 +16,18 @@ use njutest_cli::report::{
 /// How many entries the writer puts through the destination while the reader reads it.
 const ROUNDS: u64 = 400;
 
+/// How long the reader waits for the writer before saying the writer is the problem.
+///
+/// The loop reads as fast as it can on purpose — a torn read is a narrow
+/// window and slowing down is how you miss it — so it finishes in under a
+/// second on a machine with nothing else to do and takes as long as the
+/// machine makes it take when there is. What it must not do is wait forever:
+/// an unbounded wait for another thread is a sixty-second hang in somebody's
+/// CI that says nothing, where a bound is a failure naming which half was
+/// slow. The number is generous because it is not what this test is about
+/// (ADR 0023: a claim about the apparatus wants a bound, not a guess).
+const PATIENCE: Duration = Duration::from_secs(30);
+
 /// How many members one entry carries, so that writing one is not a single small write.
 const MEMBERS: u64 = 300;
 
@@ -175,7 +187,14 @@ fn an_entry_a_reader_takes_while_a_run_replaces_it_is_one_whole_entry() {
         };
         let mut reads: u64 = 0;
         let mut torn: Vec<String> = Vec::new();
+        let giving_up = std::time::Instant::now().checked_add(PATIENCE);
         while !done.load(Ordering::SeqCst) {
+            assert!(
+                giving_up.is_none_or(|at| std::time::Instant::now() < at),
+                "{}: the writer had not finished {ROUNDS} rounds after {PATIENCE:?}, and \
+                 waiting longer would say nothing about tearing. {reads} reads so far",
+                kept.name
+            );
             reads = reads.saturating_add(1);
             if let Some(stopped) = (kept.take)(&root) {
                 torn.push(stopped);

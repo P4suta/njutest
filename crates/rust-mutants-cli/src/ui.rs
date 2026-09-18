@@ -56,18 +56,16 @@ impl Color {
     }
 }
 
-/// The colour an outcome is written in, when the output is painted at all.
+/// `name` in the style this engine draws `outcome` in, painted or not as the stream will take.
+///
+/// The style is `rust_mutants::telling`'s and so is the escape. This module
+/// used to spell three of its own, which is how the same run came to draw a
+/// timed-out mutation amber here and green in the dashboard: two modules had
+/// each decided what a timeout was worth, and neither knew the other had.
 #[must_use]
-pub const fn paint(outcome: rust_mutants::outcome::Outcome) -> &'static str {
-    match outcome {
-        rust_mutants::outcome::Outcome::Killed => "\u{1b}[32m",
-        rust_mutants::outcome::Outcome::Survived => "\u{1b}[31m",
-        _ => "\u{1b}[33m",
-    }
+pub fn paint(outcome: rust_mutants::outcome::Outcome, name: &str, paints: bool) -> String {
+    rust_mutants::telling::Style::of(outcome).painted(name, paints)
 }
-
-/// What ends a painted word.
-pub const RESET: &str = "\u{1b}[0m";
 
 /// How often a plain run writes the tally out, so a log is readable rather than a wall of numbers.
 pub const TALLY_EVERY: u32 = 10;
@@ -188,11 +186,7 @@ impl Observer for Display<'_> {
         self.tally.count(judged);
         let width = total.to_string().len();
         let name = judged.outcome.name();
-        let painted = if self.paints {
-            format!("{}{name}{RESET}", paint(judged.outcome))
-        } else {
-            name.to_owned()
-        };
+        let painted = paint(judged.outcome, name, self.paints);
         let padding = " ".repeat(12usize.saturating_sub(name.len()));
         let mut line = format!(
             "[{completed:>width$}/{total}] {} {painted}{padding}",

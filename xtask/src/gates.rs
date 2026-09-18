@@ -70,7 +70,8 @@ pub fn lints(root: &Path) -> Result<String, GateFailure> {
     if found.is_empty() {
         return Ok(format!(
             "lints: {} files carry no #[allow], no Box<dyn Trait>, no comment beside the \
-             code, and no layout anybody but the configuration has decided",
+             code, no layout anybody but the configuration has decided, and no colour \
+             anybody but rust_mutants::telling has decided",
             files.len()
         ));
     }
