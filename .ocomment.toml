@@ -2,7 +2,7 @@ version = 1
 
 [files]
 include = ["crates/**", "xtask/**"]
-exclude = ["**/testdata/**", "**/target/**", "fixtures/**", "**/*.proptest-regressions"]
+exclude = ["**/testdata/**", "**/target/**", "fixtures/**"]
 
 [policy]
 mode = "conservative"
