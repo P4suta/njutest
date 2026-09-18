@@ -145,7 +145,13 @@ impl Interposer {
     /// count starts again with it. Carrying the old count over would name an
     /// exchange no run will reach, and every fault after the first would go
     /// past untouched while the report said it had been put.
+    ///
+    /// Waits like the observers do, and for a reason they share: an exchange
+    /// still being carried is about to write the very count this resets, so
+    /// resetting underneath it puts the count back where it was and the next
+    /// fault names an exchange nothing reaches.
     pub fn putting(&self, fault: Option<super::derive::Fault>) {
+        self.settled();
         if let Ok(mut held) = self.putting.lock() {
             *held = fault;
         }
@@ -164,12 +170,14 @@ impl Interposer {
     /// asked them anything at all.
     #[must_use]
     pub fn was_put(&self) -> bool {
+        self.settled();
         self.applied.load(Ordering::Relaxed)
     }
 
     /// Hands back everything that has gone past so far and forgets it, without stopping.
     #[must_use]
     pub fn taken(&self) -> Vec<Exchange> {
+        self.settled();
         self.recorded
             .lock()
             .map(|mut held| std::mem::take(&mut *held))
@@ -183,19 +191,36 @@ impl Interposer {
     /// is not something anybody would mistake for a hang.
     const SETTLING: std::time::Duration = std::time::Duration::from_millis(500);
 
-    /// Waits for the exchange being carried, if there is one, so it lands on the side of the boundary it happened on.
+    /// How long the waiting thread stands aside for each time round.
     ///
-    /// A caller's request returns when the answer has been written to it, and
-    /// the exchange is written down after that. So a run that cleared the
-    /// recording the instant its last caller was answered could have the
-    /// exchange before the boundary land after it — the contamination this
-    /// whole mechanism is against, arriving through the one door left open.
-    /// Serving one connection at a time is what makes this a single flag
-    /// rather than a count.
+    /// Sleeping rather than yielding, because the thread being waited for is
+    /// the one that has to run for the wait to end. On a machine with more
+    /// runnable threads than cores — a profiler's, a hosted runner's — a
+    /// yielding loop is handed straight back its own core and starves the
+    /// thread it is waiting for, which is how a wait bounded at half a second
+    /// manages to time out.
+    const BREATH: std::time::Duration = std::time::Duration::from_micros(200);
+
+    /// Waits for the exchange being carried, if there is one, before anything reads or resets what it is about to write.
+    ///
+    /// A caller's request returns when the interposer closes the connection
+    /// to it, and everything else happens after that: the exchange is written
+    /// down, the count moves on, the fault is marked as put. So anything done
+    /// the instant the last caller was answered meets a state the run is
+    /// still leaving — a recording cleared before the exchange before it
+    /// landed, a fault reported as never put when it was put half a
+    /// microsecond ago, or a count reset that the exchange in the air then
+    /// puts back.
+    ///
+    /// The rule is one sentence: a question about what an interposer has seen
+    /// is only answerable once it has finished seeing it, and resetting what
+    /// it is about to write is the same question asked backwards. Serving one
+    /// connection at a time is what makes this a single flag rather than a
+    /// count.
     fn settled(&self) {
         let since = std::time::Instant::now();
         while self.carrying.load(Ordering::Acquire) && since.elapsed() < Self::SETTLING {
-            std::thread::yield_now();
+            std::thread::sleep(Self::BREATH);
         }
     }
 
