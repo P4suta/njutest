@@ -205,3 +205,31 @@ fn a_subprocess_keeps_mutation_identity_and_drops_only_the_coverage_sink() {
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+#[test]
+fn only_a_compilation_cache_is_handed_to_a_nested_run_through_the_wrapper() {
+    use njutest_devkit::paths::names_a_cache;
+    use std::ffi::OsStr;
+
+    for named in ["sccache", "/opt/homebrew/bin/sccache", "SCCACHE.EXE"] {
+        assert!(
+            names_a_cache(OsStr::new(named)),
+            "a cache keyed on content is what makes three hundred isolated fixture \
+             builds affordable, and it is safe to hand on because it changes nothing \
+             about what is compiled: {named}"
+        );
+    }
+    for named in [
+        "/Users/somebody/.cargo/bin/cargo-llvm-cov",
+        "/tmp/coverage-shim",
+        "",
+    ] {
+        assert!(
+            !names_a_cache(OsStr::new(named)),
+            "and everything else under this name is refused, because what \
+             `cargo-llvm-cov` puts here instruments whatever it wraps — a coverage run \
+             of this suite that let that reach a fixture would be measuring its own \
+             instrumentation rather than the fixture's tests: {named:?}"
+        );
+    }
+}
