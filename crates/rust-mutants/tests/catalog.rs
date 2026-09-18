@@ -280,23 +280,21 @@ fn a_display_id_collision_is_a_diagnosable_error_not_a_panic() {
     let error = builder
         .build()
         .expect_err("forty ids cannot share sixteen one-character prefixes");
-    match error {
-        BuildError::DisplayCollision(DisplayCollisionError { length, collisions }) => {
-            assert_eq!(length, 1);
-            assert!(!collisions.is_empty());
-            let shorts: Vec<&str> = collisions.iter().map(|c| c.display_id.as_str()).collect();
-            let mut sorted = shorts.clone();
-            sorted.sort_unstable();
-            assert_eq!(shorts, sorted, "collisions are sorted by short form");
-            for collision in &collisions {
-                assert!(collision.ids.len() >= 2);
-                assert!(
-                    collision.ids.windows(2).all(|w| w[0] < w[1]),
-                    "ids are sorted"
-                );
-            }
-        }
-        other => panic!("expected a display collision, got {other:?}"),
+    let BuildError::DisplayCollision(DisplayCollisionError { length, collisions }) = error else {
+        panic!("expected a display collision, got {error:?}");
+    };
+    assert_eq!(length, 1);
+    assert!(!collisions.is_empty());
+    let shorts: Vec<&str> = collisions.iter().map(|c| c.display_id.as_str()).collect();
+    let mut sorted = shorts.clone();
+    sorted.sort_unstable();
+    assert_eq!(shorts, sorted, "collisions are sorted by short form");
+    for collision in &collisions {
+        assert!(collision.ids.len() >= 2);
+        assert!(
+            collision.ids.windows(2).all(|w| w[0] < w[1]),
+            "ids are sorted"
+        );
     }
     let out_of_range = Builder::new().with_display_length(0);
     assert_eq!(
@@ -371,13 +369,14 @@ fn resolve_prefix_refuses_to_guess() {
         catalog.resolve_prefix("ffff"),
         Err(PrefixError::NotFound { .. })
     ));
-    match catalog.resolve_prefix("6d62") {
-        Err(PrefixError::Ambiguous { matches, .. }) => {
-            assert_eq!(matches.len(), 2);
-            assert!(matches.iter().all(|m| m.starts_with("6d62")));
-        }
-        other => panic!("expected an ambiguous prefix, got {other:?}"),
-    }
+    let Err(PrefixError::Ambiguous { matches, .. }) = catalog.resolve_prefix("6d62") else {
+        panic!(
+            "expected an ambiguous prefix, got {:?}",
+            catalog.resolve_prefix("6d62")
+        );
+    };
+    assert_eq!(matches.len(), 2);
+    assert!(matches.iter().all(|m| m.starts_with("6d62")));
 }
 
 /// Every rule of the canonical table, as a name a generator can pick from.

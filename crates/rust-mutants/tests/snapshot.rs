@@ -565,23 +565,21 @@ fn redigest_reports_added_removed_and_changed_paths_sorted_and_is_empty_for_a_cl
             ("added", "testdata/golden.txt".to_owned()),
         ]
     );
-    match &drifts[2] {
-        Drift::Changed { want, got, .. } => {
-            assert_eq!(want.size, 13);
-            assert_eq!(want.sha256, sha256_hex(b"fn main() {}\n"));
-            assert_eq!(got.size, 24);
-            assert_eq!(got.sha256, sha256_hex(b"fn main() { mutated() }\n"));
-        }
-        other => panic!("expected Changed, got {other:?}"),
-    }
-    match &drifts[1] {
-        Drift::Removed { want, .. } => assert_eq!(want.sha256, sha256_hex(b"pub fn f() {}\n")),
-        other => panic!("expected Removed, got {other:?}"),
-    }
-    match &drifts[0] {
-        Drift::Added { got, .. } => assert_eq!(got.size, 7),
-        other => panic!("expected Added, got {other:?}"),
-    }
+    let Drift::Changed { want, got, .. } = &drifts[2] else {
+        panic!("expected Changed, got {:?}", drifts[2]);
+    };
+    assert_eq!(want.size, 13);
+    assert_eq!(want.sha256, sha256_hex(b"fn main() {}\n"));
+    assert_eq!(got.size, 24);
+    assert_eq!(got.sha256, sha256_hex(b"fn main() { mutated() }\n"));
+    let Drift::Removed { want, .. } = &drifts[1] else {
+        panic!("expected Removed, got {:?}", drifts[1]);
+    };
+    assert_eq!(want.sha256, sha256_hex(b"pub fn f() {}\n"));
+    let Drift::Added { got, .. } = &drifts[0] else {
+        panic!("expected Added, got {:?}", drifts[0]);
+    };
+    assert_eq!(got.size, 7);
 }
 
 #[test]

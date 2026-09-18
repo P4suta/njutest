@@ -7,7 +7,6 @@ use std::fmt;
 
 /// The outcome of one mutant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-#[non_exhaustive]
 pub enum Outcome {
     /// Never executed: another shard owned it, a selection excluded it, the run was interrupted, or routing proved no test reaches it.
     #[default]

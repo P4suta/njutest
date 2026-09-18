@@ -48,9 +48,11 @@ pub fn run(
     };
     let text = match arguments.format {
         Format::Json => runs::document(root, &run).map_err(|error| error.to_string()),
-        shape => runs::report(root, &run)
-            .map(|report| projected(shape, &report, (root, &run), environment))
-            .map_err(|error| error.to_string()),
+        shape @ (Format::Lines | Format::Spec | Format::Human | Format::Agent) => {
+            runs::report(root, &run)
+                .map(|report| projected(shape, &report, (root, &run), environment))
+                .map_err(|error| error.to_string())
+        }
     };
     match text {
         Ok(text) => {

@@ -859,14 +859,16 @@ fn against(
                 Err(why) => Disposition::Unconfirmed { on: name, why },
             },
         )),
-        _ => Ok(Some(Disposition::Errored {
-            on: name,
-            detail: format!(
-                "the harness answered {}: {}",
-                result.outcome.name(),
-                tail(&result.output)
-            ),
-        })),
+        Outcome::Errored | Outcome::Inconclusive | Outcome::NotRun => {
+            Ok(Some(Disposition::Errored {
+                on: name,
+                detail: format!(
+                    "the harness answered {}: {}",
+                    result.outcome.name(),
+                    tail(&result.output)
+                ),
+            }))
+        }
     }
 }
 
