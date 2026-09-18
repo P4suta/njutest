@@ -304,3 +304,39 @@ fn the_label_under_a_mark_says_what_the_run_established_and_never_something_else
         said(Decided::CompileRejected)
     );
 }
+
+#[test]
+fn every_outcome_a_record_can_hold_reads_differently_from_the_others() {
+    let said: Vec<String> = njutest_cli::report::Decided::every_against("pkg/test/it")
+        .iter()
+        .map(|decided| njutest_cli::presentation::label("gt-to-ge@1", decided))
+        .collect();
+    let distinct: std::collections::BTreeSet<&String> = said.iter().collect();
+    assert_eq!(
+        distinct.len(),
+        said.len(),
+        "a reader has to be able to tell two things a run established apart, and two \
+         outcomes reading alike means they cannot. Exhaustiveness cannot catch this: \
+         a match over all eight can still send four of them to one sentence, which is \
+         what it did — and it stays uncaught if each arm is handed its own target, \
+         because two arms sharing a template then read apart on the name alone. \
+         Every arm is established against the same target here for that reason. \
+         {said:#?}"
+    );
+}
+
+#[test]
+fn an_outcome_that_happened_to_a_target_names_that_target_and_not_another() {
+    for decided in njutest_cli::report::Decided::every() {
+        let Some(against) = decided.decided_by() else {
+            continue;
+        };
+        let said = njutest_cli::presentation::label("gt-to-ge@1", &decided);
+        assert!(
+            said.contains(against),
+            "the sentence names the target the outcome was established against. A \
+             payload bound from the wrong arm still reads as English and names the \
+             wrong target, which nothing but this notices: {said}"
+        );
+    }
+}

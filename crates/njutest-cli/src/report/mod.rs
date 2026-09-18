@@ -722,6 +722,64 @@ impl Decided {
         }
     }
 
+    /// One of each, for a test that has to speak for all of them.
+    ///
+    /// The target in every arm that carries one is that arm's own name, so a
+    /// sentence that binds the wrong payload names the wrong target rather
+    /// than still reading. A copy-paste between two arms that both carry an
+    /// `on` produces English either way; it produces the wrong string only
+    /// here.
+    #[must_use]
+    pub fn every() -> [Self; 8] {
+        [
+            Self::CompileRejected,
+            Self::Killed {
+                by: "killed-by".to_owned(),
+            },
+            Self::TimedOut {
+                on: "timed-out-on".to_owned(),
+            },
+            Self::Survived,
+            Self::Unreached,
+            Self::Equivalent,
+            Self::Unconfirmed {
+                on: "unconfirmed-on".to_owned(),
+            },
+            Self::Errored {
+                on: "errored-on".to_owned(),
+            },
+        ]
+    }
+
+    /// One of each, every arm that has a target established against the same one.
+    ///
+    /// The shared name is what makes two arms sharing a sentence show up as
+    /// one string rather than two that merely differ in the target. Two arms
+    /// can describe the same fact and still read apart when each is handed its
+    /// own name, which is how a collapsed sentence survives a distinctness
+    /// test built on [`Self::every`].
+    #[must_use]
+    pub fn every_against(target: &str) -> [Self; 8] {
+        [
+            Self::CompileRejected,
+            Self::Killed {
+                by: target.to_owned(),
+            },
+            Self::TimedOut {
+                on: target.to_owned(),
+            },
+            Self::Survived,
+            Self::Unreached,
+            Self::Equivalent,
+            Self::Unconfirmed {
+                on: target.to_owned(),
+            },
+            Self::Errored {
+                on: target.to_owned(),
+            },
+        ]
+    }
+
     /// What `outcome` and `decided_by` name together, or nothing where no run could mean the pair.
     ///
     /// # Errors
