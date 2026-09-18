@@ -303,3 +303,33 @@ fn a_directory_the_configuration_can_move_is_spelled_in_one_place() {
         "asking the type that owns the layout decides nothing"
     );
 }
+
+#[test]
+fn a_colour_spelled_by_hand_is_refused_wherever_it_is_not_the_one_place_that_paints() {
+    let by_hand = r#"
+        pub const fn paint(killed: bool) -> &'static str {
+            if killed { "\u{1b}[32m" } else { "\u{1b}[31m" }
+        }
+    "#;
+    let found = scan_source("crates/demo/src/ui.rs", by_hand).expect("it parses");
+    assert!(
+        found.iter().any(|one| one.kind == Kind::HandPainted),
+        "a second module that spells an escape decides for itself what green means, what \
+         a reader's terminal can take, and whether to paint at all — and then the two \
+         halves of one workspace look like two tools. The set of things that carry a \
+         colour is closed; the set of places that turn one into bytes has to be one: \
+         {found:?}"
+    );
+    let named = r"
+        fn drawn(telling: Telling, word: &str) -> String {
+            telling.painted(Style::Gap, word)
+        }
+    ";
+    assert!(
+        scan_source("crates/demo/src/ui.rs", named)
+            .expect("it parses")
+            .is_empty(),
+        "asking for what a thing is rather than for a colour is the whole point, and it \
+         is not what this refuses"
+    );
+}
