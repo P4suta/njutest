@@ -83,7 +83,7 @@ where
 /// `None` says this round left nothing to compare, which is not the same as
 /// a round that found nothing. The difference matters on the first round of
 /// all, where an empty stand-in would report every gap in the project as one
-/// the reader had just opened ([ADR 0023](../../../docs/adr/0023-a-run-may-not-conclude-from-how-it-measured.md)).
+/// the reader had just opened (ADR 0023).
 fn concluded(root: &Path) -> Option<crate::presentation::Told> {
     let run = crate::app::runs::resolve(root, None).ok()?;
     let report = crate::app::runs::report(root, &run).ok()?;

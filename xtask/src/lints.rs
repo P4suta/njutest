@@ -280,6 +280,24 @@ impl<'ast> Visit<'ast> for Growing<'_> {
 /// resolved to know it.
 #[must_use]
 pub fn wildcards(source: &str, ours: &[String]) -> Vec<usize> {
+    let mut found: Vec<usize> = wildcards_over(source, ours)
+        .into_iter()
+        .map(|(line, _over)| line)
+        .collect();
+    found.sort_unstable();
+    found.dedup();
+    found
+}
+
+/// The same lines, each with the enum whose arms told this gate what was being matched.
+///
+/// The name is what lets a caller ask the question this walk cannot: whether
+/// the arm could have been left out at all. An enum that says it may grow,
+/// read from another crate, forces one — and a gate asking for a waiver
+/// against something the compiler requires is asking for a decision nobody
+/// made (ADR 0023).
+#[must_use]
+pub fn wildcards_over(source: &str, ours: &[String]) -> Vec<(usize, String)> {
     let Ok(parsed) = syn::parse_file(source) else {
         return Vec::new();
     };
@@ -289,7 +307,7 @@ pub fn wildcards(source: &str, ours: &[String]) -> Vec<usize> {
         found: &mut found,
     };
     scan.visit_file(&parsed);
-    found.sort_unstable();
+    found.sort();
     found.dedup();
     found
 }
@@ -297,7 +315,7 @@ pub fn wildcards(source: &str, ours: &[String]) -> Vec<usize> {
 /// The visitor that refuses a catch-all where the arms name a set this repository closes.
 struct Catching<'a> {
     ours: &'a [String],
-    found: &'a mut Vec<usize>,
+    found: &'a mut Vec<(usize, String)>,
 }
 
 /// The enum an arm names, where the pattern is a path with one before the variant.
@@ -311,6 +329,7 @@ pub(crate) fn named_variant(pattern: &syn::Pat) -> Option<String> {
         syn::Pat::Path(held) => &held.path,
         syn::Pat::TupleStruct(held) => &held.path,
         syn::Pat::Struct(held) => &held.path,
+        syn::Pat::Guard(held) => return named_variant(&held.pat),
         _ => return None,
     };
     let mut segments = path.segments.iter().rev();
@@ -318,7 +337,32 @@ pub(crate) fn named_variant(pattern: &syn::Pat) -> Option<String> {
     Some(segments.next()?.ident.to_string())
 }
 
+/// Whether the compiler asks for an arm catching everything left because no variant is covered unconditionally.
+///
+/// A guard makes an arm conditional, so a match whose every variant-naming
+/// arm carries one is not exhaustive however many variants it lists, and the
+/// arm that catches the rest is required rather than chosen. Asking for a
+/// reviewed waiver against something the compiler demands is asking somebody
+/// to decide what they could not have decided (ADR 0023).
+///
+/// Conservative on purpose: one unguarded naming arm and this says no, which
+/// costs a ledger line rather than a blind spot.
+fn forced_by_guards(arms: &[syn::Arm]) -> bool {
+    let mut naming = arms.iter().filter(|arm| named_variant(&arm.pat).is_some());
+    let mut any = false;
+    naming.all(|arm| {
+        any = true;
+        matches!(arm.pat, syn::Pat::Guard(_))
+    }) && any
+}
+
 /// Where an arm catches everything left, which is a bare `_` or a name bound to the whole.
+///
+/// Deliberately not looked through a guard, which is the opposite of what
+/// [`named_variant`] does with one. `_ if ready()` catches nothing on its own
+/// and the compiler still asks for the rest, so it is not the arm that absorbs
+/// a new variant; `Decision::Tests if ready()` still says what is being
+/// matched, which is all that one is read for.
 pub(crate) fn catches_everything(pattern: &syn::Pat) -> Option<proc_macro2::Span> {
     match pattern {
         syn::Pat::Wild(held) => Some(held.underscore_token.span),
@@ -329,14 +373,16 @@ pub(crate) fn catches_everything(pattern: &syn::Pat) -> Option<proc_macro2::Span
 
 impl<'ast> Visit<'ast> for Catching<'_> {
     fn visit_expr_match(&mut self, matching: &'ast syn::ExprMatch) {
-        let closes = matching
+        let over = matching
             .arms
             .iter()
-            .any(|arm| named_variant(&arm.pat).is_some_and(|name| self.ours.contains(&name)));
-        if closes {
+            .find_map(|arm| named_variant(&arm.pat))
+            .filter(|name| self.ours.contains(name))
+            .filter(|_name| !forced_by_guards(&matching.arms));
+        if let Some(over) = over {
             for arm in &matching.arms {
                 if let Some(span) = catches_everything(&arm.pat) {
-                    self.found.push(span.start().line);
+                    self.found.push((span.start().line, over.clone()));
                 }
             }
         }

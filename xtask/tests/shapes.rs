@@ -122,3 +122,59 @@ fn an_arm_over_a_set_nobody_here_closes_is_not_read_at_all() {
          is a hint with a false positive rate"
     );
 }
+
+#[test]
+fn a_guard_on_the_only_arm_naming_our_set_does_not_hide_the_match() {
+    let source = r"
+        enum Message { Compiler { error: bool }, Finished { ok: bool } }
+        fn first(message: &Message, other: syn::Expr) -> Option<u8> {
+            match message {
+                Message::Compiler { error } if *error => Some(1),
+                syn::Expr::Lit(_) => None,
+                _ => None,
+            }
+        }
+    ";
+    assert_eq!(
+        xtask::lints::wildcards(source, &declared_enums(source)),
+        vec![7],
+        "syn 3 keeps a guard inside the pattern rather than beside it, so an arm written          `Message::Compiler {{ .. }} if error` is a Pat::Guard and a walk reading only the          outer shape learns nothing from it. Every guarded match in the workspace was          invisible to this gate, which is a gate that was off and said it was on"
+    );
+}
+
+#[test]
+fn an_arm_the_compiler_demands_is_not_a_waiver_anybody_could_have_refused() {
+    let every_arm_guarded = r"
+        enum Message { Compiler { error: bool }, Finished { ok: bool } }
+        fn first(message: &Message) -> Option<u8> {
+            match message {
+                Message::Compiler { error } if *error => Some(1),
+                _ => None,
+            }
+        }
+    ";
+    assert!(
+        xtask::lints::wildcards(every_arm_guarded, &declared_enums(every_arm_guarded)).is_empty(),
+        "no variant is covered unconditionally, so the compiler asks for this arm. A gate \
+         demanding a reviewed waiver for it asks somebody to have decided what they could \
+         not decide, and a ledger of those is one nobody reads"
+    );
+
+    let one_arm_bare = r"
+        enum Message { Compiler { error: bool }, Finished { ok: bool } }
+        fn first(message: &Message) -> Option<u8> {
+            match message {
+                Message::Compiler { error } if *error => Some(1),
+                Message::Finished { ok } => Some(u8::from(*ok)),
+                _ => None,
+            }
+        }
+    ";
+    assert_eq!(
+        xtask::lints::wildcards(one_arm_bare, &declared_enums(one_arm_bare)),
+        vec![7],
+        "one unguarded naming arm and the exemption stops: this errs toward a ledger line \
+         rather than toward a blind spot, because the cost of the first is a line somebody \
+         reads and the cost of the second is a gate that is off and says it is on"
+    );
+}

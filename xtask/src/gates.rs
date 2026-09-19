@@ -77,19 +77,7 @@ fn compiled_as(path: &str) -> String {
 /// A file the ledger names that cannot be read.
 pub fn waivers(root: &Path) -> Result<String, GateFailure> {
     let files = all_sources(root);
-    let mut ours: Vec<String> = Vec::new();
-    let mut open: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
-    for path in &files {
-        let source = std::fs::read_to_string(path)
-            .map_err(|error| GateFailure(format!("{}: {error}", path.display())))?;
-        ours.extend(lint_scan::declared_enums(&source));
-        let label = relative_slash(root, path);
-        for name in lint_scan::open_enums(&source) {
-            open.insert(name, label.clone());
-        }
-    }
-    ours.sort();
-    ours.dedup();
+    let (ours, open) = sets(root, &files)?;
     let path = root.join("xtask/wildcard_allowlist.txt");
     let ledger = std::fs::read_to_string(&path)
         .map_err(|error| GateFailure(format!("{}: {error}", path.display())))?;
@@ -150,9 +138,8 @@ pub fn waivers(root: &Path) -> Result<String, GateFailure> {
     );
     let _written = writeln!(
         said,
-        "waivers: a line counted `required` is not a waiver anybody can retire, so a \
-         ledger that may shrink and never grow cannot shrink past however many of \
-         those there are."
+        "waivers: a line counted `required` is one the compiler demands and the gate \
+         asked a waiver for anyway, which is the gate to fix rather than the ledger."
     );
     Ok(said)
 }
@@ -181,8 +168,10 @@ pub fn lints(root: &Path) -> Result<String, GateFailure> {
             "lints: {} files carry no #[allow], no Box<dyn Trait>, no comment beside the \
              code, no layout anybody but the configuration has decided, no colour \
              anybody but rust_mutants::telling has decided, and no type that publishes \
-             its whole list and also says the list is open",
-            files.len()
+             its whole list and also says the list is open. {} catch-all waiver(s) are \
+             still standing; `cargo xtask waivers` reads each of them a second time",
+            files.len(),
+            waived_lines(root)?
         ));
     }
     let mut report = String::new();
@@ -206,25 +195,71 @@ pub fn lints(root: &Path) -> Result<String, GateFailure> {
 /// being read. A foreign enum keeps its catch-all: the values of `syn::Expr`
 /// are not ours to list, so an arm that stands for the rest is the handling.
 fn wildcards(root: &Path, files: &[PathBuf]) -> Result<Vec<lint_scan::Finding>, GateFailure> {
-    let mut ours: Vec<String> = Vec::new();
-    for path in files {
-        let source = std::fs::read_to_string(path)
-            .map_err(|error| GateFailure(format!("{}: {error}", path.display())))?;
-        ours.extend(lint_scan::declared_enums(&source));
-    }
-    ours.sort();
-    ours.dedup();
+    let (ours, open) = sets(root, files)?;
     let mut standing: Vec<String> = Vec::new();
     for path in files {
         let source = std::fs::read_to_string(path)
             .map_err(|error| GateFailure(format!("{}: {error}", path.display())))?;
         let label = relative_slash(root, path);
-        for line in lint_scan::wildcards(&source, &ours) {
+        for (line, over) in lint_scan::wildcards_over(&source, &ours) {
+            if open
+                .get(&over)
+                .is_some_and(|declared| !shares_a_crate(&label, declared))
+            {
+                continue;
+            }
             standing.push(format!("{label}:{line}"));
         }
     }
     standing.sort();
     ratcheted(root, &standing)
+}
+
+/// The enums this repository declares, and which of those say they may grow, by the file that declared them.
+///
+/// Two answers from one read of the tree, because a caller that needs the
+/// second always needs the first and two walks would be two chances to
+/// disagree about what an enum of ours is.
+///
+/// # Errors
+/// A file that cannot be read.
+fn sets(
+    root: &Path,
+    files: &[PathBuf],
+) -> Result<(Vec<String>, std::collections::BTreeMap<String, String>), GateFailure> {
+    let mut ours: Vec<String> = Vec::new();
+    let mut open: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
+    for path in files {
+        let source = std::fs::read_to_string(path)
+            .map_err(|error| GateFailure(format!("{}: {error}", path.display())))?;
+        ours.extend(lint_scan::declared_enums(&source));
+        let label = relative_slash(root, path);
+        for name in lint_scan::open_enums(&source) {
+            open.insert(name, label.clone());
+        }
+    }
+    ours.sort();
+    ours.dedup();
+    Ok((ours, open))
+}
+
+/// How many waivers the catch-all ledger still carries.
+///
+/// In the pass line because a number somebody sees every run is a number they
+/// notice moving, and a file of forty-four that nobody could shorten was a
+/// file nobody opened.
+///
+/// # Errors
+/// The ledger cannot be read.
+fn waived_lines(root: &Path) -> Result<usize, GateFailure> {
+    let path = root.join("xtask/wildcard_allowlist.txt");
+    let ledger = std::fs::read_to_string(&path)
+        .map_err(|error| GateFailure(format!("{}: {error}", path.display())))?;
+    Ok(ledger
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .count())
 }
 
 /// Which of these the ledger still waives, and which nobody has reviewed.
@@ -254,14 +289,21 @@ fn ratcheted(root: &Path, standing: &[String]) -> Result<Vec<lint_scan::Finding>
             line: line.parse().unwrap_or(0),
         });
     }
-    for line in &allowed {
-        if !standing.iter().any(|one| one == line) {
-            return Err(GateFailure(format!(
-                "lints: xtask/wildcard_allowlist.txt names {line}, which is no longer a \
-                 catch-all over a set this repository closes. Take the line out: a \
-                 ledger that keeps a waiver nobody needs is one nobody reads."
-            )));
-        }
+    let stale: Vec<&&str> = allowed
+        .iter()
+        .filter(|line| !standing.iter().any(|one| one == **line))
+        .collect();
+    if !stale.is_empty() {
+        let how_many = stale.len();
+        let named = stale
+            .iter()
+            .map(|line| format!("\n  {line}"))
+            .collect::<String>();
+        return Err(GateFailure(format!(
+            "lints: xtask/wildcard_allowlist.txt names {how_many} line(s) that no longer \
+             catch everything left of a set this repository closes. Take them out: a \
+             ledger that keeps a waiver nobody needs is one nobody reads.{named}"
+        )));
     }
     Ok(found)
 }
@@ -556,7 +598,7 @@ pub fn release_check(root: &Path) -> Result<String, GateFailure> {
 /// Returns the first gate's failure.
 pub fn all(root: &Path) -> Result<String, GateFailure> {
     let mut report = String::new();
-    for gate in [devgates, lints, deps, fixtures, release_check] {
+    for gate in [devgates, lints, deps, fixtures, release_check, waivers] {
         let _written = writeln!(report, "{}", gate(root)?);
     }
     Ok(report.trim_end().to_owned())
