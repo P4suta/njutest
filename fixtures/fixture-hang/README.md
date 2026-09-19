@@ -61,9 +61,9 @@ src/lib.rs:11:11 negate-loop-condition killed
 src/lib.rs:11:16 lt-to-le killed
 src/lib.rs:12:9 delete-compound-assignment killed
 src/lib.rs:12:15 add-assign-to-sub-assign killed
-src/lib.rs:13:9 delete-compound-assignment timed_out
+src/lib.rs:13:9 delete-compound-assignment runaway
 src/lib.rs:13:14 add-assign-to-sub-assign killed
-src/lib.rs:13:17 int-decrement timed_out
+src/lib.rs:13:17 int-decrement runaway
 src/lib.rs:13:17 int-increment killed
 src/lib.rs:15:5 return-default killed
 src/lib.rs:25:5 return-default killed
