@@ -131,13 +131,43 @@ verifying that a faster gate is doing less of the same work rather than less
 work: the headline agreed with what was hoped for, and the count underneath
 did not.
 
-Two things follow, and neither is *give up*.
+I said next that the population was the wrong one — `self` at a third of the
+blocked set is methods and `&Fixture` at 143 is test support, so a survivor,
+living in the logic a test did not reach, should skew away from both. **That
+was a guess and it was wrong.** Measured again over `crates/*/src` alone,
+with test and bench trees excluded and methods counted separately:
 
-The population measured is the wrong one. `self` at a third of the blocked
-set is methods, and `&Fixture` at 143 is test support; a survivor lives in
-the logic a test did not reach, which skews away from both. The number to
-have is *of the survivors of a real run*, and this workspace's own is the
-first place to take it once the observer can be asked at all.
+| | |
+| --- | --- |
+| free functions taking at least one argument | 1,448 |
+| a checker can be asked | **33 (2.3%)** |
+
+Two tenths of a point. Excluding every test, every benchmark and every
+method moved nothing, because what blocks the question is not *where the
+function lives* — it is that this is a program about paths, source text and
+records, and a symbolic `&Path` is not a thing a checker mints.
+
+So the decision, with the number rather than around it: **K1 is deferred,
+and what would reverse it is stated rather than left to a later mood.**
+
+The observer is sound, and the spike above shows it answering the question
+in six milliseconds. What it is not is *worth the milestone on this
+codebase*: a scripted `fake_kani`, a parser and its fuzz, `fixtures-provable`
+in both directions, a contract, two presentation shapes and an independent
+re-derivation, to reach thirty-three functions. ADR 0004's completion rule is
+what makes that list non-negotiable, and it is the right rule; the
+arithmetic is simply against it here.
+
+It is a fact about this workspace and not about the idea. A crate of
+numeric or parsing logic over primitives would score many times this, and
+**the way to find out costs nothing**: `askable` is built, tested and landed
+independently of the rest of K1, so any project can be asked *would this
+observer reach my code* before anybody pays for the observer. That is the
+piece of the milestone worth having first, and it turns out to be the piece
+that decides whether to want the others.
+
+K1 is reopened by a number, not by an argument: a project where `askable`
+says a reach worth the list above. This workspace is not it.
 
 And a quarter of what is blocked is borrowed bytes — `&str`, `&Path`,
 `&[u8]`, `&String` together. Kani can be given those with a length bound,
