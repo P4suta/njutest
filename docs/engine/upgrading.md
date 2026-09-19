@@ -11,6 +11,37 @@ needs nothing is not listed.
 
 ## Unreleased
 
+**A timeout is two outcomes now, and the old name is gone.** `timed_out`
+said one word about two unlike events: a mutation that made the work
+unbounded, which something noticed, and a bound that expired while the
+machine was busy, which establishes nothing about the mutation in either
+direction. The first is `runaway` and counts as detected; the second is
+`waited` and does not. `detected` is `killed + runaway`, so a score computed
+on a machine under load no longer moves with the load. `accounting` carries
+both columns where it carried one, and the run report, run stream and
+assurance report schemas all say the two names.
+
+`Outcome::parse("timed_out")` returns nothing on purpose, so a
+`[[mutation.expect]]` that says `outcome = "timed_out"` no longer parses
+rather than quietly resolving to one of the two. Pick the one you meant: a
+mutation you expect to run away is `runaway`, and one you expect to outlast
+its budget is `waited` — and a fate table that expects `waited` is expecting
+a fact about the machine it runs on, which is worth knowing before you write
+it down.
+
+**A trace's `exec` record says how a process stopped, in one field.** It
+carried `exit_code` beside a `timed_out` boolean, a pair that could say a
+process was killed by a clock and also exited 101. Both are replaced by
+`stopped`, which is one of `ran` with a `code`, `waited`, `runaway`, or
+`unstarted`. A code exists only where one is the process's own. The trace
+schema name remains v1; a recording written by an earlier release does not
+validate against it.
+
+**A checkpoint inherits a runaway and not a wait.** It inherited a kill and
+a confirmed timeout, both called existential claims about the tree. Only one
+of them was: a bound that expired is a fact about the machine that measured,
+and the next machine is not that one. A resumed run re-derives it.
+
 **A filtered run validates and instruments only the mutations it can run.**
 The catalog remains complete and every identity and report position is still
 resolved against it, but `--file`, `--id`, `--mutant`, the rule/family
