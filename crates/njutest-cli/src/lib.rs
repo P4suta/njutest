@@ -32,6 +32,7 @@ pub mod targets;
 pub mod trace;
 pub mod ui;
 pub mod watch;
+pub mod why;
 pub mod wire;
 
 #[cfg(any(test, feature = "testkit"))]
