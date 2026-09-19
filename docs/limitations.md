@@ -149,13 +149,15 @@ below is stated fail-closed.
   like from inside the program. The first exchange on a seam licenses no such
   question, because nothing came before it to be answered with.
 - A run told to measure only what changed re-measures every seam question it
-  licenses, because nothing attributes an exchange to the code that caused it.
-  The baseline runs the targets together, so the interposer is told nothing
-  about who is running and records `None` rather than the last name it happened
-  to know — naming the wrong one would route a question to tests that were not
-  there. Until a recording can say which target caused which exchange, a
-  changed-run has no sound way to decide that a question it asked before is
-  still answered, and asking it again is the answer that cannot be wrong.
+  licenses. An exchange now says which target caused it — the catalogue run
+  drives the targets one at a time and names each as it goes, so a recording
+  can be asked *who did this* — and what is still missing is the other end:
+  what a change reaches is not yet answerable for seams, and whether the
+  evidence keys that answer it for mutations carry over is the open question
+  rather than a known gap. Nobody has measured it. `None` remains the honest answer wherever the
+  run cannot tell, because naming the wrong target would route a question to
+  tests that were not there, and a changed-run skipping a question on that
+  premise would be worse than asking it again.
 - Two answers arriving in the other order is not a question this release can
   put, and will not become one while the catalogue names exchanges by their
   place in the order. An interposer that served connections concurrently could

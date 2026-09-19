@@ -796,6 +796,40 @@ fn restating_a_status_worded_differently_hands_the_caller_something_else() {
 }
 
 #[test]
+fn an_exchange_says_which_target_caused_it_where_the_run_can_tell() {
+    let up = upstream("[]");
+    let seams = njutest_cli::assure::wire::Seams {
+        environment: Vec::new(),
+        watching: vec![seam("api", up.address())],
+    };
+    let at = seams.watching[0].interposer.address();
+
+    let went_past = seams.observing(|| {
+        seams.during(Some("pkg/test/one"));
+        let _first = ask(at, "/orders");
+        seams.during(Some("pkg/test/two"));
+        let _second = ask(at, "/rows");
+        seams.during(None);
+    });
+
+    let who: Vec<Option<String>> = went_past
+        .all()
+        .iter()
+        .map(|one| one.during.clone())
+        .collect();
+    assert_eq!(
+        who,
+        vec![
+            Some("pkg/test/one".to_owned()),
+            Some("pkg/test/two".to_owned())
+        ],
+        "a run told to measure only what changed can skip a question whose target \
+         did not change, and only if the recording says whose it was. Naming the \
+         wrong one would skip on a false premise, which is worse than asking again"
+    );
+}
+
+#[test]
 fn a_catalogue_holds_one_run_of_the_suite_and_never_the_runs_around_it() {
     let up = upstream("[]");
     let seams = njutest_cli::assure::wire::Seams {
