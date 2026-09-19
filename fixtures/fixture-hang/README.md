@@ -9,23 +9,42 @@ A mutation that never returns, and a test that can be slow exactly once.
 
 `count_to` sums every step below `n` in a `while` loop. Deleting `step += 1`
 leaves the loop with nothing that ends it, and no test can notice a function
-that does not return: the run has to stop it, run it once more on its own, and
-report `timed_out` only when it happens again. Nothing else in the suite has a
-mutation like that, so the bound on one execution, the serial retry, and the
-process tree the runner kills were all carried by tests that never reached
-them.
+that does not return. The guard of the active mutant sits where the mutation
+does, so it is taken once an iteration, and the count of takes ends the
+process where a clock used to: the mutation is `runaway`, it counts as
+detected, and it is **not** retried, because a count cannot disagree with
+itself on a second reading. Nothing else in the suite has a mutation like
+that, so the step allowance, the status the runtime leaves by, and the
+process tree the runner kills are carried by tests that reach them nowhere
+else.
 
 `clamp_positive` is ordinary, and the test of it sleeps once per activation
 when `FIXTURE_HANG_MARKER` names a directory and `FIXTURE_HANG_PAUSE_MS` says
-how long. That is the other half of the contract: a timeout that does not
-reproduce is `inconclusive` rather than `timed_out`, because a loaded machine
-is a different machine from the one a bound was calibrated on. The fates below
+how long. That is the other half of the contract, and since a count took over
+the first half it is the only one that reaches the clock at all: a bound that
+expires once and not again is `inconclusive` rather than `waited`, because a
+loaded machine is a different machine from the one a bound was calibrated on.
+The serial retry is carried here now, and no longer by `count_to`, which ends
+at the allowance and is never asked twice. The fates below
 are the ones without the marker set, so the fixture's ordinary run stays
 ordinary; `crates/rust-mutants-cli/tests/toolchain_hang.rs` sets it.
 
-`.rust-mutants.toml` puts the bound at two seconds. A mutation that never
-returns costs the bound twice, and a suite has to be able to afford waiting
-for it.
+The two halves want `.rust-mutants.toml`'s bound pulled in opposite
+directions. `clamp_positive` needs it low enough that a sleep of a few
+seconds outlasts it, or nothing times out and there is no `inconclusive` to
+observe. `count_to` needs it high enough that the count gets there first, or
+the clock stops a mutation the allowance was about to catch and the fate
+table becomes a fact about the machine that generated it — measured here at
+two seconds under load, where fifty million takes cost 1501 ms and one of the
+two non-terminating mutations came back `waited` while the other came back
+`runaway`. They are the same kind of mutation; only the moment differed.
+
+That pull is the reason the allowance is a separate setting from the bound,
+and the reason to give this fixture a small one rather than a generous
+bound: a sleep only grows under load, so the clock half is safe with a low
+bound, and a count is the same number under any load, so the count half is
+safe with a small allowance. Raising the bound to buy the count room takes it
+away from the sleep.
 
 ## Fates
 
