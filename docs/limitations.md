@@ -149,13 +149,32 @@ below is stated fail-closed.
   like from inside the program. The first exchange on a seam licenses no such
   question, because nothing came before it to be answered with.
 - A run told to measure only what changed re-measures every seam question it
-  licenses. An exchange now says which target caused it — the catalogue run
-  drives the targets one at a time and names each as it goes, so a recording
-  can be asked *who did this* — and what is still missing is the other end:
-  what a change reaches is not yet answerable for seams, and whether the
-  evidence keys that answer it for mutations carry over is the open question
-  rather than a known gap. Nobody has measured it. `None` remains the honest answer wherever the
-  run cannot tell, because naming the wrong target would route a question to
+  licenses. An exchange says which target caused it — the catalogue run drives
+  the targets one at a time and names each as it goes — and the behaviour key
+  that says whether a target changed is already minted per target for the
+  mutation layer. So the two halves meet at a map lookup rather than at a
+  mechanism that has to be built.
+
+  What that buys is the decision and not the catalogue, and the difference is
+  the whole of why this is still a limitation. A seam question asks *if the
+  dependency answered differently, would a test notice* — which depends on
+  the target's behaviour, and the key covers that. **Which exchanges exist at
+  all depends on what the dependency does, and the key covers none of it.** A
+  target whose key is unchanged can produce a different catalogue tomorrow
+  because the upstream it talks to changed: a new endpoint, another status,
+  one round trip where there were two.
+
+  So a run may reuse an answer and may not reuse the question. Skipping on
+  the second would report a question as still answered about an exchange that
+  no longer happens, which is a run saying something about a program it did
+  not observe — `wire-fault-not-put` inverted, and worse for being quiet.
+  Re-deriving the catalogue costs one run of the suite and re-deciding costs
+  one per question, so keeping the derivation and reusing the decisions gives
+  up almost none of the saving. It is the expensive half that is reusable,
+  which is the opposite of what this entry assumed before it was measured.
+
+  `None` remains the honest answer wherever the run cannot tell which target
+  caused an exchange, because naming the wrong one would route a question to
   tests that were not there, and a changed-run skipping a question on that
   premise would be worse than asking it again.
 - Two answers arriving in the other order is not a question this release can
