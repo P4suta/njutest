@@ -500,11 +500,20 @@ A test binary is started directly, never through `cargo test`, with the
 environment cargo would give it, `RUST_MUTANTS_*` stripped and set, a
 scratch `TMPDIR`, and the libtest arguments verbatim. The outer supervisor
 owns the timeout and the process tree; exit status is read in this order —
-start failure → `errored`; a guard's count passed → `runaway`; a bound expired
-→ `waited`; killed by us → `not_run`;
-97 → `errored` (stale catalog, never a kill); non-zero → `killed`; zero →
-`survived`. A libtest run that matched no test is green and says so:
-`tests_run` carries the count the summary line reported.
+start failure → `errored`; a bound expired → `waited`; killed by us →
+`not_run`; 97 → `errored` (stale catalog, never a kill); 95 → `runaway`;
+non-zero → `killed`; zero → `survived`. A libtest run that matched no test is
+green and says so: `tests_run` carries the count the summary line reported.
+
+A runaway leaves by a status of its own rather than a signal, because the
+fact it reports is its own: the process was stopped by a number every machine
+agrees on, where a bound is a clock only this machine saw. The guard of the
+active mutant sits where the mutation does, so a loop whose condition was
+mutated takes it once an iteration and the count rises as the mutation runs;
+past the allowance the process says what it spent and exits 95. Reading 95
+**before** the rung below it is what the two names rest on — 95 is non-zero,
+and a run that read the rungs the other way round would call every mutation
+that cannot stop a kill by the tests.
 
 ### The scratch a test process is given
 
