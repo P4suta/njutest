@@ -18,6 +18,16 @@ pub const FILE_NAME: &str = ".njutest.toml";
 /// The upper bound on one executed command when the file does not say.
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(600);
 
+/// How many guard takes a mutation may spend when the configuration does not say.
+///
+/// The engine's own default, not a second number: two products choosing
+/// separately what a mutation is allowed is two answers to one question, and
+/// a reader who moved between them would find the same code judged
+/// differently (ADR 0023).
+const fn default_steps() -> u64 {
+    rust_mutants::session::DEFAULT_MUTANT_STEPS
+}
+
 /// How much of the outcome cache is kept when the file does not say.
 pub const DEFAULT_CACHE_MAX_BYTES: u64 = 5 * 1024 * 1024 * 1024;
 
@@ -155,6 +165,15 @@ pub struct Execution {
     /// The upper bound on one measurement, which is one test binary run against one mutation.
     #[serde(deserialize_with = "duration", serialize_with = "as_millis")]
     pub timeout: Duration,
+    /// How many times a mutation's guard may be taken before its process is stopped. `0` counts nothing and leaves `timeout` as the only thing that can end a mutation that does not end.
+    ///
+    /// A clock measures partly the machine, so two runs of one catalogue on
+    /// one commit can disagree about a mutation that never returns. A count is
+    /// the same number under any load, and a mutation that spends it is
+    /// `runaway` rather than `waited` — an answer rather than a report about
+    /// how long somebody waited (ADR 0023).
+    #[serde(default = "default_steps")]
+    pub steps: u64,
     /// The upper bound on one build. `None` is no bound, which is the default: a build is not a measurement, and a project that tightened the one it waits for per mutation did not thereby say how long its own compiler may take.
     #[serde(
         default,
@@ -190,6 +209,7 @@ impl Default for Execution {
             test_binary_args: Vec::new(),
             environment: Vec::new(),
             timeout: DEFAULT_TIMEOUT,
+            steps: default_steps(),
             build_timeout: None,
             jobs: 0,
             skip_targets: Vec::new(),

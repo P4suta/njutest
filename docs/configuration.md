@@ -93,6 +93,23 @@ owner = "quality-team"
 ticket = "QA-123"
 ```
 
+`timeout` and `steps` can both stop a mutation that stops a program ending,
+and they are not interchangeable. `timeout` is a clock, and what a clock
+measures is partly the machine: two runs of one catalogue on one commit can
+disagree about the same mutation because one was on a busy laptop. A mutation a
+bound expires on is `waited`, which establishes nothing — neither that the
+tests noticed nor that they did not — so it is not counted in the score.
+`steps` is how many times the mutation's own guard may be taken; the guard sits
+where the mutation is, so a loop whose condition was mutated takes it once an
+iteration and the number is the same everywhere. A mutation that spends the
+allowance is `runaway`, which **is** an answer: the mutation stopped the
+program terminating, it counts as detected, and the run does not put it a
+second time because a count cannot disagree with itself. `0` counts nothing and
+leaves the clock as the only thing that can end a runaway. The reason to lower
+it rather than raise it is a project whose own `timeout` is short — a bound the
+count cannot beat turns a `runaway` back into a `waited`, and the answer stops
+being about the code.
+
 `build_max_bytes` and `build_dir` were removed from `[cache]`. Remove those
 keys when upgrading: configuration is strict, so keeping either one is an
 unknown-field error. Compiled artifacts belong to rust-mutants' stable target

@@ -68,6 +68,8 @@ pub struct Replaying<'a> {
     pub skip_targets: Vec<String>,
     /// How long one execution may take.
     pub timeout: Option<Duration>,
+    /// How many guard takes one execution may spend before it is stopped by a count rather than by the bound above.
+    pub steps: u64,
     /// Where this project keeps what its runs leave behind, which the tree under test is copied without.
     pub reports: crate::app::reports::Store,
 }
@@ -112,6 +114,7 @@ pub fn replay(
             harness_args: replaying.harness_args.clone(),
             skip_targets: replaying.skip_targets.clone(),
             mutant_timeout: replaying.timeout.map_or(Timeout::Auto, Timeout::Fixed),
+            mutant_steps: (replaying.steps > 0).then_some(replaying.steps),
             ..PrepareOptions::default()
         },
         watch.cancel,

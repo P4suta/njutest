@@ -22,6 +22,13 @@ fn prepared(fixture: &Fixture) -> Session {
 }
 
 /// A prepared session whose executions are bounded by `timeout`.
+/// A session over `fixture`, with an allowance small enough that the count is never in a race with `timeout`.
+///
+/// The engine reads no configuration file, so the default of fifty million
+/// would apply here -- about a second and a half, against bounds these tests
+/// set at two seconds. Which of the two answered would then be decided by the
+/// machine's load, and a test that asserts an outcome would pass or fail by
+/// it. A million takes fires in about thirty milliseconds (ADR 0023).
 fn prepared_within(fixture: &Fixture, timeout: Timeout) -> Session {
     let workspace = Workspace::open(
         fixture.root(),
@@ -34,6 +41,7 @@ fn prepared_within(fixture: &Fixture, timeout: Timeout) -> Session {
             &PrepareOptions {
                 tier: Tier::All,
                 mutant_timeout: timeout,
+                mutant_steps: Some(1_000_000),
                 ..PrepareOptions::default()
             },
             &Cancel::new(),
@@ -141,7 +149,7 @@ fn a_slow_mutant_does_not_delay_the_delivery_of_the_ones_that_finished() {
     let timed_out = finished
         .judged
         .iter()
-        .find(|one| one.outcome == Outcome::Waited)
+        .find(|one| one.outcome == Outcome::Runaway)
         .expect("the mutation that never returns");
     let at = delivered
         .order
