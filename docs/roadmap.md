@@ -77,6 +77,46 @@ behind. A model checker over one function — Kani is the one to look at — say
 run, and it is fail-closed for the ordinary reason: it costs a run, and a run
 it cannot finish leaves the mutation to the tests.
 
+That paragraph was written as a design. It has now been held against Kani
+0.68 with CBMC 6.11, and what a spike established is here rather than in
+somebody's memory, because every premise below decides a piece of the shape
+and two of them are not what the design assumed.
+
+- **It answers the question.** A differential harness — both renderings of
+  one function, one symbolic argument, `assert_eq!` between them — proved
+  `>` to `>=` on a clamp equivalent in six milliseconds, and disproved `>` to
+  `<` in the same run. This is the propagation answer: not *no test noticed*
+  but *no input distinguishes them*.
+- **Every argument type must be `kani::Arbitrary`.** The harness needs
+  `kani::any::<T>()` for each one, so the observer can be asked about a
+  function of `i32` and not about a function of somebody's struct until that
+  struct is arbitrary. What can be asked is therefore a property of the
+  signature, and a run can say so without starting anything.
+- **An unbounded loop does not terminate.** Not *slow*: the harness above,
+  with a `while i < n` over a symbolic `n`, produced nothing in ten minutes
+  and was killed. So a bound is not a tuning knob a caller may leave alone,
+  it is a thing the caller must set, and `Undecided` is reached by the
+  caller's clock rather than by Kani declining.
+- **Under too small a bound Kani says `UNDETERMINED`, not `SUCCESS`.** Two
+  functions differing only at the eleventh iteration, asked under a bound of
+  five, come back undetermined with a failed unwinding assertion beside them
+  — rather than the false proof the design feared. The status is three-valued
+  and maps onto the answers directly: `SUCCESS` to proved, `FAILURE` to
+  noticed, `UNDETERMINED` to undecided.
+- **The rule is still enforced here rather than trusted there.** A proof is
+  the equivalence assertion succeeding *and* every unwinding assertion
+  succeeding. Kani already refuses the other combination, and a layer that
+  removed executions on the strength of somebody else's refusal would be
+  trusting the tool it exists to check — the same rule that keeps
+  `xtask proofaudit` re-deciding what the producer's types already forbid.
+
+The one that changes the milestone most is the third. A model checker that
+hangs is not a checker that answers slowly, and an observer that could hang
+the run is not one a default contract can hold — which is why it stays behind
+`proved-v1` and why the bound is named in the configuration beside the seam's
+`hold`, for the same reason that one is: how long is too long is a property
+of the code being asked about, not of this tool.
+
 So the next thing to make cheaper here is not a fourth layer. It is what the
 measurement above says: the witness pass claims very little on real code, and
 what a widening of it buys is measured rather than assumed.
