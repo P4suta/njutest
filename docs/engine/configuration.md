@@ -37,6 +37,7 @@ debug = false                  # write debug information; off, because nothing h
 tier = "balanced"              # balanced | strong | all
 operators = []                 # exactly these rules; empty = the tier
 timeout = "auto"               # auto = 5x the target's own baseline, never below 30s
+steps = 50_000_000             # guard takes one mutant may spend; 0 = the bound only
 build_timeout = ""             # empty = no bound
 verify = true                  # run the instrumented baseline first
 coverage = false               # build once with LLVM coverage and route by its regions as well
@@ -69,6 +70,37 @@ can check, and the gate is an expectation with a reason
 ([ADR 0004](../adr/0004-proof-layers-not-budgets.md)). The two numbers are
 carried into the projection because that schema requires them, and `low` above
 `high` is refused rather than passed on.
+
+## What ends a mutation that does not end
+
+A mutation can stop a program ending. Something has to stop it, and the two
+things that can are not interchangeable.
+
+`timeout` is a clock. What it measures is partly the machine: the same mutation
+on a loaded machine and a quiet one is two answers, so a run that concluded
+from it would report a different score depending on what else was running. A
+mutation a bound expires on is `waited`, and `waited` establishes nothing —
+neither that the tests noticed nor that they did not.
+
+`steps` is a count of how many times the active mutant's guard is taken. The
+guard sits where the mutation does, so a loop whose condition was mutated takes
+it once an iteration, and the number is the same on every machine at every job
+count under every load. A mutation that spends the allowance is `runaway`, and
+that **is** an answer: the mutation stopped the program terminating, which is a
+behaviour change any observer would meet. It counts as detected, and a run does
+not put it a second time, because a count cannot disagree with itself.
+
+The default of fifty million spends in roughly a second and a half for a loop
+that cannot terminate, which sits well inside the thirty-second floor a derived
+`timeout` never goes below. `0` counts nothing and leaves the clock as the only
+thing that can end a runaway.
+
+The reason to lower it is a project whose own bound is short: **a bound the
+count cannot beat turns a `runaway` into a `waited`**, and the answer stops
+being about the code. Where the count does not reach at all — a mutation
+outside the loop it stopped ending — is in
+[limitations](../limitations.md).
+
 
 ## Flags win
 
@@ -133,11 +165,17 @@ every process contending with every other and would measure the contention. A
 suite that sets `test_binary_args = ["--test-threads=1"]` has already given
 that up, and can afford more.
 
-An expired budget buys one more measurement, taken with nothing else the run
-started running beside it: a duration measured while three other test
+An expired bound buys one more measurement, put again with nothing else the
+run started running beside it: a duration measured while three other test
 processes were running is a fact about the load rather than about the
-mutation. What that measurement observes is what stands — a second timeout is
-a timeout, and anything else leaves the run undecided.
+mutation. What that measurement observes is what stands — a bound that
+expires again is `waited`, and anything else leaves the mutation
+`inconclusive`.
+
+A `runaway` buys nothing here and is never put twice. The count that ended it
+is the same number on a quiet machine as on a busy one, so a second reading
+cannot disagree with the first, and asking for one would be spending a
+process to be told what the run already knows.
 
 Every `[build]` key is what a person would have typed at cargo, passed on
 unchanged to every command a run compiles with: the pristine check, each
@@ -159,7 +197,7 @@ back to true by a flag, because there is no flag that says so.
 [[mutation.expect]]
 id = "b8e3f78d"                # identity, or a prefix that names exactly one
 reason = "the bound is equivalent under the invariant the type carries"
-outcome = "survived"           # survived | killed | timed_out
+outcome = "survived"           # survived | killed | runaway | waited
 ```
 
 An expectation is a claim, not a suppression: the run resolves the identity,
@@ -241,11 +279,21 @@ the code under it moves is worse than no skip at all.
 
 ## Reserved environment
 
-A run composes `RUST_MUTANTS_ACTIVE`, `RUST_MUTANTS_CATALOG`, and
-`RUST_MUTANTS_TOUCH` for every test process it starts. Finding any of them
-already set normally ends the command with `RM0006`: nothing a test process
-said under an unrelated activation would be about this run, and a touch log
-another run owns is not one this run may append to.
+A run composes `RUST_MUTANTS_ACTIVE`, `RUST_MUTANTS_CATALOG`,
+`RUST_MUTANTS_TOUCH`, and `RUST_MUTANTS_STEPS` for every test process it
+starts. Finding any of them already set normally ends the command with
+`RM0006`: nothing a test process said under an unrelated activation would be
+about this run, and a touch log another run owns is not one this run may
+append to.
+
+`RUST_MUTANTS_STEPS` is how many times the active mutant's guard may be taken
+before the process stops itself and exits 95. The guard sits where the
+mutation does, so a loop whose condition was mutated takes it once an
+iteration, and a count is the same number on every machine, at every job
+count, under every load — which is why a mutation that will not stop is
+`runaway` and counts as detected, where a bound that expired is `waited` and
+establishes nothing. Unset, or `0`, counts nothing and leaves the clock as the
+only bound.
 
 There is one closed exception for this repository measuring itself. Cargo
 compiles every instrumented tree with an internal

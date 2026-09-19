@@ -11,7 +11,7 @@ LIMITATION	mutation-phase-not-implemented	no mutant was executed, so nothing is 
 NEXT	njutest explain crates/core/src/lib.rs:demo:lt-to-le@1@12	says which tests reached it	njutest accept crates/core/src/lib.rs:demo:lt-to-le@1@12 --reason "..."	records why it is not a gap
 TARGETS	selected=2	passed=1	failed=1	skipped=0	missing=0
 MUTANTS	cataloged=9	rejected=0	executed=0	unreached=0
-OUTCOMES	killed=0	survived=1	timed_out=0	equivalent=0
+OUTCOMES	killed=0	survived=1	runaway=0	waited=0	equivalent=0
 WITHIN_OUTCOMES	accepted_of_survived=0	reused_of_killed=0	reused_of_survived=0
 SOUNDNESS	unsafe_items=0	packages_with_unsafe=0	was_executed=false
 VERDICT	INSUFFICIENT

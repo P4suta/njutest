@@ -228,7 +228,8 @@ fn accounting(report: &Report, out: &mut String) {
         &[
             &format!("killed={}", mutants.killed),
             &format!("survived={}", mutants.survived),
-            &format!("timed_out={}", mutants.timed_out),
+            &format!("runaway={}", mutants.runaway),
+            &format!("waited={}", mutants.waited),
             &format!("equivalent={}", mutants.equivalent),
         ],
     );

@@ -1,0 +1,7 @@
+Go through one run's gaps, one at a time, deciding as you read
+
+Usage: njutest review [OPTIONS]
+
+Options:
+      --run <RUN>  The run to go through. The latest by default
+  -h, --help       Print help

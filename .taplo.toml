@@ -1,4 +1,21 @@
 # taplo (TOML formatter and linter) configuration.
+#
+# Named rather than excluded. An exclude is applied to what the walk has
+# already found, so `target/**` is reached before it is skipped — and a build
+# directory holds more files than the rest of the repository by several orders
+# of magnitude. Seventy-three tracked files do not need a walk of millions to
+# find. The exclude stays under it: a build directory that appears inside one
+# of these is still not ours.
+include = [
+  "*.toml",
+  ".cargo/*.toml",
+  ".config/*.toml",
+  "crates/**/*.toml",
+  "docs/*.toml",
+  "fixtures/**/*.toml",
+  "fuzz/**/*.toml",
+  "xtask/**/*.toml",
+]
 exclude = ["target/**", "fixtures/**/target/**"]
 
 [formatting]

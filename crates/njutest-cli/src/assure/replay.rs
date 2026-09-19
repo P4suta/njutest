@@ -17,7 +17,6 @@ use crate::watch::Watch;
 
 /// What a replay established about the finding it was given.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
 pub enum Outcome {
     /// The finding is still there.
     Reproduced,
@@ -69,6 +68,8 @@ pub struct Replaying<'a> {
     pub skip_targets: Vec<String>,
     /// How long one execution may take.
     pub timeout: Option<Duration>,
+    /// How many guard takes one execution may spend before it is stopped by a count rather than by the bound above.
+    pub steps: u64,
     /// Where this project keeps what its runs leave behind, which the tree under test is copied without.
     pub reports: crate::app::reports::Store,
 }
@@ -113,6 +114,7 @@ pub fn replay(
             harness_args: replaying.harness_args.clone(),
             skip_targets: replaying.skip_targets.clone(),
             mutant_timeout: replaying.timeout.map_or(Timeout::Auto, Timeout::Fixed),
+            mutant_steps: (replaying.steps > 0).then_some(replaying.steps),
             ..PrepareOptions::default()
         },
         watch.cancel,
@@ -134,10 +136,26 @@ pub fn replay(
 }
 
 /// Whether the finding is still what the tests say.
-fn observed(kind: FindingKind, outcome: rust_mutants::outcome::Outcome) -> Outcome {
+///
+/// A bound expiring is the only thing that reproduces one of the two findings
+/// about waiting. A replay that comes back `Runaway` has established something
+/// where the finding said nothing was established, so the finding is resolved
+/// even though the news is a detection — what a reader asks `replay` is
+/// whether the hole is still there, and it is not.
+const fn observed(kind: FindingKind, outcome: rust_mutants::outcome::Outcome) -> Outcome {
     let still = match kind {
-        FindingKind::Timeout => outcome == rust_mutants::outcome::Outcome::TimedOut,
-        _ => !outcome.detected(),
+        FindingKind::Timeout | FindingKind::WaitedMutant => {
+            matches!(outcome, rust_mutants::outcome::Outcome::Waited)
+        }
+        FindingKind::BuildFailure
+        | FindingKind::FailingTest
+        | FindingKind::TargetMissing
+        | FindingKind::SurvivingMutant
+        | FindingKind::NotMeasured
+        | FindingKind::UnmatchedAcceptance
+        | FindingKind::UndefinedBehaviour
+        | FindingKind::HollowTarget
+        | FindingKind::WireUnnoticed => !outcome.detected(),
     };
     if still {
         Outcome::Reproduced

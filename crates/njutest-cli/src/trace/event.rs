@@ -161,7 +161,7 @@ pub struct PhaseRecord {
 }
 
 /// One executed process.
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExecRecord {
     /// The command line, verbatim.
     pub argv: Vec<String>,
@@ -171,10 +171,14 @@ pub struct ExecRecord {
     pub env_names: Vec<String>,
     /// The bound the caller put on it.
     pub timeout_ms: Option<u64>,
-    /// What it exited with, when it exited at all. Absent is absent: the engine's sentinel does not travel, because a reader would have to know it to avoid reading it as a status.
-    pub exit_code: Option<i32>,
-    /// Whether the bound is why it stopped.
-    pub timed_out: bool,
+    /// How it came to an end, which is one thing and not a status beside a flag.
+    ///
+    /// The engine's type, not a second one: two products recording the same
+    /// kind of event in two vocabularies is what a reader holding both streams
+    /// has to reconcile by hand, and a pair of a status and a "the clock
+    /// fired" boolean can say a process was killed by a bound and also exited
+    /// 101 (ADR 0023).
+    pub stopped: rust_mutants::execute::Stopped,
     /// How long it took.
     pub duration_ms: u64,
     /// How much it said.
@@ -218,9 +222,7 @@ impl ExecRecord {
             timeout_ms: spec
                 .timeout
                 .map(|timeout| u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX)),
-            exit_code: (result.exit_code != rust_mutants::runner::EXIT_CODE_UNAVAILABLE)
-                .then_some(result.exit_code),
-            timed_out: result.timed_out,
+            stopped: rust_mutants::execute::Stopped::of(result),
             duration_ms: u64::try_from(result.duration.as_millis()).unwrap_or(u64::MAX),
             output_bytes: 0,
             output_sha256: None,

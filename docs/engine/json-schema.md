@@ -82,7 +82,8 @@ Written by `rust-mutants run` to
   "selection": { "tier": "all", "operators": [], "include": [], "exclude": [], "packages": [],
                  "build": ["--features", "extra"] },
   "accounting": { "cataloged": 6, "refused": 0, "skipped": 5, "executed": 6,
-                  "killed": 5, "survived": 1, "timed_out": 0, "inconclusive": 0,
+                  "killed": 5, "survived": 1, "runaway": 0, "waited": 0,
+                  "inconclusive": 0,
                   "errored": 0, "not_run": 0, "unreached": 0, "expected": 0 },
   "score": { "detected": 5, "decided": 6, "value": 0.8333333333333334 },
   "mutants": [{ "…": "as in the catalog document, plus:",
@@ -96,15 +97,17 @@ Written by `rust-mutants run` to
 }
 ```
 
-The outcome columns add up: `killed + survived + timed_out + inconclusive +
-errored == executed`, and `executed + not_run == cataloged`. `unreached`
+The outcome columns add up: `killed + survived + runaway + waited +
+inconclusive + errored == executed`, and `executed + not_run == cataloged`. `unreached`
 counts the `not_run` mutants a coverage measurement proved no target reaches,
 so it is never larger than `not_run` and is zero in a run that measured none. `score` is
-`detected / decided` where `detected = killed + timed_out` and `decided =
+`detected / decided` where `detected = killed + runaway` and `decided =
 detected + survived`; it is **absent** when the run decided nothing, which is
-not the same as a score of zero. A timeout is `timed_out` only after a serial
-retry timed out again; one that did not reproduce is `inconclusive`, which is
-a hole rather than a detection.
+not the same as a score of zero. `runaway` is a mutation whose step count
+passed a guard, which is a detection because a count is a property of the work
+rather than of the machine. `waited` is a bound that expired with nothing else
+running, which is a hole rather than a detection; a bound that expired once and
+did not expire again is `inconclusive`.
 
 Here `cataloged` is the number of candidate rows in `mutants`, not a blanket
 claim that the compiler accepted every row. `refused` candidates live in
@@ -118,8 +121,12 @@ guard present in that run's build.
 was terminated.
 
 A `finding` is one of `surviving-mutant`, `inconclusive-mutant`,
-`errored-mutant`, `not-run-mutant`, `unreached-mutant`, `discharged-mutant`,
-`stale-expectation`, `unmatched-expectation`, or `unmatched-skip`. A mutant no
+`waited-mutant`, `errored-mutant`, `not-run-mutant`, `unreached-mutant`,
+`discharged-mutant`, `stale-expectation`, `unmatched-expectation`, or
+`unmatched-skip`. A `waited-mutant` is one this machine stopped waiting for
+twice: a bound expiring is a fact about the machine that watched, so the run
+established nothing about the mutation and says so rather than counting it.
+A mutant no
 measured target reaches is an `unreached-mutant` finding rather than a
 `not-run-mutant` one: it says the tests have a gap where the mutant is, not
 that the run failed to get to it. A `discharged-mutant` says the same thing

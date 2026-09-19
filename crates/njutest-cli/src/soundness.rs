@@ -10,7 +10,6 @@ use syn::visit::Visit;
 
 /// What kind of place the compiler stops vouching for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-#[non_exhaustive]
 pub enum Kind {
     /// An `unsafe { … }` block.
     Block,

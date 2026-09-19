@@ -474,12 +474,15 @@ fn once_slow(report: &serde_json::Value) {
          different fact from one nothing could decide: {report}"
     );
     assert_eq!(
-        report["accounting"]["mutants"]["timed_out"].as_u64(),
-        Some(0),
-        "a bound reached once and not again is not a mutation that ran out of time. \
-         Every measurement here was slow the first time and quick the second, and a run \
-         that reported them as timeouts would hand a person seven findings caused by \
-         whatever else the machine was doing: {report}"
+        (
+            report["accounting"]["mutants"]["waited"].as_u64(),
+            report["accounting"]["mutants"]["runaway"].as_u64(),
+        ),
+        (Some(0), Some(0)),
+        "a bound reached once and not again is not a mutation this machine stopped \
+         waiting for, and nothing here ran away: every measurement was slow the first \
+         time and quick the second. A run that reported them either way would hand a \
+         person findings caused by whatever else the machine was doing: {report}"
     );
 }
 
@@ -1667,7 +1670,7 @@ fn verified_in_process(
 }
 
 #[test]
-fn a_mutation_that_never_returns_is_stopped_measured_alone_and_reported_as_a_timeout() {
+fn a_mutation_that_never_returns_is_stopped_measured_alone_and_reported_as_a_wait() {
     let dir = tempfile::Builder::new()
         .prefix("njutest-hang-")
         .tempdir()
@@ -1695,7 +1698,7 @@ fn a_mutation_that_never_returns_is_stopped_measured_alone_and_reported_as_a_tim
     let execs = executions(&events);
     let expired: std::collections::BTreeSet<&str> = execs
         .iter()
-        .filter(|exec| exec.outcome == "timed_out" && !exec.alone)
+        .filter(|exec| exec.outcome == "waited" && !exec.alone)
         .map(|exec| exec.mutant.as_str())
         .collect();
     assert!(
@@ -1733,7 +1736,7 @@ fn a_mutation_that_never_returns_is_stopped_measured_alone_and_reported_as_a_tim
             .expect("mutants")
             .iter()
             .filter(|one| expired.contains(one["display_id"].as_str().unwrap_or_default()))
-            .all(|one| one["outcome"] != "timed_out"),
+            .all(|one| one["outcome"] != "waited"),
         "and what the second measurement said is what the mutation is reported as: the \
          first one is how long it took, not what it established: {report}"
     );

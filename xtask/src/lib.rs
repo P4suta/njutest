@@ -16,6 +16,7 @@ pub mod release;
 pub mod reportdiff;
 pub mod route;
 pub mod sbom;
+pub mod shapes;
 pub mod wire;
 
 use std::ffi::OsString;
@@ -81,6 +82,8 @@ enum Gate {
         #[arg(long, value_name = "FILE")]
         output: Option<std::path::PathBuf>,
     },
+    /// A second opinion, by body shape alone, on every catch-all the ledger waives. Refuses nothing.
+    Waivers,
     /// Every gate, in order.
     All,
 }
@@ -133,6 +136,7 @@ where
         }
         Gate::ReportDiff { before, after } => gates::report_diff(&before, &after),
         Gate::Sbom { output } => gates::sbom(&root, output.as_deref()),
+        Gate::Waivers => gates::waivers(&root),
         Gate::All => gates::all(&root),
     };
     match outcome {

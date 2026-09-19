@@ -1,4 +1,4 @@
-# Catch-all ledger. One `path:line` per line, sorted.
+# Catch-all ledger. One name per line, sorted.
 #
 # This file may shrink and never grow. A catch-all over a set this repository
 # closes is the arm that absorbs the next variant silently: the compiler stops
@@ -7,49 +7,22 @@
 # yet, and adding one is a reviewed exception rather than a decision anybody
 # makes while writing.
 #
+# A name is `<file>::<item> over <Enum>, <n> arm(s)` and never a line number. A
+# number says where a catch-all sits and nothing about what it absorbs, so
+# changing the arm above one -- `Message::BuildFinished` to `Decision::Tests`,
+# say -- moved the waiver onto a different closed set with no diff for anybody
+# to read. That was measured rather than supposed: the gate exited 0 and every
+# gate test passed. The three parts of a name change exactly when what is being
+# waived changes, and an ordinary edit -- moving the code, renaming a binding,
+# reformatting a body -- changes none of them.
+#
+# The arm count is part of the name because several arms absorbing one set in
+# one item are one claim, and one more is a claim nobody read.
+#
 # A foreign enum is not in scope. The values of `syn::Expr` are not ours to
-# list, so an arm standing for the rest is the handling rather than a default.
-crates/njutest-cli/src/assure/mutation.rs:732
-crates/njutest-cli/src/assure/replay.rs:140
-crates/njutest-cli/src/build.rs:169
-crates/njutest-cli/src/why.rs:267
-crates/njutest-cli/tests/deep.rs:206
-crates/njutest-cli/tests/deep.rs:260
-crates/njutest-cli/tests/equivalence.rs:192
-crates/njutest-cli/tests/fuzz.rs:318
-crates/njutest-cli/tests/mutation_evidence.rs:54
-crates/njutest-cli/tests/plan_failures.rs:594
-crates/njutest-cli/tests/sanitize.rs:206
-crates/njutest-cli/tests/sanitize.rs:331
-crates/njutest-cli/tests/toolchain_baseline.rs:387
-crates/njutest-cli/tests/toolchain_build.rs:276
-crates/njutest-cli/tests/toolchain_mutation.rs:259
-crates/njutest-cli/tests/toolchain_verify.rs:357
-crates/njutest-cli/tests/toolchain_watch.rs:1935
-crates/njutest-cli/tests/toolchain_watch.rs:216
-crates/njutest-cli/tests/toolchain_watch.rs:322
-crates/njutest-cli/tests/toolchain_watch.rs:330
-crates/njutest-cli/tests/toolchain_watch.rs:351
-crates/njutest-cli/tests/toolchain_watch.rs:385
-crates/njutest-cli/tests/toolchain_watch.rs:398
-crates/njutest-cli/tests/toolchain_watch.rs:416
-crates/njutest-cli/tests/toolchain_watch.rs:492
-crates/njutest-cli/tests/toolchain_watch.rs:505
-crates/njutest-cli/tests/toolchain_watch.rs:516
-crates/njutest-cli/tests/trace.rs:210
-crates/njutest-devkit/tests/golden.rs:55
-crates/rust-mutants-cli/src/stream.rs:107
-crates/rust-mutants-cli/src/stream.rs:76
-crates/rust-mutants-cli/src/ui.rs:234
-crates/rust-mutants/src/cargo/compile.rs:214
-crates/rust-mutants/src/reach.rs:249
-crates/rust-mutants/src/trace/reader.rs:135
-crates/rust-mutants/tests/splice.rs:78
-crates/rust-mutants/tests/toolchain_discover.rs:397
-crates/rust-mutants/tests/toolchain_discover.rs:484
-crates/rust-mutants/tests/toolchain_pool.rs:266
-crates/rust-mutants/tests/toolchain_session.rs:514
-crates/rust-mutants/tests/toolchain_session.rs:524
-crates/rust-mutants/tests/toolchain_session.rs:558
-crates/rust-mutants/tests/toolchain_session.rs:658
-crates/rust-mutants/tests/trace.rs:374
+# list, so an arm standing for the rest is the handling rather than a default,
+# and neither is a set whose own crate says it may grow: there the compiler
+# asks for the arm and nobody chose it.
+crates/njutest-cli/src/why.rs::mutations over Payload, 1 arm
+crates/rust-mutants/src/cargo/compile.rs::compile over Message, 1 arm
+crates/rust-mutants/src/reach.rs::executables over Message, 1 arm

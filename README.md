@@ -86,8 +86,8 @@ catalog   <catalog digest>
 discharged-mutant      every target that could have noticed 16b0cd40508fc0785477 was removed by a proof, so no test could have: the mutation is in code the tests run and never observe
 
 MUTANTS   10 mutants were cataloged: 9 executed, 0 refused by the compiler, 2 places that produced no candidate.
-OUTCOMES  killed=9 survived=0 timed_out=0 inconclusive=0 errored=0 not_run=1
-OF THOSE  Those 6 add to the 10 cataloged. Within them, not run is 0 unreached, not run is 1 discharged, survived is 0 expected.
+OUTCOMES  killed=9 survived=0 runaway=0 waited=0 inconclusive=0 errored=0 not_run=1
+OF THOSE  Those 7 add to the 10 cataloged. Within them, not run is 0 unreached, not run is 1 discharged, survived is 0 expected.
 SCORE     100.0%  (9 detected of 9 decided)
 WORK      started=9 of 30 pairs across 3 targets; 70.0% removed (unreached=20 never-infected=1)
           tests=9 of 30; 70.0% removed

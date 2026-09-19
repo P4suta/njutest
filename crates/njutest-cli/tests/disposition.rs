@@ -52,7 +52,7 @@ fn accepted() -> BTreeSet<String> {
 
 #[test]
 fn a_mutation_that_ran_out_of_time_is_a_gap_the_run_reports() {
-    let phase = phase(Disposition::TimedOut {
+    let phase = phase(Disposition::Waited {
         on: "pkg/test/lib does_not_finish".to_owned(),
     });
 
@@ -118,7 +118,7 @@ fn an_acceptance_answers_for_a_mutation_every_reaching_test_passed() {
 
 #[test]
 fn an_acceptance_does_not_answer_for_a_mutation_the_clock_cut_short() {
-    let phase = phase(Disposition::TimedOut {
+    let phase = phase(Disposition::Waited {
         on: "pkg/test/lib does_not_finish".to_owned(),
     });
 
@@ -367,7 +367,7 @@ fn all_of_them() -> Mutation {
             ),
             of(
                 "dddd",
-                Disposition::TimedOut {
+                Disposition::Runaway {
                     on: "one".to_owned(),
                 },
                 false,
@@ -391,6 +391,13 @@ fn all_of_them() -> Mutation {
                 Disposition::Errored {
                     on: "one".to_owned(),
                     detail: "no binary".to_owned(),
+                },
+                false,
+            ),
+            of(
+                "mmmm",
+                Disposition::Waited {
+                    on: "one".to_owned(),
                 },
                 false,
             ),
@@ -506,17 +513,18 @@ fn every_disposition_is_counted_once_in_the_columns_it_belongs_to() {
 
     let counts = all_of_them().accounting(&accepted);
 
-    assert_eq!(counts.cataloged, 12, "one row for every mutation judged");
+    assert_eq!(counts.cataloged, 13, "one row for every mutation judged");
     assert_eq!(counts.rejected, 1);
     assert_eq!(
-        counts.executed, 8,
-        "a mutation is executed when something ran it: the kills, the timeout, the \
-         survivals, the pair that did not agree and the harness that failed. What is not \
-         executed is what was refused, what nothing reached, and what the compiler \
-         rendered identically"
+        counts.executed, 9,
+        "a mutation is executed when something ran it: the kills, the one that never \
+         finished, the one this machine stopped waiting for, the survivals, the pair that \
+         did not agree and the harness that failed. What is not executed is what was \
+         refused, what nothing reached, and what the compiler rendered identically"
     );
     assert_eq!(counts.killed, 2);
-    assert_eq!(counts.timed_out, 1);
+    assert_eq!(counts.runaway, 1);
+    assert_eq!(counts.waited, 1);
     assert_eq!(counts.survived, 3);
     assert_eq!(counts.unreached, 2);
     assert_eq!(counts.equivalent, 1);
@@ -554,7 +562,7 @@ fn which_test_decided_a_mutation_is_named_by_the_dispositions_that_had_one() {
         ),
         (
             "a timeout",
-            Disposition::TimedOut {
+            Disposition::Waited {
                 on: "pkg/test/it one".to_owned(),
             },
         ),

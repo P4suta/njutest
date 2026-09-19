@@ -21,7 +21,8 @@ impl Told {
                 killed: report.accounting.mutants.killed,
                 survived: report.accounting.mutants.survived,
                 unreached: report.accounting.mutants.unreached,
-                timed_out: report.accounting.mutants.timed_out,
+                runaway: report.accounting.mutants.runaway,
+                waited: report.accounting.mutants.waited,
                 duration_ms: report.timing.duration_ms,
                 kept: kept.to_owned(),
             },
@@ -290,7 +291,12 @@ const fn about(kind: FindingKind, unreached: bool) -> (Severity, &'static str, &
         FindingKind::Timeout => (
             Severity::Gap,
             "NJ-TIMEOUT",
-            "this ran out of time rather than answering",
+            "this target ran out of time rather than answering",
+        ),
+        FindingKind::WaitedMutant => (
+            Severity::Limitation,
+            "NJ-WAITED",
+            "this machine stopped waiting, so the run established nothing about it",
         ),
         FindingKind::NotMeasured => (
             Severity::Limitation,

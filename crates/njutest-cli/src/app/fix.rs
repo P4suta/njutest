@@ -146,6 +146,7 @@ fn apply(
         harness_args: config.execution.test_binary_args,
         skip_targets: config.execution.skip_targets,
         timeout: RECHECK_TIMEOUT,
+        steps: config.execution.steps,
         build_timeout: config.execution.build_timeout,
         reports: crate::app::reports::Store::of(root, &config.reports.directory),
     };

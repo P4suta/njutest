@@ -78,6 +78,19 @@ where
     code
 }
 
+/// What the round that just finished concluded, when there is a stored report to read back.
+///
+/// `None` says this round left nothing to compare, which is not the same as
+/// a round that found nothing. The difference matters on the first round of
+/// all, where an empty stand-in would report every gap in the project as one
+/// the reader had just opened (ADR 0023).
+fn concluded(root: &Path) -> Option<crate::presentation::Told> {
+    let run = crate::app::runs::resolve(root, None).ok()?;
+    let report = crate::app::runs::report(root, &run).ok()?;
+    let sources = crate::presentation::Sources::read(root, &report);
+    Some(crate::presentation::Told::of(&report, &sources, ""))
+}
+
 /// Verifies whenever the tree changes, until the run is interrupted.
 pub fn run(
     arguments: &Arguments,
@@ -100,12 +113,22 @@ pub fn run(
         stdout,
         &format!("watching\t{}\tevery {}ms", root.display(), poll.as_millis()),
     );
+    let mut before: Option<crate::presentation::Told> = None;
     until(
         &cancel,
         poll,
         || look(&root, &excluded).ok(),
         || {
             let code = super::verify::run(&arguments.verify, environment, stdout, stderr);
+            if environment.terminal.drawing
+                && let Some(now) = concluded(&root)
+            {
+                if let Some(last) = before.as_ref() {
+                    let said = crate::presentation::moved::moved(last, &now, environment.terminal);
+                    let _written = stdout.write_all(said.as_bytes());
+                }
+                before = Some(now);
+            }
             super::say(stdout, "waiting\tfor the next change");
             code
         },

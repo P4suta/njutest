@@ -116,6 +116,16 @@ pub enum Failing {
     Exclude,
 }
 
+/// How many times the active mutant's guard may be taken before its process is stopped, when nobody says.
+///
+/// Fifty million takes of one site is a number a test written by a person does
+/// not approach and a loop that cannot terminate passes in about a second, so
+/// the ceiling stops a runaway long before the clock would and stops it by a
+/// number every machine agrees on. A person who has a test that really does
+/// drive one site that hard raises it, and a run that would rather have only
+/// the clock sets it to zero.
+pub const DEFAULT_MUTANT_STEPS: u64 = 50_000_000;
+
 /// Configures [`Workspace::prepare`].
 #[derive(Debug, Clone)]
 #[expect(
@@ -156,6 +166,21 @@ pub struct PrepareOptions {
     pub build_timeout: Option<Duration>,
     /// How long one mutant execution may take, when the caller does not say.
     pub mutant_timeout: Timeout,
+    /// How many times the active mutant's guard may be taken before its process is stopped.
+    ///
+    /// A mutant that does not terminate has to be stopped by something, and a
+    /// clock is the wrong something: the same mutant on a loaded machine and
+    /// on a quiet one is two verdicts. A count of guard takes is the number
+    /// every machine agrees on, and the guard of the selected mutant sits
+    /// where the mutation does — so a loop whose condition was mutated takes
+    /// it once an iteration and a runaway is counted as it runs.
+    ///
+    /// It is an allowance rather than a measurement of the tree: nothing is
+    /// known in advance about how often a test reaches a site, so the number
+    /// is a ceiling a person may lower and the default is one no test written
+    /// by a person approaches. `None`, and zero, count nothing and leave the
+    /// timeout as the only bound.
+    pub mutant_steps: Option<u64>,
     /// Run a library's documented examples as a target of their own.
     pub doctests: bool,
     /// What the project is compiled as: its features, target, profile, and how many jobs cargo may use.
@@ -188,6 +213,7 @@ impl Default for PrepareOptions {
             max_rounds: crate::validate::DEFAULT_MAX_ROUNDS,
             build_timeout: None,
             mutant_timeout: Timeout::default(),
+            mutant_steps: Some(DEFAULT_MUTANT_STEPS),
             doctests: true,
             build: crate::cargo::BuildConfig::default(),
             skip_targets: Vec::new(),
@@ -269,6 +295,7 @@ pub struct Session {
     /// How many executions this session has started, which is what names each one's own temporary directory.
     executions: std::sync::atomic::AtomicU64,
     mutant_timeout: Timeout,
+    mutant_steps: Option<u64>,
     /// The arguments every test binary of this session is started with, unless one execution names its own.
     harness_args: Vec<String>,
     /// The files as they were before instrumentation, so a position can be counted in the file a person would open rather than in the rewrite.
@@ -713,6 +740,7 @@ impl Session {
             sysroot: self.workspace.toolchain.sysroot(),
             active: None,
             touch: None,
+            steps: None,
             profile: None,
         };
         let (timeout, _source) = self.mutant_timeout.of(self.baseline(&target.id));
@@ -1000,34 +1028,34 @@ impl Session {
         let ran = quiet.shared(|| self.execute(request, running(false), cancel))?;
         let (first, mut asked) = (ran.taken, ran.asked);
         let (timeout, timeout_source) = self.timeout_for(request, &first.target);
-        let judgement =
-            if first.outcome != crate::outcome::Outcome::TimedOut || cancel.is_cancelled() {
-                Judgement {
-                    result: first.clone(),
-                    attempts: vec![first],
-                    asked,
-                    retried: false,
-                    timeout,
-                    timeout_source,
-                    route,
-                }
-            } else {
-                let repeated = quiet.alone(|| self.execute(request, running(true), cancel))?;
-                let mut again = repeated.taken;
-                asked.extend(repeated.asked);
-                if again.outcome != crate::outcome::Outcome::TimedOut && !again.outcome.detected() {
-                    again.outcome = crate::outcome::Outcome::Inconclusive;
-                }
-                Judgement {
-                    result: again.clone(),
-                    attempts: vec![first, again],
-                    asked,
-                    retried: true,
-                    timeout,
-                    timeout_source,
-                    route,
-                }
-            };
+        let judgement = if first.outcome != crate::outcome::Outcome::Waited || cancel.is_cancelled()
+        {
+            Judgement {
+                result: first.clone(),
+                attempts: vec![first],
+                asked,
+                retried: false,
+                timeout,
+                timeout_source,
+                route,
+            }
+        } else {
+            let repeated = quiet.alone(|| self.execute(request, running(true), cancel))?;
+            let mut again = repeated.taken;
+            asked.extend(repeated.asked);
+            if again.outcome != crate::outcome::Outcome::Waited && !again.outcome.detected() {
+                again.outcome = crate::outcome::Outcome::Inconclusive;
+            }
+            Judgement {
+                result: again.clone(),
+                attempts: vec![first, again],
+                asked,
+                retried: true,
+                timeout,
+                timeout_source,
+                route,
+            }
+        };
         self.workspace.trace.route(judgement.route.record(
             mutant,
             judgement.route.executed(
@@ -1072,6 +1100,7 @@ impl Session {
             sysroot: self.workspace.toolchain.sysroot(),
             active: Some((mutant.id.as_str(), self.catalog.digest())),
             touch: None,
+            steps: self.mutant_steps,
             profile: None,
         };
         let mut last = None;
@@ -1146,6 +1175,7 @@ impl Session {
             sysroot: self.workspace.toolchain.sysroot(),
             active: None,
             touch: None,
+            steps: None,
             profile: None,
         };
         let mut last = None;

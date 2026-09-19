@@ -125,7 +125,7 @@ pub fn environment_for_a_toolchain_run(
     also: &[&str],
 ) -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
     let wanted: [&str; 4] = ["PATH", "HOME", "RUSTUP_HOME", "CARGO_HOME"];
-    environment_for_a_run()
+    let mut kept: Vec<(std::ffi::OsString, std::ffi::OsString)> = environment_for_a_run()
         .into_iter()
         .filter(|(name, _value)| {
             wanted
@@ -134,7 +134,47 @@ pub fn environment_for_a_toolchain_run(
                 .chain(also.iter())
                 .any(|wanted| same_name(name, std::ffi::OsStr::new(wanted)))
         })
-        .collect()
+        .collect();
+    if let Some(cache) = compilation_cache() {
+        kept.push((std::ffi::OsString::from(WRAPPER), cache));
+    }
+    kept
+}
+
+/// The variable a compiler wrapper is named in, which two different things use.
+const WRAPPER: &str = "RUSTC_WRAPPER";
+
+/// What names a compilation cache, rather than anything else a wrapper can be.
+const CACHE: &str = "sccache";
+
+/// The parent's compiler wrapper, when it is a compilation cache and nothing else.
+///
+/// A nested run builds a fixture from scratch, three hundred times over
+/// thirty-eight fixtures, each under its own target directory because sharing
+/// one would let a test pick up another's instrumented artifact (ADR 0019).
+/// The isolation is the point and it stays; what it costs is recompiling
+/// identical units, and a cache keyed on content removes that without
+/// touching it.
+///
+/// Read by value rather than forwarded, because this variable is where
+/// `cargo-llvm-cov` puts a shim that instruments whatever it wraps — and a
+/// coverage run of this suite that let that reach a fixture would be
+/// measuring its own instrumentation. Two different things under one name
+/// (ADR 0023); only one of them is wanted here.
+fn compilation_cache() -> Option<std::ffi::OsString> {
+    environment_for_a_run()
+        .into_iter()
+        .find(|(name, _value)| same_name(name, std::ffi::OsStr::new(WRAPPER)))
+        .map(|(_name, value)| value)
+        .filter(|value| names_a_cache(value))
+}
+
+/// Whether a compiler wrapper is the compilation cache rather than something else wearing the variable.
+#[must_use]
+pub fn names_a_cache(wrapper: &std::ffi::OsStr) -> bool {
+    Path::new(wrapper)
+        .file_stem()
+        .is_some_and(|stem| stem.eq_ignore_ascii_case(CACHE))
 }
 
 fn cargo_llvm_cov_owns(name: &std::ffi::OsStr) -> bool {

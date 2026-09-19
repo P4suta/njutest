@@ -142,8 +142,12 @@ pub enum Command {
     Report(Report),
     /// Show everything a run recorded about one mutant.
     Explain(Explain),
+    /// Say what a run's recording holds behind one claim.
+    Why(Why),
     /// Record that a reviewer looked at a surviving mutant.
     Accept(Accept),
+    /// Go through one run's gaps, one at a time, deciding as you read.
+    Review(Review),
     /// Say what repairs a run was offered, and write the ones that hold up.
     Fix(Fix),
     /// Put one finding back to the tests and say whether it is still there.
@@ -326,6 +330,51 @@ pub struct Explain {
     pub run: Option<String>,
 }
 
+/// `njutest why`.
+#[derive(Debug, Clone, clap::Args)]
+pub struct Why {
+    /// The run to read. The latest by default.
+    #[arg(long, value_name = "RUN")]
+    pub run: Option<String>,
+    /// What to ask about.
+    #[command(subcommand)]
+    pub claim: Asked,
+}
+
+/// What `njutest why` is asked about.
+///
+/// A subcommand rather than a flag with a value, because both halves of the
+/// product mint sixty-four hex characters in separate identity domains and
+/// the name a person types does not say which was meant. Two variants the
+/// parser makes a caller choose between beat two optional fields with a note
+/// saying exactly one must be set.
+#[derive(Debug, Clone, clap::Subcommand)]
+pub enum Asked {
+    /// One mutation of the source.
+    Mutation {
+        /// Its identity.
+        #[arg(value_name = "MUTANT")]
+        id: String,
+    },
+    /// One question about one exchange on one seam.
+    Seam {
+        /// Its identity.
+        #[arg(value_name = "QUESTION")]
+        id: String,
+    },
+}
+
+impl Asked {
+    /// The claim this asks about.
+    #[must_use]
+    pub fn asked(&self) -> crate::why::Claim {
+        match self {
+            Self::Mutation { id } => crate::why::Claim::Mutation(id.clone()),
+            Self::Seam { id } => crate::why::Claim::Seam(id.clone()),
+        }
+    }
+}
+
 /// `njutest replay`.
 #[derive(Debug, Clone, clap::Args)]
 pub struct Replay {
@@ -341,6 +390,14 @@ pub struct Replay {
     /// Pass `--locked` to cargo.
     #[arg(long)]
     pub locked: bool,
+}
+
+/// `njutest review`.
+#[derive(Debug, Clone, clap::Args)]
+pub struct Review {
+    /// The run to go through. The latest by default.
+    #[arg(long, value_name = "RUN")]
+    pub run: Option<String>,
 }
 
 /// `njutest accept`.

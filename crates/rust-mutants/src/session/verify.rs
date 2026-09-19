@@ -685,6 +685,7 @@ fn target_key(key: &mut Key, target: &TestTarget, scratch: &Path, building: &Bui
             log,
             catalog: building.catalog.digest(),
         }),
+        steps: None,
         profile: None,
     };
     let request = ExecRequest::new(target)
@@ -786,6 +787,7 @@ fn ran(
             log,
             catalog: catalog.digest(),
         }),
+        steps: None,
         profile: None,
     };
     let request = ExecRequest::new(target)

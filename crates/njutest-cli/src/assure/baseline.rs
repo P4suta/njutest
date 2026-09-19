@@ -229,9 +229,13 @@ pub fn status_of(outcome: Outcome, ignored: u32, output: &str) -> (TargetStatus,
             TargetStatus::Failed,
             Some(failure(output).unwrap_or_else(|| "the target failed".to_owned())),
         ),
-        Outcome::TimedOut => (
+        Outcome::Runaway => (
             TargetStatus::Failed,
-            Some("the target ran out of time".to_owned()),
+            Some("the target took its guard past the run's allowance".to_owned()),
+        ),
+        Outcome::Waited => (
+            TargetStatus::Failed,
+            Some("this machine stopped waiting for the target".to_owned()),
         ),
         Outcome::Inconclusive if ignored > 0 => (
             TargetStatus::Skipped,

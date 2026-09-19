@@ -306,7 +306,7 @@ say what the records say:
 
 ```text
 cataloged      = rejected + executed + unreached + equivalent
-executed      >= killed + survived + timed_out
+executed      >= killed + survived + runaway + waited
 accepted      <= survived + unreached + equivalent
 reused_killed <= killed        reused_survived <= survived
 ```
@@ -374,9 +374,9 @@ saw pass is neither believed nor written, because half of a set is a smaller
 claim wearing the same name. A mutant the premise of `unreached` holds for is
 a claim about the code and is reused by nothing.
 
-#### A timeout
+#### A bound that expired
 
-A timeout is not a proof about the mutant. Reusing one keeps a finding and
+A bound that expired is not a proof about the mutant. Reusing one keeps a finding and
 never removes one. Each mutation command, and the probe command that measures
 the same target, gets five times its measured baseline duration plus five
 seconds, with a 30-second floor; the contract caps calibration at 30 minutes
@@ -389,7 +389,10 @@ while other test processes were running is a fact about the load as much as
 about the mutation, so before a run decides that time really ran out it stops
 starting anything else and measures once more. What that measurement observes
 is what stands: a mutation that completes under it was observed completing,
-and only a budget that expires again with nothing else running is a timeout.
+and only a budget that expires again with nothing else running is `waited`.
+A `runaway` is not this and buys no quiet measurement: a guard counted the
+steps, a count cannot disagree with itself on a second reading, and the
+detection is a fact about the work rather than about the load.
 This is not a retry policy — one expired budget buys exactly one quiet
 measurement, and the recording says of every execution whether the machine was
 given to it.
@@ -397,7 +400,7 @@ given to it.
 An expired budget remains inconclusive under every bound. The record names the
 target time ran out under as the **last** of its executed targets, stored in
 execution order. `njutest replay <finding-id>` bypasses
-evidence entirely, which is how a timeout is deliberately re-run.
+evidence entirely, which is how a `waited` is deliberately re-run.
 
 #### The behaviour key
 
@@ -456,6 +459,21 @@ the expiry is when the reviewer said to look again, and a run that read it as
 a comment would go on exempting a mutation on the strength of a decision its
 author had already put an end to. One that names no date never lapses, which
 is what a reviewer who wrote none asked for.
+
+`njutest review` goes through one run's gaps a place at a time, drawn the way
+the run drew them, and prints the `njutest accept` lines for whatever the
+reviewer decided. It prints rather than writes: a review is somebody
+deciding, and a change to their project is a separate act they make with the
+command every other surface already hands them.
+
+What the run **established nothing about** — a bound that expired, a harness
+that never started — is shown and cannot be accepted. An acceptance says a
+reviewer looked at what a run found and decided it may stand; where nothing
+was found there is nothing to have looked at, and recording one would be a
+decision about a measurement that never happened. The loop asks a different
+question there, with an answer type that has no such arm, so the wrong
+acceptance is not a thing the program can express
+([ADR 0023](adr/0023-a-run-may-not-conclude-from-how-it-measured.md)).
 
 ## Parts of one catalog
 

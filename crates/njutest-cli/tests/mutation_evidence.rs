@@ -188,7 +188,7 @@ fn what_is_recorded_is_what_the_next_run_can_check_and_nothing_else() {
     for (mutant, disposition) in [
         (
             "m3",
-            Disposition::TimedOut {
+            Disposition::Waited {
                 on: "core/lib/core".to_owned(),
             },
         ),
@@ -197,10 +197,10 @@ fn what_is_recorded_is_what_the_next_run_can_check_and_nothing_else() {
         keep(&held, mutant, &reaching(&["core/lib/core"]), &disposition);
         assert!(
             store::read(dir.path(), mutant).expect("readable").is_none(),
-            "and what a run says about itself rather than about the mutant is not \
-             recorded at all: a mutation that ran out of this run's time is not one the \
-             next run's tests cannot notice, and one this run routed nothing to is a \
-             fact about the routing: {disposition:?}"
+            "and what a run says about the machine that measured, or about itself, is \
+             not recorded at all: a bound expiring says the next machine would have to \
+             wait as long, which it is not the one to promise, and one this run routed \
+             nothing to is a fact about the routing: {disposition:?}"
         );
     }
 
@@ -240,6 +240,27 @@ fn recorded(root: &std::path::Path, held: &MutationOptions) {
         "a survival is the universal claim, so what is recorded is every target it is \
          about with the key the next run checks each of them against: one key short and \
          the next run believes a claim over a set nobody answered for"
+    );
+    keep(
+        held,
+        "m8",
+        &reaching(&["core/lib/core"]),
+        &Disposition::Runaway {
+            on: "core/lib/core".to_owned(),
+        },
+    );
+    let ran_away = store::read(dir, "m8")
+        .expect("readable")
+        .expect("a runaway worth keeping");
+    assert_eq!(
+        ran_away.outcome,
+        store::Outcome::Runaway {
+            target: "id-one".to_owned(),
+            key: "k1".repeat(16),
+        },
+        "a count every machine agrees on is a claim about this tree, so it is kept beside \
+         a kill and against the same key. What is not kept is a bound expiring, and the \
+         difference between the two is the whole of why they stopped being one word"
     );
     keep(
         held,

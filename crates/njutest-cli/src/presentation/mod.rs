@@ -5,8 +5,11 @@
 
 pub mod agent;
 pub mod human;
+pub mod moved;
+pub mod review;
 mod telling;
 pub mod tint;
+pub mod why;
 
 use crate::report::Verdict;
 
@@ -55,8 +58,10 @@ pub struct Headline {
     pub survived: u32,
     /// How many nothing reached.
     pub unreached: u32,
-    /// How many ran out of time rather than answering, which is not a gap and is not a pass.
-    pub timed_out: u32,
+    /// How many stopped the program terminating, which a count established and no test asserted.
+    pub runaway: u32,
+    /// How many this machine stopped waiting for, which is not a gap and is not a pass.
+    pub waited: u32,
     /// How long the whole run took.
     pub duration_ms: u64,
     /// Where the run's own record was kept, from the project's root.
@@ -144,6 +149,21 @@ pub struct Spot {
     pub blind_in: Vec<Across>,
     /// How a reader names it again after they have edited the file.
     pub locator: String,
+}
+
+impl Spot {
+    /// The part of the name that an edit to the file above it cannot change.
+    ///
+    /// A locator is `path:item:rule@line`; this is everything before the line.
+    /// Round-to-round comparison keys on it because the reader has just been
+    /// editing, and a key carrying a line reports every insertion above a gap
+    /// as one gap closing and another opening (ADR 0023).
+    #[must_use]
+    pub fn unmoved(&self) -> &str {
+        self.locator
+            .rsplit_once('@')
+            .map_or(self.locator.as_str(), |(head, _line)| head)
+    }
 }
 
 /// What a run established about one place: a gap in the tests, or a gap in the run.
@@ -264,7 +284,12 @@ pub fn label(rule: &str, decided: &crate::report::Decided) -> String {
             format!("{rule} here, and a proof says no test could tell the difference")
         }
         Decided::CompileRejected => format!("{rule} here, and the compiler refused it"),
-        Decided::TimedOut { on } => format!("{rule} here, and {on} ran out of time"),
+        Decided::Runaway { on } => {
+            format!("{rule} here, and it never finished under {on}")
+        }
+        Decided::Waited { on } => {
+            format!("{rule} here, and this machine stopped waiting for {on}")
+        }
         Decided::Unconfirmed { on } => {
             format!("{rule} here, and {on} did not answer the same way twice")
         }
@@ -575,6 +600,12 @@ pub struct Telling {
 }
 
 impl Telling {
+    /// What it was told to write for.
+    #[must_use]
+    pub const fn terminal(self) -> Terminal {
+        self.terminal
+    }
+
     /// How to write for `terminal`.
     #[must_use]
     pub const fn of(terminal: Terminal) -> Self {

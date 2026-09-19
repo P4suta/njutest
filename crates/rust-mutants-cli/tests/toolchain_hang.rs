@@ -59,7 +59,7 @@ fn read(report: &Path, rule: &str, line: u64) -> serde_json::Value {
 }
 
 #[test]
-fn a_mutant_that_never_returns_is_timed_out_after_a_serial_retry() {
+fn a_mutant_that_never_returns_is_stopped_by_a_count_and_not_asked_again() {
     let fixture = Fixture::copy("fixture-hang");
     let output = run(&fixture, &[]);
     assert!(
@@ -70,13 +70,16 @@ fn a_mutant_that_never_returns_is_timed_out_after_a_serial_retry() {
     let stopped = row(&fixture, "delete-compound-assignment", 13);
     assert_eq!(
         stopped["outcome"].as_str(),
-        Some("timed_out"),
-        "deleting what ends the loop leaves a function that does not return: {stopped}"
+        Some("runaway"),
+        "deleting what ends the loop leaves a function that does not return, and the guard \
+         at the mutation's own site is taken once an iteration until the allowance is \
+         spent: {stopped}"
     );
     assert_eq!(
         stopped["retried"].as_bool(),
-        Some(true),
-        "a timeout is believed only after it repeats on its own: {stopped}"
+        Some(false),
+        "and it is not asked again: the serial retry exists because a clock is unreliable, \
+         and a count every machine agrees on cannot disagree with itself: {stopped}"
     );
     let ordinary = row(&fixture, "delete-compound-assignment", 12);
     assert_eq!(
@@ -126,8 +129,10 @@ fn a_timeout_that_does_not_reproduce_is_inconclusive() {
     let still = row(&fixture, "delete-compound-assignment", 13);
     assert_eq!(
         still["outcome"].as_str(),
-        Some("timed_out"),
-        "a mutation that never returns is not a slow one: {still}"
+        Some("runaway"),
+        "a mutation that never returns is not a slow one, and the two are told apart by \
+         what ended them: a count nobody can argue with, against a bound this machine \
+         reached once and not again: {still}"
     );
 }
 
@@ -142,7 +147,8 @@ fn a_mutation_that_never_returns_is_stopped_rather_than_left_running() {
     );
     let text = String::from_utf8_lossy(&output.stdout);
     assert!(
-        text.contains("timed_out=2"),
-        "the run ends rather than waiting on the process it started: {text}"
+        text.contains("runaway=2") && text.contains("waited=0"),
+        "the run ends rather than waiting on the process it started, and what ended it is \
+         a count rather than this machine's clock: {text}"
     );
 }

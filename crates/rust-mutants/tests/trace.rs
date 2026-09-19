@@ -32,10 +32,26 @@ fn broken(dir: &std::path::Path) -> Sink {
     Sink::Dir(sink)
 }
 
+/// One recorded execution of a process that ran and exited zero.
+///
+/// Written out rather than filled from a `Default`. A process ends exactly one
+/// way, so the record has no value meaning nobody said which — and a builder
+/// that took one would put "could not be started" on a process that ran
+/// (ADR 0023).
 fn exec(argv: &[&str]) -> ExecRecord {
     ExecRecord {
         argv: argv.iter().map(|s| (*s).to_owned()).collect(),
-        ..ExecRecord::default()
+        dir: None,
+        env_names: Vec::new(),
+        timeout_ms: None,
+        stopped: rust_mutants::execute::Stopped::Ran { code: 0 },
+        duration_ms: 0,
+        output_bytes: 0,
+        output_sha256: None,
+        output_truncated: false,
+        output_path: None,
+        error: None,
+        output: Vec::new(),
     }
 }
 
@@ -196,7 +212,7 @@ fn exec_keeps_environment_names_only_sorted_and_deduplicated_and_digests_the_out
         output: b"the captured output".to_vec(),
         dir: Some("/snap/tree".to_owned()),
         timeout_ms: Some(30_000),
-        exit_code: 101,
+        stopped: rust_mutants::execute::Stopped::Ran { code: 101 },
         duration_ms: 12,
         ..exec(&["cargo", "test", "--", "--exact", "t::x"])
     };
@@ -216,7 +232,11 @@ fn exec_keeps_environment_names_only_sorted_and_deduplicated_and_digests_the_out
     assert!(!line.contains("hunter2"), "{line}");
     assert!(!line.contains("deadbeef"), "{line}");
     assert!(!line.contains("captured output"), "{line}");
-    assert!(line.contains("\"exit_code\":101"), "{line}");
+    assert!(
+        line.contains("\"stopped\":{\"kind\":\"ran\",\"code\":101}"),
+        "how a process ended is one field on the wire as in the type, so a reader cannot \
+         be handed a status beside a flag that disagrees with it: {line}"
+    );
 }
 
 #[test]

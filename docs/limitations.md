@@ -514,6 +514,44 @@ means anything alone. A first execution in the hundreds of seconds beside a
 second in hundredths says a run started now would measure the evaluation and
 not the tests.
 
+## Where a count reaches, and where the clock is still the only bound
+
+A mutation that stops a program terminating is `runaway` and counts as
+detected, because the guard of the active mutant is taken once per pass and a
+count is the same number on every machine. That holds only where the guard is
+*inside* the part that no longer ends.
+
+A guard sits where its mutation does, and `active` spends a step only for the
+mutant a run selected. So a mutation of the loop — its condition, or a
+statement in its body — is taken once an iteration and reaches the allowance
+in about a second. A mutation *outside* the loop that makes the loop
+non-terminating is taken **once**:
+
+```rust
+let step = 1;              // a mutation of this literal is taken once
+while i < n { i += step; } // and this never ends
+```
+
+Nothing counts after that, so the allowance is never reached and the bound on
+the execution is what stops the process. The run reports `waited`, which says
+nothing was established — and for this mutation that is true of the run and
+misleading about the code, because something *could* have noticed: the
+program hangs. A reader who sees `waited` is told the machine ran out of
+time, and the honest reading of that is *ask again*, which is what they would
+do.
+
+This is the safe direction and it is still a gap. `waited` never counts as a
+detection, so no mutation is called caught on the strength of a clock; what is
+lost is the mutation that should have been `runaway` and is reported as
+nothing established. Raising `[mutation] timeout` does not close it, because
+the count is not rising: the bound is the only thing that can end that
+process, and lowering it would only make the run give up sooner.
+
+Closing it means a guard somewhere the loop passes rather than only where the
+mutation is, which is a guard in code the run is not mutating — a cost every
+execution pays for a case that is a minority of non-termination. It is not
+closed here, and a report that says `waited` is saying exactly what it knows.
+
 ## Places a run passed over
 
 Every place a rule targets gets a decision: a candidate, or a skip with the

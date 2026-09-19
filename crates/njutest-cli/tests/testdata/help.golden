@@ -13,7 +13,9 @@ Commands:
   plan         Say what a run would measure, without measuring it
   report       Show what a completed run concluded
   explain      Show everything a run recorded about one mutant
+  why          Say what a run's recording holds behind one claim
   accept       Record that a reviewer looked at a surviving mutant
+  review       Go through one run's gaps, one at a time, deciding as you read
   fix          Say what repairs a run was offered, and write the ones that hold up
   replay       Put one finding back to the tests and say whether it is still there
   trace        Read what a run recorded

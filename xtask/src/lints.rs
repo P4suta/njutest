@@ -9,7 +9,6 @@ use syn::visit::Visit;
 
 /// What kind of thing was found.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-#[non_exhaustive]
 pub enum Kind {
     /// An `#[allow(…)]` or `#![allow(…)]` attribute.
     AllowAttribute,
@@ -27,11 +26,13 @@ pub enum Kind {
     WildcardOverOurOwn,
     /// A terminal escape written out by hand, outside the one module that turns a style into bytes.
     HandPainted,
+    /// A type that publishes every one of its variants and also says there may be more.
+    OpenAndClosed,
 }
 
 impl Kind {
     /// Every kind, in the order a report lists them.
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::AllowAttribute,
         Self::BoxedTraitObject,
         Self::Comment,
@@ -40,6 +41,7 @@ impl Kind {
         Self::WildcardOverOurOwn,
         Self::LooseLayout,
         Self::HandPainted,
+        Self::OpenAndClosed,
     ];
 
     /// What to write in a report.
@@ -54,6 +56,7 @@ impl Kind {
             Self::LooseLayout => "loose-layout",
             Self::WildcardOverOurOwn => "wildcard-over-our-own",
             Self::HandPainted => "hand-painted",
+            Self::OpenAndClosed => "open-and-closed",
         }
     }
 
@@ -108,6 +111,20 @@ impl Kind {
                  take one, and whether to paint at all — and two of those in one \
                  workspace is two tools wearing one name. One module turns a style into \
                  bytes; everything else names a meaning"
+            }
+            Self::OpenAndClosed => {
+                "drop the `#[non_exhaustive]`. A type that publishes its whole list has \
+                 already promised to break its callers when it grows, and the attribute \
+                 is the promise not to; one file cannot hold both. What the attribute \
+                 costs is not theoretical: a caller outside the crate is made to write \
+                 an arm for a case the list says cannot exist, and the arm it writes \
+                 counts the next variant as whatever was nearest. It costs more than \
+                 that: `clippy::match_wildcard_for_single_variants` cannot fire on a \
+                 `#[non_exhaustive]` type, so the attribute also switches off the lint \
+                 that would have named the arm. Dropping it turns a lint this repository \
+                 already denies back on over the whole type. Keep it on an error a caller \
+                 branches on, which publishes no list and where a caller must already \
+                 handle one it does not know"
             }
         }
     }
@@ -190,6 +207,7 @@ pub fn scan_source(file: &str, source: &str) -> Result<Vec<Finding>, syn::Error>
     scan.found.extend(comments(file, source));
     scan.found.extend(handles(file, source));
     scan.found.extend(painted(file, source));
+    scan.found.extend(open_and_closed(&parsed, file));
     scan.found.sort();
     Ok(scan.found)
 }
@@ -224,6 +242,36 @@ impl<'ast> Visit<'ast> for Named<'_> {
     }
 }
 
+/// The enums of `source` that say they may grow, which the compiler makes anybody outside the crate leave a place for.
+#[must_use]
+pub fn open_enums(source: &str) -> Vec<String> {
+    let Ok(parsed) = syn::parse_file(source) else {
+        return Vec::new();
+    };
+    let mut found = Vec::new();
+    let mut named = Growing { found: &mut found };
+    named.visit_file(&parsed);
+    found
+}
+
+/// The visitor that collects the enums carrying `#[non_exhaustive]`.
+struct Growing<'a> {
+    found: &'a mut Vec<String>,
+}
+
+impl<'ast> Visit<'ast> for Growing<'_> {
+    fn visit_item_enum(&mut self, item: &'ast syn::ItemEnum) {
+        if item
+            .attrs
+            .iter()
+            .any(|attribute| attribute.path().is_ident(OPEN))
+        {
+            self.found.push(item.ident.to_string());
+        }
+        syn::visit::visit_item_enum(self, item);
+    }
+}
+
 /// Every line of `source` where a match over one of `ours` ends in a catch-all.
 ///
 /// Read from the arms rather than from the scrutinee, because the scrutinee is
@@ -232,16 +280,74 @@ impl<'ast> Visit<'ast> for Named<'_> {
 /// resolved to know it.
 #[must_use]
 pub fn wildcards(source: &str, ours: &[String]) -> Vec<usize> {
+    let mut found: Vec<usize> = wildcards_over(source, ours)
+        .into_iter()
+        .map(|one| one.line)
+        .collect();
+    found.sort_unstable();
+    found.dedup();
+    found
+}
+
+/// A catch-all over a set this repository closes, said as what it is rather than where it is.
+///
+/// A line number is a coordinate, and a coordinate is not a place. The arm
+/// standing at one can be swapped for a catch-all over a different set
+/// without the number moving — change `Message::BuildFinished` to
+/// `Decision::Tests` on the line above and a ledger keyed by the coordinate
+/// waives the second having reviewed the first, with no diff for anybody to
+/// read. That was measured rather than supposed: the gate exited 0. The item
+/// and the set change exactly when what is being waived changes, and a
+/// renamed binding or a reformatted body leaves both alone.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Wildcard {
+    /// The items enclosing it, outermost first, joined by `::`. Empty at the top of a file.
+    pub item: String,
+    /// The enum whose remaining variants it absorbs.
+    pub over: String,
+    /// The line it is on, for the sentence a person reads. Never part of the key.
+    pub line: usize,
+}
+
+impl Wildcard {
+    /// How the ledger names the group of catch-all arms that share this item and this set.
+    ///
+    /// `many` is part of the name because several arms absorbing one set in
+    /// one item are one claim — *the rest of this set, here* — and one more
+    /// is a claim nobody read. Leaving the count out would let a group's
+    /// waiver cover an arm written after it was granted, which is the defect
+    /// this key exists to remove, one layer down.
+    #[must_use]
+    pub fn key(&self, file: &str, many: usize) -> String {
+        let arms = if many == 1 { "arm" } else { "arms" };
+        if self.item.is_empty() {
+            format!("{file} over {}, {many} {arms}", self.over)
+        } else {
+            format!("{file}::{} over {}, {many} {arms}", self.item, self.over)
+        }
+    }
+}
+
+/// The same arms, each with the item it sits in and the enum whose arms told this gate what was being matched.
+///
+/// The name is what lets a caller ask the question this walk cannot: whether
+/// the arm could have been left out at all. An enum that says it may grow,
+/// read from another crate, forces one — and a gate asking for a waiver
+/// against something the compiler requires is asking for a decision nobody
+/// made (ADR 0023).
+#[must_use]
+pub fn wildcards_over(source: &str, ours: &[String]) -> Vec<Wildcard> {
     let Ok(parsed) = syn::parse_file(source) else {
         return Vec::new();
     };
     let mut found = Vec::new();
     let mut scan = Catching {
         ours,
+        within: Vec::new(),
         found: &mut found,
     };
     scan.visit_file(&parsed);
-    found.sort_unstable();
+    found.sort();
     found.dedup();
     found
 }
@@ -249,49 +355,193 @@ pub fn wildcards(source: &str, ours: &[String]) -> Vec<usize> {
 /// The visitor that refuses a catch-all where the arms name a set this repository closes.
 struct Catching<'a> {
     ours: &'a [String],
-    found: &'a mut Vec<usize>,
+    within: Vec<String>,
+    found: &'a mut Vec<Wildcard>,
 }
 
 impl Catching<'_> {
-    /// The enum an arm names, where the pattern is a path with one before the variant.
-    fn named(pattern: &syn::Pat) -> Option<String> {
-        let path = match pattern {
-            syn::Pat::Path(held) => &held.path,
-            syn::Pat::TupleStruct(held) => &held.path,
-            syn::Pat::Struct(held) => &held.path,
-            _ => return None,
-        };
-        let mut segments = path.segments.iter().rev();
-        let _variant = segments.next()?;
-        Some(segments.next()?.ident.to_string())
+    /// The items this one sits inside, outermost first.
+    fn place(&self) -> String {
+        self.within.join("::")
     }
 
-    /// Where an arm catches everything left, which is a bare `_` or a name bound to the whole.
-    fn catches_all(pattern: &syn::Pat) -> Option<proc_macro2::Span> {
-        match pattern {
-            syn::Pat::Wild(held) => Some(held.underscore_token.span),
-            syn::Pat::Ident(held) if held.subpat.is_none() => Some(held.ident.span()),
-            _ => None,
+    /// The head of a type, which is what an `impl` block is named by.
+    fn head(held: &syn::Type) -> String {
+        match held {
+            syn::Type::Path(path) => path
+                .path
+                .segments
+                .last()
+                .map_or_else(|| "impl".to_owned(), |last| last.ident.to_string()),
+            _ => "impl".to_owned(),
         }
     }
 }
 
+/// The enum an arm names, where the pattern is a path with one before the variant.
+///
+/// Free rather than private to the walk, because the body-shape hint has to
+/// speak about exactly the lines this gate names. Two answers to *which lines
+/// catch everything left* would disagree with each other about the question instead
+/// of about the code.
+pub(crate) fn named_variant(pattern: &syn::Pat) -> Option<String> {
+    let path = match pattern {
+        syn::Pat::Path(held) => &held.path,
+        syn::Pat::TupleStruct(held) => &held.path,
+        syn::Pat::Struct(held) => &held.path,
+        syn::Pat::Guard(held) => return named_variant(&held.pat),
+        _ => return None,
+    };
+    let mut segments = path.segments.iter().rev();
+    let _variant = segments.next()?;
+    Some(segments.next()?.ident.to_string())
+}
+
+/// Whether the compiler asks for an arm catching everything left because no variant is covered unconditionally.
+///
+/// A guard makes an arm conditional, so a match whose every variant-naming
+/// arm carries one is not exhaustive however many variants it lists, and the
+/// arm that catches the rest is required rather than chosen. Asking for a
+/// reviewed waiver against something the compiler demands is asking somebody
+/// to decide what they could not have decided (ADR 0023).
+///
+/// Conservative on purpose: one unguarded naming arm and this says no, which
+/// costs a ledger line rather than a blind spot.
+fn forced_by_guards(arms: &[syn::Arm]) -> bool {
+    let mut naming = arms.iter().filter(|arm| named_variant(&arm.pat).is_some());
+    let mut any = false;
+    naming.all(|arm| {
+        any = true;
+        matches!(arm.pat, syn::Pat::Guard(_))
+    }) && any
+}
+
+/// Where an arm catches everything left, which is a bare `_` or a name bound to the whole.
+///
+/// Deliberately not looked through a guard, which is the opposite of what
+/// [`named_variant`] does with one. `_ if ready()` catches nothing on its own
+/// and the compiler still asks for the rest, so it is not the arm that absorbs
+/// a new variant; `Decision::Tests if ready()` still says what is being
+/// matched, which is all that one is read for.
+pub(crate) fn catches_everything(pattern: &syn::Pat) -> Option<proc_macro2::Span> {
+    match pattern {
+        syn::Pat::Wild(held) => Some(held.underscore_token.span),
+        syn::Pat::Ident(held) if held.subpat.is_none() => Some(held.ident.span()),
+        _ => None,
+    }
+}
+
 impl<'ast> Visit<'ast> for Catching<'_> {
+    fn visit_item_mod(&mut self, one: &'ast syn::ItemMod) {
+        self.within.push(one.ident.to_string());
+        syn::visit::visit_item_mod(self, one);
+        let _left = self.within.pop();
+    }
+
+    fn visit_item_impl(&mut self, one: &'ast syn::ItemImpl) {
+        self.within.push(Self::head(&one.self_ty));
+        syn::visit::visit_item_impl(self, one);
+        let _left = self.within.pop();
+    }
+
+    fn visit_item_trait(&mut self, one: &'ast syn::ItemTrait) {
+        self.within.push(one.ident.to_string());
+        syn::visit::visit_item_trait(self, one);
+        let _left = self.within.pop();
+    }
+
+    fn visit_item_fn(&mut self, one: &'ast syn::ItemFn) {
+        self.within.push(one.sig.ident.to_string());
+        syn::visit::visit_item_fn(self, one);
+        let _left = self.within.pop();
+    }
+
+    fn visit_impl_item_fn(&mut self, one: &'ast syn::ImplItemFn) {
+        self.within.push(one.sig.ident.to_string());
+        syn::visit::visit_impl_item_fn(self, one);
+        let _left = self.within.pop();
+    }
+
+    fn visit_trait_item_fn(&mut self, one: &'ast syn::TraitItemFn) {
+        self.within.push(one.sig.ident.to_string());
+        syn::visit::visit_trait_item_fn(self, one);
+        let _left = self.within.pop();
+    }
+
     fn visit_expr_match(&mut self, matching: &'ast syn::ExprMatch) {
-        let closes = matching
+        let over = matching
             .arms
             .iter()
-            .any(|arm| Self::named(&arm.pat).is_some_and(|name| self.ours.contains(&name)));
-        if closes {
+            .find_map(|arm| named_variant(&arm.pat))
+            .filter(|name| self.ours.contains(name))
+            .filter(|_name| !forced_by_guards(&matching.arms));
+        if let Some(over) = over {
+            let item = self.place();
             for arm in &matching.arms {
-                if let Some(span) = Self::catches_all(&arm.pat) {
-                    self.found.push(span.start().line);
+                if let Some(span) = catches_everything(&arm.pat) {
+                    self.found.push(Wildcard {
+                        item: item.clone(),
+                        over: over.clone(),
+                        line: span.start().line,
+                    });
                 }
             }
         }
         syn::visit::visit_expr_match(self, matching);
     }
 }
+
+/// Every enum of `parsed` that publishes its whole list and also says the list is open.
+///
+/// Read from the syntax rather than spelled, because what makes this a
+/// contradiction is two declarations about one type rather than any text.
+fn open_and_closed(parsed: &syn::File, file: &str) -> Vec<Finding> {
+    let mut open: Vec<(String, usize)> = Vec::new();
+    let mut listed: Vec<String> = Vec::new();
+    for item in &parsed.items {
+        match item {
+            syn::Item::Enum(one) => {
+                if one.attrs.iter().any(|attr| attr.path().is_ident(OPEN)) {
+                    open.push((one.ident.to_string(), 0));
+                }
+            }
+            syn::Item::Impl(one) => {
+                let syn::Type::Path(path) = one.self_ty.as_ref() else {
+                    continue;
+                };
+                let Some(named) = path.path.segments.last() else {
+                    continue;
+                };
+                if one.items.iter().any(|held| {
+                    matches!(held, syn::ImplItem::Const(constant)
+                        if constant.ident == WHOLE_LIST
+                            && matches!(constant.vis, syn::Visibility::Public(_)))
+                }) {
+                    listed.push(named.ident.to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+    open.into_iter()
+        .filter(|(named, _at)| listed.contains(named))
+        .map(|(_named, line)| Finding {
+            kind: Kind::OpenAndClosed,
+            file: file.to_owned(),
+            line: line.saturating_add(1),
+        })
+        .collect()
+}
+
+/// The attribute that says a type may grow without breaking anybody.
+const OPEN: &str = "non_exhaustive";
+
+/// The constant by which a type publishes every one of its variants.
+///
+/// Public, because that is when the promise is made. A crate keeping its own
+/// list of its own enum has told nobody anything, and a gate that refused
+/// that would be refusing somebody for knowing what they wrote.
+const WHOLE_LIST: &str = "ALL";
 
 /// Every place `source` writes a terminal escape out by hand.
 ///

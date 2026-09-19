@@ -102,7 +102,8 @@ fn a_whole_run_judges_every_mutant_scores_the_workspace_and_writes_the_report() 
     assert_eq!(
         number("killed")
             + number("survived")
-            + number("timed_out")
+            + number("runaway")
+            + number("waited")
             + number("inconclusive")
             + number("errored"),
         number("executed"),
@@ -130,7 +131,9 @@ fn the_report_names_every_mutant_scores_what_it_decided_and_reports_every_gap() 
     );
     assert_eq!(
         document["score"]["decided"].as_u64().expect("decided"),
-        number("killed") + number("timed_out") + number("survived")
+        number("killed") + number("runaway") + number("survived"),
+        "a mutation this machine stopped waiting for decided nothing, so it is not among \
+         what the score is over"
     );
     let findings = document["findings"].as_array().expect("findings");
     assert_eq!(

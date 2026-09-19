@@ -160,15 +160,15 @@ fn a_measurement_given_the_machine_has_nothing_this_run_started_beside_it() {
 
 #[test]
 fn only_an_expired_budget_buys_a_quiet_measurement_and_a_stopped_run_buys_nothing() {
-    assert!(quiet_measurement_due(Outcome::TimedOut, false));
+    assert!(quiet_measurement_due(Outcome::Waited, false));
     assert!(
-        !quiet_measurement_due(Outcome::TimedOut, true),
+        !quiet_measurement_due(Outcome::Waited, true),
         "a run that has been asked to stop starts nothing else"
     );
     for outcome in Outcome::ALL {
         assert_eq!(
             quiet_measurement_due(outcome, false),
-            outcome == Outcome::TimedOut,
+            outcome == Outcome::Waited,
             "a mutation the tests answered has been answered: {outcome:?}"
         );
     }

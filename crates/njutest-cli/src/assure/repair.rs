@@ -38,6 +38,8 @@ pub struct Checking<'a> {
     pub skip_targets: Vec<String>,
     /// How long one execution may take.
     pub timeout: Duration,
+    /// How many guard takes one execution may spend before it is stopped by a count rather than by the bound above.
+    pub steps: u64,
     /// How long the build may take, which is not how long a measurement may take. `None` is no bound.
     pub build_timeout: Option<Duration>,
     /// Where this project keeps what its runs leave behind, which the tree under test is copied without.
@@ -115,6 +117,7 @@ pub fn check(
             skip_targets: checking.skip_targets.clone(),
             build_timeout: checking.build_timeout,
             mutant_timeout: Timeout::Fixed(checking.timeout),
+            mutant_steps: (checking.steps > 0).then_some(checking.steps),
             ..PrepareOptions::default()
         },
         watch.cancel,

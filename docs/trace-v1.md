@@ -38,7 +38,7 @@ which carries `events_emitted` and `events_dropped`.
 | --- | --- |
 | `run-start` | schema, tool versions, run id, run kind, contract |
 | `phase-start`, `phase-end` | a phase boundary: name, and on the end its duration. A reader sums these by name, so one name opens one phase: the work inside a stage is named for the work — `baseline-measure` inside `baseline` — and `njutest trace` says so when a recording opens a name twice |
-| `exec` | one command: argv verbatim, dir, environment variable **names**, timeout, exit code, timed-out flag, duration, output digest and preserved-output path |
+| `exec` | one command: argv verbatim, dir, environment variable **names**, timeout, exit code, timed-out flag, duration, output digest and preserved-output path. The engine's record says how a process stopped as one field; this one still carries the code and the flag beside each other, so a reader holding the two streams together reads the same event two ways |
 | `progress` | how far a phase has got: `message` as a person watching read it, and `subject` as a later command takes it |
 | `artifact` | something the run kept (`--keep-temp`) |
 | `note` | what has no shape of its own yet |

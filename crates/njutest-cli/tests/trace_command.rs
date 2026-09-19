@@ -60,8 +60,17 @@ fn ran(seq: u64, argv: &[&str], duration_ms: u64) -> Event {
         Payload::Exec {
             exec: ExecRecord {
                 argv: argv.iter().map(|one| (*one).to_owned()).collect(),
+                dir: None,
+                env_names: Vec::new(),
+                timeout_ms: None,
+                stopped: rust_mutants::execute::Stopped::Ran { code: 0 },
                 duration_ms,
-                ..ExecRecord::default()
+                output_bytes: 0,
+                output_sha256: None,
+                output_truncated: false,
+                output_path: None,
+                error: None,
+                output: Vec::new(),
             },
         },
     )

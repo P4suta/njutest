@@ -84,7 +84,7 @@ read its answer back from, because telling that apart needs the run's own
 identity and the value holds only the source's.
 
 A **finding** is an actionable problem in the project or its verification
-configuration. There are ten kinds, and a report carries the name rather
+configuration. There are eleven kinds, and a report carries the name rather
 than a number, because the name is what a person greps for and what a
 projection shows:
 
@@ -95,7 +95,8 @@ projection shows:
 | `undefined-behaviour` | the interpreter found unsoundness where the compiler stops vouching | yes |
 | `surviving-mutant` | every test that could notice a mutation passed with it active | no |
 | `target-missing` | a test target could not be found, so nothing was observed about it | no |
-| `timeout` | a target, or a mutation of one, ran out of the time it was given | no |
+| `timeout` | a target ran out of the time it was given | no |
+| `waited-mutant` | a mutation's bound expired before anything finished, so nothing was established about it | no |
 | `not-measured` | something a run could not measure, so it claims nothing about it | no |
 | `unmatched-acceptance` | an unexpired acceptance does not name exactly one mutant in this catalog | no |
 | `hollow-target` | a test target was put to mutations and noticed none of them | no |
@@ -135,17 +136,18 @@ process starts and one fact about the tests. An estimate built from it may
 decide an order and never a budget.
 
 `outcome` and `killed_by` travel together and are one thing in the model. A
-kill names the target that noticed; a timeout, a pair that did not agree and a
-harness that would not start name the target they happened on; and the four
-that happen to no target — `compile-rejected`, `survived`, `unreached`,
-`equivalent` — name none. The schema is one closed shape per outcome, so a
+kill names the target that noticed; a runaway, a bound that expired, a pair
+that did not agree and a harness that would not start name the target they
+happened on; and the four that happen to no target — `compile-rejected`,
+`survived`, `unreached`, `equivalent` — name none. The schema is one closed shape per outcome, so a
 document that says a mutation survived and then names a killer is not one this
 release reads, and neither is one that says a test noticed and names nobody.
 
 The field keeps its name for the documents already written, and it is the wrong
-name three times out of four: the target a timeout expired on killed nothing.
-Reading it as *the target this was established against* is what it has always
-meant.
+name four times out of five: the target a bound expired on killed nothing, and
+neither did the one a runaway was running against. `steps` says what noticed;
+the target says where to go and look. Reading it as *the target this was
+established against* is what it has always meant.
 
 `targets` is canonically ordered by descending duration, then ascending target
 ID. A mutant disposition may say `reused: true` with a `source_run_id`; the
@@ -238,7 +240,7 @@ and there is nothing to write for the second.
 The counts beside each other overlap — `executed` holds `killed` and
 `survived` both, and `reused_killed` is part of `killed` — so they answer how
 much of each kind of work a run did. `accounting.mutants.observers` answers a
-different question, and its six columns **partition the catalog**: every
+different question, and its eight columns **partition the catalog**: every
 catalogued mutation is in exactly one of them, and
 `report::audit::validate_for_persistence` refuses a report where they do not
 add up to `cataloged`.
@@ -247,10 +249,11 @@ add up to `cataloged`.
 | --- | --- | --- |
 | `types` | the compiler refused the program | `compile-rejected` |
 | `tests` | a test noticed | `killed` |
+| `steps` | it ran away, and a count of steps noticed | `runaway` |
 | `proved` | no test of any kind could have noticed | `equivalent` |
 | `unnoticed` | it ran and nothing noticed | `survived` |
 | `unreached` | nothing ran at all | `unreached` |
-| `waited` | a bound expired before anything finished | `timed_out` |
+| `waited` | a bound expired before anything finished | `waited` |
 | `errored` | nothing could be measured | `unconfirmed`, `errored` |
 
 `types` is the same number as `rejected`, said as what it is. A mutation the
@@ -265,15 +268,23 @@ denominator: `rejected` keeps its place in
 project, and neither is ever silent: a run that could not decide a mutation
 says so here and carries the finding that explains it.
 
-A timeout is `waited` and not `tests`. The engine is right to call it a
-detection — the process hung with the mutant active — but njutest measures
-something else. A bound is a budget, [ADR 0004](adr/0004-proof-layers-not-budgets.md)
-says a result resting on a budget is not a proof, and this report already gave
-a timeout its own column and a finding reading *an expired budget establishes
-nothing about the mutation*. Calling it a detection here contradicted both, and
-hid a build that timed out from `blind_in` entirely. The mapping from an
-outcome to who decided it now exists once, on `Outcome::decision`, because the
-reason it could disagree at all was that it existed three times.
+`steps` and `waited` were one column, and a process that does not stop is two
+unlike events wearing one name. A mutation made the work unbounded, which
+something noticed; or a bound expired while the machine was busy, which
+establishes nothing about the mutation in either direction. One name could not
+be counted as a detection and left out of one at the same time, and it was not:
+the engine called it detected while this report called it a gap, about the same
+mutation in the same run.
+
+A guard counts steps, and a count is a property of the work rather than of the
+machine — the same mutation runs away on a loaded laptop and on an idle one.
+That is why `steps` is a detection. `waited` is not: a bound is a budget,
+[ADR 0004](adr/0004-proof-layers-not-budgets.md) says a result resting on a
+budget is not a proof, and `waited` keeps its own column, its finding reading
+*an expired budget establishes nothing about the mutation*, and its place in
+`blind_in`. Neither column is reached by re-deciding from the outcome: the
+mapping from an outcome to who decided it exists once, because the reason it
+could disagree at all was that it existed three times.
 
 ## Who could have noticed
 

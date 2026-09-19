@@ -32,7 +32,7 @@ fuzz_target!(|text: &str| {
                 Some(
                     rust_mutants::outcome::Outcome::Survived
                         | rust_mutants::outcome::Outcome::Killed
-                        | rust_mutants::outcome::Outcome::TimedOut
+                        | rust_mutants::outcome::Outcome::Runaway
                 )
             ),
             "only an outcome a run confirms may be expected: {:?}",

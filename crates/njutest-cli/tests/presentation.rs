@@ -62,7 +62,8 @@ fn told() -> Told {
             killed: 7,
             survived: 2,
             unreached: 1,
-            timed_out: 0,
+            runaway: 0,
+            waited: 0,
             duration_ms: 1911,
             kept: kept("20260101T000000Z-aaaaaa"),
         },
@@ -172,7 +173,8 @@ fn a_run_with_nothing_to_say_says_that_and_stops() {
             killed: 4,
             survived: 0,
             unreached: 0,
-            timed_out: 0,
+            runaway: 0,
+            waited: 0,
             duration_ms: 1388,
             kept: kept("20260101T000000Z-bbbbbb"),
         },
@@ -266,7 +268,13 @@ fn the_label_under_a_mark_says_what_the_run_established_and_never_something_else
     let said = |decided: Decided| njutest_cli::presentation::label("gt-to-ge", &decided);
     for (decided, wrong) in [
         (
-            Decided::TimedOut {
+            Decided::Waited {
+                on: "fixture/test/smoke".to_owned(),
+            },
+            "noticed",
+        ),
+        (
+            Decided::Runaway {
                 on: "fixture/test/smoke".to_owned(),
             },
             "noticed",

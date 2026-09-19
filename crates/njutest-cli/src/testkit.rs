@@ -163,6 +163,12 @@ const fn nothing_routed() -> crate::trace::RouteRecord {
 
 /// One event of every shape a recording can hold.
 #[must_use]
+#[expect(
+    clippy::too_many_lines,
+    reason = "its length is the size of a closed set named in full, so splitting it would \
+              hide the only property it has: that every shape is here. A shorter version \
+              is one where a missing variant is harder to see."
+)]
 pub fn every_payload() -> Vec<crate::trace::Payload> {
     use crate::trace::{
         ArtifactRecord, ExecRecord, MutantExecRecord, NoteRecord, Payload, PhaseRecord,
@@ -186,7 +192,20 @@ pub fn every_payload() -> Vec<crate::trace::Payload> {
         },
         Payload::PhaseEnd { phase },
         Payload::Exec {
-            exec: ExecRecord::default(),
+            exec: ExecRecord {
+                argv: Vec::new(),
+                dir: None,
+                env_names: Vec::new(),
+                timeout_ms: None,
+                stopped: rust_mutants::execute::Stopped::Ran { code: 0 },
+                duration_ms: 0,
+                output_bytes: 0,
+                output_sha256: None,
+                output_truncated: false,
+                output_path: None,
+                error: None,
+                output: Vec::new(),
+            },
         },
         Payload::Progress {
             progress: ProgressRecord {
