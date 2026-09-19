@@ -5,6 +5,14 @@
 #
 # Strictness policy:
 # - pre-commit is the gentle pass: format-and-restage, deny obvious mistakes.
+#   Nothing here analyses the whole workspace, and a clippy run is the thing
+#   that was taken out to make that true. `glob` decides whether a command
+#   runs, not what it runs over, and clippy is a whole-crate analysis with no
+#   way to be pointed at the files being committed — so it read the working
+#   tree and refused commits for edits that were not in them. A red that is
+#   not about your change teaches people to re-run rather than to read.
+#   pre-push reads the same working tree, but pre-push says up front that it
+#   takes minutes and the person is sitting there waiting for it.
 # - pre-push runs `mise run check`, which is every gate this machine can
 #   answer: formatting, the build, clippy, rustdoc, the repository gates, the
 #   fuzz crate's type check, spelling, TOML, the workflows, the whole suite
@@ -29,9 +37,6 @@ pre-commit:
       glob: "*.rs"
       run: cargo fmt --all
       stage_fixed: true
-    rust-clippy:
-      glob: "*.{rs,toml}"
-      run: cargo clippy --workspace --all-targets -- -D warnings
     typos:
       run: typos
     ocomment:
