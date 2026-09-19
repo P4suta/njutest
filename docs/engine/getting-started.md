@@ -53,13 +53,16 @@ tree is never written to.
 
 ```
 MUTANTS   cataloged=120 refused=3 skipped=17 executed=117
-OUTCOMES  killed=98 survived=14 timed_out=1 inconclusive=0 errored=0 not_run=4 unreached=4 …
+OUTCOMES  killed=98 survived=14 runaway=1 waited=0 inconclusive=0 errored=0 not_run=4 unreached=4 …
 SCORE     87.6%  (99 detected of 113 decided)
 ```
 
 - **killed** — a test failed with the mutation live. The tests noticed.
 - **survived** — every test passed. Nobody noticed.
-- **timed out** — it never finished, twice. Counted as noticed.
+- **runaway** — the work stopped being bounded and a count of steps said so.
+  Counted as noticed: a count is a property of the work, not of the machine.
+- **waited** — a bound expired before anything finished. Not counted as
+  noticed, and not counted against the tests either: nothing was established.
 - **inconclusive** — the run could not decide, and says so rather than guessing.
 - **not run** — nothing executed it, and each one says why: `unreached` (no
   measured test reaches it), `discharged` (a proof says no target could have

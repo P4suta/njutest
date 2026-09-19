@@ -24,9 +24,11 @@ the files it reached and not the coverage regions inside them, so it is routed
 at file granularity for the rest of the run: a resumed run executes at least
 the work a cold run would, never less.
 
-Only a kill and a confirmed timeout are inherited from a checkpoint. Both are
-existential claims about this exact tree — one named test noticed the mutant —
-and stay true however the next run routes. Every other disposition depends on
+Only a kill and a runaway are inherited from a checkpoint. Both are
+existential claims about this exact tree — something noticed the mutant, a
+named test or a count of steps — and stay true however the next run routes.
+A `waited` is not inherited: it is a fact about the machine that measured, and
+the next machine is not that one. Every other disposition depends on
 which tests the run decided could notice, and a resumed run routes at file
 granularity, so it re-derives them rather than inheriting a claim it did not
 make. A state that carries one of them is refused rather than read.

@@ -159,7 +159,7 @@ back to true by a flag, because there is no flag that says so.
 [[mutation.expect]]
 id = "b8e3f78d"                # identity, or a prefix that names exactly one
 reason = "the bound is equivalent under the invariant the type carries"
-outcome = "survived"           # survived | killed | timed_out
+outcome = "survived"           # survived | killed | runaway | waited
 ```
 
 An expectation is a claim, not a suppression: the run resolves the identity,

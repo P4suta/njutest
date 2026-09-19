@@ -500,7 +500,8 @@ A test binary is started directly, never through `cargo test`, with the
 environment cargo would give it, `RUST_MUTANTS_*` stripped and set, a
 scratch `TMPDIR`, and the libtest arguments verbatim. The outer supervisor
 owns the timeout and the process tree; exit status is read in this order —
-start failure → `errored`; timed out → `timed_out`; killed by us → `not_run`;
+start failure → `errored`; a guard's count passed → `runaway`; a bound expired
+→ `waited`; killed by us → `not_run`;
 97 → `errored` (stale catalog, never a kill); non-zero → `killed`; zero →
 `survived`. A libtest run that matched no test is green and says so:
 `tests_run` carries the count the summary line reported.

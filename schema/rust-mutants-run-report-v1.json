@@ -195,7 +195,8 @@
         "executed",
         "killed",
         "survived",
-        "timed_out",
+        "runaway",
+        "waited",
         "inconclusive",
         "errored",
         "not_run",
@@ -227,9 +228,15 @@
           "type": "integer",
           "minimum": 0
         },
-        "timed_out": {
+        "runaway": {
           "type": "integer",
-          "minimum": 0
+          "minimum": 0,
+          "description": "Mutants whose step count passed the guard. Detected: a mutant that will not stop is a behaviour change something noticed, and a count is a property of the work rather than of the machine."
+        },
+        "waited": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Mutants whose bound expired before anything finished. Not detected: nothing was established about them, in either direction."
         },
         "inconclusive": {
           "type": "integer",
@@ -383,7 +390,8 @@
               "not_run",
               "killed",
               "survived",
-              "timed_out",
+              "runaway",
+              "waited",
               "inconclusive",
               "errored"
             ]
@@ -664,7 +672,8 @@
             "enum": [
               "killed",
               "survived",
-              "timed_out"
+              "runaway",
+              "waited"
             ]
           },
           "mutant": {

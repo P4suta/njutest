@@ -149,7 +149,8 @@
               "enum": [
                 "killed",
                 "survived",
-                "timed_out",
+                "runaway",
+                "waited",
                 "inconclusive",
                 "errored",
                 "not_run",

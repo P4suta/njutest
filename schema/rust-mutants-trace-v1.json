@@ -312,7 +312,7 @@
           "additionalProperties": false,
           "required": [
             "argv",
-            "exit_code",
+            "stopped",
             "duration_ms"
           ],
           "properties": {
@@ -336,11 +336,62 @@
               "type": "integer",
               "minimum": 0
             },
-            "exit_code": {
-              "type": "integer"
-            },
-            "timed_out": {
-              "type": "boolean"
+            "stopped": {
+              "description": "How the process came to a stop. A code exists only where one is the process\u0027s own, so a record cannot say a process was killed by a guard and also exited 101.",
+              "oneOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "kind",
+                    "code"
+                  ],
+                  "properties": {
+                    "kind": {
+                      "const": "ran"
+                    },
+                    "code": {
+                      "type": "integer"
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "kind"
+                  ],
+                  "properties": {
+                    "kind": {
+                      "const": "waited"
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "kind"
+                  ],
+                  "properties": {
+                    "kind": {
+                      "const": "runaway"
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "kind"
+                  ],
+                  "properties": {
+                    "kind": {
+                      "const": "unstarted"
+                    }
+                  }
+                }
+              ]
             },
             "duration_ms": {
               "type": "integer",
