@@ -34,24 +34,17 @@ fn problems(document: &Value) -> Vec<String> {
 /// writes whichever disposition the run it is given reaches, so a suite that
 /// only ever builds one report only ever shows the schema one of its shapes.
 /// A document is bytes, and bytes are what the published contract is about.
+///
+/// Nothing about the accounting is patched. It was, while the model still
+/// wrote a single `timed_out` and the schema already said two; the day the
+/// golden caught up, the patching started writing nulls into the two columns
+/// it had been adding, and these tests failed for the scaffolding rather
+/// than for the shape.
 fn recorded(outcome: &str, killed_by: Value) -> Value {
     let path =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testdata/report.golden.json");
     let text = std::fs::read_to_string(&path).expect("the recorded document");
     let mut document: Value = serde_json::from_str(&text).expect("the recorded document is JSON");
-
-    let counts = &mut document["accounting"]["mutants"];
-    if let Some(seen) = counts
-        .as_object_mut()
-        .expect("the counts")
-        .remove("timed_out")
-    {
-        counts["runaway"] = seen.clone();
-        counts["waited"] = seen;
-    }
-    if counts["observers"]["steps"].is_null() {
-        counts["observers"]["steps"] = json!(0);
-    }
 
     let mutation = &mut document["mutants"][0];
     mutation["outcome"] = json!(outcome);
