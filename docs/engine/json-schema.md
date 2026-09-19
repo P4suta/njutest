@@ -121,8 +121,12 @@ guard present in that run's build.
 was terminated.
 
 A `finding` is one of `surviving-mutant`, `inconclusive-mutant`,
-`errored-mutant`, `not-run-mutant`, `unreached-mutant`, `discharged-mutant`,
-`stale-expectation`, `unmatched-expectation`, or `unmatched-skip`. A mutant no
+`waited-mutant`, `errored-mutant`, `not-run-mutant`, `unreached-mutant`,
+`discharged-mutant`, `stale-expectation`, `unmatched-expectation`, or
+`unmatched-skip`. A `waited-mutant` is one this machine stopped waiting for
+twice: a bound expiring is a fact about the machine that watched, so the run
+established nothing about the mutation and says so rather than counting it.
+A mutant no
 measured target reaches is an `unreached-mutant` finding rather than a
 `not-run-mutant` one: it says the tests have a gap where the mutant is, not
 that the run failed to get to it. A `discharged-mutant` says the same thing

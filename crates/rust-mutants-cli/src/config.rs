@@ -149,6 +149,8 @@ pub struct Mutation {
     /// How long one mutant execution may take before it is confirmed with the machine to itself. `auto` is a multiple of what the target's own baseline took.
     #[serde(deserialize_with = "timeout", serialize_with = "timeout_text")]
     pub timeout: Timeout,
+    /// How many times the active mutant's guard may be taken before its process is stopped. `0` counts nothing and leaves the bound as the only thing that can end a runaway.
+    pub steps: u64,
     /// How long a build may take. `None` is no bound.
     #[serde(
         deserialize_with = "optional_duration",
@@ -299,6 +301,7 @@ impl Default for Mutation {
             tier: Tier::Balanced,
             operators: Vec::new(),
             timeout: Timeout::Auto,
+            steps: rust_mutants::session::DEFAULT_MUTANT_STEPS,
             build_timeout: None,
             verify: true,
             coverage: false,

@@ -196,7 +196,7 @@ fn exec_keeps_environment_names_only_sorted_and_deduplicated_and_digests_the_out
         output: b"the captured output".to_vec(),
         dir: Some("/snap/tree".to_owned()),
         timeout_ms: Some(30_000),
-        exit_code: 101,
+        stopped: rust_mutants::execute::Stopped::Ran { code: 101 },
         duration_ms: 12,
         ..exec(&["cargo", "test", "--", "--exact", "t::x"])
     };

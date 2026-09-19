@@ -292,11 +292,8 @@ pub struct ExecRecord {
     /// The timeout, if one applied.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_ms: Option<u64>,
-    /// The exit code, or the runner's stand-in when there is none.
-    pub exit_code: i32,
-    /// Whether the timeout fired.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub timed_out: bool,
+    /// How the process came to an end.
+    pub stopped: crate::execute::Stopped,
     /// How long the process ran.
     pub duration_ms: u64,
     /// Bytes of output captured.

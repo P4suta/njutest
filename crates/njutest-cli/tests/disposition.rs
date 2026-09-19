@@ -394,6 +394,13 @@ fn all_of_them() -> Mutation {
                 },
                 false,
             ),
+            of(
+                "mmmm",
+                Disposition::Waited {
+                    on: "one".to_owned(),
+                },
+                false,
+            ),
         ],
         skips: BTreeMap::new(),
     }
@@ -506,17 +513,18 @@ fn every_disposition_is_counted_once_in_the_columns_it_belongs_to() {
 
     let counts = all_of_them().accounting(&accepted);
 
-    assert_eq!(counts.cataloged, 12, "one row for every mutation judged");
+    assert_eq!(counts.cataloged, 13, "one row for every mutation judged");
     assert_eq!(counts.rejected, 1);
     assert_eq!(
-        counts.executed, 8,
-        "a mutation is executed when something ran it: the kills, the timeout, the \
-         survivals, the pair that did not agree and the harness that failed. What is not \
-         executed is what was refused, what nothing reached, and what the compiler \
-         rendered identically"
+        counts.executed, 9,
+        "a mutation is executed when something ran it: the kills, the one that never \
+         finished, the one this machine stopped waiting for, the survivals, the pair that \
+         did not agree and the harness that failed. What is not executed is what was \
+         refused, what nothing reached, and what the compiler rendered identically"
     );
     assert_eq!(counts.killed, 2);
     assert_eq!(counts.runaway, 1);
+    assert_eq!(counts.waited, 1);
     assert_eq!(counts.survived, 3);
     assert_eq!(counts.unreached, 2);
     assert_eq!(counts.equivalent, 1);

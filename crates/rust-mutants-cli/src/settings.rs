@@ -130,6 +130,7 @@ impl Settings {
             branch_proofs: self.config.mutation.coverage || self.config.mutation.touch,
             build_timeout: self.config.mutation.build_timeout,
             mutant_timeout: self.config.mutation.timeout,
+            mutant_steps: (self.config.mutation.steps > 0).then_some(self.config.mutation.steps),
             doctests: self.config.execution.doctests,
             build: self.config.build.config(),
             skip_targets: self.config.execution.skip_targets.clone(),

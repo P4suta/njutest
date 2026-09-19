@@ -318,9 +318,11 @@ fn parse_summary_line(line: &str) -> Option<Summary> {
 /// the order of a chain of `if`s. A process ends exactly one way, so the type
 /// says so and the policy reading it is a total match rather than a sequence
 /// somebody has to keep in the right order (ADR 0023).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum Stopped {
     /// The process could not be started or supervised at all.
+    #[default]
     Unstarted,
     /// This machine stopped waiting for it, which is a fact about the machine.
     Waited,
@@ -360,7 +362,7 @@ impl Stopped {
     /// could not be supervised tells us nothing about its status, and a clock
     /// that fired took the tree down before any status was its own.
     #[must_use]
-    pub fn of(result: &RunResult) -> Self {
+    pub const fn of(result: &RunResult) -> Self {
         if result.error.is_some() {
             return Self::Unstarted;
         }

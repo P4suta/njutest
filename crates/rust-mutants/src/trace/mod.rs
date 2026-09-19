@@ -53,8 +53,7 @@ impl ExecRecord {
             timeout_ms: spec
                 .timeout
                 .map(|timeout| u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX)),
-            exit_code: result.exit_code,
-            timed_out: result.timed_out,
+            stopped: crate::execute::Stopped::of(result),
             duration_ms: u64::try_from(result.duration.as_millis()).unwrap_or(u64::MAX),
             output_bytes: 0,
             output_sha256: None,

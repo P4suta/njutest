@@ -472,3 +472,28 @@ fn the_outcomes_a_clean_run_says_nothing_about_are_each_left_out_for_their_own_r
         "and the columns count them where a reader looks: {tally:?}"
     );
 }
+
+#[test]
+fn a_mutation_this_machine_stopped_waiting_for_is_a_finding_that_says_so() {
+    let run = of(vec![judged(0, Outcome::Waited)]);
+    let findings = run.findings();
+    assert_eq!(
+        findings.iter().map(|one| one.kind).collect::<Vec<_>>(),
+        [FindingKind::WaitedMutant],
+        "a bound expiring establishes nothing about the mutation, so the run raises it as \
+         a hole rather than passing over it: a reader who is shown nothing concludes the \
+         mutation was answered"
+    );
+    let detail = &findings[0].detail;
+    assert!(
+        detail.contains("stopped waiting") && detail.contains("step allowance"),
+        "and it names both ways out, because a person told only that a bound expired \
+         reaches for the bound, which is the knob that made the answer depend on their \
+         machine in the first place: {detail:?}"
+    );
+    assert!(
+        FindingKind::WaitedMutant.is_infrastructure(),
+        "it is a gap in what the run established rather than a fault in the code, and the \
+         two are counted in different columns"
+    );
+}

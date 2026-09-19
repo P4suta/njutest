@@ -44,7 +44,7 @@ fn document(targets: &[&str], rows: &[serde_json::Value]) -> RunDocument {
             .collect::<Vec<_>>(),
         "accounting": {
             "cataloged": rows.len(), "refused": 0, "skipped": 0, "executed": 0,
-            "killed": 0, "survived": 0, "timed_out": 0, "inconclusive": 0, "errored": 0,
+            "killed": 0, "survived": 0, "runaway": 0, "waited": 0, "inconclusive": 0, "errored": 0,
             "not_run": 0, "unreached": 0, "discharged": 0, "expected": 0
         },
         "score": null,

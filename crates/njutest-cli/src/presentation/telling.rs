@@ -291,7 +291,12 @@ const fn about(kind: FindingKind, unreached: bool) -> (Severity, &'static str, &
         FindingKind::Timeout => (
             Severity::Gap,
             "NJ-TIMEOUT",
-            "this ran out of time rather than answering",
+            "this target ran out of time rather than answering",
+        ),
+        FindingKind::WaitedMutant => (
+            Severity::Limitation,
+            "NJ-WAITED",
+            "this machine stopped waiting, so the run established nothing about it",
         ),
         FindingKind::NotMeasured => (
             Severity::Limitation,

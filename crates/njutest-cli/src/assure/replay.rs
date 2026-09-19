@@ -133,12 +133,17 @@ pub fn replay(
 }
 
 /// Whether the finding is still what the tests say.
-fn observed(kind: FindingKind, outcome: rust_mutants::outcome::Outcome) -> Outcome {
+///
+/// A bound expiring is the only thing that reproduces one of the two findings
+/// about waiting. A replay that comes back `Runaway` has established something
+/// where the finding said nothing was established, so the finding is resolved
+/// even though the news is a detection — what a reader asks `replay` is
+/// whether the hole is still there, and it is not.
+const fn observed(kind: FindingKind, outcome: rust_mutants::outcome::Outcome) -> Outcome {
     let still = match kind {
-        FindingKind::Timeout => matches!(
-            outcome,
-            rust_mutants::outcome::Outcome::Waited | rust_mutants::outcome::Outcome::Runaway
-        ),
+        FindingKind::Timeout | FindingKind::WaitedMutant => {
+            matches!(outcome, rust_mutants::outcome::Outcome::Waited)
+        }
         FindingKind::BuildFailure
         | FindingKind::FailingTest
         | FindingKind::TargetMissing

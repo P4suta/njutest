@@ -1267,14 +1267,32 @@ impl ObserverAccounting {
 
     /// How many mutations these columns account for.
     #[must_use]
-    pub const fn total(&self) -> u32 {
-        self.types
-            .saturating_add(self.tests)
-            .saturating_add(self.proved)
-            .saturating_add(self.unnoticed)
-            .saturating_add(self.unreached)
-            .saturating_add(self.waited)
-            .saturating_add(self.errored)
+    pub fn total(&self) -> u32 {
+        Decision::ALL
+            .into_iter()
+            .fold(0, |sum, one| sum.saturating_add(self.of(one)))
+    }
+
+    /// The column one decision is counted in.
+    ///
+    /// Read through here rather than by adding the fields up by hand. A chain
+    /// over the struct is told nothing when the set of decisions grows: the
+    /// eighth column was added and the sum kept six, and only a law caught it
+    /// — a runtime test standing in for a compile error. Matched against the
+    /// closed set, a ninth variant breaks this one function and everything
+    /// that adds them up follows for free (ADR 0023).
+    #[must_use]
+    pub const fn of(&self, decision: Decision) -> u32 {
+        match decision {
+            Decision::Types => self.types,
+            Decision::Tests => self.tests,
+            Decision::Steps => self.steps,
+            Decision::Proved => self.proved,
+            Decision::Unnoticed => self.unnoticed,
+            Decision::Unreached => self.unreached,
+            Decision::Waited => self.waited,
+            Decision::Errored => self.errored,
+        }
     }
 }
 
@@ -1388,8 +1406,10 @@ pub enum FindingKind {
     TargetMissing,
     /// A mutant nothing noticed.
     SurvivingMutant,
-    /// A target, or a mutation of one, that ran out of time.
+    /// A target that ran out of the time it was given.
     Timeout,
+    /// A mutation's bound expired before anything finished, so nothing was established about it.
+    WaitedMutant,
     /// Something a run could not measure, so it claims nothing about it.
     NotMeasured,
     /// An unexpired acceptance does not name exactly one mutant in this catalog.
@@ -1404,12 +1424,13 @@ pub enum FindingKind {
 
 impl FindingKind {
     /// Every kind, in declaration order.
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::BuildFailure,
         Self::FailingTest,
         Self::TargetMissing,
         Self::SurvivingMutant,
         Self::Timeout,
+        Self::WaitedMutant,
         Self::NotMeasured,
         Self::UnmatchedAcceptance,
         Self::UndefinedBehaviour,
@@ -1426,6 +1447,7 @@ impl FindingKind {
             Self::TargetMissing => "target-missing",
             Self::SurvivingMutant => "surviving-mutant",
             Self::Timeout => "timeout",
+            Self::WaitedMutant => "waited-mutant",
             Self::NotMeasured => "not-measured",
             Self::UnmatchedAcceptance => "unmatched-acceptance",
             Self::UndefinedBehaviour => "undefined-behaviour",
@@ -1442,6 +1464,7 @@ impl FindingKind {
             Self::TargetMissing
             | Self::SurvivingMutant
             | Self::Timeout
+            | Self::WaitedMutant
             | Self::NotMeasured
             | Self::UnmatchedAcceptance
             | Self::HollowTarget

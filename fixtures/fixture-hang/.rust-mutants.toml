@@ -1,10 +1,23 @@
 # SPDX-FileCopyrightText: 2026 njutest contributors
 # SPDX-License-Identifier: MIT OR Apache-2.0
 
-# A mutation of this fixture never returns, so the bound on one execution has
-# to be one a suite can afford to wait for twice.
+# The two halves of this fixture pull the bound in opposite directions, so each
+# is given a prop of its own rather than made to share one.
+#
+# `count_to` has mutations that never return. The count stops them: a guard
+# taken a million times fires in about thirty milliseconds, sixty times inside
+# the bound below, so no amount of load can let the clock answer first. Fifty
+# million -- the engine's default -- spends in about 1.5 seconds, which is
+# twenty times inside the thirty-second floor a real run derives and was only
+# ever tight against the two seconds this file sets.
+#
+# `clamp_positive` is merely slow, under FIXTURE_HANG_PAUSE_MS, and the clock is
+# what has to answer for it. That wants a bound a four-second sleep can beat,
+# which is why the bound stays low. A sleep only gets longer under load, so this
+# half has the margin the other one did not.
 
 version = 1
 
 [mutation]
 timeout = "2s"
+steps = 1_000_000
