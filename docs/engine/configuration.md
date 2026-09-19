@@ -241,11 +241,21 @@ the code under it moves is worse than no skip at all.
 
 ## Reserved environment
 
-A run composes `RUST_MUTANTS_ACTIVE`, `RUST_MUTANTS_CATALOG`, and
-`RUST_MUTANTS_TOUCH` for every test process it starts. Finding any of them
-already set normally ends the command with `RM0006`: nothing a test process
-said under an unrelated activation would be about this run, and a touch log
-another run owns is not one this run may append to.
+A run composes `RUST_MUTANTS_ACTIVE`, `RUST_MUTANTS_CATALOG`,
+`RUST_MUTANTS_TOUCH`, and `RUST_MUTANTS_STEPS` for every test process it
+starts. Finding any of them already set normally ends the command with
+`RM0006`: nothing a test process said under an unrelated activation would be
+about this run, and a touch log another run owns is not one this run may
+append to.
+
+`RUST_MUTANTS_STEPS` is how many times the active mutant's guard may be taken
+before the process stops itself and exits 95. The guard sits where the
+mutation does, so a loop whose condition was mutated takes it once an
+iteration, and a count is the same number on every machine, at every job
+count, under every load — which is why a mutation that will not stop is
+`runaway` and counts as detected, where a bound that expired is `waited` and
+establishes nothing. Unset, or `0`, counts nothing and leaves the clock as the
+only bound.
 
 There is one closed exception for this repository measuring itself. Cargo
 compiles every instrumented tree with an internal
