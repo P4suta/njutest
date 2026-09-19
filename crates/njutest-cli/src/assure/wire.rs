@@ -293,6 +293,18 @@ pub struct Seams {
 }
 
 impl Seams {
+    /// Says who the run has running, so every exchange from here is stamped with it.
+    ///
+    /// `None` is the honest answer wherever the run cannot tell, and is better
+    /// than the last name it happened to know: a question routed to a test
+    /// that was not there is a question a changed-run would skip on a false
+    /// premise.
+    pub fn during(&self, who: Option<&str>) {
+        for one in &self.watching {
+            one.interposer.during(who.map(ToOwned::to_owned));
+        }
+    }
+
     /// Records one run of the suite and stops recording: the catalogue is what that run did.
     ///
     /// The run is made here rather than taken from whatever else happened to
