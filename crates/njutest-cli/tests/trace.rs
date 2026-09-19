@@ -238,7 +238,16 @@ fn an_exec_event_carries_environment_names_and_never_a_value() {
             "AWS_SECRET_ACCESS_KEY".to_owned(),
             "RUSTFLAGS".to_owned(),
         ],
-        ..ExecRecord::default()
+        dir: None,
+        timeout_ms: None,
+        stopped: rust_mutants::execute::Stopped::Ran { code: 0 },
+        duration_ms: 0,
+        output_bytes: 0,
+        output_sha256: None,
+        output_truncated: false,
+        output_path: None,
+        error: None,
+        output: Vec::new(),
     });
     trace.run_end("ASSURED", None, None);
 
@@ -261,8 +270,17 @@ fn an_exec_event_digests_the_output_rather_than_carrying_it() {
     let output = b"error: something a person would want to grep for".to_vec();
     trace.exec(ExecRecord {
         argv: vec!["cargo".to_owned()],
+        dir: None,
+        env_names: Vec::new(),
+        timeout_ms: None,
+        stopped: rust_mutants::execute::Stopped::Ran { code: 0 },
+        duration_ms: 0,
+        output_bytes: 0,
+        output_sha256: None,
+        output_truncated: false,
+        output_path: None,
+        error: None,
         output: output.clone(),
-        ..ExecRecord::default()
     });
     trace.run_end("DEFECT", None, None);
 
@@ -646,10 +664,14 @@ fn the_wire_shape_is_the_recorded_one() {
         dir: Some("/w".to_owned()),
         env_names: vec!["CARGO_TARGET_DIR".to_owned()],
         timeout_ms: Some(600_000),
-        exit_code: Some(0),
+        stopped: rust_mutants::execute::Stopped::Ran { code: 0 },
         duration_ms: 1_200,
+        output_bytes: 0,
+        output_sha256: None,
+        output_truncated: false,
+        output_path: None,
+        error: None,
         output: b"ok".to_vec(),
-        ..ExecRecord::default()
     });
     trace.progress(ProgressRecord {
         subject: String::new(),

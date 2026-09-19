@@ -389,12 +389,12 @@ fn headline(out: &mut String, told: &Told, terminal: Terminal) {
     let ran_away = if *runaway == 0 {
         String::new()
     } else {
-        format!("{runaway} never finished  ")
+        format!("{runaway} runaway  ")
     };
     let stopped_waiting = if *waited == 0 {
         String::new()
     } else {
-        format!("{waited} not waited out  ")
+        format!("{waited} waited  ")
     };
     let counted = telling.painted(
         Style::Frame,

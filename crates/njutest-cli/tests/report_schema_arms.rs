@@ -41,14 +41,17 @@ fn recorded(outcome: &str, killed_by: Value) -> Value {
     let mut document: Value = serde_json::from_str(&text).expect("the recorded document is JSON");
 
     let counts = &mut document["accounting"]["mutants"];
-    let seen = counts["timed_out"].take();
-    counts
+    if let Some(seen) = counts
         .as_object_mut()
         .expect("the counts")
-        .remove("timed_out");
-    counts["runaway"] = seen.clone();
-    counts["waited"] = seen;
-    counts["observers"]["steps"] = json!(0);
+        .remove("timed_out")
+    {
+        counts["runaway"] = seen.clone();
+        counts["waited"] = seen;
+    }
+    if counts["observers"]["steps"].is_null() {
+        counts["observers"]["steps"] = json!(0);
+    }
 
     let mutation = &mut document["mutants"][0];
     mutation["outcome"] = json!(outcome);

@@ -35,8 +35,8 @@ impl Tally {
             parts: vec![
                 ("killed", counted.killed.count()),
                 ("survived", counted.survived.count()),
-                ("never finished", counted.runaway.count()),
-                ("not waited out", counted.waited.count()),
+                ("runaway", counted.runaway.count()),
+                ("waited", counted.waited.count()),
                 ("inconclusive", counted.inconclusive.count()),
                 ("errored", counted.errored.count()),
                 ("not run", counted.not_run.count()),

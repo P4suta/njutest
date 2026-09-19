@@ -274,7 +274,7 @@ fn the_whole_counts_every_disposition_its_parts_held() {
     ];
     let mut two = part("2/2", &[]);
     two.mutants = vec![
-        disposed(&"d".repeat(64), "timed_out", false),
+        disposed(&"d".repeat(64), "runaway", false),
         disposed(&"e".repeat(64), "unreached", false),
         disposed(&"f".repeat(64), "equivalent", false),
         disposed(&"g".repeat(64), "unconfirmed", false),

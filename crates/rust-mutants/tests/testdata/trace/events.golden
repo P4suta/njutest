@@ -2,7 +2,7 @@
 {"seq":2,"timestamp":"2027-01-15T08:00:01Z","elapsed_ms":1000,"type":"phase-start","phase":{"name":"prepare"}}
 {"seq":3,"timestamp":"2027-01-15T08:00:02Z","elapsed_ms":2000,"type":"open","open":{"root":"/w","snapshot_dir":"/tmp/snap","stable_dir":true,"sweep":{"parent":"/tmp","removed":1,"removed_bytes":2,"live":0,"kept":0,"failures":0}}}
 {"seq":4,"timestamp":"2027-01-15T08:00:03Z","elapsed_ms":3000,"type":"snapshot","snapshot":{"source_root":"/w","dir":"/tmp/snap","files":3,"bytes":40,"workspace_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","duration_ms":5}}
-{"seq":5,"timestamp":"2027-01-15T08:00:04Z","elapsed_ms":4000,"type":"exec","exec":{"argv":["cargo","check"],"exit_code":0,"duration_ms":0,"output_bytes":0}}
+{"seq":5,"timestamp":"2027-01-15T08:00:04Z","elapsed_ms":4000,"type":"exec","exec":{"argv":["cargo","check"],"stopped":{"kind":"ran","code":0},"duration_ms":0,"output_bytes":0}}
 {"seq":6,"timestamp":"2027-01-15T08:00:05Z","elapsed_ms":5000,"type":"discover-file","discover":{"path":"src/lib.rs","candidates":2,"sites":[{"line":3,"column":9,"rule":"le-to-lt","form":"C"}],"skips":[{"reason":"macro-invocation","count":1}]}}
 {"seq":7,"timestamp":"2027-01-15T08:00:06Z","elapsed_ms":6000,"type":"instrument","instrument":{"path":"src/lib.rs","guards":2,"module":"__rm_0000","lines_before":10,"lines_after":10}}
 {"seq":8,"timestamp":"2027-01-15T08:00:07Z","elapsed_ms":7000,"type":"validate-round","round":{"round":1,"condemned":0,"success":false,"written":2,"attributed":[{"index":1,"code":"E0308","said":"mismatched types"}],"unattributed":["error: something else"]}}

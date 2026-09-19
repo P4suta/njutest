@@ -68,7 +68,7 @@ fn mutant(session: &Session, rule: &str, line: u32) -> String {
 }
 
 #[test]
-fn a_timeout_that_does_not_repeat_is_inconclusive_and_one_that_does_is_timed_out() {
+fn a_mutation_that_cannot_end_is_stopped_by_a_count_and_one_that_is_merely_slow_by_the_clock() {
     let fixture = Fixture::copy("fixture-hang");
     let markers = fixture.temp().join("markers");
     std::fs::create_dir_all(&markers).expect("the marker directory");
@@ -89,16 +89,19 @@ fn a_timeout_that_does_not_repeat_is_inconclusive_and_one_that_does_is_timed_out
     let stopped = session
         .judge(&Request::new(never), &quiet, &cancel)
         .expect("judge");
-    assert_eq!(stopped.result.outcome, Outcome::Waited);
-    assert!(
-        stopped.retried,
-        "a timeout is believed only when it repeats"
-    );
     assert_eq!(
-        stopped.attempts.len(),
-        2,
-        "one expired budget buys one quiet measurement, and no more"
+        stopped.result.outcome,
+        Outcome::Runaway,
+        "the mutation deletes the step of a loop's counter, so the guard at its site is \
+         taken once an iteration and the allowance is spent long before the bound. What \
+         ends it is a number every machine agrees on"
     );
+    assert!(
+        !stopped.retried,
+        "and it is not put again: the serial retry exists because a clock is unreliable, \
+         and a count cannot disagree with itself on a second reading"
+    );
+    assert_eq!(stopped.attempts.len(), 1);
     assert_eq!(stopped.timeout, Duration::from_secs(2));
     assert_eq!(stopped.timeout_source, TimeoutSource::Configured);
 
@@ -110,7 +113,8 @@ fn a_timeout_that_does_not_repeat_is_inconclusive_and_one_that_does_is_timed_out
         undecided.result.outcome,
         Outcome::Inconclusive,
         "a mutation that was slow once and quick again is one the run cannot decide, and \
-         calling it a timeout would report a finding the second measurement contradicts"
+         calling it a wait would report a finding the second measurement contradicts. The \
+         count does not answer here: nothing is spinning, the process is merely asleep"
     );
     assert!(undecided.retried);
     assert_eq!(undecided.attempts.len(), 2);

@@ -430,6 +430,40 @@ ledger is derivable, the command that regenerates it is the conflict
 resolution, and hand-merging it is a way of writing down an answer no tree
 supports.
 
+**A derive propagates an obligation the type cannot honestly meet.** The
+record of one process execution derived `Default`, for one test builder's
+convenience. Every field of a `Default` struct needs a default, so the closed
+set saying how a process ended needed one too — and there is no such value,
+because a process that has not ended has not ended. The language does not say
+so. It takes `#[default]` on whichever arm is first and moves on. What came
+out was a published example, in the file somebody opens to learn the recording
+format, saying that a process which ran `cargo metadata` and exited zero could
+not be started or supervised at all.
+
+Nobody wrote that. Declaration order wrote it, which is why it was invisible
+to review: there is no line to disagree with.
+
+The rule this gives is better than the one it replaces, because it says when to
+look rather than what to look for. Before adding a derive, ask of each field:
+*does this type have a value that means nothing was decided?* Where the answer
+is no, the derive is asking the type to invent one. And note which way the
+obligation ran — it started at a test builder, travelled through a struct, and
+landed in the domain type written to make that exact claim unrepresentable.
+The convenience was two layers from the lie.
+
+**A refusal that something downstream is free to resolve is not a refusal.**
+Retiring an outcome name so that `parse` returns nothing for it is the whole
+of a deliberate break: a word that meant two things must stop a reader rather
+than resolve to whichever of them they guess. A test helper wrote
+`parse(name).unwrap_or(Outcome::Errored)`, and the break became an error
+count one layer down. The refusal was correct and the caller was permitted to
+throw it away.
+
+It is the same shape as the paragraph above it, at a different depth: both are
+the language offering to fill a hole somebody left open on purpose. `None` and
+`#[default]` are the two offers, and taking either one silently is how a
+decision stops being one.
+
 **Nothing here is a budget.** No threshold, no cutoff, no "more than N is
 suspicious" ([ADR 0004](0004-proof-layers-not-budgets.md)). A finding either
 rests on what the run established or it is not raised.

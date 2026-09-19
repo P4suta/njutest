@@ -279,7 +279,7 @@ pub struct SnapshotRecord {
 }
 
 /// One process execution.
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExecRecord {
     /// The command line, verbatim.
     pub argv: Vec<String>,

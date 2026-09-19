@@ -186,7 +186,20 @@ pub fn every_payload() -> Vec<crate::trace::Payload> {
         },
         Payload::PhaseEnd { phase },
         Payload::Exec {
-            exec: ExecRecord::default(),
+            exec: ExecRecord {
+                argv: Vec::new(),
+                dir: None,
+                env_names: Vec::new(),
+                timeout_ms: None,
+                stopped: rust_mutants::execute::Stopped::Ran { code: 0 },
+                duration_ms: 0,
+                output_bytes: 0,
+                output_sha256: None,
+                output_truncated: false,
+                output_path: None,
+                error: None,
+                output: Vec::new(),
+            },
         },
         Payload::Progress {
             progress: ProgressRecord {

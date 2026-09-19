@@ -9,6 +9,7 @@
       "observers": {
         "errored": 0,
         "proved": 0,
+        "steps": 0,
         "tests": 10,
         "types": 0,
         "unnoticed": 3,
@@ -18,9 +19,10 @@
       "rejected": 0,
       "reused_killed": 0,
       "reused_survived": 0,
+      "runaway": 0,
       "survived": 3,
-      "timed_out": 0,
-      "unreached": 1
+      "unreached": 1,
+      "waited": 0
     },
     "soundness": {
       "executed": false,

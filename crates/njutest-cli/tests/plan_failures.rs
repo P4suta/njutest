@@ -734,11 +734,13 @@ fn a_build_timeout_is_a_not_run_error_and_is_recorded() {
     .expect_err("the bounded command did not finish");
     assert!(matches!(error, BuildError::NotRun { .. }), "{error}");
     assert!(
-        trace
-            .events()
-            .iter()
-            .any(|event| matches!(&event.payload, Payload::Exec { exec } if exec.timed_out)),
-        "the timeout is durable trace evidence"
+        trace.events().iter().any(|event| matches!(
+            &event.payload,
+            Payload::Exec { exec }
+                if exec.stopped == rust_mutants::execute::Stopped::Waited
+        )),
+        "that this machine stopped waiting is durable trace evidence, and the record says \
+         which of the ways a process can end it was rather than a status beside a flag"
     );
 }
 
