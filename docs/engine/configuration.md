@@ -165,11 +165,17 @@ every process contending with every other and would measure the contention. A
 suite that sets `test_binary_args = ["--test-threads=1"]` has already given
 that up, and can afford more.
 
-An expired budget buys one more measurement, taken with nothing else the run
-started running beside it: a duration measured while three other test
+An expired bound buys one more measurement, put again with nothing else the
+run started running beside it: a duration measured while three other test
 processes were running is a fact about the load rather than about the
-mutation. What that measurement observes is what stands — a second timeout is
-a timeout, and anything else leaves the run undecided.
+mutation. What that measurement observes is what stands — a bound that
+expires again is `waited`, and anything else leaves the mutation
+`inconclusive`.
+
+A `runaway` buys nothing here and is never put twice. The count that ended it
+is the same number on a quiet machine as on a busy one, so a second reading
+cannot disagree with the first, and asking for one would be spending a
+process to be told what the run already knows.
 
 Every `[build]` key is what a person would have typed at cargo, passed on
 unchanged to every command a run compiles with: the pristine check, each

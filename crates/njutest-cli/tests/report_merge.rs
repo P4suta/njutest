@@ -3,6 +3,13 @@
 
 //! Combining the parts of one catalog into the report the whole would have written.
 
+#![expect(
+    clippy::panic,
+    reason = "a fixture that names an outcome no report has says so rather than standing in \
+              something else: the name that meant two things was read back as an error count \
+              for an afternoon because a helper turned a refusal into a default"
+)]
+
 use njutest_cli::config::Contract;
 use njutest_cli::report::Outcome;
 use njutest_cli::report::merge::{MergeError, merge};
@@ -17,7 +24,9 @@ use njutest_cli::report::{
 /// the thing under test everywhere else and a fixture that could not build a
 /// valid one would be testing the fixture.
 fn decided(outcome: &str, by: Option<&str>) -> njutest_cli::report::Decided {
-    let held = Outcome::parse(outcome).unwrap_or(Outcome::Errored);
+    let Some(held) = Outcome::parse(outcome) else {
+        panic!("no outcome of a report is named {outcome}");
+    };
     let named = by.unwrap_or("pkg/lib/pkg").to_owned();
     njutest_cli::report::Decided::of(held, Some(named))
         .or_else(|| njutest_cli::report::Decided::of(held, None))

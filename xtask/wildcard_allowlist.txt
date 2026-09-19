@@ -1,26 +1,28 @@
-# Catch-all ledger. One `path:line` per line, sorted.
+# Catch-all ledger. One name per line, sorted.
 #
-# This file may shrink and never grow. An arm that catches everything left of
-# a set this repository closes is the one that absorbs the next variant
-# silently: the compiler stops asking where it goes, and the defect reads as
-# English until somebody compares two outputs. Every line here is a place that
-# has not been named out yet, and adding one is a reviewed exception rather
-# than a decision anybody makes while writing.
+# This file may shrink and never grow. A catch-all over a set this repository
+# closes is the arm that absorbs the next variant silently: the compiler stops
+# asking where it goes, and the defect reads as English until somebody
+# compares two outputs. Every line here is a place that has not been named out
+# yet, and adding one is a reviewed exception rather than a decision anybody
+# makes while writing.
 #
-# Only arms somebody could have left out are in scope, because a waiver
-# against something the compiler demands asks a reviewer to have decided what
-# they could not decide. Two kinds are therefore skipped before they ever
-# reach this file, and neither is a waiver anybody may retire:
+# A name is `<file>::<item> over <Enum>, <n> arm(s)` and never a line number. A
+# number says where a catch-all sits and nothing about what it absorbs, so
+# changing the arm above one -- `Message::BuildFinished` to `Decision::Tests`,
+# say -- moved the waiver onto a different closed set with no diff for anybody
+# to read. That was measured rather than supposed: the gate exited 0 and every
+# gate test passed. The three parts of a name change exactly when what is being
+# waived changes, and an ordinary edit -- moving the code, renaming a binding,
+# reformatting a body -- changes none of them.
 #
-#   - An enum of ours that says `#[non_exhaustive]`, read from another crate.
-#     An integration test is its own crate, which is why this file was 44 lines
-#     of which 38 were not waivers at all.
-#   - A match whose every variant-naming arm carries a guard. No variant is
-#     covered unconditionally, so the rest has to be written down.
+# The arm count is part of the name because several arms absorbing one set in
+# one item are one claim, and one more is a claim nobody read.
 #
-# A foreign enum is not in scope either. The values of `syn::Expr` are not ours
-# to list, so an arm standing for the rest is the handling rather than a
-# default.
-crates/njutest-cli/src/why.rs:267
-crates/rust-mutants/src/cargo/compile.rs:214
-crates/rust-mutants/src/reach.rs:250
+# A foreign enum is not in scope. The values of `syn::Expr` are not ours to
+# list, so an arm standing for the rest is the handling rather than a default,
+# and neither is a set whose own crate says it may grow: there the compiler
+# asks for the arm and nobody chose it.
+crates/njutest-cli/src/why.rs::mutations over Payload, 1 arm
+crates/rust-mutants/src/cargo/compile.rs::compile over Message, 1 arm
+crates/rust-mutants/src/reach.rs::executables over Message, 1 arm

@@ -1,0 +1,20 @@
+# SPDX-FileCopyrightText: 2026 njutest contributors
+# SPDX-License-Identifier: MIT OR Apache-2.0
+#
+# How many catch-all waivers `xtask/wildcard_allowlist.txt` may carry.
+#
+# **This file may shrink and never grow.** The ledger's own header has always
+# said so and nothing held it: the count was printed in the pass line and
+# compared against nothing, so a waiver could be added by the same hand that
+# wrote the code needing one, which is the decision the ledger exists to take
+# away from that hand.
+#
+# It is a number rather than a fraction or a duration: the same on every
+# machine, at every job count, under every load, and a thing measured in
+# durations cannot be ratcheted.
+#
+# Lowering it is two edits in one change — a name out of the ledger and the
+# number here — and both are the diff a reviewer reads. Raising it is a bare
+# number going up in a file of its own, which is the one shape of change
+# nobody misses.
+3

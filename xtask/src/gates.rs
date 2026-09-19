@@ -90,15 +90,18 @@ pub fn waivers(root: &Path) -> Result<String, GateFailure> {
         .map(str::trim)
         .filter(|line| !line.is_empty() && !line.starts_with('#'))
     {
-        let Some((file, line)) = entry.rsplit_once(':') else {
-            continue;
-        };
-        let Ok(number) = line.parse::<usize>() else {
+        let Some((file, item, over)) = parted(entry) else {
             continue;
         };
         let source = std::fs::read_to_string(root.join(file))
             .map_err(|error| GateFailure(format!("{file}: {error}")))?;
-        let waived = shapes::shapes(&source, &ours).remove(&number);
+        let mut shaped = shapes::shapes(&source, &ours);
+        let lines: Vec<usize> = lint_scan::wildcards_over(&source, &ours)
+            .into_iter()
+            .filter(|one| one.item == item && one.over == over)
+            .map(|one| one.line)
+            .collect();
+        let waived = lines.first().and_then(|number| shaped.remove(number));
         let forced = waived
             .as_ref()
             .and_then(|one| open.get(&one.over))
@@ -114,8 +117,8 @@ pub fn waivers(root: &Path) -> Result<String, GateFailure> {
             (Some(one), false) => (one.shape.word(), one.shape.hint().to_owned()),
             (None, _) => (
                 "gone",
-                "nothing to read: there is no arm on that line now, and this is saying so \
-                 rather than guessing."
+                "nothing to read: no arm in that item absorbs that set now, and this is \
+                 saying so rather than guessing."
                     .to_owned(),
             ),
         };
@@ -196,19 +199,34 @@ pub fn lints(root: &Path) -> Result<String, GateFailure> {
 /// are not ours to list, so an arm that stands for the rest is the handling.
 fn wildcards(root: &Path, files: &[PathBuf]) -> Result<Vec<lint_scan::Finding>, GateFailure> {
     let (ours, open) = sets(root, files)?;
-    let mut standing: Vec<String> = Vec::new();
+    let mut standing: Vec<Waived> = Vec::new();
     for path in files {
         let source = std::fs::read_to_string(path)
             .map_err(|error| GateFailure(format!("{}: {error}", path.display())))?;
         let label = relative_slash(root, path);
-        for (line, over) in lint_scan::wildcards_over(&source, &ours) {
+        let mut grouped: std::collections::BTreeMap<(String, String), Vec<lint_scan::Wildcard>> =
+            std::collections::BTreeMap::new();
+        for one in lint_scan::wildcards_over(&source, &ours) {
             if open
-                .get(&over)
+                .get(&one.over)
                 .is_some_and(|declared| !shares_a_crate(&label, declared))
             {
                 continue;
             }
-            standing.push(format!("{label}:{line}"));
+            grouped
+                .entry((one.item.clone(), one.over.clone()))
+                .or_default()
+                .push(one);
+        }
+        for arms in grouped.into_values() {
+            let Some(first) = arms.first() else {
+                continue;
+            };
+            standing.push(Waived {
+                name: first.key(&label, arms.len()),
+                file: label.clone(),
+                line: first.line,
+            });
         }
     }
     standing.sort();
@@ -243,23 +261,68 @@ fn sets(
     Ok((ours, open))
 }
 
-/// How many waivers the catch-all ledger still carries.
+/// The file, the item and the set a ledger name is made of.
+///
+/// A name carries no line, which is the point of it, so the second reading
+/// finds the arms for itself rather than being handed a coordinate that may
+/// by now be pointing at something else.
+fn parted(entry: &str) -> Option<(&str, &str, &str)> {
+    let (place, rest) = entry.split_once(" over ")?;
+    let (over, _how_many) = rest.split_once(", ")?;
+    let (file, item) = place.split_once("::").unwrap_or((place, ""));
+    Some((file, item, over))
+}
+
+/// How many waivers the catch-all ledger still carries, held to the ceiling beside it.
 ///
 /// In the pass line because a number somebody sees every run is a number they
 /// notice moving, and a file of forty-four that nobody could shorten was a
-/// file nobody opened.
+/// file nobody opened. Held to `xtask/waiver_ceiling.txt` because noticing is
+/// not holding: the ledger's header has always said it may shrink and never
+/// grow, and until now the count was printed and compared against nothing, so
+/// a waiver could be granted by the same hand that wrote the code wanting one.
 ///
 /// # Errors
-/// The ledger cannot be read.
+/// Either file cannot be read, or the ledger has grown past the ceiling.
 fn waived_lines(root: &Path) -> Result<usize, GateFailure> {
-    let path = root.join("xtask/wildcard_allowlist.txt");
-    let ledger = std::fs::read_to_string(&path)
+    let how_many = counted(root, "xtask/wildcard_allowlist.txt")?.len();
+    let ceiling = counted(root, "xtask/waiver_ceiling.txt")?;
+    let [written] = ceiling.as_slice() else {
+        return Err(GateFailure(
+            "lints: xtask/waiver_ceiling.txt holds one number and nothing else.".to_owned(),
+        ));
+    };
+    let Ok(most) = written.parse::<usize>() else {
+        return Err(GateFailure(format!(
+            "lints: xtask/waiver_ceiling.txt holds {written}, which is not a number."
+        )));
+    };
+    if how_many > most {
+        return Err(GateFailure(format!(
+            "lints: the catch-all ledger carries {how_many} waiver(s) and \
+             xtask/waiver_ceiling.txt allows {most}. That file may shrink and never \
+             grow, so a new waiver is a number going up in a file of its own — which \
+             is the review the ledger exists to ask for, and the thing to argue for \
+             in the change rather than notice in a graph later."
+        )));
+    }
+    Ok(how_many)
+}
+
+/// The lines of a ledger that are not its header.
+///
+/// # Errors
+/// The file cannot be read.
+fn counted(root: &Path, relative: &str) -> Result<Vec<String>, GateFailure> {
+    let path = root.join(relative);
+    let text = std::fs::read_to_string(&path)
         .map_err(|error| GateFailure(format!("{}: {error}", path.display())))?;
-    Ok(ledger
+    Ok(text
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty() && !line.starts_with('#'))
-        .count())
+        .map(ToOwned::to_owned)
+        .collect())
 }
 
 /// Which of these the ledger still waives, and which nobody has reviewed.
@@ -268,7 +331,19 @@ fn waived_lines(root: &Path) -> Result<usize, GateFailure> {
 /// reported as nothing; a catch-all that is not on it is refused, so writing
 /// one is not a thing anybody decides while writing — it is a line somebody
 /// else reads.
-fn ratcheted(root: &Path, standing: &[String]) -> Result<Vec<lint_scan::Finding>, GateFailure> {
+/// A group of catch-all arms the ledger either waives or has never been shown.
+///
+/// `name` is what the ledger holds and `line` is only where to look: a
+/// coordinate cannot say what is being waived, and a ledger that keyed on
+/// one waived whatever happened to be standing there when it was next read.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct Waived {
+    name: String,
+    file: String,
+    line: usize,
+}
+
+fn ratcheted(root: &Path, standing: &[Waived]) -> Result<Vec<lint_scan::Finding>, GateFailure> {
     let path = root.join("xtask/wildcard_allowlist.txt");
     let ledger = std::fs::read_to_string(&path)
         .map_err(|error| GateFailure(format!("{}: {error}", path.display())))?;
@@ -279,19 +354,18 @@ fn ratcheted(root: &Path, standing: &[String]) -> Result<Vec<lint_scan::Finding>
         .collect();
     let mut found = Vec::new();
     for one in standing {
-        if allowed.iter().any(|line| line == one) {
+        if allowed.iter().any(|line| *line == one.name) {
             continue;
         }
-        let (file, line) = one.rsplit_once(':').unwrap_or((one.as_str(), "0"));
         found.push(lint_scan::Finding {
             kind: lint_scan::Kind::WildcardOverOurOwn,
-            file: file.to_owned(),
-            line: line.parse().unwrap_or(0),
+            file: one.file.clone(),
+            line: one.line,
         });
     }
     let stale: Vec<&&str> = allowed
         .iter()
-        .filter(|line| !standing.iter().any(|one| one == **line))
+        .filter(|line| !standing.iter().any(|one| one.name == ***line))
         .collect();
     if !stale.is_empty() {
         let how_many = stale.len();

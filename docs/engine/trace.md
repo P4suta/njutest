@@ -65,7 +65,7 @@ shape, and every line is checked against
 | `phase-start` / `phase-end` | a phase boundary: name, and on the end its duration |
 | `open` | root, snapshot path and whether its stable name was available, sweep result |
 | `snapshot` | files copied, bytes, digest, refusals |
-| `exec` | every process: argv verbatim, dir, environment variable names, timeout, exit code, duration, output digest |
+| `exec` | every process: argv verbatim, dir, environment variable names, timeout, how it stopped — an exit code of its own, a bound that expired, a guard's count passed, or never started — duration, output digest. A code exists only where one is the process's own, so a record cannot say a process was killed by a guard and also exited 101 |
 | `discover-file` | per file: candidates found, and every site with its form (`C`, `E`, `S`) or its skip reason |
 | `instrument` | per file: guards placed, the runtime module's name, and the line count before and after, which must be equal |
 | `validate-round` | per round: how many were condemned going in, how many files it had to write again, whether the tree compiled, which mutant each error was attributed to with the compiler's first line, and the errors no branch accounts for |
