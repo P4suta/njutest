@@ -361,6 +361,42 @@ invites the conclusion that the code resisted proof. It did not; nobody
 asked it for long enough. Two types rather than three arms, so no renderer can
 offer a knob that would not have helped.
 
+**A gate that cannot see a shape reports that the shape is not there.**
+`wildcard-over-our-own` read a match's arms to learn which set was being
+matched. syn 3 keeps a guard inside the pattern rather than beside the arm, so
+`Payload::Route { route } if route.mutant == id` arrives as a `Pat::Guard` and
+the reader of `Pat::Path | Pat::TupleStruct | Pat::Struct` returned nothing for
+it. Every match whose variant-naming arms all carried guards was therefore
+invisible: not exempted, not waived, not seen. The gate passed, and passing was
+its way of saying *I found no such arm here*, which was true about the gate and
+false about the code. Seeing them turned up two arms in `validate.rs` that no
+run had ever reported.
+
+Three plausible mechanisms were reasoned out and all three were wrong; the
+answer was a dependency's API change, which is not a thing staring at our own
+code can show. The minimal reproduction — the same source with and without the
+guard, one line of output each — settled it in a minute.
+
+**Correct by accident and correct are different states for a gate to be in,
+and only one of them survives a refactor.** Exempting those matches turns out
+to be right: with a guard on every arm that names a variant, nothing is covered
+unconditionally, so the compiler demands the rest and no reviewer could have
+refused it. But that was not what the code was doing, and a behaviour nobody
+chose is one the next person removes without knowing they changed anything. It
+is now a named function with a stated direction of error: one unguarded naming
+arm and the exemption stops, which costs a ledger line rather than a blind
+spot. And the two readings of a guard deliberately disagree — the walk looks
+*through* a guard to learn what is being matched, and refuses to look through
+one to decide what catches everything left, because `_ if ready()` catches
+nothing on its own.
+
+**A waiver against something the compiler demands is a decision nobody made.**
+Of the ledger's forty-four lines, thirty-eight named arms that could not have
+been left out: an enum of ours saying `#[non_exhaustive]`, read from another
+crate, and an integration test is its own crate. A reviewer reading the file
+had been told those were somebody's choice. The ledger is three lines now, the
+count is in the pass line, and a file of three is one somebody opens.
+
 **Nothing here is a budget.** No threshold, no cutoff, no "more than N is
 suspicious" ([ADR 0004](0004-proof-layers-not-budgets.md)). A finding either
 rests on what the run established or it is not raised.

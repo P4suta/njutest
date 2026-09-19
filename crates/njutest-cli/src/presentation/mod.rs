@@ -9,6 +9,7 @@ pub mod moved;
 pub mod review;
 mod telling;
 pub mod tint;
+pub mod why;
 
 use crate::report::Verdict;
 

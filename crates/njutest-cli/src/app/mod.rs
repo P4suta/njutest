@@ -21,6 +21,7 @@ pub mod show;
 pub mod trace;
 pub mod verify;
 pub mod watch;
+pub mod why;
 
 use std::io::Write;
 
@@ -44,6 +45,7 @@ pub fn run(
         Command::Plan(arguments) => exit(plan::run(arguments, environment, stdout, stderr)),
         Command::Report(arguments) => show::run(arguments, environment, stdout, stderr),
         Command::Explain(arguments) => explain::run(arguments, environment, stdout, stderr),
+        Command::Why(arguments) => why::run(arguments, environment, stdout, stderr),
         Command::Accept(arguments) => accept::run(arguments, environment, stdout, stderr),
         Command::Review(arguments) => review::run(arguments, environment, stdout, stderr),
         Command::Fix(arguments) => fix::run(arguments, environment, stdout, stderr),
