@@ -109,7 +109,8 @@ fn populated() -> Report {
                 executed: 8,
                 killed: 7,
                 survived: 1,
-                timed_out: 0,
+                runaway: 0,
+                waited: 0,
                 equivalent: 0,
                 unreached: 0,
                 accepted: 1,
@@ -118,6 +119,7 @@ fn populated() -> Report {
                 observers: ObserverAccounting {
                     types: 1,
                     tests: 7,
+                    steps: 0,
                     proved: 0,
                     unnoticed: 1,
                     unreached: 0,

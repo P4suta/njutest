@@ -35,7 +35,10 @@ fn disposition() -> impl Strategy<Value = Disposition> {
         Just(Disposition::Killed {
             by: "pkg/lib/pkg".to_owned()
         }),
-        Just(Disposition::TimedOut {
+        Just(Disposition::Runaway {
+            on: "pkg/lib/pkg".to_owned()
+        }),
+        Just(Disposition::Waited {
             on: "pkg/lib/pkg".to_owned()
         }),
         Just(Disposition::Survived { route: route() }),
@@ -101,7 +104,7 @@ proptest! {
             counts
         );
         prop_assert!(
-            counts.killed + counts.survived + counts.timed_out <= counts.executed,
+            counts.killed + counts.survived + counts.runaway + counts.waited <= counts.executed,
             "and what ran is at least what the outcomes of running account for: {:?}",
             counts
         );

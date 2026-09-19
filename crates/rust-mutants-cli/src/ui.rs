@@ -75,7 +75,8 @@ pub const TALLY_EVERY: u32 = 10;
 struct Tally {
     killed: u32,
     survived: u32,
-    timed_out: u32,
+    runaway: u32,
+    waited: u32,
     inconclusive: u32,
     errored: u32,
     not_run: u32,
@@ -92,7 +93,8 @@ impl Tally {
         let slot = match judged.outcome {
             rust_mutants::outcome::Outcome::Killed => &mut self.killed,
             rust_mutants::outcome::Outcome::Survived => &mut self.survived,
-            rust_mutants::outcome::Outcome::TimedOut => &mut self.timed_out,
+            rust_mutants::outcome::Outcome::Runaway => &mut self.runaway,
+            rust_mutants::outcome::Outcome::Waited => &mut self.waited,
             rust_mutants::outcome::Outcome::Inconclusive => &mut self.inconclusive,
             rust_mutants::outcome::Outcome::NotRun => &mut self.not_run,
             rust_mutants::outcome::Outcome::Errored => &mut self.errored,
@@ -102,11 +104,12 @@ impl Tally {
 
     fn line(&self, elapsed: Duration, remaining: Option<Duration>) -> String {
         let mut text = format!(
-            "          killed {}  survived {}  timed_out {}  inconclusive {}  errored {}  \
-             not_run {}   elapsed {}",
+            "          killed {}  survived {}  runaway {}  waited {}  inconclusive {}  \
+             errored {}  not_run {}   elapsed {}",
             self.killed,
             self.survived,
-            self.timed_out,
+            self.runaway,
+            self.waited,
             self.inconclusive,
             self.errored,
             self.not_run,

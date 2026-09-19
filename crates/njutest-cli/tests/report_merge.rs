@@ -286,7 +286,7 @@ fn the_whole_counts_every_disposition_its_parts_held() {
     assert_eq!(counts.killed, 1);
     assert_eq!(counts.survived, 1);
     assert_eq!(counts.rejected, 1);
-    assert_eq!(counts.timed_out, 1);
+    assert_eq!(counts.runaway, 1);
     assert_eq!(counts.unreached, 1);
     assert_eq!(counts.equivalent, 1);
     assert_eq!(counts.reused_killed, 1);

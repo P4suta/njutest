@@ -165,6 +165,8 @@ pub enum FindingKind {
     SurvivingMutant,
     /// The run could not decide.
     InconclusiveMutant,
+    /// This machine stopped waiting for the mutant, so the run established nothing about it.
+    WaitedMutant,
     /// The harness itself failed for this mutant.
     ErroredMutant,
     /// A mutant nothing ran and nothing cancelled.
@@ -183,9 +185,10 @@ pub enum FindingKind {
 
 impl FindingKind {
     /// Every kind, in the order findings are reported.
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::SurvivingMutant,
         Self::InconclusiveMutant,
+        Self::WaitedMutant,
         Self::ErroredMutant,
         Self::NotRunMutant,
         Self::UnreachedMutant,
@@ -201,6 +204,7 @@ impl FindingKind {
         match self {
             Self::SurvivingMutant => "surviving-mutant",
             Self::InconclusiveMutant => "inconclusive-mutant",
+            Self::WaitedMutant => "waited-mutant",
             Self::ErroredMutant => "errored-mutant",
             Self::NotRunMutant => "not-run-mutant",
             Self::UnreachedMutant => "unreached-mutant",
@@ -220,7 +224,10 @@ impl FindingKind {
     /// Whether the finding is about the run itself rather than about the tests.
     #[must_use]
     pub const fn is_infrastructure(self) -> bool {
-        matches!(self, Self::ErroredMutant | Self::NotRunMutant)
+        matches!(
+            self,
+            Self::ErroredMutant | Self::NotRunMutant | Self::WaitedMutant
+        )
     }
 }
 
@@ -250,8 +257,10 @@ pub struct Tally {
     pub killed: u32,
     /// How many every test passed on.
     pub survived: u32,
-    /// How many exceeded the budget twice.
-    pub timed_out: u32,
+    /// How many took their guard more times than the run allowed, twice over.
+    pub runaway: u32,
+    /// How many this machine stopped waiting for, twice over. Not caught: the run established that it stopped waiting.
+    pub waited: u32,
     /// How many the run could not decide.
     pub inconclusive: u32,
     /// How many the harness itself failed on.
@@ -312,7 +321,8 @@ impl Run {
             let slot = match one.outcome {
                 Outcome::Killed => &mut tally.killed,
                 Outcome::Survived => &mut tally.survived,
-                Outcome::TimedOut => &mut tally.timed_out,
+                Outcome::Runaway => &mut tally.runaway,
+                Outcome::Waited => &mut tally.waited,
                 Outcome::Inconclusive => &mut tally.inconclusive,
                 Outcome::NotRun => &mut tally.not_run,
                 Outcome::Errored => &mut tally.errored,
@@ -336,7 +346,7 @@ impl Run {
     #[must_use]
     pub fn score(&self) -> Option<Score> {
         let tally = self.tally();
-        let detected = tally.killed.saturating_add(tally.timed_out);
+        let detected = tally.killed.saturating_add(tally.runaway);
         let decided = detected.saturating_add(tally.survived);
         (decided > 0).then(|| Score {
             detected,
@@ -370,7 +380,8 @@ impl Run {
                 }
                 Outcome::NotRun if self.interrupted => continue,
                 Outcome::NotRun => FindingKind::NotRunMutant,
-                Outcome::Killed | Outcome::TimedOut => continue,
+                Outcome::Killed | Outcome::Runaway => continue,
+                Outcome::Waited => FindingKind::WaitedMutant,
                 Outcome::Errored => FindingKind::ErroredMutant,
             };
             findings.push(Finding {
@@ -449,6 +460,12 @@ fn detail(kind: FindingKind, one: &Judged) -> String {
                     }
                 }
             )
+        ),
+        FindingKind::WaitedMutant => format!(
+            "this machine stopped waiting for {} twice, so the run established nothing about \
+             it. A bound that expired is a fact about the machine; raise it, or give the run \
+             a step allowance so a mutant that cannot terminate is stopped by a count instead",
+            one.display_id
         ),
         FindingKind::InconclusiveMutant if one.retried => format!(
             "{} timed out once and did not do so again, so the run cannot say what the tests \
@@ -1152,13 +1169,13 @@ fn not_run_because(outcome: Outcome, route: &crate::session::Route) -> Option<No
 /// Whether this outcome is the one a run asked to stop at the first finding stops at.
 const fn stops(one: &Judged) -> bool {
     match one.outcome {
-        Outcome::Killed | Outcome::TimedOut => false,
+        Outcome::Killed | Outcome::Runaway => false,
         Outcome::Survived => !one.expected,
         Outcome::NotRun => matches!(
             one.not_run_reason,
             Some(NotRunReason::Unreached | NotRunReason::Discharged)
         ),
-        Outcome::Inconclusive | Outcome::Errored => true,
+        Outcome::Waited | Outcome::Inconclusive | Outcome::Errored => true,
     }
 }
 
@@ -1241,7 +1258,7 @@ fn keep(mutant: &Mutant, options: &Options<'_>, judged: &Judged) {
     };
     if !matches!(
         judged.outcome,
-        Outcome::Killed | Outcome::Survived | Outcome::TimedOut
+        Outcome::Killed | Outcome::Survived | Outcome::Runaway
     ) {
         return;
     }

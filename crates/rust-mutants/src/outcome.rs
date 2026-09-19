@@ -24,8 +24,10 @@ pub enum Outcome {
     Killed,
     /// Every selected test passed with the mutant active.
     Survived,
-    /// A *confirmed* timeout: exceeded the budget, retried serially, exceeded it again. Detected — an infinite loop a mutant introduced is a behaviour change the tests noticed. A single timeout is inconclusive.
-    TimedOut,
+    /// The mutant's guard was taken more times than the run allowed, twice over: it does not terminate, and a count every machine agrees on says so.
+    Runaway,
+    /// A bound expired while this machine watched, confirmed by a serial retry. Not detected: the run established that it stopped waiting, which is a fact about the machine and not about the mutation.
+    Waited,
     /// The run could not decide: one timeout that did not reproduce, or a failure that also fails on the instrumented baseline.
     Inconclusive,
     /// The harness itself failed for this mutant: the test binary could not start, the runtime said it was built from another catalog, or a process said it could not record what it saw. A death by signal is not one of these: a test that aborts is a test that failed, which is a kill.
@@ -34,11 +36,12 @@ pub enum Outcome {
 
 impl Outcome {
     /// Every outcome in declaration order.
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::NotRun,
         Self::Killed,
         Self::Survived,
-        Self::TimedOut,
+        Self::Runaway,
+        Self::Waited,
         Self::Inconclusive,
         Self::Errored,
     ];
@@ -50,22 +53,68 @@ impl Outcome {
             Self::NotRun => "not_run",
             Self::Killed => "killed",
             Self::Survived => "survived",
-            Self::TimedOut => "timed_out",
+            Self::Runaway => "runaway",
+            Self::Waited => "waited",
             Self::Inconclusive => "inconclusive",
             Self::Errored => "errored",
         }
     }
 
-    /// Whether the tests caught the mutant: a kill or a confirmed timeout.
+    /// What caught the mutant, when anything did.
+    ///
+    /// The one place that says which outcomes are detections. Two layers each
+    /// answering that question is two answers, and this repository had them:
+    /// the engine counted a timeout as caught while the report said an
+    /// expired bound establishes nothing, about the same mutation in the same
+    /// run (ADR 0023). Anything that needs the answer derives it from here.
+    #[must_use]
+    pub const fn noticed(self) -> Option<Noticed> {
+        match self {
+            Self::Killed => Some(Noticed::Tests),
+            Self::Runaway => Some(Noticed::Steps),
+            Self::NotRun | Self::Survived | Self::Waited | Self::Inconclusive | Self::Errored => {
+                None
+            }
+        }
+    }
+
+    /// Whether anything caught the mutant.
     #[must_use]
     pub const fn detected(self) -> bool {
-        matches!(self, Self::Killed | Self::TimedOut)
+        self.noticed().is_some()
     }
 
     /// The outcome with the given wire name, if any.
     #[must_use]
     pub fn parse(name: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|outcome| outcome.name() == name)
+    }
+}
+
+/// What caught a mutant, which is not always a test.
+///
+/// A closed set, because a reader adding these up is told which column each
+/// belongs in and a new way of catching one is a column somebody has to place
+/// rather than a number that quietly joins another.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Noticed {
+    /// A test failed with the mutant active.
+    Tests,
+    /// The mutation stopped the program terminating, and a count said so.
+    Steps,
+}
+
+impl Noticed {
+    /// Every way a run catches a mutant, in the order a reader adds them up.
+    pub const ALL: [Self; 2] = [Self::Tests, Self::Steps];
+
+    /// The canonical wire name.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Tests => "tests",
+            Self::Steps => "steps",
+        }
     }
 }
 

@@ -298,7 +298,8 @@ fn ratcheted(root: &Path, standing: &[String]) -> Result<Vec<lint_scan::Finding>
         let named = stale
             .iter()
             .map(|line| format!("\n  {line}"))
-            .collect::<String>();
+            .collect::<Vec<_>>()
+            .concat();
         return Err(GateFailure(format!(
             "lints: xtask/wildcard_allowlist.txt names {how_many} line(s) that no longer \
              catch everything left of a set this repository closes. Take them out: a \

@@ -74,8 +74,13 @@ pub enum Disposition {
         /// The test that noticed.
         by: String,
     },
-    /// A test ran out of time with it active, which establishes nothing either way.
-    TimedOut {
+    /// It stopped the program terminating, and a count every machine agrees on says so.
+    Runaway {
+        /// The target it was running under, which is where to look rather than what noticed.
+        on: String,
+    },
+    /// This machine stopped waiting with it active, which establishes nothing either way.
+    Waited {
         /// The test that did not finish.
         on: String,
     },
@@ -114,7 +119,8 @@ impl Disposition {
         match self {
             Self::Rejected { .. } => Recorded::CompileRejected,
             Self::Killed { .. } => Recorded::Killed,
-            Self::TimedOut { .. } => Recorded::TimedOut,
+            Self::Runaway { .. } => Recorded::Runaway,
+            Self::Waited { .. } => Recorded::Waited,
             Self::Survived { .. } => Recorded::Survived,
             Self::Unreached => Recorded::Unreached,
             Self::Equivalent { .. } => Recorded::Equivalent,
@@ -135,7 +141,8 @@ impl Disposition {
         match self {
             Self::Rejected { .. } => crate::report::Decided::CompileRejected,
             Self::Killed { by } => crate::report::Decided::Killed { by: by.clone() },
-            Self::TimedOut { on } => crate::report::Decided::TimedOut { on: on.clone() },
+            Self::Runaway { on } => crate::report::Decided::Runaway { on: on.clone() },
+            Self::Waited { on } => crate::report::Decided::Waited { on: on.clone() },
             Self::Survived { .. } => crate::report::Decided::Survived,
             Self::Unreached => crate::report::Decided::Unreached,
             Self::Equivalent { .. } => crate::report::Decided::Equivalent,
@@ -160,9 +167,10 @@ impl Disposition {
     pub fn decided_by(&self) -> Option<&str> {
         match self {
             Self::Killed { by } => Some(by),
-            Self::TimedOut { on } | Self::Unconfirmed { on, .. } | Self::Errored { on, .. } => {
-                Some(on)
-            }
+            Self::Runaway { on }
+            | Self::Waited { on }
+            | Self::Unconfirmed { on, .. }
+            | Self::Errored { on, .. } => Some(on),
             Self::Rejected { .. }
             | Self::Survived { .. }
             | Self::Unreached
@@ -228,9 +236,13 @@ impl Mutation {
                         counts.reused_killed = counts.reused_killed.saturating_add(1);
                     }
                 }
-                Disposition::TimedOut { .. } => {
+                Disposition::Runaway { .. } => {
                     counts.executed = counts.executed.saturating_add(1);
-                    counts.timed_out = counts.timed_out.saturating_add(1);
+                    counts.runaway = counts.runaway.saturating_add(1);
+                }
+                Disposition::Waited { .. } => {
+                    counts.executed = counts.executed.saturating_add(1);
+                    counts.waited = counts.waited.saturating_add(1);
                 }
                 Disposition::Survived { .. } => {
                     counts.executed = counts.executed.saturating_add(1);
@@ -342,11 +354,20 @@ fn finding_of(judged: &Judged) -> Option<Finding> {
             FindingKind::TargetMissing,
             format!("{on}: the mutation could not be measured: {detail}"),
         ),
-        Disposition::TimedOut { on } => (
+        Disposition::Waited { on } => (
             FindingKind::Timeout,
             format!(
-                "{on} ran out of time with {} at {} active: an expired budget establishes \
-                 nothing about the mutation",
+                "this machine stopped waiting for {on} with {} at {} active: an expired bound \
+                 establishes nothing about the mutation. Give the run a step allowance and a \
+                 mutation that cannot terminate is stopped by a count instead",
+                judged.rule, judged.path
+            ),
+        ),
+        Disposition::Runaway { on } => (
+            FindingKind::Timeout,
+            format!(
+                "{on} never finished with {} at {} active: the mutation stopped the program \
+                 terminating, which a count every machine agrees on established",
                 judged.rule, judged.path
             ),
         ),
@@ -685,6 +706,13 @@ pub fn reuse(options: &MutationOptions, route: &Route, mutant: &str) -> Consulte
                 .cloned()
                 .unwrap_or_else(|| target.clone()),
         },
+        store::Outcome::Runaway { target, .. } => Disposition::Runaway {
+            on: evidence
+                .names
+                .get(target)
+                .cloned()
+                .unwrap_or_else(|| target.clone()),
+        },
         store::Outcome::Survived { .. } => Disposition::Survived {
             route: route.clone(),
         },
@@ -695,7 +723,7 @@ pub fn reuse(options: &MutationOptions, route: &Route, mutant: &str) -> Consulte
     }
 }
 
-/// Records what this run established, for the next run of a tree these targets still behave the same in. Only a named kill and a survival are recorded: everything else is about the run rather than about the mutant.
+/// Records what this run established, for the next run of a tree these targets still behave the same in. Only a named kill, a runaway and a survival are recorded: everything else is about the run, or about the machine that measured, rather than about the mutant.
 pub fn keep(options: &MutationOptions, mutant: &str, route: &Route, disposition: &Disposition) {
     let Some(evidence) = options.evidence.as_ref() else {
         return;
@@ -729,7 +757,24 @@ pub fn keep(options: &MutationOptions, mutant: &str, route: &Route, disposition:
             }
             store::Outcome::Survived { targets }
         }
-        _ => return,
+        Disposition::Runaway { on } => {
+            let Some(target) = evidence.identity(on) else {
+                return;
+            };
+            let Some(key) = evidence.standing.passing.get(target) else {
+                return;
+            };
+            store::Outcome::Runaway {
+                target: target.to_owned(),
+                key: key.clone(),
+            }
+        }
+        Disposition::Waited { .. }
+        | Disposition::Rejected { .. }
+        | Disposition::Unreached
+        | Disposition::Equivalent { .. }
+        | Disposition::Unconfirmed { .. }
+        | Disposition::Errored { .. } => return,
     };
     drop(store::write(
         &evidence.root,
@@ -751,7 +796,7 @@ pub fn inherited(saved: &crate::checkpoint::SavedMutant) -> Option<Disposition> 
     let by = saved.killed_by.clone()?;
     match saved.disposition.as_str() {
         "killed" => Some(Disposition::Killed { by }),
-        "timed_out" => Some(Disposition::TimedOut { on: by }),
+        "runaway" => Some(Disposition::Runaway { on: by }),
         _ => None,
     }
 }
@@ -847,14 +892,15 @@ fn against(
     );
     match result.outcome {
         Outcome::Survived => Ok(None),
-        Outcome::Killed | Outcome::TimedOut => Ok(Some(
+        Outcome::Runaway => Ok(Some(Disposition::Runaway { on: name })),
+        Outcome::Killed | Outcome::Waited => Ok(Some(
             match confirm(
                 session,
                 &narrowed(request, measured, &result.target),
                 judging.controls,
                 watch,
             )? {
-                Ok(()) if result.outcome == Outcome::TimedOut => Disposition::TimedOut { on: name },
+                Ok(()) if result.outcome == Outcome::Waited => Disposition::Waited { on: name },
                 Ok(()) => Disposition::Killed { by: name },
                 Err(why) => Disposition::Unconfirmed { on: name, why },
             },
@@ -956,7 +1002,7 @@ fn record_exec(watch: Watch<'_>, ran: &Ran<'_>) {
 /// Whether an expired budget has a quiet measurement coming to it.
 #[must_use]
 pub const fn quiet_measurement_due(outcome: Outcome, cancelled: bool) -> bool {
-    matches!(outcome, Outcome::TimedOut) && !cancelled
+    matches!(outcome, Outcome::Waited) && !cancelled
 }
 
 /// The request the pair confirmation is made with: the one that ran, or the target the package suite found the answer in.

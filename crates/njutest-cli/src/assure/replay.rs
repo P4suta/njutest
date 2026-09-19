@@ -135,7 +135,10 @@ pub fn replay(
 /// Whether the finding is still what the tests say.
 fn observed(kind: FindingKind, outcome: rust_mutants::outcome::Outcome) -> Outcome {
     let still = match kind {
-        FindingKind::Timeout => outcome == rust_mutants::outcome::Outcome::TimedOut,
+        FindingKind::Timeout => matches!(
+            outcome,
+            rust_mutants::outcome::Outcome::Waited | rust_mutants::outcome::Outcome::Runaway
+        ),
         FindingKind::BuildFailure
         | FindingKind::FailingTest
         | FindingKind::TargetMissing

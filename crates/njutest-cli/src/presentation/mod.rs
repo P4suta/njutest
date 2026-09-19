@@ -58,8 +58,10 @@ pub struct Headline {
     pub survived: u32,
     /// How many nothing reached.
     pub unreached: u32,
-    /// How many ran out of time rather than answering, which is not a gap and is not a pass.
-    pub timed_out: u32,
+    /// How many stopped the program terminating, which a count established and no test asserted.
+    pub runaway: u32,
+    /// How many this machine stopped waiting for, which is not a gap and is not a pass.
+    pub waited: u32,
     /// How long the whole run took.
     pub duration_ms: u64,
     /// Where the run's own record was kept, from the project's root.
@@ -282,7 +284,12 @@ pub fn label(rule: &str, decided: &crate::report::Decided) -> String {
             format!("{rule} here, and a proof says no test could tell the difference")
         }
         Decided::CompileRejected => format!("{rule} here, and the compiler refused it"),
-        Decided::TimedOut { on } => format!("{rule} here, and {on} ran out of time"),
+        Decided::Runaway { on } => {
+            format!("{rule} here, and it never finished under {on}")
+        }
+        Decided::Waited { on } => {
+            format!("{rule} here, and this machine stopped waiting for {on}")
+        }
         Decided::Unconfirmed { on } => {
             format!("{rule} here, and {on} did not answer the same way twice")
         }

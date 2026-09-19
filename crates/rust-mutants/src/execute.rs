@@ -311,15 +311,33 @@ fn parse_summary_line(line: &str) -> Option<Summary> {
     (seen > 0).then_some(summary)
 }
 
+/// How a test process came to an end, which is one thing and not four flags.
+///
+/// Four booleans and an exit code could say a process was both unstarted and
+/// killed by a clock, and the precedence that made that impossible lived in
+/// the order of a chain of `if`s. A process ends exactly one way, so the type
+/// says so and the policy reading it is a total match rather than a sequence
+/// somebody has to keep in the right order (ADR 0023).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stopped {
+    /// The process could not be started or supervised at all.
+    Unstarted,
+    /// This machine stopped waiting for it, which is a fact about the machine.
+    Waited,
+    /// Its guard was taken more times than the run allowed, which is a number every machine agrees on.
+    Runaway,
+    /// It ended on its own, with this status or [`EXIT_CODE_UNAVAILABLE`].
+    Ran {
+        /// What it exited with.
+        code: i32,
+    },
+}
+
 /// What a run of a test binary looked like from outside, which is all the outcome policy reads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Observation {
-    /// The process could not be started or supervised at all.
-    pub unstarted: bool,
-    /// The timeout fired and the tree was killed.
-    pub timed_out: bool,
-    /// The exit status, or [`EXIT_CODE_UNAVAILABLE`].
-    pub exit_code: i32,
+    /// How it came to an end.
+    pub stopped: Stopped,
     /// Whether the runtime said the binary was built from another catalog, which is how that is recognised through a process that did not exit with it.
     pub stale_catalog: bool,
 }
@@ -329,10 +347,31 @@ impl Observation {
     #[must_use]
     pub fn of(result: &RunResult) -> Self {
         Self {
-            unstarted: result.error.is_some(),
-            timed_out: result.timed_out,
-            exit_code: result.exit_code,
+            stopped: Stopped::of(result),
             stale_catalog: said(&result.output, crate::instrument::STALE_CATALOG_MARKER),
+        }
+    }
+}
+
+impl Stopped {
+    /// How a supervised run came to an end.
+    ///
+    /// The order here is the one place the precedence lives: a process that
+    /// could not be supervised tells us nothing about its status, and a clock
+    /// that fired took the tree down before any status was its own.
+    #[must_use]
+    pub fn of(result: &RunResult) -> Self {
+        if result.error.is_some() {
+            return Self::Unstarted;
+        }
+        if result.timed_out {
+            return Self::Waited;
+        }
+        if result.exit_code == RUNAWAY_EXIT {
+            return Self::Runaway;
+        }
+        Self::Ran {
+            code: result.exit_code,
         }
     }
 }
@@ -347,22 +386,19 @@ fn said(output: &[u8], needle: &str) -> bool {
 /// What one run of a test binary establishes about the mutant that was active during it. See the module documentation for the order.
 #[must_use]
 pub const fn outcome_of(observed: Observation, summary: Option<Summary>, harness: bool) -> Outcome {
-    if observed.unstarted {
-        return Outcome::Errored;
-    }
-    if observed.timed_out {
-        return Outcome::TimedOut;
-    }
-    if observed.exit_code == EXIT_CODE_UNAVAILABLE {
+    let code = match observed.stopped {
+        Stopped::Unstarted => return Outcome::Errored,
+        Stopped::Waited => return Outcome::Waited,
+        Stopped::Runaway => return Outcome::Runaway,
+        Stopped::Ran { code } => code,
+    };
+    if code == EXIT_CODE_UNAVAILABLE {
         return Outcome::NotRun;
     }
-    if observed.exit_code == STALE_CATALOG_EXIT || observed.stale_catalog {
+    if code == STALE_CATALOG_EXIT || observed.stale_catalog {
         return Outcome::Errored;
     }
-    if observed.exit_code == RUNAWAY_EXIT {
-        return Outcome::TimedOut;
-    }
-    if observed.exit_code != 0 {
+    if code != 0 {
         return Outcome::Killed;
     }
     if !harness {

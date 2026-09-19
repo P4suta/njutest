@@ -141,7 +141,7 @@ fn a_slow_mutant_does_not_delay_the_delivery_of_the_ones_that_finished() {
     let timed_out = finished
         .judged
         .iter()
-        .find(|one| one.outcome == Outcome::TimedOut)
+        .find(|one| one.outcome == Outcome::Waited)
         .expect("the mutation that never returns");
     let at = delivered
         .order

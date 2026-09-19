@@ -397,6 +397,39 @@ crate, and an integration test is its own crate. A reviewer reading the file
 had been told those were somebody's choice. The ledger is three lines now, the
 count is in the pass line, and a file of three is one somebody opens.
 
+**A capability with a test is a capability somebody believed shipped.**
+`Interposer::during()` had a test, passed it, and production never called it.
+The test measured the function correctly; the absence of a caller made a
+correct measurement say nothing about the product. This is the apparatus class
+one layer further out — not a run concluding from how it measured, but a suite
+concluding about a product from a measurement of a part nothing uses. The
+milestone that named the gap named it in the right place, and the capability
+filling it was already there.
+
+A gate for it does not exist, and the reason is worth more than the gate would
+be. Of 718 public functions in production source, 125 are named only from
+tests — and most of those are not findings, because `rust-mutants` is a library
+whose callers are not in this tree. The predicate that separates them is *a
+public function in a crate whose public surface is incidental*, which is a fact
+about the crate and is written down nowhere.
+
+**A gate cannot ask a question whose premise nobody wrote down.** Twice in one
+day: *could this arm have been left out* needed to know which of our enums say
+they may grow and which crate reads them, and *is this crate's public surface
+an API* needs somebody to say so per crate. Neither is computable from the
+source, both are declarable, and in both cases the first instinct was a
+cleverer walk. A declaration in `Cargo.toml` has the property the ledger has —
+the cost lands on whoever is creating the crate, at the moment the decision is
+being made, rather than on a reader much later who has to reconstruct it.
+
+**A file that is a projection of the tree has no meaningful textual merge.**
+Every conflict in the catch-all ledger today was resolved by regenerating it
+rather than by merging two lists, because two projections of two different
+trees are not two versions of one document. `git` cannot know that. Where a
+ledger is derivable, the command that regenerates it is the conflict
+resolution, and hand-merging it is a way of writing down an answer no tree
+supports.
+
 **Nothing here is a budget.** No threshold, no cutoff, no "more than N is
 suspicious" ([ADR 0004](0004-proof-layers-not-budgets.md)). A finding either
 rests on what the run established or it is not raised.

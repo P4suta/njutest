@@ -614,11 +614,12 @@ impl Config {
             };
             if !matches!(
                 outcome,
-                Outcome::Survived | Outcome::Killed | Outcome::TimedOut
+                Outcome::Survived | Outcome::Killed | Outcome::Runaway
             ) {
                 return Err(invalid(format!(
                     "the expectation for {name:?} expects {}, which is not an outcome a run \
-                     confirms; write survived, killed, or timed_out",
+                     confirms; write survived, killed, or runaway. A run this machine stopped \
+                     waiting for establishes nothing, so nothing can expect it",
                     outcome.name()
                 )));
             }

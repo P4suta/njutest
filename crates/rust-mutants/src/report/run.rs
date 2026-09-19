@@ -97,8 +97,10 @@ pub struct Accounting {
     pub killed: Of,
     /// How many every test passed on.
     pub survived: Of,
-    /// How many exceeded the budget twice.
-    pub timed_out: Of,
+    /// How many took their guard more times than the run allowed, twice over.
+    pub runaway: Of,
+    /// How many this machine stopped waiting for, twice over.
+    pub waited: Of,
     /// How many the run could not decide.
     pub inconclusive: Of,
     /// How many the harness itself failed on.
@@ -352,7 +354,8 @@ pub fn document(
             executed: tally.executed.into(),
             killed: tally.killed.into(),
             survived: tally.survived.into(),
-            timed_out: tally.timed_out.into(),
+            runaway: tally.runaway.into(),
+            waited: tally.waited.into(),
             inconclusive: tally.inconclusive.into(),
             errored: tally.errored.into(),
             not_run: tally.not_run.into(),
@@ -645,7 +648,8 @@ fn accounting_of(mutants: &[RunMutantDocument], first: &RunDocument) -> Accounti
         let slot = match one.outcome.as_str() {
             "killed" => &mut counted.killed,
             "survived" => &mut counted.survived,
-            "timed_out" => &mut counted.timed_out,
+            "runaway" => &mut counted.runaway,
+            "waited" => &mut counted.waited,
             "inconclusive" => &mut counted.inconclusive,
             "not_run" => &mut counted.not_run,
             _ => &mut counted.errored,
@@ -669,7 +673,7 @@ fn score_of(accounting: &Accounting) -> Option<ScoreDocument> {
     let detected = accounting
         .killed
         .count()
-        .saturating_add(accounting.timed_out.count());
+        .saturating_add(accounting.runaway.count());
     let decided = detected.saturating_add(accounting.survived.count());
     (decided > 0).then(|| ScoreDocument {
         detected,

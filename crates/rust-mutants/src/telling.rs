@@ -127,19 +127,15 @@ impl Style {
     /// Exhaustive on purpose: an outcome added later is one somebody is made
     /// to place, rather than one that inherits whatever the last arm said.
     ///
-    /// `TimedOut` here is a *confirmed* timeout — over the budget, retried
-    /// alone, over it again — which this engine counts as a detection, so it
-    /// is painted like one. njutest's assurance layer spells a differently
-    /// shaped fact with the same English word: a bound that expired, which
-    /// establishes nothing. Two facts, two products, and the reason this
-    /// function is about `rust_mutants::outcome::Outcome` and answers for
-    /// nothing else.
+    /// Painted from what caught the mutant rather than from a list of
+    /// variants, so a new way of catching one cannot be painted as a gap by
+    /// whoever forgets to add it here.
     #[must_use]
     pub const fn of(outcome: Outcome) -> Self {
         match outcome {
-            Outcome::Killed | Outcome::TimedOut => Self::Well,
+            Outcome::Killed | Outcome::Runaway => Self::Well,
             Outcome::Survived => Self::Gap,
-            Outcome::Inconclusive | Outcome::Errored => Self::Limitation,
+            Outcome::Waited | Outcome::Inconclusive | Outcome::Errored => Self::Limitation,
             Outcome::NotRun => Self::Frame,
         }
     }

@@ -40,6 +40,19 @@ pub enum Outcome {
         /// That target's behaviour key.
         key: String,
     },
+    /// It stopped the program terminating while this target ran it, and that target had this behaviour key.
+    ///
+    /// Kept for the same reason a kill is: a count every machine agrees on is
+    /// a claim about this tree, so the next run of a tree these targets still
+    /// behave the same in may believe it. A bound expiring is not kept, and
+    /// must not be — that is a fact about the machine that measured, and the
+    /// next machine is not that one (ADR 0023).
+    Runaway {
+        /// The target it was running under.
+        target: String,
+        /// That target's behaviour key.
+        key: String,
+    },
     /// Every target that could notice it passed with it active. The claim is about all of them, so all of them are named.
     Survived {
         /// Every target the run routed to it, with the behaviour key each had.
@@ -137,7 +150,7 @@ impl Record {
         standing: &Standing,
     ) -> Result<(), Refusal> {
         match &self.outcome {
-            Outcome::Killed { target, key } => {
+            Outcome::Killed { target, key } | Outcome::Runaway { target, key } => {
                 if !reaching.contains(target) {
                     return Err(Refusal::NotRouted {
                         target: target.clone(),

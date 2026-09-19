@@ -265,11 +265,12 @@ fn a_resumed_run_carries_the_two_facts_a_checkpoint_may_hold_and_reads_nothing_e
     );
     assert_eq!(
         inherited(&expired),
-        Some(Disposition::TimedOut {
+        Some(Disposition::Runaway {
             on: "pkg/lib/pkg one".to_owned()
         }),
-        "and a run that gave up on the clock is the same kind of fact about the same \
-         tree, which is why both are saved and nothing else is"
+        "a mutation that stopped the program terminating is the same kind of fact about the \
+         same tree as a kill, which is why both are saved. A bound expiring is not: that is \
+         a fact about the machine that measured, and the next machine is not that one"
     );
 
     for disposition in [

@@ -7,8 +7,8 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use rust_mutants::execute::{
-    Context, ExecRequest, Lines, Observation, Summary, TargetKind, TestTarget, environment,
-    outcome_of, parse_lines, parse_summary, target_id,
+    Context, ExecRequest, Lines, Observation, Stopped, Summary, TargetKind, TestTarget,
+    environment, outcome_of, parse_lines, parse_summary, target_id,
 };
 use rust_mutants::outcome::Outcome;
 use rust_mutants::runner::EXIT_CODE_UNAVAILABLE;
@@ -98,9 +98,14 @@ fn a_summary_counts_what_ran() {
 
 const fn result(exit_code: i32) -> Observation {
     Observation {
-        unstarted: false,
-        timed_out: false,
-        exit_code,
+        stopped: Stopped::Ran { code: exit_code },
+        stale_catalog: false,
+    }
+}
+
+const fn stopped(stopped: Stopped) -> Observation {
+    Observation {
+        stopped,
         stale_catalog: false,
     }
 }
@@ -118,13 +123,22 @@ const fn green() -> Summary {
 
 #[test]
 fn the_exit_status_is_read_in_one_fixed_order() {
-    let mut failed = result(EXIT_CODE_UNAVAILABLE);
-    failed.unstarted = true;
-    assert_eq!(outcome_of(failed, None, true), Outcome::Errored);
+    assert_eq!(
+        outcome_of(stopped(Stopped::Unstarted), None, true),
+        Outcome::Errored
+    );
 
-    let mut timed_out = result(EXIT_CODE_UNAVAILABLE);
-    timed_out.timed_out = true;
-    assert_eq!(outcome_of(timed_out, None, true), Outcome::TimedOut);
+    assert_eq!(
+        outcome_of(stopped(Stopped::Waited), None, true),
+        Outcome::Waited,
+        "a bound expiring establishes that this machine stopped waiting, which is not a \
+         thing the tests did"
+    );
+
+    assert_eq!(
+        outcome_of(stopped(Stopped::Runaway), None, true),
+        Outcome::Runaway
+    );
 
     assert_eq!(
         outcome_of(result(EXIT_CODE_UNAVAILABLE), None, true),
@@ -470,9 +484,7 @@ fn a_runtime_that_named_another_catalog_is_an_error_however_the_process_exited()
         rust_mutants::instrument::STALE_CATALOG_MARKER
     );
     let observed = Observation {
-        unstarted: false,
-        timed_out: false,
-        exit_code: 101,
+        stopped: Stopped::Ran { code: 101 },
         stale_catalog: said.contains(rust_mutants::instrument::STALE_CATALOG_MARKER),
     };
 
@@ -688,9 +700,7 @@ fn a_custom_harness_that_exits_zero_survived_and_one_that_exits_nonzero_killed()
     let ran = |exit_code: i32| {
         outcome_of(
             Observation {
-                unstarted: false,
-                timed_out: false,
-                exit_code,
+                stopped: Stopped::Ran { code: exit_code },
                 stale_catalog: false,
             },
             None,
@@ -711,9 +721,7 @@ fn a_custom_harness_that_exits_zero_survived_and_one_that_exits_nonzero_killed()
 fn a_libtest_target_that_printed_no_summary_is_undecided_rather_than_survived() {
     let silent = outcome_of(
         Observation {
-            unstarted: false,
-            timed_out: false,
-            exit_code: 0,
+            stopped: Stopped::Ran { code: 0 },
             stale_catalog: false,
         },
         None,
@@ -738,7 +746,16 @@ fn silence_is_decided_by_the_harness() {
         ),
         (Outcome::Survived, true, "a test ran and passed"),
         (Outcome::Killed, true, "a target that failed"),
-        (Outcome::TimedOut, true, "a target that never returned"),
+        (
+            Outcome::Runaway,
+            true,
+            "a target whose guard was taken past the allowance",
+        ),
+        (
+            Outcome::Waited,
+            true,
+            "a target this machine stopped waiting for",
+        ),
         (Outcome::Errored, true, "a harness that failed"),
         (Outcome::NotRun, true, "a target nothing reached"),
     ] {

@@ -260,9 +260,13 @@ fn counted(parts: &[Report], mutants: &[super::MutantRecord]) -> MutantAccountin
                     counts.reused_killed = counts.reused_killed.saturating_add(1);
                 }
             }
-            Outcome::TimedOut => {
+            Outcome::Runaway => {
                 *executed = executed.saturating_add(1);
-                counts.timed_out = counts.timed_out.saturating_add(1);
+                counts.runaway = counts.runaway.saturating_add(1);
+            }
+            Outcome::Waited => {
+                *executed = executed.saturating_add(1);
+                counts.waited = counts.waited.saturating_add(1);
             }
             Outcome::Survived => {
                 *executed = executed.saturating_add(1);

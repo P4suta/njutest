@@ -243,11 +243,18 @@ fn a_target_that_did_not_pass_says_what_a_reader_acts_on() {
             Some("the target failed"),
         ),
         (
-            Outcome::TimedOut,
+            Outcome::Runaway,
             0,
             "",
             TargetStatus::Failed,
-            Some("the target ran out of time"),
+            Some("the target took its guard past the run's allowance"),
+        ),
+        (
+            Outcome::Waited,
+            0,
+            "",
+            TargetStatus::Failed,
+            Some("this machine stopped waiting for the target"),
         ),
         (
             Outcome::NotRun,

@@ -97,7 +97,8 @@ fn headline(verdict: Verdict, killed: u32, survived: u32, unreached: u32) -> Hea
         killed,
         survived,
         unreached,
-        timed_out: 0,
+        runaway: 0,
+        waited: 0,
         duration_ms: 1911,
         kept: kept("20260101T000000Z-aaaaaa"),
     }
@@ -220,7 +221,7 @@ fn cases() -> Vec<(&'static str, Told)> {
                     ],
                 )],
                 Headline {
-                    timed_out: 1,
+                    waited: 1,
                     ..headline(Verdict::Insufficient, 7, 2, 1)
                 },
                 Vec::new(),

@@ -565,8 +565,11 @@ pub struct MutantAccounting {
     pub killed: u32,
     /// How many nothing noticed.
     pub survived: u32,
-    /// How many timed out, which counts as noticed.
-    pub timed_out: u32,
+    /// How many stopped the program terminating, which counts as noticed.
+    pub runaway: u32,
+    /// How many this machine stopped waiting for, which counts as nothing.
+    #[serde(default)]
+    pub waited: u32,
     /// How many no test could reach.
     pub unreached: u32,
     /// How many the compiler renders identically to the code they mutate, which no test could have noticed.
@@ -665,6 +668,8 @@ pub enum Decision {
     Unnoticed,
     /// Nothing ran at all.
     Unreached,
+    /// The mutation stopped the program terminating, and a count said so. No test asserted anything.
+    Steps,
     /// A bound expired before anything finished, which establishes nothing about the mutation.
     Waited,
     /// Nothing could be measured: a harness that would not start, or a pair that did not agree.
@@ -673,9 +678,10 @@ pub enum Decision {
 
 impl Decision {
     /// Every way a mutation can be decided, in the order a reader adds them up.
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Types,
         Self::Tests,
+        Self::Steps,
         Self::Proved,
         Self::Unnoticed,
         Self::Unreached,
@@ -702,8 +708,9 @@ impl Decision {
             Self::Unnoticed => 2,
             Self::Unreached => 3,
             Self::Types => 4,
-            Self::Tests => 5,
-            Self::Proved => 6,
+            Self::Steps => 5,
+            Self::Tests => 6,
+            Self::Proved => 7,
         }
     }
 
@@ -725,7 +732,7 @@ impl Decision {
             Self::Unreached => Some(Blind::Unreached),
             Self::Waited => Some(Blind::Waited),
             Self::Errored => Some(Blind::Errored),
-            Self::Types | Self::Tests | Self::Proved => None,
+            Self::Types | Self::Tests | Self::Steps | Self::Proved => None,
         }
     }
 
@@ -735,6 +742,7 @@ impl Decision {
         match self {
             Self::Types => "types",
             Self::Tests => "tests",
+            Self::Steps => "steps",
             Self::Proved => "proved",
             Self::Unnoticed => "unnoticed",
             Self::Unreached => "unreached",
@@ -758,9 +766,10 @@ pub enum Outcome {
     CompileRejected,
     /// A test noticed.
     Killed,
-    /// A bound expired before anything finished.
-    #[serde(rename = "timed_out")]
-    TimedOut,
+    /// The mutation stopped the program terminating, and a count every machine agrees on says so.
+    Runaway,
+    /// A bound expired before anything finished, which is a fact about the machine that watched.
+    Waited,
     /// Every test that could notice ran and none did.
     Survived,
     /// Nothing ran it.
@@ -775,10 +784,11 @@ pub enum Outcome {
 
 impl Outcome {
     /// Every outcome a report records.
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::CompileRejected,
         Self::Killed,
-        Self::TimedOut,
+        Self::Runaway,
+        Self::Waited,
         Self::Survived,
         Self::Unreached,
         Self::Equivalent,
@@ -792,7 +802,8 @@ impl Outcome {
         match self {
             Self::CompileRejected => "compile-rejected",
             Self::Killed => "killed",
-            Self::TimedOut => "timed_out",
+            Self::Runaway => "runaway",
+            Self::Waited => "waited",
             Self::Survived => "survived",
             Self::Unreached => "unreached",
             Self::Equivalent => "equivalent",
@@ -809,18 +820,18 @@ impl Outcome {
 
     /// Who decided a mutation this outcome is recorded for.
     ///
-    /// A timeout is `Waited` rather than `Tests`. The engine is right to call
-    /// it a detection — the process hung with the mutant active — but njutest
-    /// measures something else: a bound is a budget, and ADR 0004 says a
-    /// result resting on a budget is not a proof, which is why a timeout has
-    /// its own column and its own finding saying an expired budget establishes
-    /// nothing about the mutation.
+    /// `Runaway` is `Steps` and never `Tests`: no test asserted anything, and
+    /// a suite with no assertions at all would otherwise collect credit for
+    /// every mutation that loops forever. `Waited` is neither — a bound is a
+    /// budget, ADR 0004 says a result resting on one is not a proof, and what
+    /// the run established is that this machine stopped watching.
     #[must_use]
     pub const fn decision(self) -> Decision {
         match self {
             Self::CompileRejected => Decision::Types,
             Self::Killed => Decision::Tests,
-            Self::TimedOut => Decision::Waited,
+            Self::Runaway => Decision::Steps,
+            Self::Waited => Decision::Waited,
             Self::Survived => Decision::Unnoticed,
             Self::Unreached => Decision::Unreached,
             Self::Equivalent => Decision::Proved,
@@ -912,8 +923,13 @@ pub enum Decided {
         /// The target that noticed.
         by: String,
     },
+    /// It stopped the program terminating, and a count said so while this target ran it.
+    Runaway {
+        /// The target it was running under, which is where to go and look rather than what noticed.
+        on: String,
+    },
     /// A bound expired before anything finished, on this target.
-    TimedOut {
+    Waited {
         /// The target it was running against.
         on: String,
     },
@@ -936,13 +952,14 @@ pub enum Decided {
 }
 
 impl Decided {
-    /// Which of the eight this is, without who it was.
+    /// Which of the nine this is, without who it was.
     #[must_use]
     pub const fn outcome(&self) -> Outcome {
         match self {
             Self::CompileRejected => Outcome::CompileRejected,
             Self::Killed { .. } => Outcome::Killed,
-            Self::TimedOut { .. } => Outcome::TimedOut,
+            Self::Runaway { .. } => Outcome::Runaway,
+            Self::Waited { .. } => Outcome::Waited,
             Self::Survived => Outcome::Survived,
             Self::Unreached => Outcome::Unreached,
             Self::Equivalent => Outcome::Equivalent,
@@ -968,7 +985,10 @@ impl Decided {
     pub fn decided_by(&self) -> Option<&str> {
         match self {
             Self::Killed { by } => Some(by),
-            Self::TimedOut { on } | Self::Unconfirmed { on } | Self::Errored { on } => Some(on),
+            Self::Runaway { on }
+            | Self::Waited { on }
+            | Self::Unconfirmed { on }
+            | Self::Errored { on } => Some(on),
             Self::CompileRejected | Self::Survived | Self::Unreached | Self::Equivalent => None,
         }
     }
@@ -981,14 +1001,17 @@ impl Decided {
     /// `on` produces English either way; it produces the wrong string only
     /// here.
     #[must_use]
-    pub fn every() -> [Self; 8] {
+    pub fn every() -> [Self; 9] {
         [
             Self::CompileRejected,
             Self::Killed {
                 by: "killed-by".to_owned(),
             },
-            Self::TimedOut {
-                on: "timed-out-on".to_owned(),
+            Self::Runaway {
+                on: "runaway-on".to_owned(),
+            },
+            Self::Waited {
+                on: "waited-on".to_owned(),
             },
             Self::Survived,
             Self::Unreached,
@@ -1010,13 +1033,16 @@ impl Decided {
     /// own name, which is how a collapsed sentence survives a distinctness
     /// test built on [`Self::every`].
     #[must_use]
-    pub fn every_against(target: &str) -> [Self; 8] {
+    pub fn every_against(target: &str) -> [Self; 9] {
         [
             Self::CompileRejected,
             Self::Killed {
                 by: target.to_owned(),
             },
-            Self::TimedOut {
+            Self::Runaway {
+                on: target.to_owned(),
+            },
+            Self::Waited {
                 on: target.to_owned(),
             },
             Self::Survived,
@@ -1041,7 +1067,8 @@ impl Decided {
     pub fn of(outcome: Outcome, decided_by: Option<String>) -> Option<Self> {
         match (outcome, decided_by) {
             (Outcome::Killed, Some(by)) => Some(Self::Killed { by }),
-            (Outcome::TimedOut, Some(on)) => Some(Self::TimedOut { on }),
+            (Outcome::Runaway, Some(on)) => Some(Self::Runaway { on }),
+            (Outcome::Waited, Some(on)) => Some(Self::Waited { on }),
             (Outcome::Unconfirmed, Some(on)) => Some(Self::Unconfirmed { on }),
             (Outcome::Errored, Some(on)) => Some(Self::Errored { on }),
             (Outcome::CompileRejected, None) => Some(Self::CompileRejected),
@@ -1050,7 +1077,8 @@ impl Decided {
             (Outcome::Equivalent, None) => Some(Self::Equivalent),
             (
                 Outcome::Killed
-                | Outcome::TimedOut
+                | Outcome::Runaway
+                | Outcome::Waited
                 | Outcome::Unconfirmed
                 | Outcome::Errored
                 | Outcome::CompileRejected
@@ -1205,8 +1233,10 @@ pub struct SeamRecord {
 pub struct ObserverAccounting {
     /// How many the compiler refused, which is the type system noticing.
     pub types: u32,
-    /// How many a test noticed, a timeout among them.
+    /// How many a test noticed.
     pub tests: u32,
+    /// How many stopped the program terminating, which a count established and no test asserted.
+    pub steps: u32,
     /// How many no test of any kind could have noticed, proved rather than run.
     pub proved: u32,
     /// How many ran with nothing noticing.
@@ -1225,6 +1255,7 @@ impl ObserverAccounting {
         let column = match decision {
             Decision::Types => &mut self.types,
             Decision::Tests => &mut self.tests,
+            Decision::Steps => &mut self.steps,
             Decision::Proved => &mut self.proved,
             Decision::Unnoticed => &mut self.unnoticed,
             Decision::Unreached => &mut self.unreached,

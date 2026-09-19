@@ -89,7 +89,7 @@ fn a_timeout_that_does_not_repeat_is_inconclusive_and_one_that_does_is_timed_out
     let stopped = session
         .judge(&Request::new(never), &quiet, &cancel)
         .expect("judge");
-    assert_eq!(stopped.result.outcome, Outcome::TimedOut);
+    assert_eq!(stopped.result.outcome, Outcome::Waited);
     assert!(
         stopped.retried,
         "a timeout is believed only when it repeats"

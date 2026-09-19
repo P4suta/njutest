@@ -24,7 +24,8 @@ fn came_to(decided: &Decided) -> String {
         Decided::Unreached => "nothing executed it".to_owned(),
         Decided::Equivalent => "a proof says no test could tell the difference".to_owned(),
         Decided::CompileRejected => "the compiler refused it".to_owned(),
-        Decided::TimedOut { on } => format!("{on} ran out of time"),
+        Decided::Runaway { on } => format!("it never finished under {on}"),
+        Decided::Waited { on } => format!("this machine stopped waiting for {on}"),
         Decided::Unconfirmed { on } => format!("{on} did not answer the same way twice"),
         Decided::Errored { on } => format!("{on} could not be measured"),
     }

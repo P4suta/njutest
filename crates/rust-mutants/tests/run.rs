@@ -54,25 +54,32 @@ fn the_tally_is_the_outcomes_folded_and_nothing_else() {
         judged(0, Outcome::Killed),
         judged(1, Outcome::Killed),
         judged(2, Outcome::Survived),
-        judged(3, Outcome::TimedOut),
+        judged(3, Outcome::Runaway),
         judged(4, Outcome::Inconclusive),
         judged(5, Outcome::Errored),
         judged(6, Outcome::NotRun),
+        judged(7, Outcome::Waited),
     ]);
     let tally = run.tally();
-    assert_eq!(tally.cataloged, 7);
+    assert_eq!(tally.cataloged, 8);
     assert_eq!(tally.killed, 2);
     assert_eq!(tally.survived, 1);
-    assert_eq!(tally.timed_out, 1);
+    assert_eq!(tally.runaway, 1);
+    assert_eq!(tally.waited, 1);
     assert_eq!(tally.inconclusive, 1);
     assert_eq!(tally.errored, 1);
     assert_eq!(tally.not_run, 1);
     assert_eq!(
-        tally.executed, 6,
+        tally.executed, 7,
         "everything but what never ran was executed"
     );
     assert_eq!(
-        tally.killed + tally.survived + tally.timed_out + tally.inconclusive + tally.errored,
+        tally.killed
+            + tally.survived
+            + tally.runaway
+            + tally.waited
+            + tally.inconclusive
+            + tally.errored,
         tally.executed,
         "the executed mutants are exactly the ones with an outcome"
     );
@@ -82,15 +89,18 @@ fn the_tally_is_the_outcomes_folded_and_nothing_else() {
 fn the_score_is_what_was_detected_over_what_was_decided() {
     let run = of(vec![
         judged(0, Outcome::Killed),
-        judged(1, Outcome::TimedOut),
+        judged(1, Outcome::Runaway),
         judged(2, Outcome::Survived),
         judged(3, Outcome::Inconclusive),
+        judged(4, Outcome::Waited),
     ]);
     let score = run.score().expect("three decided mutants");
     assert_eq!(score.detected, 2);
     assert_eq!(
         score.decided, 3,
-        "an inconclusive mutant is not evidence either way"
+        "an inconclusive mutant is not evidence either way, and neither is one this machine \
+         stopped waiting for: a score that counted it would be a different number on a \
+         quieter machine"
     );
     assert!((score.value - 2.0 / 3.0).abs() < 1e-12, "{score:?}");
 
@@ -192,7 +202,7 @@ fn the_exit_code_says_what_the_run_established_and_nothing_more() {
     assert_eq!(
         of(vec![
             judged(0, Outcome::Killed),
-            judged(1, Outcome::TimedOut)
+            judged(1, Outcome::Runaway)
         ])
         .exit_code(),
         0,
@@ -440,7 +450,7 @@ fn the_outcomes_a_clean_run_says_nothing_about_are_each_left_out_for_their_own_r
     let rows = vec![
         accounted,
         judged(2, Outcome::Killed),
-        judged(3, Outcome::TimedOut),
+        judged(3, Outcome::Runaway),
         unrun(4, NotRunReason::Unselected),
         unrun(5, NotRunReason::StoppedEarly),
         judged(6, Outcome::Survived),
@@ -457,12 +467,7 @@ fn the_outcomes_a_clean_run_says_nothing_about_are_each_left_out_for_their_own_r
     );
     let tally = run.tally();
     assert_eq!(
-        (
-            tally.expected,
-            tally.killed,
-            tally.timed_out,
-            tally.survived
-        ),
+        (tally.expected, tally.killed, tally.runaway, tally.survived),
         (1, 1, 1, 2),
         "and the columns count them where a reader looks: {tally:?}"
     );

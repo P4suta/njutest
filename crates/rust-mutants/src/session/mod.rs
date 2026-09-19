@@ -1028,34 +1028,34 @@ impl Session {
         let ran = quiet.shared(|| self.execute(request, running(false), cancel))?;
         let (first, mut asked) = (ran.taken, ran.asked);
         let (timeout, timeout_source) = self.timeout_for(request, &first.target);
-        let judgement =
-            if first.outcome != crate::outcome::Outcome::TimedOut || cancel.is_cancelled() {
-                Judgement {
-                    result: first.clone(),
-                    attempts: vec![first],
-                    asked,
-                    retried: false,
-                    timeout,
-                    timeout_source,
-                    route,
-                }
-            } else {
-                let repeated = quiet.alone(|| self.execute(request, running(true), cancel))?;
-                let mut again = repeated.taken;
-                asked.extend(repeated.asked);
-                if again.outcome != crate::outcome::Outcome::TimedOut && !again.outcome.detected() {
-                    again.outcome = crate::outcome::Outcome::Inconclusive;
-                }
-                Judgement {
-                    result: again.clone(),
-                    attempts: vec![first, again],
-                    asked,
-                    retried: true,
-                    timeout,
-                    timeout_source,
-                    route,
-                }
-            };
+        let judgement = if first.outcome != crate::outcome::Outcome::Waited || cancel.is_cancelled()
+        {
+            Judgement {
+                result: first.clone(),
+                attempts: vec![first],
+                asked,
+                retried: false,
+                timeout,
+                timeout_source,
+                route,
+            }
+        } else {
+            let repeated = quiet.alone(|| self.execute(request, running(true), cancel))?;
+            let mut again = repeated.taken;
+            asked.extend(repeated.asked);
+            if again.outcome != crate::outcome::Outcome::Waited && !again.outcome.detected() {
+                again.outcome = crate::outcome::Outcome::Inconclusive;
+            }
+            Judgement {
+                result: again.clone(),
+                attempts: vec![first, again],
+                asked,
+                retried: true,
+                timeout,
+                timeout_source,
+                route,
+            }
+        };
         self.workspace.trace.route(judgement.route.record(
             mutant,
             judgement.route.executed(

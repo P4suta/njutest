@@ -188,7 +188,7 @@ fn what_is_recorded_is_what_the_next_run_can_check_and_nothing_else() {
     for (mutant, disposition) in [
         (
             "m3",
-            Disposition::TimedOut {
+            Disposition::Runaway {
                 on: "core/lib/core".to_owned(),
             },
         ),

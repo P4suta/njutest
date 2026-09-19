@@ -749,8 +749,9 @@ impl Journal {
     fn keep_mutant(&mut self, judged: &mutation::Judged) {
         let (disposition, by) = match &judged.disposition {
             mutation::Disposition::Killed { by } => ("killed", by.clone()),
-            mutation::Disposition::TimedOut { on } => ("timed_out", on.clone()),
-            mutation::Disposition::Rejected { .. }
+            mutation::Disposition::Runaway { on } => ("runaway", on.clone()),
+            mutation::Disposition::Waited { .. }
+            | mutation::Disposition::Rejected { .. }
             | mutation::Disposition::Survived { .. }
             | mutation::Disposition::Unreached
             | mutation::Disposition::Equivalent { .. }

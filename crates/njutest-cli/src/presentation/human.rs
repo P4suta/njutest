@@ -379,20 +379,29 @@ fn headline(out: &mut String, told: &Told, terminal: Terminal) {
         killed,
         survived,
         unreached,
-        timed_out,
+        runaway,
+        waited,
         duration_ms,
         kept,
         ..
     } = &told.headline;
     let seconds = as_secs(*duration_ms);
-    let waited = if *timed_out == 0 {
+    let ran_away = if *runaway == 0 {
         String::new()
     } else {
-        format!("{timed_out} timed out  ")
+        format!("{runaway} never finished  ")
+    };
+    let stopped_waiting = if *waited == 0 {
+        String::new()
+    } else {
+        format!("{waited} not waited out  ")
     };
     let counted = telling.painted(
         Style::Frame,
-        &format!("{killed} killed  {survived} survived  {unreached} unreached  {waited}{seconds}"),
+        &format!(
+            "{killed} killed  {survived} survived  {unreached} unreached  \
+             {ran_away}{stopped_waiting}{seconds}"
+        ),
     );
     headed(
         out,
