@@ -333,6 +333,34 @@ whoever adds the next arm. Held apart, `Blindness::replay_proves` exists and
 `replay` is the one that takes a `Blindness` — and the wrong briefing cannot
 be written rather than being caught in review.
 
+**Choose the key that survives what the reader just did.** `watch` compares
+two rounds by naming each gap and asking which names went away. The obvious
+name is the locator a reader types — `path:item:rule@line` — and it is the
+wrong one, because this surface exists for the seconds after somebody saved
+the file. Insert a line above a gap and the line-keyed name changes, so one
+round reports a gap closing and another opening at the same spot, and the
+person reads that as having fixed something and broken something else in one
+keystroke. The run learned nothing about either; the diff concluded from how
+it addressed things. Keyed on the locator without its line, two gaps of one
+rule on one item collapse into one entry, and that is the right trade: a
+watcher is reading for change, and the second of two identical gaps was never
+news.
+
+It is the apparatus class from the other end. There, a run concluded from how
+it measured; here, a run identifies something by an accident of how it
+measured. Both have the same tell: the wrong key is the one that is already
+lying there — the line number, the ordinal, the position in a list — and the
+honest one costs something, because you have to decide what identity means
+before you can compute it.
+
+The same sentence applies to a proof that stopped because the caller's clock
+ran out. *The bound was too small* and *this argument cannot be made symbolic*
+are facts about the code, and a reader acts on both. *We stopped waiting* is a
+fact about the apparatus, and rendering it as a third bullet of the same list
+invites the conclusion that the code resisted proof. It did not; nobody
+asked it for long enough. Two types rather than three arms, so no renderer can
+offer a knob that would not have helped.
+
 **Nothing here is a budget.** No threshold, no cutoff, no "more than N is
 suspicious" ([ADR 0004](0004-proof-layers-not-budgets.md)). A finding either
 rests on what the run established or it is not raised.

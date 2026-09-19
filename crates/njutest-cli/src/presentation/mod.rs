@@ -5,6 +5,7 @@
 
 pub mod agent;
 pub mod human;
+pub mod moved;
 pub mod review;
 mod telling;
 pub mod tint;
@@ -145,6 +146,21 @@ pub struct Spot {
     pub blind_in: Vec<Across>,
     /// How a reader names it again after they have edited the file.
     pub locator: String,
+}
+
+impl Spot {
+    /// The part of the name that an edit to the file above it cannot change.
+    ///
+    /// A locator is `path:item:rule@line`; this is everything before the line.
+    /// Round-to-round comparison keys on it because the reader has just been
+    /// editing, and a key carrying a line reports every insertion above a gap
+    /// as one gap closing and another opening (ADR 0023).
+    #[must_use]
+    pub fn unmoved(&self) -> &str {
+        self.locator
+            .rsplit_once('@')
+            .map_or(self.locator.as_str(), |(head, _line)| head)
+    }
 }
 
 /// What a run established about one place: a gap in the tests, or a gap in the run.
