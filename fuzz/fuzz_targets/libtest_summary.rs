@@ -17,7 +17,8 @@ fuzz_target!(|data: &[u8]| {
     for outcome in [
         Outcome::Survived,
         Outcome::Killed,
-        Outcome::TimedOut,
+        Outcome::Runaway,
+        Outcome::Waited,
         Outcome::Inconclusive,
         Outcome::NotRun,
         Outcome::Errored,
