@@ -169,6 +169,30 @@ pub fn run(
     Ok(Outcome { report, kept })
 }
 
+/// Runs the suite one target at a time, telling the seams which one is running.
+///
+/// The catalogue is derived from what this sees, and an exchange that says
+/// which target caused it is what lets a later run told to measure only what
+/// changed skip a question whose target did not. Running the targets one at
+/// a time is the same work in a different order — `control` with no target
+/// named already loops them — so the attribution costs the loop and nothing
+/// else.
+fn attributed(
+    seams: &super::wire::Seams,
+    session: &rust_mutants::session::Session,
+    timeout: std::time::Duration,
+    watch: Watch<'_>,
+) {
+    for target in session.targets() {
+        seams.during(Some(&target.id));
+        let asked = rust_mutants::session::Request::new(String::new())
+            .with_target(&target.id)
+            .with_timeout(Some(timeout));
+        let _ran = session.control(&asked, watch.cancel);
+    }
+    seams.during(None);
+}
+
 /// Puts every question the seams recorded back to the suite, and says whether it put any.
 ///
 /// The suite is run again with one fault in place and nothing mutated, which
@@ -199,7 +223,7 @@ fn wired(
             })
             .unwrap_or_default()
     };
-    let went_past = seams.observing(|| drop(once()));
+    let went_past = seams.observing(|| attributed(seams, session, timeout, watch));
     let measured = super::wire::asking(seams, &went_past, once, watch);
     report.findings.extend(measured.findings);
     report.limitations.extend(measured.limitations);
