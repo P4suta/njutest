@@ -6,6 +6,7 @@
 #![forbid(unsafe_code)]
 
 pub mod app;
+pub mod askable;
 pub mod assure;
 pub mod build;
 pub mod cache;
@@ -18,6 +19,7 @@ pub mod evidence;
 pub mod git;
 pub mod kept;
 pub mod limitation;
+pub mod modelled;
 pub mod naming;
 pub mod presentation;
 pub mod provider;

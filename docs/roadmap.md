@@ -77,6 +77,127 @@ behind. A model checker over one function — Kani is the one to look at — say
 run, and it is fail-closed for the ordinary reason: it costs a run, and a run
 it cannot finish leaves the mutation to the tests.
 
+That paragraph was written as a design. It has now been held against Kani
+0.68 with CBMC 6.11, and what a spike established is here rather than in
+somebody's memory, because every premise below decides a piece of the shape
+and two of them are not what the design assumed.
+
+- **It answers the question.** A differential harness — both renderings of
+  one function, one symbolic argument, `assert_eq!` between them — proved
+  `>` to `>=` on a clamp equivalent in six milliseconds, and disproved `>` to
+  `<` in the same run. This is the propagation answer: not *no test noticed*
+  but *no input distinguishes them*.
+- **Every argument type must be `kani::Arbitrary`.** The harness needs
+  `kani::any::<T>()` for each one, so the observer can be asked about a
+  function of `i32` and not about a function of somebody's struct until that
+  struct is arbitrary. What can be asked is therefore a property of the
+  signature, and a run can say so without starting anything.
+- **An unbounded loop does not terminate.** Not *slow*: the harness above,
+  with a `while i < n` over a symbolic `n`, produced nothing in ten minutes
+  and was killed. So a bound is not a tuning knob a caller may leave alone,
+  it is a thing the caller must set, and `Undecided` is reached by the
+  caller's clock rather than by Kani declining.
+- **Under too small a bound Kani says `UNDETERMINED`, not `SUCCESS`.** Two
+  functions differing only at the eleventh iteration, asked under a bound of
+  five, come back undetermined with a failed unwinding assertion beside them
+  — rather than the false proof the design feared. The status is three-valued
+  and maps onto the answers directly: `SUCCESS` to proved, `FAILURE` to
+  noticed, `UNDETERMINED` to undecided.
+- **The rule is still enforced here rather than trusted there.** A proof is
+  the equivalence assertion succeeding *and* every unwinding assertion
+  succeeding. Kani already refuses the other combination, and a layer that
+  removed executions on the strength of somebody else's refusal would be
+  trusting the tool it exists to check — the same rule that keeps
+  `xtask proofaudit` re-deciding what the producer's types already forbid.
+
+How far it reaches was then measured on this workspace rather than guessed,
+because that number is what says whether the observer is worth its contract
+and it costs no checker run to get. Of 5,177 functions, 2,073 take no
+argument at all — a symbolic input cannot be made where there is nothing to
+make one of. Of the remaining 3,104:
+
+| | |
+| --- | --- |
+| a checker can be asked | **65 (2.1%)** |
+| blocked by `self` | 993 |
+| blocked by `&str` | 396 |
+| blocked by `&Path` | 321 |
+| blocked by a borrowed type of this workspace's own | ~300 |
+
+**2.1% is the inconvenient number and it is the correct output.** The first
+figure taken was 41%, and it was 41% because it counted the 2,073 functions
+with nothing to make symbolic. Splitting those out is the same move as
+verifying that a faster gate is doing less of the same work rather than less
+work: the headline agreed with what was hoped for, and the count underneath
+did not.
+
+I said next that the population was the wrong one — `self` at a third of the
+blocked set is methods and `&Fixture` at 143 is test support, so a survivor,
+living in the logic a test did not reach, should skew away from both. **That
+was a guess and it was wrong.** Measured again over `crates/*/src` alone,
+with test and bench trees excluded and methods counted separately:
+
+| | |
+| --- | --- |
+| free functions taking at least one argument | 1,448 |
+| a checker can be asked | **33 (2.3%)** |
+
+Two tenths of a point. Excluding every test, every benchmark and every
+method moved nothing, because what blocks the question is not *where the
+function lives* — it is that this is a program about paths, source text and
+records, and a symbolic `&Path` is not a thing a checker mints.
+
+So the decision, with the number rather than around it: **K1 is deferred,
+and what would reverse it is stated rather than left to a later mood.**
+
+The observer is sound, and the spike above shows it answering the question
+in six milliseconds. What it is not is *worth the milestone on this
+codebase*: a scripted `fake_kani`, a parser and its fuzz, `fixtures-provable`
+in both directions, a contract, two presentation shapes and an independent
+re-derivation, to reach thirty-three functions. ADR 0004's completion rule is
+what makes that list non-negotiable, and it is the right rule; the
+arithmetic is simply against it here.
+
+It is a fact about this workspace and not about the idea. A crate of
+numeric or parsing logic over primitives would score many times this, and
+**the way to find out costs nothing**: `askable` is built, tested and landed
+independently of the rest of K1, so any project can be asked *would this
+observer reach my code* before anybody pays for the observer. That is the
+piece of the milestone worth having first, and it turns out to be the piece
+that decides whether to want the others.
+
+K1 is reopened by a number, not by an argument: a project where `askable`
+says a reach worth the list above. This workspace is not it.
+
+And a quarter of what is blocked is borrowed bytes — `&str`, `&Path`,
+`&[u8]`, `&String` together. Kani can be given those with a length bound,
+which would move the reach a long way and **must not be spent as a proof**:
+*no input of up to sixty-four bytes distinguishes these* is not *no input
+distinguishes these*, and a layer that removed executions on the first while
+printing the second would be the false proof the bound check above exists to
+refuse. A bounded answer is `Undecided { TooDeep }`, and it stays that way.
+
+`Proved` will not grow a qualifier. A word that sometimes means *within
+sixty-four bytes* is a word every renderer already written is now misusing,
+and **there is no diff for anybody to review** — the damage is invisible
+precisely because nothing changed. `Undecided { TooDeep { bound } }` already
+says the true thing, *this run did not reach it*, and `available()` already
+tells a reader the proof is there to be reached. If *searched to sixty-four
+bytes and found nothing* is ever worth reporting it is a fourth outcome with
+its own name and its own sentence, argued for on its own rather than
+inherited by widening this one. Closing a set is worth doing; the first
+thing to do with a closed set is not to loosen a variant.
+
+Somebody reading 2.1% will want exactly that loosening, which is why the
+refusal is on the same page as the number.
+
+The one that changes the milestone most is the third. A model checker that
+hangs is not a checker that answers slowly, and an observer that could hang
+the run is not one a default contract can hold — which is why it stays behind
+`proved-v1` and why the bound is named in the configuration beside the seam's
+`hold`, for the same reason that one is: how long is too long is a property
+of the code being asked about, not of this tool.
+
 So the next thing to make cheaper here is not a fourth layer. It is what the
 measurement above says: the witness pass claims very little on real code, and
 what a widening of it buys is measured rather than assumed.
