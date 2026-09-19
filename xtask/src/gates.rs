@@ -10,6 +10,7 @@ use walkdir::WalkDir;
 
 use crate::{
     deps, devgates, engineaudit, fixtures, lints as lint_scan, proofaudit, release, reportdiff,
+    shapes,
 };
 
 /// The root of this workspace, resolved from the xtask manifest at compile time so the gates do not depend on the working directory.
@@ -46,6 +47,114 @@ pub fn all_sources(root: &Path) -> Vec<PathBuf> {
         }
     }
     files
+}
+
+/// Whether a waiving file and a declaring file are compiled as one crate, which is what decides whether an arm could have been left out.
+///
+/// An integration test is its own crate, so an enum that says it may grow
+/// forces a place to be left for the growth there even though the same match
+/// inside the declaring crate would not need one.
+fn shares_a_crate(waiving: &str, declaring: &str) -> bool {
+    compiled_as(waiving) == compiled_as(declaring)
+}
+
+/// What a file is compiled into: a package's library, or the one-file crate a test or a benchmark is.
+fn compiled_as(path: &str) -> String {
+    path.split_once("/src/")
+        .map_or_else(|| path.to_owned(), |(package, _rest)| package.to_owned())
+}
+
+/// A second opinion on every catch-all the ledger still waives, taken from the shape of its body.
+///
+/// This never refuses anything. The ledger is a reviewed list and the review
+/// is a person's; what a machine can add is a reading that was not derived
+/// from theirs, so the two can disagree. An audit that shares the
+/// implementation it audits agrees with it for free
+/// (ADR 0023), which is why this reads only the syntax and says so in every line it
+/// prints.
+///
+/// # Errors
+/// A file the ledger names that cannot be read.
+pub fn waivers(root: &Path) -> Result<String, GateFailure> {
+    let files = all_sources(root);
+    let mut ours: Vec<String> = Vec::new();
+    let mut open: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
+    for path in &files {
+        let source = std::fs::read_to_string(path)
+            .map_err(|error| GateFailure(format!("{}: {error}", path.display())))?;
+        ours.extend(lint_scan::declared_enums(&source));
+        let label = relative_slash(root, path);
+        for name in lint_scan::open_enums(&source) {
+            open.insert(name, label.clone());
+        }
+    }
+    ours.sort();
+    ours.dedup();
+    let path = root.join("xtask/wildcard_allowlist.txt");
+    let ledger = std::fs::read_to_string(&path)
+        .map_err(|error| GateFailure(format!("{}: {error}", path.display())))?;
+    let mut said = String::new();
+    let mut counted: std::collections::BTreeMap<&'static str, usize> =
+        std::collections::BTreeMap::new();
+    let mut entries: Vec<&'static str> = Vec::new();
+    for entry in ledger
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+    {
+        let Some((file, line)) = entry.rsplit_once(':') else {
+            continue;
+        };
+        let Ok(number) = line.parse::<usize>() else {
+            continue;
+        };
+        let source = std::fs::read_to_string(root.join(file))
+            .map_err(|error| GateFailure(format!("{file}: {error}")))?;
+        let waived = shapes::shapes(&source, &ours).remove(&number);
+        let forced = waived
+            .as_ref()
+            .and_then(|one| open.get(&one.over))
+            .is_some_and(|declared| !shares_a_crate(file, declared));
+        let (word, hint) = match (&waived, forced) {
+            (Some(_), true) => (
+                "required",
+                "not a shape at all: the enum says it may grow and is declared in another \
+                 crate, so the compiler will not let this arm be left out. Nobody can take \
+                 this line out of the ledger by editing the code it points at."
+                    .to_owned(),
+            ),
+            (Some(one), false) => (one.shape.word(), one.shape.hint().to_owned()),
+            (None, _) => (
+                "gone",
+                "nothing to read: there is no arm on that line now, and this is saying so \
+                 rather than guessing."
+                    .to_owned(),
+            ),
+        };
+        entries.push(word);
+        let _written = writeln!(said, "{entry}\t{word}\t{hint}");
+    }
+    for word in &entries {
+        counted.insert(word, entries.iter().filter(|one| *one == word).count());
+    }
+    let tally = counted
+        .iter()
+        .map(|(word, how_many)| format!("{how_many} {word}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let _written = writeln!(
+        said,
+        "waivers: {tally}, read from the syntax and from nothing else. This is a \
+         second reading, not a verdict, and it refuses nothing: where it disagrees \
+         with the ledger, the disagreement is the thing worth looking at."
+    );
+    let _written = writeln!(
+        said,
+        "waivers: a line counted `required` is not a waiver anybody can retire, so a \
+         ledger that may shrink and never grow cannot shrink past however many of \
+         those there are."
+    );
+    Ok(said)
 }
 
 /// Refuses `#[allow]`, `Box<dyn Trait>`, and a comment that is not documentation, anywhere in the repository's own code.

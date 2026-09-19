@@ -242,6 +242,36 @@ impl<'ast> Visit<'ast> for Named<'_> {
     }
 }
 
+/// The enums of `source` that say they may grow, which the compiler makes anybody outside the crate leave a place for.
+#[must_use]
+pub fn open_enums(source: &str) -> Vec<String> {
+    let Ok(parsed) = syn::parse_file(source) else {
+        return Vec::new();
+    };
+    let mut found = Vec::new();
+    let mut named = Growing { found: &mut found };
+    named.visit_file(&parsed);
+    found
+}
+
+/// The visitor that collects the enums carrying `#[non_exhaustive]`.
+struct Growing<'a> {
+    found: &'a mut Vec<String>,
+}
+
+impl<'ast> Visit<'ast> for Growing<'_> {
+    fn visit_item_enum(&mut self, item: &'ast syn::ItemEnum) {
+        if item
+            .attrs
+            .iter()
+            .any(|attribute| attribute.path().is_ident(OPEN))
+        {
+            self.found.push(item.ident.to_string());
+        }
+        syn::visit::visit_item_enum(self, item);
+    }
+}
+
 /// Every line of `source` where a match over one of `ours` ends in a catch-all.
 ///
 /// Read from the arms rather than from the scrutinee, because the scrutinee is
@@ -270,27 +300,30 @@ struct Catching<'a> {
     found: &'a mut Vec<usize>,
 }
 
-impl Catching<'_> {
-    /// The enum an arm names, where the pattern is a path with one before the variant.
-    fn named(pattern: &syn::Pat) -> Option<String> {
-        let path = match pattern {
-            syn::Pat::Path(held) => &held.path,
-            syn::Pat::TupleStruct(held) => &held.path,
-            syn::Pat::Struct(held) => &held.path,
-            _ => return None,
-        };
-        let mut segments = path.segments.iter().rev();
-        let _variant = segments.next()?;
-        Some(segments.next()?.ident.to_string())
-    }
+/// The enum an arm names, where the pattern is a path with one before the variant.
+///
+/// Free rather than private to the walk, because the body-shape hint has to
+/// speak about exactly the lines this gate names. Two answers to *which lines
+/// catch everything left* would disagree with each other about the question instead
+/// of about the code.
+pub(crate) fn named_variant(pattern: &syn::Pat) -> Option<String> {
+    let path = match pattern {
+        syn::Pat::Path(held) => &held.path,
+        syn::Pat::TupleStruct(held) => &held.path,
+        syn::Pat::Struct(held) => &held.path,
+        _ => return None,
+    };
+    let mut segments = path.segments.iter().rev();
+    let _variant = segments.next()?;
+    Some(segments.next()?.ident.to_string())
+}
 
-    /// Where an arm catches everything left, which is a bare `_` or a name bound to the whole.
-    fn catches_all(pattern: &syn::Pat) -> Option<proc_macro2::Span> {
-        match pattern {
-            syn::Pat::Wild(held) => Some(held.underscore_token.span),
-            syn::Pat::Ident(held) if held.subpat.is_none() => Some(held.ident.span()),
-            _ => None,
-        }
+/// Where an arm catches everything left, which is a bare `_` or a name bound to the whole.
+pub(crate) fn catches_everything(pattern: &syn::Pat) -> Option<proc_macro2::Span> {
+    match pattern {
+        syn::Pat::Wild(held) => Some(held.underscore_token.span),
+        syn::Pat::Ident(held) if held.subpat.is_none() => Some(held.ident.span()),
+        _ => None,
     }
 }
 
@@ -299,10 +332,10 @@ impl<'ast> Visit<'ast> for Catching<'_> {
         let closes = matching
             .arms
             .iter()
-            .any(|arm| Self::named(&arm.pat).is_some_and(|name| self.ours.contains(&name)));
+            .any(|arm| named_variant(&arm.pat).is_some_and(|name| self.ours.contains(&name)));
         if closes {
             for arm in &matching.arms {
-                if let Some(span) = Self::catches_all(&arm.pat) {
+                if let Some(span) = catches_everything(&arm.pat) {
                     self.found.push(span.start().line);
                 }
             }
