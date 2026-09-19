@@ -110,6 +110,57 @@ and two of them are not what the design assumed.
   trusting the tool it exists to check — the same rule that keeps
   `xtask proofaudit` re-deciding what the producer's types already forbid.
 
+How far it reaches was then measured on this workspace rather than guessed,
+because that number is what says whether the observer is worth its contract
+and it costs no checker run to get. Of 5,177 functions, 2,073 take no
+argument at all — a symbolic input cannot be made where there is nothing to
+make one of. Of the remaining 3,104:
+
+| | |
+| --- | --- |
+| a checker can be asked | **65 (2.1%)** |
+| blocked by `self` | 993 |
+| blocked by `&str` | 396 |
+| blocked by `&Path` | 321 |
+| blocked by a borrowed type of this workspace's own | ~300 |
+
+**2.1% is the inconvenient number and it is the correct output.** The first
+figure taken was 41%, and it was 41% because it counted the 2,073 functions
+with nothing to make symbolic. Splitting those out is the same move as
+verifying that a faster gate is doing less of the same work rather than less
+work: the headline agreed with what was hoped for, and the count underneath
+did not.
+
+Two things follow, and neither is *give up*.
+
+The population measured is the wrong one. `self` at a third of the blocked
+set is methods, and `&Fixture` at 143 is test support; a survivor lives in
+the logic a test did not reach, which skews away from both. The number to
+have is *of the survivors of a real run*, and this workspace's own is the
+first place to take it once the observer can be asked at all.
+
+And a quarter of what is blocked is borrowed bytes — `&str`, `&Path`,
+`&[u8]`, `&String` together. Kani can be given those with a length bound,
+which would move the reach a long way and **must not be spent as a proof**:
+*no input of up to sixty-four bytes distinguishes these* is not *no input
+distinguishes these*, and a layer that removed executions on the first while
+printing the second would be the false proof the bound check above exists to
+refuse. A bounded answer is `Undecided { TooDeep }`, and it stays that way.
+
+`Proved` will not grow a qualifier. A word that sometimes means *within
+sixty-four bytes* is a word every renderer already written is now misusing,
+and **there is no diff for anybody to review** — the damage is invisible
+precisely because nothing changed. `Undecided { TooDeep { bound } }` already
+says the true thing, *this run did not reach it*, and `available()` already
+tells a reader the proof is there to be reached. If *searched to sixty-four
+bytes and found nothing* is ever worth reporting it is a fourth outcome with
+its own name and its own sentence, argued for on its own rather than
+inherited by widening this one. Closing a set is worth doing; the first
+thing to do with a closed set is not to loosen a variant.
+
+Somebody reading 2.1% will want exactly that loosening, which is why the
+refusal is on the same page as the number.
+
 The one that changes the milestone most is the third. A model checker that
 hangs is not a checker that answers slowly, and an observer that could hang
 the run is not one a default contract can hold — which is why it stays behind

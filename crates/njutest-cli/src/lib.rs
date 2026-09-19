@@ -6,6 +6,7 @@
 #![forbid(unsafe_code)]
 
 pub mod app;
+pub mod askable;
 pub mod assure;
 pub mod build;
 pub mod cache;
