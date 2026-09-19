@@ -282,14 +282,53 @@ impl<'ast> Visit<'ast> for Growing<'_> {
 pub fn wildcards(source: &str, ours: &[String]) -> Vec<usize> {
     let mut found: Vec<usize> = wildcards_over(source, ours)
         .into_iter()
-        .map(|(line, _over)| line)
+        .map(|one| one.line)
         .collect();
     found.sort_unstable();
     found.dedup();
     found
 }
 
-/// The same lines, each with the enum whose arms told this gate what was being matched.
+/// A catch-all over a set this repository closes, said as what it is rather than where it is.
+///
+/// A line number is a coordinate, and a coordinate is not a place. The arm
+/// standing at one can be swapped for a catch-all over a different set
+/// without the number moving — change `Message::BuildFinished` to
+/// `Decision::Tests` on the line above and a ledger keyed by the coordinate
+/// waives the second having reviewed the first, with no diff for anybody to
+/// read. That was measured rather than supposed: the gate exited 0. The item
+/// and the set change exactly when what is being waived changes, and a
+/// renamed binding or a reformatted body leaves both alone.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Wildcard {
+    /// The items enclosing it, outermost first, joined by `::`. Empty at the top of a file.
+    pub item: String,
+    /// The enum whose remaining variants it absorbs.
+    pub over: String,
+    /// The line it is on, for the sentence a person reads. Never part of the key.
+    pub line: usize,
+}
+
+impl Wildcard {
+    /// How the ledger names the group of catch-all arms that share this item and this set.
+    ///
+    /// `many` is part of the name because several arms absorbing one set in
+    /// one item are one claim — *the rest of this set, here* — and one more
+    /// is a claim nobody read. Leaving the count out would let a group's
+    /// waiver cover an arm written after it was granted, which is the defect
+    /// this key exists to remove, one layer down.
+    #[must_use]
+    pub fn key(&self, file: &str, many: usize) -> String {
+        let arms = if many == 1 { "arm" } else { "arms" };
+        if self.item.is_empty() {
+            format!("{file} over {}, {many} {arms}", self.over)
+        } else {
+            format!("{file}::{} over {}, {many} {arms}", self.item, self.over)
+        }
+    }
+}
+
+/// The same arms, each with the item it sits in and the enum whose arms told this gate what was being matched.
 ///
 /// The name is what lets a caller ask the question this walk cannot: whether
 /// the arm could have been left out at all. An enum that says it may grow,
@@ -297,13 +336,14 @@ pub fn wildcards(source: &str, ours: &[String]) -> Vec<usize> {
 /// against something the compiler requires is asking for a decision nobody
 /// made (ADR 0023).
 #[must_use]
-pub fn wildcards_over(source: &str, ours: &[String]) -> Vec<(usize, String)> {
+pub fn wildcards_over(source: &str, ours: &[String]) -> Vec<Wildcard> {
     let Ok(parsed) = syn::parse_file(source) else {
         return Vec::new();
     };
     let mut found = Vec::new();
     let mut scan = Catching {
         ours,
+        within: Vec::new(),
         found: &mut found,
     };
     scan.visit_file(&parsed);
@@ -315,7 +355,27 @@ pub fn wildcards_over(source: &str, ours: &[String]) -> Vec<(usize, String)> {
 /// The visitor that refuses a catch-all where the arms name a set this repository closes.
 struct Catching<'a> {
     ours: &'a [String],
-    found: &'a mut Vec<(usize, String)>,
+    within: Vec<String>,
+    found: &'a mut Vec<Wildcard>,
+}
+
+impl Catching<'_> {
+    /// The items this one sits inside, outermost first.
+    fn place(&self) -> String {
+        self.within.join("::")
+    }
+
+    /// The head of a type, which is what an `impl` block is named by.
+    fn head(held: &syn::Type) -> String {
+        match held {
+            syn::Type::Path(path) => path
+                .path
+                .segments
+                .last()
+                .map_or_else(|| "impl".to_owned(), |last| last.ident.to_string()),
+            _ => "impl".to_owned(),
+        }
+    }
 }
 
 /// The enum an arm names, where the pattern is a path with one before the variant.
@@ -372,6 +432,42 @@ pub(crate) fn catches_everything(pattern: &syn::Pat) -> Option<proc_macro2::Span
 }
 
 impl<'ast> Visit<'ast> for Catching<'_> {
+    fn visit_item_mod(&mut self, one: &'ast syn::ItemMod) {
+        self.within.push(one.ident.to_string());
+        syn::visit::visit_item_mod(self, one);
+        let _left = self.within.pop();
+    }
+
+    fn visit_item_impl(&mut self, one: &'ast syn::ItemImpl) {
+        self.within.push(Self::head(&one.self_ty));
+        syn::visit::visit_item_impl(self, one);
+        let _left = self.within.pop();
+    }
+
+    fn visit_item_trait(&mut self, one: &'ast syn::ItemTrait) {
+        self.within.push(one.ident.to_string());
+        syn::visit::visit_item_trait(self, one);
+        let _left = self.within.pop();
+    }
+
+    fn visit_item_fn(&mut self, one: &'ast syn::ItemFn) {
+        self.within.push(one.sig.ident.to_string());
+        syn::visit::visit_item_fn(self, one);
+        let _left = self.within.pop();
+    }
+
+    fn visit_impl_item_fn(&mut self, one: &'ast syn::ImplItemFn) {
+        self.within.push(one.sig.ident.to_string());
+        syn::visit::visit_impl_item_fn(self, one);
+        let _left = self.within.pop();
+    }
+
+    fn visit_trait_item_fn(&mut self, one: &'ast syn::TraitItemFn) {
+        self.within.push(one.sig.ident.to_string());
+        syn::visit::visit_trait_item_fn(self, one);
+        let _left = self.within.pop();
+    }
+
     fn visit_expr_match(&mut self, matching: &'ast syn::ExprMatch) {
         let over = matching
             .arms
@@ -380,9 +476,14 @@ impl<'ast> Visit<'ast> for Catching<'_> {
             .filter(|name| self.ours.contains(name))
             .filter(|_name| !forced_by_guards(&matching.arms));
         if let Some(over) = over {
+            let item = self.place();
             for arm in &matching.arms {
                 if let Some(span) = catches_everything(&arm.pat) {
-                    self.found.push((span.start().line, over.clone()));
+                    self.found.push(Wildcard {
+                        item: item.clone(),
+                        over: over.clone(),
+                        line: span.start().line,
+                    });
                 }
             }
         }
