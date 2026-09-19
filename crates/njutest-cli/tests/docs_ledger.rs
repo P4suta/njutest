@@ -17,6 +17,97 @@ fn page(relative: &str) -> String {
     std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display()))
 }
 
+/// A number as a page spells it.
+fn spelled(many: usize) -> &'static str {
+    const WORDS: [&str; 21] = [
+        "no",
+        "one",
+        "two",
+        "three",
+        "four",
+        "five",
+        "six",
+        "seven",
+        "eight",
+        "nine",
+        "ten",
+        "eleven",
+        "twelve",
+        "thirteen",
+        "fourteen",
+        "fifteen",
+        "sixteen",
+        "seventeen",
+        "eighteen",
+        "nineteen",
+        "twenty",
+    ];
+    WORDS
+        .get(many)
+        .copied()
+        .unwrap_or_else(|| panic!("no page spells a number as large as {many}"))
+}
+
+/// Holds the count the paragraph above a table states to the number of rows the ledger read from it.
+///
+/// A ledger reads every name in a table and no number, so a page could say
+/// *six* over seven rows and every name still line up. One did, for as long
+/// as anybody can tell: `observers` has had seven columns and the sentence
+/// above it said six. A count is the one part of a documented table that
+/// duplicates it, which is the only reason it can disagree — and
+/// [ADR 0004](../../../docs/adr/0004-proof-layers-not-budgets.md) asks that
+/// the sentence a person reads be held by its own assertion.
+///
+/// Only the paragraph directly above the table is read, so a number further
+/// up the page counting something else is not mistaken for this one.
+fn says_how_many(text: &str, marker: &str, many: usize, noun: &str) -> Result<(), String> {
+    let Some(table) = text.find(marker) else {
+        return Err(format!("the page has no table beginning {marker}"));
+    };
+    let Some(lead) = text.get(..table) else {
+        return Err(format!(
+            "the page breaks between characters before {marker}"
+        ));
+    };
+    let above = lead.trim_end();
+    let paragraph = above.rsplit("\n\n").next().unwrap_or(above);
+    let said = format!("{} {noun}", spelled(many));
+    if paragraph.contains(&said) {
+        return Ok(());
+    }
+    Err(format!(
+        "the paragraph above the table counts its rows, and this one does not say \
+         \"{said}\". A reader who takes the number rather than counting the table \
+         is told something nothing held: {paragraph:?}"
+    ))
+}
+
+#[test]
+fn a_count_a_page_states_is_read_from_the_paragraph_that_states_it() {
+    let written = "An earlier paragraph about the three narrowings.\n\
+                   \n\
+                   A **finding** is a problem. There are eleven kinds, and a report\n\
+                   carries the name rather than a number:\n\
+                   \n\
+                   | `kind` | what it says |\n\
+                   | --- | --- |\n\
+                   | `a` | b |\n";
+    assert_eq!(says_how_many(written, "| `kind` |", 11, "kinds"), Ok(()));
+    assert!(
+        says_how_many(written, "| `kind` |", 10, "kinds").is_err(),
+        "a page that counts wrong is the whole reason this is read"
+    );
+    assert!(
+        says_how_many(written, "| `kind` |", 3, "narrowings").is_err(),
+        "only the paragraph directly above the table is this table's count, so a \
+         number further up the page counting something else cannot answer for it"
+    );
+    assert!(
+        says_how_many(written, "| nothing |", 11, "kinds").is_err(),
+        "a marker that names no table is a ledger reading a page that moved"
+    );
+}
+
 #[test]
 fn every_way_a_run_can_choose_and_every_reason_it_widened_is_on_the_report_page() {
     let text = page("docs/report-v1.md");
@@ -65,6 +156,14 @@ fn the_ways_the_page_says_a_mutation_is_decided_are_the_ways_there_are() {
          holds one row per way a mutation can be decided, in the order the model \
          lists them"
     );
+    if let Err(why) = says_how_many(
+        &text,
+        "| column | what decided it |",
+        Decision::ALL.len(),
+        "columns",
+    ) {
+        panic!("{why}");
+    }
 
     let mut paged: Vec<(String, String)> = listed
         .iter()
@@ -108,6 +207,9 @@ fn the_kinds_the_page_lists_are_the_kinds_there_are_and_it_says_which_are_defect
         FindingKind::ALL.len(),
         "the table of kinds is read and holds one row per kind: {listed:?}"
     );
+    if let Err(why) = says_how_many(&text, "| `kind` |", FindingKind::ALL.len(), "kinds") {
+        panic!("{why}");
+    }
     let mut wrong = Vec::new();
     for (name, defect) in listed {
         let Some(kind) = FindingKind::ALL.into_iter().find(|one| one.name() == name) else {
