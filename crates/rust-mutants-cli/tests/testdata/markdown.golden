@@ -8,12 +8,13 @@
 | --- | --- |
 | killed | 28 |
 | survived | 1 |
-| timed out | 0 |
+| runaway | 0 |
+| waited | 0 |
 | inconclusive | 0 |
 | errored | 0 |
 | not run | 3 |
 
-Those 6 add to the 32 cataloged. Within them, not run is 0 unreached, not run is 3 discharged, survived is 0 expected.
+Those 7 add to the 32 cataloged. Within them, not run is 0 unreached, not run is 3 discharged, survived is 0 expected.
 
 ## Findings
 
