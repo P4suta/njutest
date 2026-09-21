@@ -184,6 +184,9 @@ fn answer(entry: &Invocation, script_path: &str, started: &Started) -> ExitCode 
     if entry.delay_ms > 0 {
         std::thread::sleep(std::time::Duration::from_millis(entry.delay_ms));
     }
+    if let Err(exit) = write_entry_files_after(entry, script_path, started) {
+        return exit;
+    }
     let stdout = match stdout_for(entry, script_path, started) {
         Ok(stdout) => stdout,
         Err(exit) => return exit,
@@ -222,6 +225,47 @@ fn write_entry_files(
     started: &Started,
 ) -> Result<(), ExitCode> {
     for write in &entry.writes {
+        let path = match expand(&write.path, script_path, started) {
+            Ok(path) => PathBuf::from(path),
+            Err(why) => {
+                eprintln!("fake-cargo: cannot expand a written path: {why}");
+                return Err(ExitCode::FAILURE);
+            }
+        };
+        if let Some(parent) = path.parent()
+            && let Err(error) = std::fs::create_dir_all(parent)
+        {
+            eprintln!(
+                "fake-cargo: cannot create {}: {error}",
+                LosslessBytes::new(parent.as_os_str().as_encoded_bytes())
+            );
+            return Err(ExitCode::FAILURE);
+        }
+        let contents = match expand(&write.contents, script_path, started) {
+            Ok(contents) => contents,
+            Err(why) => {
+                eprintln!("fake-cargo: cannot expand written contents: {why}");
+                return Err(ExitCode::FAILURE);
+            }
+        };
+        if let Err(error) = std::fs::write(&path, contents) {
+            eprintln!(
+                "fake-cargo: cannot write {}: {error}",
+                LosslessBytes::new(path.as_os_str().as_encoded_bytes())
+            );
+            return Err(ExitCode::FAILURE);
+        }
+    }
+    Ok(())
+}
+
+/// Writes the files this invocation leaves once its delay has passed, so their absence is the process having been stopped.
+fn write_entry_files_after(
+    entry: &Invocation,
+    script_path: &str,
+    started: &Started,
+) -> Result<(), ExitCode> {
+    for write in &entry.writes_after {
         let path = match expand(&write.path, script_path, started) {
             Ok(path) => PathBuf::from(path),
             Err(why) => {

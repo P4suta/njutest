@@ -219,6 +219,12 @@ where
     R: FnMut() -> crate::wire::settle::Asked,
 {
     let mut done = Measured::default();
+    if seams.watching.len() != baseline.per_seam.len() {
+        return Err(crate::wire::derive::DeriveError::NotOneBaseline {
+            seams: seams.watching.len(),
+            recordings: baseline.per_seam.len(),
+        });
+    }
     for (at, observed) in seams.watching.iter().zip(&baseline.per_seam) {
         for exchange in observed {
             watch.trace.wire_exchange(recorded(exchange));
@@ -321,7 +327,7 @@ pub fn licensing(
 /// seam phase, which runs it once per question with a fault in place. A
 /// catalogue is a set of questions about a program, and every one of those
 /// runs is a different program from the one a reader is being told about.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Baseline {
     /// One recording per seam, in the order the seams were started.
     per_seam: Vec<Vec<Exchange>>,

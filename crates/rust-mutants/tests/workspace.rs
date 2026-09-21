@@ -533,11 +533,16 @@ fn a_message_stream_line_that_is_not_a_message_is_refused_by_line_number() {
 #[test]
 fn a_check_that_takes_longer_than_the_build_timeout_says_it_timed_out() {
     let fixture = Fixture::copy("fixture-simple");
+    let finished = fixture.temp().join("the-check-was-allowed-to-finish");
     let script = toolchain_answers()
         .answering(
             Invocation::new("cargo", &["metadata"]).printing(&metadata_document(fixture.root())),
         )
-        .answering(Invocation::new("cargo", &["check"]).taking(5_000));
+        .answering(
+            Invocation::new("cargo", &["check"])
+                .taking(5_000)
+                .writing_after(njutest_devkit::paths::utf8(&finished), "it was"),
+        );
     let (opened, installed_toolchain) = opened(&fixture, &script);
     assert_eq!(
         result_state(&opened),
@@ -549,7 +554,6 @@ fn a_check_that_takes_longer_than_the_build_timeout_says_it_timed_out() {
         build_timeout: Some(std::time::Duration::from_millis(200)),
         ..PrepareOptions::default()
     };
-    let started = std::time::Instant::now();
     let error = workspace.prepare(&options, &Cancel::new());
     assert_eq!(
         result_state(&error),
@@ -559,8 +563,10 @@ fn a_check_that_takes_longer_than_the_build_timeout_says_it_timed_out() {
     let Err(error) = error else { return };
     drop(installed_toolchain);
     assert!(
-        started.elapsed() < std::time::Duration::from_secs(4),
-        "the timeout is what ended it, not the command"
+        matches!(std::fs::metadata(&finished), Err(ref why) if why.kind() == std::io::ErrorKind::NotFound),
+        "the timeout is what ended it, not the command: the check writes this once its \
+         five seconds are up, and a test that read its own clock instead would fail on a \
+         machine that was merely busy"
     );
     assert_eq!(error.code().code, "RM1014", "{error}");
     assert!(error.to_string().contains("timed out"), "{error}");

@@ -780,10 +780,9 @@ impl Routing {
 }
 
 /// Who decided one mutation, which is what stands behind the verdict it feeds.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, njutest_macros::AllVariants,
-)]
-#[serde(rename_all = "snake_case")]
+///
+/// It carries no `Serialize`: nothing wrote it, and the `snake_case` rename it used to carry spelled two of its names differently from `name()`, which is what every report row, every line, every page and every explanation prints.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, njutest_macros::AllVariants)]
 pub enum Decision {
     /// The compiler refused the program.
     Types,

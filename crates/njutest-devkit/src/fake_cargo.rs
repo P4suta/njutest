@@ -93,6 +93,9 @@ pub struct Invocation {
     /// Files it writes before it answers, which is how an artifact a build would have left behind gets there.
     #[serde(default)]
     pub writes: Vec<WriteFile>,
+    /// Files it writes after the delay and before it answers, so their absence is the process having been stopped rather than a clock a test read.
+    #[serde(default)]
+    pub writes_after: Vec<WriteFile>,
     /// How many times it may answer. `None` is every time.
     #[serde(default)]
     pub times: Option<u32>,
@@ -114,6 +117,7 @@ impl Invocation {
             exit: 0,
             delay_ms: 0,
             writes: Vec::new(),
+            writes_after: Vec::new(),
             times: None,
         }
     }
@@ -158,6 +162,16 @@ impl Invocation {
     #[must_use]
     pub fn writing(mut self, path: &str, contents: &str) -> Self {
         self.writes.push(WriteFile {
+            path: path.to_owned(),
+            contents: contents.to_owned(),
+        });
+        self
+    }
+
+    /// Writes `contents` at `path` once the delay has passed, so a test reads whether the command was allowed to finish rather than how long it waited.
+    #[must_use]
+    pub fn writing_after(mut self, path: &str, contents: &str) -> Self {
+        self.writes_after.push(WriteFile {
             path: path.to_owned(),
             contents: contents.to_owned(),
         });
