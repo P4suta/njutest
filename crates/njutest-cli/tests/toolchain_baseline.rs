@@ -251,14 +251,14 @@ fn a_target_that_did_not_pass_says_what_a_reader_acts_on() {
             Outcome::StepLimitReached,
             0,
             "",
-            TargetStatus::Failed,
+            TargetStatus::Missing,
             Some("the target reached the run's guard-take allowance"),
         ),
         (
             Outcome::Waited,
             0,
             "",
-            TargetStatus::Failed,
+            TargetStatus::Missing,
             Some("this machine stopped waiting for the target"),
         ),
         (

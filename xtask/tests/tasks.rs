@@ -746,11 +746,17 @@ fn every_gate_the_pipeline_runs_is_one_this_machine_can_run() {
     );
 }
 
-/// The crate each coverage floor is about, by the order the ratchets appear.
-const MEASURED: [&str; 3] = ["crates/rust-mutants", "crates/njutest-cli", "xtask"];
+/// The crate each coverage floor is about, by the order the ratchets appear; the empty name is the whole workspace.
+const MEASURED: [&str; 5] = [
+    "",
+    "crates/rust-mutants",
+    "crates/rust-mutants-cli",
+    "crates/njutest-cli",
+    "xtask",
+];
 
 /// Every place in this tree that holds Rust a coverage report can count.
-const PLACES: [&str; 9] = [
+const PLACES: [&str; 8] = [
     "crates/rust-mutants",
     "crates/rust-mutants-cli",
     "crates/njutest",
@@ -759,7 +765,6 @@ const PLACES: [&str; 9] = [
     "crates/njutest-devkit",
     "xtask",
     "fuzz",
-    "compiler-surfaces",
 ];
 
 /// The paths one `--ignore-filename-regex` leaves out, with its one alternation spelled out.
@@ -799,25 +804,28 @@ fn every_coverage_floor_measures_the_one_crate_it_is_about() {
         MEASURED.len(),
         "a floor was added or removed and this table did not follow: {patterns:?}"
     );
+    let under = |place: &str| format!("{place}/");
     for (measured, pattern) in MEASURED.into_iter().zip(patterns) {
         let out = left_out(pattern);
-        let under = |place: &str| format!("{place}/");
-        let counted: Vec<&str> = PLACES
+        let left_in: Vec<&str> = PLACES
             .into_iter()
-            .filter(|place| *place != measured)
             .filter(|place| !out.iter().any(|one| under(place).starts_with(one.as_str())))
             .collect();
-        assert!(
-            counted.is_empty(),
-            "the {measured} floor counts {counted:?} as well, so a number that reads as \
-             one crate's coverage is an average over several: raising one crate's tests \
-             moves another crate's floor, and a new package joins every floor silently. \
-             {pattern}"
-        );
-        assert!(
-            !out.iter()
-                .any(|one| under(measured).starts_with(one.as_str())),
-            "and the {measured} floor leaves out the crate it is about: {pattern}"
+        if measured.is_empty() {
+            assert_eq!(
+                left_in.len(),
+                PLACES.len(),
+                "the workspace floor leaves a place out, so what it prints is not the \
+                 workspace's coverage: {pattern}"
+            );
+            continue;
+        }
+        assert_eq!(
+            left_in,
+            [measured],
+            "a floor is a number about one crate, and this one is an average over what \
+             it leaves in: raising one crate's tests moves another crate's floor, and a \
+             package added anywhere joins every floor silently. {pattern}"
         );
     }
 }

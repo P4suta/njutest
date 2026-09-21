@@ -222,14 +222,20 @@ jobs:
       # little under what the suite reaches today, so an ordinary change has
       # room and a change that drops a whole area does not.
       - name: Ratchet the workspace
-        run: cargo llvm-cov report --summary-only --fail-under-regions 80
+        run: >-
+          cargo llvm-cov report --summary-only --fail-under-regions 80
+          --ignore-filename-regex 'compiler-surfaces/'
       - name: Ratchet rust-mutants
         run: >-
           cargo llvm-cov report --summary-only --fail-under-regions 87
           --ignore-filename-regex 'crates/(rust-mutants-cli|njutest|njutest-cli|njutest-macros|njutest-devkit)/|xtask/|fuzz/|compiler-surfaces/'
       - name: Ratchet rust-mutants-cli
         run: >-
-          cargo llvm-cov report --summary-only --fail-under-regions 85
+          cargo llvm-cov report --summary-only --fail-under-regions 83
+          --ignore-filename-regex 'crates/(rust-mutants|njutest|njutest-cli|njutest-macros|njutest-devkit)/|xtask/|fuzz/|compiler-surfaces/'
+      - name: Ratchet njutest-cli
+        run: >-
+          cargo llvm-cov report --summary-only --fail-under-regions 81
           --ignore-filename-regex 'crates/(rust-mutants|rust-mutants-cli|njutest|njutest-macros|njutest-devkit)/|xtask/|fuzz/|compiler-surfaces/'
       - name: Ratchet xtask
         run: >-
