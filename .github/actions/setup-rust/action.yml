@@ -41,10 +41,10 @@ runs:
         cache: true
     # Activating mise brings `mise.toml`'s `[env]` with it, and that names `sccache` as the compiler wrapper.
     # A runner holding the variable but not the program fails every cargo invocation it has — `could not execute process sccache … (never executed)` — including the ones that only read metadata, which is how a single missing binary took nine jobs down at a step that does no compiling.
-    # So the step that activates the environment is the step that satisfies it.
-    # `install: false` above is still right: what a job needs is named by the job, and this is the one thing every job needs because every job inherits it.
+    # Installing it answers that and buys nothing: sccache is a compilation cache, and the one a job would hit is what `Swatinem/rust-cache` restores below. It also left the shim unable to resolve a version at compile time — `No version is set for shim: sccache` — which is a second failure held open for no gain.
+    # So the variable is cleared rather than satisfied, which is the decision `mise.toml` already records by keeping sccache out of what CI installs. Activating mise is what quietly reversed it.
     - shell: bash
-      run: mise install sccache
+      run: echo "RUSTC_WRAPPER=" >> "${GITHUB_ENV}"
     - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
     # `mise.toml` pins two kinds of tool and the key says which: a `cargo:` prefix is a crate, and a bare name is a tool mise fetches itself.
     # install-action only knows the first kind, and it knows a crate by its crates.io name rather than the tool's own, which is why translating the bare ones into its vocabulary needed a rename table.

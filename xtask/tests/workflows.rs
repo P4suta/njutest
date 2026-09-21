@@ -302,8 +302,12 @@ fn environment_programs() -> Vec<(String, String)> {
             let named = value.as_str()?;
             pinned
                 .iter()
-                .any(|one| one == named)
-                .then(|| (variable.clone(), named.to_owned()))
+                .find(|one| {
+                    named
+                        .split(|c: char| !c.is_ascii_alphanumeric() && c != '-' && c != '_')
+                        .any(|word| word == one.as_str())
+                })
+                .map(|program| (variable.clone(), program.clone()))
         })
         .collect()
 }
@@ -319,17 +323,21 @@ fn a_program_the_activated_environment_names_is_one_every_job_has() {
         source.contains("jdx/mise-action"),
         "this law is about what activating mise brings with it"
     );
-    let missing: Vec<String> = environment_programs()
+    let unaccounted: Vec<String> = environment_programs()
         .into_iter()
-        .filter(|(_, program)| !source.contains(&format!("mise install {program}")))
+        .filter(|(variable, program)| {
+            let installed = source.contains(&format!("mise install {program}"));
+            let cleared = source.contains(&format!("{variable}=\" >>"));
+            !installed && !cleared
+        })
         .map(|(variable, program)| format!("{variable}={program}"))
         .collect();
     assert!(
-        missing.is_empty(),
+        unaccounted.is_empty(),
         "the setup action activates mise, so every job inherits `[env]` from mise.toml. \
          A variable naming a program the runner does not have fails every cargo invocation \
          in that job, including one that only reads metadata, with `could not execute \
-         process ... (never executed)`. The action that activates the environment installs \
-         it, or the variable does not belong in a file CI reads: {missing:?}"
+         process ... (never executed)`. The action that activates the environment either \
+         installs the program or clears the variable, and says which: {unaccounted:?}"
     );
 }

@@ -17,7 +17,10 @@
 # would get a build that will not start, where this gives them one that is
 # merely as slow as it was before.
 [env]
-RUSTC_WRAPPER = "sccache"
+# A caller that has already said what the wrapper is keeps it, and a caller that says nothing gets sccache.
+# `mise run` re-applies this table inside the task, so a job that cleared the variable in its own environment would have it put back; deferring here is what makes the clear survive.
+# An empty value is a value: cargo treats an empty `RUSTC_WRAPPER` as no wrapper at all, which is how CI asks for the compiler it already caches through `Swatinem/rust-cache` rather than one more program to install.
+RUSTC_WRAPPER = "{{ env.RUSTC_WRAPPER | default(value='sccache') }}"
 
 [tools]
 rust = "1.98.0"
