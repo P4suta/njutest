@@ -186,7 +186,7 @@ the same audit identity and findings.
 | ---: | --- |
 | 0 | `ASSURED`, `CHANGE_ASSURED`, `SCOPE_ASSURED`, `PARTIAL`, `RESOLVED` |
 | 1 | `DEFECT`, `REPRODUCED` |
-| 2 | `INSUFFICIENT` |
+| 2 | `INSUFFICIENT`, `INCONCLUSIVE` |
 | 3 | `ERROR`, invalid input, or an infrastructure failure |
 | 130 | interrupted |
 | 143 | terminated |

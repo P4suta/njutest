@@ -1627,24 +1627,15 @@ pub fn absorb(
     }
     for measured in &baseline.targets {
         let subject = measured.target.name();
-        match measured.status {
-            TargetStatus::Failed => report.findings.push(Finding::new(
-                FindingKind::FailingTest,
+        if let Some(kind) = measured.finding {
+            report.findings.push(Finding::new(
+                kind,
                 &subject,
                 measured
                     .message
                     .as_deref()
-                    .unwrap_or("the target failed and said nothing"),
-            )),
-            TargetStatus::Missing => report.findings.push(Finding::new(
-                FindingKind::TargetMissing,
-                &subject,
-                measured
-                    .message
-                    .as_deref()
-                    .unwrap_or("the target could not be found, so nothing was observed"),
-            )),
-            TargetStatus::Passed | TargetStatus::Skipped => {}
+                    .unwrap_or("the target ended without saying why"),
+            ));
         }
         report.targets.push(TargetRecord {
             id: measured.target.id.to_string(),

@@ -482,6 +482,7 @@ fn measured(name: &str) -> njutest_cli::assure::baseline::Measured {
             env: Vec::new(),
         },
         status: njutest_cli::report::TargetStatus::Passed,
+        finding: None,
         duration_ms: 1,
         tests: 1,
         message: None,

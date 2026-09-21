@@ -204,9 +204,13 @@ fn what_one_target_came_to_is_read_off_what_the_engine_said_about_it() {
             Some(RAN_NOTHING),
         ),
     ] {
-        let (was, said) = status_of(outcome, ignored, output);
-        assert_eq!(was, status, "{outcome:?} with {ignored} ignored");
-        assert_eq!(said.as_deref(), says, "{outcome:?} with {ignored} ignored");
+        let became = status_of(outcome, ignored, output);
+        assert_eq!(became.status, status, "{outcome:?} with {ignored} ignored");
+        assert_eq!(
+            became.message.as_deref(),
+            says,
+            "{outcome:?} with {ignored} ignored"
+        );
     }
 }
 
@@ -279,13 +283,13 @@ fn a_target_that_did_not_pass_says_what_a_reader_acts_on() {
             Some("error: the harness died"),
         ),
     ] {
-        let (was, said) = status_of(outcome, ignored, output);
+        let became = status_of(outcome, ignored, output);
         assert_eq!(
-            was, status,
+            became.status, status,
             "{outcome:?} with {ignored} ignored is {status:?}"
         );
         assert_eq!(
-            said.as_deref(),
+            became.message.as_deref(),
             says,
             "{outcome:?} with {ignored} ignored says what a reader acts on"
         );
@@ -296,14 +300,14 @@ fn a_target_that_did_not_pass_says_what_a_reader_acts_on() {
 fn a_target_that_failed_quotes_the_test_that_failed_and_not_the_build_log() {
     use rust_mutants::outcome::Outcome;
 
-    let (was, said) = status_of(
+    let became = status_of(
         Outcome::Killed,
         0,
         "   Compiling fixture v0.1.0\ntest adds ... ok\nerror: unrelated\ntest doubling ... FAILED\n",
     );
-    assert_eq!(was, TargetStatus::Failed, "the target failed");
+    assert_eq!(became.status, TargetStatus::Failed, "the target failed");
     assert_eq!(
-        said.as_deref(),
+        became.message.as_deref(),
         Some("test doubling ... FAILED"),
         "a target cargo runs prints a build log first, and which crate was compiled is \
          true and not what somebody looking at a failing test needs. The line has to \

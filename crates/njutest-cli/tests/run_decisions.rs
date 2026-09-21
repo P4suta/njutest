@@ -152,6 +152,7 @@ fn measured(name: &str, status: TargetStatus) -> Measured {
             env: Vec::new(),
         },
         status,
+        finding: None,
         duration_ms: 1,
         tests: 1,
         message: None,

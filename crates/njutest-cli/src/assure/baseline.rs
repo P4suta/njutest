@@ -9,7 +9,7 @@ use rust_mutants::execute::TestTarget;
 use rust_mutants::outcome::Outcome;
 use rust_mutants::session::Session;
 
-use crate::report::TargetStatus;
+use crate::report::{FindingKind, TargetStatus};
 use crate::targets::{Target, UnitKind, WHOLE_BINARY, target_id};
 use crate::trace::ProgressRecord;
 use crate::ui::Notes;
@@ -22,10 +22,11 @@ pub struct Measured {
     pub target: Target,
     /// Its terminal state.
     pub status: TargetStatus,
+    /// The finding it earns, where it earns one.
+    pub finding: Option<FindingKind>,
     /// How long it took.
     pub duration_ms: u64,
     /// How many tests it ran, which is what that duration is the cost of.
-    #[cfg(any(test, feature = "testkit"))]
     #[cfg(feature = "testkit")]
     pub tests: u32,
     /// What it said, when that matters.
@@ -143,17 +144,17 @@ pub fn observe(
                 )
             })?;
         reporting.progress(&target.name(), done, total)?;
-        let (status, message) = status_of(observed.outcome, observed.ignored, &observed.output);
+        let became = status_of(observed.outcome, observed.ignored, &observed.output);
         let duration_ms = u64::try_from(observed.duration.as_millis())
             .map_err(|error| crate::targets::TargetError::invalid(target.name(), error))?;
         baseline.targets.push(Measured {
             target,
-            status,
+            status: became.status,
+            finding: became.finding,
             duration_ms,
-            #[cfg(any(test, feature = "testkit"))]
             #[cfg(feature = "testkit")]
             tests: observed.tests,
-            message,
+            message: became.message,
         });
     }
     drop(phase);
@@ -268,40 +269,69 @@ pub fn named(id: &str) -> Result<Target, crate::targets::TargetError> {
     })
 }
 
+/// What one target's verified run says became of it: the status a report records, the finding it earns, and what to say about it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TargetVerdict {
+    /// The terminal state the report records.
+    pub status: TargetStatus,
+    /// The finding this earns, where it earns one.
+    pub finding: Option<FindingKind>,
+    /// One sentence about what happened, where there is one to say.
+    pub message: Option<String>,
+}
+
 /// What one target's verified run says became of it.
+///
+/// Only a target whose tests failed is a defect.
+/// Every other way a target can end is a fact about the run or the machine, and a run that reported one as a failing test would be telling a reader to go and fix their suite.
 #[must_use]
-pub fn status_of(outcome: Outcome, ignored: u32, output: &str) -> (TargetStatus, Option<String>) {
-    match outcome {
-        Outcome::Survived => (TargetStatus::Passed, None),
+pub fn status_of(outcome: Outcome, ignored: u32, output: &str) -> TargetVerdict {
+    let (status, finding, message) = match outcome {
+        Outcome::Survived => (TargetStatus::Passed, None, None),
         Outcome::Killed => (
             TargetStatus::Failed,
+            Some(FindingKind::FailingTest),
             Some(failure(output).unwrap_or_else(|| "the target failed".to_owned())),
         ),
         Outcome::StepLimitReached => (
-            TargetStatus::Failed,
+            TargetStatus::Missing,
+            Some(FindingKind::NotMeasured),
             Some("the target reached the run's guard-take allowance".to_owned()),
         ),
         Outcome::Waited => (
-            TargetStatus::Failed,
+            TargetStatus::Missing,
+            Some(FindingKind::Timeout),
             Some("this machine stopped waiting for the target".to_owned()),
         ),
         Outcome::Inconclusive if ignored > 0 => (
             TargetStatus::Skipped,
+            None,
             Some(format!(
                 "libtest was told to skip every test of it: {ignored} ignored"
             )),
         ),
-        Outcome::Inconclusive => (TargetStatus::Missing, Some(RAN_NOTHING.to_owned())),
+        Outcome::Inconclusive => (
+            TargetStatus::Missing,
+            Some(FindingKind::TargetMissing),
+            Some(RAN_NOTHING.to_owned()),
+        ),
         Outcome::NotRun => (
             TargetStatus::Missing,
+            Some(FindingKind::TargetMissing),
             Some("the target was not run, so nothing was observed".to_owned()),
         ),
         Outcome::Errored => (
             TargetStatus::Missing,
+            Some(FindingKind::TargetMissing),
             Some(failure(output).unwrap_or_else(|| {
                 "the target could not be started, so nothing was observed".to_owned()
             })),
         ),
+    };
+    TargetVerdict {
+        status,
+        finding,
+        message,
     }
 }
 
@@ -323,3 +353,45 @@ pub fn failure(output: &str) -> Option<String> {
 
 /// What a target that answered and named no test of its own is recorded as having said.
 pub const RAN_NOTHING: &str = "the target ran nothing, so nothing was observed";
+
+#[cfg(test)]
+mod tests {
+    use super::{FindingKind, Outcome, status_of};
+
+    #[test]
+    fn only_a_target_whose_tests_failed_earns_a_finding_that_is_a_defect() {
+        for outcome in Outcome::ALL {
+            let became = status_of(outcome, 0, "");
+            let Some(finding) = became.finding else {
+                continue;
+            };
+            assert_eq!(
+                finding.is_defect(),
+                outcome == Outcome::Killed,
+                "a target that came back {} earns a {} finding: a defect is something \
+                 wrong with the code under test, and every other way a target can end is \
+                 a fact about the run or the machine. What happened was {:?}",
+                outcome.name(),
+                finding.name(),
+                became.message
+            );
+        }
+    }
+
+    #[test]
+    fn every_finding_a_target_earns_names_the_target_rather_than_the_suite() {
+        for outcome in Outcome::ALL {
+            let became = status_of(outcome, 0, "");
+            assert_eq!(
+                became.finding.is_some(),
+                became.status != crate::report::TargetStatus::Passed
+                    && became.status != crate::report::TargetStatus::Skipped,
+                "a target that neither passed nor was skipped is one the run has \
+                 something to say about, and one that did is not: {} came back {:?}",
+                outcome.name(),
+                became.status
+            );
+            let _ = FindingKind::ALL;
+        }
+    }
+}

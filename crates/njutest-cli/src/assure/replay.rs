@@ -10,7 +10,7 @@ use rust_mutants::session::{PrepareOptions, Request as ExecRequest, Timeout};
 use rust_mutants::workspace::{OpenOptions, Workspace};
 
 use crate::build::Cargo;
-use crate::cli::{EXIT_ASSURED, EXIT_DEFECT, Environment};
+use crate::cli::{EXIT_ASSURED, EXIT_DEFECT, EXIT_INSUFFICIENT, Environment};
 use crate::error::RunnerError;
 use crate::report::FindingKind;
 use crate::watch::Watch;
@@ -22,6 +22,8 @@ pub enum Outcome {
     Reproduced,
     /// The finding is not there any more.
     Resolved,
+    /// The replay established neither, so the finding stands as the run left it.
+    Inconclusive,
 }
 
 impl Outcome {
@@ -31,6 +33,7 @@ impl Outcome {
         match self {
             Self::Reproduced => "REPRODUCED",
             Self::Resolved => "RESOLVED",
+            Self::Inconclusive => "INCONCLUSIVE",
         }
     }
 
@@ -40,6 +43,7 @@ impl Outcome {
         match self {
             Self::Reproduced => EXIT_DEFECT,
             Self::Resolved => EXIT_ASSURED,
+            Self::Inconclusive => EXIT_INSUFFICIENT,
         }
     }
 }
@@ -130,17 +134,27 @@ pub fn replay(
 
 /// Whether the finding is still what the tests say.
 ///
-/// A clock expiry reproduces a clock-expiry finding, and a verified step
-/// boundary reproduces a step-boundary finding. Neither is upgraded into a
-/// mutation verdict merely because the same non-answer happened twice.
+/// A clock expiry reproduces a clock-expiry finding, and a verified step boundary reproduces a step-boundary finding.
+/// Neither is upgraded into a mutation verdict merely because the same non-answer happened twice.
+/// An execution that established nothing is neither: a replay saying the finding is still there is a claim that the measurement was made again.
 const fn observed(kind: FindingKind, outcome: rust_mutants::outcome::Outcome) -> Outcome {
-    let still = match kind {
-        FindingKind::Timeout | FindingKind::WaitedMutant => {
-            matches!(outcome, rust_mutants::outcome::Outcome::Waited)
-        }
-        FindingKind::StepLimitReachedMutant => {
-            matches!(outcome, rust_mutants::outcome::Outcome::StepLimitReached)
-        }
+    use rust_mutants::outcome::Outcome as Measured;
+    match kind {
+        FindingKind::Timeout | FindingKind::WaitedMutant => match outcome {
+            Measured::Waited => Outcome::Reproduced,
+            Measured::Killed | Measured::Survived => Outcome::Resolved,
+            Measured::NotRun
+            | Measured::StepLimitReached
+            | Measured::Inconclusive
+            | Measured::Errored => Outcome::Inconclusive,
+        },
+        FindingKind::StepLimitReachedMutant => match outcome {
+            Measured::StepLimitReached => Outcome::Reproduced,
+            Measured::Killed | Measured::Survived => Outcome::Resolved,
+            Measured::NotRun | Measured::Waited | Measured::Inconclusive | Measured::Errored => {
+                Outcome::Inconclusive
+            }
+        },
         FindingKind::BuildFailure
         | FindingKind::FailingTest
         | FindingKind::TargetMissing
@@ -149,11 +163,42 @@ const fn observed(kind: FindingKind, outcome: rust_mutants::outcome::Outcome) ->
         | FindingKind::UnmatchedAcceptance
         | FindingKind::UndefinedBehaviour
         | FindingKind::HollowTarget
-        | FindingKind::WireUnnoticed => !outcome.detected(),
-    };
-    if still {
-        Outcome::Reproduced
-    } else {
-        Outcome::Resolved
+        | FindingKind::WireUnnoticed => match outcome {
+            Measured::Survived => Outcome::Reproduced,
+            Measured::Killed => Outcome::Resolved,
+            Measured::NotRun
+            | Measured::StepLimitReached
+            | Measured::Waited
+            | Measured::Inconclusive
+            | Measured::Errored => Outcome::Inconclusive,
+        },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rust_mutants::outcome::Outcome as Measured;
+
+    use super::{FindingKind, Outcome, observed};
+
+    /// The outcomes that answer no question a finding can ask: nothing ran, the run could not decide, or the harness failed.
+    const ESTABLISH_NOTHING: [Measured; 3] =
+        [Measured::NotRun, Measured::Inconclusive, Measured::Errored];
+
+    #[test]
+    fn a_replay_that_established_nothing_says_so_rather_than_picking_a_side() {
+        for kind in FindingKind::ALL {
+            for measured in ESTABLISH_NOTHING {
+                assert_eq!(
+                    observed(kind, measured),
+                    Outcome::Inconclusive,
+                    "a replay of a {} finding came back {}, which is the run saying it \
+                     measured nothing; saying the finding is still there, or that it is \
+                     gone, is a claim about a measurement that was never made",
+                    kind.name(),
+                    measured.name()
+                );
+            }
+        }
     }
 }
