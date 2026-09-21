@@ -1,13 +1,13 @@
 # Exact procedural-macro packages in each locked Cargo graph.
 # graph  package  version  source
-root clap_derive 4.6.4 registry+https://github.com/rust-lang/crates.io-index
+root clap_derive 4.6.7 registry+https://github.com/rust-lang/crates.io-index
 root darling_macro 0.24.1 registry+https://github.com/rust-lang/crates.io-index
 root defmt-macros 1.1.1 registry+https://github.com/rust-lang/crates.io-index
 root derive_more-impl 2.1.1 registry+https://github.com/rust-lang/crates.io-index
 root document-features 0.2.12 registry+https://github.com/rust-lang/crates.io-index
 root indoc 2.0.7 registry+https://github.com/rust-lang/crates.io-index
 root instability 0.3.13 registry+https://github.com/rust-lang/crates.io-index
-root jiff-static 0.2.35 registry+https://github.com/rust-lang/crates.io-index
+root jiff-static 0.2.37 registry+https://github.com/rust-lang/crates.io-index
 root njutest-macros 0.1.0 path
 root num-derive 0.4.2 registry+https://github.com/rust-lang/crates.io-index
 root palette_derive 0.7.7 registry+https://github.com/rust-lang/crates.io-index
@@ -22,7 +22,7 @@ root thiserror-impl 2.0.20 registry+https://github.com/rust-lang/crates.io-index
 root wasm-bindgen-macro 0.2.127 registry+https://github.com/rust-lang/crates.io-index
 root wezterm-dynamic-derive 0.1.1 registry+https://github.com/rust-lang/crates.io-index
 root zerocopy-derive 0.8.56 registry+https://github.com/rust-lang/crates.io-index
-fuzz clap_derive 4.6.4 registry+https://github.com/rust-lang/crates.io-index
+fuzz clap_derive 4.6.7 registry+https://github.com/rust-lang/crates.io-index
 fuzz darling_macro 0.24.1 registry+https://github.com/rust-lang/crates.io-index
 fuzz defmt-macros 1.1.1 registry+https://github.com/rust-lang/crates.io-index
 fuzz derive_arbitrary 1.4.2 registry+https://github.com/rust-lang/crates.io-index
@@ -30,7 +30,7 @@ fuzz derive_more-impl 2.1.1 registry+https://github.com/rust-lang/crates.io-inde
 fuzz document-features 0.2.12 registry+https://github.com/rust-lang/crates.io-index
 fuzz indoc 2.0.7 registry+https://github.com/rust-lang/crates.io-index
 fuzz instability 0.3.13 registry+https://github.com/rust-lang/crates.io-index
-fuzz jiff-static 0.2.35 registry+https://github.com/rust-lang/crates.io-index
+fuzz jiff-static 0.2.37 registry+https://github.com/rust-lang/crates.io-index
 fuzz njutest-macros 0.1.0 path
 fuzz num-derive 0.4.2 registry+https://github.com/rust-lang/crates.io-index
 fuzz palette_derive 0.7.7 registry+https://github.com/rust-lang/crates.io-index
