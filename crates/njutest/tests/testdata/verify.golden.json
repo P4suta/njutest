@@ -709,17 +709,17 @@
           "targets": [
             {
               "duration_ms": 0,
-              "id": "9f899269d9ea04341e340338cb40091a0c4aac267b822100b788c55ffd9f2d65",
+              "id": "2b96c18d984f535b99f61c06fb9ab6af508860719591faec1141c1a95c117fe3",
               "message": null,
-              "name": "fixture-baseline/lib/fixture_baseline",
+              "name": "fixture-baseline/test/doubling",
               "package": "fixture-baseline",
               "status": "passed"
             },
             {
               "duration_ms": 0,
-              "id": "ba358cf3760a6134455083e75106edf26e52b82592cb5286d1636211a5d31907",
+              "id": "b6dad397581881b324a23ca5f6dc1cced6da84c283dd74554e2d384e694f68be",
               "message": null,
-              "name": "fixture-baseline/test/doubling",
+              "name": "fixture-baseline/lib/fixture_baseline",
               "package": "fixture-baseline",
               "status": "passed"
             }
