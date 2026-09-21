@@ -78,26 +78,36 @@ pub fn scratch_of(parent: &Path, at: u32) -> PathBuf {
 }
 
 /// Takes the lowest-numbered scratch directory no other run holds, so the name stays short however many runs share a temporary root.
-fn claim_scratch(parent: &Path, now: jiff::Timestamp) -> (PathBuf, Option<tempowner::Owner>) {
+///
+/// A claim is what keeps the next run's sweep off this one's working directory, so a run that could not take one is refused rather than started: the sweep would remove the directory the test processes are working in, every mutation in flight would come back killed, and the run would report that as what the tests establish.
+///
+/// # Errors
+/// The scratch directory could not be created or claimed under any of its names.
+fn claim_scratch(
+    parent: &Path,
+    now: jiff::Timestamp,
+) -> Result<(PathBuf, tempowner::Owner), SessionError> {
     for at in 0..SCRATCH_ATTEMPTS {
         let dir = scratch_of(parent, at);
         if std::fs::create_dir_all(&dir).is_err() {
             continue;
         }
         match tempowner::claim_as(&dir, now, SCRATCH_OWNER_SCHEMA) {
-            Ok(owner) => return (dir, Some(owner)),
+            Ok(owner) => return Ok((dir, owner)),
             Err(_already_claimed_or_unusable) => {}
         }
     }
     let dir = parent.join(format!("{SCRATCH_DIR_PREFIX}p{}", std::process::id()));
-    let owner = match std::fs::create_dir_all(&dir) {
-        Ok(()) => match tempowner::claim_as(&dir, now, SCRATCH_OWNER_SCHEMA) {
-            Ok(owner) => Some(owner),
-            Err(_) => None,
-        },
-        Err(_) => None,
-    };
-    (dir, owner)
+    std::fs::create_dir_all(&dir).map_err(|source| SessionError::ScratchCreateFailed {
+        path: dir.clone(),
+        source,
+    })?;
+    tempowner::claim_as(&dir, now, SCRATCH_OWNER_SCHEMA)
+        .map(|owner| (dir.clone(), owner))
+        .map_err(|source| SessionError::ScratchUnclaimed {
+            path: dir,
+            source: std::io::Error::other(source),
+        })
 }
 
 /// Configures [`Workspace::open`].
@@ -166,6 +176,7 @@ pub struct Workspace {
     /// Where this run's test processes work: a sibling of the target directory, not a child, because its name has to stay inside `sun_path`.
     pub(crate) scratch_dir: PathBuf,
     /// The claim on that directory, held and released exactly as [`Workspace::target_owner`] is.
+    /// The claim on the scratch directory, taken when the run opened and `None` only once it has been released or kept.
     pub(crate) scratch_owner: Option<tempowner::Owner>,
     pub(crate) base_env: Vec<(OsString, OsString)>,
     pub(crate) swept: SweepResult,
@@ -558,6 +569,19 @@ pub enum SessionError {
         error::SESSION_WRITE_FAILED.code
     )]
     ScratchSequenceExhausted,
+    /// A fresh execution scratch directory could not be claimed, so the next run's sweep would remove the one this run is working in.
+    #[error(
+        "{}: cannot claim the execution scratch directory {}: {source}",
+        error::SESSION_WRITE_FAILED.code,
+        path.display()
+    )]
+    ScratchUnclaimed {
+        /// The directory no claim could be taken on.
+        path: PathBuf,
+        /// Why the claim failed.
+        #[source]
+        source: std::io::Error,
+    },
     /// A fresh execution scratch directory could not be created exclusively.
     #[error(
         "{}: cannot reserve the fresh execution scratch directory {}: {source}",
@@ -632,6 +656,7 @@ impl SessionError {
             | Self::WorkerPanicked
             | Self::CompletedCountExhausted
             | Self::ScratchSequenceExhausted
+            | Self::ScratchUnclaimed { .. }
             | Self::ScratchCreateFailed { .. }
             | Self::WorkspacePathNotUtf8 { .. }
             | Self::CatalogTextNotUtf8 { .. } => error::SESSION_WRITE_FAILED,
@@ -790,7 +815,8 @@ impl Workspace {
         )?;
         let target_dir = target_of(parent.path(), &root);
         let target_owner = claim_target(&target_dir, now, &root);
-        let (scratch_dir, scratch_owner) = claim_scratch(parent.path(), now);
+        let (scratch_dir, scratch_owner) = claim_scratch(parent.path(), now)?;
+        let scratch_owner = Some(scratch_owner);
         phase.end();
         Ok(Self {
             snapshot,
