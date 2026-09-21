@@ -405,3 +405,39 @@ pub fn stored_report(reports: &Path) -> String {
     let path = newest_run(reports).join("run-report-v2.json");
     std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display()))
 }
+
+/// Every fixture under `fixtures/`, as a `/`-joined name, in sorted order.
+///
+/// A directory holding a `Cargo.toml` is a fixture, and one holding no `Cargo.toml` is a group of them.
+/// `cargo xtask fixtures` reads the same rule and refuses a group holding anything else, so what a test drives and what the gate checks are the same set.
+///
+/// # Panics
+/// When the fixtures directory cannot be read, which a test cannot continue without.
+#[must_use]
+pub fn names() -> Vec<String> {
+    let root = crate::paths::fixtures_dir();
+    let mut found = Vec::new();
+    for (name, path) in directories(&root) {
+        if path.join("Cargo.toml").is_file() {
+            found.push(name);
+            continue;
+        }
+        for (inner, _nested) in directories(&path) {
+            found.push(format!("{name}/{inner}"));
+        }
+    }
+    found.sort();
+    found
+}
+
+/// Every subdirectory of `dir`, by name, in sorted order.
+fn directories(dir: &Path) -> Vec<(String, PathBuf)> {
+    let mut found: Vec<(String, PathBuf)> = std::fs::read_dir(dir)
+        .unwrap_or_else(|error| panic!("{}: {error}", dir.display()))
+        .map(|entry| entry.expect("a fixtures directory entry"))
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+        .map(|entry| (crate::paths::owned_utf8(entry.file_name()), entry.path()))
+        .collect();
+    found.sort();
+    found
+}

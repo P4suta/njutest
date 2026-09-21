@@ -7,9 +7,10 @@ enforced by `cargo xtask fixtures`:
 - `Cargo.toml` carries an empty `[workspace]` table, so cargo never looks
   upwards and a fixture that fails on purpose cannot fail this workspace.
 - `Cargo.lock` is committed. Fixtures build with `--locked --offline`.
-- The only dependencies are paths inside the fixture itself, such as a
-  proc-macro member: anything else would need a registry, and the suites run
-  offline.
+- The only dependencies are paths inside the fixture itself, such as a proc-macro member, or a climb out of it that lands on another fixture and nothing else: anything else would need a registry, and the suites run offline.
+  How far the climb goes is how deep the fixture sits, so a fixture in a group reaches its library by climbing twice.
+- A directory here holding no `Cargo.toml` is a **group**, and holds fixtures and nothing else.
+  A group exists for the one thing a flat directory cannot express — a tree whose root is nested below what it reads — and `cargo xtask fixtures` refuses a group inside a group, so this stays a place to find a fixture rather than a tree to search.
 - Every `.rs` and `Cargo.toml` starts with the SPDX header used across the
   repository.
 - Fast: baselines are measured, and derived timeouts scale with the slowest

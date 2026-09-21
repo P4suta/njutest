@@ -12,7 +12,7 @@
 )]
 
 use std::ffi::OsString;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use njutest_devkit::fixture::{Fate, Fixture};
 use rust_mutants::runner::Cancel;
@@ -25,41 +25,55 @@ include!("support/metadata.rs");
 const UPDATE: &str = "UPDATE_FATES";
 
 fn fixtures() -> Vec<String> {
-    let mut names: Vec<String> =
-        std::fs::read_dir(njutest_devkit::paths::workspace_root().join("fixtures"))
-            .expect("the fixtures")
-            .map(|entry| entry.expect("fixture directory entry"))
-            .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
-            .map(|entry| njutest_devkit::paths::owned_utf8(entry.file_name()))
-            .filter(|name| name.starts_with("fixture-"))
-            .collect();
-    names.sort();
-    names
+    njutest_devkit::fixture::names()
+}
+
+/// The fixture a climbing argument lands on, when it is one.
+fn climbed(arg: &str) -> Option<&str> {
+    let parts: Vec<&str> = arg.split('/').collect();
+    let up = parts.iter().take_while(|part| **part == "..").count();
+    if up == 0 || parts.len() != up + 1 {
+        return None;
+    }
+    parts
+        .get(up)
+        .copied()
+        .filter(|last| last.starts_with("fixture-"))
 }
 
 /// Every other fixture a block's arguments name, so a path that climbs out of the tree lands in something.
 fn siblings(args: &[String]) -> Vec<&str> {
+    args.iter().filter_map(|arg| climbed(arg)).collect()
+}
+
+/// The block's arguments with each climbing `fixture-…` spelled as the copy's own path.
+fn resolved(fixture: &Fixture, args: &[String]) -> Vec<String> {
     args.iter()
-        .filter_map(|arg| arg.strip_prefix("../"))
-        .filter(|name| name.starts_with("fixture-"))
+        .map(|arg| {
+            if climbed(arg).is_none() {
+                return arg.clone();
+            }
+            let landed = normalized(&fixture.root().join(arg));
+            njutest_devkit::paths::utf8(&landed).to_owned()
+        })
         .collect()
 }
 
-/// The block's arguments with each `../fixture-…` spelled as the copy's own path.
-fn resolved(fixture: &Fixture, args: &[String]) -> Vec<String> {
-    let beside = fixture
-        .root()
-        .parent()
-        .map(Path::to_path_buf)
-        .expect("a copied fixture has a parent directory");
-    args.iter()
-        .map(|arg| match arg.strip_prefix("../") {
-            Some(name) if name.starts_with("fixture-") => {
-                njutest_devkit::paths::utf8(&beside.join(name)).to_owned()
+/// `path` with every `.` removed and every `..` folded, without asking the filesystem.
+fn normalized(path: &Path) -> PathBuf {
+    let mut parts: Vec<OsString> = Vec::new();
+    for part in path.components() {
+        match part {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if parts.len() > 1 {
+                    parts.truncate(parts.len() - 1);
+                }
             }
-            _ => arg.clone(),
-        })
-        .collect()
+            other => parts.push(other.as_os_str().to_owned()),
+        }
+    }
+    parts.iter().collect()
 }
 
 /// What a run of one fixture establishes, in the order a block states it.
@@ -253,12 +267,23 @@ fn every_fixture_is_driven_by_a_test_that_names_it() {
     }
     let orphans: Vec<String> = fixtures()
         .into_iter()
-        .filter(|name| !sources.contains(name.as_str()))
+        .filter(|name| !names_it(&sources, name))
         .collect();
     assert!(
         orphans.is_empty(),
         "these fixtures are committed and no test names them: {orphans:?}"
     );
+}
+
+/// Whether `sources` names this fixture, and not merely a longer name starting with it.
+fn names_it(sources: &str, name: &str) -> bool {
+    sources.match_indices(name).any(|(at, _)| {
+        let after = at + name.len();
+        sources[after..]
+            .chars()
+            .next()
+            .is_none_or(|next| !next.is_ascii_alphanumeric() && next != '-')
+    })
 }
 
 /// Every Rust file under `base`, however deep.

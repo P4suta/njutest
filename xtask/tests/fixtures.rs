@@ -210,14 +210,28 @@ fn a_sibling_fixture_library_is_the_one_path_allowed_to_climb() {
          suite still builds from what this repository holds and still builds offline"
     );
 
+    write(
+        dir.path(),
+        "Cargo.toml",
+        &format!(
+            "{HEADER}[workspace]\n\n[package]\nname = \"fixture-climbs-dep\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[dependencies]\nfixture-climbs-dep-lib = {{ path = \"../../fixture-climbs-dep-lib\" }}\n"
+        ),
+    );
+    assert_eq!(
+        checked(dir.path()),
+        Vec::<String>::new(),
+        "and how far it climbs is how deep the fixture sits under fixtures/, not a second \
+         rule: a fixture in a group reaches its library by climbing twice"
+    );
+
     for (spelling, why) in [
         (
             "out = { path = \"../elsewhere\" }",
             "a sibling that is not a fixture",
         ),
         (
-            "out = { path = \"../../fixture-far\" }",
-            "a path that climbs further than beside",
+            "out = { path = \"../fixture-a/src\" }",
+            "a path that lands inside a fixture rather than on one",
         ),
         (
             "out = { path = \"../fixture-a/../../fixture-b\" }",
@@ -239,4 +253,17 @@ fn a_sibling_fixture_library_is_the_one_path_allowed_to_climb() {
             "{why}: {problems:?}"
         );
     }
+}
+
+#[test]
+fn the_gate_and_the_suite_find_the_same_fixtures() {
+    let root = njutest_devkit::paths::workspace_root();
+    let gated = xtask::fixtures::discover(&root.join("fixtures")).expect("the fixtures directory");
+    assert_eq!(
+        gated,
+        njutest_devkit::fixture::names(),
+        "cargo xtask fixtures checks one set and the fate suite drives another; a fixture \
+         only one of them sees is one whose conventions are held and whose fates are not, \
+         or the other way round"
+    );
 }

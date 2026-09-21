@@ -1395,43 +1395,17 @@ pub fn deps(root: &Path) -> Result<String, GateFailure> {
 /// Returns every convention a fixture breaks.
 pub fn fixtures(root: &Path) -> Result<String, GateFailure> {
     let dir = root.join("fixtures");
-    let mut names = Vec::new();
-    let mut problems = Vec::new();
-    let entries = std::fs::read_dir(&dir)
+    let names = fixtures::discover(&dir)
         .map_err(|error| GateFailure(format!("{}: {error}", dir.display())))?;
-    for entry in entries {
-        let entry = entry.map_err(|error| GateFailure(format!("{}: {error}", dir.display())))?;
-        let kind = entry
-            .file_type()
-            .map_err(|error| GateFailure(format!("{}: {error}", entry.path().display())))?;
-        if kind.is_symlink() {
-            return Err(GateFailure(format!(
-                "{} is a symbolic link; a fixture gate does not follow a name that can hide or \
-                 escape the tree it proves",
-                entry.path().display()
-            )));
-        }
-        if !kind.is_dir() {
-            continue;
-        }
-        let name = match entry.file_name().into_string() {
-            Ok(name) => name,
-            Err(non_utf8_name) => {
-                return Err(GateFailure(format!(
-                    "a fixture name containing {} encoded bytes is not UTF-8",
-                    non_utf8_name.as_encoded_bytes().len()
-                )));
-            }
-        };
-        for problem in fixtures::check_fixture(&entry.path())
+    let mut problems = Vec::new();
+    for name in &names {
+        for problem in fixtures::check_fixture(&dir.join(name))
             .map_err(|error| GateFailure(format!("fixtures/{name}: {error}")))?
         {
             problems.push(format!("fixtures/{name}: {problem}"));
         }
-        names.push(name);
     }
     if problems.is_empty() {
-        names.sort();
         return Ok(format!(
             "fixtures: {} fixture projects follow the conventions",
             names.len()

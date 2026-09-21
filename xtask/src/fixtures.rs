@@ -10,10 +10,11 @@ use walkdir::WalkDir;
 /// The rule, for the failure message.
 pub const RULE: &str = "A fixture is an independent cargo project: its Cargo.toml carries a \
     [workspace] table so cargo does not look upwards, its Cargo.lock is committed, its only \
-    dependencies are paths inside itself (fixtures build offline against no registry), every \
-    .rs and Cargo.toml starts with the SPDX header, and its README.md states what a run of it \
-    establishes in a ```fates block, and in a ```seams block as well where it interposes on a \
-    seam. See fixtures/README.md.";
+    dependencies are paths inside itself or a sibling fixture it climbs to (fixtures build \
+    offline against no registry), every .rs and Cargo.toml starts with the SPDX header, and \
+    its README.md states what a run of it establishes in a ```fates block, and in a ```seams \
+    block as well where it interposes on a seam. A directory under fixtures/ that holds no \
+    Cargo.toml is a group, and holds fixtures and nothing else. See fixtures/README.md.";
 
 /// The fence that opens the block of a README stating what a run of the fixture establishes.
 pub const FATES_FENCE: &str = "```fates";
@@ -59,6 +60,14 @@ pub enum CheckError {
         /// The path whose operating-system spelling was not UTF-8.
         path: PathBuf,
     },
+    /// A directory under a group is not a fixture, so `fixtures/` would become a tree to search rather than a place to find one.
+    #[error("{} is under the group {} and is not a fixture", path.display(), group.display())]
+    NotAFixture {
+        /// What the group holds.
+        path: PathBuf,
+        /// The group holding it.
+        group: PathBuf,
+    },
     /// The optional fixture configuration exists but is not TOML.
     #[error("reading {} as TOML: {source}", path.display())]
     Config {
@@ -68,6 +77,67 @@ pub enum CheckError {
         #[source]
         source: toml::de::Error,
     },
+}
+
+/// Every fixture under `dir`, as a `/`-joined name relative to it, in sorted order.
+///
+/// A directory holding a `Cargo.toml` is a fixture.
+/// One holding no `Cargo.toml` is a group, and every child of it is a fixture; a group that holds anything else, or a group inside a group, is a refusal, because `fixtures/` is a place to find a fixture rather than a tree to search.
+///
+/// # Errors
+/// A directory that could not be read, a symbolic link, a name that is not UTF-8, or a group that holds something other than a fixture.
+pub fn discover(dir: &Path) -> Result<Vec<String>, CheckError> {
+    let mut found = Vec::new();
+    for (name, path) in children(dir)? {
+        if path.join("Cargo.toml").is_file() {
+            found.push(name);
+            continue;
+        }
+        for (inner, nested) in children(&path)? {
+            if !nested.join("Cargo.toml").is_file() {
+                return Err(CheckError::NotAFixture {
+                    path: nested,
+                    group: path.clone(),
+                });
+            }
+            found.push(format!("{name}/{inner}"));
+        }
+    }
+    found.sort();
+    Ok(found)
+}
+
+/// Every subdirectory of `dir`, by name, refusing a link or a name this gate cannot spell.
+fn children(dir: &Path) -> Result<Vec<(String, PathBuf)>, CheckError> {
+    let mut found = Vec::new();
+    let entries = std::fs::read_dir(dir).map_err(|source| CheckError::Read {
+        path: dir.to_path_buf(),
+        source,
+    })?;
+    for entry in entries {
+        let entry = entry.map_err(|source| CheckError::Read {
+            path: dir.to_path_buf(),
+            source,
+        })?;
+        let path = entry.path();
+        let kind = entry.file_type().map_err(|source| CheckError::Read {
+            path: path.clone(),
+            source,
+        })?;
+        if kind.is_symlink() {
+            return Err(CheckError::Symlink { path });
+        }
+        if !kind.is_dir() {
+            continue;
+        }
+        let name = entry
+            .file_name()
+            .into_string()
+            .map_err(|_non_utf8| CheckError::NonUtf8Path { path: path.clone() })?;
+        found.push((name, path));
+    }
+    found.sort();
+    Ok(found)
 }
 
 /// Every convention `dir` breaks, one line each, sorted.
@@ -278,10 +348,16 @@ fn is_local_path_dependency(value: &toml::Value) -> bool {
     parts.iter().all(|component| *component != "..") || is_sibling_fixture(&parts)
 }
 
-/// Whether the path is `../fixture-…` and nothing more: the one shape allowed to climb.
+/// Whether the path climbs out of the fixture and lands on one fixture and nothing else.
+///
+/// A dependency reaching a fixture beside its own is the one shape allowed to leave the directory, and how far it climbs is how deep the fixture sits under `fixtures/`.
 fn is_sibling_fixture(parts: &[&str]) -> bool {
-    matches!(parts, [first, second]
-        if *first == ".." && second.starts_with("fixture-"))
+    let climbed = parts.iter().take_while(|part| **part == "..").count();
+    climbed > 0
+        && parts.len() == climbed + 1
+        && parts
+            .get(climbed)
+            .is_some_and(|last| last.starts_with("fixture-"))
 }
 
 #[cfg(all(test, unix))]
