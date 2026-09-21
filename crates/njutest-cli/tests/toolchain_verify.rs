@@ -1243,8 +1243,9 @@ fn a_library_that_documents_no_example_is_not_a_target_that_ran_nothing() {
         .filter_map(|one| one["name"].as_str())
         .collect();
     assert!(
-        !stated.contains(&"doctests-not-routed"),
-        "and nothing was left out of the routing either: {stated:?}"
+        !stated.iter().any(|name| name.contains("doctests")),
+        "and the routing says nothing about documented examples either, because there \
+         are none to route: {stated:?}"
     );
 }
 

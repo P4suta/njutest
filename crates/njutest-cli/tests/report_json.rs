@@ -173,8 +173,8 @@ fn populated_draft(vary: &dyn Fn(&mut BuildReport)) -> BuildReport {
     }];
     source.findings = Vec::new();
     source.limitations = vec![Limitation::new(
-        "doctests-not-routed",
-        "doctests run once and are not routed to mutants",
+        rust_mutants::limitation::DOCTESTS_ROUTED_BY_FILE,
+        "doctests run once and are routed to mutants by the file they are in",
     )];
     source.count_targets().expect("one exact target accounting");
     source.accounting.mutants = MutantAccounting {

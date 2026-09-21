@@ -250,3 +250,70 @@ fn every_limitation_either_product_can_state_is_one_a_test_puts_to_something() {
         );
     }
 }
+
+/// Every name a run may state: both registers, and the family a skip reason derives.
+fn declared() -> std::collections::BTreeSet<String> {
+    njutest_cli::limitation::ALL
+        .into_iter()
+        .chain(rust_mutants::limitation::ALL)
+        .map(ToOwned::to_owned)
+        .chain(
+            rust_mutants::syntax::SkipReason::ALL
+                .into_iter()
+                .map(|reason| format!("skipped-{}", reason.name())),
+        )
+        .collect()
+}
+
+/// Every string literal handed straight to `Limitation::new`, with the file it is in.
+fn spelled_at_a_call_site() -> Vec<(String, String)> {
+    let root = njutest_devkit::paths::workspace_root().join("crates/njutest-cli");
+    let mut found = Vec::new();
+    let mut pending = vec![root];
+    while let Some(directory) = pending.pop() {
+        let Ok(entries) = std::fs::read_dir(&directory) else {
+            continue;
+        };
+        for entry in entries.map(|entry| entry.expect("every source entry is readable")) {
+            let path = entry.path();
+            if path.is_dir() {
+                if path.file_name().is_none_or(|name| name != "target") {
+                    pending.push(path);
+                }
+                continue;
+            }
+            if path.extension().is_none_or(|kind| kind != "rs") {
+                continue;
+            }
+            let source = std::fs::read_to_string(&path).unwrap_or_default();
+            let call = concat!("Limitation", "::new(");
+            for part in source.split(call).skip(1) {
+                let trimmed = part.trim_start();
+                let Some(rest) = trimmed.strip_prefix('"') else {
+                    continue;
+                };
+                let Some((name, _)) = rest.split_once('"') else {
+                    continue;
+                };
+                found.push((path.display().to_string(), name.to_owned()));
+            }
+        }
+    }
+    found
+}
+
+#[test]
+fn a_limitation_spelled_at_a_call_site_is_one_the_registers_hold() {
+    let held = declared();
+    let fabricated: Vec<(String, String)> = spelled_at_a_call_site()
+        .into_iter()
+        .filter(|(_, name)| !held.contains(name))
+        .collect();
+    assert!(
+        fabricated.is_empty(),
+        "a limitation name written as a literal beside the call rather than taken from \
+         a register is one nothing holds to the page or to the sentence a reader looks \
+         up, and two of these reached the committed report goldens under a name no run \
+         can emit: {fabricated:#?}"
+    );
+}

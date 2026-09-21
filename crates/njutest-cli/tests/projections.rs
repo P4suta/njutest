@@ -99,7 +99,10 @@ fn report_with(findings: Vec<Finding>) -> Report {
     };
     source.findings = findings;
     source.limitations = vec![
-        Limitation::new("doctests-not-routed", "doctests run once"),
+        Limitation::new(
+            rust_mutants::limitation::DOCTESTS_ROUTED_BY_FILE,
+            "doctests run once",
+        ),
         Limitation::new(
             "git-metadata-unavailable",
             "the fixture is not a git repository",
@@ -163,7 +166,10 @@ fn the_page_leads_with_the_verdict_and_names_what_was_found() {
     );
     assert!(page.contains("cccccccc"), "{page}");
     assert!(page.contains("lt-to-le@1"), "{page}");
-    assert!(page.contains("doctests-not-routed"), "{page}");
+    assert!(
+        page.contains(rust_mutants::limitation::DOCTESTS_ROUTED_BY_FILE),
+        "{page}"
+    );
 }
 
 #[test]
@@ -227,7 +233,10 @@ fn the_sarif_run_carries_the_verdict_and_the_accounting() {
     let properties = &log["runs"][0]["properties"];
     assert_eq!(properties["verdict"], "Insufficient");
     assert_eq!(properties["accounting"]["targets"]["selected"], 3);
-    assert_eq!(properties["limitations"][0]["name"], "doctests-not-routed");
+    assert_eq!(
+        properties["limitations"][0]["name"],
+        rust_mutants::limitation::DOCTESTS_ROUTED_BY_FILE
+    );
 }
 
 #[test]

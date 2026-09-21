@@ -42,7 +42,10 @@ fn report(targets: u32) -> Report {
         })
         .collect();
     source.count_targets().expect("one exact target accounting");
-    source.limitations = vec![Limitation::new("doctests-not-routed", "doctests run once")];
+    source.limitations = vec![Limitation::new(
+        rust_mutants::limitation::DOCTESTS_ROUTED_BY_FILE,
+        "doctests run once",
+    )];
     source.verdict = source.concluded();
     let measurements = njutest_cli::report::across::BuildMeasurements::checked(vec![(
         njutest_cli::config::DEFAULT_CONFIGURATION.to_owned(),

@@ -372,10 +372,6 @@ fn a_report_that_says_nothing_ran_cannot_say_it_is_assured() {
     let nothing = completed(|source| {
         source.accounting.targets = TargetAccounting::default();
         source.targets.clear();
-        source.limitations.push(Limitation::new(
-            "no-targets",
-            "the workspace builds no test target",
-        ));
     })
     .expect(
         "a run that observed nothing still completes, because a reader has to be able to read why",
