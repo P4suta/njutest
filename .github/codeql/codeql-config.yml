@@ -1,0 +1,24 @@
+# SPDX-FileCopyrightText: 2026 njutest contributors
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# What CodeQL is asked about, and what it is not.
+#
+# `security-extended` reasons about a program an attacker can reach.
+# Test code is not that program: it is not shipped, it is not linked into what a person installs, and its inputs are written in the same file as its assertions.
+# Running those queries over it produces findings whose remedy would be to make the test worse — a deterministic nonce is what makes a protocol test a test, and a log line built from a fixture's own string is the test reading back what it just wrote.
+#
+# The fixtures are somebody else's tree on purpose: each is an independent cargo project the engine mutates and compiles, and several are deliberately wrong so that a test can watch the engine refuse them.
+# The fuzz targets exist to be fed hostile input; that is the point of them rather than a defect in them.
+#
+# What this does not reach is a `#[cfg(test)]` module inside a source file, because the unit here is a path.
+# Those are dismissed as `used in tests` against the alert itself, which is the mechanism GitHub provides for exactly that case.
+name: njutest
+
+queries:
+  - uses: security-extended
+
+paths-ignore:
+  - "**/tests/**"
+  - "**/benches/**"
+  - "fixtures/**"
+  - "fuzz/**"

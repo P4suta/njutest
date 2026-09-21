@@ -126,9 +126,9 @@ fn the_real_kani_job_installs_one_exact_locked_version() {
 /// Every tool `mise.toml` pins, split by the key that says who installs it.
 ///
 /// A `cargo:` prefix is a crate and carries its exact version to `taiki-e/install-action`; a bare name is a tool mise fetches, and carries no version because mise reads the same pin this does.
-/// A pinned rust toolchain, the hook runner, and the compilation cache are this machine's alone: a hosted runner gets its toolchain from `rust-toolchain.toml`, runs no hooks, and keeps no cache between jobs.
+/// Three are named by no job: the toolchain comes from `rust-toolchain.toml`, a runner runs no hooks, and the compiler wrapper is installed by the setup action itself because every job inherits it from `[env]`.
 fn pinned() -> (Vec<String>, Vec<String>) {
-    const LOCAL_ONLY: [&str; 3] = ["rust", "lefthook", "sccache"];
+    const NAMED_BY_NO_JOB: [&str; 3] = ["rust", "lefthook", "sccache"];
 
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("..")
@@ -150,7 +150,7 @@ fn pinned() -> (Vec<String>, Vec<String>) {
         };
         if let Some(crate_name) = name.strip_prefix("cargo:") {
             crates.push(format!("{crate_name}@{version}"));
-        } else if !LOCAL_ONLY.contains(&name) {
+        } else if !NAMED_BY_NO_JOB.contains(&name) {
             fetched.push(name.to_owned());
         }
     }
@@ -274,4 +274,62 @@ fn executable_tools_use_the_commit_pinned_installer_and_exact_versions() {
             "CI downloads an executable without an independently pinned digest ({unverified:?}): {source}"
         );
     }
+}
+
+/// Every program `mise.toml`'s `[env]` names, which activating mise puts into a job whether or not the runner has it.
+fn environment_programs() -> Vec<(String, String)> {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("mise.toml");
+    let text = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+    let table = text
+        .parse::<toml::Table>()
+        .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+    let Some(toml::Value::Table(environment)) = table.get("env") else {
+        return Vec::new();
+    };
+    let Some(toml::Value::Table(tools)) = table.get("tools") else {
+        panic!("mise.toml declares the tools it pins")
+    };
+    let pinned: Vec<String> = tools
+        .keys()
+        .map(|name| name.trim_matches('"').to_owned())
+        .collect();
+    environment
+        .iter()
+        .filter_map(|(variable, value)| {
+            let named = value.as_str()?;
+            pinned
+                .iter()
+                .any(|one| one == named)
+                .then(|| (variable.clone(), named.to_owned()))
+        })
+        .collect()
+}
+
+#[test]
+fn a_program_the_activated_environment_names_is_one_every_job_has() {
+    let setup = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join(".github/actions/setup-rust/action.yml");
+    let source = std::fs::read_to_string(&setup)
+        .unwrap_or_else(|error| panic!("{}: {error}", setup.display()));
+    assert!(
+        source.contains("jdx/mise-action"),
+        "this law is about what activating mise brings with it"
+    );
+    let missing: Vec<String> = environment_programs()
+        .into_iter()
+        .filter(|(_, program)| !source.contains(&format!("mise install {program}")))
+        .map(|(variable, program)| format!("{variable}={program}"))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "the setup action activates mise, so every job inherits `[env]` from mise.toml. \
+         A variable naming a program the runner does not have fails every cargo invocation \
+         in that job, including one that only reads metadata, with `could not execute \
+         process ... (never executed)`. The action that activates the environment installs \
+         it, or the variable does not belong in a file CI reads: {missing:?}"
+    );
 }
