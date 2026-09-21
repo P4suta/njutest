@@ -52,7 +52,7 @@ read them too, so what those preview is what a run would do.
 | --- | --- |
 | `--features LIST`, `--all-features`, `--no-default-features` | what cargo compiles |
 | `--build-target TRIPLE`, `--profile NAME`, `--build-jobs N` | how cargo compiles it |
-| `--allow-outside DIR` | let the build read a directory outside the root, copied beside the tree |
+| `--allow-outside DIR` | let the build read a directory outside the root, copied into the snapshot where the tree reaches it |
 | `--offline`, `--locked` | what cargo may reach for and change |
 | `--jobs N`, `-j N` | mutants measured at once; the machine capped at 4 when 0 |
 | `--timeout DURATION` | a mutant's own bound; five times the target's baseline when absent |

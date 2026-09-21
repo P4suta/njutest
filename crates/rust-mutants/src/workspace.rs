@@ -124,7 +124,7 @@ pub struct OpenOptions {
     pub offline: bool,
     /// Pass `--locked` to every cargo command.
     pub locked: bool,
-    /// Directories outside the root the workspace may read code from, each copied beside the tree.
+    /// Directories outside the root the workspace may read code from, each copied into the snapshot at the position it has relative to the root.
     pub allow_outside: Vec<PathBuf>,
     /// Where the run records what it did. [`Recorder::disabled`] by default.
     pub trace: Recorder,
@@ -818,10 +818,9 @@ impl Workspace {
     ) -> Result<Snapshot, crate::EngineError> {
         let started = std::time::Instant::now();
         let snapshot = snapshot::create(
-            root,
             &SnapshotOptions {
                 exclude: options.exclude.clone(),
-                beside: options.allow_outside.clone(),
+                layout: snapshot::Layout::plan(root, &options.allow_outside)?,
                 report_dir: options.report_directory.clone(),
                 build_dir,
                 dest_parent: parent.to_path_buf(),

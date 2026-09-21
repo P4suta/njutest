@@ -89,12 +89,12 @@ pub enum CheckError {
 pub fn discover(dir: &Path) -> Result<Vec<String>, CheckError> {
     let mut found = Vec::new();
     for (name, path) in children(dir)? {
-        if path.join("Cargo.toml").is_file() {
+        if is_file(&path.join("Cargo.toml")) {
             found.push(name);
             continue;
         }
         for (inner, nested) in children(&path)? {
-            if !nested.join("Cargo.toml").is_file() {
+            if !is_file(&nested.join("Cargo.toml")) {
                 return Err(CheckError::NotAFixture {
                     path: nested,
                     group: path.clone(),
@@ -105,6 +105,11 @@ pub fn discover(dir: &Path) -> Result<Vec<String>, CheckError> {
     }
     found.sort();
     Ok(found)
+}
+
+/// Whether `path` is a regular file, asked of the filesystem rather than of a method that answers `false` to every question it could not ask.
+fn is_file(path: &Path) -> bool {
+    std::fs::metadata(path).is_ok_and(|entry| entry.is_file())
 }
 
 /// Every subdirectory of `dir`, by name, refusing a link or a name this gate cannot spell.
@@ -354,7 +359,7 @@ fn is_local_path_dependency(value: &toml::Value) -> bool {
 fn is_sibling_fixture(parts: &[&str]) -> bool {
     let climbed = parts.iter().take_while(|part| **part == "..").count();
     climbed > 0
-        && parts.len() == climbed + 1
+        && parts.len().checked_sub(climbed) == Some(1)
         && parts
             .get(climbed)
             .is_some_and(|last| last.starts_with("fixture-"))

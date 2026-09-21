@@ -32,7 +32,7 @@ fn fixtures() -> Vec<String> {
 fn climbed(arg: &str) -> Option<&str> {
     let parts: Vec<&str> = arg.split('/').collect();
     let up = parts.iter().take_while(|part| **part == "..").count();
-    if up == 0 || parts.len() != up + 1 {
+    if up == 0 || parts.len().checked_sub(up) != Some(1) {
         return None;
     }
     parts
@@ -66,8 +66,10 @@ fn normalized(path: &Path) -> PathBuf {
         match part {
             Component::CurDir => {}
             Component::ParentDir => {
-                if parts.len() > 1 {
-                    parts.truncate(parts.len() - 1);
+                if let Some(last) = parts.len().checked_sub(1)
+                    && last > 0
+                {
+                    parts.truncate(last);
                 }
             }
             other => parts.push(other.as_os_str().to_owned()),
@@ -192,8 +194,9 @@ fn rewrite(name: &str, found: &[Fate]) {
     let (fence, rest) = rest.split_once('\n').expect("the fence line");
     let (old, after) = rest.split_once("```").expect("the end of the block");
     assert!(
-        !old.is_empty(),
-        "the README contained the fate block being replaced"
+        !old.contains("```"),
+        "the fence that closes the block is the first one after it, so what is replaced \
+         is the block and never the page: {name}"
     );
     let mut block = String::new();
     for one in found {
@@ -277,11 +280,10 @@ fn every_fixture_is_driven_by_a_test_that_names_it() {
 
 /// Whether `sources` names this fixture, and not merely a longer name starting with it.
 fn names_it(sources: &str, name: &str) -> bool {
-    sources.match_indices(name).any(|(at, _)| {
-        let after = at + name.len();
-        sources[after..]
-            .chars()
-            .next()
+    sources.match_indices(name).any(|(at, matched)| {
+        at.checked_add(matched.len())
+            .and_then(|after| sources.get(after..))
+            .and_then(|rest| rest.chars().next())
             .is_none_or(|next| !next.is_ascii_alphanumeric() && next != '-')
     })
 }

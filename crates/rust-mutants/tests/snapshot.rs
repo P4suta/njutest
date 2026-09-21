@@ -83,7 +83,15 @@ fn fixture() -> Fixture {
 }
 
 fn options(fx: &Fixture) -> Options {
-    Options::new(&fx.dest)
+    options_for(&fx.source, &fx.dest)
+}
+
+/// Options for copying `root` into `dest`, reading nothing outside it.
+fn options_for(root: &Path, dest: &Path) -> Options {
+    Options::new(
+        rust_mutants::snapshot::Layout::plan(root, &[]).expect("a root with a place of its own"),
+        dest,
+    )
 }
 
 /// Every manifest entry names a byte-identical copy with the right size and digest.
@@ -178,7 +186,7 @@ fn create_copies_the_tree_byte_for_byte_and_records_a_sorted_manifest() {
     write(&fx.source, "tests/data/golden.bin", &[0, 255, 10, 13, 0]);
     fs::create_dir_all(fx.source.join("empty/dir")).expect("empty dirs");
 
-    let snap = create(&fx.source, &options(&fx), now()).expect("create");
+    let snap = create(&options(&fx), now()).expect("create");
 
     assert_eq!(snap.source_root(), fx.source);
     assert_eq!(snap.dir().parent().expect("snapshot parent"), fx.dest);
@@ -229,11 +237,11 @@ fn create_copies_the_tree_byte_for_byte_and_records_a_sorted_manifest() {
 #[test]
 fn create_is_deterministic_across_runs() {
     let fx = fixture();
-    let first = create(&fx.source, &options(&fx), now()).expect("first");
+    let first = create(&options(&fx), now()).expect("first");
     let digest = first.workspace_digest().to_owned();
     let manifest = first.manifest().to_vec();
     first.cleanup().expect("cleanup");
-    let second = create(&fx.source, &options(&fx), now()).expect("second");
+    let second = create(&options(&fx), now()).expect("second");
     assert_eq!(second.workspace_digest(), digest);
     assert_eq!(second.manifest(), manifest.as_slice());
     assert!(second.stable_dir(), "the stable name is free again");
@@ -253,7 +261,7 @@ fn create_preserves_file_permissions_and_makes_directories_writable() {
     write(&locked_dir, "inside.rs", b"// inside\n");
     fs::set_permissions(&locked_dir, fs::Permissions::from_mode(0o555)).expect("chmod");
 
-    let snap = create(&fx.source, &options(&fx), now()).expect("create");
+    let snap = create(&options(&fx), now()).expect("create");
     let mode = |rel: &str| {
         fs::metadata(snap.root().join(rel))
             .expect("copied metadata")
@@ -276,13 +284,13 @@ fn create_preserves_file_permissions_and_makes_directories_writable() {
 #[test]
 fn a_relative_or_missing_source_root_is_refused_before_anything_is_created() {
     let fx = fixture();
-    let missing = create(&fx.source.join("nope"), &options(&fx), now())
+    let missing = create(&options_for(&fx.source.join("nope"), &fx.dest), now())
         .expect_err("a missing source root is refused");
     assert_eq!(missing.kind(), SnapshotErrorKind::SourceRoot);
-    let file = create(&fx.source.join("Cargo.toml"), &options(&fx), now())
+    let file = create(&options_for(&fx.source.join("Cargo.toml"), &fx.dest), now())
         .expect_err("a source file is not a source root");
     assert_eq!(file.kind(), SnapshotErrorKind::SourceRoot);
-    let relative = create(Path::new("relative/root"), &options(&fx), now())
+    let relative = rust_mutants::snapshot::Layout::plan(Path::new("relative/root"), &[])
         .expect_err("a relative source root is refused");
     assert_eq!(relative.kind(), SnapshotErrorKind::SourceRoot);
     assert!(relative.to_string().contains("RM1002"), "{relative}");
@@ -306,7 +314,7 @@ fn git_and_the_directory_the_caller_names_are_excluded_and_patterns_skip_whole_d
         Pattern::compile("vendor/**").expect("pattern"),
         Pattern::compile("target").expect("pattern"),
     ];
-    let snap = create(&fx.source, &opts, now()).expect("create");
+    let snap = create(&opts, now()).expect("create");
     let rel: Vec<&str> = snap
         .manifest()
         .iter()
@@ -336,7 +344,7 @@ fn the_directory_cargo_builds_into_is_skipped_whether_or_not_anybody_tagged_it()
 
     let mut opts = options(&fx);
     opts.build_dir = Some("target".to_owned());
-    let snap = create(&fx.source, &opts, now()).expect("create");
+    let snap = create(&opts, now()).expect("create");
 
     let rel: Vec<&str> = snap
         .manifest()
@@ -363,7 +371,7 @@ fn a_build_directory_that_escapes_the_root_is_an_invalid_option() {
     for bad in ["../elsewhere", "/abs/target", ""] {
         let mut opts = options(&fx);
         opts.build_dir = Some(bad.to_owned());
-        let error = create(&fx.source, &opts, now()).expect_err("an escaping build directory");
+        let error = create(&opts, now()).expect_err("an escaping build directory");
         assert_eq!(error.kind(), SnapshotErrorKind::InvalidOptions, "{error:?}");
     }
 }
@@ -374,7 +382,7 @@ fn a_configured_report_directory_that_escapes_the_root_is_an_invalid_option() {
     for bad in ["../elsewhere", "/abs/reports", ""] {
         let mut opts = options(&fx);
         opts.report_dir = Some(bad.to_owned());
-        let error = create(&fx.source, &opts, now()).expect_err("an escaping report directory");
+        let error = create(&opts, now()).expect_err("an escaping report directory");
         assert_eq!(error.kind(), SnapshotErrorKind::InvalidOptions, "{bad:?}");
         assert_eq!(error.path(), bad);
     }
@@ -388,7 +396,7 @@ fn symbolic_links_are_recorded_and_not_followed() {
     std::os::unix::fs::symlink("main.rs", fx.source.join("src/zz-link.rs")).expect("symlink");
     std::os::unix::fs::symlink("..", fx.source.join("src/aa-up")).expect("symlink");
 
-    let snapshot = create(&fx.source, &options(&fx), now()).expect("a tree with links in it");
+    let snapshot = create(&options(&fx), now()).expect("a tree with links in it");
 
     let passed: Vec<(&str, &str)> = snapshot
         .passed_over()
@@ -432,7 +440,7 @@ fn irregular_files_are_recorded_and_not_copied() {
         .expect("the POSIX mkfifo utility");
     assert!(made.success(), "mkfifo exited with {made}");
 
-    let snapshot = create(&fx.source, &options(&fx), now()).expect("a tree with a pipe in it");
+    let snapshot = create(&options(&fx), now()).expect("a tree with a pipe in it");
 
     let passed: Vec<(&str, &str, Option<&str>)> = snapshot
         .passed_over()
@@ -456,7 +464,7 @@ fn irregular_files_are_recorded_and_not_copied() {
 fn a_name_with_a_backslash_is_refused_because_it_cannot_round_trip_through_a_relative_path() {
     let fx = fixture();
     write(&fx.source, "src/a\\b.rs", b"//\n");
-    let error = create(&fx.source, &options(&fx), now()).expect_err("a backslash name is refused");
+    let error = create(&options(&fx), now()).expect_err("a backslash name is refused");
     assert_eq!(error.kind(), SnapshotErrorKind::UnsupportedName);
     assert_eq!(error.path(), "src/a\\b.rs");
 }
@@ -472,8 +480,7 @@ fn a_file_that_cannot_be_read_fails_the_copy_and_removes_the_partial_snapshot() 
     let fx = fixture();
     let secret = write(&fx.source, "src/secret.rs", b"//\n");
     fs::set_permissions(&secret, fs::Permissions::from_mode(0o000)).expect("chmod");
-    let error =
-        create(&fx.source, &options(&fx), now()).expect_err("an unreadable file is refused");
+    let error = create(&options(&fx), now()).expect_err("an unreadable file is refused");
     assert_eq!(error.kind(), SnapshotErrorKind::Copy);
     assert_eq!(error.path(), "src/secret.rs");
     assert!(error.source().is_some(), "the OS error is kept");
@@ -486,8 +493,8 @@ fn a_file_that_cannot_be_read_fails_the_copy_and_removes_the_partial_snapshot() 
 #[test]
 fn a_second_live_snapshot_of_the_same_root_falls_back_to_a_random_name() {
     let fx = fixture();
-    let first = create(&fx.source, &options(&fx), now()).expect("first");
-    let second = create(&fx.source, &options(&fx), now()).expect("second");
+    let first = create(&options(&fx), now()).expect("first");
+    let second = create(&options(&fx), now()).expect("second");
     assert!(first.stable_dir());
     assert!(!second.stable_dir());
     assert_ne!(first.dir(), second.dir());
@@ -522,7 +529,7 @@ fn an_abandoned_stable_directory_is_swept_and_the_name_reused_never_adopted() {
         .expect("the previous run releases what it owned");
     drop(owner);
 
-    let snap = create(&fx.source, &options(&fx), now()).expect("create");
+    let snap = create(&options(&fx), now()).expect("create");
     assert!(snap.stable_dir());
     assert_eq!(snap.dir(), dir);
     assert!(
@@ -535,7 +542,7 @@ fn an_abandoned_stable_directory_is_swept_and_the_name_reused_never_adopted() {
 #[test]
 fn a_kept_stable_directory_is_not_reused() {
     let fx = fixture();
-    let mut first = create(&fx.source, &options(&fx), now()).expect("first");
+    let mut first = create(&options(&fx), now()).expect("first");
     first.keep().expect("keep");
     let kept_dir = first.dir().to_path_buf();
     drop(first);
@@ -544,7 +551,7 @@ fn a_kept_stable_directory_is_not_reused() {
         "kept means kept"
     );
 
-    let second = create(&fx.source, &options(&fx), now()).expect("second");
+    let second = create(&options(&fx), now()).expect("second");
     assert!(!second.stable_dir());
     assert_ne!(second.dir(), kept_dir);
     assert!(
@@ -558,7 +565,7 @@ fn a_young_unowned_stable_directory_is_spared_and_the_name_not_taken() {
     let fx = fixture();
     let dir = fx.dest.join(stable_name(&fx.source));
     fs::create_dir_all(&dir).expect("mkdir");
-    let snap = create(&fx.source, &options(&fx), now()).expect("create");
+    let snap = create(&options(&fx), now()).expect("create");
     assert!(!snap.stable_dir());
     assert!(
         path_exists(&dir).expect("inspect legacy snapshot"),
@@ -570,7 +577,7 @@ fn a_young_unowned_stable_directory_is_spared_and_the_name_not_taken() {
 fn redigest_reports_added_removed_and_changed_paths_sorted_and_is_empty_for_a_clean_tree() {
     let fx = fixture();
     write(&fx.source, "src/lib.rs", b"pub fn f() {}\n");
-    let snap = create(&fx.source, &options(&fx), now()).expect("create");
+    let snap = create(&options(&fx), now()).expect("create");
     assert!(snap.redigest().expect("redigest").is_empty());
 
     fs::write(
@@ -627,7 +634,7 @@ fn redigest_reports_added_removed_and_changed_paths_sorted_and_is_empty_for_a_cl
 #[test]
 fn redigest_applies_no_exclusions_so_a_report_written_into_the_tree_is_drift() {
     let fx = fixture();
-    let snap = create(&fx.source, &options(&fx), now()).expect("create");
+    let snap = create(&options(&fx), now()).expect("create");
     write(snap.root(), "elsewhere/late.json", b"{}");
     write(snap.root(), ".git/HEAD", b"ref\n");
     let drifts = snap.redigest().expect("redigest");
@@ -639,7 +646,7 @@ fn redigest_applies_no_exclusions_so_a_report_written_into_the_tree_is_drift() {
 #[test]
 fn redigest_refuses_a_link_that_grew_inside_the_snapshot() {
     let fx = fixture();
-    let snap = create(&fx.source, &options(&fx), now()).expect("create");
+    let snap = create(&options(&fx), now()).expect("create");
     std::os::unix::fs::symlink("/etc", snap.root().join("src/etc")).expect("symlink");
     let error = snap.redigest().expect_err("a new link is refused");
     assert_eq!(error.kind(), SnapshotErrorKind::Symlink);
@@ -649,7 +656,7 @@ fn redigest_refuses_a_link_that_grew_inside_the_snapshot() {
 #[test]
 fn redigest_of_a_removed_tree_names_the_absolute_root() {
     let fx = fixture();
-    let snap = create(&fx.source, &options(&fx), now()).expect("create");
+    let snap = create(&options(&fx), now()).expect("create");
     fs::remove_dir_all(snap.root()).expect("remove tree");
     let error = snap.redigest().expect_err("a removed tree is refused");
     assert_eq!(error.kind(), SnapshotErrorKind::Walk);
@@ -659,7 +666,7 @@ fn redigest_of_a_removed_tree_names_the_absolute_root() {
 #[test]
 fn cleanup_removes_the_whole_directory_and_releases_the_lock_first() {
     let fx = fixture();
-    let snap = create(&fx.source, &options(&fx), now()).expect("create");
+    let snap = create(&options(&fx), now()).expect("create");
     let dir = snap.dir().to_path_buf();
     snap.cleanup().expect("cleanup");
     assert!(!path_exists(&dir).expect("inspect cleaned snapshot"));
@@ -670,7 +677,7 @@ fn cleanup_removes_the_whole_directory_and_releases_the_lock_first() {
 fn dropping_an_unkept_snapshot_removes_it_best_effort() {
     let fx = fixture();
     let dir = {
-        let snap = create(&fx.source, &options(&fx), now()).expect("create");
+        let snap = create(&options(&fx), now()).expect("create");
         snap.dir().to_path_buf()
     };
     assert!(
@@ -682,7 +689,7 @@ fn dropping_an_unkept_snapshot_removes_it_best_effort() {
 #[test]
 fn keep_records_the_decision_in_the_marker_and_cleanup_becomes_a_no_op() {
     let fx = fixture();
-    let mut snap = create(&fx.source, &options(&fx), now()).expect("create");
+    let mut snap = create(&options(&fx), now()).expect("create");
     snap.keep().expect("keep");
     assert!(snap.kept());
     let dir = snap.dir().to_path_buf();
@@ -698,7 +705,7 @@ fn keep_records_the_decision_in_the_marker_and_cleanup_becomes_a_no_op() {
 #[test]
 fn cleanup_retries_with_a_doubling_backoff_and_reports_a_directory_that_survives() {
     let fx = fixture();
-    let snap = create(&fx.source, &options(&fx), now()).expect("create");
+    let snap = create(&options(&fx), now()).expect("create");
     let dir = snap.dir().to_path_buf();
     let attempts = RefCell::new(0usize);
     let sleeps = RefCell::new(Vec::new());
@@ -727,7 +734,7 @@ fn cleanup_retries_with_a_doubling_backoff_and_reports_a_directory_that_survives
 #[test]
 fn a_directory_that_is_already_gone_is_a_directory_that_was_removed() {
     let fx = fixture();
-    let snap = create(&fx.source, &options(&fx), now()).expect("create");
+    let snap = create(&options(&fx), now()).expect("create");
     let dir = snap.dir().to_path_buf();
     let attempts = RefCell::new(0usize);
     let remove = |_: &Path| -> io::Result<()> {
@@ -750,7 +757,7 @@ fn a_directory_that_is_already_gone_is_a_directory_that_was_removed() {
 #[test]
 fn cleanup_succeeds_on_a_later_attempt_without_reporting_the_earlier_ones() {
     let fx = fixture();
-    let snap = create(&fx.source, &options(&fx), now()).expect("create");
+    let snap = create(&options(&fx), now()).expect("create");
     let dir = snap.dir().to_path_buf();
     let attempts = RefCell::new(0usize);
     let sleeps = RefCell::new(0usize);
@@ -816,9 +823,9 @@ mod properties {
     use std::fs;
 
     use proptest::prelude::*;
-    use rust_mutants::snapshot::{Entry, Options, create, workspace_digest};
+    use rust_mutants::snapshot::{Entry, create, workspace_digest};
 
-    use super::{now, sha256_hex, write};
+    use super::{now, options_for, sha256_hex, write};
 
     fn tree() -> impl Strategy<Value = BTreeMap<String, Vec<u8>>> {
         let component = (0u8..3).prop_map(|n| format!("d{n}"));
@@ -844,7 +851,7 @@ mod properties {
             for (rel, bytes) in &files {
                 write(&source, rel, bytes);
             }
-            let snap = create(&source, &Options::new(&dest), now()).expect("create");
+            let snap = create(&options_for(&source, &dest), now()).expect("create");
             let expected: Vec<Entry> = files
                 .iter()
                 .map(|(rel, bytes)| Entry {
@@ -866,7 +873,7 @@ mod properties {
 #[test]
 fn resealing_absorbs_an_intended_rewrite_so_later_drift_means_a_test_wrote() {
     let fx = fixture();
-    let mut snap = create(&fx.source, &options(&fx), now()).expect("create");
+    let mut snap = create(&options(&fx), now()).expect("create");
     let before = snap.workspace_digest().to_owned();
 
     fs::write(
@@ -916,7 +923,7 @@ fn a_directory_tagged_as_a_cache_is_not_copied() {
     fs::write(target.join("debug/deps/huge.rlib"), vec![0_u8; 4096]).expect("build output");
 
     let snapshot =
-        create(source.path(), &Options::new(dest.path()), Timestamp::now()).expect("the snapshot");
+        create(&options_for(source.path(), dest.path()), Timestamp::now()).expect("the snapshot");
 
     assert!(path_is_file(&snapshot.root().join("Cargo.toml")).expect("inspect copied manifest"));
     assert!(
@@ -942,7 +949,7 @@ fn a_directory_with_a_file_of_that_name_that_is_not_the_tag_is_copied() {
     fs::write(ordinary.join("CACHEDIR.TAG"), b"notes about caching\n").expect("a file");
 
     let snapshot =
-        create(source.path(), &Options::new(dest.path()), Timestamp::now()).expect("the snapshot");
+        create(&options_for(source.path(), dest.path()), Timestamp::now()).expect("the snapshot");
     assert!(
         path_is_file(&snapshot.root().join("data/CACHEDIR.TAG")).expect("inspect ordinary tag"),
         "the signature is what tags a cache, not the name"
@@ -971,8 +978,8 @@ fn a_copied_file_keeps_the_time_the_original_was_written() {
         .set_times(fs::FileTimes::new().set_modified(long_ago))
         .expect("a time somebody could have written it");
 
-    let snapshot = create(source.path(), &Options::new(destination.path()), now())
-        .expect("the tree is copied");
+    let snapshot =
+        create(&options_for(source.path(), destination.path()), now()).expect("the tree is copied");
     let copied = fs::metadata(snapshot.root().join("src/lib.rs"))
         .expect("the copy")
         .modified()

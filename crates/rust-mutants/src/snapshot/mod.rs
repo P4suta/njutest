@@ -18,6 +18,10 @@ use std::time::Duration;
 use jiff::Timestamp;
 use sha2::{Digest as _, Sha256};
 
+mod layout;
+
+pub use layout::{Layout, Placed, Placement};
+
 use crate::error::{self, ErrorCode};
 use crate::glob::Pattern;
 use crate::id::normalize_path;
@@ -62,8 +66,8 @@ const COPY_BUFFER: usize = 64 * 1024;
 pub struct Options {
     /// Patterns matched against each entry's `/`-normalized path relative to the source root. A matching directory is skipped whole.
     pub exclude: Vec<Pattern>,
-    /// Directories to copy beside the tree, each under its own name.
-    pub beside: Vec<PathBuf>,
+    /// Where the tree and every directory it reads outside itself are placed inside the copy.
+    pub layout: Layout,
     /// Where the caller writes its reports, as a source-root-relative path, excluded from the snapshot. `None` is a caller that writes none inside the tree.
     pub report_dir: Option<String>,
     /// The directory cargo builds into, as a source-root-relative path, when it is inside the root.
@@ -74,9 +78,9 @@ pub struct Options {
 
 impl Options {
     /// Options with only the built-in exclusions, creating under `dest_parent`.
-    pub fn new(dest_parent: impl Into<PathBuf>) -> Self {
+    pub fn new(layout: Layout, dest_parent: impl Into<PathBuf>) -> Self {
         Self {
-            beside: Vec::new(),
+            layout,
             exclude: Vec::new(),
             report_dir: None,
             build_dir: None,
@@ -225,6 +229,8 @@ pub enum SnapshotErrorKind {
     CleanupRefused,
     /// A snapshot directory that survived every removal attempt, usually a file still locked by a test binary on Windows.
     CleanupFailed,
+    /// A directory a run would copy that has no place in the copy keeping every path into it resolving.
+    Layout,
 }
 
 impl SnapshotErrorKind {
@@ -243,6 +249,7 @@ impl SnapshotErrorKind {
             Self::Copy => error::SNAPSHOT_COPY,
             Self::CleanupRefused => error::SNAPSHOT_CLEANUP_REFUSED,
             Self::CleanupFailed => error::SNAPSHOT_CLEANUP_FAILED,
+            Self::Layout => error::SNAPSHOT_LAYOUT,
         }
     }
 
@@ -261,6 +268,7 @@ impl SnapshotErrorKind {
             Self::Copy => "copy",
             Self::CleanupRefused => "cleanup-refused",
             Self::CleanupFailed => "cleanup-failed",
+            Self::Layout => "layout",
         }
     }
 }
@@ -405,22 +413,12 @@ pub struct Snapshot {
     state: State,
 }
 
-/// Copies the tree rooted at `source_root` into a directory named after that root, inside [`Options::dest_parent`].
+/// Copies the tree the options lay out into a directory named after its root, inside [`Options::dest_parent`].
 ///
 /// # Errors
 /// Every failure is a [`SnapshotError`] naming the path it is about.
-pub fn create(
-    source_root: &Path,
-    options: &Options,
-    now: Timestamp,
-) -> Result<Snapshot, SnapshotError> {
-    if !source_root.is_absolute() {
-        return Err(SnapshotError::new(
-            SnapshotErrorKind::SourceRoot,
-            source_root.display().to_string(),
-            "source root must be an absolute path",
-        ));
-    }
+pub fn create(options: &Options, now: Timestamp) -> Result<Snapshot, SnapshotError> {
+    let source_root = options.layout.source_root();
     let info = fs::metadata(source_root).map_err(|source| {
         SnapshotError::new(
             SnapshotErrorKind::SourceRoot,
@@ -451,9 +449,10 @@ pub fn create(
 
     let (dir, stable) = destination(&options.dest_parent, source_root, now)?;
     let owner = claim_destination(&dir, now)?;
+    let placement = options.layout.under(dir.join(TREE_NAME));
     let mut snapshot = Snapshot {
-        source_root: source_root.to_path_buf(),
-        root: dir.join(TREE_NAME),
+        source_root: placement.source_root().to_path_buf(),
+        root: placement.root().to_path_buf(),
         dest_parent: dir.parent().map(Path::to_path_buf).unwrap_or_default(),
         dir,
         manifest: Vec::new(),
@@ -463,8 +462,9 @@ pub fn create(
         owner: Some(owner),
         state: State::Live,
     };
-    match populate(&snapshot.root, &dirs, &files)
-        .and_then(|manifest| beside(&snapshot.dir, &options.beside).map(|()| manifest))
+    match scaffold(&placement)
+        .and_then(|()| populate(&snapshot.root, &dirs, &files))
+        .and_then(|manifest| beside(placement.beside()).map(|()| manifest))
     {
         Ok(manifest) => {
             snapshot.workspace_digest = digest_of(&manifest, &snapshot.passed_over)?;
@@ -478,17 +478,29 @@ pub fn create(
     }
 }
 
-/// Copies each named directory beside the tree, under its own name.
-fn beside(dir: &Path, directories: &[PathBuf]) -> Result<(), SnapshotError> {
-    for source in directories {
-        let Some(name) = source.file_name() else {
-            continue;
-        };
-        let mut walker = Walker::new(source, &[]);
+/// Creates the directories between the stage and what it holds, each exactly once.
+fn scaffold(placement: &Placement) -> Result<(), SnapshotError> {
+    for path in placement.scaffolding() {
+        fs::create_dir(&path).map_err(|source| {
+            SnapshotError::new(
+                SnapshotErrorKind::Destination,
+                path.display().to_string(),
+                "cannot create the directory the copy reproduces the tree under",
+            )
+            .with_source(source)
+        })?;
+    }
+    Ok(())
+}
+
+/// Copies each directory the tree reads outside itself, where the placement puts it.
+fn beside(directories: &[Placed]) -> Result<(), SnapshotError> {
+    for placed in directories {
+        let mut walker = Walker::new(placed.source(), &[]);
         walker.walk("")?;
         walker.rejection()?;
         let Walker { files, dirs, .. } = walker;
-        let copied_entries = populate(&dir.join(name), &dirs, &files)?;
+        let copied_entries = populate(placed.destination(), &dirs, &files)?;
         drop(copied_entries);
     }
     Ok(())

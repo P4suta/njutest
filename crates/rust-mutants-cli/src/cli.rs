@@ -358,7 +358,7 @@ pub struct Scope {
     /// Only mutate these packages. Repeatable.
     #[arg(long = "package", short = 'p', value_name = "NAME")]
     pub packages: Vec<String>,
-    /// Let the build read this directory from outside the root, copying it beside the tree. Repeatable.
+    /// Let the build read this directory from outside the root, repeatably, copying it where the tree reaches it.
     #[arg(long = "allow-outside", value_name = "DIR")]
     pub allow_outside: Vec<PathBuf>,
     /// Compile with these cargo features. Repeatable, and each may be a comma-separated list.

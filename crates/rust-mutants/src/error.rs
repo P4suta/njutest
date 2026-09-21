@@ -294,13 +294,19 @@ snapshot_code!(
     WORKSPACE_REACHES_OUTSIDE,
     "RM1017",
     "the workspace reads code from outside itself, which a copy of it does not hold",
-    "--allow-outside DIR copies that directory beside the tree, or [project] allow_outside does"
+    "--allow-outside DIR copies that directory into the copy where the tree reaches it, or [project] allow_outside does"
 );
 snapshot_code!(
     ROOT_IS_NOT_THE_WORKSPACE,
     "RM1018",
     "the root is a member of a workspace rather than the workspace",
     "run with --root at the workspace root the message names, and --package to narrow it"
+);
+snapshot_code!(
+    SNAPSHOT_LAYOUT,
+    "RM1019",
+    "a directory a run would copy has no place in the copy that keeps every path into it resolving",
+    "--allow-outside takes an existing absolute directory outside the tree and on the same filesystem root as it; a copy reproduces the shape of what it copies, and cannot hold a directory that is the tree, holds it, or lies across a volume"
 );
 snapshot_code!(
     DEP_INFO_UNREADABLE,
@@ -566,6 +572,7 @@ pub const fn error_codes() -> &'static [ErrorCode] {
         CARGO_MESSAGE_UNPARSABLE,
         WORKSPACE_REACHES_OUTSIDE,
         ROOT_IS_NOT_THE_WORKSPACE,
+        SNAPSHOT_LAYOUT,
         DEP_INFO_UNREADABLE,
         DEP_INFO_MISSING,
         DISCOVER_FILE_UNREADABLE,

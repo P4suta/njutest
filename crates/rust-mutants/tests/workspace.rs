@@ -3,14 +3,14 @@
 
 //! Opening a tree: what the engine asks the toolchain, and what it says when the answer is not one it can use.
 
-use std::path::PathBuf;
+use std::ffi::OsString;
+use std::path::{Component, Path, PathBuf};
 
 use njutest_devkit::fake_cargo::{Installed, Invocation, Script, install};
 use njutest_devkit::fixture::Fixture;
 use njutest_devkit::result::{
-    OptionState::Present,
     ResultState::{Refused, Returned},
-    option_state, result_state,
+    result_state,
 };
 use rust_mutants::runner::Cancel;
 use rust_mutants::session::PrepareOptions;
@@ -35,16 +35,13 @@ fn opened(
     script: &Script,
 ) -> (Result<Workspace, rust_mutants::EngineError>, Installed) {
     let installed = install(script);
-    let mut env: Vec<(std::ffi::OsString, std::ffi::OsString)> = installed.env();
-    env.push((
-        std::ffi::OsString::from("PATH"),
-        std::ffi::OsString::from(installed.bin()),
-    ));
+    let mut env: Vec<(OsString, OsString)> = installed.env();
+    env.push((OsString::from("PATH"), OsString::from(installed.bin())));
     let opened = Workspace::open(
         fixture.root(),
         OpenOptions {
             cargo: Some(installed.cargo()),
-            search_path: Some(std::ffi::OsString::from(installed.bin())),
+            search_path: Some(OsString::from(installed.bin())),
             temp_directory: fixture.temp().to_path_buf(),
             env,
             locked: true,
@@ -156,16 +153,13 @@ fn opening_copies_the_tree_and_asks_the_toolchain_in_the_copy() {
         Invocation::new("cargo", &["metadata"]).printing(&metadata_document(fixture.root())),
     );
     let installed = install(&script);
-    let mut env: Vec<(std::ffi::OsString, std::ffi::OsString)> = installed.env();
-    env.push((
-        std::ffi::OsString::from("PATH"),
-        std::ffi::OsString::from(installed.bin()),
-    ));
+    let mut env: Vec<(OsString, OsString)> = installed.env();
+    env.push((OsString::from("PATH"), OsString::from(installed.bin())));
     let workspace = Workspace::open(
         fixture.root(),
         OpenOptions {
             cargo: Some(installed.cargo()),
-            search_path: Some(std::ffi::OsString::from(installed.bin())),
+            search_path: Some(OsString::from(installed.bin())),
             temp_directory: fixture.temp().to_path_buf(),
             env,
             locked: true,
@@ -245,16 +239,13 @@ fn a_temporary_root_alias_is_resolved_before_any_workspace_path_is_minted()
         Invocation::new("cargo", &["metadata"]).printing(&metadata_document(fixture.root())),
     );
     let installed = install(&script);
-    let mut env: Vec<(std::ffi::OsString, std::ffi::OsString)> = installed.env();
-    env.push((
-        std::ffi::OsString::from("PATH"),
-        std::ffi::OsString::from(installed.bin()),
-    ));
+    let mut env: Vec<(OsString, OsString)> = installed.env();
+    env.push((OsString::from("PATH"), OsString::from(installed.bin())));
     let workspace = Workspace::open(
         fixture.root(),
         OpenOptions {
             cargo: Some(installed.cargo()),
-            search_path: Some(std::ffi::OsString::from(installed.bin())),
+            search_path: Some(OsString::from(installed.bin())),
             temp_directory: alias.clone(),
             env,
             locked: true,
@@ -380,21 +371,18 @@ fn an_allowed_directory_outside_the_root_is_read_rather_than_refused() {
     let script =
         toolchain_answers().answering(Invocation::new("cargo", &["metadata"]).printing(&document));
     let installed = install(&script);
-    let mut env: Vec<(std::ffi::OsString, std::ffi::OsString)> = installed.env();
-    env.push((
-        std::ffi::OsString::from("PATH"),
-        std::ffi::OsString::from(installed.bin()),
-    ));
+    let mut env: Vec<(OsString, OsString)> = installed.env();
+    env.push((OsString::from("PATH"), OsString::from(installed.bin())));
     let opened = Workspace::open(
         fixture.root(),
         OpenOptions {
             cargo: Some(installed.cargo()),
-            search_path: Some(std::ffi::OsString::from(installed.bin())),
+            search_path: Some(OsString::from(installed.bin())),
             temp_directory: fixture.temp().to_path_buf(),
             env,
             locked: true,
             offline: true,
-            allow_outside: vec![allowed],
+            allow_outside: vec![allowed.clone()],
             ..OpenOptions::default()
         },
         &Cancel::new(),
@@ -405,30 +393,60 @@ fn an_allowed_directory_outside_the_root_is_read_rather_than_refused() {
         "a directory somebody named is one the run may read: {opened:?}"
     );
     let Ok(workspace) = opened else { return };
-    let snapshot_parent = workspace
-        .snapshot_root()
-        .parent()
-        .map(std::path::Path::to_path_buf);
-    assert_eq!(
-        option_state(snapshot_parent.as_ref()),
-        Present,
-        "the snapshot directory"
-    );
-    let Some(snapshot_parent) = snapshot_parent else {
-        return;
-    };
-    let beside = snapshot_parent.join("elsewhere");
-    let beside_metadata = std::fs::metadata(&beside);
+    let as_written = between(fixture.root(), &allowed);
+    let in_the_copy = folded(&workspace.snapshot_root().join(&as_written));
+    let reached = std::fs::metadata(in_the_copy.join("Cargo.toml"));
     assert!(
-        matches!(beside_metadata, Ok(metadata) if metadata.is_dir()),
-        "and one the run copies beside the tree, so the same relative path resolves in the \
-         copy: {}",
-        beside.display()
+        matches!(reached, Ok(entry) if entry.is_file()),
+        "the path the tree writes to reach it is {}, and following that from the copy of \
+         the tree has to reach the copy of it: a test that checked a place it computed \
+         the way the code does could not tell whether anything resolved. {} holds no \
+         manifest",
+        as_written.display(),
+        in_the_copy.display()
     );
 }
 
+/// The relative path a manifest inside `from` writes to reach `to`.
+fn between(from: &Path, to: &Path) -> PathBuf {
+    let mine: Vec<Component<'_>> = from.components().collect();
+    let theirs: Vec<Component<'_>> = to.components().collect();
+    let shared = mine
+        .iter()
+        .zip(&theirs)
+        .take_while(|(one, other)| one == other)
+        .count();
+    let mut found = PathBuf::new();
+    for _climbed in shared..mine.len() {
+        found.push("..");
+    }
+    for part in theirs.iter().skip(shared) {
+        found.push(part);
+    }
+    found
+}
+
+/// `path` with every `..` folded, which is what cargo does with a declared path.
+fn folded(path: &Path) -> PathBuf {
+    let mut parts: Vec<OsString> = Vec::new();
+    for part in path.components() {
+        match part {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if let Some(last) = parts.len().checked_sub(1)
+                    && last > 0
+                {
+                    parts.truncate(last);
+                }
+            }
+            other => parts.push(other.as_os_str().to_owned()),
+        }
+    }
+    parts.iter().collect()
+}
+
 /// A `cargo metadata` document for a one-package workspace at `root`.
-fn metadata_document(root: &std::path::Path) -> String {
+fn metadata_document(root: &Path) -> String {
     let manifest = root.join("Cargo.toml");
     let source = root.join("src/lib.rs");
     format!(
@@ -549,7 +567,7 @@ fn a_check_that_takes_longer_than_the_build_timeout_says_it_timed_out() {
 }
 
 /// A `compiler-message` a check would print for a tree that does not parse.
-fn compiler_message(root: &std::path::Path, said: &str) -> String {
+fn compiler_message(root: &Path, said: &str) -> String {
     let source = root.join("src/lib.rs");
     format!(
         r#"{{"reason":"compiler-message","package_id":"demo 0.1.0","manifest_path":"{manifest}","target":{{"kind":["lib"],"crate_types":["lib"],"name":"demo","src_path":"{source}","edition":"2024"}},"message":{{"message":"{said}","code":null,"level":"error","spans":[],"children":[],"rendered":"error: {said}\n"}}}}"#,

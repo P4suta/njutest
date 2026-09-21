@@ -418,7 +418,7 @@ pub fn names() -> Vec<String> {
     let root = crate::paths::fixtures_dir();
     let mut found = Vec::new();
     for (name, path) in directories(&root) {
-        if path.join("Cargo.toml").is_file() {
+        if std::fs::metadata(path.join("Cargo.toml")).is_ok_and(|entry| entry.is_file()) {
             found.push(name);
             continue;
         }

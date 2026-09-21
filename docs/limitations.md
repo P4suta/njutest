@@ -368,13 +368,11 @@ does not open or mutate a report store remains available.
   refused with `RM1018` naming the workspace it belongs to. A run measures a
   copy of what it was given, and a member on its own is not a tree cargo can
   build.
-- A path dependency or a `[patch]` entry that reads from outside the root is
-  refused with `RM1017` before anything is copied, naming the dependency, the
-  manifest that declares it, and `--allow-outside`. That flag copies the named
-  directory beside the tree under its own name, so the same relative path
-  resolves in the copy. What is copied beside the tree is read and never
-  mutated, and is not part of the workspace digest: a run says what it
-  measured, and it measured the tree.
+- A path dependency or a `[patch]` entry that reads from outside the root is refused with `RM1017` before anything is copied, naming the dependency, the manifest that declares it, and `--allow-outside`.
+  That flag copies the named directory into the snapshot at the position it has relative to the tree, so every path that reaches it on disk reaches it in the copy however far the declaration climbs.
+  A directory the copy cannot place that way is refused with `RM1019`: one that is the tree, holds it, is inside it, or lies on another filesystem root.
+  What is copied beside the tree is read and never mutated, and is not part of the workspace digest: a run says what it measured, and it measured the tree.
+  The cost is path length — a high shared ancestor makes the copied paths longer, and on Windows, where the engine strips the `\\?\` prefix from every canonical path on purpose, a deep ancestor under a deep tree can cross 260 characters and stop the copy with `RM1008`.
 - Symbolic links in the evidence tree are rejected.
 - The coverage build sets `CARGO_ENCODED_RUSTFLAGS`, which replaces
   `build.rustflags` rather than adding to it, so njutest reads the project's

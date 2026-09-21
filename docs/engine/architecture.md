@@ -86,20 +86,13 @@ text changed. `validate-round` says how many that was.
 
 ## Snapshot
 
-`snapshot::create` copies the tree byte for byte into
-`<dest>/rust-mutants-snap-<16 hex of sha256(absolute root)>/tree`. The
-name is stable so cargo's fingerprints survive from one run to the next;
-the directory beside `tree` carries the `tempowner` lock and marker, so
-every byte under `tree` came from the source. A directory found under the
-stable name is swept and copied into again, never adopted; a live, kept, or
-young unowned one makes the run fall back to a fresh name (reported through
-`Snapshot::stable_dir`). `.git` at any depth is always excluded, the caller's
-own report directory is excluded when it names one, and so is everything
-`[project] exclude` names — which is why
-excluding a file the crate declares as a module leaves a tree that does not
-compile, and why a pattern that is meant to keep code out of the mutations
-rather than out of the tree belongs in `include`; a symbolic link, reparse point, device, or backslash-named
-entry is refused with the first offending path in sorted order.
+`snapshot::create` copies the tree byte for byte into `<dest>/rust-mutants-snap-<16 hex of sha256(absolute root)>/tree`.
+The name is stable so cargo's fingerprints survive from one run to the next, and the directory beside `tree` carries the `tempowner` lock and marker.
+`tree` is the stage: the copy places everything it holds by substituting one prefix, the ancestor the measured root and every `--allow-outside` directory share becoming the stage, so the relative path between any two of them is the path they had on disk.
+With no `--allow-outside` the ancestor is the root itself and the tree is the stage, which is where it has always been and is every ordinary run; with one, the tree sits at its own depth under the stage and each allowed directory at its own, and the only entries the engine makes rather than copies are the empty directories between them, which `Placement::scaffolding` names once each.
+A directory found under the stable name is swept and copied into again, never adopted; a live, kept, or young unowned one makes the run fall back to a fresh name (reported through `Snapshot::stable_dir`).
+`.git` at any depth is always excluded, the caller's own report directory is excluded when it names one, and so is everything `[project] exclude` names — which is why excluding a file the crate declares as a module leaves a tree that does not compile, and why a pattern that is meant to keep code out of the mutations rather than out of the tree belongs in `include`.
+A symbolic link, reparse point, device, or backslash-named entry is refused with the first offending path in sorted order.
 
 The manifest is sorted by path and hashed under the domain
 `rust-mutants-workspace-v1` as `enc(domain) ‖ enc(path) ‖ enc(sha256hex) …`
