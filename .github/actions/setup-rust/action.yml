@@ -43,8 +43,12 @@ runs:
     # A runner holding the variable but not the program fails every cargo invocation it has — `could not execute process sccache … (never executed)` — including the ones that only read metadata, which is how a single missing binary took nine jobs down at a step that does no compiling.
     # Installing it answers that and buys nothing: sccache is a compilation cache, and the one a job would hit is what `Swatinem/rust-cache` restores below. It also left the shim unable to resolve a version at compile time — `No version is set for shim: sccache` — which is a second failure held open for no gain.
     # So the variable is cleared rather than satisfied, which is the decision `mise.toml` already records by keeping sccache out of what CI installs. Activating mise is what quietly reversed it.
+    # `mise run` installs every tool `mise.toml` pins before it runs a task, which in CI means `cargo install` for each `cargo:` pin — offline, against a registry index that is not there, for tools the task does not use. One job wanted `cargo build` and was told `could not find cargo-nextest in registry crates-io with version =0.9.140`.
+    # Here the job decides what is installed and mise runs the task. That is the same split the two inputs above make: install-action for crates, mise for what it fetches, and a job that names neither gets neither.
     - shell: bash
-      run: echo "RUSTC_WRAPPER=" >> "${GITHUB_ENV}"
+      run: |
+        echo "RUSTC_WRAPPER=" >> "${GITHUB_ENV}"
+        echo "MISE_TASK_RUN_AUTO_INSTALL=false" >> "${GITHUB_ENV}"
     - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
     # `mise.toml` pins two kinds of tool and the key says which: a `cargo:` prefix is a crate, and a bare name is a tool mise fetches itself.
     # install-action only knows the first kind, and it knows a crate by its crates.io name rather than the tool's own, which is why translating the bare ones into its vocabulary needed a rename table.

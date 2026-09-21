@@ -813,6 +813,17 @@ enum PrivateDirectoryState {
     Tighten,
     ForeignOwner,
 }
+/// The mode bits as a fixed width, whichever width this platform's `st_mode` has.
+#[cfg(target_os = "macos")]
+fn mode_bits(mode: u16) -> u32 {
+    u32::from(mode)
+}
+
+/// The mode bits as a fixed width, whichever width this platform's `st_mode` has.
+#[cfg(all(unix, not(target_os = "macos")))]
+const fn mode_bits(mode: u32) -> u32 {
+    mode
+}
 
 #[cfg(unix)]
 const fn private_directory_state(
@@ -843,7 +854,7 @@ fn require_private_directory(directory: &std::fs::File) -> io::Result<()> {
     match private_directory_state(
         metadata.st_uid,
         rustix::process::geteuid().as_raw(),
-        u32::from(metadata.st_mode),
+        mode_bits(metadata.st_mode),
     ) {
         PrivateDirectoryState::Ready => {}
         PrivateDirectoryState::ForeignOwner => {
@@ -863,7 +874,7 @@ fn require_private_directory(directory: &std::fs::File) -> io::Result<()> {
             if private_directory_state(
                 metadata.st_uid,
                 rustix::process::geteuid().as_raw(),
-                u32::from(metadata.st_mode),
+                mode_bits(metadata.st_mode),
             ) != PrivateDirectoryState::Ready
             {
                 return Err(io::Error::new(

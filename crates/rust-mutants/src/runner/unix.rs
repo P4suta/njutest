@@ -81,6 +81,13 @@ impl Supervisor {
 
     /// SIGKILL to the whole group, after the grace period a hung test ignores.
     /// The kill goes to the group while the child is still un-reaped, so the pid the group is named after cannot yet have been recycled.
+    #[cfg_attr(
+        not(target_os = "macos"),
+        expect(
+            unused_variables,
+            reason = "only macOS can see a leader that has exited and not yet been reaped, and only there does the distinction change what is signalled"
+        )
+    )]
     pub(super) fn terminate_forcefully(&self, leader: LeaderObservation) -> io::Result<()> {
         #[cfg(target_os = "macos")]
         if leader == LeaderObservation::ExitedWaitable {
@@ -98,8 +105,6 @@ impl Supervisor {
             }
             return signalled;
         }
-        #[cfg(not(target_os = "macos"))]
-        let _leader_observation = leader;
         self.signal(Signal::KILL)
     }
 

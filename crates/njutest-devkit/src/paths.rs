@@ -231,12 +231,22 @@ fn cargo_llvm_cov_owns(name: &std::ffi::OsStr) -> bool {
 }
 
 /// A command for `program`, preserving mutation identity while isolating coverage output.
+///
+/// The compiler flags go with it: a run that inherits them refuses to reach into the code it is measuring, and reports the mutants it could not probe as refused rather than killed.
+/// That turns a suite into a report about whoever set the variable — `RUSTFLAGS: -D warnings` in CI is enough — so a test that drives the engine states the environment it wants instead of inheriting one.
 #[must_use]
 pub fn command(program: &Path) -> std::process::Command {
     let mut command = std::process::Command::new(program);
-    remove_environment(&mut command, "LLVM_PROFILE_FILE");
+    for inherited in NOT_INHERITED {
+        remove_environment(&mut command, inherited);
+    }
     command
 }
+
+/// What a fixture run is insulated from, spelled here because this crate depends on nothing.
+///
+/// `crates/rust-mutants/tests/devkit_environment.rs` holds these against the engine's own constants, which is the only place that can see both.
+pub const NOT_INHERITED: [&str; 3] = ["LLVM_PROFILE_FILE", "RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS"];
 
 #[expect(
     unused_results,

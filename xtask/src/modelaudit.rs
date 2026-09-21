@@ -2374,6 +2374,13 @@ fn strict_descendant(child: &Path, parent: &Path) -> bool {
     child != parent && child.starts_with(parent)
 }
 
+#[cfg_attr(
+    not(target_os = "macos"),
+    expect(
+        clippy::missing_const_for_fn,
+        reason = "only the macOS build walks the /private aliases, and a const fn cannot; one signature is what keeps a caller from having to know which platform it is on"
+    )
+)]
 fn protocol_path(path: &Path) -> std::borrow::Cow<'_, Path> {
     #[cfg(target_os = "macos")]
     {

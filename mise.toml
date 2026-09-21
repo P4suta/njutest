@@ -126,6 +126,18 @@ description = "Type-check every non-benchmark target with every non-benchmark fe
 depends = ["setup:windows-target"]
 run = "cargo check --locked --workspace --all-targets --features njutest/testkit,rust-mutants-cli/testkit,rust-mutants/testkit,xtask/testkit --target x86_64-pc-windows-msvc"
 
+# CI's Linux runners are where a `cfg` this machine never compiles is first read, and `-D warnings` turns each one into a failed job rather than a note.
+# Three arrived at once the first time CI got far enough to run clippy: a function that is const once the macOS branch is gone, a placeholder binding with nothing to bind, and a widening conversion that is the identity where `st_mode` is already a u32.
+# Benchmarks stay out for the same reason they stay out of the Windows check: criterion's build script wants a C cross-compiler, and the lints being looked for are not in a bench.
+[tasks."setup:linux-target"]
+description = "Install the pinned Linux standard library used by the cross-target lint"
+run = "rustup target add --toolchain 1.98.0 x86_64-unknown-linux-gnu"
+
+[tasks."lint:linux"]
+description = "Lint every non-benchmark target for Linux, where CI reads the cfgs this machine does not compile"
+depends = ["setup:linux-target"]
+run = "cargo clippy --locked --workspace --all-targets --features njutest/testkit,rust-mutants-cli/testkit,rust-mutants/testkit,xtask/testkit --target x86_64-unknown-linux-gnu -- -D warnings"
+
 [tasks."build:examples"]
 description = "Build the scripted cargo the suite drives, which no test build produces"
 # `cargo test --all-targets` builds an example as a test harness rather than as
@@ -307,6 +319,7 @@ run = [
   "mise run build",
   "mise run check:windows",
   "mise run lint",
+  "mise run lint:linux",
   "mise run test",
   "mise run kani:verified",
   "mise run deny",
