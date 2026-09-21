@@ -2286,8 +2286,14 @@ fn handles(file: &str, source: &str) -> Vec<Finding> {
 /// The prefix of a comment that is an instruction to this engine rather than an account of the code beside it.
 const ANNOTATION: &str = "rust-mutants:";
 
-/// The prefix of the licence header every file of this repository carries.
-const HEADER: &str = "SPDX-";
+/// The one directive an annotation may carry, which is every word the engine reads after that prefix.
+const DIRECTIVE: &str = "skip";
+
+/// The two lines of the licence header every file of this repository carries, in order.
+const HEADER: [&str; 2] = [
+    "SPDX-FileCopyrightText: 2026 njutest contributors",
+    "SPDX-License-Identifier: MIT OR Apache-2.0",
+];
 
 /// Every comment in `source` that is neither documentation, the licence header, nor an annotation the engine reads.
 fn comments(file: &str, source: &str) -> Vec<Finding> {
@@ -2303,7 +2309,7 @@ fn comments(file: &str, source: &str) -> Vec<Finding> {
             continue;
         }
         if let Some((width, text, doc)) = comment_at(rest) {
-            if !doc && !text.trim_start().starts_with(HEADER) && !names_the_engine(&text) {
+            if !doc && !is_the_header(&text, line) && !names_the_engine(&text) {
                 found.push(Finding {
                     kind: Kind::Comment,
                     file: file.to_owned(),
@@ -2323,8 +2329,25 @@ fn comments(file: &str, source: &str) -> Vec<Finding> {
 }
 
 /// Whether the comment is one of the engine's own annotations, which is a thing it reads rather than a thing a person tells another person.
+///
+/// The prefix alone was the whole test, so a paragraph opening with it was accepted anywhere in any file, and the engine reads one directive.
 fn names_the_engine(text: &str) -> bool {
-    text.trim_start().starts_with(ANNOTATION)
+    text.trim_start()
+        .strip_prefix(ANNOTATION)
+        .map(str::trim_start)
+        .and_then(|rest| rest.strip_prefix(DIRECTIVE))
+        .is_some_and(|after| after.starts_with(char::is_whitespace))
+}
+
+/// Whether the comment is one of the two licence header lines, where that file's header is.
+///
+/// The prefix alone was the whole test, so any comment opening `SPDX-` was accepted at any depth in any file.
+fn is_the_header(text: &str, line: usize) -> bool {
+    let said = text.trim();
+    HEADER
+        .iter()
+        .enumerate()
+        .any(|(at, held)| line == at.saturating_add(1) && said == *held)
 }
 
 /// How many lines a stretch of source covers past the first.

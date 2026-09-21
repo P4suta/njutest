@@ -156,12 +156,7 @@ pub fn run(
 
     let mut resources = holding(request, environment, &mut report, (notes, watch))?;
     let seams = super::wire::watched(&resources.leases(), &request.config.resources);
-    for (capability, why) in &seams.unwatched {
-        report.limitations.push(Limitation::new(
-            crate::limitation::SEAM_NOT_WATCHED,
-            &format!("{capability}: {}", why.why()),
-        ));
-    }
+    state_unwatched(&mut report, &seams);
     let mut held = with_seams(environment, &seams);
     if request.config.contract == crate::config::Contract::VerifiedV1 {
         set_environment(&mut held, "CARGO_BUILD_TARGET", toolchain.host());
@@ -360,6 +355,16 @@ fn licensed(
         .limitations
         .extend(super::wire::licensing(&seams.recorded())?);
     Ok(())
+}
+
+/// Says, for every seam the configuration named and this run did not watch, which of the ways it could not.
+fn state_unwatched(report: &mut BuildReport, seams: &super::wire::Seams) {
+    for (capability, why) in &seams.unwatched {
+        report.limitations.push(Limitation::new(
+            crate::limitation::SEAM_NOT_WATCHED,
+            &format!("{capability}: {}", why.why()),
+        ));
+    }
 }
 
 /// What the toolchain and the workspace are, before anything is built.

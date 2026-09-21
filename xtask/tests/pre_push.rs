@@ -172,7 +172,8 @@ fn stderr(output: &Output) -> String {
 
 #[test]
 fn a_clean_exact_head_is_checked() {
-    let repository = Repository::new("test \"$*\" = 'run check'");
+    let repository =
+        Repository::new("case \"$*\" in 'run check'|'run check:cold') ;; *) exit 99 ;; esac");
     let output = repository.push(&repository.head);
     assert!(output.status.success(), "{}", stderr(&output));
 }
@@ -187,7 +188,8 @@ fn a_different_object_is_refused_before_the_check() {
 
 #[test]
 fn an_existing_remote_ancestor_is_accepted() {
-    let repository = Repository::new("test \"$*\" = 'run check'");
+    let repository =
+        Repository::new("case \"$*\" in 'run check'|'run check:cold') ;; *) exit 99 ;; esac");
     std::fs::write(repository.directory.path().join("tracked"), "after\n")
         .expect("a second revision");
     command(repository.directory.path(), "git", &["add", "tracked"]);

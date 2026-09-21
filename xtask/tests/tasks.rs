@@ -75,7 +75,8 @@ fn the_gates_a_person_runs_are_the_gates_the_pipeline_runs() {
         "git -C \"${repository}\" worktree add --quiet --detach",
         "git -C \"${checkout}\" status --porcelain=v1 --untracked-files=all",
         "mise run check",
-        "require_exact_tree\n(cd \"${checkout}\" && NJUTEST_COMMITTED_HEAD=\"${head}\" mise run check)\nrequire_exact_tree",
+        "require_exact_tree\n(cd \"${checkout}\" && NJUTEST_COMMITTED_HEAD=\"${head}\" mise run check)",
+        "(cd \"${checkout}\" && mise run check:cold)",
     ] {
         assert!(
             pre_push.contains(held),

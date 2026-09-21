@@ -55,15 +55,14 @@ fn a_count_a_page_states_is_read_from_the_paragraph_that_states_it() {
 #[test]
 fn every_way_a_run_can_choose_and_every_reason_it_widened_is_on_the_report_page() {
     let text = page("docs/report-v2.md");
-    let mut words: Vec<&str> = rust_mutants::session::Granularity::ALL
+    let missing: Vec<&str> = rust_mutants::session::Granularity::ALL
         .iter()
         .map(|one| one.name())
-        .collect();
-    for fallback in rust_mutants::session::Fallback::ALL {
-        words.push(fallback.name());
-    }
-    let missing: Vec<&str> = words
-        .into_iter()
+        .chain(
+            rust_mutants::session::Fallback::ALL
+                .iter()
+                .map(|one| one.name()),
+        )
         .filter(|word| !text.contains(&format!("`{word}`")))
         .collect();
     assert!(

@@ -85,4 +85,7 @@ ln -s "${repository}/target/pre-push/debug" "${checkout}/target/debug"
 ln -s "${repository}/target/pre-push/release" "${checkout}/target/release"
 require_exact_tree
 (cd "${checkout}" && NJUTEST_COMMITTED_HEAD="${head}" mise run check)
+# The tree is isolated and the build cache is not: `target/debug` and `target/release` are the developer's, which is minutes per push and the reason every earlier "green" in this campaign was about artifacts compiled before the field they were meant to prove existed.
+# One cold check, into a target directory nothing else writes, is what the cache cannot answer.
+(cd "${checkout}" && mise run check:cold)
 require_exact_tree

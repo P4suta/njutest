@@ -3,39 +3,37 @@
 
 //! What a route means to a report.
 
-pub use rust_mutants::session::Route;
 #[cfg(feature = "testkit")]
-pub use rust_mutants::session::{
-    Asked, BRANCH_NEVER_TAKEN, Discharge, Fallback, NEVER_INFECTED, Reaches,
-};
+pub use rust_mutants::session::{Asked, BRANCH_NEVER_TAKEN, Discharge, NEVER_INFECTED, Reaches};
+pub use rust_mutants::session::{Fallback, Route};
 
 /// One sentence a reader can act on, for the fallback a route was widened by.
+///
+/// It takes the fallback rather than its name, so the match is exhaustive and a fallback the engine grows is a compile error here rather than a catch-all sentence somebody reads.
 #[must_use]
-#[cfg(feature = "testkit")]
-pub fn detail(fallback: &str) -> &'static str {
+pub const fn detail(fallback: Fallback) -> &'static str {
     match fallback {
-        "not-measured" => {
+        Fallback::NotMeasured => {
             "nothing was measured about which tests reach which code, so every test of \
              every target was run"
         }
-        "position-unknown" => {
+        Fallback::PositionUnknown => {
             "the catalog could not say where the mutation is, so no measurement is about \
              it and every test of every target was run"
         }
-        "outside-blocks" => {
+        Fallback::OutsideBlocks => {
             "no instrumented region contains the position, which is a gap in the \
              measurement rather than proof that nothing runs it, so every test of every \
              target was run"
         }
-        "coverage-incomplete" => {
+        Fallback::CoverageIncomplete => {
             "a target that was measured carries no coverage, so its silence about the \
              position is not evidence and it was run"
         }
-        "touch-incomplete" => {
+        Fallback::TouchIncomplete => {
             "a target's guards recorded nothing this run can route by, so its silence \
              about the position is not evidence and every test of it was run"
         }
-        _ => "the measurement did not decide it, so more was run rather than less",
     }
 }
 

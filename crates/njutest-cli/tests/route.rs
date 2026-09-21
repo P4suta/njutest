@@ -25,27 +25,21 @@ const fn decided(reaching: Vec<Reaches>) -> Route {
 
 #[test]
 fn every_fallback_a_route_can_carry_has_a_sentence_of_its_own() {
-    let generic = detail("a name no release of this runner has ever emitted");
+    let mut said: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
     for fallback in Fallback::ALL {
-        let said = detail(fallback.name());
-        assert_ne!(
-            said,
-            generic,
-            "a route widened by {} reaches a report with no sentence a reader can act on: \
-             the engine's vocabulary grew and this one did not",
+        let sentence = detail(fallback);
+        assert!(
+            !sentence.is_empty(),
+            "{} says nothing at all",
             fallback.name()
         );
-        assert!(!said.is_empty(), "{} says nothing at all", fallback.name());
+        assert!(
+            said.insert(sentence),
+            "{} repeats another fallback's sentence, so a reader told either one learns \
+             which name it is and not what happened",
+            fallback.name()
+        );
     }
-}
-
-#[test]
-fn a_name_this_release_does_not_know_still_says_which_direction_it_went() {
-    assert_eq!(
-        detail("a fallback from a later engine"),
-        "the measurement did not decide it, so more was run rather than less",
-        "an unknown fallback is still a fallback, and every fallback runs more"
-    );
 }
 
 #[test]

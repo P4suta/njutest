@@ -107,9 +107,10 @@ fn stepped(step: &Step, telling: Telling) -> String {
             }));
             if let Some(fallback) = fallback {
                 parts.push(format!(
-                    "{} {}",
+                    "{} {}  {}",
                     telling.painted(Style::Limitation, "widened back:"),
-                    telling.painted(Style::Keyword, fallback.name())
+                    telling.painted(Style::Keyword, fallback.name()),
+                    crate::assure::route::detail(*fallback)
                 ));
             }
             parts.join("  ")

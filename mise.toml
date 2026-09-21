@@ -283,6 +283,13 @@ run = "cargo mutants --config .cargo/mutants.toml --workspace"
 # the way another repository drives it. Everything else CI asks is asked here
 # first, because a push that has to wait twenty minutes to be told about a
 # stale golden is a push nobody waits for.
+# The pre-push gate isolates the tree and not the build cache: it symlinks the developer's target/debug in, which is minutes per push and the reason every earlier "green" in this campaign was about artifacts compiled before the field they were meant to prove existed.
+# CI is always cold and never had the problem; this is the one place that needs asking.
+[tasks."check:cold"]
+description = "Type-check the whole workspace into a target directory nothing else writes, so no earlier artifact can answer for this tree"
+run = "cargo check --locked --workspace --all-targets --all-features"
+env = { CARGO_TARGET_DIR = "target/cold" }
+
 [tasks.check]
 description = "Run every local gate, the ones that answer quickest first"
 run = [
