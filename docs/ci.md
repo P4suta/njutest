@@ -47,11 +47,18 @@ on the verify step and upload `.njutest/trace/` with the reports.
 | `fuzz.yml` | every fuzz target for a fixed time | weekly, and on an engine pull request |
 | `dependabot-auto-merge.yml` | asks for the merge of a dependency bump, which GitHub performs once `ci-success` passes; the label `no-auto-merge` says not to | on a dependabot pull request |
 | `release-plz.yml`, `release.yml` | the release train | every push to `main`, and on a tag |
+| `codeql.yml` | CodeQL over Rust and over the workflows, with the `security-extended` queries; `CodeQL required` is the one name a protection rule asks for | every push and pull request, and weekly |
+| `dependency-review.yml` | what a pull request adds to the dependency graph, refused at moderate severity in any scope | on a pull request |
+| `scorecard.yml` | the OpenSSF Scorecard of this repository, published | every push to `main`, and weekly |
 
 The `book` job builds `docs/` with mdbook, which refuses a summary that names
 a page the repository does not hold; `cargo test -p xtask --test docs` refuses
 the other direction, a page the summary does not name. A page that neither
 side notices is one a reader of the book cannot reach.
+
+`codeql.yml`, `dependency-review.yml`, and `scorecard.yml` answer about the supply chain rather than about this code: what a query finds in it, what a change adds to the graph below it, and what the posture of the repository looks like from outside.
+`cargo deny` and `cargo audit` in `ci.yml` ask the same question of the graph that is already here, on every push; dependency review asks it of the difference, and says so on the pull request.
+Secret scanning, push protection, Dependabot security updates, and private vulnerability reporting are repository settings rather than workflows, and are on.
 
 The required checks are the ones `ci-success` gathers. `mutation.yml` and
 `dogfood.yml` are the two independent measurements of how strong this suite
