@@ -1685,14 +1685,11 @@ fn recorder(arguments: &Verify, run: &Recording<'_>) -> Result<Recorder, TraceSe
 
 #[cfg(test)]
 mod tests {
-    #[cfg(unix)]
-    mod unix {
-        use super::super::said;
-        use crate::cli::{Environment, Format};
+    mod publication {
         use crate::report::across::BuildMeasurements;
-        use crate::report::{BuildReport, LatticedDocument, Report, ReportDocument, RunKind};
+        use crate::report::{BuildReport, LatticedDocument, Report, RunKind};
         use rust_mutants::cargo::BuildConfig;
-        use rust_mutants::id::{RunId, StoredRunId};
+        use rust_mutants::id::RunId;
 
         pub(super) fn complete_report(run: &str) -> Report {
             let mut draft = BuildReport::new(
@@ -1728,9 +1725,30 @@ mod tests {
                 .expect("the standard contract needs no model batch")
         }
 
+        #[test]
+        fn a_kept_report_says_the_directory_it_was_written_to() {
+            let project = tempfile::tempdir().expect("temporary project");
+            let store =
+                crate::app::reports::Store::read(project.path()).expect("held report store");
+            let report = complete_report("20260101t000000z-abacac");
+            let kept = store.keep(&report).expect("durable report publication");
+            let document = std::fs::read(kept.directory.join(crate::app::reports::DOCUMENT_NAME))
+                .expect("the directory a publication names holds the document it wrote");
+            assert!(
+                !document.is_empty(),
+                "a published report is the bytes at the directory it says it wrote to: {}",
+                kept.directory.display()
+            );
+        }
+
         #[cfg(unix)]
         #[test]
         fn json_output_uses_the_checked_value_after_the_report_path_is_replaced() {
+            use super::super::said;
+            use crate::cli::{Environment, Format};
+            use crate::report::ReportDocument;
+            use rust_mutants::id::StoredRunId;
+
             let project = tempfile::tempdir().expect("temporary project");
             let store =
                 crate::app::reports::Store::read(project.path()).expect("held report store");

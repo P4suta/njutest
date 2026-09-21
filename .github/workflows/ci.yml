@@ -319,8 +319,10 @@ jobs:
         run: |
           written=$(awk -F'\t' '$1 == "REPORT" { print $2 }' "$RUNNER_TEMP/interpreted.out")
           test -n "$written" || { echo "the run said nothing about where it wrote"; exit 1; }
-          jq --exit-status '.contract == "deep-v1" and .accounting.soundness.executed == true' \
-            "$RUNNER_TEMP/interpreted/$written"
+          jq --exit-status '
+              .report.contract == "deep-v1"
+              and ([.report.builds[].parts[].accounting.soundness.executed] | length > 0 and all)
+            ' "$RUNNER_TEMP/interpreted/$written"
 
   kani-verified:
     name: kani-verified

@@ -341,3 +341,114 @@ fn a_program_the_activated_environment_names_is_one_every_job_has() {
          installs the program or clears the variable, and says which: {unaccounted:?}"
     );
 }
+
+/// Whether `pointer` names something the report schema declares, following `$ref`, `oneOf`, and arrays.
+fn resolves(schema: &serde_json::Value, node: &serde_json::Value, pointer: &[&str]) -> bool {
+    let Some((head, rest)) = pointer.split_first() else {
+        return true;
+    };
+    if let Some(reference) = node.get("$ref").and_then(serde_json::Value::as_str) {
+        let Some(name) = reference.strip_prefix("#/$defs/") else {
+            return false;
+        };
+        let Some(target) = schema.get("$defs").and_then(|defs| defs.get(name)) else {
+            return false;
+        };
+        return resolves(schema, target, pointer);
+    }
+    if let Some(branches) = node.get("oneOf").and_then(serde_json::Value::as_array) {
+        return branches
+            .iter()
+            .any(|branch| resolves(schema, branch, pointer));
+    }
+    if *head == "[]" {
+        return node
+            .get("items")
+            .is_some_and(|items| resolves(schema, items, rest));
+    }
+    node.get("properties")
+        .and_then(|properties| properties.get(head))
+        .is_some_and(|next| resolves(schema, next, rest))
+}
+
+/// Every `.a.b[].c` a jq filter reads, as pointer segments.
+fn jq_pointers(filter: &str) -> Vec<Vec<String>> {
+    let mut found = Vec::new();
+    let mut characters = filter.chars().peekable();
+    let mut previous = ' ';
+    while let Some(character) = characters.next() {
+        if character != '.' || previous.is_alphanumeric() || previous == '_' {
+            previous = character;
+            continue;
+        }
+        let mut segments: Vec<String> = Vec::new();
+        loop {
+            let mut name = String::new();
+            while characters
+                .peek()
+                .is_some_and(|next| next.is_alphanumeric() || *next == '_')
+            {
+                if let Some(next) = characters.next() {
+                    name.push(next);
+                }
+            }
+            if name.is_empty() {
+                break;
+            }
+            segments.push(name);
+            if characters.next_if_eq(&'[').is_some() && characters.next_if_eq(&']').is_some() {
+                segments.push("[]".to_owned());
+            }
+            if characters.next_if_eq(&'.').is_none() {
+                break;
+            }
+        }
+        previous = ' ';
+        if !segments.is_empty() {
+            found.push(segments);
+        }
+    }
+    found
+}
+
+#[test]
+fn a_workflow_that_reads_a_report_names_paths_the_schema_declares() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let schema: serde_json::Value = njutest_devkit::strictjson::decode_str(
+        &std::fs::read_to_string(root.join("schema/njutest-assurance-report-v1.json"))
+            .unwrap_or_else(|error| panic!("the report schema: {error}")),
+    )
+    .unwrap_or_else(|error| panic!("the report schema is a document: {error}"));
+    let source = std::fs::read_to_string(root.join(".github/workflows/ci.yml"))
+        .unwrap_or_else(|error| panic!("ci.yml: {error}"));
+
+    let Some(step) = source.split("$RUNNER_TEMP/interpreted.out").nth(2) else {
+        panic!("the soundness job no longer reads the report it wrote");
+    };
+    let filter = step
+        .split_once("jq --exit-status")
+        .unwrap_or_else(|| panic!("the soundness job no longer asks jq about the report"))
+        .1;
+    let filter = filter
+        .split_once("' \"")
+        .unwrap_or_else(|| panic!("the jq filter is not the quoted form this reads"))
+        .0;
+
+    let mut unresolved = Vec::new();
+    let mut checked = 0_usize;
+    for pointer in jq_pointers(filter) {
+        let borrowed: Vec<&str> = pointer.iter().map(String::as_str).collect();
+        checked = checked.saturating_add(1);
+        if !resolves(&schema, &schema, &borrowed) {
+            unresolved.push(pointer.join("."));
+        }
+    }
+    assert!(checked > 0, "no path was read out of {filter:?}");
+    assert!(
+        unresolved.is_empty(),
+        "the soundness job asks jq for a path the report schema does not declare, so the \
+         assertion is false whatever the run did and the job fails for a reason that is not \
+         about soundness. The report is enveloped: `document_type` beside `report`, and the \
+         accounting is per build and per part: {unresolved:?}"
+    );
+}

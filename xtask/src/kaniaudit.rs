@@ -12,7 +12,7 @@ const KANI_VERSION: &str = "0.68.0";
 const EXPORT_VERSION: &str = "1.0";
 const RUSTC_VERSION: &str = "rustc 1.100.0-nightly (8925ea358 2026-08-20)";
 const CBMC_VERSION: &str = "6.11.0 (cbmc-6.11.0)";
-const GOTO_CC_VERSION: &str = "clang version 21.0.0 (goto-cc 6.11.0 (cbmc-6.11.0))";
+const GOTO_CC_BACKEND: &str = "(goto-cc 6.11.0 (cbmc-6.11.0))";
 const GOTO_INSTRUMENT_VERSION: &str = "6.11.0 (cbmc-6.11.0)";
 const CRATE_NAME: &str = "rust_mutants";
 const SOLVER: &str = "cadical";
@@ -236,8 +236,15 @@ pub(crate) enum AuditError {
     Metadata,
     #[error("Kani export project paths do not bind this rust-mutants workspace")]
     Project,
-    #[error("Kani export toolchain is not the pinned backend")]
-    Toolchain,
+    #[error("Kani export {field} is {found:?}, and the pinned backend is {expected:?}")]
+    Toolchain {
+        /// Which tool disagreed.
+        field: &'static str,
+        /// What the export said.
+        found: String,
+        /// What this audit pins.
+        expected: &'static str,
+    },
     #[error("Kani export {0} ledger is missing, duplicated, or substituted")]
     Ledger(Ledger),
     #[error("Kani metadata for {0} is not the selected production proof harness")]
@@ -582,14 +589,38 @@ fn validate_context(document: &Document, workspace: &Path) -> Result<(), AuditEr
     {
         return Err(AuditError::Project);
     }
-    if document.tools.kani != KANI_VERSION
-        || document.tools.rustc != RUSTC_VERSION
-        || document.tools.cbmc != CBMC_VERSION
-        || document.tools.goto_cc != GOTO_CC_VERSION
-        || document.tools.goto_instrument != GOTO_INSTRUMENT_VERSION
-        || !matches!(document.tools.solvers.as_slice(), [Solver { name, version: Nullable(None) }] if name == SOLVER)
+    for (field, found, expected) in [
+        ("kani", document.tools.kani.as_str(), KANI_VERSION),
+        ("rustc", document.tools.rustc.as_str(), RUSTC_VERSION),
+        ("cbmc", document.tools.cbmc.as_str(), CBMC_VERSION),
+        (
+            "goto-instrument",
+            document.tools.goto_instrument.as_str(),
+            GOTO_INSTRUMENT_VERSION,
+        ),
+    ] {
+        if found != expected {
+            return Err(AuditError::Toolchain {
+                field,
+                found: found.to_owned(),
+                expected,
+            });
+        }
+    }
+    if !document.tools.goto_cc.ends_with(GOTO_CC_BACKEND) {
+        return Err(AuditError::Toolchain {
+            field: "goto-cc",
+            found: document.tools.goto_cc.clone(),
+            expected: GOTO_CC_BACKEND,
+        });
+    }
+    if !matches!(document.tools.solvers.as_slice(), [Solver { name, version: Nullable(None) }] if name == SOLVER)
     {
-        return Err(AuditError::Toolchain);
+        return Err(AuditError::Toolchain {
+            field: "solvers",
+            found: format!("{:?}", document.tools.solvers),
+            expected: SOLVER,
+        });
     }
     Ok(())
 }
