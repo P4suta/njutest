@@ -48,7 +48,7 @@ fn a_run_that_observed_no_seam_measures_nothing_and_claims_nothing() {
     let held = watching!();
     let done = measure(
         &Measuring { observed: &[] },
-        |_fault| vec![answered("a", true)],
+        |_fault| njutest_cli::wire::settle::Asked::Answered(vec![answered("a", true)]),
         njutest_cli::watch::Watch::new(&held.0, &held.1),
     )
     .expect("the fault catalogue derives");
@@ -63,7 +63,7 @@ fn a_fault_the_suite_carried_on_through_is_a_finding_that_says_what_it_asked() {
         &Measuring {
             observed: &observed(),
         },
-        |_fault| vec![answered("pkg/test/it", true)],
+        |_fault| njutest_cli::wire::settle::Asked::Answered(vec![answered("pkg/test/it", true)]),
         njutest_cli::watch::Watch::new(&held.0, &held.1),
     )
     .expect("the fault catalogue derives");
@@ -101,7 +101,7 @@ fn a_fault_the_tests_noticed_is_not_a_finding() {
         &Measuring {
             observed: &observed(),
         },
-        |_fault| vec![answered("pkg/test/it", false)],
+        |_fault| njutest_cli::wire::settle::Asked::Answered(vec![answered("pkg/test/it", false)]),
         njutest_cli::watch::Watch::new(&held.0, &held.1),
     )
     .expect("the fault catalogue derives");
@@ -121,7 +121,7 @@ fn a_fault_nothing_ran_is_reported_as_a_hole_rather_than_as_a_survivor() {
         &Measuring {
             observed: &observed(),
         },
-        |_fault| Vec::new(),
+        |_fault| njutest_cli::wire::settle::Asked::Answered(Vec::new()),
         njutest_cli::watch::Watch::new(&held.0, &held.1),
     )
     .expect("the fault catalogue derives");
@@ -159,5 +159,35 @@ fn a_run_that_watched_a_seam_nothing_went_past_states_no_limitation() {
         "a seam nothing dialled licensed no question, and saying a run left \
          questions unasked when there were none would send a reader looking for \
          a gap that is not there"
+    );
+}
+
+#[test]
+fn a_question_the_run_put_and_could_not_read_is_not_one_nothing_put() {
+    let held = watching!();
+    let done = measure(
+        &Measuring {
+            observed: &observed(),
+        },
+        |_fault| {
+            njutest_cli::wire::settle::Asked::NotMeasured(rust_mutants::outcome::Outcome::Waited)
+        },
+        njutest_cli::watch::Watch::new(&held.0, &held.1),
+    )
+    .expect("the fault catalogue derives");
+    let named: Vec<&str> = done
+        .findings
+        .iter()
+        .map(|finding| finding.subject.as_str())
+        .collect();
+    assert!(
+        !named.contains(&njutest_cli::assure::wire::NOT_PUT),
+        "the exchange did come past and the question was put: an empty list of answers \
+         used to mean both that and `the run could not read what the suite did`, and the \
+         one sentence both reached told a reader the exchange never came past. {named:?}"
+    );
+    assert!(
+        named.contains(&njutest_cli::assure::wire::NOT_MEASURED),
+        "and what it says instead names the run's own silence: {named:?}"
     );
 }

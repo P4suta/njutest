@@ -156,6 +156,12 @@ pub fn run(
 
     let mut resources = holding(request, environment, &mut report, (notes, watch))?;
     let seams = super::wire::watched(&resources.leases(), &request.config.resources);
+    for (capability, why) in &seams.unwatched {
+        report.limitations.push(Limitation::new(
+            crate::limitation::SEAM_NOT_WATCHED,
+            &format!("{capability}: {}", why.why()),
+        ));
+    }
     let mut held = with_seams(environment, &seams);
     if request.config.contract == crate::config::Contract::VerifiedV1 {
         set_environment(&mut held, "CARGO_BUILD_TARGET", toolchain.host());
@@ -301,21 +307,25 @@ fn wired(
         match session.control_observing(&asked, watch.cancel) {
             Ok(ran) => match ran.outcome() {
                 rust_mutants::outcome::Outcome::Survived
-                | rust_mutants::outcome::Outcome::Killed => vec![crate::wire::settle::Answered {
-                    passed: ran.outcome() == rust_mutants::outcome::Outcome::Survived,
-                    target: ran.target,
-                }],
-                rust_mutants::outcome::Outcome::NotRun
+                | rust_mutants::outcome::Outcome::Killed => {
+                    crate::wire::settle::Asked::Answered(vec![crate::wire::settle::Answered {
+                        passed: ran.outcome() == rust_mutants::outcome::Outcome::Survived,
+                        target: ran.target,
+                    }])
+                }
+                outcome @ (rust_mutants::outcome::Outcome::NotRun
                 | rust_mutants::outcome::Outcome::StepLimitReached
                 | rust_mutants::outcome::Outcome::Waited
                 | rust_mutants::outcome::Outcome::Inconclusive
-                | rust_mutants::outcome::Outcome::Errored => Vec::new(),
+                | rust_mutants::outcome::Outcome::Errored) => {
+                    crate::wire::settle::Asked::NotMeasured(outcome)
+                }
             },
             Err(error) => {
                 if answer_error.is_none() {
                     answer_error = Some(RunnerError::from(error));
                 }
-                Vec::new()
+                crate::wire::settle::Asked::NotMeasured(rust_mutants::outcome::Outcome::Errored)
             }
         }
     };

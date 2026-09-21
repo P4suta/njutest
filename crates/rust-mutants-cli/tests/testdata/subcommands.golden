@@ -60,8 +60,8 @@ Options:
           Only mutate these packages. Repeatable
 
       --allow-outside <DIR>
-          Let the build read this directory from outside the root, copying it where the tree reaches
-          it. Repeatable
+          Let the build read this directory from outside the root, repeatably, copying it where the
+          tree reaches it
 
       --features <LIST>
           Compile with these cargo features. Repeatable, and each may be a comma-separated list
@@ -258,8 +258,8 @@ Options:
           Only mutate these packages. Repeatable
 
       --allow-outside <DIR>
-          Let the build read this directory from outside the root, copying it where the tree reaches
-          it. Repeatable
+          Let the build read this directory from outside the root, repeatably, copying it where the
+          tree reaches it
 
       --features <LIST>
           Compile with these cargo features. Repeatable, and each may be a comma-separated list
@@ -390,8 +390,8 @@ Options:
           Only mutate these packages. Repeatable
 
       --allow-outside <DIR>
-          Let the build read this directory from outside the root, copying it where the tree reaches
-          it. Repeatable
+          Let the build read this directory from outside the root, repeatably, copying it where the
+          tree reaches it
 
       --features <LIST>
           Compile with these cargo features. Repeatable, and each may be a comma-separated list
@@ -526,8 +526,8 @@ Options:
           Only mutate these packages. Repeatable
 
       --allow-outside <DIR>
-          Let the build read this directory from outside the root, copying it where the tree reaches
-          it. Repeatable
+          Let the build read this directory from outside the root, repeatably, copying it where the
+          tree reaches it
 
       --features <LIST>
           Compile with these cargo features. Repeatable, and each may be a comma-separated list
@@ -661,8 +661,8 @@ Options:
           Only mutate these packages. Repeatable
 
       --allow-outside <DIR>
-          Let the build read this directory from outside the root, copying it where the tree reaches
-          it. Repeatable
+          Let the build read this directory from outside the root, repeatably, copying it where the
+          tree reaches it
 
       --features <LIST>
           Compile with these cargo features. Repeatable, and each may be a comma-separated list
@@ -793,8 +793,8 @@ Options:
           Only mutate these packages. Repeatable
 
       --allow-outside <DIR>
-          Let the build read this directory from outside the root, copying it where the tree reaches
-          it. Repeatable
+          Let the build read this directory from outside the root, repeatably, copying it where the
+          tree reaches it
 
       --features <LIST>
           Compile with these cargo features. Repeatable, and each may be a comma-separated list
@@ -929,8 +929,8 @@ Options:
           Only mutate these packages. Repeatable
 
       --allow-outside <DIR>
-          Let the build read this directory from outside the root, copying it where the tree reaches
-          it. Repeatable
+          Let the build read this directory from outside the root, repeatably, copying it where the
+          tree reaches it
 
       --features <LIST>
           Compile with these cargo features. Repeatable, and each may be a comma-separated list
@@ -1058,8 +1058,8 @@ Options:
           Only mutate these packages. Repeatable
 
       --allow-outside <DIR>
-          Let the build read this directory from outside the root, copying it where the tree reaches
-          it. Repeatable
+          Let the build read this directory from outside the root, repeatably, copying it where the
+          tree reaches it
 
       --features <LIST>
           Compile with these cargo features. Repeatable, and each may be a comma-separated list

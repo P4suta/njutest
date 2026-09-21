@@ -72,3 +72,40 @@ fn what_a_test_is_told_to_dial_names_the_variable_it_came_from() {
          interposed seam from one nothing watched"
     );
 }
+
+#[test]
+fn a_seam_the_run_could_not_watch_is_one_the_report_states() {
+    let held = njutest_cli::resource::Lease {
+        capability: "api".to_owned(),
+        instance: njutest_cli::provider::InstanceId::checked("one").expect("instance id"),
+        environment: vec![("OTHER".to_owned(), "http://127.0.0.1:9/x".to_owned())],
+    };
+    let resource = njutest_cli::config::Resource {
+        command: vec!["true".to_owned()],
+        timeout: std::time::Duration::from_secs(1),
+        shared: false,
+        exclusive: false,
+        environment: Vec::new(),
+        interpose: "BASE_URL".to_owned(),
+        wire: njutest_cli::wire::Wire::Http,
+        hold: std::time::Duration::from_millis(1),
+    };
+    let configured = std::collections::BTreeMap::from([("api".to_owned(), resource)]);
+
+    let seams = njutest_cli::assure::wire::watched(&[&held], &configured);
+    assert!(
+        seams.watching.is_empty(),
+        "there is no variable of that name to put an interposer in front of"
+    );
+    assert_eq!(
+        seams.unwatched.len(),
+        1,
+        "and the run says so rather than carrying on with the lease untouched: a seam \
+         the configuration named and nothing watched used to leave no seam records, no \
+         findings and no limitation, so the wire dimension read as covered"
+    );
+    assert!(
+        njutest_cli::limitation::ALL.contains(&njutest_cli::limitation::SEAM_NOT_WATCHED),
+        "and what it says is a name the register holds, so the page names it too"
+    );
+}

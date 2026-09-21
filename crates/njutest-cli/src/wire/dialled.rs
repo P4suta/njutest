@@ -84,37 +84,72 @@ pub struct Watching {
     pub interposer: super::interpose::Interposer,
 }
 
+/// Why a seam the configuration named is not one this run watched.
+///
+/// Five things can stop an interposer going in, and a run that answered all of them with silence measured no seam and said nothing about it, so a reader read the wire dimension as covered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, njutest_macros::AllVariants)]
+pub enum NotWatched {
+    /// The lease carries no variable of that name.
+    NoSuchVariable,
+    /// The value names no authority, so there is nothing to put an interposer in front of.
+    NamesNoAuthority,
+    /// The authority names a host this machine could not resolve to an address.
+    AuthorityUnresolved,
+    /// The interposer would not start.
+    WouldNotListen,
+    /// The value could not be rewritten to point at the interposer.
+    NotRedirected,
+}
+
+impl NotWatched {
+    /// One sentence a reader can act on.
+    #[must_use]
+    pub const fn why(self) -> &'static str {
+        match self {
+            Self::NoSuchVariable => {
+                "the provider's lease carries no variable of the name the configuration interposes on"
+            }
+            Self::NamesNoAuthority => {
+                "the variable's value names no authority, so there is nothing to stand in front of"
+            }
+            Self::AuthorityUnresolved => {
+                "the authority names a host this machine could not resolve to an address"
+            }
+            Self::WouldNotListen => "the interposer could not take a port on this machine",
+            Self::NotRedirected => {
+                "the variable's value could not be rewritten to name the interposer"
+            }
+        }
+    }
+}
+
 /// Puts an interposer in front of what `variable` of `lease` names, and says what the tests are told instead.
 ///
-/// Nothing where the lease carries no such variable, or where its value names
-/// no authority: a run that rewrote something else would send the tests
-/// somewhere the configuration never named.
-#[must_use]
+/// # Errors
+/// Which of the five ways the seam is one this run did not watch, so the caller states it rather than measuring nothing and saying nothing.
 pub fn interposed(
     lease: &crate::resource::Lease,
     variable: &str,
     (wire, held_up): (super::Wire, std::time::Duration),
-) -> Option<Watching> {
+) -> Result<Watching, NotWatched> {
     let given = lease
         .environment
         .iter()
         .find(|(name, _)| name == variable)
-        .map(|(_, value)| value.clone())?;
-    let upstream = match upstream_of(&given)?.parse::<std::net::SocketAddr>() {
-        Ok(upstream) => upstream,
-        Err(_) => return None,
-    };
-    let interposer = match super::interpose::Interposer::start(&super::interpose::Interposing {
+        .map(|(_, value)| value.clone())
+        .ok_or(NotWatched::NoSuchVariable)?;
+    let authority = upstream_of(&given).ok_or(NotWatched::NamesNoAuthority)?;
+    let upstream = resolved(&authority).ok_or(NotWatched::AuthorityUnresolved)?;
+    let interposer = super::interpose::Interposer::start(&super::interpose::Interposing {
         capability: lease.capability.clone(),
         upstream,
         wire,
         injecting: None,
         held_up,
-    }) {
-        Ok(interposer) => interposer,
-        Err(_) => return None,
-    };
-    let told = redirected(&given, &interposer.address().to_string())?;
+    })
+    .map_err(|_would_not_listen| NotWatched::WouldNotListen)?;
+    let told =
+        redirected(&given, &interposer.address().to_string()).ok_or(NotWatched::NotRedirected)?;
     let environment = lease
         .environment
         .iter()
@@ -126,11 +161,22 @@ pub fn interposed(
             }
         })
         .collect();
-    Some(Watching {
+    Ok(Watching {
         #[cfg(feature = "testkit")]
         capability: lease.capability.clone(),
         environment,
         held_up,
         interposer,
     })
+}
+
+/// The address `authority` names, asking the machine where a host is rather than requiring a literal.
+///
+/// A provider that answers `localhost:5432` has named where it is the way everything else does.
+fn resolved(authority: &str) -> Option<std::net::SocketAddr> {
+    use std::net::ToSocketAddrs as _;
+    match authority.to_socket_addrs() {
+        Ok(mut found) => found.next(),
+        Err(_this_machine_knows_no_address_for_it) => None,
+    }
 }

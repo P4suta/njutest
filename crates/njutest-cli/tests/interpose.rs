@@ -446,7 +446,7 @@ fn a_seam_the_configuration_names_is_one_the_tests_dial_through() {
     let upstream_at = up.address();
     let held = lease("api", &[("BASE_URL", &format!("http://{upstream_at}/v1"))]);
 
-    let Some(watching) =
+    let Ok(watching) =
         njutest_cli::wire::dialled::interposed(&held, "BASE_URL", (Wire::Http, BRIEFLY))
     else {
         panic!("a lease naming an authority is one an interposer can sit in front of");
@@ -482,10 +482,48 @@ fn a_seam_the_configuration_names_is_one_the_tests_dial_through() {
 #[test]
 fn a_lease_with_no_such_variable_is_left_as_the_provider_gave_it() {
     let held = lease("api", &[("OTHER", "http://127.0.0.1:9/x")]);
-    assert!(
-        njutest_cli::wire::dialled::interposed(&held, "BASE_URL", (Wire::Http, BRIEFLY)).is_none(),
+    let Err(refused) =
+        njutest_cli::wire::dialled::interposed(&held, "BASE_URL", (Wire::Http, BRIEFLY))
+    else {
+        panic!("a lease carrying no such variable is one nothing can be put in front of")
+    };
+    assert_eq!(
+        refused,
+        njutest_cli::wire::dialled::NotWatched::NoSuchVariable,
         "a run that rewrote something else here would send the tests somewhere the \
-         configuration never named"
+         configuration never named, and one that said nothing would leave the seam \
+         unmeasured and the verdict reading as if it were covered"
+    );
+}
+
+#[test]
+fn a_seam_whose_authority_names_a_host_is_watched_like_any_other() {
+    let up = upstream("[]");
+    let named = format!("http://localhost:{}/orders", up.address().port());
+    let held = lease("api", &[("BASE_URL", named.as_str())]);
+    let watching = njutest_cli::wire::dialled::interposed(&held, "BASE_URL", (Wire::Http, BRIEFLY));
+    assert!(
+        watching.is_ok(),
+        "`localhost:{}` is the ordinary way a provider names where it is, and a run that \
+         could not read it started no interposer, recorded no seam, raised no finding and \
+         stated no limitation: the wire dimension went unmeasured and the verdict read as \
+         if it had been covered",
+        up.address().port()
+    );
+}
+
+#[test]
+fn a_seam_the_run_could_not_watch_says_which_of_the_ways_it_could_not() {
+    let held = lease("api", &[("BASE_URL", "not a url at all")]);
+    let refused = njutest_cli::wire::dialled::interposed(&held, "BASE_URL", (Wire::Http, BRIEFLY))
+        .expect_err("a value naming no authority");
+    assert_eq!(
+        refused,
+        njutest_cli::wire::dialled::NotWatched::NamesNoAuthority
+    );
+    assert!(
+        !refused.why().is_empty(),
+        "and it says so in a sentence a reader can act on"
     );
 }
 
@@ -623,6 +661,7 @@ fn every_question_a_seam_licensed_is_put_to_the_suite_one_at_a_time() {
     let seams = njutest_cli::assure::wire::Seams {
         environment: Vec::new(),
         watching: vec![seam("api", upstream_at), seam("db", upstream_at)],
+        unwatched: Vec::new(),
     };
     let held = (
         rust_mutants::runner::Cancel::new(),
@@ -641,10 +680,10 @@ fn every_question_a_seam_licensed_is_put_to_the_suite_one_at_a_time() {
             let db = ask(seams.watching[1].interposer.address(), "/rows");
             seen.borrow_mut()
                 .push((api.contains(" 200"), db.contains(" 200")));
-            vec![njutest_cli::wire::settle::Answered {
+            njutest_cli::wire::settle::Asked::Answered(vec![njutest_cli::wire::settle::Answered {
                 target: "pkg/test/it".to_owned(),
                 passed: true,
-            }]
+            }])
         },
         njutest_cli::watch::Watch::new(&held.0, &held.1),
     );
@@ -740,6 +779,7 @@ fn a_question_the_seam_never_reached_is_reported_as_a_hole_and_never_as_a_surviv
     let seams = njutest_cli::assure::wire::Seams {
         environment: Vec::new(),
         watching: vec![seam("api", upstream_at)],
+        unwatched: Vec::new(),
     };
     let held = (
         rust_mutants::runner::Cancel::new(),
@@ -753,10 +793,10 @@ fn a_question_the_seam_never_reached_is_reported_as_a_hole_and_never_as_a_surviv
         &seams,
         &went_past,
         || {
-            vec![njutest_cli::wire::settle::Answered {
+            njutest_cli::wire::settle::Asked::Answered(vec![njutest_cli::wire::settle::Answered {
                 target: "pkg/test/it".to_owned(),
                 passed: true,
-            }]
+            }])
         },
         njutest_cli::watch::Watch::new(&held.0, &held.1),
     );
@@ -902,6 +942,7 @@ fn an_exchange_says_which_target_caused_it_where_the_run_can_tell() {
     let seams = njutest_cli::assure::wire::Seams {
         environment: Vec::new(),
         watching: vec![seam("api", up.address())],
+        unwatched: Vec::new(),
     };
     let at = seams.watching[0].interposer.address();
 
@@ -938,6 +979,7 @@ fn a_catalogue_holds_one_run_of_the_suite_and_never_the_runs_around_it() {
     let seams = njutest_cli::assure::wire::Seams {
         environment: Vec::new(),
         watching: vec![seam("api", up.address())],
+        unwatched: Vec::new(),
     };
     let at = seams.watching[0].interposer.address();
     for _verifying in 0..2 {
@@ -983,6 +1025,7 @@ fn what_a_fault_run_drives_through_a_second_seam_is_not_that_seam_s_catalogue() 
     let seams = njutest_cli::assure::wire::Seams {
         environment: Vec::new(),
         watching: vec![seam("api", upstream_at), seam("db", upstream_at)],
+        unwatched: Vec::new(),
     };
     let held = (
         rust_mutants::runner::Cancel::new(),
@@ -1006,10 +1049,10 @@ fn what_a_fault_run_drives_through_a_second_seam_is_not_that_seam_s_catalogue() 
             drop(api);
             let db = ask(seams.watching[1].interposer.address(), "/rows");
             drop(db);
-            vec![njutest_cli::wire::settle::Answered {
+            njutest_cli::wire::settle::Asked::Answered(vec![njutest_cli::wire::settle::Answered {
                 target: "pkg/test/it".to_owned(),
                 passed: true,
-            }]
+            }])
         },
         njutest_cli::watch::Watch::new(&held.0, &held.1),
     );

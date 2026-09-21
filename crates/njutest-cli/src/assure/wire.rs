@@ -8,10 +8,13 @@ use crate::report::{Finding, FindingKind, Limitation};
 use crate::watch::Watch;
 use crate::wire::Exchange;
 use crate::wire::derive::{Fault, derive};
-use crate::wire::settle::{Answered, settle};
+use crate::wire::settle::settle;
 
 /// The limitation a run states where it could not put a question it derived.
 pub const NOT_PUT: &str = "wire-fault-not-put";
+
+/// What a finding is about when a question was put and the run could not read what the suite did with it.
+pub const NOT_MEASURED: &str = "wire-fault-not-measured";
 
 /// What the phase is asked about.
 #[derive(Debug, Clone, Copy)]
@@ -46,7 +49,7 @@ pub fn measure<R>(
     watch: Watch<'_>,
 ) -> Result<Measured, crate::wire::derive::DeriveError>
 where
-    R: FnMut(&Fault) -> Vec<Answered>,
+    R: FnMut(&Fault) -> crate::wire::settle::Asked,
 {
     let faults = derive(measuring.observed)?;
     if faults.is_empty() {
@@ -57,12 +60,19 @@ where
         ..Measured::default()
     };
     let mut unput = Vec::new();
+    let mut unmeasured = Vec::new();
     for fault in &faults {
         if watch.cancel.is_cancelled() {
             break;
         }
+        let mut asked = None;
         let decision = crate::wire::prove::discharges(fault, measuring.observed).map_or_else(
-            || settle(fault, &run(fault)).decision,
+            || {
+                let put = run(fault);
+                let decision = settle(fault, &put).decision;
+                asked = Some(put);
+                decision
+            },
             |proof| SeamDecision::Proved {
                 proof: proof.to_owned(),
             },
@@ -76,7 +86,15 @@ where
         });
         match &decision {
             SeamDecision::Tests { .. } | SeamDecision::Proved { .. } => {}
-            SeamDecision::Unreached => unput.push(()),
+            SeamDecision::Unreached => match asked {
+                Some(crate::wire::settle::Asked::NotMeasured(outcome)) => {
+                    unmeasured.push(outcome);
+                }
+                Some(crate::wire::settle::Asked::Answered(_none_of_them)) => {
+                    unput.push(());
+                }
+                None => unput.push(()),
+            },
             SeamDecision::Unnoticed => {
                 done.findings.push(unnoticed(fault, measuring.observed));
             }
@@ -92,6 +110,23 @@ where
                  put to no test, so it says nothing about whether anything would have \
                  noticed them",
                 unput.len()
+            ),
+        ));
+    }
+    if !unmeasured.is_empty() {
+        let mut how: Vec<&str> = unmeasured.iter().map(|outcome| outcome.name()).collect();
+        how.sort_unstable();
+        how.dedup();
+        done.findings.push(Finding::new(
+            FindingKind::NotMeasured,
+            NOT_MEASURED,
+            &format!(
+                "{} question(s) were put to the suite and the run could not read what it \
+                 did with them ({}), so it says nothing about whether anything noticed: \
+                 the exchange did come past, and reporting it as one nothing put would \
+                 name the wrong thing",
+                unmeasured.len(),
+                how.join(", ")
             ),
         ));
     }
@@ -181,7 +216,7 @@ pub fn asking<R>(
     watch: Watch<'_>,
 ) -> Result<Measured, crate::wire::derive::DeriveError>
 where
-    R: FnMut() -> Vec<Answered>,
+    R: FnMut() -> crate::wire::settle::Asked,
 {
     let mut done = Measured::default();
     for (at, observed) in seams.watching.iter().zip(&baseline.per_seam) {
@@ -199,7 +234,7 @@ where
                 if at.interposer.was_put() {
                     answered
                 } else {
-                    Vec::new()
+                    crate::wire::settle::Asked::Answered(Vec::new())
                 }
             },
             watch,
@@ -308,6 +343,8 @@ pub struct Seams {
     pub environment: Vec<(String, String)>,
     /// The interposers, in the order the seams were started.
     pub watching: Vec<crate::wire::dialled::Watching>,
+    /// Every seam the configuration named that this run did not watch, and why.
+    pub unwatched: Vec<(String, crate::wire::dialled::NotWatched)>,
 }
 
 impl Seams {
@@ -392,11 +429,14 @@ pub fn watched(
             &resource.interpose,
             (resource.wire, resource.hold),
         ) {
-            Some(one) => {
+            Ok(one) => {
                 seams.environment.extend(one.environment.iter().cloned());
                 seams.watching.push(one);
             }
-            None => seams.environment.extend(lease.environment.iter().cloned()),
+            Err(why) => {
+                seams.environment.extend(lease.environment.iter().cloned());
+                seams.unwatched.push((lease.capability.clone(), why));
+            }
         }
     }
     seams

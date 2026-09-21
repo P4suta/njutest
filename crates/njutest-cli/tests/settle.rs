@@ -18,6 +18,11 @@ fn fault() -> Fault {
     }
 }
 
+/// What the suite said, as the thing `settle` is given.
+fn put(answers: &[Answered]) -> njutest_cli::wire::settle::Asked {
+    njutest_cli::wire::settle::Asked::Answered(answers.to_vec())
+}
+
 fn answered(target: &str, passed: bool) -> Answered {
     Answered {
         target: target.to_owned(),
@@ -27,7 +32,7 @@ fn answered(target: &str, passed: bool) -> Answered {
 
 #[test]
 fn a_fault_nothing_ran_is_one_the_run_established_nothing_about() {
-    let settled = settle(&fault(), &[]);
+    let settled = settle(&fault(), &put(&[]));
     assert_eq!(
         settled.decision,
         SeamDecision::Unreached,
@@ -44,7 +49,7 @@ fn a_fault_nothing_ran_is_one_the_run_established_nothing_about() {
 
 #[test]
 fn a_fault_every_test_passed_with_is_one_nothing_noticed() {
-    let settled = settle(&fault(), &[answered("a", true), answered("b", true)]);
+    let settled = settle(&fault(), &put(&[answered("a", true), answered("b", true)]));
     assert_eq!(
         settled.decision,
         SeamDecision::Unnoticed,
@@ -58,11 +63,11 @@ fn a_fault_every_test_passed_with_is_one_nothing_noticed() {
 fn a_fault_a_test_failed_with_is_one_the_tests_noticed_and_it_says_which() {
     let settled = settle(
         &fault(),
-        &[
+        &put(&[
             answered("a", true),
             answered("b", false),
             answered("c", false),
-        ],
+        ]),
     );
     assert_eq!(
         settled.decision,
@@ -78,9 +83,9 @@ fn a_fault_a_test_failed_with_is_one_the_tests_noticed_and_it_says_which() {
 
 #[test]
 fn putting_a_fault_to_one_more_test_never_makes_a_run_look_better() {
-    let before = settle(&fault(), &[answered("a", true)]);
+    let before = settle(&fault(), &put(&[answered("a", true)]));
     for also in [answered("b", true), answered("b", false)] {
-        let after = settle(&fault(), &[answered("a", true), also]);
+        let after = settle(&fault(), &put(&[answered("a", true), also]));
         assert!(
             after.decision.standing() >= before.decision.standing(),
             "asking one more test can leave a fault where it was or have somebody \

@@ -409,8 +409,9 @@ fail-closed:
   so what it left there is not its to remove. A run that cleaned up somebody
   else's directory would be a run that deleted work nobody asked it to.
 - A resource the run started would not stop (`resource-not-stopped`).
-  Something it started is still running, and the run says so rather than
-  exiting as though the world were as it found it.
+  Something it started is still running, and the run says so rather than exiting as though the world were as it found it.
+- The configuration named a seam to watch and this run could not put an interposer in front of it (`seam-not-watched`), naming the capability and which of the five ways it could not: the lease carries no such variable, the value names no authority, the authority names a host that did not resolve, the interposer would not take a port, or the value could not be rewritten to name it.
+  A run that met any of these and said nothing recorded no seam, raised no finding and stated no limitation, so a reader read the wire dimension as covered when nothing about it had been measured.
 - The interpreter ran out of the time it was given (`miri-timed-out`). This is
   not a claim that it found nothing: a budget that expired is a question
   nobody answered, which is why it is a limitation and never a pass.

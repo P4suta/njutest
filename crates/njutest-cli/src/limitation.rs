@@ -58,9 +58,12 @@ pub const GENERATION_CANDIDATE_NOT_KEPT: &str = "generation-candidate-not-kept";
 /// A resource the run held would not stop, so something it started is still running.
 pub const RESOURCE_NOT_STOPPED: &str = "resource-not-stopped";
 
+/// The configuration named a seam to watch and this run could not put an interposer in front of it, so nothing is claimed about what goes past it.
+pub const SEAM_NOT_WATCHED: &str = "seam-not-watched";
+
 /// Every limitation this runner states of its own, in the order a reader meets them in a run.
 #[cfg(feature = "testkit")]
-pub const ALL: [&str; 18] = [
+pub const ALL: [&str; 19] = [
     WORKSPACE_DIGEST_NOT_COMPUTED,
     TREE_WRITTEN_DURING_MEASUREMENT,
     RESUMED_FROM_CHECKPOINT,
@@ -79,4 +82,5 @@ pub const ALL: [&str; 18] = [
     GENERATION_PROVIDER_UNAVAILABLE,
     GENERATION_CANDIDATE_NOT_KEPT,
     RESOURCE_NOT_STOPPED,
+    SEAM_NOT_WATCHED,
 ];

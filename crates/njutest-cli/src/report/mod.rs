@@ -1037,7 +1037,9 @@ pub enum SeamDecision {
     },
     /// The suite ran with it in place and nothing noticed.
     Unnoticed,
-    /// The run could not put the question, so it established nothing.
+    /// The run established nothing about it: it could not put the question, or it put the question and could not read what the suite did with it.
+    ///
+    /// Which of the two is in the finding, where a reader looks.
     Unreached,
 }
 
