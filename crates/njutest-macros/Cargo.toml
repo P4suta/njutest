@@ -3,8 +3,8 @@
 
 [package]
 name = "njutest-macros"
-description = "Compiler-enforced declarations shared by the njutest workspace"
-keywords = ["testing", "assurance", "integration-tests"]
+description = "Procedural macros of the njutest workspace. Published because the command lines depend on it; install njutest-cli or rust-mutants-cli."
+keywords = ["testing", "assurance", "macro"]
 categories = ["development-tools::testing"]
 version.workspace = true
 edition.workspace = true
@@ -25,6 +25,9 @@ proc-macro = true
 proc-macro2 = { workspace = true, features = ["proc-macro"] }
 quote = { workspace = true }
 syn = { workspace = true, features = ["derive", "printing", "proc-macro"] }
+
+[dev-dependencies]
+trybuild = { workspace = true }
 
 [lints]
 workspace = true

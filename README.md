@@ -14,6 +14,8 @@ The public API and the document schemas are versioned and may still change befor
 
 ## Install
 
+Not on crates.io yet; from a clone:
+
 ```console
 cargo install --path crates/njutest-cli      # njutest, cargo-njutest
 cargo install --path crates/rust-mutants-cli # rust-mutants, cargo-rust-mutants
@@ -30,16 +32,14 @@ rust-mutants report --format html  # one page, fetching nothing
 ```
 
 Tests stay ordinary Cargo tests.
-njutest adds no assertion, mock, property, or container framework; the optional `njutest` crate only attaches resource metadata, and a comment directive does the same with no dependency:
+njutest adds no assertion, mock, property, or container framework, and nothing in your test code changes.
+The integration resources a run may start are named in `.njutest.toml`:
 
-```rust
-#[njutest::integration("postgres")]
-#[test]
-fn repository_round_trips() {}
-
-//njutest:resources postgres
-#[test]
-fn repository_round_trips_without_the_crate() {}
+```toml
+[resources.postgres]
+command = ["./tools/postgres-provider"]
+timeout = "30s"
+shared = true
 ```
 
 ## Documentation

@@ -1,4 +1,4 @@
-#[derive(njutest::AllVariants)]
+#[derive(njutest_macros::AllVariants)]
 enum Duplicated {
     One,
     Two,

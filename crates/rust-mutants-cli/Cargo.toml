@@ -3,7 +3,7 @@
 
 [package]
 name = "rust-mutants-cli"
-description = "Command line for the rust-mutants mutation testing engine"
+description = "The rust-mutants mutation testing engine at the command line: rust-mutants and cargo-rust-mutants"
 keywords = ["mutation-testing", "testing", "cargo", "cli"]
 categories = ["development-tools::testing", "command-line-utilities"]
 default-run = "rust-mutants"

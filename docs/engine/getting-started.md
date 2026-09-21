@@ -49,6 +49,66 @@ A run copies your tree, compiles it once with every mutation behind a guard,
 and then runs the tests once per mutation with one guard live. Your working
 tree is never written to.
 
+## One run, end to end
+
+Recorded from the binary by a test against one of this repository's own fixtures, so the page cannot drift from the tool:
+
+```console
+$ rust-mutants run
+
+run       <run>
+workspace <workspace digest>
+catalog   <catalog digest>
+
+discharged-mutant      every target that could have noticed f0d20edfda2959667ff1 was removed by a proof, so no test could have: the mutation is in code the tests run and never observe
+
+MUTANTS   10 mutants were cataloged: 9 executed, 0 refused by the compiler, 3 places that produced no candidate.
+OUTCOMES  killed=9 survived=0 step_limit_reached=0 waited=0 inconclusive=0 errored=0 not_run=1
+OF THOSE  Those 7 add to the 10 cataloged. Within them, not run is 0 unreached, not run is 1 discharged, survived is 0 expected.
+SCORE     100.0%  (9 detected of 9 decided)
+WORK      started=9 of 30 pairs across 3 targets; 70.0% removed (unreached=20 never-infected=1)
+          tests=9 of 30; 70.0% removed
+REPORT    ./reports/mutation/<run>/run-report-v2.json
+
+$ rust-mutants explain f0d2
+NAME      src/lib.rs:max:gt-to-ge@11
+MUTANT    f0d20edfda2959667ff19be48ef229cba965a672c7a6e367624a73bc4fcec22f
+SHORT     f0d20edfda2959667ff1
+RULE      gt-to-ge@1 (comparison)
+WHERE     src/lib.rs:11:10
+EDIT      ">" => ">="
+RUN       <run>
+OUTCOME   not_run
+TIMING    <duration>
+ROUTE     discharged reaching [] executed []
+PROVED    fixture-simple/lib/fixture_simple: never-infected
+REPRODUCE rust-mutants run --mutant src/lib.rs:max:gt-to-ge@11
+ACCEPT    [[mutation.expect]]
+          path = "src/lib.rs"
+          item = "max"
+          rule = "gt-to-ge"
+          original = ">"
+          line = 11
+          reason = ""  # why this is not a gap in the tests
+
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -8,7 +8,7 @@
+ 
+ /// The larger of two numbers, spelled with a comparison a mutant can flip.
+ pub fn max(a: i32, b: i32) -> i32 {
+-    if a > b { a } else { b }
++    if a >= b { a } else { b }
+ }
+ 
+ /// Whether `n` is even.
+```
+
+That mutation is never run.
+The guards of the instrumented tree hold both branches at `a > b`, and on the one baseline run they never answered differently, so the engine reports what running it would have established rather than spending a process on it ([ADR 0015](../adr/0015-the-guard-is-the-infection-probe.md)).
+It is a finding all the same, and the exit code is 1: a mutation the tests run and cannot notice is the same gap as one they run and do not notice.
+The score is over what a run *decided*, and this one was decided by a proof rather than by a test.
+
 ## Reading the summary
 
 ```

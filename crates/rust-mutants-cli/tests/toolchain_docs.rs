@@ -117,10 +117,12 @@ fn the_readme_sample_session_is_the_one_the_engine_prints() {
     njutest_devkit::golden::golden(&golden, session.as_bytes())
         .expect("the session is the recorded one");
 
-    let readme = std::fs::read_to_string(njutest_devkit::paths::workspace_root().join("README.md"))
-        .expect("the README");
+    let page = njutest_devkit::paths::workspace_root().join("docs/engine/getting-started.md");
+    let shown = std::fs::read_to_string(&page).expect("the getting-started page");
     assert!(
-        readme.contains(session.trim_end()),
-        "README.md does not show the session the engine prints:\n{session}"
+        shown.contains(session.trim_end()),
+        "{} does not show the session the engine prints, and a sample a person reads \
+         has to be one the tool still prints: {session}",
+        page.display()
     );
 }

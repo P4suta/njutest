@@ -3,7 +3,7 @@
 
 [package]
 name = "rust-mutants"
-description = "Mutation testing engine for Rust: one instrumented snapshot, every compilable mutant behind a guard, one environment variable per test process"
+description = "Mutation testing engine for Rust, as a library. Install rust-mutants-cli for the command line."
 keywords = ["mutation-testing", "testing", "cargo", "assurance"]
 categories = ["development-tools::testing"]
 version.workspace = true

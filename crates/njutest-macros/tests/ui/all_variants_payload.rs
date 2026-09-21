@@ -1,4 +1,4 @@
-#[derive(njutest::AllVariants)]
+#[derive(njutest_macros::AllVariants)]
 enum CarriesData {
     Unit,
     Tuple(u8),

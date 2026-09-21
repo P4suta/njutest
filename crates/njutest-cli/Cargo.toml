@@ -3,7 +3,7 @@
 
 [package]
 name = "njutest-cli"
-description = "njutest: an audit-oriented assurance runner for Rust — coverage-routed mutation testing with proofs, not budgets"
+description = "njutest, an audit-oriented assurance runner for Rust, at the command line: njutest and cargo-njutest"
 keywords = ["mutation-testing", "testing", "assurance", "coverage", "cli"]
 categories = ["development-tools::testing", "command-line-utilities"]
 default-run = "njutest"

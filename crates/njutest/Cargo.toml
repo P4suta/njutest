@@ -6,6 +6,9 @@ name = "njutest"
 description = "Attach integration-resource metadata to ordinary Rust tests for the njutest assurance runner"
 keywords = ["testing", "assurance", "integration-tests"]
 categories = ["development-tools::testing"]
+# Not published: no runner reads these attributes yet, so a crate on crates.io would be an API a user can write and nothing acts on.
+# `surface = unreleased` is that state as a declaration the surfaces gate keeps.
+publish = false
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -16,7 +19,7 @@ authors.workspace = true
 readme.workspace = true
 
 [package.metadata.njutest]
-surface = "public"
+surface = "unreleased"
 
 [dependencies]
 njutest-macros = { workspace = true }

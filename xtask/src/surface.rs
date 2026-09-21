@@ -17,6 +17,12 @@ pub enum Surface {
     Incidental,
     /// The whole crate is development apparatus and is never published.
     TestSupport,
+    /// A public API this workspace does not publish, because nothing reads it yet.
+    ///
+    /// The value exists so that state is a declaration rather than a crate quietly sitting on crates.io doing nothing.
+    /// `njutest`'s test attributes are the case: the code and its tests are here, and no runner reads one,
+    /// so publishing it would ship an API a user can call and nothing acts on.
+    Unreleased,
 }
 
 impl Surface {
@@ -27,6 +33,7 @@ impl Surface {
             "public" => Some(Self::Public),
             "incidental" => Some(Self::Incidental),
             "test-support" => Some(Self::TestSupport),
+            "unreleased" => Some(Self::Unreleased),
             _ => None,
         }
     }
@@ -258,7 +265,7 @@ fn check_packages(packages: &[Package]) -> (Vec<String>, BTreeSet<String>) {
         };
         let Some(surface) = Surface::parse(declared) else {
             problems.push(format!(
-                "{} declares unknown surface {declared:?}; expected public, incidental, or test-support",
+                "{} declares unknown surface {declared:?}; expected public, incidental, test-support, or unreleased",
                 package.name
             ));
             continue;
@@ -285,7 +292,15 @@ fn check_packages(packages: &[Package]) -> (Vec<String>, BTreeSet<String>) {
                 "{} calls itself test-support but Cargo still permits publishing it",
                 package.name
             )),
-            Surface::Public | Surface::TestSupport => {}
+            Surface::Unreleased if package.publishable => problems.push(format!(
+                "{} calls itself unreleased but Cargo still permits publishing it",
+                package.name
+            )),
+            Surface::Unreleased if !package.library => problems.push(format!(
+                "{} calls its surface unreleased but has no library or proc-macro target",
+                package.name
+            )),
+            Surface::Public | Surface::TestSupport | Surface::Unreleased => {}
         }
     }
     (problems, incidental)

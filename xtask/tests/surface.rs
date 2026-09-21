@@ -73,7 +73,7 @@ fn an_unmade_or_misspelled_decision_is_not_inferred() {
         check(&packages, &[]),
         [
             "absent has no [package.metadata.njutest] surface declaration",
-            "invented declares unknown surface \"private-ish\"; expected public, incidental, or test-support",
+            "invented declares unknown surface \"private-ish\"; expected public, incidental, test-support, or unreleased",
         ]
     );
 }
@@ -86,6 +86,7 @@ fn declarations_that_contradict_cargo_are_refused() {
     incidental_without_binary.binary = false;
     let unpublishable_public = package("hidden-api", Some("public"), false);
     let publishable_test_support = package("fixtures", Some("test-support"), true);
+    let publishable_unreleased = package("not-yet", Some("unreleased"), true);
     assert_eq!(
         check(
             &[
@@ -93,6 +94,7 @@ fn declarations_that_contradict_cargo_are_refused() {
                 unpublishable_public,
                 incidental_without_binary,
                 publishable_test_support,
+                publishable_unreleased,
             ],
             &[harness("runner")],
         ),
@@ -101,7 +103,25 @@ fn declarations_that_contradict_cargo_are_refused() {
             "hidden-api calls its surface public but Cargo forbids publishing it",
             "runner calls its surface incidental but does not have both a library and a binary target",
             "fixtures calls itself test-support but Cargo still permits publishing it",
+            "not-yet calls itself unreleased but Cargo still permits publishing it",
         ]
+    );
+}
+
+#[test]
+fn an_api_nothing_reads_yet_is_declared_rather_than_published() {
+    let held = package("attributes", Some("unreleased"), false);
+    assert!(
+        check(&[held], &[]).is_empty(),
+        "a public API this workspace does not publish is a state somebody decided, and \
+         the vocabulary had no value for it: the choice was to call it test support, \
+         which it is not, or to publish a crate a user can call and nothing acts on"
+    );
+    let mut without_library = package("attributes", Some("unreleased"), false);
+    without_library.library = false;
+    assert_eq!(
+        check(&[without_library], &[]),
+        ["attributes calls its surface unreleased but has no library or proc-macro target"]
     );
 }
 
