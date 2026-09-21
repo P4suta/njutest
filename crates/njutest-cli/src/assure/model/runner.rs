@@ -1336,6 +1336,18 @@ mod tests {
     }
 
     impl Fixture {
+        /// Whether an invocation carrying this variable is refused, whichever of the three refusals it earns.
+        ///
+        /// The fixture takes the ambient environment for `PATH` and the rest,
+        /// and stripped only the compiler-*environment* keys.
+        /// A machine or a CI job that exports `RUSTFLAGS` therefore earned the earlier `CompilerFlags` refusal, and thirty-one tests that set one variable each asserted a refusal about a different one.
+        /// Derived from the three predicates, so a fourth cleans the fixture on the day it is written.
+        fn refused_key(name: &std::ffi::OsStr) -> bool {
+            super::compiler_flags_key(name)
+                || super::compiler_environment_key(name)
+                || super::profile_environment_key(name)
+        }
+
         fn new(status: &str, exit: i32) -> Self {
             let temporary = tempfile::tempdir().expect("temporary fake Kani tree");
             let root = temporary.path().join("root");
@@ -1368,7 +1380,7 @@ mod tests {
             std::fs::write(&source, harness.source()).expect("rendered source");
             let document = document(&harness, status, &root, &target).to_string();
             let mut environment: Vec<_> = std::env::vars_os().collect();
-            environment.retain(|(name, _value)| !super::compiler_environment_key(name));
+            environment.retain(|(name, _value)| !Self::refused_key(name));
             set_env(
                 &mut environment,
                 "CARGO_HOME",

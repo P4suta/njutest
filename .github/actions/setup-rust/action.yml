@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 njutest contributors
 # SPDX-License-Identifier: MIT OR Apache-2.0
 name: setup-rust
-description: Pinned Rust toolchain (from rust-toolchain.toml) + mold + cargo cache (+ optional tools), shared by every CI job.
+description: Pinned Rust toolchain (from rust-toolchain.toml) + mold + mise + cargo cache (+ optional tools), shared by every CI job.
 
 inputs:
   components:
@@ -27,6 +27,15 @@ runs:
         components: ${{ inputs.components }}
         targets: ${{ inputs.targets }}
     - uses: rui314/setup-mold@9c9c13bf4c3f1adef0cc596abc155580bcb04444 # v1
+    # Three jobs call `mise run …` so that the pipeline and a developer's
+    # machine run the same task rather than two spellings of one; none of them
+    # installed mise, and `soundness` failed with `mise: command not found`.
+    # It goes here rather than in those jobs so a job added later cannot forget.
+    - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+      with:
+        version: 2026.9.12
+        install: false
+        cache: true
     - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
     - if: ${{ inputs.tools != '' }}
       uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2.85.3

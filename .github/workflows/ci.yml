@@ -53,7 +53,9 @@ jobs:
         env:
           CARGO_NET_OFFLINE: "false"
         shell: bash
-        run: cargo fetch --locked
+        run: |
+          cargo fetch --locked
+          cargo fetch --locked --manifest-path fuzz/Cargo.toml
       # `cargo test --all-targets` builds an example as a test harness, not as
       # the program it is, and part of this suite drives a scripted `cargo`
       # that is one. Building it plainly is what makes those tests able to run.
@@ -94,7 +96,9 @@ jobs:
       - name: Fetch the locked dependency graph
         env:
           CARGO_NET_OFFLINE: "false"
-        run: cargo fetch --locked
+        run: |
+          cargo fetch --locked
+          cargo fetch --locked --manifest-path fuzz/Cargo.toml
       - name: fmt
         run: cargo fmt --all -- --check
       - name: clippy
@@ -179,7 +183,9 @@ jobs:
       - name: Fetch the locked dependency graph
         env:
           CARGO_NET_OFFLINE: "false"
-        run: cargo fetch --locked
+        run: |
+          cargo fetch --locked
+          cargo fetch --locked --manifest-path fuzz/Cargo.toml
       # `nextest` builds the test targets and nothing else, and part of this
       # suite drives a scripted `cargo` that lives in an example. Building it
       # takes the same environment the instrumented run uses, which is what
@@ -262,7 +268,9 @@ jobs:
       - name: Fetch the locked dependency graph
         env:
           CARGO_NET_OFFLINE: "false"
-        run: cargo fetch --locked
+        run: |
+          cargo fetch --locked
+          cargo fetch --locked --manifest-path fuzz/Cargo.toml
       - name: Every publishable member packages
         run: cargo package --locked --workspace --no-verify --allow-dirty --exclude-lockfile
       - name: The binaries install from this tree
@@ -307,7 +315,9 @@ jobs:
       - name: Fetch the locked dependency graph
         env:
           CARGO_NET_OFFLINE: "false"
-        run: cargo fetch --locked
+        run: |
+          cargo fetch --locked
+          cargo fetch --locked --manifest-path fuzz/Cargo.toml
       - name: Build the njutest this commit would ship
         run: mise run build:release
       # Every other job runs on a machine with no Miri, where the whole of
@@ -342,7 +352,9 @@ jobs:
       - name: Fetch the locked dependency graph
         env:
           CARGO_NET_OFFLINE: "false"
-        run: cargo fetch --locked
+        run: |
+          cargo fetch --locked
+          cargo fetch --locked --manifest-path fuzz/Cargo.toml
       - name: Install the exact verifier and backend
         env:
           CARGO_NET_OFFLINE: "false"
@@ -366,7 +378,9 @@ jobs:
       - name: Fetch the locked dependency graph
         env:
           CARGO_NET_OFFLINE: "false"
-        run: cargo fetch --locked
+        run: |
+          cargo fetch --locked
+          cargo fetch --locked --manifest-path fuzz/Cargo.toml
       - name: Build the njutest this commit would ship and put it on the path
         run: |
           cargo build --locked --release --bin njutest
